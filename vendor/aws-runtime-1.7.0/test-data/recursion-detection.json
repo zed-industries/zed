@@ -1,0 +1,71 @@
+[
+  {
+    "env": {},
+    "requestHeadersBefore": [],
+    "requestHeadersAfter": [],
+    "description": [
+      "The AWS_LAMBDA_FUNCTION_NAME and _X_AMZN_TRACE_ID environment variables are not set.",
+      "There should be no X-Amzn-Trace-Id header sent."
+    ]
+  },
+  {
+    "env": {
+      "AWS_LAMBDA_FUNCTION_NAME": "some-function",
+      "_X_AMZN_TRACE_ID": "Root=1-5759e988-bd862e3fe1be46a994272793;Parent=53995c3f42cd8ad8;Sampled=1;lineage=a87bd80c:0,68fd508a:5,c512fbe3:2"
+    },
+    "requestHeadersBefore": [],
+    "requestHeadersAfter": [
+      "X-Amzn-Trace-Id: Root=1-5759e988-bd862e3fe1be46a994272793;Parent=53995c3f42cd8ad8;Sampled=1;lineage=a87bd80c:0,68fd508a:5,c512fbe3:2"
+    ],
+    "description": [
+      "AWS_LAMBDA_FUNCTION_NAME is set, and",
+      "_X_AMZN_TRACE_ID is set to \"Root=1-5759e988-bd862e3fe1be46a994272793;Parent=53995c3f42cd8ad8;Sampled=1;lineage=a87bd80c:0,68fd508a:5,c512fbe3:2\".",
+      "The X-Amzn-Trace-Id header should be sent with that value."
+    ]
+  },
+  {
+    "env": {
+      "_X_AMZN_TRACE_ID": "Root=1-5759e988-bd862e3fe1be46a994272793;Parent=53995c3f42cd8ad8;Sampled=1;lineage=a87bd80c:0,68fd508a:5,c512fbe3:2"
+    },
+    "requestHeadersBefore": [],
+    "requestHeadersAfter": [],
+    "description": [
+      "AWS_LAMBDA_FUNCTION_NAME is NOT set, and",
+      "_X_AMZN_TRACE_ID is set to \"Root=1-5759e988-bd862e3fe1be46a994272793;Parent=53995c3f42cd8ad8;Sampled=1;lineage=a87bd80c:0,68fd508a:5,c512fbe3:2\".",
+      "The X-Amzn-Trace-Id header should NOT be sent with that value."
+    ]
+  },
+  {
+    "env": {
+      "AWS_LAMBDA_FUNCTION_NAME": "some-function",
+      "_X_AMZN_TRACE_ID": "EnvValue"
+    },
+    "requestHeadersBefore": [
+      "X-Amzn-Trace-Id: OriginalValue"
+    ],
+    "requestHeadersAfter": [
+      "X-Amzn-Trace-Id: OriginalValue"
+    ],
+    "desciption": [
+      "AWS_LAMBDA_FUNCTION_NAME is set, and",
+      "_X_AMZN_TRACE_ID is set to \"EnvValue\",",
+      "but the X-Amzn-Trace-Id header is already set on the request.",
+      "The X-Amzn-Trace-Id header should keep its original value."
+    ]
+  },
+  {
+    "env": {
+      "AWS_LAMBDA_FUNCTION_NAME": "some-function",
+      "_X_AMZN_TRACE_ID": "first\nsecond¼\t"
+    },
+    "requestHeadersBefore": [],
+    "requestHeadersAfter": [
+      "X-Amzn-Trace-Id: first%0Asecond%C2%BC%09"
+    ],
+    "description": [
+      "AWS_LAMBDA_FUNCTION_NAME is set, and",
+      "_X_AMZN_TRACE_ID has ASCII control characters in it.",
+      "The X-Amzn-Trace-Id header is added with the control characters percent encoded."
+    ]
+  }
+]

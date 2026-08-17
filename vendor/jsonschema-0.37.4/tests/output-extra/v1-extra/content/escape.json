@@ -1,0 +1,72 @@
+[
+    {
+        "description": "property names are escaped in locations",
+        "schema": {
+            "$schema": "https://json-schema.org/v1",
+            "$id": "https://json-schema.org/tests/content/v1-extra/escape/0",
+            "properties": {
+                "~a/b": {"type": "number"}
+            }
+        },
+        "tests": [
+            {
+                "description": "incorrect type reports escaped locations",
+                "data": {"~a/b": "foobar"},
+                "output": {
+                    "list": {
+                        "$id": "https://json-schema.org/tests/content/v1-extra/escape/0/tests/0/list",
+                        "$ref": "/v1/output/schema",
+                        "properties": {
+                            "details": {
+                                "contains": {
+                                    "properties": {
+                                        "schemaLocation": {"const": "https://json-schema.org/tests/content/v1-extra/escape/0#/properties/~0a~1b/type"},
+                                        "instanceLocation": {"const": "/~0a~1b"},
+                                        "errors": {
+                                            "type": "object",
+                                            "minProperties": 1
+                                        }
+                                    },
+                                    "required": ["schemaLocation", "instanceLocation", "errors"]
+                                }
+                            }
+                        },
+                        "required": ["details"]
+                    },
+                    "hierarchical": {
+                        "$id": "https://json-schema.org/tests/content/v1-extra/escape/0/tests/0/hierarchical",
+                        "$ref": "/v1/output/schema",
+                        "properties": {
+                            "details": {
+                                "contains": {
+                                    "properties": {
+                                        "droppedAnnotations": {
+                                            "contains": {"const": "~a/b"}
+                                        },
+                                        "details": {
+                                            "contains": {
+                                                "properties": {
+                                                    "details": {
+                                                        "contains": {
+                                                            "properties": {
+                                                                "schemaLocation": {"const": "https://json-schema.org/tests/content/v1-extra/escape/0#/properties/~0a~1b/type"},
+                                                                "instanceLocation": {"const": "/~0a~1b"}
+                                                            },
+                                                            "required": ["schemaLocation", "instanceLocation"]
+                                                        }
+                                                    }
+                                                },
+                                                "required": ["details"]
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "required": ["details"]
+                    }
+                }
+            }
+        ]
+    }
+]

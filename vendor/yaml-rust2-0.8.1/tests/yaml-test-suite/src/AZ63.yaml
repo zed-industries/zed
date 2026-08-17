@@ -1,0 +1,31 @@
+---
+- name: Sequence With Same Indentation as Parent Mapping
+  from: NimYAML tests
+  tags: indent mapping sequence
+  yaml: |
+    one:
+    - 2
+    - 3
+    four: 5
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :one
+       +SEQ
+        =VAL :2
+        =VAL :3
+       -SEQ
+       =VAL :four
+       =VAL :5
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "one": [
+        2,
+        3
+      ],
+      "four": 5
+    }

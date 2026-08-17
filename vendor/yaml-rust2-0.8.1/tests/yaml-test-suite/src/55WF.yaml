@@ -1,0 +1,11 @@
+---
+- name: Invalid escape in double quoted string
+  from: '@perlpunk'
+  tags: error double
+  fail: true
+  yaml: |
+    ---
+    "\."
+  tree: |
+    +STR
+     +DOC ---

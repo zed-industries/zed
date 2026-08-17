@@ -1,0 +1,10 @@
+package foo:foo;
+
+interface bar {
+  foo: func(s: string) -> string;
+}
+
+world module {
+  import bar;
+  import foo: func(s: string) -> string;
+}

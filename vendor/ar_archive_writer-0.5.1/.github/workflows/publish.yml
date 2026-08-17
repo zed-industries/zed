@@ -1,0 +1,21 @@
+name: Publish to crates.io
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    environment: publish
+    permissions:
+      id-token: write
+
+    steps:
+    - uses: actions/checkout@v4
+    - uses: rust-lang/crates-io-auth-action@v1
+      id: auth
+    - run: cargo publish
+      env:
+        CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}

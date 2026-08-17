@@ -1,0 +1,34 @@
+environment:
+  matrix:
+    - TARGET: x86_64-pc-windows-msvc
+      GNUPLOT: yes
+    - TARGET: x86_64-pc-windows-msvc
+      GNUPLOT: no
+
+cache:
+  - 'C:\Users\appveyor\.cargo'
+
+install:
+  - curl -sSf -o rustup-init.exe https://win.rustup.rs/
+  - rustup-init.exe -y --default-host %TARGET% --default-toolchain stable
+  - SET PATH=%PATH%;C:\Users\appveyor\.cargo\bin
+  - rustc -Vv
+  - cargo -V
+  - ps: if (${env:GNUPLOT} -eq "yes") { Start-FileDownload "https://sourceforge.net/projects/gnuplot/files/gnuplot/4.6.7/gp467-win64-setup.exe";  }
+  - if %GNUPLOT%==yes gp467-win64-setup.exe /VERYSILENT /NORESTART
+  - if %GNUPLOT%==yes SET PATH=%PATH%;C:\Program Files\gnuplot\bin
+
+build: false
+
+# Disabled in favor of github actions
+test_script:
+#  - cargo build --release
+#  - cargo test --all --release
+#  - cargo build --benches --all --release
+# Disable benchmarking until performance can be improved.
+#  - cargo bench
+#  - cargo doc --release --all --no-deps
+
+branches:
+  only:
+    - master

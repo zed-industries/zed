@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="slide">
+  <copyright><![CDATA[
+    SPDX-FileCopyrightText: 2015 Martin Gräßlin
+    SPDX-FileCopyrightText: 2015 Marco Martin
+
+    SPDX-License-Identifier: LGPL-2.1-or-later
+  ]]></copyright>
+  <interface name="org_kde_kwin_slide_manager" version="1">
+      <request name="create">
+          <arg name="id" type="new_id" interface="org_kde_kwin_slide"/>
+          <arg name="surface" type="object" interface="wl_surface"/>
+      </request>
+      <request name="unset">
+          <arg name="surface" type="object" interface="wl_surface"/>
+      </request>
+  </interface>
+  <interface name="org_kde_kwin_slide" version="1">
+      <description summary="slide a surface from a location to another">
+        Ask the compositor to move the surface from a location to another
+        with a slide animation.
+
+        The from argument provides a clue about where the slide animation
+        begins, offset is the distance from screen edge to begin the animation.
+      </description>
+      <enum name="location">
+        <entry name="left" value="0"/>
+        <entry name="top" value="1"/>
+        <entry name="right" value="2"/>
+        <entry name="bottom" value="3"/>
+      </enum>
+      <request name="commit">
+      </request>
+      <request name="set_location">
+        <arg name="location" type="uint"/>
+      </request>
+      <request name="set_offset">
+        <arg name="offset" type="int"/>
+      </request>
+      <request name="release" type="destructor">
+        <description summary="release the slide object"/>
+      </request>
+  </interface>
+</protocol>

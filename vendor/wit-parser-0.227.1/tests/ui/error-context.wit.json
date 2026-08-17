@@ -1,0 +1,59 @@
+{
+  "worlds": [],
+  "interfaces": [
+    {
+      "name": "error-contexts",
+      "types": {
+        "t1": 0
+      },
+      "functions": {
+        "foo": {
+          "name": "foo",
+          "kind": "freestanding",
+          "params": [
+            {
+              "name": "x",
+              "type": "error-context"
+            },
+            {
+              "name": "y",
+              "type": 0
+            }
+          ],
+          "result": 1
+        }
+      },
+      "package": 0
+    }
+  ],
+  "types": [
+    {
+      "name": "t1",
+      "kind": {
+        "type": "error-context"
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": null,
+      "kind": {
+        "result": {
+          "ok": null,
+          "err": "error-context"
+        }
+      },
+      "owner": null
+    }
+  ],
+  "packages": [
+    {
+      "name": "foo:error-contexts",
+      "interfaces": {
+        "error-contexts": 0
+      },
+      "worlds": {}
+    }
+  ]
+}

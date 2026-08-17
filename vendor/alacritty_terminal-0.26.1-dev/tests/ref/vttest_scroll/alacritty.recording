@@ -1,0 +1,255 @@
+[1m[7m%[27m[1m[0m                                                                                ]2;jwilm@jwilm-desk: ~/code/alacritty]1;..ode/alacritty[0m[27m[24m[Jjwilm@jwilm-desk [01;32m➜ [01;32m [36m~/code/alacritty [00m [K[?1h=[?2004h[1m[31mv[0m[39m[1m[31mv[1m[31mt[0m[39m[1m[31mv[1m[31mt[1m[31mt[0m[39m[1m[31mt[1m[31me[0m[39m[1m[31me[1m[31ms[0m[39m[0m[35mv[0m[35mt[0m[35mt[0m[35me[0m[35ms[35mt[39m[?1l>[?2004l
+]2;vttest]1;vttest[0c[?1l[?3l[?4l[?5l[?6l[?7h[?8l[?40h[?45l[r[0m[2J[3;10HVT100 test program, version 2.7 (20140305)[4;10HLine speed 38400bd [5;10HChoose test type:
+[6;1H[0J
+          0. Exit
+          1. Test of cursor movements
+          2. Test of screen features
+          3. Test of character sets
+          4. Test of double-sized characters
+          5. Test of keyboard
+          6. Test of terminal reports
+          7. Test of VT52 mode
+          8. Test of VT102 features (Insert/Delete Char/Line)
+          9. Test of known bugs
+          10. Test of reset and self-test
+          11. Test non-VT100 (e.g., VT220, XTERM) terminals
+          12. Modify test-parameters
+
+          Enter choice number (0 - 12): 2
+[2J[1;1H[?7h****************************************************************************************************************************************************************[?7l[3;1H****************************************************************************************************************************************************************[?7h[5;1HThis should be three identical lines of *'s completely filling
+the top of the screen without any empty lines between.
+(Test of WRAP AROUND mode setting.)
+Push <RETURN>[2J[3g[1;1H[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[1;4H[0g[6C[0g[6C[0g[6C[0g[6C[0g[6C[0g[6C[0g[6C[0g[6C[0g[6C[0g[6C[0g[6C[0g[6C[0g[6C[1;7H[1g[2g[1;1H	*	*	*	*	*	*	*	*	*	*	*	*	*[2;2H     *     *     *     *     *     *     *     *     *     *     *     *     *[4;1HTest of TAB setting/resetting. These two lines
+should look the same. Push <RETURN>[?5h[?3h[2J[1;1H[3g[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[1;1H12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901[3;3HThis is 132 column mode, light background.[4;4HThis is 132 column mode, light background.[5;5HThis is 132 column mode, light background.[6;6HThis is 132 column mode, light background.[7;7HThis is 132 column mode, light background.[8;8HThis is 132 column mode, light background.[9;9HThis is 132 column mode, light background.[10;10HThis is 132 column mode, light background.[11;11HThis is 132 column mode, light background.[12;12HThis is 132 column mode, light background.[13;13HThis is 132 column mode, light background.[14;14HThis is 132 column mode, light background.[15;15HThis is 132 column mode, light background.[16;16HThis is 132 column mode, light background.[17;17HThis is 132 column mode, light background.[18;18HThis is 132 column mode, light background.[19;19HThis is 132 column mode, light background.[20;20HThis is 132 column mode, light background.Push <RETURN>[?3l[2J[1;1H1234567890123456789012345678901234567890123456789012345678901234567890123456789[3;3HThis is 80 column mode, light background.[4;4HThis is 80 column mode, light background.[5;5HThis is 80 column mode, light background.[6;6HThis is 80 column mode, light background.[7;7HThis is 80 column mode, light background.[8;8HThis is 80 column mode, light background.[9;9HThis is 80 column mode, light background.[10;10HThis is 80 column mode, light background.[11;11HThis is 80 column mode, light background.[12;12HThis is 80 column mode, light background.[13;13HThis is 80 column mode, light background.[14;14HThis is 80 column mode, light background.[15;15HThis is 80 column mode, light background.[16;16HThis is 80 column mode, light background.[17;17HThis is 80 column mode, light background.[18;18HThis is 80 column mode, light background.[19;19HThis is 80 column mode, light background.[20;20HThis is 80 column mode, light background.Push <RETURN>[?5l[?3h[2J[1;1H[3g[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[1;1H12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901[3;3HThis is 132 column mode, dark background.[4;4HThis is 132 column mode, dark background.[5;5HThis is 132 column mode, dark background.[6;6HThis is 132 column mode, dark background.[7;7HThis is 132 column mode, dark background.[8;8HThis is 132 column mode, dark background.[9;9HThis is 132 column mode, dark background.[10;10HThis is 132 column mode, dark background.[11;11HThis is 132 column mode, dark background.[12;12HThis is 132 column mode, dark background.[13;13HThis is 132 column mode, dark background.[14;14HThis is 132 column mode, dark background.[15;15HThis is 132 column mode, dark background.[16;16HThis is 132 column mode, dark background.[17;17HThis is 132 column mode, dark background.[18;18HThis is 132 column mode, dark background.[19;19HThis is 132 column mode, dark background.[20;20HThis is 132 column mode, dark background.Push <RETURN>[?3l[2J[1;1H1234567890123456789012345678901234567890123456789012345678901234567890123456789[3;3HThis is 80 column mode, dark background.[4;4HThis is 80 column mode, dark background.[5;5HThis is 80 column mode, dark background.[6;6HThis is 80 column mode, dark background.[7;7HThis is 80 column mode, dark background.[8;8HThis is 80 column mode, dark background.[9;9HThis is 80 column mode, dark background.[10;10HThis is 80 column mode, dark background.[11;11HThis is 80 column mode, dark background.[12;12HThis is 80 column mode, dark background.[13;13HThis is 80 column mode, dark background.[14;14HThis is 80 column mode, dark background.[15;15HThis is 80 column mode, dark background.[16;16HThis is 80 column mode, dark background.[17;17HThis is 80 column mode, dark background.[18;18HThis is 80 column mode, dark background.[19;19HThis is 80 column mode, dark background.[20;20HThis is 80 column mode, dark background.Push <RETURN>[2J[?6h[?4h[12;13r[2J[24BSoft scroll up region [12..13] size 2 Line 1
+Soft scroll up region [12..13] size 2 Line 2
+Soft scroll up region [12..13] size 2 Line 3
+Soft scroll up region [12..13] size 2 Line 4
+Soft scroll up region [12..13] size 2 Line 5
+Soft scroll up region [12..13] size 2 Line 6
+Soft scroll up region [12..13] size 2 Line 7
+Soft scroll up region [12..13] size 2 Line 8
+Soft scroll up region [12..13] size 2 Line 9
+Soft scroll up region [12..13] size 2 Line 10
+Soft scroll up region [12..13] size 2 Line 11
+Soft scroll up region [12..13] size 2 Line 12
+Soft scroll up region [12..13] size 2 Line 13
+Soft scroll up region [12..13] size 2 Line 14
+Soft scroll up region [12..13] size 2 Line 15
+Soft scroll up region [12..13] size 2 Line 16
+Soft scroll up region [12..13] size 2 Line 17
+Soft scroll up region [12..13] size 2 Line 18
+Soft scroll up region [12..13] size 2 Line 19
+Soft scroll up region [12..13] size 2 Line 20
+Soft scroll up region [12..13] size 2 Line 21
+Soft scroll up region [12..13] size 2 Line 22
+Soft scroll up region [12..13] size 2 Line 23
+Soft scroll up region [12..13] size 2 Line 24
+Soft scroll up region [12..13] size 2 Line 25
+Soft scroll up region [12..13] size 2 Line 26
+Soft scroll up region [12..13] size 2 Line 27
+Soft scroll up region [12..13] size 2 Line 28
+Soft scroll up region [12..13] size 2 Line 29
+[24ASoft scroll down region [12..13] size 2 Line 1
+MMSoft scroll down region [12..13] size 2 Line 2
+MMSoft scroll down region [12..13] size 2 Line 3
+MMSoft scroll down region [12..13] size 2 Line 4
+MMSoft scroll down region [12..13] size 2 Line 5
+MMSoft scroll down region [12..13] size 2 Line 6
+MMSoft scroll down region [12..13] size 2 Line 7
+MMSoft scroll down region [12..13] size 2 Line 8
+MMSoft scroll down region [12..13] size 2 Line 9
+MMSoft scroll down region [12..13] size 2 Line 10
+MMSoft scroll down region [12..13] size 2 Line 11
+MMSoft scroll down region [12..13] size 2 Line 12
+MMSoft scroll down region [12..13] size 2 Line 13
+MMSoft scroll down region [12..13] size 2 Line 14
+MMSoft scroll down region [12..13] size 2 Line 15
+MMSoft scroll down region [12..13] size 2 Line 16
+MMSoft scroll down region [12..13] size 2 Line 17
+MMSoft scroll down region [12..13] size 2 Line 18
+MMSoft scroll down region [12..13] size 2 Line 19
+MMSoft scroll down region [12..13] size 2 Line 20
+MMSoft scroll down region [12..13] size 2 Line 21
+MMSoft scroll down region [12..13] size 2 Line 22
+MMSoft scroll down region [12..13] size 2 Line 23
+MMSoft scroll down region [12..13] size 2 Line 24
+MMSoft scroll down region [12..13] size 2 Line 25
+MMSoft scroll down region [12..13] size 2 Line 26
+MMSoft scroll down region [12..13] size 2 Line 27
+MMSoft scroll down region [12..13] size 2 Line 28
+MMSoft scroll down region [12..13] size 2 Line 29
+MMPush <RETURN>[1;24r[2J[24BSoft scroll up region [1..24] size 24 Line 1
+Soft scroll up region [1..24] size 24 Line 2
+Soft scroll up region [1..24] size 24 Line 3
+Soft scroll up region [1..24] size 24 Line 4
+Soft scroll up region [1..24] size 24 Line 5
+Soft scroll up region [1..24] size 24 Line 6
+Soft scroll up region [1..24] size 24 Line 7
+Soft scroll up region [1..24] size 24 Line 8
+Soft scroll up region [1..24] size 24 Line 9
+Soft scroll up region [1..24] size 24 Line 10
+Soft scroll up region [1..24] size 24 Line 11
+Soft scroll up region [1..24] size 24 Line 12
+Soft scroll up region [1..24] size 24 Line 13
+Soft scroll up region [1..24] size 24 Line 14
+Soft scroll up region [1..24] size 24 Line 15
+Soft scroll up region [1..24] size 24 Line 16
+Soft scroll up region [1..24] size 24 Line 17
+Soft scroll up region [1..24] size 24 Line 18
+Soft scroll up region [1..24] size 24 Line 19
+Soft scroll up region [1..24] size 24 Line 20
+Soft scroll up region [1..24] size 24 Line 21
+Soft scroll up region [1..24] size 24 Line 22
+Soft scroll up region [1..24] size 24 Line 23
+Soft scroll up region [1..24] size 24 Line 24
+Soft scroll up region [1..24] size 24 Line 25
+Soft scroll up region [1..24] size 24 Line 26
+Soft scroll up region [1..24] size 24 Line 27
+Soft scroll up region [1..24] size 24 Line 28
+Soft scroll up region [1..24] size 24 Line 29
+[24ASoft scroll down region [1..24] size 24 Line 1
+MMSoft scroll down region [1..24] size 24 Line 2
+MMSoft scroll down region [1..24] size 24 Line 3
+MMSoft scroll down region [1..24] size 24 Line 4
+MMSoft scroll down region [1..24] size 24 Line 5
+MMSoft scroll down region [1..24] size 24 Line 6
+MMSoft scroll down region [1..24] size 24 Line 7
+MMSoft scroll down region [1..24] size 24 Line 8
+MMSoft scroll down region [1..24] size 24 Line 9
+MMSoft scroll down region [1..24] size 24 Line 10
+MMSoft scroll down region [1..24] size 24 Line 11
+MMSoft scroll down region [1..24] size 24 Line 12
+MMSoft scroll down region [1..24] size 24 Line 13
+MMSoft scroll down region [1..24] size 24 Line 14
+MMSoft scroll down region [1..24] size 24 Line 15
+MMSoft scroll down region [1..24] size 24 Line 16
+MMSoft scroll down region [1..24] size 24 Line 17
+MMSoft scroll down region [1..24] size 24 Line 18
+MMSoft scroll down region [1..24] size 24 Line 19
+MMSoft scroll down region [1..24] size 24 Line 20
+MMSoft scroll down region [1..24] size 24 Line 21
+MMSoft scroll down region [1..24] size 24 Line 22
+MMSoft scroll down region [1..24] size 24 Line 23
+MMSoft scroll down region [1..24] size 24 Line 24
+MMSoft scroll down region [1..24] size 24 Line 25
+MMSoft scroll down region [1..24] size 24 Line 26
+MMSoft scroll down region [1..24] size 24 Line 27
+MMSoft scroll down region [1..24] size 24 Line 28
+MMSoft scroll down region [1..24] size 24 Line 29
+MMPush <RETURN>[?4l[12;13r[2J[24BJump scroll up region [12..13] size 2 Line 1
+Jump scroll up region [12..13] size 2 Line 2
+Jump scroll up region [12..13] size 2 Line 3
+Jump scroll up region [12..13] size 2 Line 4
+Jump scroll up region [12..13] size 2 Line 5
+Jump scroll up region [12..13] size 2 Line 6
+Jump scroll up region [12..13] size 2 Line 7
+Jump scroll up region [12..13] size 2 Line 8
+Jump scroll up region [12..13] size 2 Line 9
+Jump scroll up region [12..13] size 2 Line 10
+Jump scroll up region [12..13] size 2 Line 11
+Jump scroll up region [12..13] size 2 Line 12
+Jump scroll up region [12..13] size 2 Line 13
+Jump scroll up region [12..13] size 2 Line 14
+Jump scroll up region [12..13] size 2 Line 15
+Jump scroll up region [12..13] size 2 Line 16
+Jump scroll up region [12..13] size 2 Line 17
+Jump scroll up region [12..13] size 2 Line 18
+Jump scroll up region [12..13] size 2 Line 19
+Jump scroll up region [12..13] size 2 Line 20
+Jump scroll up region [12..13] size 2 Line 21
+Jump scroll up region [12..13] size 2 Line 22
+Jump scroll up region [12..13] size 2 Line 23
+Jump scroll up region [12..13] size 2 Line 24
+Jump scroll up region [12..13] size 2 Line 25
+Jump scroll up region [12..13] size 2 Line 26
+Jump scroll up region [12..13] size 2 Line 27
+Jump scroll up region [12..13] size 2 Line 28
+Jump scroll up region [12..13] size 2 Line 29
+[24AJump scroll down region [12..13] size 2 Line 1
+MMJump scroll down region [12..13] size 2 Line 2
+MMJump scroll down region [12..13] size 2 Line 3
+MMJump scroll down region [12..13] size 2 Line 4
+MMJump scroll down region [12..13] size 2 Line 5
+MMJump scroll down region [12..13] size 2 Line 6
+MMJump scroll down region [12..13] size 2 Line 7
+MMJump scroll down region [12..13] size 2 Line 8
+MMJump scroll down region [12..13] size 2 Line 9
+MMJump scroll down region [12..13] size 2 Line 10
+MMJump scroll down region [12..13] size 2 Line 11
+MMJump scroll down region [12..13] size 2 Line 12
+MMJump scroll down region [12..13] size 2 Line 13
+MMJump scroll down region [12..13] size 2 Line 14
+MMJump scroll down region [12..13] size 2 Line 15
+MMJump scroll down region [12..13] size 2 Line 16
+MMJump scroll down region [12..13] size 2 Line 17
+MMJump scroll down region [12..13] size 2 Line 18
+MMJump scroll down region [12..13] size 2 Line 19
+MMJump scroll down region [12..13] size 2 Line 20
+MMJump scroll down region [12..13] size 2 Line 21
+MMJump scroll down region [12..13] size 2 Line 22
+MMJump scroll down region [12..13] size 2 Line 23
+MMJump scroll down region [12..13] size 2 Line 24
+MMJump scroll down region [12..13] size 2 Line 25
+MMJump scroll down region [12..13] size 2 Line 26
+MMJump scroll down region [12..13] size 2 Line 27
+MMJump scroll down region [12..13] size 2 Line 28
+MMJump scroll down region [12..13] size 2 Line 29
+MMPush <RETURN>[1;24r[2J[24BJump scroll up region [1..24] size 24 Line 1
+Jump scroll up region [1..24] size 24 Line 2
+Jump scroll up region [1..24] size 24 Line 3
+Jump scroll up region [1..24] size 24 Line 4
+Jump scroll up region [1..24] size 24 Line 5
+Jump scroll up region [1..24] size 24 Line 6
+Jump scroll up region [1..24] size 24 Line 7
+Jump scroll up region [1..24] size 24 Line 8
+Jump scroll up region [1..24] size 24 Line 9
+Jump scroll up region [1..24] size 24 Line 10
+Jump scroll up region [1..24] size 24 Line 11
+Jump scroll up region [1..24] size 24 Line 12
+Jump scroll up region [1..24] size 24 Line 13
+Jump scroll up region [1..24] size 24 Line 14
+Jump scroll up region [1..24] size 24 Line 15
+Jump scroll up region [1..24] size 24 Line 16
+Jump scroll up region [1..24] size 24 Line 17
+Jump scroll up region [1..24] size 24 Line 18
+Jump scroll up region [1..24] size 24 Line 19
+Jump scroll up region [1..24] size 24 Line 20
+Jump scroll up region [1..24] size 24 Line 21
+Jump scroll up region [1..24] size 24 Line 22
+Jump scroll up region [1..24] size 24 Line 23
+Jump scroll up region [1..24] size 24 Line 24
+Jump scroll up region [1..24] size 24 Line 25
+Jump scroll up region [1..24] size 24 Line 26
+Jump scroll up region [1..24] size 24 Line 27
+Jump scroll up region [1..24] size 24 Line 28
+Jump scroll up region [1..24] size 24 Line 29
+[24AJump scroll down region [1..24] size 24 Line 1
+MMJump scroll down region [1..24] size 24 Line 2
+MMJump scroll down region [1..24] size 24 Line 3
+MMJump scroll down region [1..24] size 24 Line 4
+MMJump scroll down region [1..24] size 24 Line 5
+MMJump scroll down region [1..24] size 24 Line 6
+MMJump scroll down region [1..24] size 24 Line 7
+MMJump scroll down region [1..24] size 24 Line 8
+MMJump scroll down region [1..24] size 24 Line 9
+MMJump scroll down region [1..24] size 24 Line 10
+MMJump scroll down region [1..24] size 24 Line 11
+MMJump scroll down region [1..24] size 24 Line 12
+MMJump scroll down region [1..24] size 24 Line 13
+MMJump scroll down region [1..24] size 24 Line 14
+MMJump scroll down region [1..24] size 24 Line 15
+MMJump scroll down region [1..24] size 24 Line 16
+MMJump scroll down region [1..24] size 24 Line 17
+MMJump scroll down region [1..24] size 24 Line 18
+MMJump scroll down region [1..24] size 24 Line 19
+MMJump scroll down region [1..24] size 24 Line 20
+MMJump scroll down region [1..24] size 24 Line 21
+MMJump scroll down region [1..24] size 24 Line 22
+MMJump scroll down region [1..24] size 24 Line 23
+MMJump scroll down region [1..24] size 24 Line 24
+MMJump scroll down region [1..24] size 24 Line 25
+MMJump scroll down region [1..24] size 24 Line 26
+MMJump scroll down region [1..24] size 24 Line 27
+MMJump scroll down region [1..24] size 24 Line 28
+MMJump scroll down region [1..24] size 24 Line 29
+MMPush <RETURN>

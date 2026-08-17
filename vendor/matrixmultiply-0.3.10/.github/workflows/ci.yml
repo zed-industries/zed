@@ -1,0 +1,178 @@
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+name: Continuous integration
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  MATMUL_NUM_THREADS: 4
+  RUST_BACKTRACE: full
+
+jobs:
+  tests:
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      matrix:
+        include:
+          - rust: 1.41.1  # MSRV
+            experimental: false
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            features: cgemm
+          - rust: stable
+            experimental: false
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            features: threading cgemm
+            test_examples: yes_examples
+            test_benchmark: yes_bench
+          - rust: nightly
+            experimental: false
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            mmtest_feature: avx
+          - rust: nightly
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            features: threading cgemm
+            mmtest_feature: fma
+            experimental: false
+          - rust: nightly
+            os: ubuntu-latest
+            target: i686-unknown-linux-gnu
+            features: cgemm
+            install_deps: |
+              sudo apt-get update
+              sudo apt-get install -y gcc-multilib
+            experimental: false
+          - rust: stable
+            experimental: false
+            os: macos-latest
+            target: x86_64-apple-darwin
+            features: threading cgemm
+            test_examples: yes_examples
+
+    name: tests/${{ matrix.target }}/${{ matrix.rust }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+          targets: ${{ matrix.target }}
+      - name: Install dependencies
+        if: matrix.install_deps
+        run: ${{ matrix.install_deps }}
+      - name: Cargo deps locks
+        if: ${{ matrix.rust == '1.41.1' }}
+        run:
+          cargo update -p either --precise 1.13.0
+      - name: Tests
+        run: |
+          rustc -C target-cpu=native --print cfg
+          cargo build -v --features "${{ matrix.features }}" --target "${{ matrix.target }}"
+          cargo test -v --tests --lib --no-fail-fast --features "${{ matrix.features }}" --target "${{ matrix.target }}"
+          cargo test -v  --tests --lib --release --no-fail-fast --features "${{ matrix.features }}" --target "${{ matrix.target }}"
+      - name: Test examples
+        if: matrix.test_examples
+        run: |
+          cargo test -v --examples --features "${{ matrix.features }}" --target "${{ matrix.target }}"
+      - name: Test benchmark
+        if: matrix.test_benchmark
+        run: |
+          cargo bench --no-run -v --features "${{ matrix.features }}" --target "${{ matrix.target }}"
+          python3 ./benches/benchloop.py -t f32 f64 c32 c64 --mc 32 -s 32 64 | tee bench.csv
+          cat bench.csv
+      - name: Test specific feature
+        if: matrix.mmtest_feature
+        env:
+          MMTEST_FEATURE: ${{ matrix.mmtest_feature }}
+          MMTEST_ENSUREFEATURE: 1
+        run: |
+          cargo test -v --no-fail-fast
+
+  nostd-build:
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      matrix:
+        include:
+          - rust: 1.41.1  # MSRV
+            experimental: false
+            target: thumbv6m-none-eabi
+          - rust: stable
+            experimental: false
+            target: thumbv6m-none-eabi
+
+    name: nostd-build/${{ matrix.target }}/${{ matrix.rust }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+          targets: ${{ matrix.target }}
+      - name: Tests
+        run: |
+          cargo rustc "--target=${{ matrix.target }}" --manifest-path=ensure_no_std/Cargo.toml
+
+  cross_test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - rust: stable
+            target: s390x-unknown-linux-gnu
+            features: constconf cgemm threading
+          - rust: stable
+            target: aarch64-unknown-linux-gnu
+            features: constconf cgemm threading
+          - rust: 1.65.0
+            target: aarch64-unknown-linux-gnu
+            features: cgemm
+
+    name: cross_test/${{ matrix.target }}/${{ matrix.rust }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          profile: minimal
+          targets: ${{ matrix.target }}
+      - name: Cache cargo plugins
+        uses: Swatinem/rust-cache@v2
+      - name: Install cross
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: cargo install cross
+      - name: Tests
+        run: cross test --target "${{ matrix.target }}" --features "${{ matrix.features }}"
+        env:
+          MMTEST_FAST_TEST: 1
+      - name: Tests (Release)
+        run: cross test --release --target "${{ matrix.target }}" --features "${{ matrix.features }}"
+        env:
+          MMTEST_FAST_TEST: 1
+
+
+  cargo-careful:
+    runs-on: ubuntu-latest
+    name: cargo-careful
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-careful
+        run: cargo install cargo-careful
+      - run: cargo careful test -Zcareful-sanitizer=thread --features=threading,cgemm
+
+  miri:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Miri
+        run: ci/miri.sh --features cgemm
+

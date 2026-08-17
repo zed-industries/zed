@@ -1,0 +1,47 @@
+[package]
+name = "libmimalloc-sys"
+version = "0.1.44"
+authors = ["Octavian Oncescu <octavonce@gmail.com>"]
+edition = "2018"
+repository = "https://github.com/purpleprotocol/mimalloc_rust/tree/master/libmimalloc-sys"
+keywords = ["allocator", "encrypted-heap", "performance"]
+categories = ["memory-management", "api-bindings"]
+description = "Sys crate wrapping the mimalloc allocator"
+license = "MIT"
+links = "mimalloc"
+exclude = [
+    "/c_src/mimalloc/v2/bin",
+    "/c_src/mimalloc/v2/cmake",
+    "/c_src/mimalloc/v2/doc",
+    "/c_src/mimalloc/v2/docs",
+    "/c_src/mimalloc/v2/ide",
+    "/c_src/mimalloc/v2/test",
+    "/c_src/mimalloc/v3/bin",
+    "/c_src/mimalloc/v3/cmake",
+    "/c_src/mimalloc/v3/doc",
+    "/c_src/mimalloc/v3/docs",
+    "/c_src/mimalloc/v3/ide",
+    "/c_src/mimalloc/v3/test",
+]
+
+[dependencies]
+cty = { version = "0.2", optional = true }
+libc = "0.2"
+
+[build-dependencies]
+cc = "1.0"
+
+[features]
+secure = []
+debug = []
+debug_in_debug = []
+override = []
+extended = ["cty"]
+arena = []
+local_dynamic_tls = []
+no_thp = []
+v3 = []
+
+# Show `extended` on docs.rs since it's the full API surface.
+[package.metadata.docs.rs]
+features = ["extended"]

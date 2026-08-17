@@ -1,0 +1,90 @@
+[package]
+name = "palette"
+version = "0.7.6" #automatically updated
+authors = ["Erik Hedvall <hello@erikhedvall.nu>"]
+exclude = [
+    "scripts/*",
+    "examples/*",
+    "tests/*",
+    "regression_tests/*",
+    "benches/*",
+    "res/*",
+    ".travis.yml",
+    ".gitignore",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "version.sh",
+]
+description = "Convert and manage colors with a focus on correctness, flexibility and ease of use."
+documentation = "https://docs.rs/palette/0.7.6/palette/"
+repository = "https://github.com/Ogeon/palette"
+readme = "README.md"
+keywords = ["color", "conversion", "linear", "pixel", "rgb"]
+license = "MIT OR Apache-2.0"
+edition = "2018"
+resolver = "2"
+categories = ["graphics", "multimedia::images", "no-std"]
+build = "build/main.rs"
+rust-version = "1.60.0"
+
+[features]
+default = ["named_from_str", "std", "approx"]
+named_from_str = ["named", "phf"]
+named = []
+random = ["rand"]
+serializing = ["serde", "std"]
+find-crate = ["palette_derive/find-crate"]
+std = ["alloc", "approx?/std"]
+alloc = []
+
+[lib]
+bench = false
+
+[dependencies]
+palette_derive = { version = "0.7.6", path = "../palette_derive" }
+fast-srgb8 = "1.0.0"
+approx = { version = "0.5", default-features = false, optional = true }
+libm = { version = "0.2.1", default-features = false, optional = true }
+
+[dependencies.phf]
+version = "0.11.0"
+optional = true
+default-features = false
+features = ["macros"]
+
+[dependencies.rand]
+version = "0.8"
+default-features = false
+optional = true
+
+[dependencies.serde]
+version = "1"
+features = ["serde_derive"]
+optional = true
+
+[dependencies.bytemuck]
+version = "1"
+optional = true
+
+[dependencies.wide]
+version = "0.7.3"
+optional = true
+default-features = false
+
+[dev-dependencies]
+serde_json = "1"
+ron = "=0.8.0" # Pinned due to MSRV mismatch
+enterpolation = "0.2.0"
+
+[dev-dependencies.image]
+version = "0.23.14"
+default-features = false
+features = ["png"]
+
+[dev-dependencies.rand_mt]
+version = "4"
+default-features = false
+features = ["rand-traits"]
+
+[package.metadata.docs.rs]
+all-features = true

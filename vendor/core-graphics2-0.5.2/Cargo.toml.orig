@@ -1,0 +1,49 @@
+[package]
+name = "core-graphics2"
+description = "Safe bindings to CoreGraphics framework, including display stream"
+homepage.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/core-graphics2"
+version = "0.5.2"
+authors.workspace = true
+license.workspace = true
+categories = ["graphics", "multimedia", "os::macos-apis"]
+keywords = ["coregraphics", "display", "displaystream", "screencapture"]
+edition.workspace = true
+
+[dependencies]
+bitflags.workspace = true
+block = "0.1"
+cfg-if.workspace = true
+core-foundation.workspace = true
+dispatch2 = { version = "0.1", optional = true }
+io-surface = { version = "0.16", optional = true }
+libc.workspace = true
+metal = { version = "0.33", optional = true }
+objc2 = { workspace = true, optional = true }
+
+[dev-dependencies]
+core-video.workspace = true
+
+[features]
+default = ["display", "display-stream", "event", "link", "window"]
+display = []
+display-stream = ["dep:dispatch2", "dep:io-surface", "display", "objc"]
+event = []
+link = ["core-foundation/link"]
+objc = ["dep:objc2"]
+window = []
+
+[[example]]
+name = "display_stream"
+
+[package.metadata.docs.rs]
+no-default-features = true
+features = ["display", "display-stream", "event", "objc", "window"]
+default-target = "x86_64-apple-darwin"
+targets = [
+    "x86_64-apple-darwin",
+    "x86_64-apple-ios",
+    "aarch64-apple-darwin",
+    "aarch64-apple-ios",
+]

@@ -1,0 +1,33 @@
+[package]
+name = "data-url"
+version = "0.3.2"
+authors = ["Simon Sapin <simon.sapin@exyr.org>"]
+description = "Processing of data: URL according to WHATWG’s Fetch Standard"
+categories = ["no-std"]
+repository = "https://github.com/servo/rust-url"
+license = "MIT OR Apache-2.0"
+edition = "2018"
+autotests = false
+rust-version = "1.51"
+
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+
+[dev-dependencies]
+tester = "0.9"
+# We pin this transitive dev dep so that MSRV CI can continue to run.
+unicode-width = "=0.1.12"
+serde = { version = "1.0", default-features = false, features = ["alloc", "derive"] }
+serde_json = "1.0"
+
+[lib]
+test = true
+
+[[test]]
+name = "wpt"
+harness = false
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--generate-link-to-definition"]

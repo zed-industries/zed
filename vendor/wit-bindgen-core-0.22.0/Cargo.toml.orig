@@ -1,0 +1,19 @@
+[package]
+name = "wit-bindgen-core"
+authors = ["Alex Crichton <alex@alexcrichton.com>"]
+version.workspace = true
+edition.workspace = true
+repository = 'https://github.com/bytecodealliance/wit-bindgen'
+license = "Apache-2.0 WITH LLVM-exception"
+homepage = 'https://github.com/bytecodealliance/wit-bindgen'
+description = """
+Low-level support for bindings generation based on WIT files for use with
+`wit-bindgen-cli` and other languages.
+"""
+
+[lib]
+doctest = false
+
+[dependencies]
+wit-parser = { workspace = true }
+anyhow = { workspace = true }

@@ -1,0 +1,11 @@
+# Rustfmt is not fully used with this crate, as its formatting decreases
+# readability in too many places. Therefore formatting is disabled. This config
+# file exists for me to occasionally run `cargo fmt` and cherry pick changes.
+disable_all_formatting = true
+
+blank_lines_upper_bound = 3
+group_imports = "StdExternalCrate"
+use_field_init_shorthand = true
+overflow_delimited_expr = true
+single_line_if_else_max_width = 60
+struct_lit_width = 70

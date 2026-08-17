@@ -1,0 +1,13 @@
+{
+  "build": "h789abc_0",
+  "build_number": 0,
+  "channel": "https://repo.anaconda.com/pkgs/main/linux-64",
+  "constrains": [],
+  "depends": [],
+  "files": [],
+  "license": "PSF",
+  "name": "python",
+  "noarch": null,
+  "package_type": "conda",
+  "version": "3.9.21"
+}

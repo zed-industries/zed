@@ -1,0 +1,14 @@
+{
+  "id": 1296269,
+  "name": "Programming Elixir",
+  "archived": false,
+  "organization": {
+    "id": 1,
+    "login": "programming-elixir",
+    "node_id": "MDEyOk9yZ2FuaXphdGlvbjE=",
+    "html_url": "https://github.com/programming-elixir",
+    "name": "Learn how to build fault tolerant applications",
+    "avatar_url": "https://avatars.githubusercontent.com/u/9919?v=4"
+  },
+  "url": "https://classroom.github.com/classrooms/1-programming-elixir"
+}

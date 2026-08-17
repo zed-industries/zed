@@ -1,0 +1,36 @@
+---
+- name: Spec Example 8.14. Block Sequence
+  from: http://www.yaml.org/spec/1.2/spec.html#id2797596
+  tags: mapping spec sequence
+  yaml: |
+    block sequence:
+      - one
+      - two : three
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :block sequence
+       +SEQ
+        =VAL :one
+        +MAP
+         =VAL :two
+         =VAL :three
+        -MAP
+       -SEQ
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "block sequence": [
+        "one",
+        {
+          "two": "three"
+        }
+      ]
+    }
+  dump: |
+    block sequence:
+    - one
+    - two: three

@@ -1,0 +1,108 @@
+---
+name: Rust
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+env:
+  CARGO_TERM_COLOR: always
+  # Pinned toolchain for linting and benchmarks
+  ACTIONS_LINTS_TOOLCHAIN: 1.81.0
+  # Minimum supported Rust version (MSRV)
+  ACTION_MSRV_TOOLCHAIN: 1.81.0
+  EXTRA_FEATURES: "protobuf push process"
+
+jobs:
+  tests-stable:
+    name: "Tests, stable toolchain"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: cargo build
+        run: cargo build
+      - name: cargo test
+        run: cargo test
+      - name: cargo test (no default features)
+        run: cargo test --no-default-features
+      - name: cargo test (extra features)
+        run: cargo test --no-default-features --features="${{ env['EXTRA_FEATURES'] }}"
+      - name: cargo package
+        run : cargo package && cargo package --manifest-path static-metric/Cargo.toml
+  tests-other-channels:
+    name: "Tests, unstable toolchain"
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      matrix:
+        channel:
+          - "beta"
+          - "nightly"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.channel }}
+      - name: cargo build
+        run: cargo build
+      - name: cargo test
+        run: cargo test
+      - name: cargo build (static-metric)
+        run: cargo build -p prometheus-static-metric --examples --no-default-features --features="${{ env['EXTRA_FEATURES'] }}"
+      - name: cargo test (static-metric)
+        run: cargo test -p prometheus-static-metric --no-default-features --features="${{ env['EXTRA_FEATURES'] }}"
+  build-msrv:
+    name: "Build, minimum toolchain"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env['ACTION_MSRV_TOOLCHAIN'] }}
+      - run: cargo build
+      - run: cargo test --no-run
+      - run: cargo build --no-default-features
+      - run: cargo test --no-default-features --no-run
+      - run: cargo build --no-default-features --features="${{ env['EXTRA_FEATURES'] }}"
+      - run: cargo test --no-default-features --features="${{ env['EXTRA_FEATURES'] }}"
+  linting:
+    name: "Lints, pinned toolchain"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env['ACTIONS_LINTS_TOOLCHAIN'] }}
+          components: rustfmt, clippy
+      - name: cargo fmt (check)
+        run: cargo fmt --all -- --check -l
+      - name: cargo clippy
+        run: cargo clippy --all
+      - name: cargo clippy (no default features)
+        run: cargo clippy --all --no-default-features
+      - name: cargo clippy (extra features)
+        run: cargo clippy --all --no-default-features --features="${{ env['EXTRA_FEATURES'] }}"
+  criterion:
+    name: "Benchmarks (criterion)"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env['ACTIONS_LINTS_TOOLCHAIN']  }}
+      - name: cargo bench (prometheus)
+        run: cargo bench -p prometheus
+      - name: cargo bench (prometheus-static-metric)
+        run: cargo bench -p prometheus-static-metric

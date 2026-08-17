@@ -1,0 +1,20 @@
+[package]
+name = "compression-core"
+version = "0.4.29"
+description = """
+Abstractions for compression algorithms.
+"""
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+license.workspace = true
+readme = "../../README.md"
+repository.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+
+[dependencies]
+
+[lints]
+workspace = true

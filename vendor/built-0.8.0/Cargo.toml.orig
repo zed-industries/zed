@@ -1,0 +1,27 @@
+[package]
+name = "built"
+version = "0.8.0"
+description = "Provides a crate with information from the time it was built."
+repository = "https://github.com/lukaslueg/built"
+documentation = "https://docs.rs/built"
+authors = ["Lukas Lueg <lukas.lueg@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+keywords = ["cargo", "build"]
+edition = "2021"
+rust-version = "1.81"
+
+[dependencies]
+cargo-lock = { version = "10.0", optional = true, default-features = false }
+semver = { version = "1.0", optional = true }
+chrono = { version = "0.4", optional = true, default-features = false, features = ["clock"] }
+git2 = { version = "0.20", optional = true, default-features = false, features = [] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+dependency-tree = [ "cargo-lock/dependency-tree" ]
+
+[package.metadata.docs.rs]
+features = [ "cargo-lock", "chrono", "dependency-tree", "git2", "semver" ]

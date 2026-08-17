@@ -1,0 +1,9 @@
+package root:component;
+
+world root {
+  import foo:foo/foo;
+
+  export x: interface {
+    use foo:foo/foo.{r};
+  }
+}

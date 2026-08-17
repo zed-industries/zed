@@ -1,0 +1,5 @@
+<!DOCTYPE test [
+    <!ENTITY q 'b'>
+    <!ENTITY p '<p a="&q;"/>'>
+]>
+<root>&p;</root>

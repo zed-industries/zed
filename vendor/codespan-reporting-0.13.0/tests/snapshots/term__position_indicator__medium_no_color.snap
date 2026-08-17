@@ -1,0 +1,7 @@
+---
+source: codespan-reporting/tests/term.rs
+expression: TEST_DATA.emit_no_color(&config)
+---
+tests/main.js:4:3: warning[ParserWarning]: The strict mode declaration in the body of function `foo` is redundant, as the outer scope is already in strict mode
+
+

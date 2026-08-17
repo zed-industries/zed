@@ -1,0 +1,59 @@
+name: Rust
+
+on: [push, pull_request]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+          - 1.63.0
+          - stable
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+
+    - name: Install toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: ${{ matrix.rust }}
+        override: true
+
+    - name: Build with no default features
+      run: cargo build --no-default-features --features=no-std-float
+
+    - name: Build with std
+      run: cargo build --no-default-features --features=std
+
+    - name: Build with variable-fonts
+      run: cargo build --no-default-features --features=variable-fonts,no-std-float
+
+    - name: Build with all features
+      run: cargo build --all-features
+
+    - name: Run tests
+      run: cargo test
+
+    - name: Build C API
+      working-directory: c-api
+      run: cargo build --no-default-features
+
+    - name: Build C API with variable-fonts
+      working-directory: c-api
+      run: cargo build --no-default-features --features=variable-fonts
+
+    - name: Test C API
+      working-directory: c-api
+      run: |
+        cargo build
+        gcc test.c -o test -L./target/debug/ -lttfparser -Werror -fsanitize=address
+        env LD_LIBRARY_PATH=./target/debug/ ./test
+
+    - name: Build benches
+      working-directory: benches
+      run: cargo bench dummy # `cargo build` will not actually build it

@@ -1,0 +1,9 @@
+error[E0119]: conflicting implementations of trait `Default` for type `Number`
+ --> tests/try_build/compile_fail/conflicting_default.rs:1:19
+  |
+1 | #[derive(Default, num_enum::Default)]
+  |          -------  ^^^^^^^^^^^^^^^^^ conflicting implementation for `Number`
+  |          |
+  |          first implementation here
+  |
+  = note: this error originates in the derive macro `num_enum::Default` (in Nightly builds, run with -Z macro-backtrace for more info)

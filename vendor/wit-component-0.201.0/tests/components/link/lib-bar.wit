@@ -1,0 +1,10 @@
+package test:test;
+
+interface test {
+   bar: func(v: s32) -> s32;
+}
+
+world lib-bar {
+    import test;
+    export test;
+}

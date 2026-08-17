@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+permissions:
+  id-token: write # Required for OIDC
+  contents: write # Required to create GH releases
+  pull-requests: write # Required to interact with PRs
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: pnpm/action-setup@v4
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Create Release Pull Request or Publish packages
+        id: changesets
+        uses: changesets/action@v1
+        with:
+          # This expects you to have a script called ci:publish which does a build for your packages and calls changeset publish
+          publish: pnpm ci:publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create git tag for golang package
+        if: steps.changesets.outputs.published == 'true'
+        uses: rickstaa/action-create-tag@v1
+        id: tag_create
+        with:
+          tag: ${{format('v{0}', fromJson(steps.changesets.outputs.publishedPackages)[0].version)}}
+          tag_exists_error: false
+          message: "github.com/livekit/protocol@${{fromJson(steps.changesets.outputs.publishedPackages)[0].version}}"

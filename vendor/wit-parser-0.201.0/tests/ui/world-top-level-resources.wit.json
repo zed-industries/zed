@@ -1,0 +1,240 @@
+{
+  "worlds": [
+    {
+      "name": "proxy",
+      "imports": {
+        "interface-0": {
+          "interface": 0
+        },
+        "interface-1": {
+          "interface": 1
+        }
+      },
+      "exports": {
+        "interface-1": {
+          "interface": 1
+        }
+      },
+      "package": 0
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "types",
+      "types": {
+        "request": 0,
+        "response": 1
+      },
+      "functions": {
+        "[method]request.foo": {
+          "name": "[method]request.foo",
+          "kind": {
+            "method": 0
+          },
+          "params": [
+            {
+              "name": "self",
+              "type": 2
+            }
+          ],
+          "results": []
+        },
+        "[method]request.bar": {
+          "name": "[method]request.bar",
+          "kind": {
+            "method": 0
+          },
+          "params": [
+            {
+              "name": "self",
+              "type": 2
+            },
+            {
+              "name": "arg",
+              "type": 3
+            }
+          ],
+          "results": []
+        },
+        "[method]response.foo": {
+          "name": "[method]response.foo",
+          "kind": {
+            "method": 1
+          },
+          "params": [
+            {
+              "name": "self",
+              "type": 4
+            }
+          ],
+          "results": []
+        },
+        "[method]response.bar": {
+          "name": "[method]response.bar",
+          "kind": {
+            "method": 1
+          },
+          "params": [
+            {
+              "name": "self",
+              "type": 4
+            },
+            {
+              "name": "arg",
+              "type": 3
+            }
+          ],
+          "results": []
+        }
+      },
+      "package": 0
+    },
+    {
+      "name": "handler",
+      "types": {
+        "request": 5,
+        "response": 6
+      },
+      "functions": {
+        "handle": {
+          "name": "handle",
+          "kind": "freestanding",
+          "params": [
+            {
+              "name": "some",
+              "type": 7
+            }
+          ],
+          "results": [
+            {
+              "type": 8
+            }
+          ]
+        },
+        "handle-owned": {
+          "name": "handle-owned",
+          "kind": "freestanding",
+          "params": [
+            {
+              "name": "some",
+              "type": 9
+            }
+          ],
+          "results": [
+            {
+              "type": 10
+            }
+          ]
+        }
+      },
+      "package": 0
+    }
+  ],
+  "types": [
+    {
+      "name": "request",
+      "kind": "resource",
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "response",
+      "kind": "resource",
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": null,
+      "kind": {
+        "handle": {
+          "borrow": 0
+        }
+      },
+      "owner": null
+    },
+    {
+      "name": null,
+      "kind": {
+        "list": "u32"
+      },
+      "owner": null
+    },
+    {
+      "name": null,
+      "kind": {
+        "handle": {
+          "borrow": 1
+        }
+      },
+      "owner": null
+    },
+    {
+      "name": "request",
+      "kind": {
+        "type": 0
+      },
+      "owner": {
+        "interface": 1
+      }
+    },
+    {
+      "name": "response",
+      "kind": {
+        "type": 1
+      },
+      "owner": {
+        "interface": 1
+      }
+    },
+    {
+      "name": null,
+      "kind": {
+        "handle": {
+          "borrow": 5
+        }
+      },
+      "owner": null
+    },
+    {
+      "name": null,
+      "kind": {
+        "handle": {
+          "borrow": 6
+        }
+      },
+      "owner": null
+    },
+    {
+      "name": null,
+      "kind": {
+        "handle": {
+          "own": 5
+        }
+      },
+      "owner": null
+    },
+    {
+      "name": null,
+      "kind": {
+        "handle": {
+          "own": 6
+        }
+      },
+      "owner": null
+    }
+  ],
+  "packages": [
+    {
+      "name": "foo:foo",
+      "interfaces": {
+        "types": 0,
+        "handler": 1
+      },
+      "worlds": {
+        "proxy": 0
+      }
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<node>
+  <interface name="org.a11y.atspi.Value">
+
+    <property name="MinimumValue" type="d" access="read"/>
+
+    <property name="MaximumValue" type="d" access="read"/>
+
+    <property name="MinimumIncrement" type="d" access="read"/>
+
+    <property name="CurrentValue" type="d" access="readwrite"/>
+
+    <property name="Text" type="s" access="read"/>
+
+  </interface>
+</node>

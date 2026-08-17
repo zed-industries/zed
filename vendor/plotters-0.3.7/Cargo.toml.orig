@@ -1,0 +1,144 @@
+[package]
+name = "plotters"
+version = "0.3.7"
+authors = ["Hao Hou <haohou302@gmail.com>"]
+edition = "2018"
+license = "MIT"
+msrv = "1.56"
+description = "A Rust drawing library focus on data plotting for both WASM and native applications"
+repository = "https://github.com/plotters-rs/plotters"
+homepage = "https://plotters-rs.github.io/"
+keywords = ["WebAssembly", "Visualization", "Plotting", "Drawing"]
+categories = ["visualization", "wasm"]
+readme = "../README.md"
+exclude = ["doc-template", "plotters-doc-data"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(doc_cfg)'] }
+deprecated = { level = "allow" }
+
+[dependencies]
+num-traits = "0.2.14"
+chrono = { version = "0.4.32", optional = true }
+
+[dependencies.plotters-backend]
+version = "0.3.6"
+path = "../plotters-backend"
+
+[dependencies.plotters-bitmap]
+version = "0.3.6"
+default-features = false
+optional = true
+path = "../plotters-bitmap"
+
+[dependencies.plotters-svg]
+version = "0.3.6"
+optional = true
+path = "../plotters-svg"
+
+[target.'cfg(not(all(target_arch = "wasm32", not(target_os = "wasi"))))'.dependencies]
+ttf-parser = { version = "0.20.0", optional = true }
+lazy_static = { version = "1.4.0", optional = true }
+pathfinder_geometry = { version = "0.5.1", optional = true }
+font-kit = { version = "0.14.2", optional = true }
+ab_glyph = { version = "0.2.12", optional = true }
+once_cell = { version = "1.8.0", optional = true }
+
+
+[target.'cfg(not(all(target_arch = "wasm32", not(target_os = "wasi"))))'.dependencies.image]
+version = "0.24.3"
+optional = true
+default-features = false
+features = ["jpeg", "png", "bmp"]
+
+[target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dependencies.wasm-bindgen]
+version = "0.2.89"
+
+[target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dependencies.web-sys]
+version = "0.3.66"
+features = [
+         "Document",
+         "DomRect",
+         "Element",
+         "HtmlElement",
+         "Node",
+         "Window",
+         "HtmlCanvasElement",
+         "CanvasRenderingContext2d",
+]
+
+[features]
+default = [
+        "bitmap_backend", "bitmap_encoder", "bitmap_gif",
+        "svg_backend",
+        "chrono",
+        "ttf",
+        "image",
+        "deprecated_items",  "all_series", "all_elements",
+        "full_palette",
+        "colormaps"
+]
+all_series = ["area_series", "line_series", "point_series", "surface_series"]
+all_elements = ["errorbar", "candlestick", "boxplot", "histogram"]
+
+# Tier 1 Backends
+bitmap_backend = ["plotters-bitmap"]
+bitmap_encoder = ["plotters-bitmap/image_encoder"]
+bitmap_gif = ["plotters-bitmap/gif_backend"]
+svg_backend = ["plotters-svg"]
+
+# Colors
+full_palette = []
+colormaps = []
+
+# Elements
+errorbar = []
+candlestick = []
+boxplot = []
+
+# Series
+histogram = []
+area_series = []
+line_series = []
+point_series = []
+surface_series = []
+
+# Font implementation
+ttf = ["font-kit", "ttf-parser", "lazy_static", "pathfinder_geometry"]
+# dlopen fontconfig C library at runtime instead of linking at build time
+# Can be useful for cross compiling, especially considering fontconfig has lots of C dependencies
+fontconfig-dlopen = ["font-kit/source-fontconfig-dlopen"]
+
+ab_glyph = ["dep:ab_glyph", "once_cell"]
+
+# Misc
+datetime = ["chrono"]
+evcxr = ["svg_backend"]
+evcxr_bitmap = ["evcxr", "bitmap_backend", "plotters-svg/bitmap_encoder"]
+deprecated_items = [] # Keep some of the deprecated items for backward compatibility
+
+[dev-dependencies]
+itertools = "0.10.0"
+criterion = "0.5.1"
+rayon = "1.5.1"
+serde_json = "1.0.82"
+serde = "1.0.139"
+serde_derive = "1.0.140"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+rand = "0.8.3"
+rand_distr = "0.4.0"
+rand_xorshift = "0.3.0"
+
+[target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dev-dependencies]
+wasm-bindgen-test = "0.3.39"
+
+[[bench]]
+name = "benchmark"
+harness = false
+path = "benches/main.rs"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "doc_cfg"]
+

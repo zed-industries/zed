@@ -1,0 +1,37 @@
+language: rust
+
+env:
+  - TASK=test RUSTFLAGS="-D warnings" CXX=clang++
+
+matrix:
+  include:
+    - rust: nightly
+    - rust: stable
+      name: clippy-lint
+      before_script:
+        - rustup component add clippy
+      script:
+        - cargo clippy --all-features -- -D warnings
+    - rust: stable
+      name: fmt-check
+      before_script:
+        - rustup component add rustfmt
+      script:
+        - cargo fmt -- --check
+    - rust: beta
+    - rust: stable
+    - rust: 1.45.0
+      script:
+        - cargo build
+    - rust: nightly
+      name: minimal-versions
+      script:
+        - cargo -Z minimal-versions build --verbose
+    - rust: nightly
+      os: windows
+
+script:
+  - cargo $TASK --verbose
+  - cargo $TASK --no-default-features --features no_logging --verbose
+  - cargo $TASK --no-default-features --features dir_source --verbose
+  - cargo $TASK --no-default-features --features script_helper --verbose

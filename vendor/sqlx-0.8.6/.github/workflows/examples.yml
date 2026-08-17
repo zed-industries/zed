@@ -1,0 +1,233 @@
+name: Examples
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - '*-dev'
+
+jobs:
+  sqlx-cli:
+    name: Build SQLx CLI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup override set stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: >
+          cargo build
+          -p sqlx-cli
+          --bin sqlx
+          --release
+          --no-default-features
+          --features mysql,postgres,sqlite
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sqlx-cli
+          path: target/release/sqlx
+
+  mysql:
+    name: MySQL Examples
+    runs-on: ubuntu-latest
+    needs: sqlx-cli
+
+    services:
+      mysql:
+        image: mysql:latest
+        env:
+          MYSQL_ROOT_PASSWORD: password
+        ports:
+          - 3306:3306
+
+    steps:
+      - name: Get SQLx-CLI
+        uses: actions/download-artifact@v4
+        with:
+          name: sqlx-cli
+          # $HOME is interpreted differently by the shell
+          path: /home/runner/.local/bin
+
+      - run: |
+          ls -R /home/runner/.local/bin
+          chmod +x /home/runner/.local/bin/sqlx
+          echo /home/runner/.local/bin >> $GITHUB_PATH
+          sleep 10
+
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Todos (Setup)
+        working-directory: examples/mysql/todos
+        env:
+          DATABASE_URL: mysql://root:password@localhost:3306/todos?ssl-mode=disabled
+        run: sqlx db setup
+
+      - name: Todos (Run)
+        env:
+          DATABASE_URL: mysql://root:password@localhost:3306/todos?ssl-mode=disabled
+        run: cargo run -p sqlx-example-mysql-todos
+
+  postgres:
+    name: PostgreSQL Examples
+    runs-on: ubuntu-latest
+    needs: sqlx-cli
+
+    services:
+      postgres:
+        image: postgres:latest
+        env:
+          POSTGRES_PASSWORD: password
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Get SQLx-CLI
+        uses: actions/download-artifact@v4
+        with:
+          name: sqlx-cli
+          path: /home/runner/.local/bin
+
+      - run: |
+          ls -R /home/runner/.local/bin
+          chmod +x $HOME/.local/bin/sqlx
+          echo $HOME/.local/bin >> $GITHUB_PATH
+          sleep 10
+
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Axum Social with Tests (Setup)
+        working-directory: examples/postgres/axum-social-with-tests
+        env:
+          DATABASE_URL: postgres://postgres:password@localhost:5432/axum-social
+        run: sqlx db setup
+
+      - name: Axum Social with Tests (Check)
+        env:
+          DATABASE_URL: postgres://postgres:password@localhost:5432/axum-social
+        run: cargo check -p sqlx-example-postgres-axum-social
+
+      - name: Axum Social with Tests (Test)
+        env:
+          DATABASE_URL: postgres://postgres:password@localhost:5432/axum-social
+        run: cargo test -p sqlx-example-postgres-axum-social
+
+      # The Chat example has an interactive TUI which is not trivial to test automatically,
+      # so we only check that it compiles.
+      - name: Chat (Check)
+        run: cargo check -p sqlx-example-postgres-chat
+
+      - name: Files (Setup)
+        working-directory: examples/postgres/files
+        env:
+          DATABASE_URL: postgres://postgres:password@localhost:5432/files
+        run: sqlx db setup
+
+      - name: Files (Run)
+        env:
+          DATABASE_URL: postgres://postgres:password@localhost:5432/files
+        run: cargo run -p sqlx-example-postgres-files
+
+      - name: JSON (Setup)
+        working-directory: examples/postgres/json
+        env:
+          DATABASE_URL: postgres://postgres:password@localhost:5432/json
+        run: sqlx db setup
+
+      - name: JSON (Run)
+        env:
+          DATABASE_URL: postgres://postgres:password@localhost:5432/json
+        run: cargo run -p sqlx-example-postgres-json
+
+      - name: Listen (Setup)
+        working-directory: examples/postgres/listen
+        env:
+          DATABASE_URL: postgres://postgres:password@localhost:5432/listen
+        run: sqlx db create
+
+      - name: Listen (Run)
+        env:
+          DATABASE_URL: postgres://postgres:password@localhost:5432/listen
+        run: cargo run -p sqlx-example-postgres-listen
+
+      - name: Mockable TODOs (Setup)
+        working-directory: examples/postgres/mockable-todos
+        env:
+          DATABASE_URL: postgres://postgres:password@localhost:5432/mockable-todos
+        run: sqlx db setup
+
+      - name: Mockable TODOs (Run)
+        env:
+          DATABASE_URL: postgres://postgres:password@localhost:5432/mockable-todos
+        run: cargo run -p sqlx-example-postgres-mockable-todos
+
+      - name: TODOs (Setup)
+        working-directory: examples/postgres/todos
+        env:
+          DATABASE_URL: postgres://postgres:password@localhost:5432/todos
+        run: sqlx db setup
+
+      - name: TODOs (Run)
+        env:
+          DATABASE_URL: postgres://postgres:password@localhost:5432/todos
+        # TODO: test full CLI
+        run: cargo run -p sqlx-example-postgres-todos
+
+      - name: Transaction (Setup)
+        working-directory: examples/postgres/transaction
+        env:
+          DATABASE_URL: postgres://postgres:password@localhost:5432/txn
+        run: sqlx db setup
+
+      - name: Transaction (Run)
+        env:
+          DATABASE_URL: postgres://postgres:password@localhost:5432/txn
+        run: cargo run -p sqlx-example-postgres-transaction
+
+  sqlite:
+    name: SQLite Examples
+    runs-on: ubuntu-latest
+    needs: sqlx-cli
+
+    steps:
+      - name: Get SQLx-CLI
+        uses: actions/download-artifact@v4
+        with:
+          name: sqlx-cli
+          path: /home/runner/.local/bin
+
+      - run: |
+          ls -R /home/runner/.local/bin
+          chmod +x /home/runner/.local/bin/sqlx
+          echo /home/runner/.local/bin >> $GITHUB_PATH
+
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: TODOs (Setup)
+        env:
+          DATABASE_URL: sqlite://todos.sqlite
+        run: sqlx db setup --source=examples/sqlite/todos/migrations
+
+      - name: TODOs (Run)
+        env:
+          DATABASE_URL: sqlite://todos.sqlite
+        run: cargo run -p sqlx-example-sqlite-todos

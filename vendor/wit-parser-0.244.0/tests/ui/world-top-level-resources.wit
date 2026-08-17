@@ -1,0 +1,24 @@
+package foo:foo;
+
+interface types {
+  resource request {
+    foo: func();
+    bar: func(arg: list<u32>);
+  }
+
+  resource response {
+    foo: func();
+    bar: func(arg: list<u32>);
+  }
+}
+
+interface handler {
+  use types.{request, response};
+  handle: func(some: borrow<request>) -> response;
+  handle-owned: func(some: own<request>) -> own<response>;
+}
+
+world proxy {
+  import handler;
+  export handler;
+}

@@ -1,0 +1,15 @@
+name: yaml-test-suite Repository Testing
+
+on:
+  push:
+  pull_request:
+    types: [opened]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - run: make test
+    # - uses: mxschmitt/action-tmate@v3

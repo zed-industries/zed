@@ -1,0 +1,18 @@
+[package]
+name = "pathfinder_simd"
+version = "0.5.6"
+edition = "2018"
+authors = ["Patrick Walton <pcwalton@mimiga.net>"]
+build = "build.rs"
+description = "A simple SIMD library"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/servo/pathfinder"
+homepage = "https://github.com/servo/pathfinder"
+
+[features]
+pf-no-simd = []
+
+[dependencies]
+
+[build-dependencies]
+rustc_version = "0.4"

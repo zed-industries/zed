@@ -1,0 +1,10 @@
+Document:
+  - Element:
+      tag_name: svg
+      children:
+        - Text: "\n    "
+        - Element:
+            tag_name: style
+            children:
+              - Text: "\n        text\n    "
+        - Text: "\n"

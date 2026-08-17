@@ -1,0 +1,34 @@
+[package]
+name = "pest_meta"
+description = "pest meta language parser and validator"
+version = "2.8.3"
+edition = "2021"
+authors = ["Dragoș Tiselice <dragostiselice@gmail.com>"]
+homepage = "https://pest.rs/"
+repository = "https://github.com/pest-parser/pest"
+documentation = "https://docs.rs/pest"
+keywords = ["pest", "parser", "meta", "optimizer"]
+categories = ["parsing"]
+license = "MIT OR Apache-2.0"
+readme = "_README.md"
+exclude = ["src/grammar.pest"]
+include = [
+    "Cargo.toml",
+    "src/**/*",
+    "src/grammar.rs",
+    "_README.md",
+    "LICENSE-*",
+]
+rust-version = "1.81"
+
+[dependencies]
+pest = { path = "../pest", version = "2.8.3" }
+
+[build-dependencies]
+sha2 = { version = "0.10", default-features = false }
+cargo = { version = "0.81.0", optional = true }
+
+[features]
+default = []
+not-bootstrap-in-src = ["dep:cargo"]
+grammar-extras = []

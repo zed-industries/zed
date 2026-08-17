@@ -1,0 +1,278 @@
+# Override values For Indic_Syllabic_Category
+# Not derivable
+# Initial version based on Unicode 7.0 by Andrew Glass 2014-03-17
+# Updated for Unicode 10.0 by Andrew Glass 2017-07-25
+# Updated for Unicode 12.1 by Andrew Glass 2019-05-24
+# Updated for Unicode 13.0 by Andrew Glass 2020-07-28
+# Updated for Unicode 14.0 by Andrew Glass 2021-09-25
+# Updated for Unicode 15.0 by Andrew Glass 2022-09-16
+# Updated for Unicode 15.1 by Andrew Glass 2023-09-14
+# Updated for Unicode 16.0 by Andrew Glass 2024-09-11
+
+# ================================================
+# OVERRIDES TO ASSIGNED VALUES
+# ================================================
+
+# Indic_Syllabic_Category=Bindu  
+193A          ; Bindu  # Mn       LIMBU SIGN KEMPHRENG
+AA29          ; Bindu  # Mn       CHAM VOWEL SIGN AA
+10A0D         ; Bindu  # Mn       KHAROSHTHI SIGN DOUBLE RING BELOW
+113CE         ; Bindu  # Mn       TULU-TIGALARI SIGN VIRAMA
+
+# ================================================
+
+# Indic_Syllabic_Category=Consonant
+19C1..19C7    ; Consonant # Lo   [7] NEW TAI LUE LETTER FINAL V..NEW TAI LUE LETTER FINAL B # Reassigned to avoid clustering with a base consonant
+25CC          ; Consonant # So       DOTTED CIRCLE #Reassigned to allow it to cluster as a generic base
+
+# ================================================
+
+# Indic_Syllabic_Category=Consonant_Dead
+0F7F          ; Consonant_Dead    # Mc       TIBETAN SIGN RNAM BCAD # reassigned so that visarga can form an independent cluster, but see #19
+
+# ================================================
+
+# Indic_Syllabic_Category=Consonant_With_Stacker
+11A3A         ; Consonant_With_Stacker # Lo   ZANABAZAR SQUARE CLUSTER-INITIAL LETTER RA
+
+# ================================================
+
+# Indic_Syllabic_Category=Consonant_Subjoined
+11A3B..11A3E  ; Consonant_Subjoined # Mn [4] ZANABAZAR SQUARE CLUSTER-FINAL LETTER YA..ZANABAZAR SQUARE CLUSTER-FINAL LETTER VA
+
+# ================================================
+
+# Indic_Syllabic_Category=Consonant_Final_Modifier
+1C36          ; Consonant_Final_Modifier  # Mn   LEPCHA SIGN RAN
+
+# ================================================
+
+# Indic_Syllabic_Category=Gemination_Mark 
+11134         ; Gemination_Mark  # Mc      CHAKMA MAAYYAA
+
+# ================================================
+
+# Indic_Syllabic_Category=Nukta   
+0F71          ; Nukta            # Mn       TIBETAN VOWEL SIGN AA # Reassigned to get this before an above vowel, but see #22
+113CF         ; Nukta            # Mc       TULU-TIGALARI SIGN LOOPED VIRAMA
+
+# ================================================
+
+# Indic_Syllabic_Category=Tone_Mark
+1A7B..1A7C    ; Tone_Mark         # Mn   [2] TAI THAM SIGN MAI SAM..TAI THAM SIGN KHUEN-LUE KARAN
+1A7F          ; Tone_Mark         # Mn       TAI THAM COMBINING CRYPTOGRAMMIC DOT
+
+# ================================================
+
+# Indic_Syllabic_Category=Vowel_Independent
+AAB1          ; Vowel_Independent # Lo       TAI VIET VOWEL AA
+AABA          ; Vowel_Independent # Lo       TAI VIET VOWEL UA
+AABD          ; Vowel_Independent # Lo       TAI VIET VOWEL AN
+
+# ================================================
+# ================================================
+# VALUES NOT ASSIGNED IN Indic_Syllabic_Category
+# ================================================
+# ================================================
+
+# Indic_Syllabic_Category=Consonant
+0800..0815    ; Consonant # Lo   [22] SAMARITAN LETTER ALAF..SAMARITAN LETTER TAAF
+0840..0858    ; Consonant # Lo   [25] MANDAIC LETTER HALQA..MANDAIC LETTER AIN
+0F00..0F01    ; Consonant # Lo    [2] TIBETAN SYLLABLE OM..TIBETAN MARK GTER YIG MGO TRUNCATED
+0F04..0F06    ; Consonant # Po        TIBETAN MARK INITIAL YIG MGO MDUN MA..TIBETAN MARK CARET YIG MGO PHUR SHAD MA
+1800          ; Consonant # Po        MONGOLIAN BIRGA # Reassigned so that legacy Birga + MFVS sequences still work
+1807          ; Consonant # Po        MONGOLIAN SIBE SYLLABLE BOUNDARY MARKER
+180A          ; Consonant # Po        MONGOLIAN NIRUGU
+1820..1842    ; Consonant # Lo   [35] MONGOLIAN LETTER A..MONGOLIAN LETTER CHI
+1843          ; Consonant # Lm        MONGOLIAN LETTER TODO LONG VOWEL SIGN
+1844..1878    ; Consonant # Lo   [53] MONGOLIAN LETTER TODO E..MONGOLIAN LETTER CHA WITH TWO DOTS
+2D30..2D67    ; Consonant # Lo   [56] TIFINAGH LETTER YA..TIFINAGH LETTER YO
+2D6F          ; Consonant # Lm        TIFINAGH MODIFIER LETTER LABIALIZATION MARK
+10570..1057A  ; Consonant # Lo   [11] VITHKUQI CAPITAL LETTER A..VITHKUQI CAPITAL LETTER GA
+1057C..1058A  ; Consonant # Lo   [15] VITHKUQI CAPITAL LETTER HA..VITHKUQI CAPITAL LETTER RE
+1058C..10592  ; Consonant # Lo    [7] VITHKUQI CAPITAL LETTER SE..VITHKUQI CAPITAL LETTER XE
+10594..10595  ; Consonant # Lo    [2] VITHKUQI CAPITAL LETTER Y..VITHKUQI CAPITAL LETTER ZE
+10597..105A1  ; Consonant # Lo   [11] VITHKUQI SMALL LETTER A..VITHKUQI SMALL LETTER GA
+105A3..105B1  ; Consonant # Lo   [15] VITHKUQI SMALL LETTER HA..VITHKUQI SMALL LETTER RE
+105B3..105B9  ; Consonant # Lo    [7] VITHKUQI SMALL LETTER SE..VITHKUQI SMALL LETTER XE
+105BB..105BC  ; Consonant # Lo    [2] VITHKUQI SMALL LETTER Y..VITHKUQI SMALL LETTER ZE
+10AC0..10AC7  ; Consonant # Lo    [8] MANICHAEAN LETTER ALEPH..MANICHAEAN LETTER WAW
+10AC9..10AE4  ; Consonant # Lo   [28] MANICHAEAN LETTER ZAYIN..MANICHAEAN LETTER TAW
+10D00..10D23  ; Consonant # Lo   [36] HANIFI ROHINGYA LETTER A..HANIFI ROHINGYA MARK NA KHONNA
+10D4A..10D4F  ; Consonant # Lo    [6] GARAY VOWEL SIGN A..GARAY SUKUN
+10D50..10D65  ; Consonant # Lu   [22] GARAY CAPITAL LETTER A..GARAY CAPITAL LETTER OLD NA
+10D70..10D85  ; Consonant # Ll   [22] GARAY SMALL LETTER A..GARAY SMALL LETTER OLD NA
+10D6F         ; Consonant # Lm        GARAY REDUPLICATION MARK
+10E80..10EA9  ; Consonant # Lo   [42] YEZIDI LETTER ELIF..YEZIDI LETTER ET
+10EB0..10EB1  ; Consonant # Lo    [2] YEZIDI LETTER LAM WITH DOT ABOVE..YEZIDI LETTER YOT WITH CIRCUMFLEX ABOVE
+10F30..10F45  ; Consonant # Lo   [22] SOGDIAN LETTER ALEPH..SOGDIAN INDEPENDENT SHIN
+10F70..10F81  ; Consonant # Lo   [18] OLD UYGHUR LETTER ALEPH..OLD UYGHUR LETTER LESH
+111DA         ; Consonant # Lo        SHARADA EKAM
+16B00..16B2F  ; Consonant # Lo   [48] PAHAWH HMONG VOWEL KEEB..PAHAWH HMONG CONSONANT CAU
+16F00..16F4A  ; Consonant # Lo   [75] MIAO LETTER PA..MIAO LETTER RTE
+16FE4         ; Consonant # Mn        KHITAN SMALL SCRIPT FILLER          # Avoids Mn pushing this into VOWEL class
+18B00..18CD5  ; Consonant # Lo  [470] KHITAN SMALL SCRIPT CHARACTER-18B00..KHITAN SMALL SCRIPT CHARACTER-18CD5
+18CFF         ; Consonant # Lo        KHITAN SMALL SCRIPT CHARACTER-18CFF
+1BC00..1BC6A  ; Consonant # Lo  [107] DUPLOYAN LETTER H..DUPLOYAN LETTER VOCALIC M
+1BC70..1BC7C  ; Consonant # Lo   [13] DUPLOYAN AFFIX LEFT HORIZONTAL SECANT..DUPLOYAN AFFIX ATTACHED TANGENT HOOK 
+1BC80..1BC88  ; Consonant # Lo    [9] DUPLOYAN AFFIX HIGH ACUTE..DUPLOYAN AFFIX HIGH VERTICAL
+1BC90..1BC99  ; Consonant # Lo   [10] DUPLOYAN AFFIX LOW ACUTE..DUPLOYAN AFFIX LOW ARROW
+1E100..1E12C  ; Consonant # Lo   [45] NYIAKENG PUACHUE HMONG LETTER MA..NYIAKENG PUACHUE HMONG LETTER W
+1E137..1E13D  ; Consonant # Lm    [7] NYIAKENG PUACHUE HMONG SIGN FOR PERSON..NYIAKENG PUACHUE HMONG SYLLABLE LENGTHENER
+1E14E         ; Consonant # Lo        NYIAKENG PUACHUE HMONG LOGOGRAM NYAJ
+1E14F         ; Consonant # So        NYIAKENG PUACHUE HMONG CIRCLED CA
+1E290..1E2AD  ; Consonant # Lo   [30] TOTO LETTER PA..TOTO LETTER A
+1E2C0..1E2EB  ; Consonant # Lo   [44] WANCHO LETTER AA..WANCHO LETTER YIH
+1E4D0..1E4EA  ; Consonant # Lo   [27] NAG MUNDARI LETTER O..NAG MUNDARI LETTER ELL
+1E4EB         ; Consonant # Lm        NAG MUNDARI SIGN OJOD
+1E5D0..1E5ED  ; Consonant # Lo   [30] OL ONAL LETTER O..OL ONAL LETTER EG
+1E5F0         ; Consonant # Lo        OL ONAL SIGN HODDOND
+1E900..1E921  ; Consonant # Lu   [34] ADLAM CAPITAL LETTER ALIF..ADLAM CAPITAL LETTER SHA
+1E922..1E943  ; Consonant # Ll   [34] ADLAM SMALL LETTER ALIF..ADLAM SMALL LETTER SHA
+1E94B         ; Consonant # Lm        ADLAM NASALIZATION MARK
+
+# ================================================
+
+# Indic_Syllabic_Category=Consonant_Placeholder
+1880..1884 ; Consonant_Placeholder # Lo   [5] MONGOLIAN LETTER ALI GALI ANUSVARA ONE..MONGOLIAN LETTER ALI GALI INVERTED UBADAMA
+
+# ================================================
+
+# Indic_Syllabic_Category=Gemination_Mark
+10D27         ; Gemination_Mark   # Mn       HANIFI ROHINGYA SIGN TASSI
+
+# ================================================
+
+# Indic_Syllabic_Category=Modifying_Letter
+FE00..FE0F    ; Modifying_Letter  # Mn  [16] VARIATION SELECTOR-1..VARIATION SELECTOR-16# Need to treat them as isolated bases so they don't merge with a cluster in invalid scenarios
+16F50         ; Modifying_Letter  # Lo       MIAO LETTER NASALIZATION
+
+# ================================================
+
+# Indic_Syllabic_Category=Nukta
+0859..085B    ; Nukta            # Mn   [3] MANDAIC AFFRICATION MARK..MANDAIC GEMINATION MARK
+0F39          ; Nukta            # Mn       TIBETAN MARK TSA -PHRU # NOW IN UNICODE 10.0
+1885..1886    ; Nukta            # Mn   [2] MONGOLIAN LETTER ALI GALI BALUDA..MONGOLIAN LETTER ALI GALI THREE BALUDA
+18A9          ; Nukta            # Mn       MONGOLIAN LETTER ALI GALI DAGALGA
+10AE5..10AE6  ; Nukta            # Mn   [2] MANICHAEAN ABBREVIATION MARK ABOVE..MANICHAEAN ABBREVIATION MARK BELOW
+16F4F         ; Nukta            # Mn       MIAO SIGN CONSONANT MODIFIER BAR
+1BC9D..1BC9E  ; Nukta            # Mn   [2] DUPLOYAN THICK LETTER SELECTOR..DUPLOYAN DOUBLE MARK
+1E944..1E94A  ; Nukta            # Mn   [7] ADLAM ALIF LENGTHENER..ADLAM NUKTA
+10F82..10F85  ; Nukta            # Mn   [4] OLD UYGHUR COMBINING DOT ABOVE..OLD UYGHUR COMBINING TWO DOTS BELOW
+
+# ================================================
+
+# Indic_Syllabic_Category=Number
+10D30..10D39  ; Number              # Nd  [10] HANIFI ROHINGYA DIGIT ZERO..HANIFI ROHINGYA DIGIT NINE
+10F51..10F54  ; Number              # No   [4] SOGDIAN NUMBER ONE..SOGDIAN NUMBER ONE HUNDRED
+16AC0..16AC9  ; Number              # Nd  [10] TANGSA DIGIT ZERO..TANGSA DIGIT NINE
+1E140..1E149  ; Number              # Nd  [10] NYIAKENG PUACHUE HMONG DIGIT ZERO..NYIAKENG PUACHUE HMONG DIGIT NINE
+1E2F0..1E2F9  ; Number              # Nd  [10] WANCHO DIGIT ZERO..WANCHO DIGIT NINE
+1E4F0..1E4F9  ; Number              # Nd  [10] NAG MUNDARI DIGIT ZERO..NAG MUNDARI DIGIT NINE
+1E5F1..1E5FA  ; Number              # Nd  [10] OL ONAL DIGIT ZERO..OL ONAL DIGIT NINE
+1E950..1E959  ; Number              # Nd  [10] ADLAM DIGIT ZERO..ADLAM DIGIT NINE
+
+# ================================================
+
+# Indic_Syllabic_Category=Tone_Mark
+07EB..07F3    ; Tone_Mark           # Mn   [9] NKO COMBINING SHORT HIGH TONE..NKO COMBINING DOUBLE DOT ABOVE
+07FD          ; Tone_Mark           # Mn       NKO DANTAYALAN
+0F86..0F87    ; Tone_Mark           # Mn   [2] TIBETAN SIGN LCI RTAGS..TIBETAN SIGN YANG RTAGS
+17CF          ; Tone_Mark           # Mn       KHMER SIGN AHSDA
+10D24..10D26  ; Tone_Mark           # Mn   [3] HANIFI ROHINGYA SIGN HARBAHAY..HANIFI ROHINGYA SIGN TANA
+10F46..10F50  ; Tone_Mark           # Mn  [11] SOGDIAN COMBINING DOT BELOW..SOGDIAN COMBINING STROKE BELOW
+16B30..16B36  ; Tone_Mark           # Mn   [7] PAHAWH HMONG MARK CIM TUB..PAHAWH HMONG MARK CIM TAUM
+16F8F..16F92  ; Tone_Mark           # Mn   [4] MIAO TONE RIGHT..MIAO TONE BELOW
+1E130..1E136  ; Tone_Mark           # Mn   [7] NYIAKENG PUACHUE HMONG TONE-B..NYIAKENG PUACHUE HMONG TONE-D
+1E2AE         ; Tone_Mark           # Mn       TOTO SIGN RISING TONE
+1E2EC..1E2EF  ; Tone_Mark           # Mn   [4] WANCHO TONE TUP..WANCHO TONE KOINI
+
+# ================================================
+
+# Indic_Syllabic_Category=Virama
+2D7F          ; Virama              # Mn       TIFINAGH CONSONANT JOINER
+
+# ================================================
+
+# Indic_Syllabic_Category=Vowel_Dependent
+0B55          ; Vowel_Dependent     # Mn       ORIYA SIGN OVERLINE
+10D69..10D6D  ; Vowel_Dependent     # Mn   [5] GARAY VOWEL SIGN E..GARAY CONSONANT NASALIZATION MARK
+10EAB..10EAC  ; Vowel_Dependent     # Mn   [2] YEZIDI COMBINING HAMZA MARK..YEZIDI COMBINING MADDA MARK
+16F51..16F87  ; Vowel_Dependent     # Mc  [55] MIAO SIGN ASPIRATION..MIAO VOWEL SIGN UI
+1E4EC..1E4EF  ; Vowel_Dependent     # Mn   [4] NAG MUNDARI SIGN MUHOR..NAG MUNDARI SIGN SUTUH
+1E5EE..1E5EF  ; Vowel_Dependent     # Mn   [2] OL ONAL SIGN MU..OL ONAL SIGN IKIR
+
+# ================================================
+
+# Indic_Syllabic_Category=Cantillation_Mark
+
+1CF8..1CF9    ; Cantillation_Mark   # Mn   [2] VEDIC TONE RING ABOVE..VEDIC TONE DOUBLE RING ABOVE
+
+# ================================================
+
+# Indic_Syllabic_Category=Symbol_Modifier
+1B6B..1B73    ; Symbol_Modifier     # Mn   [9] BALINESE MUSICAL SYMBOL COMBINING TEGEH..BALINESE MUSICAL SYMBOL COMBINING GONG
+
+# ================================================
+# ================================================
+# PROPERTIES NOT ASSIGNED IN Indic_Syllabic_Category
+# ================================================
+# ================================================
+
+# USE, Extended_Syllabic_Category=Hieroglyph
+13000..1342F ; Hieroglyph          # Lo [1072] EGYPTIAN HIEROGLYPH A001..EGYPTIAN HIEROGLYPH V011D
+1343C..1343F ; Hieroglyph          # Cf    [4] EGYPTIAN HIEROGLYPH BEGIN ENCLOSURE..END WALLED ENCLOSURE
+13441..13446 ; Hieroglyph          # Lo    [6] EGYPTIAN HIEROGLYPH FULL BLANK..HIEROGLYPH WIDE LOST SIGN
+13460..143FA ; Hieroglyph          # Lo [3995] EGYPTIAN HIEROGLYPH-13460..EGYPTIAN HIEROGLYPH-143FA
+
+# ================================================
+
+# USE, Extended_Syllabic_Category=Hieroglyph_Joiner
+13430..13436 ; Hieroglyph_Joiner   # Cf    [7] EGYPTIAN HIEROGLYPH VERTICAL JOINER..EGYPTIAN HIEROGLYPH OVERLAY MIDDLE
+13439..1343B ; Hieroglyph_Joiner   # Cf    [3] EGYPTIAN HIEROGLYPH INSERT AT MIDDLE..EGYPTIAN HIEROGLYPH INSERT AT BOTTOM
+
+# ================================================
+
+# USE, Extended_Syllabic_Category=Hieroglyph_Mark_Begin
+005B        ; Hieroglyph_Mark_Begin  # Ps  LEFT SQUARE BRACKET
+007B        ; Hieroglyph_Mark_Begin  # Ps  LEFT CURLY BRACKET
+27E6        ; Hieroglyph_Mark_Begin  # Ps  MATHEMATICAL LEFT WHITE SQUARE BRACKET
+27E8        ; Hieroglyph_Mark_Begin  # Ps  MATHEMATICAL LEFT ANGLE BRACKET
+2E22        ; Hieroglyph_Mark_Begin  # Ps  TOP LEFT HALF BRACKET
+2E24        ; Hieroglyph_Mark_Begin  # Ps  BOTTOM LEFT HALF BRACKET
+
+# ================================================
+
+# USE, Extended_Syllabic_Category=Hieroglyph_Mark_End
+005D        ; Hieroglyph_Mark_End  # Pe  RIGHT SQUARE BRACKET
+007D        ; Hieroglyph_Mark_End  # Pe  RIGHT CURLY BRACKET
+27E7        ; Hieroglyph_Mark_End  # Pe  MATHEMATICAL RIGHT WHITE SQUARE BRACKET
+27E9        ; Hieroglyph_Mark_End  # Pe  MATHEMATICAL RIGHT ANGLE BRACKET
+2E23        ; Hieroglyph_Mark_End  # Pe  TOP RIGHT HALF BRACKET
+2E25        ; Hieroglyph_Mark_End  # Pe  BOTTOM RIGHT HALF BRACKET
+
+# ================================================
+
+# USE, Extended_Syllabic_Category=Hieroglyph_Segment_Begin
+13437        ; Hieroglyph_Segment_Begin  # Cf  EGYPTIAN HIEROGLYPH BEGIN SEGMENT
+
+# ================================================
+
+# USE, Extended_Syllabic_Category=Hieroglyph_Segment_End
+13438        ; Hieroglyph_Segment_End    # Cf  EGYPTIAN HIEROGLYPH END SEGMENT 
+
+# ================================================
+
+# USE, Extended_Syllabic_Category=Hieroglyph_Mirror
+13440        ; Hieroglyph_Mirror    # Mn       EGYPTIAN HIEROGLYPH MIRROR HORIZONTALLY
+
+# ================================================
+
+# USE, Extended_Syllabic_Category=Hieroglyph_Modifier
+13447..13455 ; Hieroglyph_Modifier    # Mn  [15] EGYPTIAN HIEROGLYPH MODIFIER DAMAGED AT TOP START..EGYPTIAN HIEROGLYPH MODIFIER DAMAGED
+
+# ================================================
+
+# eof
+
+

@@ -1,0 +1,9 @@
+merge_imports = true
+use_try_shorthand = true
+tab_spaces = 2
+max_width = 80
+color = "Never"
+use_small_heuristics = "Max"
+format_code_in_doc_comments = true
+wrap_comments = true
+

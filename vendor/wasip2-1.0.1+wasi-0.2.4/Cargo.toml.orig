@@ -1,0 +1,48 @@
+[package]
+name = "wasip2"
+version = "1.0.1+wasi-0.2.4"
+description = "WASIp2 API bindings for Rust"
+categories = ["no-std", "wasm"]
+keywords = ["webassembly", "wasm"]
+documentation = "https://docs.rs/wasip2"
+readme = "README.md"
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+wit-bindgen = { workspace = true }
+
+# When built as part of libstd
+core = { optional = true, workspace = true }
+alloc = { optional = true, workspace = true }
+
+[features]
+default = ["std", "bitflags"]
+std = []
+bitflags = ["wit-bindgen/bitflags"]
+# Unstable feature to support being a libstd dependency
+rustc-dep-of-std = ["core", "alloc", "wit-bindgen/rustc-dep-of-std"]
+
+[[example]]
+name = "cli-command-no_std"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "cli-command"
+crate-type = ["cdylib"]
+required-features = ["std"]
+
+[[example]]
+name = "hello-world"
+required-features = ["std"]
+
+[[example]]
+name = "http-proxy-no_std"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "http-proxy"
+crate-type = ["cdylib"]
+required-features = ["std"]

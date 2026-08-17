@@ -1,0 +1,29 @@
+---
+- name: Spec Example 6.28. Non-Specific Tags
+  from: http://www.yaml.org/spec/1.2/spec.html#id2785512
+  tags: spec tag
+  yaml: |
+    # Assuming conventional resolution:
+    - "12"
+    - 12
+    - ! 12
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       =VAL "12
+       =VAL :12
+       =VAL <!> :12
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      "12",
+      12,
+      "12"
+    ]
+  dump: |
+    - "12"
+    - 12
+    - ! 12

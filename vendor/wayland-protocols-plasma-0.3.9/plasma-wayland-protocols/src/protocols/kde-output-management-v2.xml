@@ -1,0 +1,355 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="kde_output_management_v2">
+  <copyright><![CDATA[
+    SPDX-FileCopyrightText: 2008-2011 Kristian Høgsberg
+    SPDX-FileCopyrightText: 2010-2011 Intel Corporation
+    SPDX-FileCopyrightText: 2012-2013 Collabora, Ltd.
+    SPDX-FileCopyrightText: 2015 Sebastian Kügler <sebas@kde.org>
+    SPDX-FileCopyrightText: 2021 Méven Car <meven.car@enioka.com>
+    SPDX-FileCopyrightText: 2023 Xaver Hugl <xaver.hugl@kde.org>
+
+    SPDX-License-Identifier: MIT-CMU
+    ]]></copyright>
+
+<interface name="kde_output_management_v2" version="12">
+  <description summary="configuration of server outputs through clients">
+    This interface enables clients to set properties of output devices for screen
+    configuration purposes via the server. To this end output devices are referenced
+    by global kde_output_device_v2 objects.
+
+    outputmanagement (wl_global)
+    --------------------------
+    request:
+    * create_configuration -> outputconfiguration (wl_resource)
+
+    outputconfiguration (wl_resource)
+    --------------------------
+    requests:
+    * enable(outputdevice, bool)
+    * mode(outputdevice, mode)
+    * transformation(outputdevice, flag)
+    * position(outputdevice, x, y)
+    * apply
+
+    events:
+    * applied
+    * failed
+
+    The server registers one outputmanagement object as a global object. In order
+    to configure outputs a client requests create_configuration, which provides a
+    resource referencing an outputconfiguration for one-time configuration. That
+    way the server knows which requests belong together and can group them by that.
+
+    On the outputconfiguration object the client calls for each output whether the
+    output should be enabled, which mode should be set (by referencing the mode from
+    the list of announced modes) and the output's global position. Once all outputs
+    are configured that way, the client calls apply.
+    At that point and not earlier the server should try to apply the configuration.
+    If this succeeds the server emits the applied signal, otherwise the failed
+    signal, such that the configuring client is noticed about the success of its
+    configuration request.
+
+    Through this design the interface enables atomic output configuration changes if
+    internally supported by the server.
+
+    Warning! The protocol described in this file is a desktop environment implementation
+    detail. Regular clients must not use this protocol. Backward incompatible
+    changes may be added without bumping the major version of the extension.
+  </description>
+  <request name="create_configuration">
+    <description summary="provide outputconfiguration object for configuring outputs">
+      Request an outputconfiguration object through which the client can configure
+      output devices.
+    </description>
+    <arg name="id" type="new_id" interface="kde_output_configuration_v2"/>
+  </request>
+
+</interface>
+
+<interface name="kde_output_configuration_v2" version="12">
+  <description summary="configure single output devices">
+    outputconfiguration is a client-specific resource that can be used to ask
+    the server to apply changes to available output devices.
+
+    The client receives a list of output devices from the registry. When it wants
+    to apply new settings, it creates a configuration object from the
+    outputmanagement global, writes changes through this object's enable, scale,
+    transform and mode calls. It then asks the server to apply these settings in
+    an atomic fashion, for example through Linux' DRM interface.
+
+    The server signals back whether the new settings have applied successfully
+    or failed to apply. outputdevice objects are updated after the changes have been
+    applied to the hardware and before the server side sends the applied event.
+  </description>
+
+  <enum name="error">
+    <description summary="kde_output_configuration_v2 error values">
+      These error can be emitted in response to kde_output_configuration_v2 requests.
+    </description>
+    <entry name="already_applied" value="0" summary="the config is already applied"/>
+  </enum>
+
+  <request name="enable">
+    <description summary="enable or disable an output">
+      Mark the output as enabled or disabled.
+    </description>
+    <arg name="outputdevice" type="object" interface="kde_output_device_v2" summary="outputdevice to be en- or disabled"/>
+    <arg name="enable" type="int" summary="1 to enable or 0 to disable this output"/>
+  </request>
+
+  <request name="mode">
+    <description summary="switch output-device to mode">
+      Sets the mode for a given output.
+    </description>
+    <arg name="outputdevice" type="object" interface="kde_output_device_v2" summary="outputdevice this mode change applies to"/>
+    <arg name="mode" type="object" interface="kde_output_device_mode_v2" summary="the mode to apply"/>
+  </request>
+
+  <request name="transform">
+    <description summary="transform output-device">
+      Sets the transformation for a given output.
+    </description>
+    <arg name="outputdevice" type="object" interface="kde_output_device_v2" summary="outputdevice this transformation change applies to"/>
+    <arg name="transform" type="int" summary="transform enum"/>
+  </request>
+
+  <request name="position">
+    <description summary="position output in global space">
+      Sets the position for this output device. (x,y) describe the top-left corner
+      of the output in global space, whereby the origin (0,0) of the global space
+      has to be aligned with the top-left corner of the most left and in case this
+      does not define a single one the top output.
+
+      There may be no gaps or overlaps between outputs, i.e. the outputs are
+      stacked horizontally, vertically, or both on each other.
+    </description>
+    <arg name="outputdevice" type="object" interface="kde_output_device_v2" summary="outputdevice this position applies to"/>
+    <arg name="x" type="int" summary="position on the x-axis"/>
+    <arg name="y" type="int" summary="position on the y-axis"/>
+  </request>
+
+  <request name="scale">
+    <description summary="set scaling factor of this output">
+      Sets the scaling factor for this output device.
+    </description>
+    <arg name="outputdevice" type="object" interface="kde_output_device_v2" summary="outputdevice this scale change applies to"/>
+    <arg name="scale" type="fixed" summary="scaling factor"/>
+  </request>
+
+  <request name="apply">
+    <description summary="apply configuration changes to all output devices">
+      Asks the server to apply property changes requested through this outputconfiguration
+      object to all outputs on the server side.
+
+      The output configuration can be applied only once. The already_applied protocol error
+      will be posted if the apply request is called the second time.
+    </description>
+  </request>
+
+  <event name="applied">
+    <description summary="configuration changes have been applied">
+      Sent after the server has successfully applied the changes.
+      .
+    </description>
+  </event>
+
+  <event name="failed">
+    <description summary="configuration changes failed to apply">
+      Sent if the server rejects the changes or failed to apply them.
+    </description>
+  </event>
+
+  <request name="destroy" type="destructor">
+    <description summary="release the outputconfiguration object"/>
+  </request>
+
+  <request name="overscan">
+    <description summary="set overscan value">
+      Set the overscan value of this output device with a value in percent.
+    </description>
+    <arg name="outputdevice" type="object" interface="kde_output_device_v2" summary="outputdevice overscan applies to"/>
+    <arg name="overscan" type="uint" summary="overscan value"/>
+  </request>
+
+  <enum name="vrr_policy">
+    <description summary="describes vrr policy">
+      Describes when the compositor may employ variable refresh rate
+    </description>
+    <entry name="never" value="0"/>
+    <entry name="always" value="1"/>
+    <entry name="automatic" value="2"/>
+  </enum>
+
+  <request name="set_vrr_policy">
+    <description summary="set the VRR policy">
+      Set what policy the compositor should employ regarding its use of
+      variable refresh rate.
+    </description>
+    <arg name="outputdevice" type="object" interface="kde_output_device_v2" summary="outputdevice this VRR policy applies to"/>
+    <arg name="policy" type="uint" enum="vrr_policy" summary="the vrr policy to apply"/>
+  </request>
+
+  <enum name="rgb_range">
+    <description summary="describes RGB range policy">
+      Whether this output should use full or limited rgb.
+    </description>
+    <entry name="automatic" value="0"/>
+    <entry name="full" value="1"/>
+    <entry name="limited" value="2"/>
+  </enum>
+
+  <request name="set_rgb_range">
+    <description summary="RGB range">
+      Whether full or limited color range should be used
+    </description>
+    <arg name="outputdevice" type="object" interface="kde_output_device_v2" summary="outputdevice the rgb range applies to"/>
+    <arg name="rgb_range" type="uint" enum="rgb_range"/>
+  </request>
+
+  <request name="set_primary_output" since="2">
+    <description summary="Select which primary output to use" />
+    <arg name="output" type="object" interface="kde_output_device_v2" allow-null="false"/>
+  </request>
+
+  <request name="set_priority" since="3">
+    <description summary="Set the order of outputs">
+      The order of outputs can be used to assign desktop environment components to a specific screen,
+      see kde_output_order_v1 for details. The priority is 1-based for outputs that will be enabled after
+      this changeset is applied, all outputs that are disabled need to have the index set to zero.
+    </description>
+    <arg name="outputdevice" type="object" interface="kde_output_device_v2" summary="outputdevice the index applies to" />
+    <arg name="priority" type="uint" summary="the priority of the output" />
+  </request>
+
+  <request name="set_high_dynamic_range" since="4">
+    <description summary="change if HDR should be enabled">
+      Sets whether or not the output should be set to HDR mode.
+    </description>
+    <arg name="outputdevice" type="object" interface="kde_output_device_v2" summary="outputdevice this setting applies to"/>
+    <arg name="enable_hdr" type="uint" summary="1 to enable, 0 to disable hdr"/>
+  </request>
+
+  <request name="set_sdr_brightness" since="4">
+    <description summary="set the brightness for sdr content">
+      Sets the brightness of standard dynamic range content in nits. Only has an effect while the output is in HDR mode.
+      Note that while the value is in nits, that doesn't necessarily translate to the same brightness on the screen.
+    </description>
+    <arg name="outputdevice" type="object" interface="kde_output_device_v2" summary="outputdevice this setting applies to"/>
+    <arg name="sdr_brightness" type="uint"/>
+  </request>
+
+  <request name="set_wide_color_gamut" since="4">
+    <description summary="change if a wide color gamut should be used">
+      Whether or not the output should use a wide color gamut
+    </description>
+    <arg name="outputdevice" type="object" interface="kde_output_device_v2" summary="outputdevice this setting applies to"/>
+    <arg name="enable_wcg" type="uint" summary="1 to enable, 0 to disable wcg"/>
+  </request>
+
+  <enum name="auto_rotate_policy">
+    <description summary="describes when auto rotate should be used"/>
+    <entry name="never" value="0"/>
+    <entry name="in_tablet_mode" value="1"/>
+    <entry name="always" value="2"/>
+  </enum>
+
+  <request name="set_auto_rotate_policy" since="5">
+    <description summary="change when auto rotate should be used"/>
+    <arg name="outputdevice" type="object" interface="kde_output_device_v2" summary="outputdevice this setting applies to"/>
+    <arg name="policy" type="uint" enum="auto_rotate_policy"/>
+  </request>
+
+  <request name="set_icc_profile_path" since="6">
+    <description summary="change the used icc profile"/>
+    <arg name="outputdevice" type="object" interface="kde_output_device_v2" summary="outputdevice this setting applies to"/>
+    <arg name="profile_path" type="string"/>
+  </request>
+
+  <request name="set_brightness_overrides" since="7">
+    <description summary="override metadata about the screen's brightness limits"/>
+    <arg name="outputdevice" type="object" interface="kde_output_device_v2" summary="outputdevice this setting applies to"/>
+    <arg name="max_peak_brightness" type="int" summary="-1 for not overriding, or positive values in nits"/>
+    <arg name="max_frame_average_brightness" type="int" summary="-1 for not overriding, or positive values in nits"/>
+    <arg name="min_brightness" type="int" summary="-1 for not overriding, or positive values in 0.0001 nits"/>
+  </request>
+
+  <request name="set_sdr_gamut_wideness" since="7">
+    <description summary="describes which gamut is assumed for sRGB applications">
+      This can be used to provide the colors users assume sRGB applications should have based on the
+      default experience on many modern sRGB screens.
+    </description>
+    <arg name="outputdevice" type="object" interface="kde_output_device_v2" summary="outputdevice this setting applies to"/>
+    <arg name="gamut_wideness" type="uint" summary="0 means rec.709 primaries, 10000 means native primaries"/>
+  </request>
+
+  <enum name="color_profile_source" since="7">
+    <description summary="which source the compositor should use for the color profile on an output"/>
+    <entry name="sRGB" value="0"/>
+    <entry name="ICC" value="1"/>
+    <entry name="EDID" value="2"/>
+  </enum>
+
+  <request name="set_color_profile_source" since="8">
+    <description summary="which source the compositor should use for the color profile on an output"/>
+    <arg name="outputdevice" type="object" interface="kde_output_device_v2" summary="outputdevice this setting applies to"/>
+    <arg name="color_profile_source" type="uint" enum="color_profile_source" summary="the color profile source"/>
+  </request>
+
+  <request name="set_brightness" since="9">
+    <description summary="brightness multiplier">
+      Set the brightness modifier of the output. It doesn't specify
+      any absolute values, but is merely a multiplier on top of other
+      brightness values, like sdr_brightness and brightness_metadata.
+      0 is the minimum brightness (not completely dark) and 10000 is
+      the maximum brightness.
+      This is supported while HDR is active in versions 8 and below,
+      or when the device supports the brightness_control capability in
+      versions 9 and above.
+    </description>
+    <arg name="outputdevice" type="object" interface="kde_output_device_v2" summary="outputdevice this setting applies to"/>
+    <arg name="brightness" type="uint" summary="brightness in 0-10000"/>
+  </request>
+
+  <enum name="color_power_tradeoff">
+    <description summary="tradeoff between power and accuracy">
+      The compositor can do a lot of things that trade between
+      performance, power and color accuracy. This setting describes
+      a high level preference from the user about in which direction
+      that tradeoff should be made.
+    </description>
+    <entry name="efficiency" value="0" summary="prefer efficiency and performance"/>
+    <entry name="accuracy" value="1" summary="prefer accuracy"/>
+  </enum>
+
+  <request name="set_color_power_tradeoff" since="10">
+    <description summary="set the preferred color/power tradeoff"/>
+    <arg name="outputdevice" type="object" interface="kde_output_device_v2" summary="outputdevice this setting applies to"/>
+    <arg name="preference" type="uint" enum="color_power_tradeoff"/>
+  </request>
+
+  <request name="set_dimming" since="11">
+    <description summary="dimming multiplier">
+      Set the dimming multiplier of the output. This is similar to the
+      brightness setting, except it's meant to be a temporary setting
+      only, not persistent and may be implemented differently depending
+      on the display.
+      0 is the minimum dimming factor (not completely dark) and 10000
+      means the output is not dimmed.
+
+      This is supported only when the brightness_control capability is
+      also supported.
+    </description>
+    <arg name="outputdevice" type="object" interface="kde_output_device_v2" summary="outputdevice this setting applies to"/>
+    <arg name="multiplier" type="uint" summary="multiplier in 0-10000"/>
+  </request>
+
+  <event name="failure_reason" since="12">
+    <description summary="reason for failure">
+      Describes why applying the output configuration failed. Is only
+      sent before the failure event.
+    </description>
+    <arg name="reason" type="string" summary="reason for failure"/>
+  </event>
+
+</interface>
+</protocol>

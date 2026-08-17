@@ -1,0 +1,2296 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="API Reference Documentation for FreeType-2.13.2">
+      
+      
+      
+        <meta name="author" content="FreeType Contributors">
+      
+      
+      <link rel="icon" href="images/favico.ico">
+      <meta name="generator" content="mkdocs-1.4.3, mkdocs-material-7.1.9">
+    
+    
+      
+        <title>Multiple Masters - FreeType-2.13.2 API Reference</title>
+      
+    
+    
+      <link rel="stylesheet" href="assets/stylesheets/main.ca7ac06f.min.css">
+      
+        
+        <link rel="stylesheet" href="assets/stylesheets/palette.f1a3b89f.min.css">
+        
+          
+          
+          <meta name="theme-color" content="#4cae4f">
+        
+      
+    
+    
+    
+      
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Noto+Serif:300,400,400i,700%7CRoboto+Mono&display=fallback">
+        <style>:root{--md-text-font-family:"Noto Serif";--md-code-font-family:"Roboto Mono"}</style>
+      
+    
+    
+    
+      <link rel="stylesheet" href="stylesheets/extra.css">
+    
+    
+      
+
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <script>function __prefix(e){return new URL(".",location).pathname+"."+e}function __get(e,t=localStorage){return JSON.parse(t.getItem(__prefix(e)))}</script>
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#multiple-masters" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-header__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            FreeType-2.13.2 API Reference
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Multiple Masters
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+      </label>
+      
+<div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" data-md-state="active" required>
+      <label class="md-search__icon md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+      </label>
+      <button type="reset" class="md-search__icon md-icon" aria-label="Clear" tabindex="-1">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
+      </button>
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+  </nav>
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-nav__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    FreeType-2.13.2 API Reference
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="index.html" class="md-nav__link">
+        TOC
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-index.html" class="md-nav__link">
+        Index
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_3" type="checkbox" id="__nav_3" >
+      
+      <label class="md-nav__link" for="__nav_3">
+        General Remarks
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="General Remarks" data-md-level="1">
+        <label class="md-nav__title" for="__nav_3">
+          <span class="md-nav__icon md-icon"></span>
+          General Remarks
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-preamble.html" class="md-nav__link">
+        Preamble
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_inclusion.html" class="md-nav__link">
+        FreeType's header inclusion scheme
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-user_allocation.html" class="md-nav__link">
+        User allocation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_4" type="checkbox" id="__nav_4" >
+      
+      <label class="md-nav__link" for="__nav_4">
+        Core API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Core API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_4">
+          <span class="md-nav__icon md-icon"></span>
+          Core API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-basic_types.html" class="md-nav__link">
+        Basic Data Types
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-library_setup.html" class="md-nav__link">
+        Library Setup
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-face_creation.html" class="md-nav__link">
+        Face Creation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_testing_macros.html" class="md-nav__link">
+        Font Testing Macros
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizing_and_scaling.html" class="md-nav__link">
+        Sizing and Scaling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_retrieval.html" class="md-nav__link">
+        Glyph Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-character_mapping.html" class="md-nav__link">
+        Character Mapping
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-information_retrieval.html" class="md-nav__link">
+        Information Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-other_api_data.html" class="md-nav__link">
+        Other API Data
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_5" type="checkbox" id="__nav_5" >
+      
+      <label class="md-nav__link" for="__nav_5">
+        Extended API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Extended API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_5">
+          <span class="md-nav__icon md-icon"></span>
+          Extended API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_variants.html" class="md-nav__link">
+        Unicode Variation Sequences
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-color_management.html" class="md-nav__link">
+        Glyph Color Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-layer_management.html" class="md-nav__link">
+        Glyph Layer Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_management.html" class="md-nav__link">
+        Glyph Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-mac_specific.html" class="md-nav__link">
+        Mac Specific Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizes_management.html" class="md-nav__link">
+        Size Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_file_macros.html" class="md-nav__link">
+        Header File Macros
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+    
+  
+  
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_6" type="checkbox" id="__nav_6" checked>
+      
+      <label class="md-nav__link" for="__nav_6">
+        Format-Specific API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Format-Specific API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_6">
+          <span class="md-nav__icon md-icon"></span>
+          Format-Specific API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+    
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" data-md-toggle="toc" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          Multiple Masters
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="ft2-multiple_masters.html" class="md-nav__link md-nav__link--active">
+        Multiple Masters
+      </a>
+      
+        
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_mm_axis" class="md-nav__link">
+    FT_MM_Axis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_multi_master" class="md-nav__link">
+    FT_Multi_Master
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_var_axis" class="md-nav__link">
+    FT_Var_Axis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_var_named_style" class="md-nav__link">
+    FT_Var_Named_Style
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_mm_var" class="md-nav__link">
+    FT_MM_Var
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_multi_master" class="md-nav__link">
+    FT_Get_Multi_Master
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_mm_var" class="md-nav__link">
+    FT_Get_MM_Var
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_done_mm_var" class="md-nav__link">
+    FT_Done_MM_Var
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_set_mm_design_coordinates" class="md-nav__link">
+    FT_Set_MM_Design_Coordinates
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_set_var_design_coordinates" class="md-nav__link">
+    FT_Set_Var_Design_Coordinates
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_var_design_coordinates" class="md-nav__link">
+    FT_Get_Var_Design_Coordinates
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_set_mm_blend_coordinates" class="md-nav__link">
+    FT_Set_MM_Blend_Coordinates
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_mm_blend_coordinates" class="md-nav__link">
+    FT_Get_MM_Blend_Coordinates
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_set_var_blend_coordinates" class="md-nav__link">
+    FT_Set_Var_Blend_Coordinates
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_var_blend_coordinates" class="md-nav__link">
+    FT_Get_Var_Blend_Coordinates
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_set_mm_weightvector" class="md-nav__link">
+    FT_Set_MM_WeightVector
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_mm_weightvector" class="md-nav__link">
+    FT_Get_MM_WeightVector
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_var_axis_flag_xxx" class="md-nav__link">
+    FT_VAR_AXIS_FLAG_XXX
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_var_axis_flags" class="md-nav__link">
+    FT_Get_Var_Axis_Flags
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_set_named_instance" class="md-nav__link">
+    FT_Set_Named_Instance
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_default_named_instance" class="md-nav__link">
+    FT_Get_Default_Named_Instance
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_tables.html" class="md-nav__link">
+        TrueType Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-type1_tables.html" class="md-nav__link">
+        Type 1 Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sfnt_names.html" class="md-nav__link">
+        SFNT Names
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bdf_fonts.html" class="md-nav__link">
+        BDF and PCF Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cid_fonts.html" class="md-nav__link">
+        CID Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pfr_fonts.html" class="md-nav__link">
+        PFR Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-winfnt_fonts.html" class="md-nav__link">
+        Window FNT Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-svg_fonts.html" class="md-nav__link">
+        OpenType SVG Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_formats.html" class="md-nav__link">
+        Font Formats
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gasp_table.html" class="md-nav__link">
+        Gasp Table
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_7" type="checkbox" id="__nav_7" >
+      
+      <label class="md-nav__link" for="__nav_7">
+        Controlling FreeType Modules
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Controlling FreeType Modules" data-md-level="1">
+        <label class="md-nav__title" for="__nav_7">
+          <span class="md-nav__icon md-icon"></span>
+          Controlling FreeType Modules
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-auto_hinter.html" class="md-nav__link">
+        The auto-hinter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cff_driver.html" class="md-nav__link">
+        The CFF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-t1_cid_driver.html" class="md-nav__link">
+        The Type 1 and CID drivers
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-tt_driver.html" class="md-nav__link">
+        The TrueType driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pcf_driver.html" class="md-nav__link">
+        The PCF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_svg_driver.html" class="md-nav__link">
+        The SVG driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-properties.html" class="md-nav__link">
+        Driver properties
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-parameter_tags.html" class="md-nav__link">
+        Parameter Tags
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lcd_rendering.html" class="md-nav__link">
+        Subpixel Rendering
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_8" type="checkbox" id="__nav_8" >
+      
+      <label class="md-nav__link" for="__nav_8">
+        Cache Sub-System
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Cache Sub-System" data-md-level="1">
+        <label class="md-nav__title" for="__nav_8">
+          <span class="md-nav__icon md-icon"></span>
+          Cache Sub-System
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cache_subsystem.html" class="md-nav__link">
+        Cache Sub-System
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_9" type="checkbox" id="__nav_9" >
+      
+      <label class="md-nav__link" for="__nav_9">
+        Support API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Support API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_9">
+          <span class="md-nav__icon md-icon"></span>
+          Support API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-computations.html" class="md-nav__link">
+        Computations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-list_processing.html" class="md-nav__link">
+        List Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-outline_processing.html" class="md-nav__link">
+        Outline Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-quick_advance.html" class="md-nav__link">
+        Quick retrieval of advance values
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bitmap_handling.html" class="md-nav__link">
+        Bitmap Handling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-raster.html" class="md-nav__link">
+        Scanline Converter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_stroker.html" class="md-nav__link">
+        Glyph Stroker
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-system_interface.html" class="md-nav__link">
+        System Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-module_management.html" class="md-nav__link">
+        Module Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gzip.html" class="md-nav__link">
+        GZIP Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lzw.html" class="md-nav__link">
+        LZW Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bzip2.html" class="md-nav__link">
+        BZIP2 Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-debugging_apis.html" class="md-nav__link">
+        External Debugging APIs
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_10" type="checkbox" id="__nav_10" >
+      
+      <label class="md-nav__link" for="__nav_10">
+        Error Codes
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Error Codes" data-md-level="1">
+        <label class="md-nav__title" for="__nav_10">
+          <span class="md-nav__icon md-icon"></span>
+          Error Codes
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_enumerations.html" class="md-nav__link">
+        Error Enumerations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_code_values.html" class="md-nav__link">
+        Error Code Values
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_11" type="checkbox" id="__nav_11" >
+      
+      <label class="md-nav__link" for="__nav_11">
+        Miscellaneous
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Miscellaneous" data-md-level="1">
+        <label class="md-nav__title" for="__nav_11">
+          <span class="md-nav__icon md-icon"></span>
+          Miscellaneous
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gx_validation.html" class="md-nav__link">
+        TrueTypeGX/AAT Validation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-incremental.html" class="md-nav__link">
+        Incremental Loading
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_engine.html" class="md-nav__link">
+        The TrueType Engine
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_validation.html" class="md-nav__link">
+        OpenType Validation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_mm_axis" class="md-nav__link">
+    FT_MM_Axis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_multi_master" class="md-nav__link">
+    FT_Multi_Master
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_var_axis" class="md-nav__link">
+    FT_Var_Axis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_var_named_style" class="md-nav__link">
+    FT_Var_Named_Style
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_mm_var" class="md-nav__link">
+    FT_MM_Var
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_multi_master" class="md-nav__link">
+    FT_Get_Multi_Master
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_mm_var" class="md-nav__link">
+    FT_Get_MM_Var
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_done_mm_var" class="md-nav__link">
+    FT_Done_MM_Var
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_set_mm_design_coordinates" class="md-nav__link">
+    FT_Set_MM_Design_Coordinates
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_set_var_design_coordinates" class="md-nav__link">
+    FT_Set_Var_Design_Coordinates
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_var_design_coordinates" class="md-nav__link">
+    FT_Get_Var_Design_Coordinates
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_set_mm_blend_coordinates" class="md-nav__link">
+    FT_Set_MM_Blend_Coordinates
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_mm_blend_coordinates" class="md-nav__link">
+    FT_Get_MM_Blend_Coordinates
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_set_var_blend_coordinates" class="md-nav__link">
+    FT_Set_Var_Blend_Coordinates
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_var_blend_coordinates" class="md-nav__link">
+    FT_Get_Var_Blend_Coordinates
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_set_mm_weightvector" class="md-nav__link">
+    FT_Set_MM_WeightVector
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_mm_weightvector" class="md-nav__link">
+    FT_Get_MM_WeightVector
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_var_axis_flag_xxx" class="md-nav__link">
+    FT_VAR_AXIS_FLAG_XXX
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_var_axis_flags" class="md-nav__link">
+    FT_Get_Var_Axis_Flags
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_set_named_instance" class="md-nav__link">
+    FT_Set_Named_Instance
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_default_named_instance" class="md-nav__link">
+    FT_Get_Default_Named_Instance
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          <div class="md-content" data-md-component="content">
+            <article class="md-content__inner md-typeset">
+              
+                
+                
+                <p><a href="https://www.freetype.org">FreeType</a> &raquo; <a href="../">Docs</a> &raquo; <a href="index.html#format-specific-api">Format-Specific API</a> &raquo; Multiple Masters</p>
+<hr />
+<h1 id="multiple-masters">Multiple Masters<a class="headerlink" href="#multiple-masters" title="Permanent link">&para;</a></h1>
+<h2 id="synopsis">Synopsis<a class="headerlink" href="#synopsis" title="Permanent link">&para;</a></h2>
+<p>The following types and functions are used to manage Multiple Master fonts, i.e., the selection of specific design instances by setting design axis coordinates.</p>
+<p>Besides Adobe MM fonts, the interface supports Apple's TrueType GX and OpenType variation fonts. Some of the routines only work with Adobe MM fonts, others will work with all three types. They are similar enough that a consistent interface makes sense.</p>
+<p>For Adobe MM fonts, macro <code><a href="ft2-font_testing_macros.html#ft_is_sfnt">FT_IS_SFNT</a></code> returns false. For GX and OpenType variation fonts, it returns true.</p>
+<h2 id="ft_mm_axis">FT_MM_Axis<a class="headerlink" href="#ft_mm_axis" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_MULTIPLE_MASTERS_H (freetype/ftmm.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_MM_Axis_
+  {
+    <a href="ft2-basic_types.html#ft_string">FT_String</a>*  name;
+    <a href="ft2-basic_types.html#ft_long">FT_Long</a>     minimum;
+    <a href="ft2-basic_types.html#ft_long">FT_Long</a>     maximum;
+
+  } <b>FT_MM_Axis</b>;
+</code></pre></div>
+
+<p>A structure to model a given axis in design space for Multiple Masters fonts.</p>
+<p>This structure can't be used for TrueType GX or OpenType variation fonts.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="name">name</td><td class="desc">
+<p>The axis's name.</p>
+</td></tr>
+<tr><td class="val" id="minimum">minimum</td><td class="desc">
+<p>The axis's minimum design coordinate.</p>
+</td></tr>
+<tr><td class="val" id="maximum">maximum</td><td class="desc">
+<p>The axis's maximum design coordinate.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_multi_master">FT_Multi_Master<a class="headerlink" href="#ft_multi_master" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_MULTIPLE_MASTERS_H (freetype/ftmm.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_Multi_Master_
+  {
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>     num_axis;
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>     num_designs;
+    <a href="ft2-multiple_masters.html#ft_mm_axis">FT_MM_Axis</a>  axis[T1_MAX_MM_AXIS];
+
+  } <b>FT_Multi_Master</b>;
+</code></pre></div>
+
+<p>A structure to model the axes and space of a Multiple Masters font.</p>
+<p>This structure can't be used for TrueType GX or OpenType variation fonts.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="num_axis">num_axis</td><td class="desc">
+<p>Number of axes. Cannot exceed&nbsp;4.</p>
+</td></tr>
+<tr><td class="val" id="num_designs">num_designs</td><td class="desc">
+<p>Number of designs; should be normally 2^num_axis even though the Type&nbsp;1 specification strangely allows for intermediate designs to be present. This number cannot exceed&nbsp;16.</p>
+</td></tr>
+<tr><td class="val" id="axis">axis</td><td class="desc">
+<p>A table of axis descriptors.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_var_axis">FT_Var_Axis<a class="headerlink" href="#ft_var_axis" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_MULTIPLE_MASTERS_H (freetype/ftmm.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_Var_Axis_
+  {
+    <a href="ft2-basic_types.html#ft_string">FT_String</a>*  name;
+
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>    minimum;
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>    def;
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>    maximum;
+
+    <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>    tag;
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>     strid;
+
+  } <b>FT_Var_Axis</b>;
+</code></pre></div>
+
+<p>A structure to model a given axis in design space for Multiple Masters, TrueType GX, and OpenType variation fonts.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="name">name</td><td class="desc">
+<p>The axis's name. Not always meaningful for TrueType GX or OpenType variation fonts.</p>
+</td></tr>
+<tr><td class="val" id="minimum">minimum</td><td class="desc">
+<p>The axis's minimum design coordinate.</p>
+</td></tr>
+<tr><td class="val" id="def">def</td><td class="desc">
+<p>The axis's default design coordinate. FreeType computes meaningful default values for Adobe MM fonts.</p>
+</td></tr>
+<tr><td class="val" id="maximum">maximum</td><td class="desc">
+<p>The axis's maximum design coordinate.</p>
+</td></tr>
+<tr><td class="val" id="tag">tag</td><td class="desc">
+<p>The axis's tag (the equivalent to &lsquo;name&rsquo; for TrueType GX and OpenType variation fonts). FreeType provides default values for Adobe MM fonts if possible.</p>
+</td></tr>
+<tr><td class="val" id="strid">strid</td><td class="desc">
+<p>The axis name entry in the font's &lsquo;name&rsquo; table. This is another (and often better) version of the &lsquo;name&rsquo; field for TrueType GX or OpenType variation fonts. Not meaningful for Adobe MM fonts.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>The fields <code>minimum</code>, <code>def</code>, and <code>maximum</code> are 16.16 fractional values for TrueType GX and OpenType variation fonts. For Adobe MM fonts, the values are whole numbers (i.e., the fractional part is zero).</p>
+<hr>
+
+<h2 id="ft_var_named_style">FT_Var_Named_Style<a class="headerlink" href="#ft_var_named_style" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_MULTIPLE_MASTERS_H (freetype/ftmm.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_Var_Named_Style_
+  {
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>*  coords;
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>    strid;
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>    psid;   /* since 2.7.1 */
+
+  } <b>FT_Var_Named_Style</b>;
+</code></pre></div>
+
+<p>A structure to model a named instance in a TrueType GX or OpenType variation font.</p>
+<p>This structure can't be used for Adobe MM fonts.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="coords">coords</td><td class="desc">
+<p>The design coordinates for this instance. This is an array with one entry for each axis.</p>
+</td></tr>
+<tr><td class="val" id="strid">strid</td><td class="desc">
+<p>The entry in &lsquo;name&rsquo; table identifying this instance.</p>
+</td></tr>
+<tr><td class="val" id="psid">psid</td><td class="desc">
+<p>The entry in &lsquo;name&rsquo; table identifying a PostScript name for this instance. Value 0xFFFF indicates a missing entry.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_mm_var">FT_MM_Var<a class="headerlink" href="#ft_mm_var" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_MULTIPLE_MASTERS_H (freetype/ftmm.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_MM_Var_
+  {
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>              num_axis;
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>              num_designs;
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>              num_namedstyles;
+    <a href="ft2-multiple_masters.html#ft_var_axis">FT_Var_Axis</a>*         axis;
+    <a href="ft2-multiple_masters.html#ft_var_named_style">FT_Var_Named_Style</a>*  namedstyle;
+
+  } <b>FT_MM_Var</b>;
+</code></pre></div>
+
+<p>A structure to model the axes and space of an Adobe MM, TrueType GX, or OpenType variation font.</p>
+<p>Some fields are specific to one format and not to the others.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="num_axis">num_axis</td><td class="desc">
+<p>The number of axes. The maximum value is&nbsp;4 for Adobe MM fonts; no limit in TrueType GX or OpenType variation fonts.</p>
+</td></tr>
+<tr><td class="val" id="num_designs">num_designs</td><td class="desc">
+<p>The number of designs; should be normally 2^num_axis for Adobe MM fonts. Not meaningful for TrueType GX or OpenType variation fonts (where every glyph could have a different number of designs).</p>
+</td></tr>
+<tr><td class="val" id="num_namedstyles">num_namedstyles</td><td class="desc">
+<p>The number of named styles; a &lsquo;named style&rsquo; is a tuple of design coordinates that has a string ID (in the &lsquo;name&rsquo; table) associated with it. The font can tell the user that, for example, [Weight=1.5,Width=1.1] is &lsquo;Bold&rsquo;. Another name for &lsquo;named style&rsquo; is &lsquo;named instance&rsquo;.</p>
+<p>For Adobe Multiple Masters fonts, this value is always zero because the format does not support named styles.</p>
+</td></tr>
+<tr><td class="val" id="axis">axis</td><td class="desc">
+<p>An axis descriptor table. TrueType GX and OpenType variation fonts contain slightly more data than Adobe MM fonts. Memory management of this pointer is done internally by FreeType.</p>
+</td></tr>
+<tr><td class="val" id="namedstyle">namedstyle</td><td class="desc">
+<p>A named style (instance) table. Only meaningful for TrueType GX and OpenType variation fonts. Memory management of this pointer is done internally by FreeType.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_get_multi_master">FT_Get_Multi_Master<a class="headerlink" href="#ft_get_multi_master" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_MULTIPLE_MASTERS_H (freetype/ftmm.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Get_Multi_Master</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>           face,
+                       <a href="ft2-multiple_masters.html#ft_multi_master">FT_Multi_Master</a>  *amaster );
+</code></pre></div>
+
+<p>Retrieve a variation descriptor of a given Adobe MM font.</p>
+<p>This function can't be used with TrueType GX or OpenType variation fonts.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the source face.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="amaster">amaster</td><td class="desc">
+<p>The Multiple Masters descriptor.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<hr>
+
+<h2 id="ft_get_mm_var">FT_Get_MM_Var<a class="headerlink" href="#ft_get_mm_var" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_MULTIPLE_MASTERS_H (freetype/ftmm.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Get_MM_Var</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>      face,
+                 <a href="ft2-multiple_masters.html#ft_mm_var">FT_MM_Var</a>*  *amaster );
+</code></pre></div>
+
+<p>Retrieve a variation descriptor for a given font.</p>
+<p>This function works with all supported variation formats.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the source face.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="amaster">amaster</td><td class="desc">
+<p>The variation descriptor. Allocates a data structure, which the user must deallocate with a call to <code><a href="ft2-multiple_masters.html#ft_done_mm_var">FT_Done_MM_Var</a></code> after use.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<hr>
+
+<h2 id="ft_done_mm_var">FT_Done_MM_Var<a class="headerlink" href="#ft_done_mm_var" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_MULTIPLE_MASTERS_H (freetype/ftmm.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Done_MM_Var</b>( <a href="ft2-library_setup.html#ft_library">FT_Library</a>   library,
+                  <a href="ft2-multiple_masters.html#ft_mm_var">FT_MM_Var</a>   *amaster );
+</code></pre></div>
+
+<p>Free the memory allocated by <code><a href="ft2-multiple_masters.html#ft_get_mm_var">FT_Get_MM_Var</a></code>.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="library">library</td><td class="desc">
+<p>A handle of the face's parent library object that was used in the call to <code><a href="ft2-multiple_masters.html#ft_get_mm_var">FT_Get_MM_Var</a></code> to create <code>amaster</code>.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<hr>
+
+<h2 id="ft_set_mm_design_coordinates">FT_Set_MM_Design_Coordinates<a class="headerlink" href="#ft_set_mm_design_coordinates" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_MULTIPLE_MASTERS_H (freetype/ftmm.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Set_MM_Design_Coordinates</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>   face,
+                                <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>   num_coords,
+                                <a href="ft2-basic_types.html#ft_long">FT_Long</a>*  coords );
+</code></pre></div>
+
+<p>For Adobe MM fonts, choose an interpolated font design through design coordinates.</p>
+<p>This function can't be used with TrueType GX or OpenType variation fonts.</p>
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the source face.</p>
+</td></tr>
+</table>
+
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="num_coords">num_coords</td><td class="desc">
+<p>The number of available design coordinates. If it is larger than the number of axes, ignore the excess values. If it is smaller than the number of axes, use default values for the remaining axes.</p>
+</td></tr>
+<tr><td class="val" id="coords">coords</td><td class="desc">
+<p>An array of design coordinates.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>[Since 2.8.1] To reset all axes to the default values, call the function with <code>num_coords</code> set to zero and <code>coords</code> set to <code>NULL</code>.</p>
+<p>[Since 2.9] If <code>num_coords</code> is larger than zero, this function sets the <code><a href="ft2-face_creation.html#ft_face_flag_xxx">FT_FACE_FLAG_VARIATION</a></code> bit in <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code>'s <code>face_flags</code> field (i.e., <code><a href="ft2-font_testing_macros.html#ft_is_variation">FT_IS_VARIATION</a></code> will return true). If <code>num_coords</code> is zero, this bit flag gets unset.</p>
+<hr>
+
+<h2 id="ft_set_var_design_coordinates">FT_Set_Var_Design_Coordinates<a class="headerlink" href="#ft_set_var_design_coordinates" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_MULTIPLE_MASTERS_H (freetype/ftmm.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Set_Var_Design_Coordinates</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>    face,
+                                 <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>    num_coords,
+                                 <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>*  coords );
+</code></pre></div>
+
+<p>Choose an interpolated font design through design coordinates.</p>
+<p>This function works with all supported variation formats.</p>
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the source face.</p>
+</td></tr>
+</table>
+
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="num_coords">num_coords</td><td class="desc">
+<p>The number of available design coordinates. If it is larger than the number of axes, ignore the excess values. If it is smaller than the number of axes, use default values for the remaining axes.</p>
+</td></tr>
+<tr><td class="val" id="coords">coords</td><td class="desc">
+<p>An array of design coordinates.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>The design coordinates are 16.16 fractional values for TrueType GX and OpenType variation fonts. For Adobe MM fonts, the values are supposed to be whole numbers (i.e., the fractional part is zero).</p>
+<p>[Since 2.8.1] To reset all axes to the default values, call the function with <code>num_coords</code> set to zero and <code>coords</code> set to <code>NULL</code>. [Since 2.9] &lsquo;Default values&rsquo; means the currently selected named instance (or the base font if no named instance is selected).</p>
+<p>[Since 2.9] If <code>num_coords</code> is larger than zero, this function sets the <code><a href="ft2-face_creation.html#ft_face_flag_xxx">FT_FACE_FLAG_VARIATION</a></code> bit in <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code>'s <code>face_flags</code> field (i.e., <code><a href="ft2-font_testing_macros.html#ft_is_variation">FT_IS_VARIATION</a></code> will return true). If <code>num_coords</code> is zero, this bit flag gets unset.</p>
+<hr>
+
+<h2 id="ft_get_var_design_coordinates">FT_Get_Var_Design_Coordinates<a class="headerlink" href="#ft_get_var_design_coordinates" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_MULTIPLE_MASTERS_H (freetype/ftmm.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Get_Var_Design_Coordinates</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>    face,
+                                 <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>    num_coords,
+                                 <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>*  coords );
+</code></pre></div>
+
+<p>Get the design coordinates of the currently selected interpolated font.</p>
+<p>This function works with all supported variation formats.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the source face.</p>
+</td></tr>
+<tr><td class="val" id="num_coords">num_coords</td><td class="desc">
+<p>The number of design coordinates to retrieve. If it is larger than the number of axes, set the excess values to&nbsp;0.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="coords">coords</td><td class="desc">
+<p>The design coordinates array.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>The design coordinates are 16.16 fractional values for TrueType GX and OpenType variation fonts. For Adobe MM fonts, the values are whole numbers (i.e., the fractional part is zero).</p>
+<h4>since</h4>
+
+<p>2.7.1</p>
+<hr>
+
+<h2 id="ft_set_mm_blend_coordinates">FT_Set_MM_Blend_Coordinates<a class="headerlink" href="#ft_set_mm_blend_coordinates" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_MULTIPLE_MASTERS_H (freetype/ftmm.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Set_MM_Blend_Coordinates</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>    face,
+                               <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>    num_coords,
+                               <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>*  coords );
+</code></pre></div>
+
+<p>Choose an interpolated font design through normalized blend coordinates.</p>
+<p>This function works with all supported variation formats.</p>
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the source face.</p>
+</td></tr>
+</table>
+
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="num_coords">num_coords</td><td class="desc">
+<p>The number of available design coordinates. If it is larger than the number of axes, ignore the excess values. If it is smaller than the number of axes, use default values for the remaining axes.</p>
+</td></tr>
+<tr><td class="val" id="coords">coords</td><td class="desc">
+<p>The design coordinates array. Each element is a 16.16 fractional value and must be between 0 and 1.0 for Adobe MM fonts, and between -1.0 and 1.0 for TrueType GX and OpenType variation fonts.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>[Since 2.8.1] To reset all axes to the default values, call the function with <code>num_coords</code> set to zero and <code>coords</code> set to <code>NULL</code>. [Since 2.9] &lsquo;Default values&rsquo; means the currently selected named instance (or the base font if no named instance is selected).</p>
+<p>[Since 2.9] If <code>num_coords</code> is larger than zero, this function sets the <code><a href="ft2-face_creation.html#ft_face_flag_xxx">FT_FACE_FLAG_VARIATION</a></code> bit in <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code>'s <code>face_flags</code> field (i.e., <code><a href="ft2-font_testing_macros.html#ft_is_variation">FT_IS_VARIATION</a></code> will return true). If <code>num_coords</code> is zero, this bit flag gets unset.</p>
+<hr>
+
+<h2 id="ft_get_mm_blend_coordinates">FT_Get_MM_Blend_Coordinates<a class="headerlink" href="#ft_get_mm_blend_coordinates" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_MULTIPLE_MASTERS_H (freetype/ftmm.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Get_MM_Blend_Coordinates</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>    face,
+                               <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>    num_coords,
+                               <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>*  coords );
+</code></pre></div>
+
+<p>Get the normalized blend coordinates of the currently selected interpolated font.</p>
+<p>This function works with all supported variation formats.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the source face.</p>
+</td></tr>
+<tr><td class="val" id="num_coords">num_coords</td><td class="desc">
+<p>The number of normalized blend coordinates to retrieve. If it is larger than the number of axes, set the excess values to&nbsp;0.5 for Adobe MM fonts, and to&nbsp;0 for TrueType GX and OpenType variation fonts.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="coords">coords</td><td class="desc">
+<p>The normalized blend coordinates array (as 16.16 fractional values).</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>since</h4>
+
+<p>2.7.1</p>
+<hr>
+
+<h2 id="ft_set_var_blend_coordinates">FT_Set_Var_Blend_Coordinates<a class="headerlink" href="#ft_set_var_blend_coordinates" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_MULTIPLE_MASTERS_H (freetype/ftmm.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Set_Var_Blend_Coordinates</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>    face,
+                                <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>    num_coords,
+                                <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>*  coords );
+</code></pre></div>
+
+<p>This is another name of <code><a href="ft2-multiple_masters.html#ft_set_mm_blend_coordinates">FT_Set_MM_Blend_Coordinates</a></code>.</p>
+<hr>
+
+<h2 id="ft_get_var_blend_coordinates">FT_Get_Var_Blend_Coordinates<a class="headerlink" href="#ft_get_var_blend_coordinates" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_MULTIPLE_MASTERS_H (freetype/ftmm.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Get_Var_Blend_Coordinates</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>    face,
+                                <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>    num_coords,
+                                <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>*  coords );
+</code></pre></div>
+
+<p>This is another name of <code><a href="ft2-multiple_masters.html#ft_get_mm_blend_coordinates">FT_Get_MM_Blend_Coordinates</a></code>.</p>
+<h4>since</h4>
+
+<p>2.7.1</p>
+<hr>
+
+<h2 id="ft_set_mm_weightvector">FT_Set_MM_WeightVector<a class="headerlink" href="#ft_set_mm_weightvector" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_MULTIPLE_MASTERS_H (freetype/ftmm.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Set_MM_WeightVector</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>    face,
+                          <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>    len,
+                          <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>*  weightvector );
+</code></pre></div>
+
+<p>For Adobe MM fonts, choose an interpolated font design by directly setting the weight vector.</p>
+<p>This function can't be used with TrueType GX or OpenType variation fonts.</p>
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the source face.</p>
+</td></tr>
+</table>
+
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="len">len</td><td class="desc">
+<p>The length of the weight vector array. If it is larger than the number of designs, the extra values are ignored. If it is less than the number of designs, the remaining values are set to zero.</p>
+</td></tr>
+<tr><td class="val" id="weightvector">weightvector</td><td class="desc">
+<p>An array representing the weight vector.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>Adobe Multiple Master fonts limit the number of designs, and thus the length of the weight vector to 16&nbsp;elements.</p>
+<p>If <code>len</code> is larger than zero, this function sets the <code><a href="ft2-face_creation.html#ft_face_flag_xxx">FT_FACE_FLAG_VARIATION</a></code> bit in <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code>'s <code>face_flags</code> field (i.e., <code><a href="ft2-font_testing_macros.html#ft_is_variation">FT_IS_VARIATION</a></code> will return true). If <code>len</code> is zero, this bit flag is unset and the weight vector array is reset to the default values.</p>
+<p>The Adobe documentation also states that the values in the WeightVector array must total 1.0 &plusmn;&nbsp;0.001. In practice this does not seem to be enforced, so is not enforced here, either.</p>
+<h4>since</h4>
+
+<p>2.10</p>
+<hr>
+
+<h2 id="ft_get_mm_weightvector">FT_Get_MM_WeightVector<a class="headerlink" href="#ft_get_mm_weightvector" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_MULTIPLE_MASTERS_H (freetype/ftmm.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Get_MM_WeightVector</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>    face,
+                          <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>*   len,
+                          <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>*  weightvector );
+</code></pre></div>
+
+<p>For Adobe MM fonts, retrieve the current weight vector of the font.</p>
+<p>This function can't be used with TrueType GX or OpenType variation fonts.</p>
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the source face.</p>
+</td></tr>
+<tr><td class="val" id="len">len</td><td class="desc">
+<p>A pointer to the size of the array to be filled. If the size of the array is less than the number of designs, <code>FT_Err_Invalid_Argument</code> is returned, and <code>len</code> is set to the required size (the number of designs). If the size of the array is greater than the number of designs, the remaining entries are set to&nbsp;0. On successful completion, <code>len</code> is set to the number of designs (i.e., the number of values written to the array).</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="weightvector">weightvector</td><td class="desc">
+<p>An array to be filled.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>Adobe Multiple Master fonts limit the number of designs, and thus the length of the WeightVector to&nbsp;16.</p>
+<h4>since</h4>
+
+<p>2.10</p>
+<hr>
+
+<h2 id="ft_var_axis_flag_xxx">FT_VAR_AXIS_FLAG_XXX<a class="headerlink" href="#ft_var_axis_flag_xxx" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_MULTIPLE_MASTERS_H (freetype/ftmm.h).</p>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <a href="ft2-multiple_masters.html#ft_var_axis_flag_hidden">FT_VAR_AXIS_FLAG_HIDDEN</a>  1
+</code></pre></div>
+
+<p>A list of bit flags used in the return value of <code><a href="ft2-multiple_masters.html#ft_get_var_axis_flags">FT_Get_Var_Axis_Flags</a></code>.</p>
+<h4>values</h4>
+<table class="fields">
+<tr><td class="val" id="ft_var_axis_flag_hidden">FT_VAR_AXIS_FLAG_HIDDEN</td><td class="desc">
+<p>The variation axis should not be exposed to user interfaces.</p>
+</td></tr>
+</table>
+
+<h4>since</h4>
+
+<p>2.8.1</p>
+<hr>
+
+<h2 id="ft_get_var_axis_flags">FT_Get_Var_Axis_Flags<a class="headerlink" href="#ft_get_var_axis_flags" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_MULTIPLE_MASTERS_H (freetype/ftmm.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Get_Var_Axis_Flags</b>( <a href="ft2-multiple_masters.html#ft_mm_var">FT_MM_Var</a>*  master,
+                         <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>     axis_index,
+                         <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>*    flags );
+</code></pre></div>
+
+<p>Get the &lsquo;flags&rsquo; field of an OpenType Variation Axis Record.</p>
+<p>Not meaningful for Adobe MM fonts (<code>*flags</code> is always zero).</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="master">master</td><td class="desc">
+<p>The variation descriptor.</p>
+</td></tr>
+<tr><td class="val" id="axis_index">axis_index</td><td class="desc">
+<p>The index of the requested variation axis.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="flags">flags</td><td class="desc">
+<p>The &lsquo;flags&rsquo; field. See <code><a href="ft2-multiple_masters.html#ft_var_axis_flag_xxx">FT_VAR_AXIS_FLAG_XXX</a></code> for possible values.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>since</h4>
+
+<p>2.8.1</p>
+<hr>
+
+<h2 id="ft_set_named_instance">FT_Set_Named_Instance<a class="headerlink" href="#ft_set_named_instance" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_MULTIPLE_MASTERS_H (freetype/ftmm.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Set_Named_Instance</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>  face,
+                         <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>  instance_index );
+</code></pre></div>
+
+<p>Set or change the current named instance.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the source face.</p>
+</td></tr>
+<tr><td class="val" id="instance_index">instance_index</td><td class="desc">
+<p>The index of the requested instance, starting with value 1. If set to value 0, FreeType switches to font access without a named instance.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>The function uses the value of <code>instance_index</code> to set bits 16-30 of the face's <code>face_index</code> field. It also resets any variation applied to the font, and the <code><a href="ft2-face_creation.html#ft_face_flag_xxx">FT_FACE_FLAG_VARIATION</a></code> bit of the face's <code>face_flags</code> field gets reset to zero (i.e., <code><a href="ft2-font_testing_macros.html#ft_is_variation">FT_IS_VARIATION</a></code> will return false).</p>
+<p>For Adobe MM fonts (which don't have named instances) this function simply resets the current face to the default instance.</p>
+<h4>since</h4>
+
+<p>2.9</p>
+<hr>
+
+<h2 id="ft_get_default_named_instance">FT_Get_Default_Named_Instance<a class="headerlink" href="#ft_get_default_named_instance" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_MULTIPLE_MASTERS_H (freetype/ftmm.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Get_Default_Named_Instance</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>   face,
+                                 <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>  *instance_index );
+</code></pre></div>
+
+<p>Retrieve the index of the default named instance, to be used with <code><a href="ft2-multiple_masters.html#ft_set_named_instance">FT_Set_Named_Instance</a></code>.</p>
+<p>The default instance of a variation font is that instance for which the nth axis coordinate is equal to <code>axis[n].def</code> (as specified in the <code><a href="ft2-multiple_masters.html#ft_mm_var">FT_MM_Var</a></code> structure), with&nbsp;n covering all axes.</p>
+<p>FreeType synthesizes a named instance for the default instance if the font does not contain such an entry.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the source face.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="instance_index">instance_index</td><td class="desc">
+<p>The index of the default named instance.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>For Adobe MM fonts (which don't have named instances) this function always returns zero for <code>instance_index</code>.</p>
+<h4>since</h4>
+
+<p>2.13.1</p>
+<hr>
+                
+              
+              
+                
+
+
+              
+            </article>
+          </div>
+        </div>
+        
+      </main>
+      
+        
+<footer class="md-footer">
+  
+    <nav class="md-footer__inner md-grid" aria-label="Footer">
+      
+        
+        <a href="ft2-header_file_macros.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: Header File Macros" rel="prev">
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+          </div>
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              Header File Macros
+            </div>
+          </div>
+        </a>
+      
+      
+        
+        <a href="ft2-truetype_tables.html" class="md-footer__link md-footer__link--next" aria-label="Next: TrueType Tables" rel="next">
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              TrueType Tables
+            </div>
+          </div>
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11H4z"/></svg>
+          </div>
+        </a>
+      
+    </nav>
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-footer-copyright">
+        
+          <div class="md-footer-copyright__highlight">
+            Copyright 2023 <a href = "https://www.freetype.org/license.html">The FreeType Project</a>.
+          </div>
+        
+        Made with
+        <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+          Material for MkDocs
+        </a>
+        
+      </div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    <script id="__config" type="application/json">{"base": ".", "features": [], "search": "assets/javascripts/workers/search.477d984a.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.config.lang": "en", "search.config.pipeline": "trimmer, stopWordFilter", "search.config.separator": "[\\s\\-]+", "search.placeholder": "Search", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version.title": "Select version"}, "version": null}</script>
+    
+    
+      <script src="assets/javascripts/bundle.82b56eb2.min.js"></script>
+      
+        <script src="javascripts/extra.js"></script>
+      
+    
+  </body>
+</html>

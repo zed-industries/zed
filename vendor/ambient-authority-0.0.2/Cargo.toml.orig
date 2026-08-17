@@ -1,0 +1,11 @@
+[package]
+name = "ambient-authority"
+version = "0.0.2"
+description = "Ambient Authority"
+authors = ["Dan Gohman <dev@sunfishcode.online>"]
+edition = "2018"
+license = "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
+keywords = ["io"]
+categories = ["rust-patterns"]
+repository = "https://github.com/sunfishcode/ambient-authority"
+exclude = ["/.github"]

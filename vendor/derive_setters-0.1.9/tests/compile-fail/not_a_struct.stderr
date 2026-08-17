@@ -1,0 +1,7 @@
+error: `#[derive(Setters)] may only be used on structs.
+ --> tests/compile-fail/not_a_struct.rs:4:1
+  |
+4 | / enum NotAStruct {
+5 | |     Variant,
+6 | | }
+  | |_^

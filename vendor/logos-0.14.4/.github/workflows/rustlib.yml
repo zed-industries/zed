@@ -1,0 +1,58 @@
+on:
+  pull_request:
+    paths:
+    - '**.rs'
+    - '**/Cargo.toml'
+  workflow_dispatch:
+
+name: Library testing
+
+jobs:
+  rustdoc:
+    name: Rustdoc
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout sources
+      uses: actions/checkout@v4
+
+    - name: Install nightly toolchain
+      uses: dtolnay/rust-toolchain@nightly
+
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+
+    - name: Check rustdoc build
+      run: RUSTDOCFLAGS='--cfg docsrs' cargo +nightly doc --features debug -Zunstable-options -Zrustdoc-scrape-examples
+
+  tests:
+    name: Tests
+    strategy:
+      matrix:
+        rust:
+        - stable
+        - beta
+        - nightly
+        os:
+        - macos-latest
+        - ubuntu-latest
+        - windows-latest
+        features:
+        - ""  # default features
+        - "--features forbid_unsafe"
+
+    runs-on: ${{ matrix.os }}
+    steps:
+    - name: Checkout sources
+      uses: actions/checkout@v4
+
+    - name: Install stable toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+
+    - name: Check that tests run
+      uses: actions-rs/cargo@v1
+      with:
+        command: test
+        args: --workspace --verbose ${{ matrix.features }}

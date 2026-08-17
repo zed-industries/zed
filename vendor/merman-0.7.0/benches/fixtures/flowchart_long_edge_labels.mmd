@@ -1,0 +1,33 @@
+flowchart LR
+  subgraph Intake
+    A[Customer order intake]
+    B[Validation service]
+    C{Policy gate}
+  end
+
+  subgraph Fulfillment
+    D[Inventory allocation]
+    E[Picking queue]
+    F[Shipment handoff]
+  end
+
+  subgraph ExceptionPath
+    G[Exception triage]
+    H[Supervisor review]
+    I[Audit archive]
+  end
+
+  A -->|normalize line items, coupons, and tax context| B
+  B -->|verify item availability and payment hold status| C
+  C -->|approved with inventory reservation| D
+  C -->|rejected due to compliance or stock constraints| G
+  D -->|reserve stock in primary warehouse and queue pick list| E
+  E -->|handoff to carrier assignment and label generation| F
+  G -->|attach exception reason and risk classification metadata| H
+  H -->|final disposition with override code and approver identity| I
+  H -->|reopen request with additional evidence requirements| B
+  I -->|emit asynchronous notification to fulfillment and finance| F
+
+  A -.->|customer-provided delivery constraints and blackout windows| H
+  D -.->|backorder probability forecast and replenishment ETA| G
+  E -.->|carrier SLA downgrade when weather alert is active| H

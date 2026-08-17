@@ -1,0 +1,142 @@
+r#"政府資料開放授權條款－第1版
+
+中華民國104年7月27日訂定
+
+為便利民眾共享及應用政府資料、促進及活化政府資料應用、結合民間創意提升政府資料品質及價值、優化政府服務品質，訂定本條款。
+
+一、定義
+
+(一)資料提供機關：指將職權範圍內取得或作成之各類電子資料，透過本條款釋出予公眾之政府機關（構）、公營事業機構、公立學校及行政法人。
+
+(二)使用者：指依本條款規定取得開放資料，並對其利用之自然人、法人或團體，包括依本條款授權使用者再轉授權利用之人或團體。
+
+(三)開放資料：指資料提供機關擁有完整著作財產權，或經授權得再轉授權第三人利用之資料，並以公開、可修改，且無不必要技術限制之格式提供者，包括但不限於下列著作：
+
+    1. 編輯著作：選擇、編排具有創作性，而可受著作權法保護之資料庫或其他結構化資料組合。
+
+    2. 素材：指開放資料集合物中，其他可受著作權法保護之獨立著作。
+
+(四)衍生物：指依本條款所提供之開放資料，進行後續重製、改作、編輯或為其他方式利用之修改物。
+
+(五)資訊：指不受著作權法保護之純粹紀錄，並隨同開放資料一併提供者。前揭資訊除本條款授與權利之規定外，比照有關開放資料之規定辦理。
+
+二、授與權利
+
+(一)各機關所提供之開放資料，授權使用者不限目的、時間及地域、非專屬、不可撤回、免授權金進行利用，利用之方式包括重製、散布、公開傳輸、公開播送、公開口述、公開上映、公開演出、編輯、改作，包括但不限於開發各種產品或服務型態之衍生物。
+
+(二)使用者得再轉授權他人為前項之利用。
+
+(三)使用者依本條款規定利用開放資料，無須另行取得各資料提供機關之書面或其他方式授權。
+
+(四)本條款之授權範圍不包括專利權及商標權。
+
+三、課予義務
+
+(一)使用者利用依本條款提供之開放資料，視為同意遵守本條款之各項規定，並應以尊重第三人著作人格權之方式利用之。
+
+(二)使用者利用依本條款提供之開放資料，及後續之衍生物，應以符合附件所示「顯名聲明」要求之方式，明確標示原資料提供機關之相關聲明；未盡顯名標示義務者，視為自始未取得開放資料之授權。
+
+四、版本更新及授權轉換
+
+(一)本條款如有修正，依舊條款提供之開放資料，於新條款公告時，使用者得選擇採用新條款利用。但原資料提供機關，於提供開放資料時，已訂明其使用之特定版本條款者，不在此限。
+
+(二)本條款與「創用CC授權 姓名標示 4.0 國際版本」相容，使用者依本條款利用開放資料，如後續以「創用CC授權 姓名標示 4.0 國際版本」規定之方式利用，視為符合本條款之規定。
+
+五、停止提供
+
+有下列情形之一者，各資料提供機關得停止全部或一部開放資料之提供，使用者不得向資料提供機關請求任何賠償或補償：
+
+    1. 因情事變更或其他正當事由，致各資料提供機關評估繼續提供該開放資料供公眾使用，已不符合公共利益之要求。
+
+    2. 所提供之開放資料，有侵害第三人智慧財產權、隱私權或其他法律上利益之虞。
+
+六、免責聲明
+
+(一)依本條款提供之開放資料，不構成任何資料提供機關申述、保證或暗示其推薦、同意、許可或核准之意思表示；各資料提供機關僅於知悉其所提供之開放資料有錯誤或遺漏時，負修正及補充之責。
+
+(二)使用者利用依本條款提供之開放資料，受有損害或損失，或致第三人受有損害或損失，而遭求償者，除法令另有規定外，各資料提供機關不負任何賠償或補償之責。
+
+(三)使用者利用依本條款提供之開放資料，因故意或過失，致資料提供機關遭受損害，或第三人因此向資料提供機關請求賠償損害，使用者應對各機關負賠償責任。
+
+七、準據法
+
+本條款之解釋、效力、履行及其他未盡事宜，以中華民國法律為準據法。
+
+附件：顯名聲明
+
+    1. 提供機關／單位 [年份] [開放資料釋出名稱與版本號]
+
+    2. 此開放資料依政府資料開放授權條款 (Open Government Data License) 進行公眾釋出，使用者於遵守本條款各項規定之前提下，得利用之。
+
+    3. 政府資料開放授權條款：https://data.gov.tw/license
+
+Open Government Data License, version 1.0
+
+The Open Government Data License (the License) is intended to facilitate government data sharing and application among the public in outreaching and promotion method, and to advance government service efficacy and government data value and quality in collaboration with the creative private sector.
+
+1. Definition
+
+1.1. "Data Providing Organization" refers to government agency, government-owned business, public school and administrative legal entity that has various types of electronic data released to the public under the License when it is obtained or made in the scope of performance for public duties.
+
+1.2. "User" refers to individual, legal entity or group that receives and uses Open Data under the License, including individual, legal entity or group who is receiving and using Open Data as the recipient of the former Users under the sublicensing scenario.
+
+1.3. "Open Data" means data that the Data Providing Organization owns its copyright in whole or has full authority to provide it to third parties in sublicensing way, and provides it in an open and modifiable form such that there are no unnecessary technological obstacles to the performance of the licensed rights, including but not limited to the following creation protected by copyright:
+
+    a. "Compilation Work" means a work formed by the creative selection and arrangement of data, and can be protected by copyright law, such as database or other qualified structured data combination.
+
+    b. "Material" means a separate work, that is collected into the Open Data aggregation and can be protected by copyright law independently.
+
+1.4. "Derivative Work" means any adaptation based upon the Open Data provided under the License and in which the original data is reproduced, adapted, compiled, or otherwise modified.
+
+1.5. "Information" means the pure record that is not subject to copyright law and providing along with the Open Data. Accordingly, the granting of copyright license hereunder does not apply to such Information, however, other provisions of the License shall be applied to it as well as to the Open Data.
+
+2. Grant of Copyright License
+
+2.1. The Data Providing Organization grants User a perpetual, worldwide, non-exclusive, irrevocable, royalty-free copyright license to reproduce, distribute, publicly transmit, publicly broadcast, publicly recite, publicly present, publicly perform, compile, adapt to the Open Data provided for any purpose, including but not limited to making all kinds of Derivative Works either as products or services.
+
+2.2. User can sublicense the copyrights which he/she is granted through 2.1. to others.
+
+2.3. Any additional written offer or other formality for copyright license from the Data Providing Organization is not required, if User makes use of Open Data in compliance with the License.
+
+2.4. The License does not grant any rights in the patents and trademarks.
+
+3. Condition and Obligation
+
+3.1. By utilizing the Open Data provided under the License, User indicates his/her acceptance of this License and all its terms and conditions overall to do so, and shall make the reasonable efforts with respect to moral right protection of the third parties involved.
+
+3.2. When User makes use of the Open Data and its Derivative Work, he/she must make an explicit notice of statement as attribution requested in the Exhibit below by the Data Providing Organization. If User fails to comply with the attribution requirement, the rights granted under this License shall be deemed to have been void ab initio.
+
+4. License Version and Compatibility
+
+4.1. When a new version of the License has been updated and declared, if not the Data Providing Organization has already appointed a specific version of the License for the Open Data it provided, User may make use of the Open Data under the terms of the version of the License under which he/she originally received, or under the terms of any subsequent version published thereafter.
+
+4.2. The License is compatible with the Creative Commons Attribution License 4.0 International. This means that when the Open Data is provided under the License, User automatically satisfies the conditions of this License when he/she makes use of the Open Data in compliance with the Creative Commons Attribution License 4.0 International thereafter.
+
+5. Cessation of Data Providing
+
+5.1. Under the circumstances described hereunder, the Data Providing Organization may cease to provide all or part of a specific Open Data, and User shall not claim any damages or compensations on account of that to the provider:
+
+    a. It has been evaluated by the Data Providing Organization that continuously providing of a specific Open Data as not being met the requirement of public interest due to the change of circumstances unpredictable or for a legitimate cause.
+
+    b. A provided Open Data might jeopardize third parties' intellectual property rights, privacy rights, or other interests protected at law.
+
+6. Disclaimer
+
+6.1. The providing of Open Data under the License shall not be construed as any statement, warranty, or implication to the recommendation, permission, approval, or sanction of all kinds of authoritative declaration of intention made by the Data Providing Organization. And the Data Providing Organization shall only be liable to make the correcting and updating when the errors or omissions of Open Data provided by it has been acknowledged.
+
+6.2. The Data Providing Organization shall not be liable for damage or loss User encounters when he/she makes use of the Open Data provided under the License. This disclaimer applies as well when User has third parties encountered damage or loss and thus has been claimed for remedies. Unless otherwise specified according to law, the Data Providing Organization shall not be held responsible for any damages or compensations herein.
+
+6.3. User shall be liable for the damages to the Data Providing Organization, if he/she has used the Open Data provided wrongfully due to an intentional or negligent misconduct and caused damages to the Data Providing Organization. The same reimbursement rule for wrongful misconducting shall be applied to the User when the damaged one is a third party and the compensations have already been disbursed by the Data Providing Organization to the third party due to a legal claim.
+
+7. Governing Law
+
+7.1. The interpretation, validity, enforcement and matters not mentioned herein for the License is governed by the Laws of Republic of China (Taiwan).
+
+Exhibit - Attribution
+
+    a. Data Providing Organization/Agency [year] [distinguishing full name of the released Open Data and its version number]
+
+    b. The Open Data is made available to the public under the Open Government Data License, User can make use of it when complying to the condition and obligation of its terms.
+
+    c. Open Government Data License:https://data.gov.tw/license
+"#

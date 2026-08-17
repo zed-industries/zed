@@ -1,0 +1,46 @@
+[package]
+name = "proptest-derive"
+version = "0.8.0"
+authors = ["Mazdak Farrokhzad <twingoow@gmail.com>"]
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+edition = "2021"
+rust-version = "1.84"
+
+repository = "https://github.com/proptest-rs/proptest"
+documentation = "https://proptest-rs.github.io/proptest/proptest-derive/index.html"
+
+keywords = ["derive", "arbitrary", "proptest", "testing", "quickcheck"]
+categories = ["development-tools::testing"]
+
+description = """
+Custom-derive for the Arbitrary trait of proptest.
+"""
+
+homepage = "https://proptest-rs.github.io/proptest/proptest-derive/index.html"
+
+[lib]
+proc-macro = true
+
+[dev-dependencies]
+proptest = { version = "1.10.0", path = "../proptest" }
+# We don't actually run the tests on stable since some of them use nightly
+# features. However, due to
+# https://github.com/laumann/compiletest-rs/issues/166, the default features of
+# compiletest-rs fail to compile, but the stable fallback works fine.
+compiletest_rs = { workspace = true, features = ["tmp", "stable"] }
+# criterion is used for benchmarks.
+criterion = { workspace = true }
+
+[dependencies]
+proc-macro2 = { workspace = true }
+syn = { workspace = true, features = ["visit", "extra-traits", "full"] }
+quote = { workspace = true }
+
+[features]
+# Don't generate TupleUnion structs in #[derive(Arbitrary)] code
+boxed_union = []
+
+[[bench]]
+name = "large_enum"
+harness = false

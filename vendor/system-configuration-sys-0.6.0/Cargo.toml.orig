@@ -1,0 +1,14 @@
+[package]
+name = "system-configuration-sys"
+version = "0.6.0"
+authors = ["Mullvad VPN"]
+description = "Low level bindings to SystemConfiguration framework for macOS"
+keywords = ["macos", "system", "configuration", "bindings"]
+categories = ["external-ffi-bindings", "os::macos-apis"]
+repository = "https://github.com/mullvad/system-configuration-rs"
+license = "MIT OR Apache-2.0"
+edition = "2021"
+
+[dependencies]
+core-foundation-sys = "0.8"
+libc = "0.2.149"

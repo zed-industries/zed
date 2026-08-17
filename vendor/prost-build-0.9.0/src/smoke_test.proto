@@ -1,0 +1,18 @@
+syntax = "proto2";
+
+package smoke_test;
+
+message SmokeRequest {
+}
+
+message SmokeResponse {
+}
+
+// Just a smoke test service.
+service SmokeService {
+
+    // A detached comment block.
+
+    // Blow some smoke.
+    rpc BlowSmoke(SmokeRequest) returns (SmokeResponse);
+}

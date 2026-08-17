@@ -1,0 +1,14 @@
+package foo:foo;
+
+world module {
+  import a:b/c@0.1.0;
+}
+
+package a:b@0.1.0 {
+  interface c {
+    resource r {
+      constructor();
+    }
+    x: func(x: string);
+  }
+}

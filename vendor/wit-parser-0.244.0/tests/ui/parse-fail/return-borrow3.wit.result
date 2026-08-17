@@ -1,0 +1,5 @@
+function returns a type which contains a `borrow<T>` which is not supported
+     --> tests/ui/parse-fail/return-borrow3.wit:5:5
+      |
+    5 |     x: func() -> borrow<y>;
+      |     ^

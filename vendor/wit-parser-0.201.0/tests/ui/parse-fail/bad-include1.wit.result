@@ -1,0 +1,5 @@
+interface or world `non-existance` not found in package
+     --> tests/ui/parse-fail/bad-include1.wit:4:11
+      |
+    4 |   include non-existance;
+      |           ^------------

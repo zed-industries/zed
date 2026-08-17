@@ -1,0 +1,19 @@
+---
+- name: Multiline scalar that looks like a YAML directive
+  from: '@perlpunk'
+  tags: directive scalar
+  yaml: |
+    ---
+    scalar
+    %YAML 1.2
+  tree: |
+    +STR
+     +DOC ---
+      =VAL :scalar %YAML 1.2
+     -DOC
+    -STR
+  json: |
+    "scalar %YAML 1.2"
+  dump: |
+    --- scalar %YAML 1.2
+    ...

@@ -1,0 +1,124 @@
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jjwilm@kurast.local [01;32m➜ [01;32m [36m~/code/alacritty [00m [K[?1h=[?2004h[35mg[39m[1m[31mg[1m[31mi[0m[39m[0m[35mg[0m[35mi[35mt[39m log[?1l>[?2004l
+[?1049h[?1h=[33mcommit bdd21810882dbba8485ac44c871482dfc6ea9b93[m[m
+Author: Joe Wilm <joe@jwilm.com>[m
+Date:   Sat Nov 19 16:16:20 2016 -0800[m
+[m
+    Add support for recording/running ref tests[m
+    [m
+    Ref tests use a recording of the terminal protocol and a serialization[m
+    of the grid state to check that the parsing and action handling systems[m
+    produce the correct result. Ref tests may be recorded by running[m
+    alacritty with `--ref-test` and closing the terminal by using the window[m
+    "X" button. At that point, the recording is fully written to disk, and a[m
+    serialization of important state is recorded. Those files should be[m
+    moved to an appropriate folder in the `tests/ref/` tree, and the[m
+    `ref_test!` macro invocation should be updated accordingly.[m
+    [m
+    A couple of changes were necessary to make this work:[m
+    [m
+    * Ref tests shouldn't create a pty; the pty was refactored out of the[m
+      `Term` type.[m
+    * Repeatable lines/cols were needed; on startup, the terminal is resized[m
+    * by default to 80x24 though that may be changed by passing[m
+      `--dimensions w h`.[m
+    * Calculating window size based on desired rows/columns and font metrics[m
+:[K[K      required making load_font callable multiple times. I think this still[m
+:[K[K      needs to be done for linux.[m
+:[K[K    * Refactor types into library crate so they may be imported in an[m
+:[K[K      integration test.[m
+:[K[K    * A whole bunch of types needed symmetric serialization and[m
+:[K[K      deserialization. Mostly this was just adding derives, but the custom[m
+:[K[K      deserialization of Rgb had to change to a deserialize_with function.[m
+:[K[K    [m
+:[K[K    This initially adds one ref test as a sanity check, and more will be[m
+:[K[K    added in subsequent commits. This initial ref tests just starts the[m
+:[K[K    terminal and runs `ll`.[m
+:[K[K[m
+:[K[K[33mcommit d97996e19de6856c23c51d05ec10f10db41e309d[m[m
+:[K[KAuthor: Joe Wilm <joe@jwilm.com>[m
+:[K[K[?1l>[?1049l[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jjwilm@kurast.local [01;32m➜ [01;32m [36m~/code/alacritty [00m [K[?1h=[?2004h[36mt[39m[36mt[36mm[39m[36mt[36mm[36mu[39m[35mt[35mm[35mu[35mx[39m[?1l>[?2004l
+[?1049h(B[m[?1l>[H[2J[?12l[?25h[?1000l[?1002l[?1006l[?1005l]112[?25l[1;1H[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[30m[43m1:reattach-to-user-namespace*[44m                                                   (B[m[24;1H[1;24r[H[?12l[?25h[1;23rg[1;24r[H[C[?25l[24;1H[30m[43m1:zsh*[44m                                                                          (B[m[1;2H[?12l[?25h[1;23r[H[C[1m[7m%(B[m                                                                                [1;24r[H
+[1;23r[H
+[K
+[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[2djwilm@kurast.local [32m[1m➜  [36m~/code/alacritty (B[m [K[1;24r[H[2;41H[?1h=[?2004h[1;23r[H[2;41H[35mg[1;24r[H[2;42H(B[m[1;23r[H[2;41H[31m[1mgi[1;24r[H[2;43H(B[m[1;23r[H[2;41H[35mgit[1;24r[H[2;44H(B[m[1;23r[H[2;44H [1;24r[H[2;45H[1;23r[H[2;45Hl[1;24r[H[2;46H[1;23r[H[2;46Hg[1;24r[H[2;47H[?1l>
+[?2004l[?25l[H[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K[3d[?12l[?25h[?1h=[1;23r[H[2B* [34m[1mbdd2181(B[m - [32m[1m(2 hours ago)(B[m Add support for recording/running ref tests [32m- Joe Wilm(B[m [1;24r[H[3B[1;23r[H[3B[31m[1m (HEAD -> ref-tests, origin/ref-tests)
+(B[m[31m|[39m *   [34m[1md629f72(B[m - [1;24r[H[5;17H[1;23r[H[5;17H[32m[1m(2 days ago)(B[m WIP on master: d97996e Make bindings configurable f rom alacritty.yml[1;24r[H[6;18H[1;23r[H[6;18H [32m- Joe Wilm(B[m[31m[1m (refs/stash)
+(B[m[31m|[39m [31m|[33m\[39m  
+[31m|/[39m [33m/[39m  
+[31m|[1;24r[H[9;2H(B[m[1;23r[H[9;2H * [34m[1m5908bde(B[m - [32m[1m(2 days ago)(B[m index on master: d97996e Make bindings configurable f [1;24r[H[9B[1;23r[H[9Brom alacritty.yml [32m- Joe Wilm
+(B[m[31m|/[39m  
+* [34m[1md97996e(B[m - [32m[1m(4 days [1;24r[H[12;21H(B[m[1;23r[H[12;21H[32m[1mago)(B[m Make bindings configurable from alacritty.yml [32m- Joe Wil(B[m [32mm(B[m[31m[1m (o[1;24r[H[13;5H(B[m[1;23r[H[13;5H[31m[1mrigin/master, origin/bindings-v2, origin/HEAD, master, bindings-v2)
+(B[m* [34m[1mcb2bc4e(B[m - [32m[1m(4 days ago)(B[m Fix t[1;24r[H[14;31H[1;23r[H[14;31Hest for Cell layout [32m- Joe Wilm
+(B[m* [34m[1mcbb9167(B[m - [32m[1m(5 days ago)(B[m Redraw screen on focus[1;24r[H[15;48H[1;23r[H[15;48H [32m- Joe Wilm
+(B[m* [34m[1m8360ab4(B[m - [32m[1m(8 days ago)(B[m Fallback to received chars when no bindin[1;24r[H[16;67H[1;23r[H[16;67Hgs [32m- Joe Wilm
+(B[m* [34m[1m6925daa(B[m - [32m[1m(8 days ago)(B[m Fix/add some keybindings [32m- Jo[1;24r[H[17;55H(B[m[1;23r[H[17;55H[32me Wilm
+(B[m* [34m[1me426013(B[m - [32m[1m(8 days ago)(B[m Fix alacritty shutdown when shell exits on macOS [1;24r[H[18;75H[1;23r[H[18;75H[32m- Joe (B[m [32mWilm
+(B[m* [34m[1m8cbd768(B[m - [32m[1m(8 days ago)(B[m Fix resize [1;24r[H[20;37H[1;23r[H[20;37Hon macOS leaving screen blank [32m- Joe Wilm
+(B[m* [34m[1ma652b4a(B[m - [32m[1m(8 days ago)(B[m Rustup [1;24r[H[21;33H[1;23r[H[21;33H[32m- Joe Wilm
+(B[m* [34m[1m3e0b2b6(B[m - [32m[1m(8 days ago)(B[m Fix config file reloading on macOS [32m- [1;24r[H[22;63H(B[m[1;23r[H[22;63H[32mJoe Wilm
+(B[m* [34m[1mbe036ed(B[m - [32m[1m(8 days ago)(B[m Workaround for cutoff glyphs [32m- Joe Wilm[1;24r[H[23;65H(B[m[1;23r[H[23d
+* [34m[1m82c8804(B[m - [32m[1m(3 weeks ago)(B[m Update default config [32m- Joe Wilm(B[m
+:[K[1;24r[H[23;2H[?25l
+[30m[43m1:git*[44m                                                                          (B[m[23;2H[?12l[?25h[K[1;23r[H[23d* [34m[1ma81152c(B[m - [32m[1m(3 weeks ago)(B[m Support drawing bold test with bright colors [32m- Joe Wil(B[m :[K[1;24r[H[23;2H[K[1;23r[H[23d[32mm(B[m
+:[K[1;24r[H[23;2H[K[1;23r[H[23d*   [34m[1m7cd8a6c(B[m - [32m[1m(3 weeks ago)(B[m Merge branch 'reload-colors' [32m- Joe Wilm(B[m
+:[K[1;24r[H[23;2H[K[1;23r[H[23d[34m|[35m\[39m  
+:[K[1;24r[H[23;2H[K[1;23r[H[23d[34m|[39m * [34m[1mf8cb6d4(B[m - [32m[1m(3 weeks ago)(B[m Set colors on CPU [32m- Joe Wilm(B[m
+:[K[1;24r[H[23;2H[K[1;23r[H[23d[34m|[39m * [34m[1mcb2fa27(B[m - [32m[1m(3 weeks ago)(B[m Dynamically update render_timer config [32m- Joe Wilm[1;24r[H[23;78H(B[m[1;23r[H[23d
+:[K[1;24r[H[23;2H[K[1;23r[H[23d[34m|[39m * [34m[1m06ea6c8(B[m - [32m[1m(3 weeks ago)(B[m Move config reloading to separate thread [32m- Joe Wilm[1;24r[H[23;80H(B[m[1;23r[H[23d
+:[K[1;24r[H[23;2H[K[1;23r[H[23d[34m|[39m * [34m[1m0958c0f(B[m - [32m[1m(4 weeks ago)(B[m Move color indexing to vertex shader [32m- Joe Wilm[1;24r[H[23;76H(B[m[1;23r[H[23d
+:[K[1;24r[H[23;2H[K[1;23r[H[23d[34m|[39m * [34m[1me9304af(B[m - [32m[1m(4 weeks ago)(B[m Expand cell::Color layout tests [32m- Joe Wilm[1;24r[H[23;71H(B[m[1;23r[H[23d
+:[K[1;24r[H[23;2H[K[1;23r[H[23d[34m|[39m * [34m[1m741a8b3(B[m - [32m[1m(4 weeks ago)(B[m Fix some compiler warnings [32m- Joe Wilm(B[m
+[1;24r[H[23d[1;23r[H[23d:[K[1;24r[H[23;2H[K[1;23r[H[23d[34m|[39m * [34m[1mb29eed2(B[m - [32m[1m(4 weeks ago)(B[m Add discriminant_value test for cell::Color [32m- Joe Wi[23;1H[1;24r[H[23;80H(B[m[1;23r[H[23;80H[32mi(B[m :[K[1;24r[H[23;2H[K[1;23r[H[23d[32mlm(B[m
+:[K[1;24r[H[23;2H[K[1;23r[H[23d[34m|[39m * [34m[1m5876b4b(B[m - [32m[1m(4 weeks ago)(B[m Proof of concept live reloading for colors [32m- Joe Wil[23;1H[1;24r[H[23;80H(B[m[1;23r[H[23;80H[32ml(B[m :[K[1;24r[H[23;2H[K[1;23r[H[23d[32mm(B[m
+:[K[1;24r[H[23;2H[K[1;23r[H[23d* [35m|[39m [34m[1me503baf(B[m - [32m[1m(3 weeks ago)(B[m Live shader reloading is now a feature [32m- Joe Wilm[1;24r[H[23;78H(B[m[1;23r[H[23d
+:[K[1;24r[H[23;2H[K[1;23r[H[23d[35m|/[39m  
+:[K[1;24r[H[23;2H[K[1;23r[H[23d[35m|[39m * [34m[1m655e8f4(B[m - [32m[1m(4 weeks ago)(B[m WIP color management [32m- Joe Wilm(B[m[31m[1m (live-reload-[1;24r[H[23;74H(B[m[1;23r[H[23;74H[31m[1mcolors)(B[m[23;1H
+:[K[1;24r[H[23;2H[K[1;23r[H[23d[35m|/[39m  
+:[K[1;24r[H[23;2H[K[1;23r[H[23d* [34m[1mea07f03(B[m - [32m[1m(5 weeks ago)(B[m Add test exhibiting SIGBUS on my machine [32m- Joe Wilm(B[m
+[1;24r[H[23d[1;23r[H[23d:[K[1;24r[H[23;2H[K[1;23r[HM* [34m[1ma652b4a(B[m - [32m[1m(8 days ago)(B[m Rustup [32m- Joe Wilm(B[m[23;1H[K:[K[1;24r[H[23;2H[K[1;23r[HM* [34m[1m8cbd768(B[m - [32m[1m(8 days ago)(B[m Fix resize on macOS leaving screen blank [32m- Joe Wilm[1;24r[H[76C(B[m[23;1H[K[1;23r[H[23d:[K[1;24r[H[23;2H[K[1;23r[HM[32mWilm(B[m[23;1H[K:[K[1;24r[H[23;2H[K[1;23r[HM* [34m[1me426013(B[m - [32m[1m(8 days ago)(B[m Fix alacritty shutdown when shell exits on macOS [32m- Joe [1;1H[1;24r[79C(B[m[23;1H[K[1;23r[H[23d:[K[1;24r[H[23;2H[K[1;23r[HM* [34m[1m6925daa(B[m - [32m[1m(8 days ago)(B[m Fix/add some keybindings [32m- Joe Wilm[1;24r[H[23d(B[m[K[1;23r[H[23d:[K[1;24r[H[23;2H[K[1;23r[HM* [34m[1m8360ab4(B[m - [32m[1m(8 days ago)(B[m Fallback to received chars when no bindings [32m- Joe Wilm[1;24r[H[79C(B[m[23;1H[K[1;23r[H[23d:[K[1;24r[H[23;2H[K[1;23r[HM* [34m[1mcbb9167(B[m - [32m[1m(5 days ago)(B[m Redraw screen on focus [32m- Joe Wilm[1;24r[H[23d(B[m[K[1;23r[H[23d:[K[1;24r[H[23;2H[K[1;23r[HM* [34m[1mcb2bc4e(B[m - [32m[1m(4 days ago)(B[m Fix test for Cell layout [32m- Joe Wilm[1;24r[H[23d(B[m[K[1;23r[H[23d:[K[1;24r[H[23;2H[K[1;23r[HM[32mm(B[m[31m[1m (origin/master, origin/bindings-v2, origin/HEAD, master, bindings-v2)[1;24r[H
+(B[m[23d[K[1;23r[H[23d:[K[1;24r[H[23;2H[K[1;23r[HM* [34m[1md97996e(B[m - [32m[1m(4 days ago)(B[m Make bindings configurable from alacritty.yml [32m- Joe Wil[1;1H[1;24r[23d(B[m[K[1;23r[H[23d:[K[1;24r[H[23;2H[K[1;23r[HM[31m|/[39m  [23;1H[K:[K[1;24r[H[23;2H[K[1;23r[HMrom alacritty.yml [32m- Joe Wilm(B[m[23;1H[K:[K[1;24r[H[23;2H[K[1;23r[HM[31m|[39m * [34m[1m5908bde(B[m - [32m[1m(2 days ago)(B[m index on master: d97996e Make bindings configurable f[1;1H[1;24r[79C[23;1H[K[1;23r[H[23d:[K[1;24r[H[23;2H[K[1;23r[HM[31m|/[39m [33m/[39m  [23;1H[K:[K[1;24r[H[23;2H[K[1;23r[HM[31m|[39m [31m|[33m\[39m  [23;1H[K:[K[1;24r[H[23;2H[K[1;23r[HMrom alacritty.yml [32m- Joe Wilm(B[m[31m[1m (refs/stash)(B[m[23;1H[K:[K[1;24r[H[23;2H[K[1;23r[HM[31m|[39m *   [34m[1md629f72(B[m - [32m[1m(2 days ago)(B[m WIP on master: d97996e Make bindings configurable f[1;1H[1;24r[79C[23;1H[K[1;23r[H[23d:[K[1;24r[H[23;2H[K[1;23r[HM[31m[1m (HEAD -> ref-tests, origin/ref-tests)(B[m[23;1H[K:[K[1;24r[H[23;2H[K[1;23r[HM* [34m[1mbdd2181(B[m - [32m[1m(2 hours ago)(B[m Add support for recording/running ref tests [32m- Joe Wilm[1;1H[1;24r[79C(B[m[23;1H[K[1;23r[H[23d:[K[1;24r[H[23;2H[K[K[1;23r[H[23d:[K[1;24r[H[23;2H[K[K[1;23r[H[23d:[K[1;24r[H[23;2H[K[K[1;23r[H[23d:[K[1;24r[H[23;2H[K[K[1;23r[H[23d:[K[1;24r[H[23;2H[K[K[1;23r[H[23d:[K[1;24r[H[23;2H[K[K[1;23r[H[23d:[K[1;24r[H[23;2H[K[K[1;23r[H[23d:[K[1;24r[H[23;2H[K[K[1;23r[H[23d:[K[1;24r[H[23;2H[K[K[1;23r[H[23d:[K[1;24r[H[23;2H[K[K[1;23r[H[23d:[K[1;24r[H[23;2H[K[K[1;23r[H[23d:[K[1;24r[H[23;2H[K[K[1;23r[H[23d:[K[1;24r[H[23;2H

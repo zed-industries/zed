@@ -1,0 +1,8 @@
+sign-tag = true
+# Required for templates below to work
+consolidate-commits = false
+pre-release-commit-message = "[{{crate_name}}] version {{version}}"
+tag-message = "[{{crate_name}}] version {{version}}"
+tag-name = "camino-{{version}}"
+publish = false
+dependent-version = "upgrade"

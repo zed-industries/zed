@@ -1,0 +1,5 @@
+number is too big to parse
+     --> tests/parse-fail/string11.wat:1:13
+      |
+    1 | "\u{fffffffffffffffff}"
+      |             ^

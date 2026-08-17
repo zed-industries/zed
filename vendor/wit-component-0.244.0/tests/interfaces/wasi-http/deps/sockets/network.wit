@@ -1,0 +1,147 @@
+
+interface network {
+    /// An opaque resource that represents access to (a subset of) the network.
+    /// This enables context-based security for networking.
+    /// There is no need for this to map 1:1 to a physical network interface.
+    resource network;
+
+    /// Error codes.
+    ///
+    /// In theory, every API can return any error code.
+    /// In practice, API's typically only return the errors documented per API
+    /// combined with a couple of errors that are always possible:
+    /// - `unknown`
+    /// - `access-denied`
+    /// - `not-supported`
+    /// - `out-of-memory`
+    /// - `concurrency-conflict`
+    ///
+    /// See each individual API for what the POSIX equivalents are. They sometimes differ per API.
+    enum error-code {
+        // ### GENERAL ERRORS ###
+
+        /// Unknown error
+        unknown,
+
+        /// Access denied.
+        ///
+        /// POSIX equivalent: EACCES, EPERM
+        access-denied,
+
+        /// The operation is not supported.
+        ///
+        /// POSIX equivalent: EOPNOTSUPP
+        not-supported,
+
+        /// One of the arguments is invalid.
+        ///
+        /// POSIX equivalent: EINVAL
+        invalid-argument,
+
+        /// Not enough memory to complete the operation.
+        ///
+        /// POSIX equivalent: ENOMEM, ENOBUFS, EAI_MEMORY
+        out-of-memory,
+
+        /// The operation timed out before it could finish completely.
+        timeout,
+
+        /// This operation is incompatible with another asynchronous operation that is already in progress.
+        ///
+        /// POSIX equivalent: EALREADY
+        concurrency-conflict,
+
+        /// Trying to finish an asynchronous operation that:
+        /// - has not been started yet, or:
+        /// - was already finished by a previous `finish-*` call.
+        ///
+        /// Note: this is scheduled to be removed when `future`s are natively supported.
+        not-in-progress,
+
+        /// The operation has been aborted because it could not be completed immediately.
+        ///
+        /// Note: this is scheduled to be removed when `future`s are natively supported.
+        would-block,
+
+
+
+        // ### TCP & UDP SOCKET ERRORS ###
+
+        /// The operation is not valid in the socket's current state.
+        invalid-state,
+
+        /// A new socket resource could not be created because of a system limit.
+        new-socket-limit,
+
+        /// A bind operation failed because the provided address is not an address that the `network` can bind to.
+        address-not-bindable,
+
+        /// A bind operation failed because the provided address is already in use or because there are no ephemeral ports available.
+        address-in-use,
+
+        /// The remote address is not reachable
+        remote-unreachable,
+
+
+        // ### TCP SOCKET ERRORS ###
+
+        /// The connection was forcefully rejected
+        connection-refused,
+
+        /// The connection was reset.
+        connection-reset,
+
+        /// A connection was aborted.
+        connection-aborted,
+
+
+        // ### UDP SOCKET ERRORS ###
+        datagram-too-large,
+
+
+        // ### NAME LOOKUP ERRORS ###
+
+        /// Name does not exist or has no suitable associated IP addresses.
+        name-unresolvable,
+
+        /// A temporary failure in name resolution occurred.
+        temporary-resolver-failure,
+
+        /// A permanent failure in name resolution occurred.
+        permanent-resolver-failure,
+    }
+
+    enum ip-address-family {
+        /// Similar to `AF_INET` in POSIX.
+        ipv4,
+
+        /// Similar to `AF_INET6` in POSIX.
+        ipv6,
+    }
+
+    type ipv4-address = tuple<u8, u8, u8, u8>;
+    type ipv6-address = tuple<u16, u16, u16, u16, u16, u16, u16, u16>;
+
+    variant ip-address {
+        ipv4(ipv4-address),
+        ipv6(ipv6-address),
+    }
+
+    record ipv4-socket-address {
+        port: u16, // sin_port
+        address: ipv4-address, // sin_addr
+    }
+
+    record ipv6-socket-address {
+        port: u16, // sin6_port
+        flow-info: u32, // sin6_flowinfo
+        address: ipv6-address, // sin6_addr
+        scope-id: u32, // sin6_scope_id
+    }
+
+    variant ip-socket-address {
+        ipv4(ipv4-socket-address),
+        ipv6(ipv6-socket-address),
+    }
+
+}

@@ -1,0 +1,305 @@
+// Copyright 2023 LiveKit, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package livekit;
+option go_package = "github.com/livekit/protocol/livekit";
+option csharp_namespace = "LiveKit.Proto";
+option ruby_package = "LiveKit::Proto";
+
+import "livekit_models.proto";
+import "livekit_egress.proto";
+import "livekit_agent_dispatch.proto";
+
+import "logger/options.proto";
+
+// Room service that can be performed on any node
+// they are Twirp-based HTTP req/responses
+service RoomService {
+  // Creates a room with settings. Requires `roomCreate` permission.
+  // This method is optional; rooms are automatically created when clients connect to them for the first time.
+  rpc CreateRoom(CreateRoomRequest) returns (Room);
+
+  // List rooms that are active on the server. Requires `roomList` permission.
+  rpc ListRooms(ListRoomsRequest) returns (ListRoomsResponse);
+
+  // Deletes an existing room by name or id. Requires `roomCreate` permission.
+  // DeleteRoom will disconnect all participants that are currently in the room.
+  rpc DeleteRoom(DeleteRoomRequest) returns (DeleteRoomResponse);
+
+  // Lists participants in a room, Requires `roomAdmin`
+  rpc ListParticipants(ListParticipantsRequest) returns (ListParticipantsResponse);
+
+  // Get information on a specific participant, Requires `roomAdmin`
+  rpc GetParticipant(RoomParticipantIdentity) returns (ParticipantInfo);
+
+  // Removes a participant from room. Requires `roomAdmin`
+  rpc RemoveParticipant(RoomParticipantIdentity) returns (RemoveParticipantResponse);
+
+  // Mute/unmute a participant's track, Requires `roomAdmin`
+  rpc MutePublishedTrack(MuteRoomTrackRequest) returns (MuteRoomTrackResponse);
+
+  // Update participant metadata, will cause updates to be broadcasted to everyone in the room. Requires `roomAdmin`
+  rpc UpdateParticipant(UpdateParticipantRequest) returns (ParticipantInfo);
+
+  // Subscribes or unsubscribe a participant from tracks. Requires `roomAdmin`
+  rpc UpdateSubscriptions(UpdateSubscriptionsRequest) returns (UpdateSubscriptionsResponse);
+
+  // Send data over data channel to participants in a room, Requires `roomAdmin`
+  rpc SendData(SendDataRequest) returns (SendDataResponse);
+
+  // Update room metadata, will cause updates to be broadcasted to everyone in the room, Requires `roomAdmin`
+  rpc UpdateRoomMetadata (UpdateRoomMetadataRequest) returns (Room);
+
+  // Cloud-only
+  // a connected participant's track(s) to another room. Requires `roomAdmin` and `destinationRoom`. The forwarding will 
+  // stop when the participant leaves the room or `RemoveParticipant` has been called in the destination room. 
+  // A participant can be forwarded to multiple rooms. The destination room will be created if it does not exist.
+  rpc ForwardParticipant(ForwardParticipantRequest) returns (ForwardParticipantResponse);
+
+  // Cloud-only
+  // Move a connected participant to a different room. Requires `roomAdmin` and `destinationRoom`.
+  // The participant will be removed from the current room and added to the destination room.
+  // From the other observers' perspective, the participant would've disconnected from the previous room and joined the new one.
+  rpc MoveParticipant(MoveParticipantRequest) returns (MoveParticipantResponse);
+
+  rpc PerformRpc(PerformRpcRequest) returns (PerformRpcResponse);
+}
+
+message CreateRoomRequest {
+  // name of the room
+  string name = 1;
+  // configuration to use for this room parameters. Setting parameters below override the config defaults.
+  string room_preset = 12;
+  // number of seconds to keep the room open if no one joins
+  uint32 empty_timeout = 2;
+  // number of seconds to keep the room open after everyone leaves
+  uint32 departure_timeout = 10;
+  // limit number of participants that can be in a room
+  uint32 max_participants = 3;
+  // override the node room is allocated to, for debugging
+  string node_id = 4;
+  // metadata of room
+  string metadata = 5 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  // auto-egress configurations
+  RoomEgress egress = 6;
+  // playout delay of subscriber
+  uint32 min_playout_delay = 7;
+  uint32 max_playout_delay = 8;
+  // improves A/V sync when playout_delay set to a value larger than 200ms. It will disables transceiver re-use
+  // so not recommended for rooms with frequent subscription changes
+  bool sync_streams = 9;
+  // replay
+  bool replay_enabled = 13;
+
+  // Define agents that should be dispatched to this room
+  repeated RoomAgentDispatch agents = 14;
+  // NEXT-ID: 15
+}
+
+message RoomEgress {
+  RoomCompositeEgressRequest room = 1;
+  AutoParticipantEgress participant = 3;
+  AutoTrackEgress tracks = 2;
+}
+
+message RoomAgent {
+  repeated RoomAgentDispatch dispatches = 1;
+}
+
+
+message ListRoomsRequest {
+  // when set, will only return rooms with name match
+  repeated string names = 1;
+}
+
+message ListRoomsResponse {
+  repeated Room rooms = 1;
+}
+
+message DeleteRoomRequest {
+  // name of the room
+  string room = 1;
+}
+
+message DeleteRoomResponse {
+}
+
+message ListParticipantsRequest {
+  // name of the room
+  string room = 1;
+}
+
+message ListParticipantsResponse {
+  repeated ParticipantInfo participants = 1;
+}
+
+message RoomParticipantIdentity {
+  // name of the room
+  string room = 1;
+  // identity of the participant
+  string identity = 2;
+}
+
+message RemoveParticipantResponse {
+}
+
+message MuteRoomTrackRequest {
+  // name of the room
+  string room = 1;
+  string identity = 2;
+  // sid of the track to mute
+  string track_sid = 3;
+  // set to true to mute, false to unmute
+  bool muted = 4;
+}
+
+message MuteRoomTrackResponse {
+  TrackInfo track = 1;
+}
+
+message UpdateParticipantRequest {
+  string room = 1;
+  string identity = 2;
+  // metadata to update. skipping updates if left empty
+  string metadata = 3 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  // set to update the participant's permissions
+  ParticipantPermission permission = 4;
+  // display name to update
+  string name = 5 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  // attributes to update. it only updates attributes that have been set
+  // to delete attributes, set the value to an empty string
+  map<string, string> attributes = 6 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+}
+
+message UpdateSubscriptionsRequest {
+  string room = 1;
+  string identity = 2;
+  // list of sids of tracks
+  repeated string track_sids = 3;
+  // set to true to subscribe, false to unsubscribe from tracks
+  bool subscribe = 4;
+  // list of participants and their tracks
+  repeated ParticipantTracks participant_tracks = 5;
+}
+
+message UpdateSubscriptionsResponse {
+  // empty for now
+}
+
+message SendDataRequest {
+  string room = 1;
+  bytes data = 2;
+  DataPacket.Kind kind = 3;
+  // mark deprecated
+  repeated string destination_sids = 4 [deprecated=true];
+  // when set, only forward to these identities
+  repeated string destination_identities = 6;
+  optional string topic = 5;
+  // added by SDK to enable de-duping of messages, for INTERNAL USE ONLY
+  bytes nonce = 7;
+
+  // NEXT_ID: 8
+}
+
+message SendDataResponse {
+  //
+}
+
+message UpdateRoomMetadataRequest {
+  string room = 1;
+  // metadata to update. skipping updates if left empty
+  string metadata = 2 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+}
+
+message RoomConfiguration {
+  string name = 1; // Used as ID, must be unique
+  // number of seconds to keep the room open if no one joins
+  uint32 empty_timeout = 2;
+  // number of seconds to keep the room open after everyone leaves
+  uint32 departure_timeout = 3;
+  // limit number of participants that can be in a room, excluding Egress and Ingress participants
+  uint32 max_participants = 4;
+  // metadata of room
+  string metadata = 11 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  // egress
+  RoomEgress egress = 5;
+  // playout delay of subscriber
+  uint32 min_playout_delay = 7;
+  uint32 max_playout_delay = 8;
+  // improves A/V sync when playout_delay set to a value larger than 200ms. It will disables transceiver re-use
+  // so not recommended for rooms with frequent subscription changes
+  bool sync_streams = 9;
+
+  // Define agents that should be dispatched to this room
+  repeated RoomAgentDispatch agents = 10;
+
+  // NEXT_ID: 12
+}
+
+message ForwardParticipantRequest {
+  // room to forward participant from
+  string room = 1;
+  // identity of the participant to forward
+  string identity = 2;
+  // room to forward participant to
+  string destination_room = 3;
+}
+
+message ForwardParticipantResponse {
+}
+
+message MoveParticipantRequest {
+  // room to move participant from
+  string room = 1;
+  // identity of the participant to move to
+  string identity = 2;
+  // room to move participant to
+  string destination_room = 3;
+}
+
+message MoveParticipantResponse {
+}
+
+message PerformRpcRequest {
+  string room = 1;
+  string destination_identity = 2;
+  string method = 3;
+  string payload = 4;
+  uint32 response_timeout_ms = 5;
+}
+
+message PerformRpcResponse {
+  string payload = 1;
+}
+

@@ -1,0 +1,13 @@
+---
+- name: Wrong indendation in mapping
+  from: '@perlpunk'
+  tags: error mapping indent
+  fail: true
+  yaml: |
+    k1: v1
+     k2: v2
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :k1

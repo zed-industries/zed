@@ -1,0 +1,71 @@
+name: CI
+on: [push, pull_request]
+jobs:
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      # make sure all code has been formatted with rustfmt and linted with clippy
+      - name: rustfmt
+        run: cargo fmt -- --check --color always
+
+      # run clippy to verify we have no warnings
+      - run: cargo fetch
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      # check that codegen output matches committed source files
+      - name: codegen
+        run: cargo run --release -p codegen -- --check
+
+  test:
+    name: Test
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        toolchain: [1.58.1, stable, beta, nightly]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v2
+      - run: rustup update --no-self-update ${{ matrix.toolchain }}
+      - run: rustup default ${{ matrix.toolchain }}
+      - run: ./build_and_test_features.sh
+        shell: bash
+
+  test-core-simd:
+    name: Test portable simd
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        toolchain: [nightly]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v2
+      - run: rustup update --no-self-update ${{ matrix.toolchain }}
+      - run: rustup default ${{ matrix.toolchain }}
+      - run: cargo test --features core-simd
+        shell: bash
+
+  test-wasm:
+    name: Test wasm
+    strategy:
+      matrix:
+        toolchain: [stable]
+        os: [ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - run: ./build_and_test_wasm32_firefox.sh
+      - run: ./build_and_test_wasm32_chrome.sh

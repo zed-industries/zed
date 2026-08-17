@@ -1,0 +1,28 @@
+[package]
+name = "ciborium-io"
+version = "0.2.2"
+authors = ["Nathaniel McCallum <npmccallum@profian.com>"]
+license = "Apache-2.0"
+edition = "2021"
+rust-version = "1.58"
+homepage = "https://github.com/enarx/ciborium"
+repository = "https://github.com/enarx/ciborium"
+description = "Simplified Read/Write traits for no_std usage"
+readme = "README.md"
+keywords = ["io", "read", "write"]
+categories = ["data-structures", "embedded", "no-std"]
+
+[badges]
+# See https://doc.rust-lang.org/cargo/reference/manifest.html#the-badges-section
+github = { repository = "enarx/ciborium", workflow = "test" }
+#github = { repository = "enarx/ciborium", workflow = "lint" }
+maintenance = { status = "actively-developed" }
+is-it-maintained-issue-resolution = { repository = "enarx/ciborium" }
+is-it-maintained-open-issues = { repository = "enarx/ciborium" }
+
+[features]
+alloc = []
+std = ["alloc"]
+
+[package.metadata.docs.rs]
+all-features = true

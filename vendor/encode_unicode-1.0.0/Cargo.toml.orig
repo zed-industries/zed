@@ -1,0 +1,41 @@
+[package]
+name = "encode_unicode"
+keywords = ["unicode","UTF-8","UTF-16"]
+categories = ["encoding","no-std"]
+description = """
+UTF-8 and UTF-16 character types, iterators and related methods for char, u8 and u16.
+"""
+readme = "README.md"
+version = "1.0.0"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/tormol/encode_unicode"
+documentation = "https://docs.rs/encode_unicode/"
+authors = ["Torbjørn Birch Moltu <t.b.moltu@lyse.net>"]
+edition = "2021"
+
+[dependencies.ascii]
+optional = true
+version = "^1.0.0"
+default-features = false # don't need std for the parts we use
+
+[target.'cfg(unix)'.dev-dependencies]
+lazy_static = "^1.0"
+
+[dev-dependencies.minreq]
+version = "^2.6"
+features = ["https-native"]
+
+[features]
+std = []
+default = ["std"]
+
+[[bench]]
+name="length"
+required-features = ["std"]
+
+[badges.maintenance]
+status = "passively-maintained"
+# Too low activity for is-it-maintained-issue-resolution
+
+[package.metadata.docs.rs]
+features = ["ascii/std"]

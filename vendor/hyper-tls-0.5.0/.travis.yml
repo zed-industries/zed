@@ -1,0 +1,10 @@
+language: rust
+rust:
+#  - stable
+#  - beta
+  - nightly
+
+sudo: false
+
+notifications:
+  email: false

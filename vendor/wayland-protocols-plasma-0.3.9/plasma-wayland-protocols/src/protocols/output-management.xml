@@ -1,0 +1,202 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="outputmanagement">
+  <copyright><![CDATA[
+        SPDX-FileCopyrightText: 2008-2011 Kristian Høgsberg
+        SPDX-FileCopyrightText: 2010-2011 Intel Corporation
+        SPDX-FileCopyrightText: 2012-2013 Collabora, Ltd.
+        SPDX-FileCopyrightText: 2015 Sebastian Kügler <sebas@kde.org>
+
+        SPDX-License-Identifier: MIT-CMU
+        ]]></copyright>
+
+<interface name="org_kde_kwin_outputmanagement" version="4">
+    <description summary="configuration of server outputs through clients">
+    This interface enables clients to set properties of output devices for screen
+    configuration purposes via the server. To this end output devices are referenced
+    by global org_kde_kwin_outputdevice objects.
+
+    outputmanagement (wl_global)
+    --------------------------
+    request:
+    * create_configuration -> outputconfiguration (wl_resource)
+
+    outputconfiguration (wl_resource)
+    --------------------------
+    requests:
+    * enable(outputdevice, bool)
+    * mode(outputdevice, mode_id)
+    * transformation(outputdevice, flag)
+    * position(outputdevice, x, y)
+    * apply
+
+    events:
+    * applied
+    * failed
+
+    The server registers one outputmanagement object as a global object. In order
+    to configure outputs a client requests create_configuration, which provides a
+    resource referencing an outputconfiguration for one-time configuration. That
+    way the server knows which requests belong together and can group them by that.
+
+    On the outputconfiguration object the client calls for each output whether the
+    output should be enabled, which mode should be set (by referencing the mode from
+    the list of announced modes) and the output's global position. Once all outputs
+    are configured that way, the client calls apply.
+    At that point and not earlier the server should try to apply the configuration.
+    If this succeeds the server emits the applied signal, otherwise the failed
+    signal, such that the configuring client is noticed about the success of its
+    configuration request.
+
+    Through this design the interface enables atomic output configuration changes if
+    internally supported by the server.
+
+    </description>
+    <request name="create_configuration">
+        <description summary="provide outputconfiguration object for configuring outputs">
+            Request an outputconfiguration object through which the client can configure
+            output devices.
+        </description>
+        <arg name="id" type="new_id" interface="org_kde_kwin_outputconfiguration"/>
+    </request>
+
+</interface>
+
+<interface name="org_kde_kwin_outputconfiguration" version="4">
+    <description summary="configure single output devices">
+        outputconfiguration is a client-specific resource that can be used to ask
+        the server to apply changes to available output devices.
+
+        The client receives a list of output devices from the registry. When it wants
+        to apply new settings, it creates a configuration object from the
+        outputmanagement global, writes changes through this object's enable, scale,
+        transform and mode calls. It then asks the server to apply these settings in
+        an atomic fashion, for example through Linux' DRM interface.
+
+        The server signals back whether the new settings have applied successfully
+        or failed to apply. outputdevice objects are updated after the changes have been
+        applied to the hardware and before the server side sends the applied event.
+    </description>
+
+    <request name="enable">
+        <description summary="enable or disable an output">
+            Mark the output as enabled or disabled.
+        </description>
+        <arg name="outputdevice" type="object" interface="org_kde_kwin_outputdevice" summary="outputdevice to be en- or disabled"/>
+        <arg name="enable" type="int" summary="1 to enable or 0 to disable this output"/>
+    </request>
+
+    <request name="mode">
+        <description summary="switch outputdevice to mode">
+            Sets the mode for a given output by its mode size (width and height) and refresh rate.
+        </description>
+        <arg name="outputdevice" type="object" interface="org_kde_kwin_outputdevice" summary="outputdevice this mode change applies to"/>
+        <arg name="mode_id" type="int" summary="aspired mode's id"/>
+    </request>
+
+    <request name="transform">
+        <description summary="transform outputdevice">
+            Sets the transformation for a given output.
+        </description>
+        <arg name="outputdevice" type="object" interface="org_kde_kwin_outputdevice" summary="outputdevice this transformation change applies to"/>
+        <arg name="transform" type="int" summary="transform enum"/>
+    </request>
+
+    <request name="position">
+        <description summary="position output in global space">
+            Sets the position for this output device. (x,y) describe the top-left corner
+            of the output in global space, whereby the origin (0,0) of the global space
+            has to be aligned with the top-left corner of the most left and in case this
+            does not define a single one the top output.
+
+            There may be no gaps or overlaps between outputs, i.e. the outputs are
+            stacked horizontally, vertically, or both on each other.
+        </description>
+        <arg name="outputdevice" type="object" interface="org_kde_kwin_outputdevice" summary="outputdevice this position applies to"/>
+        <arg name="x" type="int" summary="position on the x-axis"/>
+        <arg name="y" type="int" summary="position on the y-axis"/>
+    </request>
+
+    <request name="scale">
+        <description summary="set scaling factor of this output">
+            Sets the scaling factor for this output device.
+        </description>
+        <arg name="outputdevice" type="object" interface="org_kde_kwin_outputdevice" summary="outputdevice this mode change applies to"/>
+        <arg name="scale" type="int" summary="scaling factor"/>
+    </request>
+
+    <request name="apply">
+        <description summary="apply configuration changes to all output devices">
+            Asks the server to apply property changes requested through this outputconfiguration
+            object to all outputs on the server side.
+        </description>
+    </request>
+
+    <event name="applied">
+        <description summary="configuration changes have been applied">
+            Sent after the server has successfully applied the changes.
+            .
+        </description>
+    </event>
+
+    <event name="failed">
+        <description summary="configuration changes failed to apply">
+            Sent if the server rejects the changes or failed to apply them.
+        </description>
+    </event>
+
+    <request name="scalef" since="2">
+        <description summary="set scaling factor of this output">
+            Sets the scaling factor for this output device.
+            Sending both scale and scalef is undefined.
+        </description>
+        <arg name="outputdevice" type="object" interface="org_kde_kwin_outputdevice" summary="outputdevice this mode change applies to"/>
+        <arg name="scale" type="fixed" summary="scaling factor"/>
+    </request>
+
+    <request name="colorcurves" since="2">
+        <description summary="set output color curves">
+            Set color curves of output devices through RGB color ramps. Allows color
+            correction of output device from user space.
+
+            These are the raw values. A compositor might opt to adjust these values
+            internally, for example to shift color temperature at night.
+        </description>
+        <arg name="outputdevice" type="object" interface="org_kde_kwin_outputdevice" summary="outputdevice curves apply to"/>
+        <arg name="red" type="array" summary="red color ramp"/>
+        <arg name="green" type="array" summary="green color ramp"/>
+        <arg name="blue" type="array" summary="blue color ramp"/>
+    </request>
+
+    <request name="destroy" type="destructor" since="2">
+        <description summary="release the outputconfiguration object"/>
+    </request>
+
+    <request name="overscan" since="3">
+        <description summary="set overscan value">
+            Set the overscan value of this output device with a value in percent.
+        </description>
+        <arg name="outputdevice" type="object" interface="org_kde_kwin_outputdevice" summary="outputdevice overscan applies to"/>
+        <arg name="overscan" type="uint" summary="overscan value"/>
+    </request>
+
+    <enum name="vrr_policy" since="4">
+        <description summary="describes vrr policy">
+            Describes when the compositor may employ variable refresh rate
+        </description>
+        <entry name="never" value="0"/>
+        <entry name="always" value="1"/>
+        <entry name="automatic" value="2"/>
+    </enum>
+
+    <request name="set_vrr_policy" since="4">
+        <description summary="set the VRR policy">
+            Set what policy the compositor should employ regarding its use of
+            variable refresh rate.
+        </description>
+        <arg name="outputdevice" type="object" interface="org_kde_kwin_outputdevice" summary="outputdevice this VRR policy applies to"/>
+        <arg name="policy" type="uint" enum="vrr_policy" summary="the vrr policy to apply"/>
+    </request>
+
+</interface>
+
+</protocol>

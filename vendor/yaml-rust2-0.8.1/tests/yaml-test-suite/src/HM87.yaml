@@ -1,0 +1,37 @@
+---
+- name: Scalars in flow start with syntax char
+  from: '@ingydotnet'
+  tags: flow scalar
+  yaml: |
+    [:x]
+  tree: |
+    +STR
+     +DOC
+      +SEQ []
+       =VAL ::x
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      ":x"
+    ]
+  dump: |
+    - :x
+
+- yaml: |
+    [?x]
+  tree: |
+    +STR
+     +DOC
+      +SEQ []
+       =VAL :?x
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      "?x"
+    ]
+  dump: |
+    - ?x

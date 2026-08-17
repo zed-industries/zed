@@ -1,0 +1,44 @@
+package foo:foo;
+
+
+world union-world {
+  include test;
+  include a-different-world;
+  include the-world;
+}
+
+interface foo {}
+interface bar {}
+
+world the-world {
+  import foo;
+  import bar;
+  import baz: interface {
+    foo: func();
+  }
+  export foo;
+  export bar;
+  export baz2: interface {
+    foo: func();
+  }
+}
+
+world a-different-world {
+  import foo;
+}
+
+interface i1 {
+  type t = u32;
+}
+interface i2 {
+  use i1.{t};
+}
+interface i3 {
+  use i2.{t};
+}
+
+world test {
+  import i3;
+  export i1;
+  export i3;
+}

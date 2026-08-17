@@ -1,0 +1,88 @@
+[package]
+name = "simplecss"
+version = "0.2.2"
+license = "Apache-2.0 OR MIT"
+edition = "2021"
+description = "A simple CSS 2 parser and selector."
+repository = "https://github.com/linebender/simplecss"
+keywords = ["css", "parser", "selector"]
+categories = ["parser-implementations"]
+readme = "README.md"
+# Keep in sync with RUST_MIN_VER in .github/workflows/ci.yml and with the relevant README.md files.
+# and with the MSRV in the `Unreleased` section of CHANGELOG.md.
+rust-version = "1.65"
+exclude = [".github", ".clippy.toml", ".gitignore", ".typos.toml"]
+
+[lints]
+rust.unsafe_code = "forbid"
+
+# LINEBENDER LINT SET - Cargo.toml - v3
+# See https://linebender.org/wiki/canonical-lints/
+rust.keyword_idents_2024 = "forbid"
+rust.non_ascii_idents = "forbid"
+rust.non_local_definitions = "forbid"
+rust.unsafe_op_in_unsafe_fn = "forbid"
+
+rust.elided_lifetimes_in_paths = "warn"
+rust.let_underscore_drop = "warn"
+rust.missing_debug_implementations = "warn"
+rust.missing_docs = "warn"
+rust.single_use_lifetimes = "warn"
+rust.trivial_numeric_casts = "warn"
+rust.unexpected_cfgs = "warn"
+rust.unit_bindings = "warn"
+rust.unnameable_types = "warn"
+rust.unreachable_pub = "warn"
+rust.unused_import_braces = "warn"
+rust.unused_lifetimes = "warn"
+rust.unused_macro_rules = "warn"
+rust.unused_qualifications = "warn"
+rust.variant_size_differences = "warn"
+
+clippy.too_many_arguments = "allow"
+
+clippy.allow_attributes = "warn"
+clippy.allow_attributes_without_reason = "warn"
+clippy.cast_possible_truncation = "warn"
+clippy.collection_is_never_read = "warn"
+clippy.dbg_macro = "warn"
+clippy.debug_assert_with_mut_call = "warn"
+clippy.doc_markdown = "warn"
+clippy.exhaustive_enums = "warn"
+clippy.fn_to_numeric_cast_any = "warn"
+clippy.infinite_loop = "warn"
+clippy.large_include_file = "warn"
+clippy.large_stack_arrays = "warn"
+clippy.match_same_arms = "warn"
+clippy.mismatching_type_param_order = "warn"
+clippy.missing_assert_message = "warn"
+clippy.missing_errors_doc = "warn"
+clippy.missing_fields_in_debug = "warn"
+clippy.missing_panics_doc = "warn"
+clippy.partial_pub_fields = "warn"
+clippy.return_self_not_must_use = "warn"
+clippy.same_functions_in_if_condition = "warn"
+clippy.semicolon_if_nothing_returned = "warn"
+clippy.shadow_unrelated = "warn"
+clippy.should_panic_without_expect = "warn"
+clippy.todo = "warn"
+clippy.unseparated_literal_suffix = "warn"
+clippy.use_self = "warn"
+clippy.wildcard_imports = "warn"
+
+clippy.cargo_common_metadata = "warn"
+clippy.negative_feature_names = "warn"
+clippy.redundant_feature_names = "warn"
+clippy.wildcard_dependencies = "warn"
+# END LINEBENDER LINT SET
+
+[features]
+default = ["std"]
+std = ["log/std"]
+
+[dependencies]
+log = { version = "0.4.22", default-features = false }
+
+[dev-dependencies]
+env_logger = { version = "0.11.6", default-features = false }
+roxmltree = "0.20.0"

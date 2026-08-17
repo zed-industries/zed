@@ -1,0 +1,8 @@
+
+;; Move helpers ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(decl fpu_move_128 (Reg) Reg)
+(rule (fpu_move_128 src)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.FpuMove128 dst src))))
+        (writable_reg_to_reg dst)))
+

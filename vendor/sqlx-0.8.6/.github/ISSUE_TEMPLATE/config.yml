@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Enabling some optional features adds unexpected crates to Cargo.lock
+    url: https://github.com/launchbadge/sqlx/issues/3211
+    about: See this issue.
+  - name: I have a question or problem
+    url: https://github.com/launchbadge/sqlx/tree/main/FAQ.md
+    about: See our FAQ.
+  - name: I have a question or problem not covered in the FAQ
+    url: https://github.com/launchbadge/sqlx/discussions/new?category=q-a
+    about: Open a Q&A discussion.
+  - name: Join SQLx's Discord
+    url: https://discord.gg/hPm3WqA
+    about: Join our Discord server for help, discussions and release announcements.

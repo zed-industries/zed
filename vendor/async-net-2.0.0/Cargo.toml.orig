@@ -1,0 +1,22 @@
+[package]
+name = "async-net"
+# When publishing a new version:
+# - Update CHANGELOG.md
+# - Create "v2.x.y" git tag
+version = "2.0.0"
+authors = ["Stjepan Glavina <stjepang@gmail.com>"]
+edition = "2021"
+rust-version = "1.63"
+description = "Async networking primitives for TCP/UDP/Unix communication"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/smol-rs/async-net"
+homepage = "https://github.com/smol-rs/async-net"
+documentation = "https://docs.rs/async-net"
+keywords = ["networking", "uds", "mio", "reactor", "std"]
+categories = ["asynchronous", "network-programming", "os"]
+exclude = ["/.*"]
+
+[dependencies]
+async-io = "2.0.0"
+blocking = "1.0.0"
+futures-lite = "2.0.0"

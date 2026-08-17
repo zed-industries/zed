@@ -1,0 +1,44 @@
+name: test
+
+on: [push, pull_request]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab
+
+      - name: Install Rust toolchain
+        run: rustup default nightly
+
+      - name: Install cargo-hack
+        run: cargo install cargo-hack
+
+      - name: Powerset
+        working-directory: ./test
+        run: cargo hack test --feature-powerset
+
+      - name: Minimal Versions
+        working-directory: ./test
+        run: cargo hack test --feature-powerset -Z minimal-versions
+
+  msrv:
+    name: Build (MSRV)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain add 1.61.0 --profile minimal
+          rustup default 1.61.0
+
+      - name: Check
+        working-directory: ./test
+        run: cargo check --all-features

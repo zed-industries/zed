@@ -1,0 +1,16 @@
+[package]
+name = "xmlparser"
+version = "0.13.6"
+authors = ["Yevhenii Reizner <razrfalcon@gmail.com>"]
+categories = ["parser-implementations"]
+description = "Pull-based, zero-allocation XML parser."
+documentation = "https://docs.rs/xmlparser/"
+keywords = ["xml", "parser", "tokenizer"]
+license = "MIT/Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/RazrFalcon/xmlparser"
+edition = "2018"
+
+[features]
+default = ["std"]
+std = []

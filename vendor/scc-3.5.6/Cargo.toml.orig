@@ -1,0 +1,51 @@
+[package]
+name = "scc"
+description = "A collection of high-performance asynchronous/concurrent containers with both asynchronous and synchronous interfaces"
+documentation = "https://docs.rs/scc"
+version = "3.5.6"
+authors = ["wvwwvwwv <wvwwvwwv@me.com>"]
+edition = "2024"
+rust-version = "1.85.0"
+readme = "README.md"
+repository = "https://codeberg.org/wvwwvwwv/scalable-concurrent-containers/"
+license = "Apache-2.0"
+categories = ["asynchronous", "caching", "concurrency", "data-structures"]
+keywords = ["async", "cache", "concurrent", "hashmap", "tree"]
+
+[workspace]
+members = [".", "examples", "extended_benches", "extended_tests"]
+
+[dependencies]
+equivalent = { version = "1.0", optional = true }
+loom = { version = "0.7", optional = true, features = ["checkpoint"] }
+saa = "5.4"
+sdd = "4.6"
+serde = { version = "1.0", optional = true }
+
+[features]
+loom = ["dep:loom", "saa/loom", "sdd/loom"]
+
+[dev-dependencies]
+criterion = { version = "0.8", features = ["async_futures"] }
+fnv = "1.0"
+futures = "0.3"
+proptest = "1.10"
+serde_test = "1.0"
+static_assertions = "1.1"
+tokio = { version = "1.49", features = ["full"] }
+
+[[bench]]
+name = "hash_map"
+harness = false
+
+[[bench]]
+name = "hash_index"
+harness = false
+
+[[bench]]
+name = "hash_cache"
+harness = false
+
+[[bench]]
+name = "tree_index"
+harness = false

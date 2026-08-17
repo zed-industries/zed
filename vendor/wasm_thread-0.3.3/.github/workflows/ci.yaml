@@ -1,0 +1,28 @@
+on: [push, pull_request]
+
+jobs:
+  test:
+    # Prevent running double CI when pull request is on the same repository
+    if: |
+      (github.event_name != 'pull_request')
+      || (github.event.pull_request.head.repo.id != github.event.pull_request.base.repo.id)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Rustfmt
+        run: cargo fmt --all --check
+
+      - name: Test native
+        run: cargo test
+
+      - name: Test wasm
+        run: ./test_wasm.sh
+
+      - name: Build docs
+        env:
+          RUSTDOCFLAGS: "-Dwarnings"
+        run: cargo doc --no-deps --lib --target wasm32-unknown-unknown

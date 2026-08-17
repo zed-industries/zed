@@ -1,0 +1,62 @@
+[package]
+name = "tracing-tracy"
+version = "0.11.4"
+authors = ["Simonas Kazlauskas <tracing-tracy@kazlauskas.me>"]
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+readme = "README.mkd"
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/tracing-tracy"
+description = """
+Inspect tracing-enabled Rust applications with Tracy
+"""
+
+[lib]
+harness = false
+bench = true
+
+[dependencies]
+tracing-core = { version = "0.1", default-features = false, features = ["std"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "registry"] }
+client = { package = "tracy-client", path = "../tracy-client", version = ">=0.17.0,<0.19.0", default-features = false }
+
+[dev-dependencies]
+tracing = { version = "0.1", default-features = false, features = ["std"] }
+tokio = { version = "1", features = ["full"] }
+tracing-attributes =  { version = "0.1"}
+tracing-futures = { version = "0.2" }
+futures = "0.3"
+criterion = "0.5"
+
+[features]
+# Refer to FEATURES.mkd for documentation on features.
+default = [ "enable", "system-tracing", "context-switch-tracing", "sampling", "code-transfer",
+            "broadcast", "callstack-inlines" ]
+broadcast = ["client/broadcast"]
+code-transfer = ["client/code-transfer"]
+context-switch-tracing = ["client/context-switch-tracing"]
+enable = ["client/enable"]
+fibers = ["client/fibers"]
+timer-fallback = ["client/timer-fallback"]
+ondemand = ["client/ondemand"]
+only-ipv4 = ["client/only-ipv4"]
+only-localhost = ["client/only-localhost"]
+sampling = ["client/sampling"]
+system-tracing = ["client/system-tracing"]
+callstack-inlines = ["client/callstack-inlines"]
+manual-lifetime = ["client/manual-lifetime"]
+delayed-init = ["client/delayed-init"]
+flush-on-exit = ["client/flush-on-exit"]
+demangle = ["client/demangle"]
+verify = ["client/verify"]
+debuginfod = ["client/debuginfod"]
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--cfg", "tracing_tracy_docs"]
+all-features = true
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ['cfg(tracing_tracy_docs)']

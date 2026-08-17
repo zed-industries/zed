@@ -1,0 +1,8 @@
+package a:a;
+
+world a {
+  import b:b/b;
+  import c:c/c;
+  import d:d/d;
+  import e:e/e;
+}

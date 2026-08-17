@@ -1,0 +1,817 @@
+[
+  {
+    "Description": "Set substitutions for similar/metric-compatible families"
+  },
+  {
+    "Alias": {
+      "alias": "Nimbus Sans L",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Helvetica"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Nimbus Sans",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Helvetica"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "TeX Gyre Heros",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Helvetica"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Nimbus Sans Narrow",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Helvetica Narrow"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "TeX Gyre Heros Cn",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Helvetica Narrow"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Nimbus Roman No9 L",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Times"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Nimbus Roman",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Times"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "TeX Gyre Termes",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Times"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Nimbus Mono L",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Courier"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Nimbus Mono",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Courier"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Nimbus Mono PS",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Courier"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "TeX Gyre Cursor",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Courier"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Avant Garde",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "ITC Avant Garde Gothic"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "URW Gothic L",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "ITC Avant Garde Gothic"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "URW Gothic",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "ITC Avant Garde Gothic"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "TeX Gyre Adventor",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "ITC Avant Garde Gothic"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Bookman",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "ITC Bookman"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "URW Bookman L",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "ITC Bookman"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Bookman URW",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "ITC Bookman"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "URW Bookman",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "ITC Bookman"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "TeX Gyre Bonum",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "ITC Bookman"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Bookman Old Style",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "ITC Bookman"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Zapf Chancery",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "ITC Zapf Chancery"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "URW Chancery L",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "ITC Zapf Chancery"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Chancery URW",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "ITC Zapf Chancery"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Z003",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "ITC Zapf Chancery"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "TeX Gyre Chorus",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "ITC Zapf Chancery"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "URW Palladio L",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Palatino"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Palladio URW",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Palatino"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "P052",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Palatino"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "TeX Gyre Pagella",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Palatino"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Palatino Linotype",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Palatino"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Century Schoolbook L",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "New Century Schoolbook"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Century SchoolBook URW",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "New Century Schoolbook"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "C059",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "New Century Schoolbook"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "TeX Gyre Schola",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "New Century Schoolbook"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Century Schoolbook",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "New Century Schoolbook"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Arimo",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Arial"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Liberation Sans",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Arial"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Liberation Sans Narrow",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Arial Narrow"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Albany",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Arial"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Albany AMT",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Arial"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Tinos",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Times New Roman"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Liberation Serif",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Times New Roman"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Thorndale",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Times New Roman"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Thorndale AMT",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Times New Roman"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Cousine",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Courier New"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Liberation Mono",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Courier New"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Cumberland",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Courier New"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Cumberland AMT",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Courier New"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Gelasio",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Georgia"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Caladea",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Cambria"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Carlito",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Calibri"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "SymbolNeu",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Symbol"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Helvetica",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Arial"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Helvetica Narrow",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Arial Narrow"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Times",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Times New Roman"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Courier",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Courier New"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Arial",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Helvetica"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Arial Narrow",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Helvetica Narrow"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Times New Roman",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Times"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Courier New",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "Courier"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Helvetica",
+      "prefer": [],
+      "accept": [
+        "TeX Gyre Heros"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Helvetica Narrow",
+      "prefer": [],
+      "accept": [
+        "TeX Gyre Heros Cn"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Times",
+      "prefer": [],
+      "accept": [
+        "TeX Gyre Termes"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Courier",
+      "prefer": [],
+      "accept": [
+        "TeX Gyre Cursor"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Courier Std",
+      "prefer": [],
+      "accept": [
+        "Courier"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "ITC Avant Garde Gothic",
+      "prefer": [],
+      "accept": [
+        "TeX Gyre Adventor"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "ITC Bookman",
+      "prefer": [],
+      "accept": [
+        "Bookman Old Style",
+        "TeX Gyre Bonum"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "ITC Zapf Chancery",
+      "prefer": [],
+      "accept": [
+        "TeX Gyre Chorus"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Palatino",
+      "prefer": [],
+      "accept": [
+        "Palatino Linotype",
+        "TeX Gyre Pagella"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "New Century Schoolbook",
+      "prefer": [],
+      "accept": [
+        "Century Schoolbook",
+        "TeX Gyre Schola"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Arial",
+      "prefer": [],
+      "accept": [
+        "Arimo",
+        "Liberation Sans",
+        "Albany",
+        "Albany AMT"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Arial Narrow",
+      "prefer": [],
+      "accept": [
+        "Liberation Sans Narrow"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Times New Roman",
+      "prefer": [],
+      "accept": [
+        "Tinos",
+        "Liberation Serif",
+        "Thorndale",
+        "Thorndale AMT"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Courier New",
+      "prefer": [],
+      "accept": [
+        "Cousine",
+        "Liberation Mono",
+        "Cumberland",
+        "Cumberland AMT"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Georgia",
+      "prefer": [],
+      "accept": [
+        "Gelasio"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Cambria",
+      "prefer": [],
+      "accept": [
+        "Caladea"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Calibri",
+      "prefer": [],
+      "accept": [
+        "Carlito"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Symbol",
+      "prefer": [],
+      "accept": [
+        "SymbolNeu"
+      ],
+      "default": []
+    }
+  }
+]

@@ -1,0 +1,234 @@
+[
+  {
+    "type": "comment",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "file_path",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "go_directive",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "go_version",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "go_version",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "interpreted_string_literal",
+          "named": true
+        },
+        {
+          "type": "raw_string_literal",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "interpreted_string_literal",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "escape_sequence",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "module_path",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "interpreted_string_literal",
+          "named": true
+        },
+        {
+          "type": "raw_string_literal",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "replace_directive",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "replace_spec",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "replace_spec",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "file_path",
+          "named": true
+        },
+        {
+          "type": "module_path",
+          "named": true
+        },
+        {
+          "type": "version",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "source_file",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "go_directive",
+          "named": true
+        },
+        {
+          "type": "replace_directive",
+          "named": true
+        },
+        {
+          "type": "use_directive",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "use_directive",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "use_spec",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "use_spec",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "file_path",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "version",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "interpreted_string_literal",
+          "named": true
+        },
+        {
+          "type": "raw_string_literal",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "\n",
+    "named": false
+  },
+  {
+    "type": "\"",
+    "named": false
+  },
+  {
+    "type": "(",
+    "named": false
+  },
+  {
+    "type": ")",
+    "named": false
+  },
+  {
+    "type": "//",
+    "named": false
+  },
+  {
+    "type": "=>",
+    "named": false
+  },
+  {
+    "type": "escape_sequence",
+    "named": true
+  },
+  {
+    "type": "go",
+    "named": false
+  },
+  {
+    "type": "raw_string_literal",
+    "named": true
+  },
+  {
+    "type": "replace",
+    "named": false
+  },
+  {
+    "type": "use",
+    "named": false
+  }
+]

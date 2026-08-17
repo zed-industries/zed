@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<node>
+  <interface name="org.a11y.atspi.EditableText">
+
+    <method name="SetTextContents">
+      <arg direction="in" name="newContents" type="s"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+    <method name="InsertText">
+      <arg direction="in" name="position" type="i"/>
+      <arg direction="in" name="text" type="s"/>
+      <arg direction="in" name="length" type="i"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+    <method name="CopyText">
+      <arg direction="in" name="startPos" type="i"/>
+      <arg direction="in" name="endPos" type="i"/>
+    </method>
+
+    <method name="CutText">
+      <arg direction="in" name="startPos" type="i"/>
+      <arg direction="in" name="endPos" type="i"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+    <method name="DeleteText">
+      <arg direction="in" name="startPos" type="i"/>
+      <arg direction="in" name="endPos" type="i"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+    <method name="PasteText">
+      <arg direction="in" name="position" type="i"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+  </interface>
+</node>

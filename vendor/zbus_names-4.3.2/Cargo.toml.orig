@@ -1,0 +1,45 @@
+[package]
+name = "zbus_names"
+version = "4.3.2"
+authors = ["Zeeshan Ali Khan <zeeshanak@gnome.org>"]
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+description = "A collection of D-Bus bus names types"
+repository = { workspace = true }
+keywords = ["D-Bus", "DBus", "IPC"]
+license = { workspace = true }
+categories = ["os::unix-apis"]
+readme = "README.md"
+
+[dependencies]
+zvariant = { path = "../zvariant", features = [
+    "enumflags2",
+], version = "5.10.1" }
+
+serde.workspace = true
+winnow.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[lib]
+bench = false
+
+[[bench]]
+name = "benchmarks"
+harness = false
+
+[package.metadata.docs.rs]
+all-features = true
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-gnu",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-freebsd",
+    "x86_64-unknown-netbsd",
+    "aarch64-linux-android",
+]
+
+[lints]
+workspace = true

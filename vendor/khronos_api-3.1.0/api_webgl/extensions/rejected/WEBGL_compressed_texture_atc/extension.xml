@@ -1,0 +1,112 @@
+<?xml version="1.0"?>
+
+<rejected href="rejected/WEBGL_compressed_texture_atc/">
+  <name>WEBGL_compressed_texture_atc</name>
+  <contact>
+    <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL working group</a> (public_webgl 'at' khronos.org)
+  </contact>
+  <contributors>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+  <number>12</number>
+  <depends>
+    <api version="1.0"/>
+  </depends>
+  <overview>
+    <p>
+      This extension exposes the compressed texture formats defined in the 
+      <a href="http://www.khronos.org/registry/gles/extensions/AMD/AMD_compressed_ATC_texture.txt">
+      AMD_compressed_ATC_texture</a> OpenGL extension to WebGL.
+    </p>
+    <features>
+      <feature>
+        Compression formats <code>COMPRESSED_RGB_ATC_WEBGL</code>,
+        <code>COMPRESSED_RGBA_ATC_EXPLICIT_ALPHA_WEBGL</code>, and
+        <code>COMPRESSED_RGBA_ATC_INTERPOLATED_ALPHA_WEBGL</code> may be passed to
+        the <code>compressedTexImage2D</code> and <code>compressedTexSubImage2D</code> entry points.
+
+        These formats correspond to the 3 formats defined in the AMD_compressed_ATC_texture OpenGL
+        extension. Although the enum names are changed, their numeric values are the same. The correspondence
+        is given by this table:
+        <table>
+          <tr>
+            <th>WebGL format enum</th>
+            <th>OpenGL format enum</th>
+            <th>Numeric value</th>
+          </tr>
+          <tr>
+            <td>COMPRESSED_RGB_ATC_WEBGL</td>
+            <td>ATC_RGB_AMD</td>
+            <td>0x8C92</td>
+          </tr>
+          <tr>
+            <td>COMPRESSED_RGBA_ATC_EXPLICIT_ALPHA_WEBGL</td>
+            <td>ATC_RGBA_EXPLICIT_ALPHA_AMD</td>
+            <td>0x8C93</td>
+          </tr>
+          <tr>
+            <td>COMPRESSED_RGBA_ATC_INTERPOLATED_ALPHA_WEBGL</td>
+            <td>ATC_RGBA_INTERPOLATED_ALPHA_AMD</td>
+            <td>0x87EE</td>
+          </tr>
+        </table>
+      </feature>
+      <feature>
+        Calling <code>getParameter</code> with the argument <code>COMPRESSED_TEXTURE_FORMATS</code>
+        will include the 3 formats from this specification.
+      </feature>
+      <feature>
+        <p>The following format-specific restrictions must be enforced:</p>
+        <dl>
+          <dt>COMPRESSED_RGB_ATC_WEBGL</dt>
+          <dd><p>The <code>byteLength</code> of the ArrayBufferView, <code>pixels</code>, passed to
+          <code>compressedTexImage2D</code>, must be equal to the following number of bytes:</p>
+          <blockquote><code>
+            floor((width + 3) / 4) * floor((height + 3) / 4) * 8
+          </code></blockquote>
+          <p>If it is not, an <code>INVALID_VALUE</code> error is generated.</p>
+          </dd>
+
+          <dt>COMPRESSED_RGBA_ATC_EXPLICIT_ALPHA_WEBGL</dt>
+          <dt>COMPRESSED_RGBA_ATC_INTERPOLATED_ALPHA_WEBGL</dt>
+          <dd><p>The <code>byteLength</code> of the ArrayBufferView, <code>pixels</code>, passed to
+          <code>compressedTexImage2D</code>, must be equal to the following number of bytes:</p>
+          <blockquote><code>
+            floor((width + 3) / 4) * floor((height + 3) / 4) * 16
+          </code></blockquote>
+          <p>If it is not, an <code>INVALID_VALUE</code> error is generated.</p>
+          </dd>
+        </dl>
+      </feature>
+    </features>
+  </overview>
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface WEBGL_compressed_texture_atc {
+    /* Compressed Texture Formats */
+    const GLenum COMPRESSED_RGB_ATC_WEBGL                     = 0x8C92;
+    const GLenum COMPRESSED_RGBA_ATC_EXPLICIT_ALPHA_WEBGL     = 0x8C93;
+    const GLenum COMPRESSED_RGBA_ATC_INTERPOLATED_ALPHA_WEBGL = 0x87EE;
+};
+  </idl>
+  <history>
+    <revision date="2012/09/11">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2013/07/03">
+      <change>Clarified that length of ArrayBufferView is actually byteLength.</change>
+    </revision>
+    <revision date="2014/04/17">
+      <change>Removed reference to compressedTexSubImage2D. This format can only be used with compressedTexImage2D.</change>
+    </revision>
+    <revision date="2014/06/27">
+      <change>Moved to community approved after discussion on public_webgl list.</change>
+    </revision>
+    <revision date="2014/07/15">
+      <change>Added NoInterfaceObject extended attribute.</change>
+    </revision>
+    <revision date="2018/04/25">
+      <change>Moved to rejected status at Khronos Montreal face-to-face meeting.</change>
+    </revision>
+  </history>
+</rejected>

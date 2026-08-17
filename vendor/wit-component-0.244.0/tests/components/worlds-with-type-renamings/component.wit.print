@@ -1,0 +1,8 @@
+package root:component;
+
+world root {
+  import foo:foo/i;
+  use foo:foo/i.{some-type as other-name};
+
+  export foo:foo/i;
+}

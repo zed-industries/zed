@@ -1,0 +1,20 @@
+---
+- name: Spec Example 2.14. In the folded scalars, newlines become spaces
+  from: http://www.yaml.org/spec/1.2/spec.html#id2761032
+  tags: spec folded scalar
+  yaml: |
+    --- >
+      Mark McGwire's
+      year was crippled
+      by a knee injury.
+  tree: |
+    +STR
+     +DOC ---
+      =VAL >Mark McGwire's year was crippled by a knee injury.\n
+     -DOC
+    -STR
+  json: |
+    "Mark McGwire's year was crippled by a knee injury.\n"
+  dump: |
+    --- >
+      Mark McGwire's year was crippled by a knee injury.

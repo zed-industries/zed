@@ -1,0 +1,12 @@
+---
+- name: Flow sequence with invalid comma at the beginning
+  from: '@perlpunk'
+  tags: error flow sequence
+  fail: true
+  yaml: |
+    ---
+    [ , a, b, c ]
+  tree: |
+    +STR
+     +DOC ---
+      +SEQ []

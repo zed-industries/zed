@@ -1,0 +1,35 @@
+framework = "CoreData"
+crate = "objc2-core-data"
+required-dependencies = ["objc2-foundation"]
+macos = "10.4"
+maccatalyst = "13.0"
+ios = "3.0"
+tvos = "9.0"
+watchos = "2.0"
+visionos = "1.0"
+
+# Has `error:` parameter, but returns NSInteger (where 0 means error)
+class.NSManagedObjectContext.methods."countForFetchRequest:error:".skipped = true
+
+# Defined in multiple files
+static.NSErrorMergePolicy.skipped = true
+static.NSMergeByPropertyObjectTrumpMergePolicy.skipped = true
+static.NSMergeByPropertyStoreTrumpMergePolicy.skipped = true
+static.NSOverwriteMergePolicy.skipped = true
+static.NSRollbackMergePolicy.skipped = true
+
+# Uses `NSDiffableDataSourceSnapshot`, which is defined in AppKit
+protocol.NSFetchedResultsControllerDelegate.methods."controller:didChangeContentWithSnapshot:".skipped = true
+
+# Needs stuff from CloudKit
+class.NSPersistentCloudKitContainerOptions.methods.databaseScope.skipped = true
+class.NSPersistentCloudKitContainerOptions.methods."setDatabaseScope:".skipped = true
+class.NSPersistentCloudKitContainer.methods."recordForManagedObjectID:".skipped = true
+class.NSPersistentCloudKitContainer.methods."recordsForManagedObjectIDs:".skipped = true
+class.NSPersistentCloudKitContainer.methods."recordIDForManagedObjectID:".skipped = true
+class.NSPersistentCloudKitContainer.methods."recordIDsForManagedObjectIDs:".skipped = true
+
+# Needs stuff from CoreSpotlight
+class.NSCoreDataCoreSpotlightDelegate.methods."attributeSetForObject:".skipped = true
+class.NSCoreDataCoreSpotlightDelegate.methods."searchableIndex:reindexAllSearchableItemsWithAcknowledgementHandler:".skipped = true
+class.NSCoreDataCoreSpotlightDelegate.methods."searchableIndex:reindexSearchableItemsWithIdentifiers:acknowledgementHandler:".skipped = true

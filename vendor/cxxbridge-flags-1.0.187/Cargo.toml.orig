@@ -1,0 +1,26 @@
+[package]
+name = "cxxbridge-flags"
+version = "1.0.187"
+authors = ["David Tolnay <dtolnay@gmail.com>"]
+categories = ["development-tools::ffi", "compilers"]
+description = "Compiler configuration of the `cxx` crate (implementation detail)"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/dtolnay/cxx"
+rust-version = "1.87"
+
+[features]
+default = [] # c++11
+"c++14" = []
+"c++17" = []
+"c++20" = []
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+rustdoc-args = [
+    "--generate-link-to-definition",
+    "--generate-macro-expansion",
+    "--extern-html-root-url=core=https://doc.rust-lang.org",
+    "--extern-html-root-url=alloc=https://doc.rust-lang.org",
+    "--extern-html-root-url=std=https://doc.rust-lang.org",
+]

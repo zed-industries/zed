@@ -1,0 +1,26 @@
+[package]
+name = "serde_fmt"
+version = "1.0.3"
+authors = ["Ashley Mannix <ashleymannix@live.com.au>"]
+edition = "2018"
+description = "Write any serde::Serialize using the standard formatting APIs"
+documentation = "https://docs.rs/serde_fmt"
+repository = "https://github.com/KodrAus/serde_fmt.git"
+readme = "README.md"
+exclude = [
+    ".github"
+]
+license = "Apache-2.0 OR MIT"
+keywords = ["serialization", "no_std"]
+categories = ["encoding", "no-std"]
+
+[features]
+# Support the standard library
+std = ["serde/std"]
+
+[dependencies.serde]
+version = "1.0.104"
+default-features = false
+
+[dev-dependencies.serde_derive]
+version = "1"

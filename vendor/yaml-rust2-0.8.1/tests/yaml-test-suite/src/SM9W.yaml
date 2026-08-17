@@ -1,0 +1,34 @@
+---
+- name: Single character streams
+  from: '@ingydotnet'
+  tags: sequence
+  yaml: |
+    -∎
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       =VAL :
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [null]
+  dump: |
+    -
+
+- tags: mapping
+  yaml: |
+    :∎
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :
+       =VAL :
+      -MAP
+     -DOC
+    -STR
+  json: null
+  dump: |
+    :

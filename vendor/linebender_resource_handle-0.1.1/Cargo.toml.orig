@@ -1,0 +1,84 @@
+[package]
+name = "linebender_resource_handle"
+version = "0.1.1"
+license = "Apache-2.0 OR MIT"
+edition = "2021"
+description = "Raw resource handle for immutable blobs with dynamic lifetimes."
+keywords = ["graphics"]
+categories = ["graphics"]
+repository = "https://github.com/linebender/raw_resource_handle"
+# Keep in sync with RUST_MIN_VER in .github/workflows/ci.yml, with the relevant README.md files
+# and with the MSRV in the `Unreleased` section of CHANGELOG.md.
+rust-version = "1.70"
+exclude = [".github", ".clippy.toml", ".gitignore", ".typos.toml"]
+
+# If this repository weren't quite so throwaway, we'd split it into a workspace
+
+[package.metadata.docs.rs]
+all-features = true
+# There are no platform specific docs.
+default-target = "x86_64-unknown-linux-gnu"
+targets = []
+
+[features]
+default = ["std"]
+# The `std` feature is provided for forwards compatibility only, and current behaviour is the same whether or not it is enabled.
+std = []
+# Adds serde Serialize and Deserialize impls for the Blob type.
+serde = ["dep:serde", "dep:serde_bytes"]
+
+[dependencies]
+serde = { version = "1.0.219", optional = true, default-features = false, features = [
+    "alloc",
+    "derive",
+] }
+serde_bytes = { version = "0.11.17", optional = true, default-features = false, features = [
+    "alloc",
+] }
+
+[lints]
+rust.unsafe_code = "forbid"
+
+# LINEBENDER LINT SET - Cargo.toml - v6.1
+# See https://linebender.org/wiki/canonical-lints/
+rust.keyword_idents_2024 = "forbid"
+rust.non_ascii_idents = "forbid"
+rust.non_local_definitions = "forbid"
+rust.unsafe_op_in_unsafe_fn = "forbid"
+
+rust.elided_lifetimes_in_paths = "warn"
+rust.missing_debug_implementations = "warn"
+rust.missing_docs = "warn"
+rust.trivial_numeric_casts = "warn"
+rust.unnameable_types = "warn"
+rust.unreachable_pub = "warn"
+rust.unused_import_braces = "warn"
+rust.unused_lifetimes = "warn"
+rust.unused_macro_rules = "warn"
+
+clippy.too_many_arguments = "allow"
+
+clippy.allow_attributes_without_reason = "warn"
+clippy.cast_possible_truncation = "warn"
+clippy.collection_is_never_read = "warn"
+clippy.dbg_macro = "warn"
+clippy.debug_assert_with_mut_call = "warn"
+clippy.doc_markdown = "warn"
+clippy.fn_to_numeric_cast_any = "warn"
+clippy.infinite_loop = "warn"
+clippy.large_stack_arrays = "warn"
+clippy.mismatching_type_param_order = "warn"
+clippy.missing_assert_message = "warn"
+clippy.missing_fields_in_debug = "warn"
+clippy.same_functions_in_if_condition = "warn"
+clippy.semicolon_if_nothing_returned = "warn"
+clippy.should_panic_without_expect = "warn"
+clippy.todo = "warn"
+clippy.unseparated_literal_suffix = "warn"
+clippy.use_self = "warn"
+
+clippy.cargo_common_metadata = "warn"
+clippy.negative_feature_names = "warn"
+clippy.redundant_feature_names = "warn"
+clippy.wildcard_dependencies = "warn"
+# END LINEBENDER LINT SET

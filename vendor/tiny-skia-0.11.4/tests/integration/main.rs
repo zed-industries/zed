@@ -1,0 +1,11 @@
+#[rustfmt::skip] mod mask;
+#[rustfmt::skip] mod dash;
+#[rustfmt::skip] mod fill;
+#[rustfmt::skip] mod gradients;
+#[rustfmt::skip] mod hairline;
+#[rustfmt::skip] mod path;
+#[rustfmt::skip] mod pattern;
+#[rustfmt::skip] mod pixmap;
+#[rustfmt::skip] mod png;
+#[rustfmt::skip] mod skia_dash;
+#[rustfmt::skip] mod stroke;

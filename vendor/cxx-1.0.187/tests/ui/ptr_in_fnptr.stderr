@@ -1,0 +1,5 @@
+error: pointer argument requires that the function pointer be marked unsafe
+ --> tests/ui/ptr_in_fnptr.rs:4:27
+  |
+4 |         fn f(callback: fn(p: *const u8));
+  |                           ^^^^^^^^^^^^

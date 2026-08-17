@@ -1,0 +1,37 @@
+[package]
+name = "crash-handler"
+description = "Allows running of user code during crash events"
+repository = "https://github.com/EmbarkStudios/crash-handling"
+version = "0.7.0"
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+readme = "README.md"
+documentation = "https://docs.rs/crash-handler"
+homepage = "https://github.com/EmbarkStudios/crash-handling/tree/main/crash-handler"
+keywords = ["breakpad", "minidump", "crash", "signal", "exception"]
+
+[features]
+default = []
+# If enabled, will log out information when a signal is raised/exception thrown
+# but logged in a manner that is safe.
+debug-print = []
+
+[dependencies]
+# Nicer handling of complex cfg expressions
+cfg-if.workspace = true
+# Definition of a portable crash-context that can be shared between various
+# crates
+crash-context.workspace = true
+# Wrapper around libc
+libc.workspace = true
+# Nicer sync primitives
+parking_lot.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Bindings to MacOS specific APIs that are used. Note we don't use the `mach`
+# crate as it is unmaintained
+mach2.workspace = true
+
+[dev-dependencies]
+sadness-generator = { path = "../sadness-generator" }

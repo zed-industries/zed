@@ -1,0 +1,13 @@
+framework = "CoreLocation"
+crate = "objc2-core-location"
+required-crates = ["objc2", "objc2-foundation"]
+custom-lib-rs = true
+# macos = "10.6"
+macos = "10.11"      # Temporarily raised since `CoreLocation` imports `Contacts`
+maccatalyst = "13.0"
+ios = "2.0"
+tvos = "9.0"
+watchos = "2.0"
+visionos = "1.0"
+
+external.CNPostalAddress.module = "Contacts.CNPostalAddress"

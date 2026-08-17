@@ -1,0 +1,68 @@
+[package]
+name = "raw-window-metal"
+# Remember to update html_root_url in lib.rs
+version = "1.1.0"
+license = "MIT OR Apache-2.0"
+edition = "2021"
+description = "Interop library between Metal and raw-window-handle"
+documentation = "https://docs.rs/raw-window-metal"
+repository = "https://github.com/rust-windowing/raw-window-metal"
+readme = "README.md"
+keywords = ["window", "metal", "graphics"]
+categories = ["game-development", "graphics", "os::macos-apis"]
+exclude = [".github/*"]
+# Current, though not specified by policy, see:
+# https://github.com/rust-windowing/raw-window-metal/issues/26
+rust-version = "1.71"
+
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+objc2 = "0.6.0"
+objc2-core-foundation = { version = "0.3.0", default-features = false, features = [
+    "CFCGTypes",
+] }
+objc2-foundation = { version = "0.3.0", default-features = false, features = [
+    "objc2-core-foundation",
+    "NSDictionary",
+    "NSGeometry",
+    "NSKeyValueObserving",
+    "NSObjCRuntime",
+    "NSString",
+    "NSThread",
+    "NSValue",
+] }
+objc2-quartz-core = { version = "0.3.0", default-features = false, features = [
+    "objc2-metal",
+    "objc2-core-foundation",
+    "CALayer",
+    "CAMetalLayer",
+] }
+
+[dev-dependencies]
+raw-window-handle = "0.6.0"
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+objc2-app-kit = { version = "0.3.0", default-features = false, features = [
+    "NSResponder",
+    "NSView",
+] }
+
+[target.'cfg(all(target_vendor = "apple", not(target_os = "macos")))'.dev-dependencies]
+objc2-ui-kit = { version = "0.3.0", default-features = false, features = [
+    "UIResponder",
+    "UIView",
+] }
+
+[package.metadata.docs.rs]
+targets = [
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "aarch64-apple-ios",
+    "aarch64-apple-ios-macabi",
+    "x86_64-apple-ios",
+]
+rustdoc-args = ["--cfg", "docsrs"]

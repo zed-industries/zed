@@ -1,0 +1,117 @@
+---
+source: brush-parser/src/tokenizer.rs
+expression: "test_tokenizer(r\"cat <<EOF | wc -l\nA B C\n1 2 3\nD E F\nEOF\n\")?"
+---
+TokenizerResult(
+  input: "cat <<EOF | wc -l\nA B C\n1 2 3\nD E F\nEOF\n",
+  result: [
+    W("cat", Loc(
+      start: Pos(
+        idx: 0,
+        line: 1,
+        col: 1,
+      ),
+      end: Pos(
+        idx: 3,
+        line: 1,
+        col: 4,
+      ),
+    )),
+    Op("<<", Loc(
+      start: Pos(
+        idx: 4,
+        line: 1,
+        col: 5,
+      ),
+      end: Pos(
+        idx: 6,
+        line: 1,
+        col: 7,
+      ),
+    )),
+    W("EOF", Loc(
+      start: Pos(
+        idx: 6,
+        line: 1,
+        col: 7,
+      ),
+      end: Pos(
+        idx: 9,
+        line: 1,
+        col: 10,
+      ),
+    )),
+    W("A B C\n1 2 3\nD E F\n", Loc(
+      start: Pos(
+        idx: 18,
+        line: 2,
+        col: 1,
+      ),
+      end: Pos(
+        idx: 40,
+        line: 6,
+        col: 1,
+      ),
+    )),
+    W("EOF", Loc(
+      start: Pos(
+        idx: 40,
+        line: 6,
+        col: 1,
+      ),
+      end: Pos(
+        idx: 40,
+        line: 6,
+        col: 1,
+      ),
+    )),
+    Op("|", Loc(
+      start: Pos(
+        idx: 9,
+        line: 1,
+        col: 10,
+      ),
+      end: Pos(
+        idx: 11,
+        line: 1,
+        col: 12,
+      ),
+    )),
+    W("wc", Loc(
+      start: Pos(
+        idx: 12,
+        line: 1,
+        col: 13,
+      ),
+      end: Pos(
+        idx: 14,
+        line: 1,
+        col: 15,
+      ),
+    )),
+    W("-l", Loc(
+      start: Pos(
+        idx: 14,
+        line: 1,
+        col: 15,
+      ),
+      end: Pos(
+        idx: 17,
+        line: 1,
+        col: 18,
+      ),
+    )),
+    Op("\n", Loc(
+      start: Pos(
+        idx: 17,
+        line: 1,
+        col: 18,
+      ),
+      end: Pos(
+        idx: 18,
+        line: 2,
+        col: 1,
+      ),
+    )),
+  ],
+)

@@ -1,0 +1,5 @@
+import `x` conflicts with prior type of same name
+     --> tests/ui/parse-fail/async-bad-world3.wit:4:10
+      |
+    4 |   import x: async func();
+      |          ^

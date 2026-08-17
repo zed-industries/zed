@@ -1,0 +1,25 @@
+name: PR Slack Notifier
+
+on:
+  pull_request:
+    types: [review_requested, reopened, closed]
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: pr-slack-${{ github.event.pull_request.number }}-${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  notify-devs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: livekit/slack-notifier-action@main
+        with:
+          config_json: ${{ secrets.SLACK_NOTIFY_CONFIG_JSON }}
+          slack_token: ${{ secrets.SLACK_PR_NOTIFIER_TOKEN }}

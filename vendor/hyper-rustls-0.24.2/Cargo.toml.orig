@@ -1,0 +1,53 @@
+[package]
+name = "hyper-rustls"
+version = "0.24.2"
+edition = "2021"
+rust-version = "1.63"
+license = "Apache-2.0 OR ISC OR MIT"
+readme = "README.md"
+description = "Rustls+hyper integration for pure rust HTTPS"
+homepage = "https://github.com/rustls/hyper-rustls"
+repository = "https://github.com/rustls/hyper-rustls"
+documentation = "https://docs.rs/hyper-rustls/"
+
+[dependencies]
+http = "0.2"
+hyper = { version = "0.14", default-features = false, features = ["client"] }
+log = { version = "0.4.4", optional = true }
+rustls-native-certs = { version = "0.6", optional = true }
+rustls = { version = "0.21.6", default-features = false }
+tokio = "1.0"
+tokio-rustls = { version = "0.24.0", default-features = false }
+webpki-roots = { version = "0.25", optional = true }
+futures-util = { version = "0.3", default-features = false }
+
+[dev-dependencies]
+hyper = { version = "0.14", features = ["full"] }
+rustls = { version = "0.21.0", default-features = false, features = ["tls12"] }
+rustls-pemfile = "1.0.0"
+tokio = { version = "1.0", features = ["io-std", "macros", "net", "rt-multi-thread"] }
+
+[features]
+default = ["native-tokio", "http1", "tls12", "logging", "acceptor"]
+acceptor = ["hyper/server", "tokio-runtime"]
+http1 = ["hyper/http1"]
+http2 = ["hyper/http2"]
+webpki-tokio = ["tokio-runtime", "webpki-roots"]
+native-tokio = ["tokio-runtime", "rustls-native-certs"]
+tokio-runtime =  ["hyper/runtime"]
+tls12 = ["tokio-rustls/tls12", "rustls/tls12"]
+logging = ["log", "tokio-rustls/logging", "rustls/logging"]
+
+[[example]]
+name = "client"
+path = "examples/client.rs"
+required-features = ["native-tokio", "http1"]
+
+[[example]]
+name = "server"
+path = "examples/server.rs"
+required-features = ["tokio-runtime", "acceptor"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

@@ -1,0 +1,1813 @@
+;; Pulley instruction selection and CLIF-to-MachInst lowering.
+
+;; The main lowering constructor term: takes a clif `Inst` and returns the
+;; register(s) within which the lowered instruction's result values live.
+(decl partial lower (Inst) InstOutput)
+
+;;;; Rules for Control Flow ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Helper to place a conditional `Value` provided into a register. Pulley
+;; conditional values occupy the full low 32-bits of a register and so this
+;; needs to handle situations such as when the `Value` is 64-bits an explicit
+;; comparison must be made. Additionally if `Value` is smaller than 32-bits
+;; then it must be sign-extended up to at least 32 bits.
+(decl lower_cond (Value) Cond)
+(rule 0 (lower_cond val @ (value_type (fits_in_32 _))) (Cond.If32 (zext32 val)))
+(rule 1 (lower_cond val @ (value_type $I64))
+  (Cond.IfXneq64I32 val 0))
+
+;; Peel away explicit `uextend` values to take a look at the inner value.
+(rule 2 (lower_cond (uextend val)) (lower_cond val))
+;; Conditional branches on `icmp`s.
+(rule 2 (lower_cond (icmp cc a b @ (value_type $I32))) (lower_cond_icmp32 cc a b))
+(rule 2 (lower_cond (icmp cc a b @ (value_type $I64))) (lower_cond_icmp64 cc a b))
+
+(decl lower_cond_icmp32 (IntCC Value Value) Cond)
+(rule (lower_cond_icmp32 (IntCC.Equal) a b) (Cond.IfXeq32 a b))
+(rule (lower_cond_icmp32 (IntCC.NotEqual) a b) (Cond.IfXneq32 a b))
+(rule (lower_cond_icmp32 (IntCC.SignedLessThan) a b) (Cond.IfXslt32 a b))
+(rule (lower_cond_icmp32 (IntCC.SignedLessThanOrEqual) a b) (Cond.IfXslteq32 a b))
+(rule (lower_cond_icmp32 (IntCC.UnsignedLessThan) a b) (Cond.IfXult32 a b))
+(rule (lower_cond_icmp32 (IntCC.UnsignedLessThanOrEqual) a b) (Cond.IfXulteq32 a b))
+;; Swap args for conditions pulley doesn't have
+(rule (lower_cond_icmp32 (IntCC.SignedGreaterThan) a b) (Cond.IfXslt32 b a))
+(rule (lower_cond_icmp32 (IntCC.SignedGreaterThanOrEqual) a b) (Cond.IfXslteq32 b a))
+(rule (lower_cond_icmp32 (IntCC.UnsignedGreaterThan) a b) (Cond.IfXult32 b a))
+(rule (lower_cond_icmp32 (IntCC.UnsignedGreaterThanOrEqual) a b) (Cond.IfXulteq32 b a))
+
+(rule 1 (lower_cond_icmp32 (IntCC.Equal) a (i32_from_iconst b))
+  (Cond.IfXeq32I32 a b))
+(rule 1 (lower_cond_icmp32 (IntCC.NotEqual) a (i32_from_iconst b))
+  (Cond.IfXneq32I32 a b))
+(rule 1 (lower_cond_icmp32 (IntCC.SignedLessThan) a (i32_from_iconst b))
+  (Cond.IfXslt32I32 a b))
+(rule 1 (lower_cond_icmp32 (IntCC.SignedLessThanOrEqual) a (i32_from_iconst b))
+  (Cond.IfXslteq32I32 a b))
+(rule 1 (lower_cond_icmp32 (IntCC.SignedGreaterThan) a (i32_from_iconst b))
+  (Cond.IfXsgt32I32 a b))
+(rule 1 (lower_cond_icmp32 (IntCC.SignedGreaterThanOrEqual) a (i32_from_iconst b))
+  (Cond.IfXsgteq32I32 a b))
+(rule 1 (lower_cond_icmp32 (IntCC.UnsignedLessThan) a (u32_from_iconst b))
+  (Cond.IfXult32I32 a b))
+(rule 1 (lower_cond_icmp32 (IntCC.UnsignedLessThanOrEqual) a (u32_from_iconst b))
+  (Cond.IfXulteq32I32 a b))
+(rule 1 (lower_cond_icmp32 (IntCC.UnsignedGreaterThan) a (u32_from_iconst b))
+  (Cond.IfXugt32I32 a b))
+(rule 1 (lower_cond_icmp32 (IntCC.UnsignedGreaterThanOrEqual) a (u32_from_iconst b))
+  (Cond.IfXugteq32I32 a b))
+
+(decl lower_cond_icmp64 (IntCC Value Value) Cond)
+(rule (lower_cond_icmp64 (IntCC.Equal) a b) (Cond.IfXeq64 a b))
+(rule (lower_cond_icmp64 (IntCC.NotEqual) a b) (Cond.IfXneq64 a b))
+(rule (lower_cond_icmp64 (IntCC.SignedLessThan) a b) (Cond.IfXslt64 a b))
+(rule (lower_cond_icmp64 (IntCC.SignedLessThanOrEqual) a b) (Cond.IfXslteq64 a b))
+(rule (lower_cond_icmp64 (IntCC.UnsignedLessThan) a b) (Cond.IfXult64 a b))
+(rule (lower_cond_icmp64 (IntCC.UnsignedLessThanOrEqual) a b) (Cond.IfXulteq64 a b))
+;; Swap args for conditions pulley doesn't have
+(rule (lower_cond_icmp64 (IntCC.SignedGreaterThan) a b) (Cond.IfXslt64 b a))
+(rule (lower_cond_icmp64 (IntCC.SignedGreaterThanOrEqual) a b) (Cond.IfXslteq64 b a))
+(rule (lower_cond_icmp64 (IntCC.UnsignedGreaterThan) a b) (Cond.IfXult64 b a))
+(rule (lower_cond_icmp64 (IntCC.UnsignedGreaterThanOrEqual) a b) (Cond.IfXulteq64 b a))
+
+(rule 1 (lower_cond_icmp64 (IntCC.Equal) a (i32_from_iconst b))
+  (Cond.IfXeq64I32 a b))
+(rule 1 (lower_cond_icmp64 (IntCC.NotEqual) a (i32_from_iconst b))
+  (Cond.IfXneq64I32 a b))
+(rule 1 (lower_cond_icmp64 (IntCC.SignedLessThan) a (i32_from_iconst b))
+  (Cond.IfXslt64I32 a b))
+(rule 1 (lower_cond_icmp64 (IntCC.SignedLessThanOrEqual) a (i32_from_iconst b))
+  (Cond.IfXslteq64I32 a b))
+(rule 1 (lower_cond_icmp64 (IntCC.SignedGreaterThan) a (i32_from_iconst b))
+  (Cond.IfXsgt64I32 a b))
+(rule 1 (lower_cond_icmp64 (IntCC.SignedGreaterThanOrEqual) a (i32_from_iconst b))
+  (Cond.IfXsgteq64I32 a b))
+(rule 1 (lower_cond_icmp64 (IntCC.UnsignedLessThan) a (u32_from_iconst b))
+  (Cond.IfXult64I32 a b))
+(rule 1 (lower_cond_icmp64 (IntCC.UnsignedLessThanOrEqual) a (u32_from_iconst b))
+  (Cond.IfXulteq64I32 a b))
+(rule 1 (lower_cond_icmp64 (IntCC.UnsignedGreaterThan) a (u32_from_iconst b))
+  (Cond.IfXugt64I32 a b))
+(rule 1 (lower_cond_icmp64 (IntCC.UnsignedGreaterThanOrEqual) a (u32_from_iconst b))
+  (Cond.IfXugteq64I32 a b))
+
+;; The main control-flow-lowering term: takes a control-flow instruction and
+;; target(s) and emits the necessary instructions.
+(decl partial lower_branch (Inst MachLabelSlice) Unit)
+
+;; Unconditional jumps.
+(rule (lower_branch (jump _) (single_target label))
+      (emit_side_effect (pulley_jump label)))
+
+;; Generic case for conditional branches.
+(rule -1 (lower_branch (brif c _ _) (two_targets then else))
+      (emit_side_effect (pulley_br_if (lower_cond c) then else)))
+
+;; Branch tables.
+(rule (lower_branch (br_table index _) (jump_table_targets default targets))
+      (gen_br_table index default targets))
+
+;;;; Rules for `trap` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (trap code))
+      (side_effect (pulley_trap code)))
+
+;;;; Rules for `trapz` and `trapnz` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (trapz cond code))
+  (side_effect (pulley_trap_if (cond_invert (lower_cond cond)) code)))
+
+(rule (lower (trapnz cond code))
+  (side_effect (pulley_trap_if (lower_cond cond) code)))
+
+;;;; Rules for `get_stack_pointer` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (get_stack_pointer))
+      (pulley_get_special (sp_reg)))
+
+;;;; Rules for `get_frame_pointer` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (get_frame_pointer)) (pulley_xmov_fp))
+
+;;;; Rules for `get_return_address` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (get_return_address)) (pulley_xmov_lr))
+
+;;;; Rules for `return` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; N.B.: the `ret` itself is generated by the ABI.
+(rule (lower (return args))
+      (lower_return args))
+
+;; Rules for `call` and `call_indirect` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Direct call to a pulley function.
+(rule 1 (lower (call (func_ref_data sig_ref name (reloc_distance_near)) args))
+      (let ((output ValueRegsVec (gen_call_output sig_ref))
+            (abi Sig (abi_sig sig_ref))
+            (uses CallArgList (gen_call_args abi args))
+            (defs CallRetList (gen_call_rets abi output))
+            (info BoxCallInfo (gen_call_info abi name uses defs (try_call_none)))
+            (_ Unit (emit_side_effect (call_impl info))))
+        output))
+
+;; Direct call to a host function.
+(rule (lower (call (func_ref_data sig_ref name _) args))
+      (let ((output ValueRegsVec (gen_call_output sig_ref))
+            (abi Sig (abi_sig sig_ref))
+            (uses CallArgList (gen_call_args abi args))
+            (defs CallRetList (gen_call_rets abi output))
+            (info BoxCallIndirectHostInfo (gen_call_host_info abi name uses defs (try_call_none)))
+            (_ Unit (emit_side_effect (indirect_call_host_impl info))))
+        output))
+
+;; Indirect call (assumed to be pulley->pulley).
+(rule (lower (call_indirect sig_ref ptr args))
+      (let ((output ValueRegsVec (gen_call_output sig_ref))
+            (abi Sig (abi_sig sig_ref))
+            (target Reg (put_in_reg ptr))
+            (uses CallArgList (gen_call_args abi args))
+            (defs CallRetList (gen_call_rets abi output))
+            (info BoxCallIndInfo (gen_call_ind_info abi target uses defs (try_call_none)))
+            (_ Unit (emit_side_effect (indirect_call_impl info))))
+        output))
+
+;;;; Rules for `try_call` and `try_call_indirect` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Direct call to a pulley function.
+(rule 1 (lower_branch (try_call (func_ref_data sig_ref name (reloc_distance_near)) args et) targets)
+      (let ((abi Sig (abi_sig sig_ref))
+            (trycall OptionTryCallInfo (try_call_info et targets))
+            (uses CallArgList (gen_call_args abi args))
+            (defs CallRetList (gen_try_call_rets abi))
+            (info BoxCallInfo (gen_call_info abi name uses defs trycall)))
+        (emit_side_effect (call_impl info))))
+
+;; Direct call to a host function.
+(rule (lower_branch (try_call (func_ref_data sig_ref name _) args et) targets)
+      (let ((abi Sig (abi_sig sig_ref))
+            (trycall OptionTryCallInfo (try_call_info et targets))
+            (uses CallArgList (gen_call_args abi args))
+            (defs CallRetList (gen_try_call_rets abi))
+            (info BoxCallIndirectHostInfo (gen_call_host_info abi name uses defs trycall)))
+        (emit_side_effect (indirect_call_host_impl info))))
+
+;; Indirect call (assumed to be pulley->pulley).
+(rule (lower_branch (try_call_indirect ptr args et) targets)
+      (if-let (exception_sig sig_ref) et)
+      (let ((abi Sig (abi_sig sig_ref))
+            (trycall OptionTryCallInfo (try_call_info et targets))
+            (target Reg (put_in_reg ptr))
+            (uses CallArgList (gen_call_args abi args))
+            (defs CallRetList (gen_try_call_rets abi))
+            (info BoxCallIndInfo (gen_call_ind_info abi target uses defs trycall)))
+        (emit_side_effect (indirect_call_impl info))))
+
+;;;; Rules for `return_call` and `return_call_indirect` ;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Direct call to a pulley function.
+(rule 1 (lower (return_call (func_ref_data sig_ref name (reloc_distance_near)) args))
+      (let ((abi Sig (abi_sig sig_ref))
+            (uses CallArgList (gen_return_call_args abi args))
+            (info BoxReturnCallInfo (gen_return_call_info abi name uses)))
+        (side_effect (return_call_impl info))))
+
+;; Indirect call (assumed to be pulley->pulley).
+(rule (lower (return_call_indirect sig_ref ptr args))
+      (let ((abi Sig (abi_sig sig_ref))
+            (target Reg (put_in_reg ptr))
+            (uses CallArgList (gen_return_call_args abi args))
+            (info BoxReturnCallIndInfo (gen_return_call_ind_info abi target uses)))
+        (side_effect (return_indirect_call_impl info))))
+
+;;;; Rules for `iconst` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type ty (iconst c))) (imm (i64_sextend_imm64 ty c)))
+
+;;;; Rules for `f32const`;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (f32const (u32_from_ieee32 x))) (pulley_fconst32 x))
+
+;;;; Rules for `f64const`;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (f64const (u64_from_ieee64 x))) (pulley_fconst64 x))
+
+;;;; Rules for `iadd` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 0 (lower (has_type (ty_int (fits_in_64 ty)) (iadd a b))) (pulley_xadd32 a b))
+(rule 1 (lower (has_type $I64 (iadd a b))) (pulley_xadd64 a b))
+
+;; Fold constants into the instruction if possible
+(rule 10 (lower (has_type (ty_int (fits_in_32 _)) (iadd a (u32_from_iconst b))))
+  (pulley_xadd32_u32 a b))
+(rule 11 (lower (has_type (ty_int (fits_in_32 _)) (iadd a (u8_from_iconst b))))
+  (pulley_xadd32_u8 a b))
+(rule 12 (lower (has_type $I64 (iadd a (u32_from_iconst b))))
+  (pulley_xadd64_u32 a b))
+(rule 13 (lower (has_type $I64 (iadd a (u8_from_iconst b))))
+  (pulley_xadd64_u8 a b))
+
+;; If the rhs is a constant and the negated version can fit within a smaller
+;; constant then switch this to a subtraction with the negated constant.
+(rule 14 (lower (has_type (ty_int (fits_in_32 _)) (iadd a b)))
+  (if-let c (u32_from_negated_iconst b))
+  (pulley_xsub32_u32 a c))
+(rule 15 (lower (has_type $I64 (iadd a b)))
+  (if-let c (u32_from_negated_iconst b))
+  (pulley_xsub64_u32 a c))
+(rule 16 (lower (has_type (ty_int (fits_in_32 _)) (iadd a b)))
+  (if-let c (u8_from_negated_iconst b))
+  (pulley_xsub32_u8 a c))
+(rule 17 (lower (has_type $I64 (iadd a b)))
+  (if-let c (u8_from_negated_iconst b))
+  (pulley_xsub64_u8 a c))
+
+;; Helper extract a constant from a `Value`, negate it, and fit it within a
+;; `u8`.
+(decl pure partial u8_from_negated_iconst (Value) u8)
+(rule (u8_from_negated_iconst (i32_from_iconst i))
+  (if-let neg_i64 (i64_checked_neg i))
+  (if-let neg_u8 (i64_try_into_u8 neg_i64))
+  neg_u8)
+
+;; Helper extract a constant from a `Value`, negate it, and fit it within a
+;; `u32`.
+(decl pure partial u32_from_negated_iconst (Value) u32)
+(rule (u32_from_negated_iconst (i32_from_iconst i))
+  (if-let neg_i64 (i64_checked_neg i))
+  (if-let neg_u32 (i64_try_into_u32 neg_i64))
+  neg_u32)
+
+;; 128-bit addition
+(rule 1 (lower (has_type $I128 (iadd a b)))
+  (let ((a ValueRegs a)
+        (b ValueRegs b))
+    (pulley_xadd128
+      (value_regs_get a 0)
+      (value_regs_get a 1)
+      (value_regs_get b 0)
+      (value_regs_get b 1))))
+
+;; vector addition
+(rule 1 (lower (has_type $I8X16 (iadd a b))) (pulley_vaddi8x16 a b))
+(rule 1 (lower (has_type $I16X8 (iadd a b))) (pulley_vaddi16x8 a b))
+(rule 1 (lower (has_type $I32X4 (iadd a b))) (pulley_vaddi32x4 a b))
+(rule 1 (lower (has_type $I64X2 (iadd a b))) (pulley_vaddi64x2 a b))
+
+(rule 1 (lower (has_type $I8X16 (sadd_sat a b))) (pulley_vaddi8x16_sat a b))
+(rule 1 (lower (has_type $I8X16 (uadd_sat a b))) (pulley_vaddu8x16_sat a b))
+(rule 1 (lower (has_type $I16X8 (sadd_sat a b))) (pulley_vaddi16x8_sat a b))
+(rule 1 (lower (has_type $I16X8 (uadd_sat a b))) (pulley_vaddu16x8_sat a b))
+
+;; Specialized lowerings for multiply-and-add
+
+(rule 2 (lower (has_type $I32 (iadd (imul a b) c))) (pulley_xmadd32 a b c))
+(rule 3 (lower (has_type $I32 (iadd c (imul a b)))) (pulley_xmadd32 a b c))
+(rule 2 (lower (has_type $I64 (iadd (imul a b) c))) (pulley_xmadd64 a b c))
+(rule 3 (lower (has_type $I64 (iadd c (imul a b)))) (pulley_xmadd64 a b c))
+
+;;;; Rules for `iadd_pairwise` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $I16X8 (iadd_pairwise a b))) (pulley_vaddpairwisei16x8_s a b))
+(rule (lower (has_type $I32X4 (iadd_pairwise a b))) (pulley_vaddpairwisei32x4_s a b))
+
+;;;; Rules for `isub` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 0 (lower (has_type (ty_int (fits_in_32 _)) (isub a b))) (pulley_xsub32 a b))
+(rule 1 (lower (has_type $I64 (isub a b))) (pulley_xsub64 a b))
+
+;; Fold a rhs constant into the instruction if possible.
+(rule 2 (lower (has_type (ty_int (fits_in_32 _)) (isub a (u32_from_iconst b))))
+  (pulley_xsub32_u32 a b))
+(rule 3 (lower (has_type (ty_int (fits_in_32 _)) (isub a (u8_from_iconst b))))
+  (pulley_xsub32_u8 a b))
+(rule 4 (lower (has_type $I64 (isub a (u32_from_iconst b))))
+  (pulley_xsub64_u32 a b))
+(rule 5 (lower (has_type $I64 (isub a (u8_from_iconst b))))
+  (pulley_xsub64_u8 a b))
+
+;; If the rhs is a constant and the negated version can fit within a smaller
+;; constant then switch this to an addition with the negated constant.
+(rule 6 (lower (has_type (ty_int (fits_in_32 _)) (isub a b)))
+  (if-let c (u32_from_negated_iconst b))
+  (pulley_xadd32_u32 a c))
+(rule 7 (lower (has_type $I64 (isub a b)))
+  (if-let c (u32_from_negated_iconst b))
+  (pulley_xadd64_u32 a c))
+(rule 8 (lower (has_type (ty_int (fits_in_32 _)) (isub a b)))
+  (if-let c (u8_from_negated_iconst b))
+  (pulley_xadd32_u8 a c))
+(rule 9 (lower (has_type $I64 (isub a b)))
+  (if-let c (u8_from_negated_iconst b))
+  (pulley_xadd64_u8 a c))
+
+;; 128-bit subtraction
+(rule 1 (lower (has_type $I128 (isub a b)))
+  (let ((a ValueRegs a)
+        (b ValueRegs b))
+    (pulley_xsub128
+      (value_regs_get a 0)
+      (value_regs_get a 1)
+      (value_regs_get b 0)
+      (value_regs_get b 1))))
+
+;; vector subtraction
+(rule 1 (lower (has_type $I8X16 (isub a b))) (pulley_vsubi8x16 a b))
+(rule 1 (lower (has_type $I16X8 (isub a b))) (pulley_vsubi16x8 a b))
+(rule 1 (lower (has_type $I32X4 (isub a b))) (pulley_vsubi32x4 a b))
+(rule 1 (lower (has_type $I64X2 (isub a b))) (pulley_vsubi64x2 a b))
+
+(rule 1 (lower (has_type $I8X16 (ssub_sat a b))) (pulley_vsubi8x16_sat a b))
+(rule 1 (lower (has_type $I8X16 (usub_sat a b))) (pulley_vsubu8x16_sat a b))
+(rule 1 (lower (has_type $I16X8 (ssub_sat a b))) (pulley_vsubi16x8_sat a b))
+(rule 1 (lower (has_type $I16X8 (usub_sat a b))) (pulley_vsubu16x8_sat a b))
+
+;;;; Rules for `imul` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $I8 (imul a b))) (pulley_xmul32 a b))
+(rule (lower (has_type $I16 (imul a b))) (pulley_xmul32 a b))
+(rule (lower (has_type $I32 (imul a b))) (pulley_xmul32 a b))
+(rule (lower (has_type $I64 (imul a b))) (pulley_xmul64 a b))
+
+(rule 1 (lower (has_type (ty_int (fits_in_32 _)) (imul a (i32_from_iconst b))))
+  (pulley_xmul32_s32 a b))
+(rule 2 (lower (has_type $I64 (imul a (i32_from_iconst b))))
+  (pulley_xmul64_s32 a b))
+(rule 3 (lower (has_type (ty_int (fits_in_32 _)) (imul a (i8_from_iconst b))))
+  (pulley_xmul32_s8 a b))
+(rule 4 (lower (has_type $I64 (imul a (i8_from_iconst b))))
+  (pulley_xmul64_s8 a b))
+
+;; 128-bit (or wide) multiplication
+(rule 4 (lower (has_type $I128 (imul (uextend a) (uextend b))))
+  (pulley_xwidemul64_u (zext64 a) (zext64 b)))
+(rule 4 (lower (has_type $I128 (imul (sextend a) (sextend b))))
+  (pulley_xwidemul64_s (sext64 a) (sext64 b)))
+
+;; for I128
+(rule (lower (has_type $I128 (imul x y)))
+  (let
+    ((x_regs ValueRegs x)
+      (x_lo XReg (value_regs_get x_regs 0))
+      (x_hi XReg (value_regs_get x_regs 1))
+
+      ;; Get the high/low registers for `y`.
+      (y_regs ValueRegs y)
+      (y_lo XReg (value_regs_get y_regs 0))
+      (y_hi XReg (value_regs_get y_regs 1))
+
+      ;; 128bit mul formula:
+      ;;   dst_lo = x_lo * y_lo
+      ;;   dst_hi = mul_high(x_lo, y_lo) + (x_lo * y_hi) + (x_hi * y_lo)
+      (wide_regs ValueRegs (pulley_xwidemul64_u x_lo y_lo))
+      (wide_lo XReg (value_regs_get wide_regs 0))
+      (wide_hi XReg (value_regs_get wide_regs 1))
+      (tmp_hi1 XReg (pulley_xmul64 x_lo y_hi))
+      (tmp_hi2 XReg (pulley_xmul64 x_hi y_lo))
+      (tmp_add XReg (pulley_xadd64 wide_hi tmp_hi1))
+      (result_hi XReg (pulley_xadd64 tmp_add tmp_hi2))
+    )
+    (value_regs wide_lo result_hi)))
+
+;; vector multiplication
+(rule (lower (has_type $I8X16 (imul a b))) (pulley_vmuli8x16 a b))
+(rule (lower (has_type $I16X8 (imul a b))) (pulley_vmuli16x8 a b))
+(rule (lower (has_type $I32X4 (imul a b))) (pulley_vmuli32x4 a b))
+(rule (lower (has_type $I64X2 (imul a b))) (pulley_vmuli64x2 a b))
+
+;;;; Rules for `umulhi` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $I8 (umulhi a b)))
+  (if-let (u6_from_u8 shift) (u64_try_into_u8 8))
+  (pulley_xshr32_u_u6 (pulley_xmul32 (zext32 a) (zext32 b)) shift))
+
+(rule (lower (has_type $I16 (umulhi a b)))
+  (if-let (u6_from_u8 shift) (u64_try_into_u8 16))
+  (pulley_xshr32_u_u6 (pulley_xmul32 (zext32 a) (zext32 b)) shift))
+
+(rule (lower (has_type $I32 (umulhi a b)))
+  (if-let (u6_from_u8 shift) (u64_try_into_u8 32))
+  (pulley_xshr64_u_u6 (pulley_xmul64 (zext64 a) (zext64 b)) shift))
+
+(rule (lower (has_type $I64 (umulhi a b)))
+  (pulley_xmulhi64_u a b))
+
+;;;; Rules for `smulhi` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $I8 (smulhi a b)))
+  (if-let (u6_from_u8 shift) (u64_try_into_u8 8))
+  (pulley_xshr32_s_u6 (pulley_xmul32 (sext32 a) (sext32 b)) shift))
+
+(rule (lower (has_type $I16 (smulhi a b)))
+  (if-let (u6_from_u8 shift) (u64_try_into_u8 16))
+  (pulley_xshr32_s_u6 (pulley_xmul32 (sext32 a) (sext32 b)) shift))
+
+(rule (lower (has_type $I32 (smulhi a b)))
+  (if-let (u6_from_u8 shift) (u64_try_into_u8 32))
+  (pulley_xshr64_s_u6 (pulley_xmul64 (sext64 a) (sext64 b)) shift))
+
+(rule (lower (has_type $I64 (smulhi a b)))
+  (pulley_xmulhi64_s a b))
+
+;;;; Rules for `sqmul_round_sat` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $I16X8 (sqmul_round_sat a b))) (pulley_vqmulrsi16x8 a b))
+
+;;;; Rules for `sdiv` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 0 (lower (has_type (fits_in_32 _) (sdiv a b)))
+  (pulley_xdiv32_s (sext32 a) (sext32 b)))
+(rule 1 (lower (has_type $I64 (sdiv a b))) (pulley_xdiv64_s a b))
+
+;;;; Rules for `srem` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 0 (lower (has_type (fits_in_32 _) (srem a b)))
+  (pulley_xrem32_s (sext32 a) (sext32 b)))
+(rule 1 (lower (has_type $I64 (srem a b))) (pulley_xrem64_s a b))
+
+;;;; Rules for `udiv` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 0 (lower (has_type (ty_int (fits_in_32 _)) (udiv a b)))
+  (pulley_xdiv32_u (zext32 a) (zext32 b)))
+(rule 1 (lower (has_type $I64 (udiv a b))) (pulley_xdiv64_u a b))
+
+;;;; Rules for `urem` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 0 (lower (has_type (ty_int (fits_in_32 _)) (urem a b)))
+  (pulley_xrem32_u (zext32 a) (zext32 b)))
+(rule 1 (lower (has_type $I64 (urem a b))) (pulley_xrem64_u a b))
+
+;;;; Rules for `avg_round` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $I8X16 (avg_round a b))) (pulley_vavground8x16 a b))
+(rule (lower (has_type $I16X8 (avg_round a b))) (pulley_vavground16x8 a b))
+
+;;;; Rules for `ishl` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $I8 (ishl a b)))
+  (pulley_xshl32 a (pulley_xband32_s8 b 7)))
+
+(rule (lower (has_type $I16 (ishl a b)))
+  (pulley_xshl32 a (pulley_xband32_s8 b 15)))
+
+(rule (lower (has_type $I32 (ishl a b)))
+  (pulley_xshl32 a b))
+
+(rule (lower (has_type $I64 (ishl a b)))
+  (pulley_xshl64 a b))
+
+;; Special-case constant shift amounts.
+(rule 1 (lower (has_type $I32 (ishl a b)))
+  (if-let n (u6_shift_from_iconst b))
+  (pulley_xshl32_u6 a n))
+(rule 1 (lower (has_type $I64 (ishl a b)))
+  (if-let n (u6_shift_from_iconst b))
+  (pulley_xshl64_u6 a n))
+
+;; vector shifts
+
+(rule (lower (has_type $I8X16 (ishl a b))) (pulley_vshli8x16 a b))
+(rule (lower (has_type $I16X8 (ishl a b))) (pulley_vshli16x8 a b))
+(rule (lower (has_type $I32X4 (ishl a b))) (pulley_vshli32x4 a b))
+(rule (lower (has_type $I64X2 (ishl a b))) (pulley_vshli64x2 a b))
+
+;; Helper to extract a constant from `Value`, mask it to 6 bits, and then make a
+;; `U6`.
+(decl pure partial u6_shift_from_iconst (Value) U6)
+(rule (u6_shift_from_iconst (u64_from_iconst val))
+  (if-let (u6_from_u8 x) (u64_try_into_u8 (u64_and val 0x3f)))
+  x)
+
+(decl u6_from_u8 (U6) u8)
+(extern extractor u6_from_u8 u6_from_u8)
+
+;;;; Rules for `ushr` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $I8 (ushr a b)))
+  (pulley_xshr32_u (zext32 a) (pulley_xband32_s8 b 7)))
+
+(rule (lower (has_type $I16 (ushr a b)))
+  (pulley_xshr32_u (zext32 a) (pulley_xband32_s8 b 15)))
+
+(rule (lower (has_type $I32 (ushr a b)))
+  (pulley_xshr32_u a b))
+
+(rule (lower (has_type $I64 (ushr a b)))
+  (pulley_xshr64_u a b))
+
+;; Special-case constant shift amounts.
+(rule 1 (lower (has_type $I32 (ushr a b)))
+  (if-let n (u6_shift_from_iconst b))
+  (pulley_xshr32_u_u6 a n))
+(rule 1 (lower (has_type $I64 (ushr a b)))
+  (if-let n (u6_shift_from_iconst b))
+  (pulley_xshr64_u_u6 a n))
+
+;; vector shifts
+
+(rule (lower (has_type $I8X16 (ushr a b))) (pulley_vshri8x16_u a b))
+(rule (lower (has_type $I16X8 (ushr a b))) (pulley_vshri16x8_u a b))
+(rule (lower (has_type $I32X4 (ushr a b))) (pulley_vshri32x4_u a b))
+(rule (lower (has_type $I64X2 (ushr a b))) (pulley_vshri64x2_u a b))
+
+;;;; Rules for `sshr` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $I8 (sshr a b)))
+  (pulley_xshr32_u (sext32 a) (pulley_xband32_s8 b 7)))
+
+(rule (lower (has_type $I16 (sshr a b)))
+  (pulley_xshr32_u (sext32 a) (pulley_xband32_s8 b 15)))
+
+(rule (lower (has_type $I32 (sshr a b)))
+  (pulley_xshr32_s a b))
+
+(rule (lower (has_type $I64 (sshr a b)))
+  (pulley_xshr64_s a b))
+
+;; Special-case constant shift amounts.
+(rule 1 (lower (has_type $I32 (sshr a b)))
+  (if-let n (u6_shift_from_iconst b))
+  (pulley_xshr32_s_u6 a n))
+(rule 1 (lower (has_type $I64 (sshr a b)))
+  (if-let n (u6_shift_from_iconst b))
+  (pulley_xshr64_s_u6 a n))
+
+;; vector shifts
+
+(rule (lower (has_type $I8X16 (sshr a b))) (pulley_vshri8x16_s a b))
+(rule (lower (has_type $I16X8 (sshr a b))) (pulley_vshri16x8_s a b))
+(rule (lower (has_type $I32X4 (sshr a b))) (pulley_vshri32x4_s a b))
+(rule (lower (has_type $I64X2 (sshr a b))) (pulley_vshri64x2_s a b))
+
+;;;; Rules for `band` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 0 (lower (has_type (fits_in_32 _) (band a b))) (pulley_xband32 a b))
+(rule 1 (lower (has_type $I64 (band a b))) (pulley_xband64 a b))
+
+(rule 3 (lower (has_type (ty_int (fits_in_32 _)) (band a (i32_from_iconst b))))
+  (pulley_xband32_s32 a b))
+(rule 4 (lower (has_type $I64 (band a (i32_from_iconst b))))
+  (pulley_xband64_s32 a b))
+(rule 5 (lower (has_type (ty_int (fits_in_32 _)) (band a (i8_from_iconst b))))
+  (pulley_xband32_s8 a b))
+(rule 6 (lower (has_type $I64 (band a (i8_from_iconst b))))
+  (pulley_xband64_s8 a b))
+
+(rule 2 (lower (has_type (ty_vec128 _) (band a b)))
+  (pulley_vband128 a b))
+
+;;;; Rules for `bor` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 0 (lower (has_type (fits_in_32 _) (bor a b))) (pulley_xbor32 a b))
+(rule 1 (lower (has_type $I64 (bor a b))) (pulley_xbor64 a b))
+
+(rule 3 (lower (has_type (ty_int (fits_in_32 _)) (bor a (i32_from_iconst b))))
+  (pulley_xbor32_s32 a b))
+(rule 4 (lower (has_type $I64 (bor a (i32_from_iconst b))))
+  (pulley_xbor64_s32 a b))
+(rule 5 (lower (has_type (ty_int (fits_in_32 _)) (bor a (i8_from_iconst b))))
+  (pulley_xbor32_s8 a b))
+(rule 6 (lower (has_type $I64 (bor a (i8_from_iconst b))))
+  (pulley_xbor64_s8 a b))
+
+(rule 2 (lower (has_type (ty_vec128 _) (bor a b)))
+  (pulley_vbor128 a b))
+
+;;;; Rules for `bxor` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 0 (lower (has_type (fits_in_32 _) (bxor a b))) (pulley_xbxor32 a b))
+(rule 1 (lower (has_type $I64 (bxor a b))) (pulley_xbxor64 a b))
+
+(rule 3 (lower (has_type (ty_int (fits_in_32 _)) (bxor a (i32_from_iconst b))))
+  (pulley_xbxor32_s32 a b))
+(rule 4 (lower (has_type $I64 (bxor a (i32_from_iconst b))))
+  (pulley_xbxor64_s32 a b))
+(rule 5 (lower (has_type (ty_int (fits_in_32 _)) (bxor a (i8_from_iconst b))))
+  (pulley_xbxor32_s8 a b))
+(rule 6 (lower (has_type $I64 (bxor a (i8_from_iconst b))))
+  (pulley_xbxor64_s8 a b))
+
+(rule 2 (lower (has_type (ty_vec128 _) (bxor a b)))
+  (pulley_vbxor128 a b))
+
+;;;; Rules for `bnot` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 0 (lower (has_type (fits_in_32 _) (bnot a)))
+  (pulley_xbnot32 a))
+
+(rule 1 (lower (has_type $I64 (bnot a)))
+  (pulley_xbnot64 a))
+
+(rule 2 (lower (has_type (ty_vec128 _) (bnot a)))
+  (pulley_vbnot128 a))
+
+;;;; Rules for `bitselect` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type (ty_vec128 _) (bitselect c x y)))
+  (pulley_vbitselect128 c x y))
+
+;;;; Rules for `umin` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 0 (lower (has_type (fits_in_32 _) (umin a b)))
+  (pulley_xmin32_u (zext32 a) (zext32 b)))
+(rule 1 (lower (has_type $I64 (umin a b))) (pulley_xmin64_u a b))
+(rule 1 (lower (has_type $I8X16 (umin a b))) (pulley_vmin8x16_u a b))
+(rule 1 (lower (has_type $I16X8 (umin a b))) (pulley_vmin16x8_u a b))
+(rule 1 (lower (has_type $I32X4 (umin a b))) (pulley_vmin32x4_u a b))
+
+;;;; Rules for `smin` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 0 (lower (has_type (fits_in_32 _) (smin a b)))
+  (pulley_xmin32_s (sext32 a) (sext32 b)))
+(rule 1 (lower (has_type $I64 (smin a b))) (pulley_xmin64_s a b))
+(rule 1 (lower (has_type $I8X16 (smin a b))) (pulley_vmin8x16_s a b))
+(rule 1 (lower (has_type $I16X8 (smin a b))) (pulley_vmin16x8_s a b))
+(rule 1 (lower (has_type $I32X4 (smin a b))) (pulley_vmin32x4_s a b))
+
+;;;; Rules for `umax` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 0 (lower (has_type (fits_in_32 _) (umax a b)))
+  (pulley_xmax32_u (zext32 a) (zext32 b)))
+(rule 1 (lower (has_type $I64 (umax a b))) (pulley_xmax64_u a b))
+(rule 1 (lower (has_type $I8X16 (umax a b))) (pulley_vmax8x16_u a b))
+(rule 1 (lower (has_type $I16X8 (umax a b))) (pulley_vmax16x8_u a b))
+(rule 1 (lower (has_type $I32X4 (umax a b))) (pulley_vmax32x4_u a b))
+
+;;;; Rules for `smax` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 0 (lower (has_type (fits_in_32 _) (smax a b)))
+  (pulley_xmax32_s (sext32 a) (sext32 b)))
+(rule 1 (lower (has_type $I64 (smax a b))) (pulley_xmax64_s a b))
+(rule 1 (lower (has_type $I8X16 (smax a b))) (pulley_vmax8x16_s a b))
+(rule 1 (lower (has_type $I16X8 (smax a b))) (pulley_vmax16x8_s a b))
+(rule 1 (lower (has_type $I32X4 (smax a b))) (pulley_vmax32x4_s a b))
+
+;;;; Rules for `bmask` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 0 (lower (has_type (ty_int (fits_in_32 _)) (bmask a @ (value_type (fits_in_32 _)))))
+  (pulley_xbmask32 (zext32 a)))
+(rule 1 (lower (has_type $I64 (bmask a)))
+  (pulley_xbmask64 (zext64 a)))
+(rule 2 (lower (bmask a @ (value_type $I64)))
+  (pulley_xbmask64 a))
+
+;;;; Rules for `ctz` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $I8 (ctz a)))
+  (pulley_xctz32 (pulley_xbor32_s32 a 0x100)))
+(rule (lower (has_type $I16 (ctz a)))
+  (pulley_xctz32 (pulley_xbor32_s32 a 0x10000)))
+(rule (lower (has_type $I32 (ctz a))) (pulley_xctz32 a))
+(rule (lower (has_type $I64 (ctz a))) (pulley_xctz64 a))
+
+;;;; Rules for `clz` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $I8 (clz a)))
+  (pulley_xsub32_u8 (pulley_xclz32 (zext32 a)) 24))
+(rule (lower (has_type $I16 (clz a)))
+  (pulley_xsub32_u8 (pulley_xclz32 (zext32 a)) 16))
+(rule (lower (has_type $I32 (clz a))) (pulley_xclz32 a))
+(rule (lower (has_type $I64 (clz a))) (pulley_xclz64 a))
+
+;;;; Rules for `popcnt` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 0 (lower (has_type (fits_in_32 _) (popcnt a))) (pulley_xpopcnt32 (zext32 a)))
+(rule 1 (lower (has_type $I64 (popcnt a))) (pulley_xpopcnt64 a))
+(rule 1 (lower (has_type $I8X16 (popcnt a))) (pulley_vpopcnt8x16 a))
+
+;;;; Rules for `rotl` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $I32 (rotl a b))) (pulley_xrotl32 a b))
+(rule (lower (has_type $I64 (rotl a b))) (pulley_xrotl64 a b))
+
+;;;; Rules for `rotr` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $I32 (rotr a b))) (pulley_xrotr32 a b))
+(rule (lower (has_type $I64 (rotr a b))) (pulley_xrotr64 a b))
+
+;;;; Rules for `icmp` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (icmp cc a b @ (value_type (ty_int ty))))
+      (lower_icmp ty cc a b))
+
+(decl lower_icmp (Type IntCC Value Value) XReg)
+
+(rule (lower_icmp $I64 (IntCC.Equal) a b)
+      (pulley_xeq64 a b))
+
+(rule (lower_icmp $I64 (IntCC.NotEqual) a b)
+      (pulley_xneq64 a b))
+
+(rule (lower_icmp $I64 (IntCC.SignedLessThan) a b)
+      (pulley_xslt64 a b))
+
+(rule (lower_icmp $I64 (IntCC.SignedLessThanOrEqual) a b)
+      (pulley_xslteq64 a b))
+
+(rule (lower_icmp $I64 (IntCC.UnsignedLessThan) a b)
+      (pulley_xult64 a b))
+
+(rule (lower_icmp $I64 (IntCC.UnsignedLessThanOrEqual) a b)
+      (pulley_xulteq64 a b))
+
+(rule 1 (lower_icmp (fits_in_32 _) (IntCC.Equal) a b)
+      (pulley_xeq32 (zext32 a) (zext32 b)))
+
+(rule 1 (lower_icmp (fits_in_32 _) (IntCC.NotEqual) a b)
+      (pulley_xneq32 (zext32 a) (zext32 b)))
+
+(rule 1 (lower_icmp (fits_in_32 _) (IntCC.SignedLessThan) a b)
+      (pulley_xslt32 (sext32 a) (sext32 b)))
+
+(rule 1 (lower_icmp (fits_in_32 _) (IntCC.SignedLessThanOrEqual) a b)
+      (pulley_xslteq32 (sext32 a) (sext32 b)))
+
+(rule 1 (lower_icmp (fits_in_32 _) (IntCC.UnsignedLessThan) a b)
+      (pulley_xult32 (zext32 a) (zext32 b)))
+
+(rule 1 (lower_icmp (fits_in_32 _) (IntCC.UnsignedLessThanOrEqual) a b)
+      (pulley_xulteq32 (zext32 a) (zext32 b)))
+
+;; Pulley doesn't have instructions for `>` and `>=`, so we have to reverse the
+;; operation.
+(rule (lower_icmp ty (IntCC.SignedGreaterThan) a b)
+      (lower_icmp ty (IntCC.SignedLessThan) b a))
+(rule (lower_icmp ty (IntCC.SignedGreaterThanOrEqual) a b)
+      (lower_icmp ty (IntCC.SignedLessThanOrEqual) b a))
+(rule (lower_icmp ty (IntCC.UnsignedGreaterThan) a b)
+      (lower_icmp ty (IntCC.UnsignedLessThan) b a))
+(rule (lower_icmp ty (IntCC.UnsignedGreaterThanOrEqual) a b)
+      (lower_icmp ty (IntCC.UnsignedLessThanOrEqual) b a))
+
+;; `i128` comparisons
+;;
+;; While we could pretty easily add 128-bit comparisons to the interpreter it's
+;; currently predicted that it's relatively niche to need this and that it's
+;; not performance-sensitive in an interpreter context. In lieu of adding more
+;; opcodes this is an adaptation of riscv64's lowering rules for 128-bit
+;; integers. In the future if this is a performance bottleneck it should be
+;; possible to add new opcodes to pulley for 128-bit comparisons.
+
+(rule (lower_icmp $I128 (IntCC.Equal) x y)
+  (let ((lo XReg (pulley_xbxor64 (value_regs_get x 0) (value_regs_get y 0)))
+        (hi XReg (pulley_xbxor64 (value_regs_get x 1) (value_regs_get y 1))))
+    (pulley_xeq64 (pulley_xbor64 lo hi) (pulley_xconst8 0))))
+(rule (lower_icmp $I128 (IntCC.NotEqual) x y)
+  (let ((lo XReg (pulley_xbxor64 (value_regs_get x 0) (value_regs_get y 0)))
+        (hi XReg (pulley_xbxor64 (value_regs_get x 1) (value_regs_get y 1))))
+    (pulley_xneq64 (pulley_xbor64 lo hi) (pulley_xconst8 0))))
+
+;; swap args for `>` to use `<` instead
+;;(rule 1 (lower_icmp $I128 cc @ (IntCC.SignedGreaterThan) x y)
+;;  (lower_icmp $I128 (intcc_swap_args cc) y x))
+;;(rule 1 (lower_icmp $I128 cc @ (IntCC.UnsignedGreaterThan) x y)
+;;  (lower_icmp $I128  (intcc_swap_args cc) y x))
+
+;; complement `=`-related conditions to get ones that don't use `=`.
+(rule 2 (lower_icmp $I128 cc @ (IntCC.SignedLessThanOrEqual) x y)
+  (pulley_xbxor32_s8 (lower_icmp $I128 (intcc_complement cc) x y) 1))
+(rule 2 (lower_icmp $I128 cc @ (IntCC.SignedGreaterThanOrEqual) x y)
+  (pulley_xbxor32_s8 (lower_icmp $I128 (intcc_complement cc) x y) 1))
+(rule 2 (lower_icmp $I128 cc @ (IntCC.UnsignedLessThanOrEqual) x y)
+  (pulley_xbxor32_s8 (lower_icmp $I128 (intcc_complement cc) x y) 1))
+(rule 2 (lower_icmp $I128 cc @ (IntCC.UnsignedGreaterThanOrEqual) x y)
+  (pulley_xbxor32_s8 (lower_icmp $I128 (intcc_complement cc) x y) 1))
+
+;; Compare both the bottom and upper halves of the 128-bit values. If
+;; the top half is equal use the bottom comparison, otherwise use the upper
+;; comparison. Note that the lower comparison is always unsigned since if it's
+;; used the top halves are all zeros and the semantic values are positive.
+(rule 3 (lower_icmp $I128 cc x y)
+  (if-let (IntCC.UnsignedLessThan) (intcc_unsigned cc))
+  (let ((x_lo XReg (value_regs_get x 0))
+        (x_hi XReg (value_regs_get x 1))
+        (y_lo XReg (value_regs_get y 0))
+        (y_hi XReg (value_regs_get y 1))
+        (top_cmp XReg (lower_icmp128_hi cc x_hi y_hi))
+        (bottom_cmp XReg (pulley_xult64 x_lo y_lo)))
+    (pulley_xselect32
+      (pulley_xeq64 (pulley_xbxor64 x_hi y_hi) (pulley_xconst8 0))
+      bottom_cmp
+      top_cmp)))
+
+(decl lower_icmp128_hi (IntCC XReg XReg) XReg)
+(rule (lower_icmp128_hi (IntCC.SignedLessThan) a b) (pulley_xslt64 a b))
+(rule (lower_icmp128_hi (IntCC.UnsignedLessThan) a b) (pulley_xult64 a b))
+
+;; vector comparisons
+
+(rule 1 (lower (icmp cc a @ (value_type (ty_vec128 ty)) b))
+  (lower_vcmp ty cc a b))
+
+(decl lower_vcmp (Type IntCC Value Value) VReg)
+(rule (lower_vcmp $I8X16 (IntCC.Equal) a b) (pulley_veq8x16 a b))
+(rule (lower_vcmp $I8X16 (IntCC.NotEqual) a b) (pulley_vneq8x16 a b))
+(rule (lower_vcmp $I8X16 (IntCC.SignedLessThan) a b) (pulley_vslt8x16 a b))
+(rule (lower_vcmp $I8X16 (IntCC.SignedLessThanOrEqual) a b) (pulley_vslteq8x16 a b))
+(rule (lower_vcmp $I8X16 (IntCC.UnsignedLessThan) a b) (pulley_vult8x16 a b))
+(rule (lower_vcmp $I8X16 (IntCC.UnsignedLessThanOrEqual) a b) (pulley_vulteq8x16 a b))
+(rule (lower_vcmp $I16X8 (IntCC.Equal) a b) (pulley_veq16x8 a b))
+(rule (lower_vcmp $I16X8 (IntCC.NotEqual) a b) (pulley_vneq16x8 a b))
+(rule (lower_vcmp $I16X8 (IntCC.SignedLessThan) a b) (pulley_vslt16x8 a b))
+(rule (lower_vcmp $I16X8 (IntCC.SignedLessThanOrEqual) a b) (pulley_vslteq16x8 a b))
+(rule (lower_vcmp $I16X8 (IntCC.UnsignedLessThan) a b) (pulley_vult16x8 a b))
+(rule (lower_vcmp $I16X8 (IntCC.UnsignedLessThanOrEqual) a b) (pulley_vulteq16x8 a b))
+(rule (lower_vcmp $I32X4 (IntCC.Equal) a b) (pulley_veq32x4 a b))
+(rule (lower_vcmp $I32X4 (IntCC.NotEqual) a b) (pulley_vneq32x4 a b))
+(rule (lower_vcmp $I32X4 (IntCC.SignedLessThan) a b) (pulley_vslt32x4 a b))
+(rule (lower_vcmp $I32X4 (IntCC.SignedLessThanOrEqual) a b) (pulley_vslteq32x4 a b))
+(rule (lower_vcmp $I32X4 (IntCC.UnsignedLessThan) a b) (pulley_vult32x4 a b))
+(rule (lower_vcmp $I32X4 (IntCC.UnsignedLessThanOrEqual) a b) (pulley_vulteq32x4 a b))
+(rule (lower_vcmp $I64X2 (IntCC.Equal) a b) (pulley_veq64x2 a b))
+(rule (lower_vcmp $I64X2 (IntCC.NotEqual) a b) (pulley_vneq64x2 a b))
+(rule (lower_vcmp $I64X2 (IntCC.SignedLessThan) a b) (pulley_vslt64x2 a b))
+(rule (lower_vcmp $I64X2 (IntCC.SignedLessThanOrEqual) a b) (pulley_vslteq64x2 a b))
+(rule (lower_vcmp $I64X2 (IntCC.UnsignedLessThan) a b) (pulley_vult64x2 a b))
+(rule (lower_vcmp $I64X2 (IntCC.UnsignedLessThanOrEqual) a b) (pulley_vulteq64x2 a b))
+
+;; Sweap operand order of ops pulley doesn't support
+(rule (lower_vcmp ty cc @ (IntCC.SignedGreaterThan) a b)
+  (lower_vcmp ty (intcc_swap_args cc) b a))
+(rule (lower_vcmp ty cc @ (IntCC.SignedGreaterThanOrEqual) a b)
+  (lower_vcmp ty (intcc_swap_args cc) b a))
+(rule (lower_vcmp ty cc @ (IntCC.UnsignedGreaterThan) a b)
+  (lower_vcmp ty (intcc_swap_args cc) b a))
+(rule (lower_vcmp ty cc @ (IntCC.UnsignedGreaterThanOrEqual) a b)
+  (lower_vcmp ty (intcc_swap_args cc) b a))
+
+;;;; Rules for `fcmp` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (fcmp cc a b @ (value_type (ty_scalar_float ty))))
+  (lower_fcmp ty cc a b))
+
+(rule 1 (lower (fcmp cc a b @ (value_type (ty_vec128 ty))))
+  (lower_vfcmp ty cc a b))
+
+(decl lower_fcmp (Type FloatCC Value Value) XReg)
+
+(rule (lower_fcmp $F32 (FloatCC.Equal) a b) (pulley_feq32 a b))
+(rule (lower_fcmp $F64 (FloatCC.Equal) a b) (pulley_feq64 a b))
+(rule (lower_fcmp $F32 (FloatCC.NotEqual) a b) (pulley_fneq32 a b))
+(rule (lower_fcmp $F64 (FloatCC.NotEqual) a b) (pulley_fneq64 a b))
+(rule (lower_fcmp $F32 (FloatCC.LessThan) a b) (pulley_flt32 a b))
+(rule (lower_fcmp $F64 (FloatCC.LessThan) a b) (pulley_flt64 a b))
+(rule (lower_fcmp $F32 (FloatCC.LessThanOrEqual) a b) (pulley_flteq32 a b))
+(rule (lower_fcmp $F64 (FloatCC.LessThanOrEqual) a b) (pulley_flteq64 a b))
+
+;; Ordered == !a.is_nan() && !b.is_nan()
+(rule (lower_fcmp ty (FloatCC.Ordered) a b)
+  (pulley_xband32 (lower_fcmp ty (FloatCC.Equal) a a) (lower_fcmp ty (FloatCC.Equal) b b)))
+
+;; OrderedNotEqual == a < b || a > b
+(rule (lower_fcmp ty (FloatCC.OrderedNotEqual) a b)
+  (pulley_xbor32 (lower_fcmp ty (FloatCC.LessThan) a b) (lower_fcmp ty (FloatCC.GreaterThan) a b)))
+
+;; Pulley doesn't have instructions for `>` and `>=`, so we have to reverse the
+;; operation.
+(rule (lower_fcmp ty (FloatCC.GreaterThan) a b)
+  (lower_fcmp ty (FloatCC.LessThan) b a))
+(rule (lower_fcmp ty (FloatCC.GreaterThanOrEqual) a b)
+  (lower_fcmp ty (FloatCC.LessThanOrEqual) b a))
+
+;; For other `Unordered*` comparisons generate its complement and invert the result.
+(rule -1 (lower_fcmp ty cc a b)
+  (if-let true (floatcc_unordered cc))
+  (pulley_xbxor32_s8 (lower_fcmp ty (floatcc_complement cc) a b) 1))
+
+(decl lower_vfcmp (Type FloatCC Value Value) VReg)
+
+(rule (lower_vfcmp $F32X4 (FloatCC.Equal) a b) (pulley_veqf32x4 a b))
+(rule (lower_vfcmp $F64X2 (FloatCC.Equal) a b) (pulley_veqf64x2 a b))
+(rule (lower_vfcmp $F32X4 (FloatCC.NotEqual) a b) (pulley_vneqf32x4 a b))
+(rule (lower_vfcmp $F64X2 (FloatCC.NotEqual) a b) (pulley_vneqf64x2 a b))
+(rule (lower_vfcmp $F32X4 (FloatCC.LessThan) a b) (pulley_vltf32x4 a b))
+(rule (lower_vfcmp $F64X2 (FloatCC.LessThan) a b) (pulley_vltf64x2 a b))
+(rule (lower_vfcmp $F32X4 (FloatCC.LessThanOrEqual) a b) (pulley_vlteqf32x4 a b))
+(rule (lower_vfcmp $F64X2 (FloatCC.LessThanOrEqual) a b) (pulley_vlteqf64x2 a b))
+
+(rule (lower_vfcmp ty (FloatCC.Unordered) a b)
+  (pulley_vbor128
+    (lower_vfcmp ty (FloatCC.NotEqual) a a)
+    (lower_vfcmp ty (FloatCC.NotEqual) b b)))
+
+;; NB: Pulley doesn't have lowerings for `Ordered` or `Unordered*` `FloatCC`
+;; conditions as that's not needed by wasm at this time.
+
+;; Pulley doesn't have instructions for `>` and `>=`, so we have to reverse the
+;; operation.
+(rule (lower_vfcmp ty (FloatCC.GreaterThan) a b)
+  (lower_vfcmp ty (FloatCC.LessThan) b a))
+(rule (lower_vfcmp ty (FloatCC.GreaterThanOrEqual) a b)
+  (lower_vfcmp ty (FloatCC.LessThanOrEqual) b a))
+
+;;;; Rules for `load` and friends ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type (ty_int (fits_in_64 ty)) (load flags addr offset)))
+  (gen_xload addr offset flags ty (ExtKind.None)))
+
+(rule 1 (lower (has_type (ty_scalar_float ty) (load flags addr offset)))
+  (gen_fload addr offset flags ty))
+
+(rule 3 (lower (has_type $I128 (load flags addr offset)))
+  (if-let offsetp8 (i32_checked_add offset 8))
+  (let ((lo XReg (pulley_xload (amode addr offset) $I64 flags))
+        (hi XReg (pulley_xload (amode addr offsetp8) $I64 flags)))
+    (value_regs lo hi)))
+
+(rule 0 (lower (has_type (ty_int (fits_in_32 _)) (uload8 flags addr offset)))
+  (gen_xload addr offset flags $I8 (ExtKind.Zero32)))
+
+(rule 0 (lower (has_type (ty_int (fits_in_32 _)) (uload16 flags addr offset)))
+  (gen_xload addr offset flags $I16 (ExtKind.Zero32)))
+
+(rule 0 (lower (has_type (ty_int (fits_in_32 _)) (uload32 flags addr offset)))
+  (gen_xload addr offset flags $I32 (ExtKind.None)))
+
+(rule 1 (lower (has_type $I64 (uload8 flags addr offset)))
+  (gen_xload addr offset flags $I8 (ExtKind.Zero64)))
+
+(rule 1 (lower (has_type $I64 (uload16 flags addr offset)))
+  (gen_xload addr offset flags $I16 (ExtKind.Zero64)))
+
+(rule 1 (lower (has_type $I64 (uload32 flags addr offset)))
+  (gen_xload addr offset flags $I32 (ExtKind.Zero64)))
+
+(rule 0 (lower (has_type (ty_int (fits_in_32 _)) (sload8 flags addr offset)))
+  (gen_xload addr offset flags $I8 (ExtKind.Sign32)))
+
+(rule 0 (lower (has_type (ty_int (fits_in_32 _)) (sload16 flags addr offset)))
+  (gen_xload addr offset flags $I16 (ExtKind.Sign32)))
+
+(rule 0 (lower (has_type (ty_int (fits_in_32 _)) (sload32 flags addr offset)))
+  (gen_xload addr offset flags $I32 (ExtKind.None)))
+
+(rule 1 (lower (has_type $I64 (sload8 flags addr offset)))
+  (gen_xload addr offset flags $I8 (ExtKind.Sign64)))
+
+(rule 1 (lower (has_type $I64 (sload16 flags addr offset)))
+  (gen_xload addr offset flags $I16 (ExtKind.Sign64)))
+
+(rule 1 (lower (has_type $I64 (sload32 flags addr offset)))
+  (gen_xload addr offset flags $I32 (ExtKind.Sign64)))
+
+(rule 2 (lower (has_type (ty_vec128 ty) (load flags addr offset)))
+  (gen_vload addr offset flags ty (VExtKind.None)))
+
+(rule (lower (has_type ty (sload8x8 flags addr offset)))
+  (gen_vload addr offset flags ty (VExtKind.S8x8)))
+
+(rule (lower (has_type ty (uload8x8 flags addr offset)))
+  (gen_vload addr offset flags ty (VExtKind.U8x8)))
+
+(rule (lower (has_type ty (sload16x4 flags addr offset)))
+  (gen_vload addr offset flags ty (VExtKind.S16x4)))
+
+(rule (lower (has_type ty (uload16x4 flags addr offset)))
+  (gen_vload addr offset flags ty (VExtKind.U16x4)))
+
+(rule (lower (has_type ty (sload32x2 flags addr offset)))
+  (gen_vload addr offset flags ty (VExtKind.S32x2)))
+
+(rule (lower (has_type ty (uload32x2 flags addr offset)))
+  (gen_vload addr offset flags ty (VExtKind.U32x2)))
+
+;; Helper to generate an `xload*` instruction, of which there are many. This
+;; falls back to the pseudo-instruction `XLoad` which has code in `emit.rs` to
+;; emit lots of forms but it additionally supports more specific pattern-matched
+;; versions too.
+(decl gen_xload (Value Offset32 MemFlags Type ExtKind) XReg)
+
+;; Base case: use `pulley_xload` pseudo-inst for big-endian loads/stores with
+;; no extension. This should only be used for host-things on wasm and
+;; intentionally is minimal at this time as we don't currently need to match
+;; all `ExtKind` variants.
+(rule 0 (gen_xload addr offset flags ty (ExtKind.None))
+  (if-let true (memflags_nontrapping flags))
+  (if-let (Endianness.Big) (endianness flags))
+  (pulley_xload (amode addr offset) ty flags))
+
+;; Base case: use `*_o32` addressing modes for little-endian and nontrapping
+;; loads/stores
+(rule 0 (gen_xload addr offset flags ty ext)
+  (if-let true (memflags_nontrapping flags))
+  (if-let (Endianness.Little) (endianness flags))
+  (emit_addro32_xload (addro32 addr offset) ty ext))
+
+(decl emit_addro32_xload (AddrO32 Type ExtKind) XReg)
+(rule (emit_addro32_xload addr $I8 (ExtKind.None)) (pulley_xload8_u32_o32 addr))
+(rule (emit_addro32_xload addr $I8 (ExtKind.Sign32)) (pulley_xload8_s32_o32 addr))
+(rule (emit_addro32_xload addr $I8 (ExtKind.Zero32)) (pulley_xload8_u32_o32 addr))
+(rule (emit_addro32_xload addr $I8 (ExtKind.Sign64)) (pulley_sext32 (pulley_xload8_s32_o32 addr)))
+(rule (emit_addro32_xload addr $I8 (ExtKind.Zero64)) (pulley_zext32 (pulley_xload8_u32_o32 addr)))
+(rule (emit_addro32_xload addr $I16 (ExtKind.None)) (pulley_xload16le_u32_o32 addr))
+(rule (emit_addro32_xload addr $I16 (ExtKind.Sign32)) (pulley_xload16le_s32_o32 addr))
+(rule (emit_addro32_xload addr $I16 (ExtKind.Zero32)) (pulley_xload16le_u32_o32 addr))
+(rule (emit_addro32_xload addr $I16 (ExtKind.Sign64)) (pulley_sext32 (pulley_xload16le_s32_o32 addr)))
+(rule (emit_addro32_xload addr $I16 (ExtKind.Zero64)) (pulley_zext32 (pulley_xload16le_u32_o32 addr)))
+(rule (emit_addro32_xload addr $I32 (ExtKind.None)) (pulley_xload32le_o32 addr))
+(rule (emit_addro32_xload addr $I32 (ExtKind.Sign32)) (pulley_xload32le_o32 addr))
+(rule (emit_addro32_xload addr $I32 (ExtKind.Zero32)) (pulley_xload32le_o32 addr))
+(rule (emit_addro32_xload addr $I32 (ExtKind.Sign64)) (pulley_sext32 (pulley_xload32le_o32 addr)))
+(rule (emit_addro32_xload addr $I32 (ExtKind.Zero64)) (pulley_zext32 (pulley_xload32le_o32 addr)))
+(rule (emit_addro32_xload addr $I64 _ext) (pulley_xload64le_o32 addr))
+
+;; Special case: wasm loads/stores that map trap use the `*_z` addressing modes
+;; which generates a trap for load-from-null.
+(rule 1 (gen_xload addr offset flags ty ext)
+  (if-let true (memflags_is_wasm flags))
+  (emit_addrz_xload (addrz addr offset) ty ext))
+
+(decl emit_addrz_xload (AddrZ Type ExtKind) XReg)
+(rule (emit_addrz_xload addr $I8 (ExtKind.None)) (pulley_xload8_u32_z addr))
+(rule (emit_addrz_xload addr $I8 (ExtKind.Sign32)) (pulley_xload8_s32_z addr))
+(rule (emit_addrz_xload addr $I8 (ExtKind.Zero32)) (pulley_xload8_u32_z addr))
+(rule (emit_addrz_xload addr $I8 (ExtKind.Sign64)) (pulley_sext32 (pulley_xload8_s32_z addr)))
+(rule (emit_addrz_xload addr $I8 (ExtKind.Zero64)) (pulley_zext32 (pulley_xload8_u32_z addr)))
+(rule (emit_addrz_xload addr $I16 (ExtKind.None)) (pulley_xload16le_u32_z addr))
+(rule (emit_addrz_xload addr $I16 (ExtKind.Sign32)) (pulley_xload16le_s32_z addr))
+(rule (emit_addrz_xload addr $I16 (ExtKind.Zero32)) (pulley_xload16le_u32_z addr))
+(rule (emit_addrz_xload addr $I16 (ExtKind.Sign64)) (pulley_sext32 (pulley_xload16le_s32_z addr)))
+(rule (emit_addrz_xload addr $I16 (ExtKind.Zero64)) (pulley_zext32 (pulley_xload16le_u32_z addr)))
+(rule (emit_addrz_xload addr $I32 (ExtKind.None)) (pulley_xload32le_z addr))
+(rule (emit_addrz_xload addr $I32 (ExtKind.Sign32)) (pulley_xload32le_z addr))
+(rule (emit_addrz_xload addr $I32 (ExtKind.Zero32)) (pulley_xload32le_z addr))
+(rule (emit_addrz_xload addr $I32 (ExtKind.Sign64)) (pulley_sext32 (pulley_xload32le_z addr)))
+(rule (emit_addrz_xload addr $I32 (ExtKind.Zero64)) (pulley_zext32 (pulley_xload32le_z addr)))
+(rule (emit_addrz_xload addr $I64 _ext) (pulley_xload64le_z addr))
+
+;; Special case: wasm loads/stores that may trap use the `*_g32` addressing
+;; modes. This is a superset of the `*_z` modes above and requires extracting
+;; a bounds check from within `addr` using a `select` condition.
+(rule 2 (gen_xload addr offset flags ty ext)
+  (if-let addrg32 (wasm_g32 addr offset flags ty))
+  (gen_xload_g32 addrg32 ty ext))
+
+;; Base case of "g32" loads, emit the instructions
+(decl gen_xload_g32 (G32 Type ExtKind) XReg)
+(rule 0 (gen_xload_g32 addr ty ext) (emit_addrg32_xload addr ty ext))
+
+(decl emit_addrg32_xload (AddrG32 Type ExtKind) XReg)
+(rule (emit_addrg32_xload addr $I8 (ExtKind.None)) (pulley_xload8_u32_g32 addr))
+(rule (emit_addrg32_xload addr $I8 (ExtKind.Sign32)) (pulley_xload8_s32_g32 addr))
+(rule (emit_addrg32_xload addr $I8 (ExtKind.Zero32)) (pulley_xload8_u32_g32 addr))
+(rule (emit_addrg32_xload addr $I8 (ExtKind.Sign64)) (pulley_sext32 (pulley_xload8_s32_g32 addr)))
+(rule (emit_addrg32_xload addr $I8 (ExtKind.Zero64)) (pulley_zext32 (pulley_xload8_u32_g32 addr)))
+(rule (emit_addrg32_xload addr $I16 (ExtKind.None)) (pulley_xload16le_u32_g32 addr))
+(rule (emit_addrg32_xload addr $I16 (ExtKind.Sign32)) (pulley_xload16le_s32_g32 addr))
+(rule (emit_addrg32_xload addr $I16 (ExtKind.Zero32)) (pulley_xload16le_u32_g32 addr))
+(rule (emit_addrg32_xload addr $I16 (ExtKind.Sign64)) (pulley_sext32 (pulley_xload16le_s32_g32 addr)))
+(rule (emit_addrg32_xload addr $I16 (ExtKind.Zero64)) (pulley_zext32 (pulley_xload16le_u32_g32 addr)))
+(rule (emit_addrg32_xload addr $I32 (ExtKind.None)) (pulley_xload32le_g32 addr))
+(rule (emit_addrg32_xload addr $I32 (ExtKind.Sign32)) (pulley_xload32le_g32 addr))
+(rule (emit_addrg32_xload addr $I32 (ExtKind.Zero32)) (pulley_xload32le_g32 addr))
+(rule (emit_addrg32_xload addr $I32 (ExtKind.Sign64)) (pulley_sext32 (pulley_xload32le_g32 addr)))
+(rule (emit_addrg32_xload addr $I32 (ExtKind.Zero64)) (pulley_zext32 (pulley_xload32le_g32 addr)))
+(rule (emit_addrg32_xload addr $I64 _ext) (pulley_xload64le_g32 addr))
+
+;; Special case of "g32" load - if a "g32bne" mode is possible instead use that.
+(rule 1 (gen_xload_g32 addr ty ext)
+  (if-let addrbne (addrg32bne addr))
+  (emit_addrg32bne_xload addrbne ty ext))
+
+(decl emit_addrg32bne_xload (AddrG32Bne Type ExtKind) XReg)
+(rule (emit_addrg32bne_xload addr $I8 (ExtKind.None)) (pulley_xload8_u32_g32bne addr))
+(rule (emit_addrg32bne_xload addr $I8 (ExtKind.Sign32)) (pulley_xload8_s32_g32bne addr))
+(rule (emit_addrg32bne_xload addr $I8 (ExtKind.Zero32)) (pulley_xload8_u32_g32bne addr))
+(rule (emit_addrg32bne_xload addr $I8 (ExtKind.Sign64)) (pulley_sext32 (pulley_xload8_s32_g32bne addr)))
+(rule (emit_addrg32bne_xload addr $I8 (ExtKind.Zero64)) (pulley_zext32 (pulley_xload8_u32_g32bne addr)))
+(rule (emit_addrg32bne_xload addr $I16 (ExtKind.None)) (pulley_xload16le_u32_g32bne addr))
+(rule (emit_addrg32bne_xload addr $I16 (ExtKind.Sign32)) (pulley_xload16le_s32_g32bne addr))
+(rule (emit_addrg32bne_xload addr $I16 (ExtKind.Zero32)) (pulley_xload16le_u32_g32bne addr))
+(rule (emit_addrg32bne_xload addr $I16 (ExtKind.Sign64)) (pulley_sext32 (pulley_xload16le_s32_g32bne addr)))
+(rule (emit_addrg32bne_xload addr $I16 (ExtKind.Zero64)) (pulley_zext32 (pulley_xload16le_u32_g32bne addr)))
+(rule (emit_addrg32bne_xload addr $I32 (ExtKind.None)) (pulley_xload32le_g32bne addr))
+(rule (emit_addrg32bne_xload addr $I32 (ExtKind.Sign32)) (pulley_xload32le_g32bne addr))
+(rule (emit_addrg32bne_xload addr $I32 (ExtKind.Zero32)) (pulley_xload32le_g32bne addr))
+(rule (emit_addrg32bne_xload addr $I32 (ExtKind.Sign64)) (pulley_sext32 (pulley_xload32le_g32bne addr)))
+(rule (emit_addrg32bne_xload addr $I32 (ExtKind.Zero64)) (pulley_zext32 (pulley_xload32le_g32bne addr)))
+(rule (emit_addrg32bne_xload addr $I64 _ext) (pulley_xload64le_g32bne addr))
+
+;; Analog of `gen_xload`, but for floating-point registers
+(decl gen_fload (Value Offset32 MemFlags Type) FReg)
+
+;; Base case: nontrapping loads/stores use the `fload` helper which bottoms out
+;; in `emit.rs` using the `*_o32` addressing mode.
+(rule 0 (gen_fload addr offset flags ty)
+  (if-let true (memflags_nontrapping flags))
+  (pulley_fload (amode addr offset) ty flags))
+
+;; Base case: use trapping loads stores with the `*_z` addressing mode for
+;; wasm-looking loads/stores.
+(rule 1 (gen_fload addr offset flags ty)
+  (if-let true (memflags_is_wasm flags))
+  (emit_addrz_fload (addrz addr offset) ty))
+
+(decl emit_addrz_fload (AddrZ Type) FReg)
+(rule (emit_addrz_fload addr $F32) (pulley_fload32le_z addr))
+(rule (emit_addrz_fload addr $F64) (pulley_fload64le_z addr))
+
+;; Special case: use `*_g32` addressing when the bounds-check can be
+;; pattern-matched.
+(rule 2 (gen_fload addr offset flags ty)
+  (if-let addrg32 (wasm_g32 addr offset flags ty))
+  (emit_addrg32_fload addrg32 ty))
+
+(decl emit_addrg32_fload (AddrG32 Type) FReg)
+(rule (emit_addrg32_fload addr $F32) (pulley_fload32le_g32 addr))
+(rule (emit_addrg32_fload addr $F64) (pulley_fload64le_g32 addr))
+
+;; Analog of `gen_xload`, but for vector registers.
+(decl gen_vload (Value Offset32 MemFlags Type VExtKind) VReg)
+
+;; Base case: nontrapping loads/stores use the `*_o32` addressing mode through
+;; helpers in `emit.rs` and the `pulley_vload` pseudo-inst. Note that this
+;; intentionally doesn't support all extension kinds.
+(rule 0 (gen_vload addr offset flags ty (VExtKind.None))
+  (if-let true (memflags_nontrapping flags))
+  (pulley_vload (amode addr offset) ty flags))
+
+;; Base case: wasm loads/stores using the `*_z` addressing mode.
+(rule 1 (gen_vload addr offset flags ty ext)
+  (if-let true (memflags_is_wasm flags))
+  (emit_addrz_vload (addrz addr offset) ty ext))
+
+(decl emit_addrz_vload (AddrZ Type VExtKind) VReg)
+(rule (emit_addrz_vload addr (ty_vec128 _) (VExtKind.None)) (pulley_vload128le_z addr))
+(rule (emit_addrz_vload addr (ty_vec128 _) (VExtKind.S8x8)) (pulley_vload8x8_s_z addr))
+(rule (emit_addrz_vload addr (ty_vec128 _) (VExtKind.U8x8)) (pulley_vload8x8_u_z addr))
+(rule (emit_addrz_vload addr (ty_vec128 _) (VExtKind.S16x4)) (pulley_vload16x4le_s_z addr))
+(rule (emit_addrz_vload addr (ty_vec128 _) (VExtKind.U16x4)) (pulley_vload16x4le_u_z addr))
+(rule (emit_addrz_vload addr (ty_vec128 _) (VExtKind.S32x2)) (pulley_vload32x2le_s_z addr))
+(rule (emit_addrz_vload addr (ty_vec128 _) (VExtKind.U32x2)) (pulley_vload32x2le_u_z addr))
+
+;; Special case: use `*_g32` addressing when the bounds-check can be
+;; pattern-matched.
+(rule 2 (gen_vload addr offset flags (ty_vec128 ty) (VExtKind.None))
+  (if-let addrg32 (wasm_g32 addr offset flags ty))
+  (pulley_vload128le_g32 addrg32))
+
+;;;; Rules for `store` and friends ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (store flags src @ (value_type (ty_int (fits_in_64 ty))) addr offset))
+  (side_effect (gen_store src addr offset flags ty)))
+
+(rule 1 (lower (store flags src @ (value_type (ty_scalar_float ty)) addr offset))
+  (side_effect (gen_store src addr offset flags ty)))
+
+(rule (lower (istore8 flags src addr offset))
+  (side_effect (gen_store src addr offset flags $I8)))
+
+(rule (lower (istore16 flags src addr offset))
+  (side_effect (gen_store src addr offset flags $I16)))
+
+(rule (lower (istore32 flags src addr offset))
+  (side_effect (gen_store src addr offset flags $I32)))
+
+(rule 2 (lower (store flags src @ (value_type (ty_vec128 ty)) addr offset))
+  (side_effect (gen_store src addr offset flags ty)))
+
+;; i128 stores
+
+(rule 3 (lower (store flags src @ (value_type $I128) addr offset))
+  (let
+    ((src_regs ValueRegs src)
+      (src_lo XReg (value_regs_get src_regs 0))
+      (src_hi XReg (value_regs_get src_regs 1))
+      (addrp0 XReg addr)
+      (addrp8 Amode (Amode.RegOffset addrp0 8)))
+  (side_effect (emit_store_i128 flags src_lo src_hi (Amode.RegOffset addrp0 0) addrp8))))
+
+;; Helper to handle big/little endian to determine which order the lo/hi
+;; halves of the i128 are stored.
+(decl emit_store_i128 (MemFlags XReg XReg Amode Amode) SideEffectNoResult)
+(rule 0 (emit_store_i128 flags lo hi addrp0 addrp8)
+  (if-let (Endianness.Little) (endianness flags))
+  (let ((_ InstOutput (side_effect (pulley_xstore addrp0 lo $I64 flags))))
+    (pulley_xstore addrp8 hi $I64 flags)))
+(rule 1 (emit_store_i128 flags lo hi addrp0 addrp8)
+  (if-let (Endianness.Big) (endianness flags))
+  (let ((_ InstOutput (side_effect (pulley_xstore addrp0 hi $I64 flags))))
+    (pulley_xstore addrp8 lo $I64 flags)))
+
+;; Helper function to store the first argument into the second argument. This
+;; only stores up to the width of the `Type` specified, regardless of what the
+;; type of the first argument is.
+(decl gen_store (Value Value Offset32 MemFlags Type) SideEffectNoResult)
+
+;; Base cases: normal typed loads/stores
+(rule 0 (gen_store src addr offset flags (ty_int ty))
+  (if-let true (memflags_nontrapping flags))
+  (pulley_xstore (amode addr offset) src ty flags))
+(rule 1 (gen_store src addr offset flags (ty_scalar_float ty))
+  (if-let true (memflags_nontrapping flags))
+  (pulley_fstore (amode addr offset) src ty flags))
+(rule 2 (gen_store src addr offset flags (ty_vec128 ty))
+  (if-let true (memflags_nontrapping flags))
+  (pulley_vstore (amode addr offset) src ty flags))
+
+;; Base case: wasm stores
+(rule 3 (gen_store src addr offset flags ty)
+  (if-let true (memflags_is_wasm flags))
+  (emit_addrz_store (addrz addr offset) src ty))
+
+(decl emit_addrz_store (AddrZ Value Type) SideEffectNoResult)
+(rule (emit_addrz_store addr val $I8) (pulley_xstore8_z addr val))
+(rule (emit_addrz_store addr val $I16) (pulley_xstore16le_z addr val))
+(rule (emit_addrz_store addr val $I32) (pulley_xstore32le_z addr val))
+(rule (emit_addrz_store addr val $I64) (pulley_xstore64le_z addr val))
+(rule (emit_addrz_store addr val $F32) (pulley_fstore32le_z addr val))
+(rule (emit_addrz_store addr val $F64) (pulley_fstore64le_z addr val))
+(rule 1 (emit_addrz_store addr val (ty_vec128 _)) (pulley_vstore128le_z addr val))
+
+;; special case: wasm stores with a folded bounds check
+(rule 4 (gen_store src addr offset flags ty)
+  (if-let addrg32 (wasm_g32 addr offset flags ty))
+  (emit_addrg32_store addrg32 src ty))
+
+(decl emit_addrg32_store (AddrG32 Value Type) SideEffectNoResult)
+(rule (emit_addrg32_store addr val $I8) (pulley_xstore8_g32 addr val))
+(rule (emit_addrg32_store addr val $I16) (pulley_xstore16le_g32 addr val))
+(rule (emit_addrg32_store addr val $I32) (pulley_xstore32le_g32 addr val))
+(rule (emit_addrg32_store addr val $I64) (pulley_xstore64le_g32 addr val))
+(rule (emit_addrg32_store addr val $F32) (pulley_fstore32le_g32 addr val))
+(rule (emit_addrg32_store addr val $F64) (pulley_fstore64le_g32 addr val))
+(rule 1 (emit_addrg32_store addr val (ty_vec128 _)) (pulley_vstore128le_g32 addr val))
+
+;;;; Rules for `stack_addr` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (stack_addr stack_slot offset))
+      (lower_stack_addr stack_slot offset))
+
+(decl lower_stack_addr (StackSlot Offset32) XReg)
+(rule (lower_stack_addr stack_slot offset)
+      (let ((dst WritableXReg (temp_writable_xreg))
+            (_ Unit (emit (abi_stackslot_addr dst stack_slot offset))))
+        dst))
+
+;;;; Rules for `uextend` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 0 (lower (has_type (fits_in_32 _) (uextend val)))
+  (zext32 val))
+
+(rule 1 (lower (has_type $I64 (uextend val)))
+  (zext64 val))
+
+(rule 1 (lower (has_type $I128 (uextend val)))
+  (value_regs (zext64 val) (pulley_xzero)))
+
+;;;; Rules for `sextend` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 0 (lower (has_type (fits_in_32 _) (sextend val)))
+  (sext32 val))
+
+(rule 1 (lower (has_type $I64 (sextend val)))
+  (sext64 val))
+
+(rule 1 (lower (has_type $I128 (sextend val)))
+  (if-let (u6_from_u8 shift) (u64_try_into_u8 63))
+  (let ((lo XReg (sext64 val))
+        (hi XReg (pulley_xshr64_s_u6 lo shift)))
+    (value_regs lo hi)))
+
+;;;; Rules for `ireduce` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type (fits_in_64 _ty) (ireduce src)))
+  src)
+
+;;;; Rules for `iconcat` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $I128 (iconcat a b)))
+  (value_regs a b))
+
+;;;; Rules for `isplit` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (isplit x @ (value_type $I128)))
+  (let ((lo XReg (value_regs_get x 0))
+        (hi XReg (value_regs_get x 1)))
+    (output_pair lo hi)))
+
+;;;; Rules for `uadd_overflow_trap` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $I32 (uadd_overflow_trap a b tc)))
+  (pulley_xadd32_uoverflow_trap a b tc))
+
+(rule (lower (has_type $I64 (uadd_overflow_trap a b tc)))
+  (pulley_xadd64_uoverflow_trap a b tc))
+
+;;;; Rules for `select` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 0 (lower (has_type (ty_int (fits_in_32 _)) (select c a b)))
+  (pulley_xselect32 (emit_cond (lower_cond c)) a b))
+
+(rule 1 (lower (has_type $I64 (select c a b)))
+  (pulley_xselect64 (emit_cond (lower_cond c)) a b))
+
+(rule 1 (lower (has_type $F32 (select c a b)))
+  (pulley_fselect32 (emit_cond (lower_cond c)) a b))
+
+(rule 1 (lower (has_type $F64 (select c a b)))
+  (pulley_fselect64 (emit_cond (lower_cond c)) a b))
+
+(rule 2 (lower (has_type (ty_vec128 _) (select c a b)))
+  (pulley_vselect (emit_cond (lower_cond c)) a b))
+
+;; Helper to emit a conditional into a register itself.
+(decl emit_cond (Cond) XReg)
+(rule (emit_cond (Cond.If32 reg)) reg)
+(rule (emit_cond (Cond.IfNot32 reg)) (pulley_xeq32 reg (pulley_xconst8 0)))
+(rule (emit_cond (Cond.IfXeq32 src1 src2)) (pulley_xeq32 src1 src2))
+(rule (emit_cond (Cond.IfXneq32 src1 src2)) (pulley_xneq32 src1 src2))
+(rule (emit_cond (Cond.IfXslt32 src1 src2)) (pulley_xslt32 src1 src2))
+(rule (emit_cond (Cond.IfXslteq32 src1 src2)) (pulley_xslteq32 src1 src2))
+(rule (emit_cond (Cond.IfXult32 src1 src2)) (pulley_xult32 src1 src2))
+(rule (emit_cond (Cond.IfXulteq32 src1 src2)) (pulley_xulteq32 src1 src2))
+(rule (emit_cond (Cond.IfXeq64 src1 src2)) (pulley_xeq64 src1 src2))
+(rule (emit_cond (Cond.IfXneq64 src1 src2)) (pulley_xneq64 src1 src2))
+(rule (emit_cond (Cond.IfXslt64 src1 src2)) (pulley_xslt64 src1 src2))
+(rule (emit_cond (Cond.IfXslteq64 src1 src2)) (pulley_xslteq64 src1 src2))
+(rule (emit_cond (Cond.IfXult64 src1 src2)) (pulley_xult64 src1 src2))
+(rule (emit_cond (Cond.IfXulteq64 src1 src2)) (pulley_xulteq64 src1 src2))
+
+(rule (emit_cond (Cond.IfXeq32I32 src1 src2)) (pulley_xeq32 src1 (imm src2)))
+(rule (emit_cond (Cond.IfXneq32I32 src1 src2)) (pulley_xneq32 src1 (imm src2)))
+(rule (emit_cond (Cond.IfXslt32I32 src1 src2)) (pulley_xslt32 src1 (imm src2)))
+(rule (emit_cond (Cond.IfXslteq32I32 src1 src2)) (pulley_xslteq32 src1 (imm src2)))
+(rule (emit_cond (Cond.IfXult32I32 src1 src2)) (pulley_xult32 src1 (imm src2)))
+(rule (emit_cond (Cond.IfXulteq32I32 src1 src2)) (pulley_xulteq32 src1 (imm src2)))
+
+;; Note the operand swaps here
+(rule (emit_cond (Cond.IfXsgt32I32 src1 src2)) (pulley_xslt32 (imm src2) src1))
+(rule (emit_cond (Cond.IfXsgteq32I32 src1 src2)) (pulley_xslteq32 (imm src2) src1))
+(rule (emit_cond (Cond.IfXugt32I32 src1 src2)) (pulley_xult32 (imm src2) src1))
+(rule (emit_cond (Cond.IfXugteq32I32 src1 src2)) (pulley_xulteq32 (imm src2) src1))
+
+(rule (emit_cond (Cond.IfXeq64I32 src1 src2)) (pulley_xeq64 src1 (imm src2)))
+(rule (emit_cond (Cond.IfXneq64I32 src1 src2)) (pulley_xneq64 src1 (imm src2)))
+(rule (emit_cond (Cond.IfXslt64I32 src1 src2)) (pulley_xslt64 src1 (imm src2)))
+(rule (emit_cond (Cond.IfXslteq64I32 src1 src2)) (pulley_xslteq64 src1 (imm src2)))
+(rule (emit_cond (Cond.IfXult64I32 src1 src2)) (pulley_xult64 src1 (imm src2)))
+(rule (emit_cond (Cond.IfXulteq64I32 src1 src2)) (pulley_xulteq64 src1 (imm src2)))
+
+;; Note the operand swaps here
+(rule (emit_cond (Cond.IfXsgt64I32 src1 src2)) (pulley_xslt64 (imm src2) src1))
+(rule (emit_cond (Cond.IfXsgteq64I32 src1 src2)) (pulley_xslteq64 (imm src2) src1))
+(rule (emit_cond (Cond.IfXugt64I32 src1 src2)) (pulley_xult64 (imm src2) src1))
+(rule (emit_cond (Cond.IfXugteq64I32 src1 src2)) (pulley_xulteq64 (imm src2) src1))
+
+;;;; Rules for `bitcast` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $F32 (bitcast _flags val @ (value_type $I32))))
+  (pulley_bitcast_float_from_int_32 val))
+
+(rule (lower (has_type $F64 (bitcast _flags val @ (value_type $I64))))
+  (pulley_bitcast_float_from_int_64 val))
+
+(rule (lower (has_type $I32 (bitcast _flags val @ (value_type $F32))))
+  (pulley_bitcast_int_from_float_32 val))
+
+(rule (lower (has_type $I64 (bitcast _flags val @ (value_type $F64))))
+  (pulley_bitcast_int_from_float_64 val))
+
+(rule 1 (lower (has_type (ty_vec128 _) (bitcast _flags val @ (value_type (ty_vec128 _)))))
+  val)
+
+(rule 2 (lower (has_type ty (bitcast _flags a @ (value_type ty)))) a)
+
+;;;; Rules for `fcvt_to_{u,s}int` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $I32 (fcvt_to_uint val @ (value_type $F32))))
+  (pulley_x32_from_f32_u val))
+
+(rule (lower (has_type $I32 (fcvt_to_uint val @ (value_type $F64))))
+  (pulley_x32_from_f64_u val))
+
+(rule (lower (has_type $I64 (fcvt_to_uint val @ (value_type $F32))))
+  (pulley_x64_from_f32_u val))
+
+(rule (lower (has_type $I64 (fcvt_to_uint val @ (value_type $F64))))
+  (pulley_x64_from_f64_u val))
+
+(rule (lower (has_type $I32 (fcvt_to_sint val @ (value_type $F32))))
+  (pulley_x32_from_f32_s val))
+
+(rule (lower (has_type $I32 (fcvt_to_sint val @ (value_type $F64))))
+  (pulley_x32_from_f64_s val))
+
+(rule (lower (has_type $I64 (fcvt_to_sint val @ (value_type $F32))))
+  (pulley_x64_from_f32_s val))
+
+(rule (lower (has_type $I64 (fcvt_to_sint val @ (value_type $F64))))
+  (pulley_x64_from_f64_s val))
+
+;;;; Rules for `fcvt_from_{u,s}int` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 0 (lower (has_type $F32 (fcvt_from_uint val @ (value_type (fits_in_32 _)))))
+  (pulley_f32_from_x32_u (zext32 val)))
+
+(rule 1 (lower (has_type $F32 (fcvt_from_uint val @ (value_type $I64))))
+  (pulley_f32_from_x64_u val))
+
+(rule 0 (lower (has_type $F64 (fcvt_from_uint val @ (value_type (fits_in_32 _)))))
+  (pulley_f64_from_x32_u (zext32 val)))
+
+(rule 1 (lower (has_type $F64 (fcvt_from_uint val @ (value_type $I64))))
+  (pulley_f64_from_x64_u val))
+
+(rule 0 (lower (has_type $F32 (fcvt_from_sint val @ (value_type (fits_in_32 _)))))
+  (pulley_f32_from_x32_s (sext32 val)))
+
+(rule 1 (lower (has_type $F32 (fcvt_from_sint val @ (value_type $I64))))
+  (pulley_f32_from_x64_s val))
+
+(rule 0 (lower (has_type $F64 (fcvt_from_sint val @ (value_type (fits_in_32 _)))))
+  (pulley_f64_from_x32_s (sext32 val)))
+
+(rule 1 (lower (has_type $F64 (fcvt_from_sint val @ (value_type $I64))))
+  (pulley_f64_from_x64_s val))
+
+(rule (lower (has_type $F32X4 (fcvt_from_sint val @ (value_type $I32X4))))
+  (pulley_vf32x4_from_i32x4_s val))
+
+(rule (lower (has_type $F32X4 (fcvt_from_uint val @ (value_type $I32X4))))
+  (pulley_vf32x4_from_i32x4_u val))
+
+(rule (lower (has_type $F64X2 (fcvt_from_sint val @ (value_type $I64X2))))
+  (pulley_vf64x2_from_i64x2_s val))
+
+(rule (lower (has_type $F64X2 (fcvt_from_uint val @ (value_type $I64X2))))
+  (pulley_vf64x2_from_i64x2_u val))
+
+;;;; Rules for `fcvt_to_{u,s}int_sat` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $I32 (fcvt_to_uint_sat val @ (value_type $F32))))
+  (pulley_x32_from_f32_u_sat val))
+
+(rule (lower (has_type $I32 (fcvt_to_uint_sat val @ (value_type $F64))))
+  (pulley_x32_from_f64_u_sat val))
+
+(rule (lower (has_type $I64 (fcvt_to_uint_sat val @ (value_type $F32))))
+  (pulley_x64_from_f32_u_sat val))
+
+(rule (lower (has_type $I64 (fcvt_to_uint_sat val @ (value_type $F64))))
+  (pulley_x64_from_f64_u_sat val))
+
+(rule (lower (has_type $I32 (fcvt_to_sint_sat val @ (value_type $F32))))
+  (pulley_x32_from_f32_s_sat val))
+
+(rule (lower (has_type $I32 (fcvt_to_sint_sat val @ (value_type $F64))))
+  (pulley_x32_from_f64_s_sat val))
+
+(rule (lower (has_type $I64 (fcvt_to_sint_sat val @ (value_type $F32))))
+  (pulley_x64_from_f32_s_sat val))
+
+(rule (lower (has_type $I64 (fcvt_to_sint_sat val @ (value_type $F64))))
+  (pulley_x64_from_f64_s_sat val))
+
+(rule (lower (has_type $I32X4 (fcvt_to_sint_sat val @ (value_type $F32X4))))
+  (pulley_vi32x4_from_f32x4_s val))
+
+(rule (lower (has_type $I32X4 (fcvt_to_uint_sat val @ (value_type $F32X4))))
+  (pulley_vi32x4_from_f32x4_u val))
+
+(rule (lower (has_type $I64X2 (fcvt_to_sint_sat val @ (value_type $F64X2))))
+  (pulley_vi64x2_from_f64x2_s val))
+
+(rule (lower (has_type $I64X2 (fcvt_to_uint_sat val @ (value_type $F64X2))))
+  (pulley_vi64x2_from_f64x2_u val))
+
+;;;; Rules for `fdemote` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $F32 (fdemote val @ (value_type $F64))))
+  (pulley_f32_from_f64 val))
+
+;;;; Rules for `fpromote` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $F64 (fpromote val @ (value_type $F32))))
+  (pulley_f64_from_f32 val))
+
+;;;; Rules for `fcopysign` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $F32 (fcopysign a b)))
+  (pulley_fcopysign32 a b))
+
+(rule (lower (has_type $F64 (fcopysign a b)))
+  (pulley_fcopysign64 a b))
+
+;;;; Rules for `fadd` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $F32 (fadd a b))) (pulley_fadd32 a b))
+(rule (lower (has_type $F64 (fadd a b))) (pulley_fadd64 a b))
+(rule (lower (has_type $F32X4 (fadd a b))) (pulley_vaddf32x4 a b))
+(rule (lower (has_type $F64X2 (fadd a b))) (pulley_vaddf64x2 a b))
+
+;;;; Rules for `fsub` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $F32 (fsub a b))) (pulley_fsub32 a b))
+(rule (lower (has_type $F64 (fsub a b))) (pulley_fsub64 a b))
+(rule (lower (has_type $F32X4 (fsub a b))) (pulley_vsubf32x4 a b))
+(rule (lower (has_type $F64X2 (fsub a b))) (pulley_vsubf64x2 a b))
+
+;;;; Rules for `fmul` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $F32 (fmul a b))) (pulley_fmul32 a b))
+(rule (lower (has_type $F64 (fmul a b))) (pulley_fmul64 a b))
+(rule (lower (has_type $F32X4 (fmul a b))) (pulley_vmulf32x4 a b))
+(rule (lower (has_type $F64X2 (fmul a b))) (pulley_vmulf64x2 a b))
+
+;;;; Rules for `fdiv` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $F32 (fdiv a b))) (pulley_fdiv32 a b))
+(rule (lower (has_type $F64 (fdiv a b))) (pulley_fdiv64 a b))
+(rule (lower (has_type $F32X4 (fdiv a b))) (pulley_vdivf32x4 a b))
+(rule (lower (has_type $F64X2 (fdiv a b))) (pulley_vdivf64x2 a b))
+
+;;;; Rules for `fmax` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $F32 (fmax a b))) (pulley_fmaximum32 a b))
+(rule (lower (has_type $F64 (fmax a b))) (pulley_fmaximum64 a b))
+(rule (lower (has_type $F32X4 (fmax a b))) (pulley_vmaximumf32x4 a b))
+(rule (lower (has_type $F64X2 (fmax a b))) (pulley_vmaximumf64x2 a b))
+
+;;;; Rules for `fmin` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $F32 (fmin a b))) (pulley_fminimum32 a b))
+(rule (lower (has_type $F64 (fmin a b))) (pulley_fminimum64 a b))
+(rule (lower (has_type $F32X4 (fmin a b))) (pulley_vminimumf32x4 a b))
+(rule (lower (has_type $F64X2 (fmin a b))) (pulley_vminimumf64x2 a b))
+
+;;;; Rules for `trunc` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $F32 (trunc a))) (pulley_ftrunc32 a))
+(rule (lower (has_type $F64 (trunc a))) (pulley_ftrunc64 a))
+(rule (lower (has_type $F32X4 (trunc a))) (pulley_vtrunc32x4 a))
+(rule (lower (has_type $F64X2 (trunc a))) (pulley_vtrunc64x2 a))
+
+;;;; Rules for `floor` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $F32 (floor a))) (pulley_ffloor32 a))
+(rule (lower (has_type $F64 (floor a))) (pulley_ffloor64 a))
+(rule (lower (has_type $F32X4 (floor a)))
+      (pulley_vfloor32x4 a))
+(rule (lower (has_type $F64X2 (floor a)))
+      (pulley_vfloor64x2 a))
+
+;;;; Rules for `ceil` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $F32 (ceil a))) (pulley_fceil32 a))
+(rule (lower (has_type $F64 (ceil a))) (pulley_fceil64 a))
+(rule (lower (has_type $F64X2 (ceil a)))
+      (pulley_vceil64x2 a))
+(rule (lower (has_type $F32X4 (ceil a)))
+      (pulley_vceil32x4 a))
+
+;;;; Rules for `nearest` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $F32 (nearest a))) (pulley_fnearest32 a))
+(rule (lower (has_type $F64 (nearest a))) (pulley_fnearest64 a))
+(rule (lower (has_type $F32X4 (nearest a)))
+      (pulley_vnearest32x4 a))
+(rule (lower (has_type $F64X2 (nearest a)))
+      (pulley_vnearest64x2 a))
+
+;;;; Rules for `sqrt` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $F32 (sqrt a))) (pulley_fsqrt32 a))
+(rule (lower (has_type $F64 (sqrt a))) (pulley_fsqrt64 a))
+(rule (lower (has_type $F32X4 (sqrt a)))
+      (pulley_vsqrt32x4 a))
+(rule (lower (has_type $F64X2 (sqrt a)))
+      (pulley_vsqrt64x2 a))
+
+;;;; Rules for `fneg` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $F32 (fneg a))) (pulley_fneg32 a))
+(rule (lower (has_type $F64 (fneg a))) (pulley_fneg64 a))
+(rule (lower (has_type $F32X4 (fneg a))) (pulley_vnegf32x4 a))
+(rule (lower (has_type $F64X2 (fneg a))) (pulley_vnegf64x2 a))
+
+;;;; Rules for `ineg` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 0 (lower (has_type (fits_in_32 _) (ineg a))) (pulley_xneg32 (sext32 a)))
+(rule 1 (lower (has_type $I64 (ineg a))) (pulley_xneg64 a))
+
+;; vector negation
+
+(rule 1 (lower (has_type $I8X16 (ineg a))) (pulley_vneg8x16 a))
+(rule 1 (lower (has_type $I16X8 (ineg a))) (pulley_vneg16x8 a))
+(rule 1 (lower (has_type $I32X4 (ineg a))) (pulley_vneg32x4 a))
+(rule 1 (lower (has_type $I64X2 (ineg a))) (pulley_vneg64x2 a))
+
+;;;; Rules for `fabs` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $F32 (fabs a))) (pulley_fabs32 a))
+(rule (lower (has_type $F64 (fabs a))) (pulley_fabs64 a))
+(rule (lower (has_type $F32X4 (fabs a))) (pulley_vabsf32x4 a))
+(rule (lower (has_type $F64X2 (fabs a))) (pulley_vabsf64x2 a))
+
+;;;; Rules for `vconst` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type (ty_vec128 _) (vconst (u128_from_constant a)))) (pulley_vconst128 a))
+
+;;;; Rules for `bswap` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $I16 (bswap a)))
+  (if-let (u6_from_u8 shift) (u64_try_into_u8 16))
+  (pulley_xshr32_u_u6 (pulley_bswap32 a) shift))
+(rule (lower (has_type $I32 (bswap a))) (pulley_bswap32 a))
+(rule (lower (has_type $I64 (bswap a))) (pulley_bswap64 a))
+
+;;;; Rules for `iabs` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 0 (lower (has_type (fits_in_32 _) (iabs a))) (pulley_xabs32 (sext32 a)))
+(rule 1 (lower (has_type $I64 (iabs a))) (pulley_xabs64 a))
+(rule 1 (lower (has_type $I8X16 (iabs a))) (pulley_vabs8x16 a))
+(rule 1 (lower (has_type $I16X8 (iabs a))) (pulley_vabs16x8 a))
+(rule 1 (lower (has_type $I32X4 (iabs a))) (pulley_vabs32x4 a))
+(rule 1 (lower (has_type $I64X2 (iabs a))) (pulley_vabs64x2 a))
+
+;;;; Rules for `splat` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $I8X16 (splat a))) (pulley_vsplatx8 a))
+(rule (lower (has_type $I16X8 (splat a))) (pulley_vsplatx16 a))
+(rule (lower (has_type $I32X4 (splat a))) (pulley_vsplatx32 a))
+(rule (lower (has_type $I64X2 (splat a))) (pulley_vsplatx64 a))
+(rule (lower (has_type $F32X4 (splat a))) (pulley_vsplatf32 a))
+(rule (lower (has_type $F64X2 (splat a))) (pulley_vsplatf64 a))
+
+;;;; Rules for `vhigh_bits` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type (fits_in_32 _) (vhigh_bits a @ (value_type $I8X16))))
+  (pulley_vbitmask8x16 a))
+(rule (lower (has_type (fits_in_32 _) (vhigh_bits a @ (value_type $I16X8))))
+  (pulley_vbitmask16x8 a))
+(rule (lower (has_type (fits_in_32 _) (vhigh_bits a @ (value_type $I32X4))))
+  (pulley_vbitmask32x4 a))
+(rule (lower (has_type (fits_in_32 _) (vhigh_bits a @ (value_type $I64X2))))
+  (pulley_vbitmask64x2 a))
+
+;;;; Rules for `vall_true`; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (vall_true a @ (value_type $I8X16))) (pulley_valltrue8x16 a))
+(rule (lower (vall_true a @ (value_type $I16X8))) (pulley_valltrue16x8 a))
+(rule (lower (vall_true a @ (value_type $I32X4))) (pulley_valltrue32x4 a))
+(rule (lower (vall_true a @ (value_type $I64X2))) (pulley_valltrue64x2 a))
+(rule (lower (vall_true a @ (value_type $F32X4))) (pulley_valltrue32x4 a))
+(rule (lower (vall_true a @ (value_type $F64X2))) (pulley_valltrue64x2 a))
+
+;;;; Rules for `vany_true`; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (vany_true a @ (value_type $I8X16))) (pulley_vanytrue8x16 a))
+(rule (lower (vany_true a @ (value_type $I16X8))) (pulley_vanytrue16x8 a))
+(rule (lower (vany_true a @ (value_type $I32X4))) (pulley_vanytrue32x4 a))
+(rule (lower (vany_true a @ (value_type $I64X2))) (pulley_vanytrue64x2 a))
+(rule (lower (vany_true a @ (value_type $F32X4))) (pulley_vanytrue32x4 a))
+(rule (lower (vany_true a @ (value_type $F64X2))) (pulley_vanytrue64x2 a))
+
+;;;; Rules for `swiden_low` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (swiden_low a @ (value_type $I8X16))) (pulley_vwidenlow8x16_s a))
+(rule (lower (swiden_low a @ (value_type $I16X8))) (pulley_vwidenlow16x8_s a))
+(rule (lower (swiden_low a @ (value_type $I32X4))) (pulley_vwidenlow32x4_s a))
+
+;;;; Rules for `swiden_high` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (swiden_high a @ (value_type $I8X16))) (pulley_vwidenhigh8x16_s a))
+(rule (lower (swiden_high a @ (value_type $I16X8))) (pulley_vwidenhigh16x8_s a))
+(rule (lower (swiden_high a @ (value_type $I32X4))) (pulley_vwidenhigh32x4_s a))
+
+;;;; Rules for `uwiden_low` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (uwiden_low a @ (value_type $I8X16))) (pulley_vwidenlow8x16_u a))
+(rule (lower (uwiden_low a @ (value_type $I16X8))) (pulley_vwidenlow16x8_u a))
+(rule (lower (uwiden_low a @ (value_type $I32X4))) (pulley_vwidenlow32x4_u a))
+
+;;;; Rules for `uwiden_high` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (uwiden_high a @ (value_type $I8X16))) (pulley_vwidenhigh8x16_u a))
+(rule (lower (uwiden_high a @ (value_type $I16X8))) (pulley_vwidenhigh16x8_u a))
+(rule (lower (uwiden_high a @ (value_type $I32X4))) (pulley_vwidenhigh32x4_u a))
+
+;;;; Rules for `snarrow` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (snarrow a @ (value_type $I16X8) b)) (pulley_vnarrow16x8_s a b))
+(rule (lower (snarrow a @ (value_type $I32X4) b)) (pulley_vnarrow32x4_s a b))
+(rule (lower (snarrow a @ (value_type $I64X2) b)) (pulley_vnarrow64x2_s a b))
+
+;;;; Rules for `unarrow` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (unarrow a @ (value_type $I16X8) b)) (pulley_vnarrow16x8_u a b))
+(rule (lower (unarrow a @ (value_type $I32X4) b)) (pulley_vnarrow32x4_u a b))
+
+;;;; Rules for `uunarrow` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (uunarrow a @ (value_type $I64X2) b)) (pulley_vunarrow64x2_u a b))
+
+;;;; Rules for `fvpromote_low` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (fvpromote_low a @ (value_type $F32X4))) (pulley_vfpromotelow a))
+
+;;;; Rules for `fvdemote` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (fvdemote a @ (value_type $F64X2))) (pulley_vfdemote a))
+
+;;;; Rules for `extractlane` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (extractlane a @ (value_type $I8X16) (u8_from_uimm8 lane)))
+  (pulley_xextractv8x16 a lane))
+(rule (lower (extractlane a @ (value_type $I16X8) (u8_from_uimm8 lane)))
+  (pulley_xextractv16x8 a lane))
+(rule (lower (extractlane a @ (value_type $I32X4) (u8_from_uimm8 lane)))
+  (pulley_xextractv32x4 a lane))
+(rule (lower (extractlane a @ (value_type $I64X2) (u8_from_uimm8 lane)))
+  (pulley_xextractv64x2 a lane))
+(rule (lower (extractlane a @ (value_type $F32X4) (u8_from_uimm8 lane)))
+  (pulley_fextractv32x4 a lane))
+(rule (lower (extractlane a @ (value_type $F64X2) (u8_from_uimm8 lane)))
+  (pulley_fextractv64x2 a lane))
+
+;;;; Rules for `insertlane` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (insertlane a @ (value_type $I8X16) b (u8_from_uimm8 lane)))
+  (pulley_vinsertx8 a b lane))
+(rule (lower (insertlane a @ (value_type $I16X8) b (u8_from_uimm8 lane)))
+  (pulley_vinsertx16 a b lane))
+(rule (lower (insertlane a @ (value_type $I32X4) b (u8_from_uimm8 lane)))
+  (pulley_vinsertx32 a b lane))
+(rule (lower (insertlane a @ (value_type $I64X2) b (u8_from_uimm8 lane)))
+  (pulley_vinsertx64 a b lane))
+(rule (lower (insertlane a @ (value_type $F32X4) b (u8_from_uimm8 lane)))
+  (pulley_vinsertf32 a b lane))
+(rule (lower (insertlane a @ (value_type $F64X2) b (u8_from_uimm8 lane)))
+  (pulley_vinsertf64 a b lane))
+
+;;;; Rules for `scalar_to_vector` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Note that this doesn't use special pulley instructions at this time and
+;; generates a bytecode-wise relatively inefficient lowering. Should be
+;; relatively easy to optimize if necessary in the future.
+
+(rule (lower (scalar_to_vector a @ (value_type $I8)))
+  (pulley_vinsertx8 (pulley_vconst128 0) a 0))
+(rule (lower (scalar_to_vector a @ (value_type $I16)))
+  (pulley_vinsertx16 (pulley_vconst128 0) a 0))
+(rule (lower (scalar_to_vector a @ (value_type $I32)))
+  (pulley_vinsertx32 (pulley_vconst128 0) a 0))
+(rule (lower (scalar_to_vector a @ (value_type $I64)))
+  (pulley_vinsertx64 (pulley_vconst128 0) a 0))
+(rule (lower (scalar_to_vector a @ (value_type $F32)))
+  (pulley_vinsertf32 (pulley_vconst128 0) a 0))
+(rule (lower (scalar_to_vector a @ (value_type $F64)))
+  (pulley_vinsertf64 (pulley_vconst128 0) a 0))
+
+;;;; Rules for `shuffle` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $I8X16 (shuffle a b (u128_from_immediate mask))))
+  (pulley_vshuffle a b mask))
+
+;;;; Rules for `swizzle` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 1 (lower (has_type $I8X16 (swizzle a b))) (pulley_vswizzlei8x16 a b))
+
+;;;; Rules for `fma` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (has_type $F32X4 (fma a b c))) (pulley_vfma32x4 a b c))
+(rule (lower (has_type $F64X2 (fma a b c))) (pulley_vfma64x2 a b c))

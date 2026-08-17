@@ -1,0 +1,5 @@
+cannot import function `x`
+     --> tests/ui/parse-fail/unresolved-use3.wit:6:12
+      |
+    6 |   use bar.{x};
+      |            ^

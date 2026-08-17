@@ -1,0 +1,76 @@
+---
+- name: Question marks in scalars
+  from: '@perlpunk'
+  tags: flow scalar
+  yaml: |
+    - a?string
+    - another ? string
+    - key: value?
+    - [a?string]
+    - [another ? string]
+    - {key: value? }
+    - {key: value?}
+    - {key?: value }
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       =VAL :a?string
+       =VAL :another ? string
+       +MAP
+        =VAL :key
+        =VAL :value?
+       -MAP
+       +SEQ []
+        =VAL :a?string
+       -SEQ
+       +SEQ []
+        =VAL :another ? string
+       -SEQ
+       +MAP {}
+        =VAL :key
+        =VAL :value?
+       -MAP
+       +MAP {}
+        =VAL :key
+        =VAL :value?
+       -MAP
+       +MAP {}
+        =VAL :key?
+        =VAL :value
+       -MAP
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      "a?string",
+      "another ? string",
+      {
+        "key": "value?"
+      },
+      [
+        "a?string"
+      ],
+      [
+        "another ? string"
+      ],
+      {
+        "key": "value?"
+      },
+      {
+        "key": "value?"
+      },
+      {
+        "key?": "value"
+      }
+    ]
+  dump: |
+    - a?string
+    - another ? string
+    - key: value?
+    - - a?string
+    - - another ? string
+    - key: value?
+    - key: value?
+    - key?: value

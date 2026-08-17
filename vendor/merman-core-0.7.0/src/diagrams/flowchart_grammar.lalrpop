@@ -1,0 +1,272 @@
+// Flowchart minimal grammar (phase 1).
+
+grammar;
+
+use crate::diagrams::flowchart::{
+  ClassAssignStmt, ClassDefStmt, ClickStmt, Edge, FlowchartAst, LabeledText, LinkStyleStmt,
+  LinkToken, Node, NodeLabelToken, Stmt, StyleStmt, SubgraphBlock, SubgraphHeader, TitleKind, Tok
+};
+
+extern {
+  type Location = usize;
+  type Error = crate::diagrams::flowchart::LexError;
+
+  enum Tok {
+    "graph" => Tok::KwGraph,
+    "flowchart" => Tok::KwFlowchart,
+    "flowchart-elk" => Tok::KwFlowchartElk,
+    "subgraph" => Tok::KwSubgraph,
+    "end" => Tok::KwEnd,
+
+    Sep => Tok::Sep,
+    Amp => Tok::Amp,
+    StyleSep => Tok::StyleSep,
+
+    Direction => Tok::Direction(<String>),
+    DirectionStmt => Tok::DirectionStmt(<String>),
+    Id => Tok::Id(<String>),
+    NodeLabel => Tok::NodeLabel(<NodeLabelToken>),
+    Arrow => Tok::Arrow(<LinkToken>),
+    EdgeLabel => Tok::EdgeLabel(<LabeledText>),
+    SubgraphHeader => Tok::SubgraphHeader(<SubgraphHeader>),
+
+    StyleStmt => Tok::StyleStmt(<StyleStmt>),
+    ClassDefStmt => Tok::ClassDefStmt(<ClassDefStmt>),
+    ClassAssignStmt => Tok::ClassAssignStmt(<ClassAssignStmt>),
+    ClickStmt => Tok::ClickStmt(<ClickStmt>),
+    LinkStyleStmt => Tok::LinkStyleStmt(<LinkStyleStmt>),
+
+    EdgeId => Tok::EdgeId(<String>),
+    ShapeData => Tok::ShapeData(<String>),
+  }
+}
+
+pub FlowchartAst: FlowchartAst = {
+  <h:Header> <_s:Seps> <st:Statements> => {
+    let (keyword, direction) = h;
+    FlowchartAst { keyword, direction, statements: st }
+  },
+};
+
+Header: (String, Option<String>) = {
+  "graph" <d:Direction?> => ("graph".to_string(), d),
+  "flowchart" <d:Direction?> => ("flowchart".to_string(), d),
+  "flowchart-elk" <d:Direction?> => ("flowchart-elk".to_string(), d),
+};
+
+Statements: Vec<Stmt> = {
+  => Vec::new(),
+  <s:Statement> <rest:StatementRest> => {
+    let mut st = vec![s];
+    st.extend(rest);
+    st
+  }
+};
+
+StatementRest: Vec<Stmt> = {
+  <_sep:Seps> <s:Statement> <rest:StatementRest> => {
+    let mut st = vec![s];
+    st.extend(rest);
+    st
+  },
+  Seps => Vec::new(),
+};
+
+Seps: () = {
+  => (),
+  Sep Seps => (),
+};
+
+Statement: Stmt = {
+  <c:Chain> => Stmt::Chain { nodes: c.0, edges: c.1 },
+  <id:Id> <sd:ShapeData> => Stmt::ShapeData { target: id, yaml: sd },
+  <g:NodeGroupOnly> => Stmt::Chain { nodes: g, edges: Vec::new() },
+  <n:NodeRef> => Stmt::Node(Box::new(n)),
+  <sg:SubgraphBlock> => Stmt::Subgraph(sg),
+  <d:DirectionStmt> => Stmt::Direction(d),
+  <s:StyleStmt> => Stmt::Style(s),
+  <c:ClassDefStmt> => Stmt::ClassDef(c),
+  <c:ClassAssignStmt> => Stmt::ClassAssign(c),
+  <c:ClickStmt> => Stmt::Click(c),
+  <ls:LinkStyleStmt> => Stmt::LinkStyle(ls),
+};
+
+Chain: (Vec<Node>, Vec<Edge>) = {
+  <start:NodeGroup> <segs:EdgeSeg+> => {
+    let mut nodes: Vec<Node> = start.clone();
+    let mut edges: Vec<Edge> = Vec::new();
+
+    let mut prev_group = start;
+    for (eid, link, label, next_group) in segs {
+      for from in &prev_group {
+        for to in &next_group {
+          let is_last_start = from.id == prev_group[prev_group.len() - 1].id;
+          let is_first_end = to.id == next_group[0].id;
+          let edge_id = if is_last_start && is_first_end {
+            eid.clone()
+          } else {
+            None
+          };
+          let edge_label = label.as_ref().map(|l| l.text.clone());
+          let label_type = label.as_ref().map(|l| l.kind.clone()).unwrap_or(TitleKind::Text);
+          edges.push(Edge {
+            from: from.id.clone(),
+            to: to.id.clone(),
+            id: edge_id,
+            link: link.clone(),
+            label: edge_label,
+            label_type,
+            style: Vec::new(),
+            classes: Vec::new(),
+            interpolate: None,
+            is_user_defined_id: false,
+            animate: None,
+            animation: None,
+          });
+        }
+      }
+      nodes.extend(next_group.iter().cloned());
+      prev_group = next_group;
+    }
+
+    (nodes, edges)
+  }
+};
+
+Seps1: () = {
+  Sep Seps => (),
+};
+
+SubgraphBlock: SubgraphBlock = {
+  "subgraph" <h:SubgraphHeader?> <_s:Seps1> <inner:Statements> "end" => SubgraphBlock { header: h.unwrap_or_default(), statements: inner }
+};
+
+EdgeSeg: (Option<String>, LinkToken, Option<LabeledText>, Vec<Node>) = {
+  <eid:EdgeId?> <a:Arrow> <l:EdgeLabel?> <n:NodeGroup> => (eid, a, l, n),
+};
+
+NodeGroup: Vec<Node> = {
+  <first:NodeRefChain> <rest:NodeGroupRest*> => {
+    let mut v = vec![first];
+    v.extend(rest);
+    v
+  }
+};
+
+NodeGroupOnly: Vec<Node> = {
+  <first:NodeRefChain> <rest:NodeGroupRest+> => {
+    let mut v = vec![first];
+    v.extend(rest);
+    v
+  }
+};
+
+NodeGroupRest: Node = {
+  Amp <n:NodeRefChain> => n,
+};
+
+NodeRef: Node = {
+  <id:Id> <nl:NodeLabel> <sd:ShapeData?> <cls:ClassOpt> => Node {
+    id,
+    label: Some(nl.text.text),
+    label_type: nl.text.kind,
+    shape: Some(nl.shape),
+    shape_data: sd,
+    icon: None,
+    form: None,
+    pos: None,
+    img: None,
+    constraint: None,
+    asset_width: None,
+    asset_height: None,
+    styles: Vec::new(),
+    classes: cls,
+    link: None,
+    link_target: None,
+    have_callback: false,
+  },
+  <id:Id> <cls:ClassOpt> => Node {
+    id,
+    label: None,
+    label_type: TitleKind::Text,
+    shape: None,
+    shape_data: None,
+    icon: None,
+    form: None,
+    pos: None,
+    img: None,
+    constraint: None,
+    asset_width: None,
+    asset_height: None,
+    styles: Vec::new(),
+    classes: cls,
+    link: None,
+    link_target: None,
+    have_callback: false,
+  },
+};
+
+NodeRefChain: Node = {
+  <id:Id> <nl:NodeLabel> <sd:ShapeData?> <cls:ClassOpt> => Node {
+    id,
+    label: Some(nl.text.text),
+    label_type: nl.text.kind,
+    shape: Some(nl.shape),
+    shape_data: sd,
+    icon: None,
+    form: None,
+    pos: None,
+    img: None,
+    constraint: None,
+    asset_width: None,
+    asset_height: None,
+    styles: Vec::new(),
+    classes: cls,
+    link: None,
+    link_target: None,
+    have_callback: false,
+  },
+  <id:Id> <sd:ShapeData> <cls:ClassOpt> => Node {
+    id,
+    label: None,
+    label_type: TitleKind::Text,
+    shape: None,
+    shape_data: Some(sd),
+    icon: None,
+    form: None,
+    pos: None,
+    img: None,
+    constraint: None,
+    asset_width: None,
+    asset_height: None,
+    styles: Vec::new(),
+    classes: cls,
+    link: None,
+    link_target: None,
+    have_callback: false,
+  },
+  <id:Id> <cls:ClassOpt> => Node {
+    id,
+    label: None,
+    label_type: TitleKind::Text,
+    shape: None,
+    shape_data: None,
+    icon: None,
+    form: None,
+    pos: None,
+    img: None,
+    constraint: None,
+    asset_width: None,
+    asset_height: None,
+    styles: Vec::new(),
+    classes: cls,
+    link: None,
+    link_target: None,
+    have_callback: false,
+  },
+};
+
+ClassOpt: Vec<String> = {
+  StyleSep <c:Id> => vec![c],
+  => Vec::new(),
+};

@@ -1,0 +1,78 @@
+<?xml version="1.0"?>
+<ratified href="ANGLE_instanced_arrays/">
+  <name>ANGLE_instanced_arrays</name>
+  <contact>
+    <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL working group</a> (public_webgl 'at' khronos.org)
+  </contact>
+  <contributors>
+    <contributor>Contributors to ANGLE_instanced_arrays</contributor>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+  <number>19</number>
+  <depends>
+    <api version="1.0"/>
+    <core version="2.0" />
+  </depends>
+  <overview>
+    <mirrors href="http://www.khronos.org/registry/gles/extensions/ANGLE/ANGLE_instanced_arrays.txt" name="ANGLE_instanced_arrays">
+      <addendum>
+        The implementation must validate the indices referenced by <code>drawArraysInstancedANGLE</code> and <code>drawElementsInstancedANGLE</code>
+        similarly to how indices referenced by <code>drawArrays</code> and <code>drawElements</code> are validated according to section
+        <a href="http://www.khronos.org/registry/webgl/specs/1.0/#ATTRIBS_AND_RANGE_CHECKING">Enabled Vertex Attributes and Range Checking</a> of the
+        WebGL specification.
+      </addendum>
+    </mirrors>
+    <p>
+      Although the extension contains ANGLE in the name it may be exposed by any implementation, whether or not the implementation uses the ANGLE library.
+    </p>
+  </overview>
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface ANGLE_instanced_arrays {
+    const GLenum VERTEX_ATTRIB_ARRAY_DIVISOR_ANGLE = 0x88FE;
+    void drawArraysInstancedANGLE(GLenum mode, GLint first, GLsizei count, GLsizei primcount);
+    void drawElementsInstancedANGLE(GLenum mode, GLsizei count, GLenum type, GLintptr offset, GLsizei primcount);
+    void vertexAttribDivisorANGLE(GLuint index, GLuint divisor); 
+};
+  </idl>
+  <issues>
+    <p>How does ANGLE_instanced_arrays interact with OES_vertex_array_object?</p>
+    <ul>
+      <li>
+        <p>RESOLVED: When the ANGLE_instanced_arrays and OES_vertex_array_object
+        extensions are both enabled, attribute divisors are tracked by the
+        vertex array objects like any other vertex array state.
+        </p>
+      </li>
+    </ul>
+  </issues>
+  <history>
+    <revision date="2012/03/06">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2013/01/26">
+      <change>Moved from proposal to draft.</change>
+    </revision>
+    <revision date="2013/03/11">
+      <change>Renumbered to 19 to fix misnumbering problem.</change>
+    </revision>
+    <revision date="2013/08/06">
+      <change>Moved to community approved.</change>
+    </revision>
+    <revision date="2013/08/22">
+      <change>Clarified non-ANGLE support.</change>
+    </revision>
+    <revision date="2014/03/13">
+      <change>Addendum about index validation.</change>
+    </revision>
+    <revision date="2014/07/15">
+      <change>Added NoInterfaceObject extended attribute.</change>
+    </revision>
+    <revision date="2014/08/08">
+      <change>Ratified by Khronos Board of Promoters.</change>
+    </revision>
+    <revision date="2015/09/23">
+      <change>Clarified interaction with OES_vertex_array_object.</change>
+    </revision>
+  </history>
+</ratified>

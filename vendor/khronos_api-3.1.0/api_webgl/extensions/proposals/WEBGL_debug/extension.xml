@@ -1,0 +1,359 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<proposal href="proposals/WEBGL_debug/">
+  <name>WEBGL_debug</name>
+
+  <contact> <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL
+  working group</a> (public_webgl 'at' khronos.org) </contact>
+
+  <contributors>
+    <contributor>Emmanuel Gil Peyrot, Collabora Ltd.</contributor>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+
+  <number>NN</number>
+
+  <depends>
+    <api version="1.0"/>
+  </depends>
+
+  <overview id="overview">
+    <p>
+      This extension allows the GL to notify applications when various events
+      occur that may be useful during application development, debugging and
+      profiling.
+    </p>
+
+    <mirrors href="https://www.opengl.org/registry/specs/KHR/debug.txt"
+             name="KHR_debug">
+      <addendum>
+        References to debug contexts are deleted.
+      </addendum>
+
+      <addendum>
+        References to the debug message log and callback are deleted, replaced
+        with DOM events.
+      </addendum>
+
+      <addendum>
+        The <code>ObjectPtrLabel</code> and <code>GetObjectPtrLabel</code>
+        functions are replaced with <code>ObjectLabel</code> and
+        <code>GetObjectLabel</code>.
+      </addendum>
+
+      <addendum>
+        The <code>count</code> and <code>ids</code> arguments of
+        <code>DebugMessageControl</code> are replaced with a
+        <code>sequence&lt;GLuint&gt; ids</code> argument.
+      </addendum>
+
+      <addendum>
+        The <code>length</code> and <code>buf</code> arguments of
+        <code>DebugMessageInsert</code> and <code>PushDebugGroup</code> are
+        replaced with a <code>DOMString message</code> argument.
+      </addendum>
+
+      <addendum>
+        The <code>identifier</code> and <code>name</code> arguments of
+        <code>ObjectLabel</code> and <code>GetObjectLabel</code> are replaced
+        with a <code>WebGLObject object</code> argument.
+      </addendum>
+
+      <addendum>
+        The <code>length</code> and <code>label</code> arguments of
+        <code>ObjectLabel</code> are replaced with a <code>DOMString
+        label</code> argument.
+      </addendum>
+
+      <addendum>
+        The <code>bufSize</code>, <code>length</code> and <code>label</code>
+        arguments of <code>GetObjectLabel</code> are replaced with a
+        <code>DOMString</code> return type.
+      </addendum>
+
+      <addendum>
+        As per the usual WebGL binding rules, functions don’t keep the KHR
+        suffix they have in the GLES version, but tokens do.
+      </addendum>
+    </mirrors>
+
+    <features>
+      <feature>
+        The <code>WEBGL_debug</code> extension object is a DOM
+        <code>EventTarget</code>, obeying the rules of the <a
+        href="http://www.w3.org/TR/DOM-Level-3-Events/">DOM Level 3 Events</a>,
+        with a new <code>WebGLDebugMessage</code> event that gets fired
+        whenever the driver, browser or application emits a debug message.
+      </feature>
+
+      <feature>
+        <code>debugMessageInsertKHR</code> is exposed to allow the application
+        to insert debug messages into the WebGL stream.
+      </feature>
+
+      <feature>
+        <code>objectLabelKHR</code> and <code>getObjectLabelKHR</code> are
+        exposed, to assign a label to a <code>WebGLObject</code> and retrieve
+        it.
+      </feature>
+
+      <feature>
+        <code>pushDebugGroupKHR</code> and <code>popDebugGroupKHR</code> make
+        it possible to group a list of WebGL calls together.
+      </feature>
+
+      <feature>
+        <code>debugMessageControlKHR</code> allows the application to enable
+        and disable the debug messages which emit a
+        <code>WebGLDebugMessage</code> event.  This state is part of the debug
+        group they are part of, and gets poped on
+        <code>popDebugGroupKHR</code>.
+      </feature>
+    </features>
+  </overview>
+
+  <idl xml:space="preserve"><![CDATA[
+[NoInterfaceObject]
+interface WEBGL_debug : EventTarget {
+  const GLenum MAX_DEBUG_MESSAGE_LENGTH_KHR = 0x9143;
+  const GLenum MAX_DEBUG_GROUP_STACK_DEPTH_KHR = 0x826C;
+  const GLenum DEBUG_GROUP_STACK_DEPTH_KHR = 0x826D;
+  const GLenum MAX_LABEL_LENGTH_KHR = 0x82E8;
+
+  const GLenum DEBUG_SOURCE_API_KHR = 0x8246;
+  const GLenum DEBUG_SOURCE_WINDOW_SYSTEM_KHR = 0x8247;
+  const GLenum DEBUG_SOURCE_SHADER_COMPILER_KHR = 0x8248;
+  const GLenum DEBUG_SOURCE_THIRD_PARTY_KHR = 0x8249;
+  const GLenum DEBUG_SOURCE_APPLICATION_KHR = 0x824A;
+  const GLenum DEBUG_SOURCE_OTHER_KHR = 0x824B;
+
+  const GLenum DEBUG_TYPE_ERROR_KHR = 0x824C;
+  const GLenum DEBUG_TYPE_DEPRECATED_BEHAVIOR_KHR = 0x824D;
+  const GLenum DEBUG_TYPE_UNDEFINED_BEHAVIOR_KHR = 0x824E;
+  const GLenum DEBUG_TYPE_PORTABILITY_KHR = 0x824F;
+  const GLenum DEBUG_TYPE_PERFORMANCE_KHR = 0x8250;
+  const GLenum DEBUG_TYPE_OTHER_KHR = 0x8251;
+  const GLenum DEBUG_TYPE_MARKER_KHR = 0x8268;
+
+  const GLenum DEBUG_TYPE_PUSH_GROUP_KHR = 0x8269;
+  const GLenum DEBUG_TYPE_POP_GROUP_KHR = 0x826A;
+
+  const GLenum DEBUG_SEVERITY_HIGH_KHR = 0x9146;
+  const GLenum DEBUG_SEVERITY_MEDIUM_KHR = 0x9147;
+  const GLenum DEBUG_SEVERITY_LOW_KHR = 0x9148;
+  const GLenum DEBUG_SEVERITY_NOTIFICATION_KHR = 0x826B;
+
+  const GLenum STACK_UNDERFLOW_KHR = 0x0504;
+  const GLenum STACK_OVERFLOW_KHR = 0x0503;
+
+  void debugMessageControlKHR(GLenum source, GLenum type, GLenum severity, sequence<GLuint> ids, boolean enabled);
+  void debugMessageInsertKHR(GLenum source, GLenum type, GLuint id, GLenum severity, DOMString buf);
+
+  void pushDebugGroupKHR(GLenum source, GLuint id, DOMString message);
+  void popDebugGroupKHR();
+
+  void objectLabelKHR(WebGLObject? object, DOMString label);
+  DOMString getObjectLabelKHR(WebGLObject? object);
+}; // interface WEBGL_debug
+
+[NoInterfaceObject]
+interface WebGLDebugMessage : Event {
+  readonly attribute GLenum source;
+  readonly attribute GLenum type;
+  readonly attribute GLuint id;
+  readonly attribute GLenum severity;
+  readonly attribute DOMString message;
+}; // interface WebGLDebugMessage
+  ]]></idl>
+
+  <newfun>
+    <p>On <code>WEBGL_debug</code>:</p>
+
+    <function name="debugMessageControlKHR" type="void">
+      <param name="source" type="GLenum"/>
+      <param name="type" type="GLenum"/>
+      <param name="severity" type="GLenum"/>
+      <param name="ids" type="sequence&lt;GLuint&gt;"/>
+      <param name="enabled" type="boolean"/>
+      Enables or disables the reporting of <code>WebGLDebugMessage</code>
+      events for the specified messages.
+    </function>
+
+    <function name="debugMessageInsertKHR" type="void">
+      <param name="source" type="GLenum"/>
+      <param name="type" type="GLenum"/>
+      <param name="id" type="GLuint"/>
+      <param name="severity" type="GLenum"/>
+      <param name="message" type="DOMString"/>
+      Inserts a custom message into the debug log.
+    </function>
+
+    <function name="pushDebugGroupKHR" type="void">
+      <param name="source" type="GLenum"/>
+      <param name="id" type="GLuint"/>
+      <param name="message" type="DOMString"/>
+      Pushes a debug group on the stack.
+    </function>
+
+    <function name="popDebugGroupKHR" type="void">
+      Closes a group opened with <code>pushDebugGroupKHR</code>.
+    </function>
+
+    <function name="objectLabelKHR" type="void">
+      <param name="object" type="WebGLObject?"/>
+      <param name="label" type="DOMString"/>
+      Assigns a label to a <code>WebGLObject</code>.
+    </function>
+
+    <function name="getObjectLabelKHR" type="DOMString">
+      <param name="object" type="WebGLObject?"/>
+      Retrieves the label associated with a <code>WebGLObject</code>.
+    </function>
+
+    <function name="addEventListener" type="void">
+      <param name="type" type="DOMString"/>
+      <param name="listener" type="EventListener"/>
+      Register an event handler of a specific event type on the EventTarget.
+    </function>
+
+    <function name="removeEventListener" type="void">
+      <param name="type" type="DOMString"/>
+      <param name="listener" type="EventListener"/>
+      Removes an event listener from the EventTarget.
+    </function>
+
+    <function name="dispatchEvent" type="boolean">
+      <param name="event" type="Event"/>
+      Dispatch an event to this EventTarget.
+    </function>
+
+  </newfun>
+
+  <samplecode><div class="example">
+    Common initialization of the extension, with an example of debug message
+    reporting.
+
+    <pre xml:space="preserve"><![CDATA[
+function init(gl) {
+  ...
+  var ext = gl.getExtension('WEBGL_debug');
+
+  ext.addEventListener('message', function(evt) {
+    console.log(evt.source, evt.type, evt.id, evt.severity, evt.message);
+  });
+  ...
+}]]></pre></div></samplecode>
+
+  <samplecode><div class="example">
+    Skip a section of the code.
+    
+    <pre xml:space="preserve"><![CDATA[
+function draw(gl, ext) {
+  ...
+
+  // Setup of the default active debug group: Filter everything in
+  ext.debugMessageControlKHR(gl.DONT_CARE, gl.DONT_CARE, gl.DONT_CARE, [], true);
+
+  // Generate a debug marker debug output message
+  ext.debugMessageInsertKHR(
+    ext.DEBUG_SOURCE_APPLICATION_KHR,
+    ext.DEBUG_TYPE_MARKER_KHR, 100,
+    ext.DEBUG_SEVERITY_NOTIFICATION_KHR,
+    "Message 1");
+
+  // Push debug group 1
+  ext.pushDebugGroupKHR(
+    ext.DEBUG_SOURCE_APPLICATION_KHR,
+    1,
+    "Message 2");
+
+  // Setup of the debug group 1: Filter everything out
+  ext.debugMessageControlKHR(gl.DONT_CARE, gl.DONT_CARE, gl.DONT_CARE, [], false);
+
+  // This message won't appear in the debug output log of
+  ext.debugMessageInsertKHR(
+    ext.DEBUG_SOURCE_APPLICATION_KHR,
+    ext.DEBUG_TYPE_MARKER_KHR, 100,
+    ext.DEBUG_SEVERITY_NOTIFICATION_KHR,
+    "Message 3");
+
+  // Pop debug group 1, restore the volume control of the default debug group.
+  ext.popDebugGroupKHR();
+
+  // Generate a debug marker debug output message
+  ext.debugMessageInsertKHR(
+    ext.DEBUG_SOURCE_APPLICATION_KHR,
+    ext.DEBUG_TYPE_MARKER_KHR, 100,
+    ext.DEBUG_SEVERITY_NOTIFICATION_KHR,
+    "Message 5");
+
+  ...
+
+  // Expected debug output in the JS console:
+  // Message 1
+  // Message 2
+  // Message 2
+  // Message 5
+}]]></pre></div></samplecode>
+
+  <samplecode><div class="example">
+    Only output a subsection of the code and disable some messages for the
+    entire application.
+  
+    <pre xml:space="preserve"><![CDATA[
+function draw(gl, ext) {
+  ...
+
+  // Setup the control of the debug output for the default debug group
+  ext.debugMessageControlKHR(
+    gl.DONT_CARE, gl.DONT_CARE, gl.DONT_CARE, [], false);
+  ext.debugMessageControlKHR(
+    ext.DEBUG_SOURCE_THIRD_PARTY_KHR, gl.DONT_CARE, gl.DONT_CARE, [], false);
+  var messages = [1234, 2345, 3456, 4567];
+  ext.debugMessageControlKHR(
+    ext.DEBUG_SOURCE_APPLICATION_KHR, gl.DEBUG_TYPE_OTHER, gl.DONT_CARE,
+    messages, false);
+  ext.debugMessageControlKHR(
+    ext.DEBUG_SOURCE_APPLICATION_KHR, ext.DEBUG_TYPE_PORTABILITY_KHR, gl.DONT_CARE,
+    messages, false);
+
+  // Push debug group 1
+  // Inherit the default debug group debug output volume control
+  // Filtered out by ext.debugMessageControlKHR
+  ext.pushDebugGroupKHR(
+    ext.DEBUG_SOURCE_APPLICATION_KHR,
+    1,
+    "Message 1");
+
+  // In this section of the code, we are interested in performances.
+  ext.debugMessageControlKHR(
+    ext.DEBUG_SOURCE_APPLICATION_KHR, ext.DEBUG_TYPE_PERFORMANCE_KHR, gl.DONT_CARE, [], true);
+  // But we already identify that some messages are not really useful for us.
+  ext.debugMessageControlKHR(
+    ext.DEBUG_SOURCE_APPLICATION_KHR, ext.DEBUG_TYPE_OTHER_KHR, gl.DONT_CARE,
+    [5678, 6789], false);
+
+  ext.debugMessageInsertKHR(
+    ext.DEBUG_SOURCE_APPLICATION_KHR,
+    ext.DEBUG_TYPE_PERFORMANCE_KHR, 1357,
+    ext.DEBUG_SEVERITY_MEDIUM_KHR,
+    "Message 2");
+  ext.debugMessageInsertKHR(
+    ext.DEBUG_SOURCE_THIRD_PARTY_KHR, // We still filter out these messages.
+    ext.DEBUG_TYPE_OTHER_KHR, 3579,
+    ext.DEBUG_SEVERITY_MEDIUM_KHR,
+    "Message 3");
+
+  ext.popDebugGroupKHR();
+
+  ...
+
+  // Expected debug output in the JS console:
+  // Message 2
+}]]></pre></div></samplecode>
+
+  <history>
+    <revision date="2015/09/18">
+      <change>Initial revision.</change>
+    </revision>
+  </history>
+</proposal>

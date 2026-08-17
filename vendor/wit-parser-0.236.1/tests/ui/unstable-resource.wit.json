@@ -1,0 +1,44 @@
+{
+  "worlds": [],
+  "interfaces": [
+    {
+      "name": "error",
+      "types": {
+        "error": 0
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "foo",
+      "types": {},
+      "functions": {},
+      "package": 1
+    }
+  ],
+  "types": [
+    {
+      "name": "error",
+      "kind": "resource",
+      "owner": {
+        "interface": 0
+      }
+    }
+  ],
+  "packages": [
+    {
+      "name": "wasi:io@0.1.0",
+      "interfaces": {
+        "error": 0
+      },
+      "worlds": {}
+    },
+    {
+      "name": "a:b@0.1.0",
+      "interfaces": {
+        "foo": 1
+      },
+      "worlds": {}
+    }
+  ]
+}

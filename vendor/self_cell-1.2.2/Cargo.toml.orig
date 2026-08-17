@@ -1,0 +1,29 @@
+[package]
+name = "self_cell"
+version = "1.2.2"
+authors = ["Lukas Bergdoll <lukas.bergdoll@gmail.com>"]
+edition = "2018"
+license = "Apache-2.0 OR GPL-2.0-only"
+
+description = "Safe-to-use proc-macro-free self-referential structs in stable Rust."
+readme = "README.md"
+documentation = "https://docs.rs/self_cell"
+
+repository = "https://github.com/Voultapher/self_cell"
+keywords = ["lifetime", "borrowing", "self", "reference", "intrusive"]
+categories = ["rust-patterns", "memory-management"]
+
+include = ["src/*.rs", "Cargo.toml", "README.md", "LICENSE*"]
+
+[dependencies]
+rustversion = { version = ">=1", optional = true }
+
+[dev-dependencies]
+once_cell = "=1.1.0"
+
+[features]
+# This optional feature lowers the minimum rustc version from 1.51 to 1.36.
+# However this requires polyfilling std library functionality for older rustc
+# with technically UB versions. Testing does not show older rustc versions
+# (ab)using this. Use at
+old_rust = ["rustversion"]

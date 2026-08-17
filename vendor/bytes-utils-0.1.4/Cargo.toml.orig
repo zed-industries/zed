@@ -1,0 +1,29 @@
+[package]
+name = "bytes-utils"
+version = "0.1.4"
+authors = ["Michal 'vorner' Vaner <vorner@vorner.cz>"]
+edition = "2021"
+description = "Additional utilities for working with the bytes crate"
+documentation = "https://docs.rs/bytes-utils"
+repository = "https://github.com/vorner/bytes-utils"
+readme = "README.md"
+keywords = ["bytes", "zero-copy", "buffers", "no_std"]
+categories = ["data-structures"]
+license = "Apache-2.0/MIT"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bytes = { version = "1", default-features = false }
+either = { version = "1", default-features = false }
+serde = { version = "1", optional = true, default-features = false }
+
+[features]
+default = ["std"]
+std = ["bytes/default"]
+serde = ["dep:serde", "bytes/serde"]
+
+[dev-dependencies]
+itertools = "^0.12"
+proptest = "^1.0"
+serde_test = "1.0.144"

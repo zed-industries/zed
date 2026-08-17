@@ -1,0 +1,20 @@
+task:
+  only_if: $CIRRUS_BRANCH == 'master' || $CIRRUS_PR != ''
+  environment:
+    CODECOV_TOKEN: ENCRYPTED[cfd48b16731c254067ef7b39a7083384127a594c6ad52e51cc32982da2eb8cc67c0a54f69736c29559a28664c615ab99]
+  matrix:
+    - name: FreeBSD 14.2
+      freebsd_instance:
+        image_family: freebsd-14-2
+ # Install Rust
+  setup_script:
+    - fetch https://sh.rustup.rs -o rustup.sh
+    - sh rustup.sh -y --profile=minimal --default-toolchain nightly
+    - pkg install -y grcov bash
+    - . $HOME/.cargo/env
+    - rustup component add llvm-tools-preview
+  test_script:
+    - . $HOME/.cargo/env
+    - env LLVM_PROFILE_FILE="calloop-%p-%m.profraw" RUSTFLAGS="-Cinstrument-coverage --cfg coverage" cargo test --all-features
+    - grcov . --binary-path ./target/debug -s . -t lcov --branch --llvm --ignore-not-existing --keep-only "src/*" --excl-br-start "mod tests \{" --excl-start "mod tests \{" --excl-br-line "#\[derive\(" --excl-line "#\[derive\(" -o lcov.info
+    - bash -c 'bash <(curl -s https://codecov.io/bash) -f lcov.info' -F freebsd

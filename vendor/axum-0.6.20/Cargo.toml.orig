@@ -1,0 +1,202 @@
+[package]
+name = "axum"
+version = "0.6.20"
+categories = ["asynchronous", "network-programming", "web-programming::http-server"]
+description = "Web framework that focuses on ergonomics and modularity"
+edition = "2021"
+rust-version = "1.63"
+homepage = "https://github.com/tokio-rs/axum"
+keywords = ["http", "web", "framework"]
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/tokio-rs/axum"
+
+[features]
+default = ["form", "http1", "json", "matched-path", "original-uri", "query", "tokio", "tower-log"]
+form = ["dep:serde_urlencoded"]
+http1 = ["hyper/http1"]
+http2 = ["hyper/http2"]
+json = ["dep:serde_json", "dep:serde_path_to_error"]
+macros = ["dep:axum-macros"]
+matched-path = []
+multipart = ["dep:multer"]
+original-uri = []
+query = ["dep:serde_urlencoded"]
+tokio = ["dep:tokio", "hyper/server", "hyper/tcp", "hyper/runtime", "tower/make"]
+tower-log = ["tower/log"]
+tracing = ["dep:tracing", "axum-core/tracing"]
+ws = ["tokio", "dep:tokio-tungstenite", "dep:sha1", "dep:base64"]
+
+# Required for intra-doc links to resolve correctly
+__private_docs = ["tower/full", "dep:tower-http"]
+
+[dependencies]
+async-trait = "0.1.67"
+axum-core = { path = "../axum-core", version = "0.3.4" }
+bitflags = "1.0"
+bytes = "1.0"
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
+http = "0.2.9"
+http-body = "0.4.4"
+hyper = { version = "0.14.24", features = ["stream"] }
+itoa = "1.0.5"
+matchit = "0.7"
+memchr = "2.4.1"
+mime = "0.3.16"
+percent-encoding = "2.1"
+pin-project-lite = "0.2.7"
+serde = "1.0"
+sync_wrapper = "0.1.1"
+tower = { version = "0.4.13", default-features = false, features = ["util"] }
+tower-layer = "0.3.2"
+tower-service = "0.3"
+
+# optional dependencies
+axum-macros = { path = "../axum-macros", version = "0.3.8", optional = true }
+base64 = { version = "0.21.0", optional = true }
+headers = { version = "0.3.7", optional = true }
+multer = { version = "2.0.0", optional = true }
+serde_json = { version = "1.0", features = ["raw_value"], optional = true }
+serde_path_to_error = { version = "0.1.8", optional = true }
+serde_urlencoded = { version = "0.7", optional = true }
+sha1 = { version = "0.10", optional = true }
+tokio = { package = "tokio", version = "1.25.0", features = ["time"], optional = true }
+tokio-tungstenite = { version = "0.20", optional = true }
+tracing = { version = "0.1", default-features = false, optional = true }
+
+[dependencies.tower-http]
+version = "0.4"
+optional = true
+features = [
+    # all tower-http features except (de)?compression-zstd which doesn't
+    # build on `--target armv5te-unknown-linux-musleabi`
+    "add-extension",
+    "auth",
+    "catch-panic",
+    "compression-br",
+    "compression-deflate",
+    "compression-gzip",
+    "cors",
+    "decompression-br",
+    "decompression-deflate",
+    "decompression-gzip",
+    "follow-redirect",
+    "fs",
+    "limit",
+    "map-request-body",
+    "map-response-body",
+    "metrics",
+    "normalize-path",
+    "propagate-header",
+    "redirect",
+    "request-id",
+    "sensitive-headers",
+    "set-header",
+    "set-status",
+    "timeout",
+    "trace",
+    "util",
+    "validate-request",
+]
+
+[build-dependencies]
+rustversion = "1.0.9"
+
+[dev-dependencies]
+anyhow = "1.0"
+axum-macros = { path = "../axum-macros", version = "0.3.8", features = ["__private"] }
+quickcheck = "1.0"
+quickcheck_macros = "1.0"
+reqwest = { version = "0.11.14", default-features = false, features = ["json", "stream", "multipart"] }
+rustversion = "1.0.9"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+time = { version = "0.3", features = ["serde-human-readable"] }
+tokio = { package = "tokio", version = "1.25.0", features = ["macros", "rt", "rt-multi-thread", "net", "test-util"] }
+tokio-stream = "0.1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json"] }
+uuid = { version = "1.0", features = ["serde", "v4"] }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dev-dependencies.tower]
+package = "tower"
+version = "0.4.10"
+features = [
+    "util",
+    "timeout",
+    "limit",
+    "load-shed",
+    "steer",
+    "filter",
+]
+
+[dev-dependencies.tower-http]
+version = "0.4"
+features = [
+    # all tower-http features except (de)?compression-zstd which doesn't
+    # build on `--target armv5te-unknown-linux-musleabi`
+    "add-extension",
+    "auth",
+    "catch-panic",
+    "compression-br",
+    "compression-deflate",
+    "compression-gzip",
+    "cors",
+    "decompression-br",
+    "decompression-deflate",
+    "decompression-gzip",
+    "follow-redirect",
+    "fs",
+    "limit",
+    "map-request-body",
+    "map-response-body",
+    "metrics",
+    "normalize-path",
+    "propagate-header",
+    "redirect",
+    "request-id",
+    "sensitive-headers",
+    "set-header",
+    "set-status",
+    "timeout",
+    "trace",
+    "util",
+    "validate-request",
+]
+
+[package.metadata.playground]
+features = [
+    "http1",
+    "http2",
+    "json",
+    "multipart",
+    "ws",
+]
+
+[package.metadata.cargo-public-api-crates]
+allowed = [
+    "async_trait",
+    "axum_core",
+    "axum_macros",
+    "bytes",
+    "futures_core",
+    "futures_sink",
+    "futures_util",
+    "headers",
+    "headers_core",
+    "http",
+    "http_body",
+    "hyper",
+    "serde",
+    "serde_json",
+    "tower_layer",
+    "tower_service",
+]
+
+[[bench]]
+name = "benches"
+harness = false

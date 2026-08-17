@@ -1,0 +1,24 @@
+framework = "UserNotifications"
+crate = "objc2-user-notifications"
+required-crates = ["objc2", "objc2-foundation"]
+macos = "10.14"
+maccatalyst = "13.0"
+ios = "10.0"
+tvos = "10.0"
+watchos = "3.0"
+visionos = "1.0"
+
+external.CLRegion.module = "CoreLocation.CLRegion"
+
+class.UNNotificationContent.counterpart = "MutableSubclass(UserNotifications.UNNotificationContent.UNMutableNotificationContent)"
+class.UNMutableNotificationContent.counterpart = "ImmutableSuperclass(UserNotifications.UNNotificationContent.UNNotificationContent)"
+
+# Unsure whether this should depend on Intents, or vice-versa
+class.UNNotificationAttributedMessageContext.methods."contextWithSendMessageIntent:attributedContent:".skipped = true
+
+##
+## Safety
+##
+
+# SAFETY: UserNotifications is well-behaved.
+unsafe-default-safety.documentation-is-reviewed = true

@@ -1,0 +1,40 @@
+(type A (enum (A1 (x u32))))
+
+(decl Ext1 (u32) A)
+(decl Ext2 (u32) A)
+(extern extractor Ext1 ext1)
+(extern extractor Ext2 ext2)
+
+(extern const $A u32)
+(extern const $B u32)
+
+(decl C (bool) A)
+(extern constructor C c)
+
+(decl Lower (A) A)
+
+(rule
+  (Lower
+    (and
+      a
+      (Ext1 x)
+      (Ext2 x)))
+  (C true))
+
+(type Opcode (enum A B C))
+(type MachInst (enum D E F))
+(decl Lower2 (Opcode) MachInst)
+(rule
+  (Lower2 (Opcode.A))
+  (MachInst.D))
+(rule
+  (Lower2 (Opcode.B))
+  (MachInst.E))
+(rule
+  (Lower2 (Opcode.C))
+  (MachInst.F))
+
+(decl F (Opcode) u32)
+(rule
+ (F _)
+ $B)

@@ -1,0 +1,27 @@
+---
+source: brush-parser/src/word.rs
+expression: "test_parse(\"+([$var])\")?"
+---
+ParseTestResults(
+  input: "+([$var])",
+  result: [
+    WordPieceWithSource(
+      piece: Text("+(["),
+      start_index: 0,
+      end_index: 3,
+    ),
+    WordPieceWithSource(
+      piece: ParameterExpansion(Parameter(
+        parameter: Named("var"),
+        indirect: false,
+      )),
+      start_index: 3,
+      end_index: 7,
+    ),
+    WordPieceWithSource(
+      piece: Text("])"),
+      start_index: 7,
+      end_index: 9,
+    ),
+  ],
+)

@@ -1,0 +1,596 @@
+name: Platform Compatibility
+
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE*"
+      - ".gitignore"
+      - "Dockerfile*"
+      - "Cross.toml"
+  pull_request:
+    branches: [master]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE*"
+      - ".gitignore"
+      - "Dockerfile*"
+      - "Cross.toml"
+  release:
+    types: [published]
+
+env:
+  # MSRV varies by backend due to platform-specific dependencies
+  MSRV_AAUDIO: "1.82"
+  MSRV_ALSA: "1.77"
+  MSRV_COREAUDIO: "1.80"
+  MSRV_JACK: "1.82"
+  MSRV_WASIP1: "1.78"
+  MSRV_WASM: "1.82"
+  MSRV_WINDOWS: "1.82"
+
+  PACKAGES_LINUX: libasound2-dev libjack-jackd2-dev libjack-jackd2-0 libdbus-1-dev
+
+  ANDROID_COMPILE_SDK: "30"
+  ANDROID_BUILD_TOOLS: "30.0.3"
+
+jobs:
+  # Linux (x86_64 and ARM64)
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    name: linux-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Cache Linux audio packages
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: ${{ env.PACKAGES_LINUX }}
+
+      - name: Determine MSRV for all-features
+        id: msrv
+        uses: ./.github/actions/determine-msrv
+        with:
+          platform-msrv: ${{ env.MSRV_ALSA }}
+          jack-msrv: ${{ env.MSRV_JACK }}
+
+      - name: Install Rust MSRV (${{ env.MSRV_ALSA }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.MSRV_ALSA }}
+
+      - name: Install Rust MSRV (${{ steps.msrv.outputs.all-features }})
+        if: steps.msrv.outputs.all-features != env.MSRV_ALSA
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.all-features }}
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: linux-${{ matrix.arch }}
+
+      - name: Run tests (default features)
+        run: cargo +${{ env.MSRV_ALSA }} test --workspace --verbose
+
+      - name: Check examples (default features)
+        run: cargo +${{ env.MSRV_ALSA }} check --examples --workspace --verbose
+
+      - name: Run tests (no default features)
+        run: cargo +${{ env.MSRV_ALSA }} test --no-default-features --workspace --verbose
+
+      - name: Check examples (no default features)
+        run: cargo +${{ env.MSRV_ALSA }} check --examples --no-default-features --workspace --verbose
+
+      - name: Run tests (all features)
+        run: cargo +${{ steps.msrv.outputs.all-features }} test --all-features --workspace --verbose
+
+      - name: Check examples (all features)
+        run: cargo +${{ steps.msrv.outputs.all-features }} check --examples --all-features --workspace --verbose
+
+  # Linux ARMv7 (cross-compilation)
+  linux-armv7:
+    runs-on: ubuntu-latest
+    env:
+      TARGET: armv7-unknown-linux-gnueabihf
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Determine MSRV for all-features
+        id: msrv
+        uses: ./.github/actions/determine-msrv
+        with:
+          platform-msrv: ${{ env.MSRV_ALSA }}
+          jack-msrv: ${{ env.MSRV_JACK }}
+
+      - name: Install Rust MSRV (${{ env.MSRV_ALSA }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.MSRV_ALSA }}
+          targets: ${{ env.TARGET }}
+
+      - name: Install Rust MSRV (${{ steps.msrv.outputs.all-features }})
+        if: steps.msrv.outputs.all-features != env.MSRV_ALSA
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.all-features }}
+          targets: ${{ env.TARGET }}
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: cross-armv7
+
+      - name: Install cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Run tests (default features)
+        run: cross +${{ env.MSRV_ALSA }} test --workspace --verbose --target ${{ env.TARGET }}
+
+      - name: Check examples (default features)
+        run: cross +${{ env.MSRV_ALSA }} check --examples --workspace --verbose --target ${{ env.TARGET }}
+
+      - name: Run tests (no default features)
+        run: cross +${{ env.MSRV_ALSA }} test --no-default-features --workspace --verbose --target ${{ env.TARGET }}
+
+      - name: Check examples (no default features)
+        run: cross +${{ env.MSRV_ALSA }} test --no-default-features --workspace --verbose --target ${{ env.TARGET }}
+
+      - name: Run tests (all features)
+        run: cross +${{ steps.msrv.outputs.all-features }} test --all-features --workspace --verbose --target ${{ env.TARGET }}
+
+      - name: Check examples (all features)
+        run: cross +${{ steps.msrv.outputs.all-features }} test --all-features --workspace --verbose --target ${{ env.TARGET }}
+
+  # Windows (x86_64 and i686)
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            target: x86_64-pc-windows-msvc
+          - arch: x86
+            target: i686-pc-windows-msvc
+    name: windows-${{ matrix.arch }}
+    runs-on: windows-latest
+    env:
+      TARGET: ${{ matrix.target }}
+      CPAL_ASIO_DIR: ${{ github.workspace }}/asio
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup ASIO SDK
+        uses: ./.github/actions/setup-asio
+
+      - name: Determine MSRV for all-features
+        id: msrv
+        uses: ./.github/actions/determine-msrv
+        with:
+          platform-msrv: ${{ env.MSRV_WINDOWS }}
+          jack-msrv: ${{ env.MSRV_JACK }}
+
+      - name: Install Rust MSRV (${{ env.MSRV_WINDOWS }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.MSRV_WINDOWS }}
+          targets: ${{ env.TARGET }}
+
+      - name: Install Rust MSRV (${{ steps.msrv.outputs.all-features }})
+        if: steps.msrv.outputs.all-features != env.MSRV_WINDOWS
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.all-features }}
+          targets: ${{ env.TARGET }}
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-${{ matrix.arch }}
+
+      - name: Run tests (default features)
+        run: cargo +${{ env.MSRV_WINDOWS }} test --workspace --verbose
+
+      - name: Check examples (default features)
+        run: cargo +${{ env.MSRV_WINDOWS }} check --examples --workspace --verbose
+
+      - name: Run tests (no default features)
+        run: cargo +${{ env.MSRV_WINDOWS }} test --no-default-features --workspace --verbose
+
+      - name: Check examples (no default features)
+        run: cargo +${{ env.MSRV_WINDOWS }} check --examples --no-default-features --workspace --verbose
+
+      - name: Run tests (all features)
+        run: cargo +${{ steps.msrv.outputs.all-features }} test --workspace --all-features --verbose
+
+      - name: Check examples (all features)
+        run: cargo +${{ steps.msrv.outputs.all-features }} check --examples --all-features --workspace --verbose
+
+      - name: Check ASIO examples
+        working-directory: asio-sys
+        run: cargo +${{ env.MSRV_WINDOWS }} check --examples --verbose --workspace
+
+  # macOS ARM64
+  macos:
+    runs-on: macOS-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install dependencies
+        run: brew install llvm
+
+      - name: Determine MSRV for all-features
+        id: msrv
+        uses: ./.github/actions/determine-msrv
+        with:
+          platform-msrv: ${{ env.MSRV_COREAUDIO }}
+          jack-msrv: ${{ env.MSRV_JACK }}
+
+      - name: Install Rust MSRV (${{ env.MSRV_COREAUDIO }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.MSRV_COREAUDIO }}
+
+      - name: Install Rust MSRV (${{ steps.msrv.outputs.all-features }})
+        if: steps.msrv.outputs.all-features != env.MSRV_COREAUDIO
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.all-features }}
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run tests (default features)
+        run: cargo +${{ env.MSRV_COREAUDIO }} test --workspace --verbose
+
+      - name: Check examples (default features)
+        run: cargo +${{ env.MSRV_COREAUDIO }} check --examples --workspace --verbose
+
+      - name: Run tests (no default features)
+        run: cargo +${{ env.MSRV_COREAUDIO }} test --no-default-features --workspace --verbose
+
+      - name: Check examples (no default features)
+        run: cargo +${{ env.MSRV_COREAUDIO }} check --no-default-features --examples --workspace --verbose
+
+      - name: Run tests (all features)
+        run: cargo +${{ steps.msrv.outputs.all-features }} test --all-features --workspace --verbose
+
+      - name: Check examples (all features)
+        run: cargo +${{ steps.msrv.outputs.all-features }} check --all-features --examples --workspace --verbose
+
+  # Android
+  android:
+    runs-on: ubuntu-latest
+    env:
+      TARGET: armv7-linux-androideabi
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust MSRV (${{ env.MSRV_AAUDIO }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.MSRV_AAUDIO }}
+          targets: ${{ env.TARGET }},aarch64-linux-android,i686-linux-android,x86_64-linux-android
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: android
+
+      - name: Check examples (default features)
+        run: cargo +${{ env.MSRV_AAUDIO }} check --examples --workspace --verbose --target ${{ env.TARGET }}
+
+      - name: Check examples (no default features)
+        run: cargo +${{ env.MSRV_AAUDIO }} check --examples --no-default-features --workspace --verbose --target ${{ env.TARGET }}
+
+      - name: Check examples (all features)
+        run: cargo +${{ env.MSRV_AAUDIO }} check --examples --all-features --workspace --verbose --target ${{ env.TARGET }}
+
+      - name: Check Android project
+        working-directory: examples/android
+        run: cargo +${{ env.MSRV_AAUDIO }} check --verbose --target ${{ env.TARGET }}
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platforms;android-${{ env.ANDROID_COMPILE_SDK }} build-tools;${{ env.ANDROID_BUILD_TOOLS }}
+
+      - name: Install cargo-apk
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-apk
+
+      - name: Build APK
+        working-directory: examples/android
+        run: cargo +${{ env.MSRV_AAUDIO }} apk build
+
+  # iOS
+  ios:
+    runs-on: macOS-latest
+    env:
+      TARGET: aarch64-apple-ios
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install dependencies
+        run: brew install llvm
+
+      - name: Install Rust MSRV (${{ env.MSRV_COREAUDIO }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.MSRV_COREAUDIO }}
+          targets: ${{ env.TARGET }},aarch64-apple-ios-sim
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ios
+
+      - name: Check examples (default features)
+        run: cargo +${{ env.MSRV_COREAUDIO }} check --examples --workspace --verbose --target ${{ env.TARGET }}
+
+      - name: Check examples (no default features)
+        run: cargo +${{ env.MSRV_COREAUDIO }} check --examples --no-default-features --workspace --verbose --target ${{ env.TARGET }}
+
+      - name: Check examples (all features)
+        run: cargo +${{ env.MSRV_COREAUDIO }} check --examples --all-features --workspace --verbose --target ${{ env.TARGET }}
+
+      - name: Install cargo-lipo
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-lipo
+
+      - name: Build iOS example
+        env:
+          IOS_TARGETS: aarch64-apple-ios-sim
+        working-directory: examples/ios-feedback
+        run: xcodebuild -scheme cpal-ios-example -configuration Debug -derivedDataPath build -sdk iphonesimulator -arch arm64
+
+  # WebAssembly - Emscripten
+  wasm-emscripten:
+    runs-on: ubuntu-latest
+    env:
+      TARGET: wasm32-unknown-emscripten
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Emscripten toolchain
+        uses: mymindstorm/setup-emsdk@v14
+
+      - name: Install Rust MSRV (${{ env.MSRV_WASM }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.MSRV_WASM }}
+          targets: ${{ env.TARGET }}
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm-emscripten
+
+      - name: Check examples (default features)
+        run: cargo +${{ env.MSRV_WASM }} check --examples --workspace --verbose --target ${{ env.TARGET }}
+
+      - name: Check examples (no default features)
+        run: cargo +${{ env.MSRV_WASM }} check --examples --no-default-features --workspace --verbose --target ${{ env.TARGET }}
+
+  # WebAssembly - wasm-bindgen
+  wasm-bindgen:
+    runs-on: ubuntu-latest
+    env:
+      TARGET: wasm32-unknown-unknown
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust MSRV (${{ env.MSRV_WASM }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.MSRV_WASM }}
+          targets: ${{ env.TARGET }}
+
+      - name: Install Trunk
+        uses: taiki-e/install-action@v2
+        with:
+          tool: trunk
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm-bindgen
+
+      - name: Check examples (wasm-bindgen feature)
+        run: cargo +${{ env.MSRV_WASM }} check --examples --features wasm-bindgen --workspace --verbose --target ${{ env.TARGET }}
+
+      - name: Build wasm-beep example
+        working-directory: ./examples/wasm-beep
+        run: trunk build
+        env:
+          RUSTUP_TOOLCHAIN: ${{ env.MSRV_WASM }}
+
+  # WebAssembly - AudioWorklet
+  wasm-audioworklet:
+    runs-on: ubuntu-latest
+    env:
+      TARGET: wasm32-unknown-unknown
+      RUSTFLAGS: -C target-feature=+atomics,+bulk-memory,+mutable-globals
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust nightly (for build-std)
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: ${{ env.TARGET }}
+          components: rust-src
+
+      - name: Install Trunk
+        uses: taiki-e/install-action@v2
+        with:
+          tool: trunk
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm-audioworklet
+
+      - name: Check examples (audioworklet feature)
+        run: cargo +nightly check --examples --features audioworklet --workspace --verbose -Z build-std=std,panic_abort --target ${{ env.TARGET }}
+
+      - name: Build audioworklet-beep example
+        working-directory: ./examples/audioworklet-beep
+        run: trunk build
+        env:
+          RUSTUP_TOOLCHAIN: nightly
+
+  # WebAssembly - WASI Preview 1
+  wasm-wasip1:
+    runs-on: ubuntu-latest
+    env:
+      TARGET: wasm32-wasip1
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust MSRV (${{ env.MSRV_WASIP1 }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.MSRV_WASIP1 }}
+          targets: ${{ env.TARGET }}
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm-wasip1
+
+      - name: Check examples (default features)
+        run: cargo +${{ env.MSRV_WASIP1 }} check --examples --workspace --target ${{ env.TARGET }} --verbose
+
+      - name: Check examples (no default features)
+        run: cargo +${{ env.MSRV_WASIP1 }} check --examples --no-default-features --workspace --verbose --target ${{ env.TARGET }}
+
+  # Windows crate version compatibility
+  windows-versions:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ["0.59.0", "0.60.0", "0.61.3"]
+
+    name: windows-crate-v${{ matrix.version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install dependencies
+        run: choco install llvm
+
+      - name: Install Rust MSRV (${{ env.MSRV_WINDOWS }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.MSRV_WINDOWS }}
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-v${{ matrix.version }}
+
+      - name: Lock windows crate to specific version
+        shell: bash
+        run: |
+          cargo generate-lockfile
+          cargo update -p windows --precise ${{ matrix.version }}
+          echo "Locked windows crate version:"
+          cargo tree | grep "windows v" || echo "Windows crate not found in dependency tree"
+          echo "Cargo.lock entry:"
+          grep -A 5 "name = \"windows\"" Cargo.lock | head -10
+
+      - name: Check WASAPI with windows v${{ matrix.version }}
+        run: cargo +${{ env.MSRV_WINDOWS }} check --workspace --verbose
+
+  # cpal publishing (only on cpal release events)
+  publish-cpal:
+    if: github.event_name == 'release' && startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - linux
+      - linux-armv7
+      - windows
+      - macos
+      - android
+      - ios
+      - wasm-emscripten
+      - wasm-bindgen
+      - wasm-audioworklet
+      - wasm-wasip1
+      - windows-versions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Cache Linux audio packages
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: ${{ env.PACKAGES_LINUX }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify release version
+        run: |
+          CARGO_VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          RELEASE_VERSION=${GITHUB_REF#refs/tags/v}
+          echo "Cargo.toml version: $CARGO_VERSION"
+          echo "Release tag version: $RELEASE_VERSION"
+          if [ "$CARGO_VERSION" != "$RELEASE_VERSION" ]; then
+            echo "❌ Version mismatch! Cargo.toml has $CARGO_VERSION but release tag is v$RELEASE_VERSION"
+            exit 1
+          fi
+
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATESIO_TOKEN }}
+        run: cargo publish
+
+  # asio-sys publishing (only on asio-sys release events)
+  publish-asio-sys:
+    if: github.event_name == 'release' && startsWith(github.ref, 'refs/tags/asio-sys-v')
+    needs:
+      - windows
+    runs-on: windows-latest
+    env:
+      CPAL_ASIO_DIR: ${{ github.workspace }}/asio
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup ASIO SDK
+        uses: ./.github/actions/setup-asio
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify asio-sys version
+        shell: bash
+        run: |
+          CARGO_VERSION=$(cd asio-sys && cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "asio-sys") | .version')
+          RELEASE_VERSION=${GITHUB_REF#refs/tags/asio-sys-v}
+          echo "asio-sys Cargo.toml version: $CARGO_VERSION"
+          echo "Release tag version: $RELEASE_VERSION"
+          if [ "$CARGO_VERSION" != "$RELEASE_VERSION" ]; then
+            echo "❌ Version mismatch! asio-sys Cargo.toml has $CARGO_VERSION but release tag is asio-sys-v$RELEASE_VERSION"
+            exit 1
+          fi
+
+      - name: Publish asio-sys to crates.io
+        working-directory: asio-sys
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATESIO_TOKEN }}
+        run: cargo publish

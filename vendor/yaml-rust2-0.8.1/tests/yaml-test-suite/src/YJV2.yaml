@@ -1,0 +1,11 @@
+---
+- name: Dash in flow sequence
+  from: '@ingydotnet'
+  tags: flow sequence
+  fail: true
+  yaml: |
+    [-]
+  tree: |
+    +STR
+     +DOC
+      +SEQ []

@@ -1,0 +1,11 @@
+[package]
+name = "heed-traits"
+version = "0.20.0"
+authors = ["Kerollmops <renault.cle@gmail.com>"]
+description = "The traits used inside of the fully typed LMDB wrapper, heed"
+license = "MIT"
+repository = "https://github.com/Kerollmops/heed"
+readme = "../README.md"
+edition = "2021"
+
+[dependencies]

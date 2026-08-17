@@ -1,0 +1,29 @@
+[tasks.bench]
+toolchain = "nightly"
+command = "cargo"
+args = ["bench", "${@}"]
+
+[tasks.bench-maths]
+toolchain = "nightly"
+command = "cargo"
+args = ["bench", "--features", "maths", "${@}"]
+
+[tasks.bench-legacy]
+toolchain = "nightly"
+command = "cargo"
+args = ["bench", "--no-default-features", "--features", "serde,std,legacy-ops", "${@}"]
+
+[tasks.benchcmp]
+dependencies = [
+    "benchcmp-legacy",
+    "benchcmp-default"
+]
+install_crate = "benchcmp"
+command = "cargo"
+args = ["benchcmp", "target/legacy.bench", "target/default.bench"]
+
+[tasks.benchcmp-default]
+script = "cargo +nightly bench > target/default.bench"
+
+[tasks.benchcmp-legacy]
+script = "cargo +nightly bench --no-default-features --features serde,std,legacy-ops > target/legacy.bench"

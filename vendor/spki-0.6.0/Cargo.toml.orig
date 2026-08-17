@@ -1,0 +1,36 @@
+[package]
+name = "spki"
+version = "0.6.0"
+description = """
+X.509 Subject Public Key Info (RFC5280) describing public keys as well as their
+associated AlgorithmIdentifiers (i.e. OIDs)
+"""
+authors = ["RustCrypto Developers"]
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/RustCrypto/formats/tree/master/spki"
+categories = ["cryptography", "data-structures", "encoding", "no-std"]
+keywords = ["crypto", "x509"]
+readme = "README.md"
+edition = "2021"
+rust-version = "1.57"
+
+[dependencies]
+der = { version = "0.6", features = ["oid"], path = "../der" }
+
+# Optional dependencies
+sha2 = { version = "0.10", optional = true, default-features = false }
+base64ct = { version = "1", path = "../base64ct", optional = true, default-features = false }
+
+[dev-dependencies]
+hex-literal = "0.3"
+tempfile = "3"
+
+[features]
+alloc = ["base64ct/alloc", "der/alloc"]
+fingerprint = ["sha2"]
+pem = ["alloc", "der/pem"]
+std = ["der/std", "alloc"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

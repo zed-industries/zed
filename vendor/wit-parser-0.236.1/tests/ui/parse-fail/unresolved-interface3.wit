@@ -1,0 +1,5 @@
+// parse-fail
+
+package foo:foo;
+
+use bar as foo;

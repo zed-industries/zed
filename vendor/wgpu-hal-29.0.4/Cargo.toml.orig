@@ -1,0 +1,355 @@
+[package]
+name = "wgpu-hal"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "Hardware abstraction layer for wgpu, the cross-platform, safe, pure-rust graphics API"
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+license.workspace = true
+
+# Override the workspace's `rust-version` key. `wgpu-core` and its dependencies
+# have a less strict MSRV, to allow firefox more leeway in updating their Rust toolchain.
+#
+# See the repo README for more information on MSRV policy.
+rust-version = "1.87"
+
+[package.metadata.docs.rs]
+# Ideally we would enable all the features.
+#
+# However, the dx12 features fail to be documented because the docs.rs runner cross-compiling under
+# x86_64-unknown-linux-gnu cannot compile in that environment at the moment.
+features = ["metal", "vulkan", "gles", "renderdoc"]
+rustdoc-args = ["--cfg", "docsrs"]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "wasm32-unknown-unknown",
+]
+
+[package.metadata.cargo-machete]
+# Cargo machete can't check build.rs dependencies. See https://github.com/bnjbvr/cargo-machete/issues/100
+ignored = ["cfg_aliases"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(feature, values("cargo-clippy"))', # objc's `msg_send` macro injects this in our code https://github.com/SSheldon/rust-objc/issues/125
+    'cfg(web_sys_unstable_apis)',           # web-sys uses this
+] }
+
+[lib]
+
+[features]
+
+########################
+### Backend Features ###
+########################
+
+# The interaction of features between wgpu-core and wgpu-hal is a bit nuanced to get
+# the desired behavior on all platforms.
+#
+# At the wgpu-hal level the features are defined to enable the backends on all platforms
+# that can compile the backend. Vulkan for example will have an effect on Windows, Mac, Linux, and Android.
+# This is done with target conditional dependencies in wgpu-hal. This allows `--all-features`
+# to compile on all platforms.
+#
+# wgpu-core's features are defined to enable the backends on their "default" platforms. For example we
+# exclude the Vulkan backend on MacOS unless a separate feature `vulkan-portability` is enabled. In response
+# to these features, it enables features of platform specific crates. For example, the `vulkan` feature in wgpu-core
+# enables the `vulkan` feature in `wgpu-core-deps-windows-linux-android` which in turn enables the
+# `vulkan` feature in `wgpu-hal` _only_ on those platforms. If you enable the `vulkan-portability` feature, it
+# will enable the `vulkan` feature in `wgpu-core-deps-apple`. The only way to do this is unfortunately to have
+# a separate crate for each platform category that participates in the feature unification.
+#
+# This trick doesn't work at the `wgpu` level, because the `wgpu` -> `wgpu-core` dependency is conditional,
+# making the Cargo.toml signifigantly more complicated in all areas.
+#
+# See https://github.com/gfx-rs/wgpu/issues/3514, https://github.com/gfx-rs/wgpu/pull/7076,
+# and https://github.com/rust-lang/cargo/issues/1197 for more information.
+
+## Enables the Metal backend when targeting Apple platforms.
+metal = [
+    # Metal is only available on Apple platforms, therefore request MSL output also only if we target an Apple platform.
+    "naga/msl-out",
+    "dep:arrayvec",
+    "dep:block2",
+    "dep:bytemuck",
+    "dep:hashbrown",
+    "dep:libc",
+    "dep:objc2",
+    "dep:objc2-core-foundation",
+    "dep:objc2-foundation",
+    "dep:objc2-metal",
+    "dep:objc2-quartz-core",
+    "dep:parking_lot",
+    "dep:profiling",
+    "dep:smallvec",
+    "dep:raw-window-metal",
+]
+vulkan = [
+    "naga/spv-out",
+    "dep:android_system_properties",
+    "dep:arrayvec",
+    "dep:ash",
+    "dep:bytemuck",
+    "dep:gpu-descriptor",
+    "dep:hashbrown",
+    "dep:libc",
+    "dep:libloading",
+    "dep:ordered-float",
+    "dep:parking_lot",
+    "dep:profiling",
+    "dep:raw-window-metal",
+    "dep:smallvec",
+    "dep:windows",
+    "gpu-allocator/vulkan",
+    "windows/Win32",
+]
+gles = [
+    "dep:arrayvec",
+    "dep:bytemuck",
+    "dep:glow",
+    "dep:glutin_wgl_sys",
+    "dep:hashbrown",
+    "dep:js-sys",
+    "dep:khronos-egl",
+    "dep:libloading",
+    "dep:ndk-sys",
+    "dep:objc2",
+    "dep:parking_lot",
+    "dep:profiling",
+    "dep:wasm-bindgen",
+    "dep:wayland-sys",
+    "dep:web-sys",
+    "dep:windows-result",
+    "naga/glsl-out",
+    "wgpu-types/web",
+    "windows-result/std",                   # Need to enable this for the `Error` impl on `windows_result::Error` to work.
+    "windows/Win32_Graphics_Gdi",
+    "windows/Win32_Graphics_OpenGL",
+    "windows/Win32_System_LibraryLoader",
+    "windows/Win32_UI_WindowsAndMessaging",
+]
+## Enables the DX12 backend when targeting Windows.
+dx12 = [
+    "dep:arrayvec",
+    "dep:bit-set",
+    "dep:bytemuck",
+    "dep:gpu-allocator",
+    "dep:hashbrown",
+    "dep:libloading",
+    "dep:once_cell",
+    "dep:ordered-float",
+    "dep:parking_lot",
+    "dep:profiling",
+    "dep:range-alloc",
+    "dep:windows-core",
+    "gpu-allocator/d3d12",
+    "naga/hlsl-out",
+    "once_cell/std",
+    "windows/Win32_Devices_DeviceAndDriverInstallation",
+    "windows/Win32_Graphics_Direct3D_Dxc",
+    "windows/Win32_Graphics_Direct3D_Fxc",
+    "windows/Win32_Graphics_Direct3D",
+    "windows/Win32_Graphics_Direct3D12",
+    "windows/Win32_Graphics_DirectComposition",
+    "windows/Win32_Graphics_Dxgi_Common",
+    "windows/Win32_Security",
+    "windows/Win32_System_Diagnostics_Debug",
+    "windows/Win32_System_Kernel",
+    "windows/Win32_System_Performance",
+    "windows/Win32_System_Threading",
+    "windows/Win32_UI_WindowsAndMessaging",
+]
+
+###########################
+### Misc Other Features ###
+###########################
+
+static-dxc = ["dep:mach-dxcompiler-rs"]
+renderdoc = ["dep:libloading", "dep:renderdoc-sys"]
+fragile-send-sync-non-atomic-wasm = [
+    "wgpu-types/fragile-send-sync-non-atomic-wasm",
+]
+portable-atomic = ["dep:portable-atomic", "dep:portable-atomic-util"]
+
+###################################
+### Internal Debugging Features ###
+###################################
+
+# Panic when running into a device lost error (for debugging purposes).
+# Only affects the d3d12 and vulkan backends.
+device_lost_panic = []
+# Panic when running into an internal error other than out-of-memory and device lost
+# (for debugging purposes).
+#
+# Only affects the d3d12 and vulkan backends.
+internal_error_panic = []
+# Tracks validation errors in a `VALIDATION_CANARY` static.
+validation_canary = ["dep:parking_lot"]
+
+[[example]]
+name = "halmark"
+
+[[example]]
+name = "raw-gles"
+required-features = ["gles"]
+
+#####################
+### Platform: All ###
+#####################
+
+[dependencies]
+naga.workspace = true
+wgpu-naga-bridge.workspace = true
+wgpu-types = { workspace = true, default-features = false }
+
+# Dependencies in the lib and empty backend
+bitflags.workspace = true
+cfg-if.workspace = true
+log = { workspace = true }
+parking_lot = { workspace = true, optional = true }
+raw-window-handle.workspace = true
+thiserror.workspace = true
+
+# Target agnostic dependencies used only in backends.
+arrayvec = { workspace = true, optional = true }
+bytemuck = { workspace = true, optional = true, features = ["derive"] }
+hashbrown = { workspace = true, optional = true }
+ordered-float = { workspace = true, optional = true }
+profiling = { workspace = true, optional = true, default-features = false }
+
+# Backend: GLES
+glow = { workspace = true, optional = true }
+
+########################
+### Platform: Native ###
+########################
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Backend: Vulkan and Dx12
+gpu-allocator = { workspace = true, optional = true }
+# Backend: Vulkan
+ash = { workspace = true, optional = true }
+gpu-descriptor = { workspace = true, optional = true }
+smallvec = { workspace = true, optional = true, features = ["union"] }
+# Backend: GLES
+khronos-egl = { workspace = true, features = ["dynamic"], optional = true }
+libloading = { workspace = true, optional = true }
+renderdoc-sys = { workspace = true, optional = true }
+
+##########################
+### Platform: All Unix ###
+##########################
+
+[target.'cfg(unix)'.dependencies]
+# Backend: Vulkan
+libc = { workspace = true, optional = true }
+# backend: GLES
+wayland-sys = { version = "0.31.3", features = [
+    "client",
+    "dlopen",
+    "egl",
+], optional = true }
+
+#########################
+### Platform: Windows ###
+#########################
+
+[target.'cfg(windows)'.dependencies]
+# Backend: Dx12 and GLES
+windows = { workspace = true, optional = true }
+windows-core = { workspace = true, optional = true }
+windows-result = { workspace = true, optional = true }
+# Backend: Dx12
+bit-set = { workspace = true, optional = true }
+range-alloc = { workspace = true, optional = true }
+once_cell = { workspace = true, optional = true }
+# backend: GLES
+glutin_wgl_sys = { workspace = true, optional = true }
+
+### Platform: x86/x86_64 Windows ###
+# This doesn't support aarch64. See https://github.com/gfx-rs/wgpu/issues/6860.
+# This doesn't support x86_64-pc-windows-gnu. See https://github.com/gfx-rs/wgpu/issues/8303
+#
+# ⚠️ Keep in sync with static_dxc cfg in build.rs and cfg_alias in `wgpu` crate ⚠️
+[target.'cfg(all(windows, not(target_arch = "aarch64"), target_env = "msvc"))'.dependencies]
+mach-dxcompiler-rs = { workspace = true, optional = true }
+
+#######################
+### Platform: Apple ###
+#######################
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+# Backend: Metal
+block2 = { workspace = true, optional = true }
+bytemuck = { workspace = true, optional = true }
+objc2 = { workspace = true, optional = true }
+objc2-core-foundation = { workspace = true, optional = true }
+objc2-foundation = { workspace = true, optional = true }
+objc2-metal = { workspace = true, optional = true }
+objc2-quartz-core = { workspace = true, optional = true }
+
+# backend: Metal + Vulkan
+raw-window-metal = { workspace = true, optional = true }
+
+#########################
+### Platform: Android ###
+#########################
+
+[target.'cfg(target_os = "android")'.dependencies]
+android_system_properties = { workspace = true, optional = true }
+ndk-sys = { workspace = true, optional = true }
+
+#############################
+### Platform: Webassembly ###
+#############################
+
+[target.'cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))'.dependencies]
+# Backend: GLES
+wasm-bindgen = { workspace = true, optional = true }
+web-sys = { workspace = true, optional = true, features = [
+    "default",
+    "Window",
+    "HtmlCanvasElement",
+    "WebGl2RenderingContext",
+    "OffscreenCanvas",
+] }
+js-sys = { workspace = true, optional = true, default-features = true }
+
+############################
+### Platform: Emscripten ###
+############################
+
+[target.'cfg(target_os = "emscripten")'.dependencies]
+# Backend: GLES
+khronos-egl = { workspace = true, optional = true, features = [
+    "static",
+    "no-pkg-config",
+] }
+# Note: it's unused by emscripten, but we keep it to have single code base in egl.rs
+libloading = { workspace = true, optional = true }
+
+[target.'cfg(any(not(target_has_atomic = "64"), not(target_has_atomic = "ptr")))'.dependencies]
+portable-atomic = { workspace = true, optional = true }
+
+[target.'cfg(not(target_has_atomic = "ptr"))'.dependencies]
+portable-atomic-util = { workspace = true, features = [
+    "alloc",
+], optional = true }
+
+[build-dependencies]
+cfg_aliases.workspace = true
+
+[dev-dependencies]
+env_logger.workspace = true
+glam.workspace = true                                            # for ray-traced-triangle example
+naga = { workspace = true, features = ["wgsl-in", "termcolor"] }
+winit.workspace = true                                           # for "halmark" example
+
+### Platform: Windows + MacOS + Linux for "raw-gles" example ###
+[target.'cfg(not(any(target_arch = "wasm32", target_os = "ios", target_os = "visionos", target_env = "ohos")))'.dev-dependencies]
+glutin-winit = { workspace = true, features = ["egl", "wgl", "wayland", "x11"] }
+glutin = { workspace = true, features = ["egl", "wgl", "wayland", "x11"] }

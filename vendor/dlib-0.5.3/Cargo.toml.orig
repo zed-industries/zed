@@ -1,0 +1,21 @@
+[package]
+name = "dlib"
+version = "0.5.3"
+repository = "https://github.com/elinorbgr/dlib"
+authors = ["Elinor Berger <elinor@safaradeg.net>"]
+license = "MIT"
+description = "Helper macros for handling manually loading optional system libraries."
+exclude = ["/dlib-test", "README.tpl"]
+readme = "README.md"
+keywords = ["dylib", "dlopen"]
+categories = ["api-bindings"]
+edition = "2021"
+rust-version = "1.56"
+
+[dependencies]
+libloading = ">=0.7, <0.9"
+
+[workspace]
+members = [
+    "dlib-test",
+]

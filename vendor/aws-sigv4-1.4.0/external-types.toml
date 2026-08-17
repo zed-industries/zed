@@ -1,0 +1,9 @@
+allowed_external_types = [
+    # TODO(https://github.com/smithy-lang/smithy-rs/issues/1193): Once tooling permits it, only allow the following types in the `http0-compat` feature
+    "http::request::Request",
+    # TODO(https://github.com/smithy-lang/smithy-rs/issues/1193): Once tooling permits it, only allow the following types in the `event-stream` feature
+    "aws_smithy_types::event_stream::Message",
+    "aws_smithy_runtime_api::client::identity::Identity",
+    "aws_smithy_runtime_api::http::headers::Headers",
+    "bytes::bytes::Bytes"
+]

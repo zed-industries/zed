@@ -1,0 +1,140 @@
+//! Pest grammar for handlebars templating
+WHITESPACE = _{ " "|"\t"|"\n"|"\r" }
+keywords = { "as" | "else" }
+
+escape = @{ ("\\" ~ "{{" ~ "{{"?) | ("\\" ~ "\\"+ ~ &"{{") }
+raw_text = ${ ( escape | (!"{{" ~ ANY) )+ }
+raw_block_text = ${ ( escape | (!"{{{{" ~ ANY) )* }
+
+literal = { string_literal |
+            array_literal |
+            object_literal |
+            number_literal |
+            null_literal |
+            boolean_literal }
+
+null_literal = @{ "null" ~ !symbol_char }
+boolean_literal = @{ ("true"|"false") ~ !symbol_char }
+number_literal = @{ "-"? ~ ASCII_DIGIT+ ~ "."? ~ ASCII_DIGIT* ~ ("E" ~ "-"? ~ ASCII_DIGIT+)? ~ !symbol_char }
+json_char_double_quote = {
+    !("\"" | "\\") ~ ANY
+    | "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t")
+    | "\\" ~ ("u" ~ ASCII_HEX_DIGIT{4})
+}
+json_char_single_quote = {
+    !("'" | "\\") ~ ANY
+    | "\\" ~ ("'" | "\\" | "/" | "b" | "f" | "n" | "r" | "t")
+    | "\\" ~ ("u" ~ ASCII_HEX_DIGIT{4})
+}
+string_inner_double_quote = @{ json_char_double_quote* }
+string_inner_single_quote = @{ json_char_single_quote* }
+string_literal = ${ ("\"" ~ string_inner_double_quote ~ "\"") | ("'" ~ string_inner_single_quote ~ "'") }
+array_literal = { "[" ~ literal? ~ ("," ~ literal)* ~ "]" }
+object_literal = { "{" ~ (string_literal ~ ":" ~ literal)?
+                   ~ ("," ~ string_literal ~ ":" ~ literal)* ~ "}" }
+
+symbol_char = _{ASCII_ALPHANUMERIC|"-"|"_"|"$"|'\u{80}'..'\u{7ff}'|'\u{800}'..'\u{ffff}'|'\u{10000}'..'\u{10ffff}'}
+partial_symbol_char = _{ASCII_ALPHANUMERIC|"-"|"_"|'\u{80}'..'\u{7ff}'|'\u{800}'..'\u{ffff}'|'\u{10000}'..'\u{10ffff}'|"/"|"."}
+path_char = _{ "/" }
+
+identifier = @{ symbol_char+ }
+partial_identifier = @{ partial_symbol_char+ | ("[" ~ ANY+ ~ "]") | ("'" ~ (!"'" ~ ("\\'" | ANY))+ ~ "'") }
+reference = ${ path_inline }
+
+name = _{ subexpression | reference }
+
+helper_parameter = { !(keywords ~ !symbol_char) ~ (literal | reference | subexpression) }
+hash = { identifier ~ "=" ~ helper_parameter }
+block_param = { "as" ~ "|" ~ identifier ~ identifier? ~ "|"}
+exp_line = _{ identifier ~ (hash|helper_parameter)* ~ block_param?}
+partial_exp_line = _{ ((partial_identifier|name) ~ (hash|helper_parameter)*) }
+
+subexpression = { "(" ~ ((identifier ~ (hash|helper_parameter)+) | reference)  ~ ")" }
+
+leading_tilde_to_omit_whitespace = { "~" }
+trailing_tilde_to_omit_whitespace = { "~" }
+
+expression = { !(invert_tag|invert_chain_tag) ~ "{{" ~ leading_tilde_to_omit_whitespace? ~
+              ((identifier ~ (hash|helper_parameter)+) | name )
+              ~ trailing_tilde_to_omit_whitespace? ~ "}}" }
+html_expression_triple_bracket_legacy = _{ "{{{" ~ leading_tilde_to_omit_whitespace? ~
+                                           ((identifier ~ (hash|helper_parameter)+) | name ) ~
+                                           trailing_tilde_to_omit_whitespace? ~ "}}}" }
+html_expression_triple_bracket = _{ "{{" ~ leading_tilde_to_omit_whitespace? ~ "{" ~
+                                              ((identifier ~ (hash|helper_parameter)+) | name ) ~
+                                              "}" ~ trailing_tilde_to_omit_whitespace? ~ "}}" }
+
+amp_expression = _{ "{{" ~ leading_tilde_to_omit_whitespace? ~ "&" ~ name ~
+                       trailing_tilde_to_omit_whitespace? ~ "}}" }
+html_expression = { (html_expression_triple_bracket_legacy | html_expression_triple_bracket)
+                   | amp_expression }
+
+decorator_expression = { "{{" ~ leading_tilde_to_omit_whitespace? ~ "*" ~ exp_line ~
+trailing_tilde_to_omit_whitespace? ~ "}}" }
+partial_expression = { "{{" ~ leading_tilde_to_omit_whitespace? ~ ">" ~ partial_exp_line
+                     ~ trailing_tilde_to_omit_whitespace? ~ "}}" }
+
+invert_tag_item = { "else"|"^" }
+invert_tag = { !escape ~ "{{" ~ leading_tilde_to_omit_whitespace? ~ invert_tag_item
+             ~ trailing_tilde_to_omit_whitespace? ~ "}}" }
+invert_chain_tag = { !escape ~ "{{" ~ leading_tilde_to_omit_whitespace? ~ invert_tag_item
+                     ~ exp_line ~ trailing_tilde_to_omit_whitespace? ~ "}}" }
+helper_block_start = { "{{" ~ leading_tilde_to_omit_whitespace? ~ "#" ~ exp_line ~
+                     trailing_tilde_to_omit_whitespace? ~ "}}" }
+helper_block_end = { "{{" ~ leading_tilde_to_omit_whitespace? ~ "/" ~ identifier ~
+                   trailing_tilde_to_omit_whitespace? ~ "}}" }
+helper_block = _{ helper_block_start ~ template ~
+                  (invert_chain_tag ~ template)* ~ (invert_tag ~ template)? ~ helper_block_end }
+
+decorator_block_start = { "{{" ~ leading_tilde_to_omit_whitespace? ~ "#" ~ "*"
+                        ~ exp_line ~ trailing_tilde_to_omit_whitespace? ~ "}}" }
+decorator_block_end = { "{{" ~ leading_tilde_to_omit_whitespace? ~ "/" ~ identifier ~
+                        trailing_tilde_to_omit_whitespace? ~ "}}" }
+decorator_block = _{ decorator_block_start ~ template ~
+                     decorator_block_end }
+
+partial_block_start = { "{{" ~ leading_tilde_to_omit_whitespace? ~ "#" ~ ">"
+                        ~ partial_exp_line ~ trailing_tilde_to_omit_whitespace? ~ "}}" }
+partial_block_end = { "{{" ~ leading_tilde_to_omit_whitespace? ~ "/" ~ partial_identifier ~
+                      trailing_tilde_to_omit_whitespace? ~ "}}" }
+partial_block = _{ partial_block_start ~ template ~ partial_block_end }
+
+raw_block_start = { "{{{{" ~ leading_tilde_to_omit_whitespace? ~ exp_line ~
+                    trailing_tilde_to_omit_whitespace? ~ "}}}}" }
+raw_block_end = { "{{{{" ~ leading_tilde_to_omit_whitespace? ~ "/" ~ identifier ~
+                  trailing_tilde_to_omit_whitespace? ~ "}}}}" }
+raw_block = _{ raw_block_start ~ raw_block_text ~ raw_block_end }
+
+hbs_comment = { "{{!" ~ "--" ~ (!"--}}" ~ ANY)* ~ "--" ~ "}}" }
+hbs_comment_compact = { "{{!" ~ (!"}}" ~ ANY)* ~ "}}" }
+
+template = { (
+            raw_text |
+            expression |
+            html_expression |
+            helper_block |
+            raw_block |
+            hbs_comment |
+            hbs_comment_compact |
+            decorator_expression |
+            decorator_block |
+            partial_expression |
+            partial_block )* }
+
+parameter = _{ helper_parameter ~ EOI }
+handlebars = _{ template ~ EOI }
+
+/// json path visitor
+/// Disallowed chars: Whitespace ! " # % & ' ( ) * + , . / ; < = > @ [ \ ] ^ ` { | } ~
+path_id = @{ symbol_char+ }
+
+path_raw_id = { (!"]" ~ ANY)* }
+path_sep = _{ "/" | "." }
+path_up = { ".." }
+path_key = _{ "[" ~  path_raw_id ~ "]" }
+path_root = { "@root" }
+path_current = _{ "this" ~ path_sep | "./" }
+path_item = _{ path_id|path_key }
+path_local = { "@" }
+path_inline = ${ path_current? ~ (path_root ~ path_sep)? ~ path_local? ~ (path_up ~ path_sep)*  ~ path_item ~ (path_sep ~  path_item)* }
+path = _{ path_inline ~ EOI }

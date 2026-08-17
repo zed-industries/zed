@@ -1,0 +1,15 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@3.0.0/schema.json",
+  "changelog": [
+    "@livekit/changesets-changelog-github",
+    { "repo": "livekit/protocol" }
+  ],
+  "commit": false,
+  "fixed": [["github.com/livekit/protocol", "@livekit/protocol"]],
+  "linked": [],
+  "access": "public",
+  "baseBranch": "main",
+  "updateInternalDependencies": "patch",
+  "ignore": [],
+  "privatePackages": { "version": true, "tag": true }
+}

@@ -1,0 +1,54 @@
+[package]
+name = "futures-concurrency"
+version = "7.7.1"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/yoshuawuyts/futures-concurrency"
+documentation = "https://docs.rs/futures-concurrency"
+description = "Structured concurrency operations for async Rust"
+readme = "README.md"
+edition = "2021"
+keywords = ["async", "concurrency"]
+categories = ["asynchronous", "concurrency"]
+authors = ["Yoshua Wuyts <yoshuawuyts@gmail.com>"]
+rust-version = "1.81.0"
+
+[profile.bench]
+debug = true
+
+[lib]
+bench = false
+
+[[bench]]
+name = "bench"
+harness = false
+
+[[bench]]
+name = "compare"
+harness = false
+
+[features]
+default = ["std"]
+std = ["alloc", "futures-lite/std"]
+alloc = ["dep:fixedbitset", "dep:smallvec", "futures-lite/alloc"]
+
+[dependencies]
+fixedbitset = { version = "0.5.7", default-features = false, optional = true }
+futures-core = { version = "0.3", default-features = false }
+futures-lite = { version = "2.5.0", default-features = false }
+pin-project = "1.1"
+smallvec = { version = "1.13", optional = true }
+
+[dev-dependencies]
+async-io = "2.4"
+async-std = { version = "1.13.0", features = ["attributes"] }
+criterion = { version = "0.7", features = [
+    "async",
+    "async_futures",
+    "html_reports",
+] }
+futures = "0.3"
+futures-time = "3.0.0"
+itertools = "0.14"
+lending-stream = "1.0.1"
+rand = "0.9.1"
+tokio = { version = "1.41", features = ["macros", "time", "rt-multi-thread"] }

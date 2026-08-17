@@ -1,0 +1,382 @@
+[
+    {
+        "description": "property annotations are reported for list and hierarchical outputs",
+        "schema": {
+            "$schema": "https://json-schema.org/v1",
+            "$id": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0",
+            "type": "object",
+            "$defs": {
+                "integer": {
+                    "type": "integer"
+                },
+                "minimum": {
+                    "minimum": 5
+                }
+            },
+            "properties": {
+                "passes": true,
+                "fails": false,
+                "refs": {
+                    "$ref": "#/$defs/integer"
+                },
+                "multi": {
+                    "allOf": [
+                        {
+                            "$ref": "#/$defs/integer"
+                        },
+                        {
+                            "$ref": "#/$defs/minimum"
+                        }
+                    ]
+                }
+            }
+        },
+        "tests": [
+            {
+                "description": "list output includes root annotations",
+                "data": {
+                    "passes": "value"
+                },
+                "output": {
+                    "list": {
+                        "$id": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0/tests/0/list",
+                        "const": {
+                            "valid": true,
+                            "details": [
+                                {
+                                    "valid": true,
+                                    "evaluationPath": "",
+                                    "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#",
+                                    "instanceLocation": ""
+                                },
+                                {
+                                    "valid": true,
+                                    "evaluationPath": "/properties",
+                                    "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/properties",
+                                    "instanceLocation": "",
+                                    "annotations": [
+                                        "passes"
+                                    ]
+                                },
+                                {
+                                    "valid": true,
+                                    "evaluationPath": "/properties/passes",
+                                    "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/properties/passes",
+                                    "instanceLocation": "/passes"
+                                },
+                                {
+                                    "valid": true,
+                                    "evaluationPath": "/type",
+                                    "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/type",
+                                    "instanceLocation": ""
+                                }
+                            ]
+                        }
+                    },
+                    "hierarchical": {
+                        "$id": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0/tests/0/hierarchical",
+                        "const": {
+                            "valid": true,
+                            "evaluationPath": "",
+                            "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#",
+                            "instanceLocation": "",
+                            "details": [
+                                {
+                                    "valid": true,
+                                    "evaluationPath": "/properties",
+                                    "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/properties",
+                                    "instanceLocation": "",
+                                    "annotations": [
+                                        "passes"
+                                    ],
+                                    "details": [
+                                        {
+                                            "valid": true,
+                                            "evaluationPath": "/properties/passes",
+                                            "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/properties/passes",
+                                            "instanceLocation": "/passes"
+                                        }
+                                    ]
+                                },
+                                {
+                                    "valid": true,
+                                    "evaluationPath": "/type",
+                                    "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/type",
+                                    "instanceLocation": ""
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            {
+                "description": "false property is reported as error",
+                "data": {
+                    "fails": "value"
+                },
+                "output": {
+                    "list": {
+                        "$id": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0/tests/1/list",
+                        "const": {
+                            "valid": false,
+                            "details": [
+                                {
+                                    "valid": false,
+                                    "evaluationPath": "",
+                                    "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#",
+                                    "instanceLocation": ""
+                                },
+                                {
+                                    "valid": false,
+                                    "evaluationPath": "/properties",
+                                    "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/properties",
+                                    "instanceLocation": "",
+                                    "droppedAnnotations": [
+                                        "fails"
+                                    ]
+                                },
+                                {
+                                    "valid": false,
+                                    "evaluationPath": "/properties/fails",
+                                    "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/properties/fails",
+                                    "instanceLocation": "/fails",
+                                    "errors": {
+                                        "falseSchema": "False schema does not allow \"value\""
+                                    }
+                                },
+                                {
+                                    "valid": true,
+                                    "evaluationPath": "/type",
+                                    "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/type",
+                                    "instanceLocation": ""
+                                }
+                            ]
+                        }
+                    },
+                    "hierarchical": {
+                        "$id": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0/tests/1/hierarchical",
+                        "const": {
+                            "valid": false,
+                            "evaluationPath": "",
+                            "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#",
+                            "instanceLocation": "",
+                            "details": [
+                                {
+                                    "valid": false,
+                                    "evaluationPath": "/properties",
+                                    "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/properties",
+                                    "instanceLocation": "",
+                                    "droppedAnnotations": [
+                                        "fails"
+                                    ],
+                                    "details": [
+                                        {
+                                            "valid": false,
+                                            "evaluationPath": "/properties/fails",
+                                            "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/properties/fails",
+                                            "instanceLocation": "/fails",
+                                            "errors": {
+                                                "falseSchema": "False schema does not allow \"value\""
+                                            }
+                                        }
+                                    ]
+                                },
+                                {
+                                    "valid": true,
+                                    "evaluationPath": "/type",
+                                    "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/type",
+                                    "instanceLocation": ""
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            {
+                "description": "allOf failure exposes nested evaluation paths",
+                "data": {
+                    "multi": 3.5
+                },
+                "output": {
+                    "list": {
+                        "$id": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0/tests/2/list",
+                        "const": {
+                            "valid": false,
+                            "details": [
+                                {
+                                    "valid": false,
+                                    "evaluationPath": "",
+                                    "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#",
+                                    "instanceLocation": ""
+                                },
+                                {
+                                    "valid": false,
+                                    "evaluationPath": "/properties",
+                                    "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/properties",
+                                    "instanceLocation": "",
+                                    "droppedAnnotations": [
+                                        "multi"
+                                    ]
+                                },
+                                {
+                                    "valid": false,
+                                    "evaluationPath": "/properties/multi",
+                                    "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/properties/multi",
+                                    "instanceLocation": "/multi"
+                                },
+                                {
+                                    "valid": false,
+                                    "evaluationPath": "/properties/multi/allOf",
+                                    "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/properties/multi/allOf",
+                                    "instanceLocation": "/multi"
+                                },
+                                {
+                                    "valid": false,
+                                    "evaluationPath": "/properties/multi/allOf/0",
+                                    "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/properties/multi/allOf/0",
+                                    "instanceLocation": "/multi"
+                                },
+                                {
+                                    "valid": false,
+                                    "evaluationPath": "/properties/multi/allOf/0/$ref",
+                                    "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/properties/multi/allOf/0/$ref",
+                                    "instanceLocation": "/multi"
+                                },
+                                {
+                                    "valid": false,
+                                    "evaluationPath": "/properties/multi/allOf/0/$ref/type",
+                                    "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/properties/multi/allOf/0/$ref/type",
+                                    "instanceLocation": "/multi",
+                                    "errors": {
+                                        "type": "3.5 is not of type \"integer\""
+                                    }
+                                },
+                                {
+                                    "valid": false,
+                                    "evaluationPath": "/properties/multi/allOf/1",
+                                    "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/properties/multi/allOf/1",
+                                    "instanceLocation": "/multi"
+                                },
+                                {
+                                    "valid": false,
+                                    "evaluationPath": "/properties/multi/allOf/1/$ref",
+                                    "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/properties/multi/allOf/1/$ref",
+                                    "instanceLocation": "/multi"
+                                },
+                                {
+                                    "valid": false,
+                                    "evaluationPath": "/properties/multi/allOf/1/$ref/minimum",
+                                    "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/properties/multi/allOf/1/$ref/minimum",
+                                    "instanceLocation": "/multi",
+                                    "errors": {
+                                        "minimum": "3.5 is less than the minimum of 5"
+                                    }
+                                },
+                                {
+                                    "valid": true,
+                                    "evaluationPath": "/type",
+                                    "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/type",
+                                    "instanceLocation": ""
+                                }
+                            ]
+                        }
+                    },
+                    "hierarchical": {
+                        "$id": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0/tests/2/hierarchical",
+                        "const": {
+                            "valid": false,
+                            "evaluationPath": "",
+                            "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#",
+                            "instanceLocation": "",
+                            "details": [
+                                {
+                                    "valid": false,
+                                    "evaluationPath": "/properties",
+                                    "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/properties",
+                                    "instanceLocation": "",
+                                    "droppedAnnotations": [
+                                        "multi"
+                                    ],
+                                    "details": [
+                                        {
+                                            "valid": false,
+                                            "evaluationPath": "/properties/multi",
+                                            "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/properties/multi",
+                                            "instanceLocation": "/multi",
+                                            "details": [
+                                                {
+                                                    "valid": false,
+                                                    "evaluationPath": "/properties/multi/allOf",
+                                                    "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/properties/multi/allOf",
+                                                    "instanceLocation": "/multi",
+                                                    "details": [
+                                                        {
+                                                            "valid": false,
+                                                            "evaluationPath": "/properties/multi/allOf/0",
+                                                            "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/properties/multi/allOf/0",
+                                                            "instanceLocation": "/multi",
+                                                            "details": [
+                                                                {
+                                                                    "valid": false,
+                                                                    "evaluationPath": "/properties/multi/allOf/0/$ref",
+                                                                    "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/properties/multi/allOf/0/$ref",
+                                                                    "instanceLocation": "/multi",
+                                                                    "details": [
+                                                                        {
+                                                                            "valid": false,
+                                                                            "evaluationPath": "/properties/multi/allOf/0/$ref/type",
+                                                                            "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/properties/multi/allOf/0/$ref/type",
+                                                                            "instanceLocation": "/multi",
+                                                                            "errors": {
+                                                                                "type": "3.5 is not of type \"integer\""
+                                                                            }
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "valid": false,
+                                                            "evaluationPath": "/properties/multi/allOf/1",
+                                                            "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/properties/multi/allOf/1",
+                                                            "instanceLocation": "/multi",
+                                                            "details": [
+                                                                {
+                                                                    "valid": false,
+                                                                    "evaluationPath": "/properties/multi/allOf/1/$ref",
+                                                                    "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/properties/multi/allOf/1/$ref",
+                                                                    "instanceLocation": "/multi",
+                                                                    "details": [
+                                                                        {
+                                                                            "valid": false,
+                                                                            "evaluationPath": "/properties/multi/allOf/1/$ref/minimum",
+                                                                            "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/properties/multi/allOf/1/$ref/minimum",
+                                                                            "instanceLocation": "/multi",
+                                                                            "errors": {
+                                                                                "minimum": "3.5 is less than the minimum of 5"
+                                                                            }
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                },
+                                {
+                                    "valid": true,
+                                    "evaluationPath": "/type",
+                                    "schemaLocation": "https://json-schema.org/tests/content/v1-extra/list-hierarchical/0#/type",
+                                    "instanceLocation": ""
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        ]
+    }
+]

@@ -1,0 +1,23 @@
+# This will allow users to self assign, and/or drop assignment
+[assign]
+
+# Allows @rustbot ready, review, author, or blocked
+[shortcut]
+
+[relabel]
+allow-unauthenticated = [
+    # For Issue areas
+    "A-*",
+    # Categories
+    "C-*",
+    # Commands
+    "Command-*",
+    # Status
+    "S-*",
+    "regression",
+    "Breaking Change",
+    "msrv-bump",
+]
+
+[autolabel."S-waiting-on-review"]
+new_pr = true

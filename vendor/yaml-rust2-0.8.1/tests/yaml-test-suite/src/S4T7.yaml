@@ -1,0 +1,20 @@
+---
+- name: Document with footer
+  from: https://github.com/ingydotnet/yaml-pegex-pm/blob/master/test/footer.tml
+  tags: mapping footer
+  yaml: |
+    aaa: bbb
+    ...
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :aaa
+       =VAL :bbb
+      -MAP
+     -DOC ...
+    -STR
+  json: |
+    {
+      "aaa": "bbb"
+    }

@@ -1,0 +1,20 @@
+Use the following CMake targets to import mimalloc:
+
+  find_package(mimalloc CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE mimalloc)
+
+And use mimalloc in your sources as:
+
+  #include <mimalloc.h>
+  #include <stdio.h>
+  int main(int argc, char** argv) {
+    int* p = mi_malloc_tp(int);
+    *p = mi_version();
+    printf("mimalloc version: %d\n", *p);
+    mi_free(p);
+    return 0;
+  }
+
+When dynamically overriding on Windows, ensure `mimalloc.dll` is linked through some call to
+mimalloc (e.g. `mi_version()`), and that the `mimalloc-redirect.dll` is in the same directory.
+See https://github.com/microsoft/mimalloc/blob/dev/bin/readme.md for detailed information.

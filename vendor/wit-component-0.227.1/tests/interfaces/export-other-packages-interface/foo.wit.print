@@ -1,0 +1,5 @@
+package foo:foo;
+
+world foo {
+  export foo:the-dep/the-interface;
+}

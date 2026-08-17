@@ -1,0 +1,10 @@
+GET
+/
+
+host:example.amazonaws.com
+x-amz-date:20150830T123600Z
+x-amz-region-set:us-east-1
+x-amz-security-token:6e86291e8372ff2a2260956d9b8aae1d763fbf315fa00fa31553b73ebf194267
+
+host;x-amz-date;x-amz-region-set;x-amz-security-token
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855

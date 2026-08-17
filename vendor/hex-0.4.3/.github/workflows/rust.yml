@@ -1,0 +1,32 @@
+name: Test hex
+on: [push, pull_request]
+
+env:
+  RUST_BACKTRACE: '1'
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # We want the tests to run on all configurations, even if jobs (like on nightly), fail.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        rust: [stable, beta, nightly]
+
+    steps:
+      - uses: actions/checkout@v2
+      - uses: hecrj/setup-rust-action@v1
+        with:
+          rust-version: ${{ matrix.rust }}
+      - name: Build
+        run: cargo build --verbose
+      - name: Run tests
+        run: cargo test --verbose
+      - name: Run tests [no-default-features]
+        run: cargo test --verbose --no-default-features
+      - name: Run tests [serde]
+        run: cargo test --verbose --features serde
+      - name: Validate benches still work
+        run: cargo bench --all -- --test

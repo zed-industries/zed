@@ -1,0 +1,228 @@
+// pest. The Elegant Parser
+// Copyright (c) 2018 Dragoș Tiselice
+// 
+// Licensed under the Apache License, Version 2.0
+// <LICENSE-APACHE or http://www.apache.org/licenses/LICENSE-2.0> or the MIT
+// license <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. All files in the project carrying such notice may not be copied,
+// modified, or distributed except according to those terms.
+//! Pest meta-grammar
+//!
+//! # Warning: Semantic Versioning
+//! There may be non-breaking changes to the meta-grammar
+//! between minor versions. Those non-breaking changes, however,
+//! may translate into semver-breaking changes due to the additional variants
+//! added to the `Rule` enum. This is a known issue and will be fixed in the
+//! future (e.g. by increasing MSRV and non_exhaustive annotations).
+
+/// The top-level rule of a grammar.
+grammar_rules = _{ SOI ~ grammar_doc* ~ grammar_rule* ~ EOI }
+
+/// A rule of a grammar.
+grammar_rule = {
+    identifier ~ assignment_operator ~ modifier? ~ opening_brace ~ expression ~ closing_brace
+  | line_doc
+}
+
+/// Assignment operator.
+assignment_operator = { "=" }
+
+/// Opening brace for a rule.
+opening_brace = { "{" }
+
+/// Closing brace for a rule.
+closing_brace = { "}" }
+
+/// Opening parenthesis for a branch, PUSH, etc.
+opening_paren = { "(" }
+
+/// Closing parenthesis for a branch, PUSH, etc.
+closing_paren = { ")" }
+
+/// Opening bracket for PEEK (slice inside).
+opening_brack = { "[" }
+
+/// Closing bracket for PEEK (slice inside).
+closing_brack = { "]" }
+
+/// A rule modifier.
+modifier = _{
+    silent_modifier
+  | atomic_modifier
+  | compound_atomic_modifier
+  | non_atomic_modifier
+}
+
+/// Silent rule prefix.
+silent_modifier = { "_" }
+
+/// Atomic rule prefix.
+atomic_modifier = { "@" }
+
+/// Compound atomic rule prefix.
+compound_atomic_modifier = { "$" }
+
+/// Non-atomic rule prefix.
+non_atomic_modifier = { "!" }
+
+/// A tag label.
+tag_id = @{ "#" ~ ("_" | alpha) ~ ("_" | alpha_num)* }
+
+/// For assigning labels to nodes.
+node_tag = _{ tag_id ~ assignment_operator }
+
+/// A rule expression.
+expression = { choice_operator? ~ term ~ (infix_operator ~ term)* }
+
+/// A rule term.
+term = { node_tag? ~ prefix_operator* ~ node ~ postfix_operator* }
+
+/// A rule node (inside terms).
+node = _{ opening_paren ~ expression ~ closing_paren | terminal }
+
+/// A terminal expression.
+terminal = _{ _push_literal | _push | peek_slice | identifier | string | insensitive_string | range }
+
+/// Possible predicates for a rule.
+prefix_operator = _{ positive_predicate_operator | negative_predicate_operator }
+
+/// Branches or sequences.
+infix_operator = _{ sequence_operator | choice_operator }
+
+/// Possible modifiers for a rule.
+postfix_operator = _{
+    optional_operator
+  | repeat_operator
+  | repeat_once_operator
+  | repeat_exact
+  | repeat_min
+  | repeat_max
+  | repeat_min_max
+}
+
+/// A positive predicate.
+positive_predicate_operator = { "&" }
+
+/// A negative predicate.
+negative_predicate_operator = { "!" }
+
+/// A sequence operator.
+sequence_operator = { "~" }
+
+/// A choice operator.
+choice_operator = { "|" }
+
+/// An optional operator.
+optional_operator = { "?" }
+
+/// A repeat operator.
+repeat_operator = { "*" }
+
+/// A repeat at least once operator.
+repeat_once_operator = { "+" }
+
+/// A repeat exact times.
+repeat_exact = { opening_brace ~ number ~ closing_brace }
+
+/// A repeat at least times.
+repeat_min = { opening_brace ~ number ~ comma ~ closing_brace }
+
+/// A repeat at most times.
+repeat_max = { opening_brace ~ comma ~ number ~ closing_brace }
+
+/// A repeat in a range.
+repeat_min_max = { opening_brace ~ number ~ comma ~ number ~ closing_brace }
+
+/// A number.
+number = @{ '0'..'9'+ }
+
+/// An integer number (positive or negative).
+integer = @{ number | "-" ~ "0"* ~ '1'..'9' ~ number? }
+
+/// A comma terminal.
+comma = { "," }
+
+/// A PUSH expression.
+_push = { "PUSH" ~ opening_paren ~ expression ~ closing_paren }
+
+/// A PUSH_LITERAL expression with one argument, which must be a literal string.
+_push_literal = { "PUSH_LITERAL" ~ opening_paren ~ string ~ closing_paren }
+
+/// A PEEK expression.
+peek_slice = { "PEEK" ~ opening_brack ~ integer? ~ range_operator ~ integer? ~ closing_brack }
+
+/// An identifier.
+identifier = @{ !"PUSH" ~ ("_" | alpha) ~ ("_" | alpha_num)* }
+
+/// An alpha character.
+alpha = _{ 'a'..'z' | 'A'..'Z' }
+
+/// An alphanumeric character.
+alpha_num = _{ alpha | '0'..'9' }
+
+/// A string.
+string = ${ quote ~ inner_str ~ quote }
+
+/// An insensitive string.
+insensitive_string = { "^" ~ string }
+
+/// A character range.
+range = { character ~ range_operator ~ character }
+
+/// A single quoted character
+character = ${ single_quote ~ inner_chr ~ single_quote }
+
+/// A quoted string.
+inner_str = @{ (!("\"" | "\\") ~ ANY)* ~ (escape ~ inner_str)? }
+
+/// An escaped or any character.
+inner_chr = @{ escape | ANY }
+
+/// An escape sequence.
+escape = @{ "\\" ~ ("\"" | "\\" | "r" | "n" | "t" | "0" | "'" | code | unicode) }
+
+/// A hexadecimal code.
+code = @{ "x" ~ hex_digit{2} }
+
+/// A unicode code.
+unicode = @{ "u" ~ opening_brace ~ hex_digit{2, 6} ~ closing_brace }
+
+/// A hexadecimal digit.
+hex_digit = @{ '0'..'9' | 'a'..'f' | 'A'..'F' }
+
+/// A double quote.
+quote = { "\"" }
+
+/// A single quote.
+single_quote = { "'" }
+
+/// A range operator.
+range_operator = { ".." }
+
+/// A newline character.
+newline = _{ "\n" | "\r\n" }
+
+/// A whitespace character.
+WHITESPACE = _{ " " | "\t" | newline }
+
+/// A single line comment.
+line_comment = _{ ("//" ~ !("/" | "!") ~ (!newline ~ ANY)*) }
+
+/// A multi-line comment.
+block_comment = _{ "/*" ~ (block_comment | !"*/" ~ ANY)* ~ "*/" }
+
+/// A grammar comment.
+COMMENT = _{ block_comment | line_comment }
+
+// ref: https://doc.rust-lang.org/reference/comments.html
+/// A space character.
+space = _{ " " | "\t" }
+
+/// A top-level comment.
+grammar_doc = ${ "//!" ~ space? ~ inner_doc }
+
+/// A rule comment.
+line_doc = ${ "///" ~ space? ~ inner_doc }
+
+/// A comment content.
+inner_doc = @{ (!newline ~ ANY)* }

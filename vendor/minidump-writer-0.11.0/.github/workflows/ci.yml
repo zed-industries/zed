@@ -1,0 +1,149 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches:
+      - main
+      - github-actions
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt,clippy
+      - name: rustfmt
+        run: cargo fmt --all -- --check
+      - name: clippy
+        run: cargo clippy --all-features --all-targets -- -D warnings
+
+  test:
+    name: Test
+    runs-on: ${{ matrix.job.os }}
+    strategy:
+      matrix:
+        job:
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, release: true }
+          - { os: ubuntu-22.04,  target: x86_64-unknown-linux-musl }
+          - { os: windows-2022,  target: x86_64-pc-windows-msvc }
+          - { os: macos-13,      target: x86_64-apple-darwin }
+          - { os: macos-14,      target: aarch64-apple-darwin }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          target: ${{ matrix.job.target }}
+      - name: Fetch
+        run: cargo fetch --target ${{ matrix.job.target }}
+      - name: Build
+        run: cargo test --target ${{ matrix.job.target }} --no-run
+      - name: Test
+        run: cargo test --target ${{ matrix.job.target }}
+      - name: Release test
+        if: ${{ matrix.job.release }}
+        run: |
+          cargo test --target ${{ matrix.job.target }} --release --no-run
+          cargo test --target ${{ matrix.job.target }} --release
+
+  install-cross:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: XAMPPRocky/get-github-release@v1
+        id: cross
+        with:
+          owner: rust-embedded
+          repo: cross
+          matches: linux-musl
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cross-linux-musl
+          path: ${{ steps.cross.outputs.install_path }}
+
+  # This job builds and tests non-tier1 targets
+  build_lower_tier:
+    name: Build sources
+    runs-on: ubuntu-22.04
+    needs: install-cross
+    strategy:
+      matrix:
+        job:
+          - target: i686-unknown-linux-gnu
+          - target: aarch64-unknown-linux-gnu
+          - target: aarch64-unknown-linux-musl
+          - target: arm-unknown-linux-gnueabi
+          - target: arm-unknown-linux-musleabi
+          - target: arm-linux-androideabi
+          - target: arm-unknown-linux-gnueabihf
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download Cross
+        uses: actions/download-artifact@v4
+        with:
+          name: cross-linux-musl
+          path: /tmp/
+      - run: chmod +x /tmp/cross
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          target: ${{ matrix.job.target }}
+      - name: Build and Test
+        run: |
+          /tmp/cross build --target ${{ matrix.job.target }} --all-targets
+          # /tmp/cross test --target ${{ matrix.job.target }}
+          # /tmp/cross test --target ${{ matrix.job.target }} -- ignored
+
+  # The cargo x86-64-linux-android target configuration in .cargo/config.toml
+  # interacts with this job.
+  test-android:
+    name: Test android
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          target: x86_64-linux-android
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      # Add the (eventual) NDK toolchain bin directory to PATH so the linker is
+      # available to cargo
+      - run: echo "$ANDROID_HOME/ndk/26.2.11394342/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+      - name: Build/run tests in android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          arch: x86_64
+          api-level: 30
+          ndk: 26.2.11394342
+          script: |
+            # run adb as root so we can create remote directories
+            adb root
+            # Copy test helper binary over as a side-effect of running it.
+            cargo run --target x86_64-linux-android --bin test -- nop
+            # Build and run tests
+            cargo test --target x86_64-linux-android
+
+  deny-check:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: deny check
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          # Note that advisories are checked separately on a schedule in audit.yml
+          command: check bans licenses sources

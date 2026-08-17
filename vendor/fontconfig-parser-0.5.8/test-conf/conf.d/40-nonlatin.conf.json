@@ -1,0 +1,755 @@
+[
+  {
+    "Description": "Set substitutions for non-Latin fonts"
+  },
+  {
+    "Alias": {
+      "alias": "Nazli",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Lotoos",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Mitra",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Ferdosi",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Badr",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Zar",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Titr",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Jadid",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Kochi Mincho",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "AR PL SungtiL GB",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "AR PL Mingti2L Big5",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "ＭＳ 明朝",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "NanumMyeongjo",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "UnBatang",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Baekmuk Batang",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "MgOpen Canonica",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Sazanami Mincho",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "AR PL ZenKai Uni",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "ZYSong18030",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "FreeSerif",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "SimSun",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Arshia",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Elham",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Farnaz",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Nasim",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Sina",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Roya",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Koodak",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Terafik",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Kochi Gothic",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "AR PL KaitiM GB",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "AR PL KaitiM Big5",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "ＭＳ ゴシック",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "NanumGothic",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "UnDotum",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Baekmuk Dotum",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "MgOpen Modata",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Sazanami Gothic",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "AR PL ShanHeiSun Uni",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "ZYSong18030",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "FreeSans",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "NSimSun",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "monospace"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "ZYSong18030",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "monospace"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "NanumGothicCoding",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "monospace"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "FreeMono",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "monospace"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Homa",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "fantasy"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Kamran",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "fantasy"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Fantezi",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "fantasy"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Tabassom",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "fantasy"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "IranNastaliq",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "cursive"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Nafees Nastaleeq",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "cursive"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Noto Sans Arabic UI",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "system-ui"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Noto Sans Bengali UI",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "system-ui"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Noto Sans Devanagari UI",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "system-ui"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Noto Sans Gujarati UI",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "system-ui"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Noto Sans Gurmukhi UI",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "system-ui"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Noto Sans Kannada UI",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "system-ui"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Noto Sans Khmer UI",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "system-ui"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Noto Sans Lao UI",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "system-ui"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Noto Sans Malayalam UI",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "system-ui"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Noto Sans Myanmar UI",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "system-ui"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Noto Sans Oriya UI",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "system-ui"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Noto Sans Sinhala UI",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "system-ui"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Noto Sans Tamil UI",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "system-ui"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Noto Sans Telugu UI",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "system-ui"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Noto Sans Thai UI",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "system-ui"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Leelawadee UI",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "system-ui"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Nirmala UI",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "system-ui"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Yu Gothic UI",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "system-ui"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Meiryo UI",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "system-ui"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "MS UI Gothic",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "system-ui"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Khmer UI",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "system-ui"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Lao UI",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "system-ui"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Microsoft JhengHei UI",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "system-ui"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Microsoft YaHei UI",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "system-ui"
+      ]
+    }
+  }
+]

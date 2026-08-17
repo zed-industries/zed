@@ -1,0 +1,5 @@
+error: Attribute `default` is mutually exclusive with `catch_all`
+ --> tests/try_build/compile_fail/default_and_catch_all_same_variant_alt.rs:6:16
+  |
+6 |     #[num_enum(default)]
+  |                ^^^^^^^

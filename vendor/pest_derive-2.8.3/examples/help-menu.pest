@@ -1,0 +1,36 @@
+WHITESPACE = _{ " " }
+
+Rew       = ! { ( ASCII_DIGIT | ASCII_ALPHA_UPPER | "_" | "-" ) + }
+Lit       = ! { ( ASCII_ALPHANUMERIC              | "_" | "-" ) + }
+Word      = _ { Rew | Lit }
+WordGroup = _ { Word ~ ( " " ~ Word ) * }
+
+// Argument groups are nonatomic;
+// "<whitespace |between|the|bar|or|braces |is | OK>"
+
+ArgOptChoiceGroup = { ( "[" ~ Word + ~
+                      ( "|" ~ ( Word
+                              | ArgChoiceGroup ) + ) * ~
+                        "]" ) + }
+ArgReqChoiceGroup = { ( "<" ~ Word + ~
+                      ( "|" ~ ( Word
+                              | ArgChoiceGroup ) + ) * ~
+                        ">" ) + }
+ArgChoiceGroup    = _ { ArgOptChoiceGroup
+                      | ArgReqChoiceGroup }
+
+Command = {
+    ( WordGroup ) ~
+    ( ArgChoiceGroup ) *
+}
+
+HelpMenu = {
+    SOI ~
+
+    (
+        Command ~
+        NEWLINE
+    ) * ~
+
+    EOI
+}

@@ -1,0 +1,5 @@
+interface or world `bar` not found in package
+     --> tests/ui/parse-fail/unresolved-use1.wit:6:7
+      |
+    6 |   use bar.{x};
+      |       ^--

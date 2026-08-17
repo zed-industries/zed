@@ -1,0 +1,21 @@
+package foo:multi-file;
+
+interface irrelevant-name {
+  record a-name {}
+}
+
+interface depends-on-later-item {
+  use depend-on-me.{x};
+}
+
+interface depend-on-me {
+  type x = u32;
+}
+
+world more-depends-on-later-things {
+  import later-interface;
+  export later-interface;
+}
+
+interface later-interface {
+}

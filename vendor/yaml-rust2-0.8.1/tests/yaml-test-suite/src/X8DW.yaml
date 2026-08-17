@@ -1,0 +1,25 @@
+---
+- name: Explicit key and value seperated by comment
+  from: '@perlpunk'
+  tags: comment explicit-key mapping
+  yaml: |
+    ---
+    ? key
+    # comment
+    : value
+  tree: |
+    +STR
+     +DOC ---
+      +MAP
+       =VAL :key
+       =VAL :value
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "key": "value"
+    }
+  dump: |
+    ---
+    key: value

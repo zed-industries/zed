@@ -1,0 +1,5 @@
+error: unexpected `cxx::` qualifier found in a `#[cxx::bridge]`
+ --> tests/ui/cxx_crate_name_qualified_cxx_string.rs:5:20
+  |
+5 |         fn bar(x: &cxx::CxxString);
+  |                    ^^^^^^^^^^^^^^

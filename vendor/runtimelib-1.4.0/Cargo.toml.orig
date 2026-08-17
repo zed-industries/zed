@@ -1,0 +1,60 @@
+[package]
+name = "runtimelib"
+version = "1.4.0"
+edition = "2021"
+description = "Jupyter runtime library"
+repository = "https://github.com/runtimed/runtimed"
+license = "BSD-3-Clause"
+readme = "./README.md"
+
+[dependencies]
+zeromq = { version = "0.5.0", default-features = false, features = [
+    "tcp-transport",
+] }
+base64 = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+data-encoding = "2.5.0"
+dirs = "6.0"
+smol = { version = "2", optional = true }
+futures = { workspace = true }
+jupyter-protocol = { workspace = true }
+ring = { version = "0.17.7", optional = true }
+aws-lc-rs = { version = "1.9", optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+shellexpand = "3.1.0"
+glob = "0.3.1"
+thiserror = { workspace = true }
+
+[features]
+default = ["ring"]
+ring = ["dep:ring"]
+aws-lc-rs = ["dep:aws-lc-rs"]
+async-dispatcher-runtime = [
+    "zeromq/async-dispatcher-runtime",
+    "async-dispatcher",
+    "async-std",
+    "smol",
+]
+tokio-runtime = ["tokio", "zeromq/tokio-runtime"]
+test-kernel = ["tokio-runtime"]
+
+[dependencies.tokio]
+version = "1.36.0"
+features = ["full"]
+optional = true
+
+[dependencies.async-dispatcher]
+version = "0.1"
+optional = true
+
+[dependencies.async-std]
+version = "1"
+features = ["attributes"]
+optional = true
+
+[package.metadata.docs.rs]
+features = ["async-dispatcher-runtime", "ring"]
+no-default-features = true

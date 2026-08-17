@@ -1,0 +1,19 @@
+Hi all, 
+
+Rodio maintainer here, François was so kind to point this working group out to me. The Rodio team is making great steps in improving Rodio, and a lot has changed in the last year. We are reaching out because we are about to make a rather big change and we want to do that such that it makes Rodio better for game dev (and use from Bevy). We also think Rodio can do more in Bevy then it currenty is. 
+
+I've read through the last few messages here, specifically the summary by @manokara was insightfull. There might be some inaccuracies in this working group knowledge of what rodio can do. That is an issue with Rodio, it lacks  documentation regarding more advanced audio pipelines. I will not get into that now but I would like to quickly note a few things relevant to Bevy:  
+
+ - Rodio's goal is to allow you to make custom audio graph's (tree shaped). The `Sink` struct is meant for simple audo playback without the need of a graph.
+ - The file decoders support streaming & seeking .
+ - Within the tree you can use filters we have some ready made (for example high/low pass) and you can insert custom ones. No need to re-implement decoders.
+
+I think it could be really helpfull to Bevy and Rodio if I have a call with one of the audio working group members. We could help better integrate rodio in Bevy, discuss if Rodio can fullfill all Bevy's needs and what changes would be needed to do so. 
+
+I look forward to hear from you all,
+Best regards,
+
+David
+
+Ps: the large change being considerd: https://github.com/RustAudio/rodio/issues/712
+Ps: discussion on controlling the graph: https://github.com/RustAudio/rodio/issues/658

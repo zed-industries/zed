@@ -1,0 +1,12 @@
+trailing_comma = "Never"
+fn_single_line = true
+where_single_line = true
+match_block_trailing_comma = true
+reorder_imported_names = true
+reorder_imports = true
+reorder_imports_in_group = true
+trailing_semicolon = false
+use_field_init_shorthand = true
+color = "Always"
+struct_lit_single_line = true
+max_width = 80

@@ -1,0 +1,9 @@
+failed to resolve directory while parsing WIT for path [tests/ui/parse-fail/unresolved-use10]
+
+Caused by:
+    0: failed to parse package: tests/ui/parse-fail/unresolved-use10
+    1: name `thing` is not defined
+            --> tests/ui/parse-fail/unresolved-use10/bar.wit:4:12
+             |
+           4 |   use foo.{thing};
+             |            ^----

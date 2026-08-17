@@ -1,0 +1,8 @@
+[features]
+# Uses the nightly derive_coerce_pointee feature to make conversions more ergonomic.
+unstable-coerce-pointee = []
+# For backwards compatibility, but unnecessary.
+CFBase = []
+
+[dev-dependencies]
+static_assertions = "1.1.0"

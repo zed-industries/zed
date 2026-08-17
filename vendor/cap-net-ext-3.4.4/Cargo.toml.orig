@@ -1,0 +1,19 @@
+[package]
+name = "cap-net-ext"
+version = "3.4.4"
+description = "Extension traits for `TcpListener`, `Pool`, etc."
+authors = [
+    "Dan Gohman <dev@sunfishcode.online>",
+    "Jakub Konka <kubkon@jakubkonka.com>",
+]
+license = "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
+keywords = ["filesystem"]
+categories = ["filesystem"]
+repository = "https://github.com/bytecodealliance/cap-std"
+edition = "2021"
+
+[dependencies]
+cap-std = { path = "../cap-std", version = "^3.4.4" }
+cap-primitives = { path = "../cap-primitives", version = "^3.4.4" }
+rustix = { version = "1.0.0", features = ["net"] }
+smallvec = "1.10"

@@ -1,0 +1,23 @@
+error: unused pinned boxed `Future` trait object that must be used
+ --> tests/ui/must_use.rs:9:5
+  |
+9 |     apples(3);
+  |     ^^^^^^^^^
+  |
+  = note: futures do nothing unless you `.await` or poll them
+note: the lint level is defined here
+ --> tests/ui/must_use.rs:1:9
+  |
+1 | #![deny(unused_must_use)]
+  |         ^^^^^^^^^^^^^^^
+
+error: unused return value of `apples` that must be used
+ --> tests/ui/must_use.rs:9:5
+  |
+9 |     apples(3);
+  |     ^^^^^^^^^
+  |
+help: use `let _ = ...` to ignore the resulting value
+  |
+9 |     let _ = apples(3);
+  |     +++++++

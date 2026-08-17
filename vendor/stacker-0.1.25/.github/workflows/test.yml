@@ -1,0 +1,439 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - "*.mkd"
+      - "LICENSE"
+  pull_request:
+    types: [opened, reopened, synchronize]
+  workflow_dispatch:
+
+jobs:
+  psm-msrv-test:
+    name: Test psm on MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust 1.88.0
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: 1.88.0
+          profile: minimal
+          default: true
+      - name: Test psm
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --manifest-path=psm/Cargo.toml --all-targets
+
+  native-test:
+    name: Test ${{ matrix.manifest }} on ${{ matrix.os }} with ${{ matrix.rust_toolchain }} and ${{ matrix.mode }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        rust_toolchain: [nightly, stable, 1.91.0]
+        os: [ubuntu-latest, windows-latest, macOS-latest, windows-11-arm]
+        mode: ["--release", "-Zminimal-versions", ""]
+        manifest: ["psm/Cargo.toml", "Cargo.toml"]
+        # Pedantic flags
+        cflags: ["-Werror -Wundef", ""]
+        exclude:
+          - rust_toolchain: stable
+            mode: -Zminimal-versions
+          - rust_toolchain: 1.91.0
+            mode: -Zminimal-versions
+          - os: windows-latest
+            cflags: "-Werror -Wundef"
+          - os: windows-11-arm
+            cflags: "-Werror -Wundef"
+        include:
+          - os: windows-latest
+            extra_target: i686-pc-windows-msvc
+          - os: windows-11-arm
+            rust_toolchain: nightly
+            extra_target: arm64ec-pc-windows-msvc
+    timeout-minutes: 10
+    env:
+      CFLAGS: ${{ matrix.cflags }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust ${{ matrix.rust_toolchain }}
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust_toolchain }}
+          profile: minimal
+          default: true
+          target: ${{ matrix.extra_target }}
+      - name: Test ${{ matrix.manifest}} with ${{ matrix.mode }}
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --manifest-path=${{ matrix.manifest }} ${{ matrix.mode }} -- --nocapture
+      - name: Test ${{ matrix.manifest}} examples with ${{ matrix.mode }}
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --manifest-path=${{ matrix.manifest }} ${{ matrix.mode }} --examples -- --nocapture
+      - if: ${{ matrix.extra_target }}
+        name: Test ${{ matrix.manifest}} with ${{ matrix.mode }} as ${{ matrix.extra_target }}
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --target=${{ matrix.extra_target }} --manifest-path=${{ matrix.manifest }} ${{ matrix.mode }} -- --nocapture
+      - if: ${{ matrix.extra_target }}
+        name: Test ${{ matrix.manifest}} examples with ${{ matrix.mode }} as ${{ matrix.extra_target }}
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --target=${{ matrix.extra_target }} --manifest-path=${{ matrix.manifest }} ${{ matrix.mode }} --examples -- --nocapture
+
+  clang-cl-test:
+    name: Test ${{ matrix.manifest }} on ${{ matrix.rust_target }} with ${{ matrix.clang_cl }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        manifest: ["psm/Cargo.toml", "Cargo.toml"]
+        rust_target:
+          - x86_64-pc-windows-msvc
+          # - i686-pc-windows-msvc
+        include:
+          - rust_target: x86_64-pc-windows-msvc
+            clang_cl: C:/msys64/mingw64/bin/clang-cl.exe
+            package: mingw-w64-x86_64-clang
+          # mingw has removed the relevant packages
+          # - rust_target: i686-pc-windows-msvc
+          #   clang_cl: C:/msys64/mingw32/bin/clang-cl.exe
+          #   package: mingw-w64-i686-clang
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          release: false
+          install: ${{ matrix.package }}
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          default: true
+          target: ${{ matrix.rust_target }}
+      - uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --target=${{ matrix.rust_target }} --manifest-path=${{ matrix.manifest }} -- --nocapture
+        env:
+          CC: ${{ matrix.clang_cl }}
+          CFLAGS: "-Werror -Wundef"
+
+  windows-gnu-test:
+    name: Test ${{ matrix.manifest }} on ${{ matrix.rust_target }} with ${{ matrix.rust_toolchain }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rust_toolchain: [nightly, stable]
+        rust_target:
+          - x86_64-pc-windows-gnu
+          - i686-pc-windows-gnu
+        manifest: ["psm/Cargo.toml", "Cargo.toml"]
+        include:
+          - rust_target: x86_64-pc-windows-gnu
+            mingw_path: C:/msys64/mingw64/bin
+            package: mingw-w64-x86_64-gcc
+          - rust_target: i686-pc-windows-gnu
+            mingw_path: C:/msys64/mingw32/bin
+            package: mingw-w64-i686-gcc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          release: false
+          install: ${{ matrix.package }}
+      - run: echo "c:/msys64/bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+      - run: echo "${{ matrix.mingw_path }}" | Out-File -FilePath $env:GITHUB_PATH -Append
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust_toolchain }}
+          profile: minimal
+          target: ${{ matrix.rust_target }}
+          default: true
+      - uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --target ${{ matrix.rust_target }} --manifest-path=${{ matrix.manifest }}
+        env:
+          CFLAGS: "-Werror -Wundef"
+
+  cross-windows-gnullvm-check:
+    name: Check ${{ matrix.manifest }} to ${{ matrix.rust_target }} with stable
+    runs-on: ubuntu-22.04
+    env:
+      LLVM_MINGW_VERSION: "20250417"
+    strategy:
+      fail-fast: false
+      matrix:
+        rust_target:
+          - aarch64-pc-windows-gnullvm
+          - i686-pc-windows-gnullvm
+          - x86_64-pc-windows-gnullvm
+        manifest: ["psm/Cargo.toml", "Cargo.toml"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: llvm-mingw-version
+          key: ${{ env.LLVM_MINGW_VERSION }}
+      - name: Install llvm-mingw
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: curl -L https://github.com/mstorsjo/llvm-mingw/releases/download/${{ env.LLVM_MINGW_VERSION }}/llvm-mingw-${{ env.LLVM_MINGW_VERSION }}-ucrt-ubuntu-22.04-x86_64.tar.xz | tar xJf -
+      - name: Add llvm-mingw to PATH
+        run: echo "${{ github.workspace }}/llvm-mingw-${{ env.LLVM_MINGW_VERSION }}-ucrt-ubuntu-22.04-x86_64/bin" >> $GITHUB_PATH
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          target: ${{ matrix.rust_target }}
+      - name: Check
+        uses: actions-rs/cargo@v1
+        with:
+          command: check
+          args: --target ${{ matrix.rust_target }} --manifest-path=${{ matrix.manifest }}
+
+  cross-linux-test:
+    name: Test ${{ matrix.manifest }} on ${{ matrix.rust_target }} with nightly ${{ matrix.mode }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rust_target:
+          - aarch64-linux-android
+          - arm-linux-androideabi
+          - armv7-linux-androideabi
+          - x86_64-linux-android
+          - aarch64-unknown-linux-gnu
+          - arm-unknown-linux-gnueabi
+          - armv7-unknown-linux-gnueabihf
+          - loongarch64-unknown-linux-gnu
+          - i686-unknown-linux-gnu
+          - i686-unknown-linux-musl
+          # No libstd available :(
+          # - mips-unknown-linux-gnu
+          # - mips64-unknown-linux-gnuabi64
+          # - mips64el-unknown-linux-gnuabi64
+          # - mipsel-unknown-linux-gnu
+          - powerpc-unknown-linux-gnu
+          # https://github.com/rust-embedded/cross/pull/440
+          # - powerpc64-unknown-linux-gnu
+          - x86_64-unknown-linux-musl
+        manifest: ["psm/Cargo.toml", "Cargo.toml"]
+        mode: ["--release", "-Zminimal-versions", ""]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          profile: minimal
+          target: ${{ matrix.rust_target }}
+          default: true
+      - name: Install cross
+        run: |
+          cargo install cross --git https://github.com/cross-rs/cross
+      - name: Test
+        run: |
+          cross test --target ${{ matrix.rust_target }} --manifest-path=${{ matrix.manifest }}  ${{ matrix.mode }} -- --test-threads=1 --nocapture
+
+  native-build:
+    name: Build ${{ matrix.manifest }} to ${{ matrix.rust_target }} on nightly
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rust_target:
+          # BSDs: could be tested with full system emulation
+          - i686-unknown-freebsd
+          - x86_64-unknown-freebsd
+        manifest: ["psm/Cargo.toml", "Cargo.toml"]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          profile: minimal
+          target: ${{ matrix.rust_target }}
+          default: true
+      - name: Build ${{ matrix.rust_target }}
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --target ${{ matrix.rust_target }} --manifest-path=${{ matrix.manifest }}
+
+  cross-build:
+    name: Cross-compile ${{ matrix.manifest }} to ${{ matrix.rust_target }} with cargo-cross
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rust_target:
+          # https://github.com/rust-embedded/cross/issues/333
+          - powerpc64le-unknown-linux-gnu
+          # FIXME: Testing hangs, should be verified once-in-a-while manually.
+          # could be made work by using full system emulation
+          # https://github.com/rust-embedded/cross/issues/242
+          #
+          # Currently tested manually with full-system emulation.
+          - s390x-unknown-linux-gnu
+          # FIXME: tests could be made work by using full system emulation, maybe?
+          #
+          # Currently tested manually on real hardware.
+          # FIXME: https://github.com/rust-embedded/cross/pull/440
+          # - sparc64-unknown-linux-gnu
+          # BSDs: could be tested with full system emulation
+          - x86_64-unknown-netbsd
+        manifest: ["psm/Cargo.toml", "Cargo.toml"]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust nightly
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          profile: minimal
+          target: ${{ matrix.rust_target }}
+          default: true
+      - name: Build ${{ matrix.rust_target }}
+        uses: actions-rs/cargo@v1
+        with:
+          use-cross: true
+          command: build
+          args: --target ${{ matrix.rust_target }} --manifest-path=${{ matrix.manifest }}
+
+  cross-ios-build:
+    name: Cross-compile ${{ matrix.manifest }} to ${{ matrix.rust_target }} on ${{ matrix.rust_toolchain }}
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rust_toolchain: [nightly, stable]
+        rust_target:
+          - aarch64-apple-ios
+          - x86_64-apple-ios
+        manifest: ["psm/Cargo.toml", "Cargo.toml"]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust_toolchain }}
+          profile: minimal
+          target: ${{ matrix.rust_target }}
+          default: true
+      - name: Build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --target=${{ matrix.rust_target }} --manifest-path=${{ matrix.manifest }}
+
+  cross-windows-build:
+    name: Cross-compile ${{ matrix.manifest }} for ${{ matrix.rust_target }} from x86_64-unknown-linux-gnu
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: true
+      matrix:
+        rust_target:
+          - x86_64-pc-windows-msvc
+          - i686-pc-windows-msvc
+        manifest: ["psm/Cargo.toml", "Cargo.toml"]
+        xwin_version: ["0.1.6"]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          target: ${{ matrix.rust_target }}
+      - name: Add toolchain shims
+        run: |
+          set -eux
+          sudo ln -s clang-14 /usr/bin/clang-cl
+          sudo ln -s llvm-ar-14 /usr/bin/llvm-lib
+          sudo ln -s lld-link-14 /usr/bin/lld-link
+      - name: Install Windows SDK
+        run: |
+          set -eux
+          xwin_version=${{ matrix.xwin_version }}
+          xwin_prefix="xwin-$xwin_version-x86_64-unknown-linux-musl"
+
+          # Install xwin to cargo/bin via github release. Note you could also just use `cargo install xwin`.
+          curl --fail -L https://github.com/Jake-Shadle/xwin/releases/download/$xwin_version/$xwin_prefix.tar.gz | tar -xzv -C /home/runner/.cargo/bin --strip-components=1 $xwin_prefix/xwin
+
+          # Splat the CRT and SDK files to /tmp/xwin/crt and /tmp/xwin/sdk respectively
+          xwin --accept-license 1 splat --output /tmp/xwin
+      - name: Test
+        env:
+          CC: "clang-cl"
+          CXX: "clang-cl"
+          AR: "llvm-lib"
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER: "lld-link"
+          CARGO_TARGET_I686_PC_WINDOWS_MSVC_LINKER: "lld-link"
+          # Note that we only disable unused-command-line-argument here since clang-cl
+          # doesn't implement all of the options supported by cl, but the ones it doesn't
+          # are _generally_ not interesting.
+          CFLAGS: "-Wno-unused-command-line-argument -fuse-ld=lld-link /imsvc/tmp/xwin/crt/include /imsvc/tmp/xwin/sdk/include/ucrt /imsvc/tmp/xwin/sdk/include/um /imsvc/tmp/xwin/sdk/include/shared"
+          # Inform the linker where to search for libraries
+          RUSTFLAGS: "-Lnative=/tmp/xwin/crt/lib/x86_64 -Lnative=/tmp/xwin/sdk/lib/um/x86_64 -Lnative=/tmp/xwin/sdk/lib/ucrt/x86_64"
+        run: |
+          set -eux
+          cargo build --target ${{ matrix.rust_target }} --manifest-path ${{ matrix.manifest }}
+
+  wasm-test:
+    name: Test stacker on WASM
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust nightly
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          default: true
+          target: wasm32-wasip1
+      - run: |
+          curl -Lf https://github.com/bytecodealliance/wasmtime/releases/download/v24.0.0/wasmtime-v24.0.0-x86_64-linux.tar.xz | tar xJf - -C ${{ runner.tool_cache }}
+          echo "${{ runner.tool_cache }}/wasmtime-v24.0.0-x86_64-linux" >> $GITHUB_PATH
+          echo "CARGO_TARGET_WASM32_WASIP1_RUNNER=wasmtime run --" >> $GITHUB_ENV
+      - run: cargo test --target wasm32-wasip1 --all -- --nocapture
+
+  miri-test:
+    name: Test stacker with Miri on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust nightly with Miri
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          profile: minimal
+          components: miri
+          default: true
+      - name: Setup Miri
+        run: cargo miri setup
+      - name: Test with Miri
+        run: cargo miri test -- --nocapture

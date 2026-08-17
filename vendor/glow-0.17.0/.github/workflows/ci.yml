@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches-ignore: [staging.tmp]
+  pull_request:
+    branches-ignore: [staging.tmp]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        build: [pinned, stable, beta, nightly, macos, windows]
+        include:
+        - build: pinned
+          os: ubuntu-latest
+          rust: 1.73.0
+          sdl: true
+        - build: stable
+          os: ubuntu-latest
+          rust: stable
+          sdl: true
+        - build: beta
+          os: ubuntu-latest
+          rust: beta
+          sdl: true
+        - build: nightly
+          os: ubuntu-latest
+          rust: nightly
+          sdl: true
+        - build: macos
+          os: macos-latest
+          rust: stable
+          sdl: false
+        - build: windows
+          os: windows-latest
+          rust: stable
+          sdl: false
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+    - name: Install toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: ${{ matrix.rust }}
+        override: true
+        profile: minimal
+        target: wasm32-unknown-unknown
+    - run: cargo build --verbose
+    - run: cargo build --verbose --target wasm32-unknown-unknown
+      env:
+        RUSTFLAGS: --cfg=web_sys_unstable_apis 
+    - run: cargo test --verbose
+    - run: (cd examples/hello && cargo build --features glutin_winit)
+    - run: (cd examples/hello && cargo build --target wasm32-unknown-unknown)
+    - name: sdl
+      if: ${{ matrix.sdl == true }}
+      run: |
+        sudo apt-get -qq update
+        sudo apt-get -qq install libsdl2-dev
+        cargo build --verbose
+        (cd examples/hello && cargo build --features sdl2)
+    - name: android
+      if: matrix.build == 'stable'
+      run: |
+        rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+        cargo build --verbose --target aarch64-linux-android
+        cargo build --verbose --target armv7-linux-androideabi
+        cargo build --verbose --target x86_64-linux-android
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Check fmt
+        run: cargo fmt --check
+      - name: Install phosphorus from crates.io
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: phosphorus
+          version: '0.0.22'
+      - name: Test reproducability of gl46.rs
+        run: bash generate-native.sh
+      - uses: infotroph/tree-is-clean@v1
+        with:
+          check_untracked: true

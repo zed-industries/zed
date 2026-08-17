@@ -1,0 +1,89 @@
+matrix:
+  RUST: [stable, nightly]
+  platform: [linux/amd64, linux/arm64]
+
+steps:
+  test:
+    when:
+      event: [push, pull_request]
+    image: rust
+    environment:
+      CARGO_TERM_COLOR: always
+    commands:
+      - rustup default $RUST
+      - cargo test
+      - cargo test -p examples
+      - cargo test --release
+      - cargo test --release -p examples
+  32-bit:
+    when:
+      event: [push, pull_request]
+      matrix:
+        RUST: nightly
+        platform: linux/amd64
+    image: rust
+    environment:
+      CARGO_TERM_COLOR: always
+    commands:
+      - apt-get update
+      - apt-get -y install gcc-multilib
+      - rustup default $RUST
+      - rustup target add i686-unknown-linux-gnu
+      - cargo test --target i686-unknown-linux-gnu
+      - cargo test --target i686-unknown-linux-gnu -p examples
+  linter:
+    when:
+      event: [push, pull_request]
+      matrix:
+        RUST: stable
+        platform: linux/amd64
+    image: rust
+    environment:
+      CARGO_TERM_COLOR: always
+    commands:
+      - rustup default $RUST
+      - rustup component add rustfmt
+      - rustup component add clippy
+      - cargo fmt -- --check
+      - cargo fmt -p examples --check
+      - cargo clippy --all
+      - cargo clippy -p examples --all
+      - cargo doc --document-private-items
+  miri:
+    when:
+      event: [push, pull_request]
+      matrix:
+        RUST: nightly
+        platform: linux/amd64
+    image: rust
+    environment:
+      CARGO_TERM_COLOR: always
+      MIRIFLAGS: "-Zmiri-strict-provenance"
+    commands:
+      - rustup default $RUST
+      - rustup component add miri
+      - cargo miri test
+  loom:
+    when:
+      event: [push, pull_request]
+      matrix:
+        RUST: stable
+        platform: linux/amd64
+    image: rust
+    environment:
+      CARGO_TERM_COLOR: always
+    commands:
+      - rustup default $RUST
+      - cargo test --features loom --release --lib
+  benchmark:
+    when:
+      event: [push, pull_request]
+      matrix:
+        RUST: stable
+        platform: linux/amd64
+    image: rust
+    environment:
+      CARGO_TERM_COLOR: always
+    commands:
+      - rustup default $RUST
+      - cargo bench

@@ -1,0 +1,9 @@
+package foo:bar;
+
+interface a {}
+interface b {}
+
+world bar-a {
+    import a;
+    import b;
+}

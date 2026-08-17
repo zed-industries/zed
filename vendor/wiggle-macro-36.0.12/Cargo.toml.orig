@@ -1,0 +1,31 @@
+[package]
+name = "wiggle-macro"
+version.workspace = true
+authors = ["Pat Hickey <phickey@fastly.com>", "Jakub Konka <kubkon@jakubkonka.com>", "Alex Crichton <alex@alexcrichton.com>"]
+edition.workspace = true
+rust-version.workspace = true
+license = "Apache-2.0 WITH LLVM-exception"
+description = "Wiggle code generator"
+categories = ["wasm"]
+keywords = ["webassembly", "wasm"]
+repository = "https://github.com/bytecodealliance/wasmtime"
+
+[lints]
+workspace = true
+
+[lib]
+proc-macro = true
+test = false
+doctest = false
+
+[dependencies]
+wiggle-generate = { workspace = true }
+quote = { workspace = true }
+syn = { workspace = true, features = ["full"] }
+proc-macro2 = { workspace = true }
+
+[dev-dependencies]
+wiggle = { path = ".." }
+
+[features]
+wiggle_metadata = []

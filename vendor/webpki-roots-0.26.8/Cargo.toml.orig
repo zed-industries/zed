@@ -1,0 +1,24 @@
+[package]
+name = "webpki-roots"
+version = "0.26.8"
+edition = { workspace = true }
+readme = "README.md"
+license = "MPL-2.0"
+homepage = { workspace = true }
+repository = { workspace = true }
+description = "Mozilla's CA root certificates for use with webpki"
+
+[dependencies]
+pki-types = { workspace = true }
+
+[dev-dependencies]
+hex = { workspace = true }
+percent-encoding = "2.3"
+rcgen = "0.13"
+ring = "0.17.0"
+rustls = "0.23"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+webpki = { workspace = true }
+webpki-ccadb = { path = "../webpki-ccadb" }
+x509-parser = { workspace = true }
+yasna = { workspace = true }

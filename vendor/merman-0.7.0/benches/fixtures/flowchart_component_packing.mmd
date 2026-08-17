@@ -1,0 +1,35 @@
+flowchart LR
+  subgraph EastRegion
+    E1[Order API]
+    E2[Rule engine]
+    E3[Warehouse east]
+    E4[Carrier east]
+    E1 --> E2 --> E3 --> E4
+  end
+
+  subgraph WestRegion
+    W1[Order API west]
+    W2[Risk filter]
+    W3[Warehouse west]
+    W4[Carrier west]
+    W1 --> W2 --> W3 --> W4
+  end
+
+  subgraph AuditAndOps
+    A1[Audit sink]
+    A2[Ops dashboard]
+    A3[Pager]
+    A1 --> A2 --> A3
+  end
+
+  subgraph BillingIsland
+    B1[Invoice build]
+    B2[Tax post]
+    B3[Settlement]
+    B1 --> B2 --> B3
+  end
+
+  E2 -.->|policy digest| A1
+  W2 -.->|risk digest| A1
+  E4 -.->|billing signal| B1
+  W4 -.->|billing signal| B1

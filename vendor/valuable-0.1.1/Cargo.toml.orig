@@ -1,0 +1,47 @@
+[package]
+name = "valuable"
+version = "0.1.1"
+edition = "2021"
+license = "MIT"
+rust-version = "1.56"
+readme = "../README.md"
+repository = "https://github.com/tokio-rs/valuable"
+description = """
+Object-safe value inspection, used to pass un-typed structured data across trait-object boundaries.
+"""
+categories = [
+    "development-tools::debugging",
+    "encoding",
+]
+keywords = [
+    "valuable",
+    "serialization",
+    "debugging",
+    "no_std",
+]
+
+[features]
+default = ["std"]
+
+# Provide derive(Valuable) macro
+derive = ["valuable-derive"]
+
+# Provide impls for common standard library types like Vec<T> and HashMap<K, V>.
+std = ["alloc"]
+
+# Provide imps for types in Rust's `alloc` library.
+alloc = []
+
+[dependencies]
+valuable-derive = { version = "=0.1.1", optional = true, path = "../valuable-derive" }
+
+[dev-dependencies]
+criterion = "0.3"
+
+[[bench]]
+name = "structable"
+harness = false
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

@@ -1,0 +1,52 @@
+[package]
+name = "normpath"
+version.workspace = true
+authors = ["dylni"]
+edition.workspace = true
+rust-version.workspace = true
+description = """
+More reliable path manipulation
+"""
+readme = "README.md"
+repository.workspace = true
+license.workspace = true
+keywords = ["absolute", "canonicalize", "path", "normalize", "windows"]
+categories = ["command-line-interface", "filesystem", "os"]
+exclude = [".*", "tests.rs", "/rustfmt.toml", "/src/bin", "/tests"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustc-args = ["--cfg", "normpath_docs_rs"]
+rustdoc-args = ["--cfg", "normpath_docs_rs"]
+
+[dependencies]
+print_bytes = { version = "2.0", features = ["os_str_bytes"], optional = true }
+serde = { version = "1.0", optional = true }
+uniquote = { version = "4.0", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+
+[dev-dependencies]
+bincode = "1.0"
+tempfile = "3.0"
+
+[target.'cfg(windows)'.dev-dependencies]
+normpath_macros = { version = "=1.5.0", path = "macros" }
+windows-sys = { version = "0.61", features = ["Win32_Foundation"] }
+
+[target.'cfg(not(windows))'.dev-dependencies]
+libc = "0.2"
+
+[features]
+localization = ["windows-sys/Win32_UI_Shell", "windows-sys/Win32_UI_WindowsAndMessaging"]
+
+[workspace]
+members = ["macros"]
+
+[workspace.package]
+version = "1.5.0"
+edition = "2021"
+rust-version = "1.81.0"
+repository = "https://github.com/dylni/normpath"
+license = "MIT OR Apache-2.0"

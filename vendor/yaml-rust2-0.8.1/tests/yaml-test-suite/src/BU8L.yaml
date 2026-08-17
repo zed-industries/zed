@@ -1,0 +1,29 @@
+---
+- name: Node Anchor and Tag on Seperate Lines
+  from: https://gist.github.com/anonymous/f192e7dab6da31831f264dbf1947cb83 via @ingydotnet
+  tags: anchor indent 1.3-err tag
+  yaml: |
+    key: &anchor
+     !!map
+      a: b
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :key
+       +MAP &anchor <tag:yaml.org,2002:map>
+        =VAL :a
+        =VAL :b
+       -MAP
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "key": {
+        "a": "b"
+      }
+    }
+  dump: |
+    key: &anchor !!map
+      a: b

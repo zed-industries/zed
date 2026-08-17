@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "R",
+    "--slave",
+    "-e",
+    "IRkernel::main()",
+    "--args",
+    "{connection_file}"
+  ],
+  "display_name": "R",
+  "language": "R",
+  "interrupt_mode": "signal",
+  "env": {
+    "R_LIBS_USER": "/home/jovyan/R/x86_64-pc-linux-gnu-library/3.3"
+  }
+}

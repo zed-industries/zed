@@ -1,0 +1,112 @@
+name: Rust
+
+on: [push, pull_request]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  x86:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+          - stable
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Install toolchain
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ matrix.rust }}
+        components: rustfmt
+
+    - name: Check formatting
+      run: cargo fmt --all -- --check
+      if: matrix.rust == 'stable'
+
+    - name: Build with minimal features (no_std)
+      run: cargo build --verbose --no-default-features --features no-std-float
+
+    - name: Run tests for tiny-skia-path
+      working-directory: path
+      run: cargo test --verbose
+
+    - name: Run tests without SIMD
+      run: cargo test --verbose --no-default-features --features png-format
+
+    - name: Run tests with SSE2
+      env:
+        RUSTFLAGS: -Ctarget-feature=+sse2
+      run: cargo test
+
+    - name: Run tests with SSE4.1
+      env:
+        RUSTFLAGS: -Ctarget-feature=+sse4.1
+      run: cargo test
+
+    - name: Run tests with AVX
+      env:
+        RUSTFLAGS: -Ctarget-feature=+avx
+      run: cargo test
+
+    - name: Run tests with AVX2
+      env:
+        RUSTFLAGS: -Ctarget-feature=+avx2
+      run: cargo test
+
+  wasm:
+    runs-on: ubuntu-20.04
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Install toolchain
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: stable
+        target: wasm32-wasi
+
+    - name: Install wasmtime
+      run: |
+        curl https://wasmtime.dev/install.sh -sSf | bash
+        echo "$HOME/.wasmtime/bin" >> $GITHUB_PATH
+
+    - name: Build with minimal features (no_std)
+      run: cargo build --target wasm32-wasi --verbose --no-default-features --features no-std-float
+
+    - name: Run tests without SIMD
+      run: cargo test --target wasm32-wasi --verbose --no-default-features --features png-format
+
+    - name: Run tests with SIMD128
+      env:
+        RUSTFLAGS: -Ctarget-feature=+simd128,+bulk-memory,+nontrapping-fptoint,+sign-ext
+      run: cargo test --target wasm32-wasi
+
+  aarch64:
+    runs-on: ubuntu-20.04
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Install toolchain
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: stable
+        target: aarch64-unknown-linux-gnu
+
+    - name: Install cross
+      run: cargo install cross
+
+    - name: Build with minimal features (no_std)
+      run: cross build --target aarch64-unknown-linux-gnu --verbose --no-default-features --features no-std-float
+
+    - name: Run tests without SIMD
+      run: cross test --target aarch64-unknown-linux-gnu --verbose --no-default-features --features png-format
+
+    - name: Run tests with Neon
+      run: cross test --target aarch64-unknown-linux-gnu
+
+    - name: Rust tests on PowerPC (big endian)
+      run: cross test --target powerpc-unknown-linux-gnu

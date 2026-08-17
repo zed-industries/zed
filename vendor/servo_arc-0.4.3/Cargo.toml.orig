@@ -1,0 +1,23 @@
+[package]
+name = "servo_arc"
+version = "0.4.3"
+authors = ["The Servo Project Developers"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/servo/stylo"
+description = "A fork of std::sync::Arc with some extra functionality and without weak references"
+edition = "2021"
+readme = "../README.md"
+
+[lib]
+name = "servo_arc"
+path = "lib.rs"
+
+[features]
+default = ["track_alloc_size"]
+gecko_refcount_logging = []
+servo = ["serde", "track_alloc_size"]
+track_alloc_size = []
+
+[dependencies]
+serde = { version = "1.0", optional = true }
+stable_deref_trait = "1.0.0"

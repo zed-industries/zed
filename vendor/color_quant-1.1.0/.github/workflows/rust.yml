@@ -1,0 +1,38 @@
+name: Rust CI
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust: ["1.34.2", stable, beta, nightly]
+        command: [build, test]
+    steps:
+    - uses: actions/checkout@v2
+    - run: rustup default ${{ matrix.rust }}
+    - name: build
+      run: >
+        cargo build --verbose
+    - name: test
+      if: ${{ matrix.rust != '1.34.2' }}
+      run: >
+        cargo test --tests --benches
+      # TODO: add criterion benchmarks?
+  rustfmt:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+        components: rustfmt
+    - name: Run rustfmt check
+      uses: actions-rs/cargo@v1
+      with:
+        command: fmt
+        args: -- --check

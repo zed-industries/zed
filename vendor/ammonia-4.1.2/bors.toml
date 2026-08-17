@@ -1,0 +1,2 @@
+status = [ "ci" ]
+cut_body_after = "<details>"

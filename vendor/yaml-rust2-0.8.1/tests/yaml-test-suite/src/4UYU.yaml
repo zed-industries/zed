@@ -1,0 +1,14 @@
+---
+- name: Colon in Double Quoted String
+  from: NimYAML tests
+  tags: mapping scalar 1.3-err
+  yaml: |
+    "foo: bar\": baz"
+  tree: |
+    +STR
+     +DOC
+      =VAL "foo: bar": baz
+     -DOC
+    -STR
+  json: |
+    "foo: bar\": baz"

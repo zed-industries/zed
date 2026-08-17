@@ -1,0 +1,43 @@
+[package]
+
+name = "unicode-normalization"
+version = "0.1.24"
+authors = [
+    "kwantam <kwantam@gmail.com>",
+    "Manish Goregaokar <manishsmail@gmail.com>",
+]
+
+homepage = "https://github.com/unicode-rs/unicode-normalization"
+repository = "https://github.com/unicode-rs/unicode-normalization"
+documentation = "https://docs.rs/unicode-normalization/"
+
+license = "MIT/Apache-2.0"
+keywords = [
+    "text",
+    "unicode",
+    "normalization",
+    "decomposition",
+    "recomposition",
+]
+readme = "README.md"
+description = """
+This crate provides functions for normalization of
+Unicode strings, including Canonical and Compatible
+Decomposition and Recomposition, as described in
+Unicode Standard Annex #15.
+"""
+
+rust-version = "1.36"
+
+edition = "2018"
+
+exclude = ["target/*", "Cargo.lock", "scripts/tmp", "*.txt", "tests/*"]
+
+[dependencies.tinyvec]
+version = "1"
+features = ["alloc"]
+
+
+[features]
+default = ["std"]
+std = []

@@ -1,0 +1,87 @@
+name: Rust
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: -D warnings
+  RUSTDOCFLAGS: -D warnings --cfg docsrs
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+          - stable
+          - beta
+          - nightly
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+          toolchain: ${{ matrix.rust }}
+          override: true
+          components: rustfmt, clippy
+    - name: Build
+      run: cargo build --verbose
+    - name: Run tests with all features
+      run: cargo test --all-features --verbose
+    - name: Run tests without features
+      run: cargo test --no-default-features --verbose
+    - name: Package
+      run: cargo package
+    - name: Test package
+      run: cd $(find target/package/ -maxdepth 1 -mindepth 1 -type d) && cargo test
+    - name: Test package without features
+      run: cd $(find target/package/ -maxdepth 1 -mindepth 1 -type d) && cargo test --no-default-features
+    - name: Build docs
+      if: matrix.rust == 'nightly'
+      run: cargo doc --all-features --verbose
+    - name: Check formatting
+      if: matrix.rust == 'stable'
+      run: cargo fmt --all --check
+    - name: Check clippy
+      if: matrix.rust == 'stable'
+      run: cargo clippy --all-features --lib --tests --examples --verbose
+    - name: Check benchmarks with clippy
+      if: matrix.rust == 'nightly'
+      run: cargo clippy --all-features --benches --verbose
+    - name: Check fuzz tests with clippy
+      if: matrix.rust == 'stable'
+      working-directory: fuzz
+      run: cargo clippy --all-features --all-targets --verbose
+    - name: Check fuzz tests formatting
+      if: matrix.rust == 'stable'
+      working-directory: fuzz
+      run: cargo fmt --all --check
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install msrv toolchain
+      uses: dtolnay/rust-toolchain@1.36.0
+    - name: Use tinyvec 1.6.0
+      run: cargo update -p tinyvec --precise 1.6.0
+    - name: Build
+      run: cargo build --verbose --all-features
+  regen:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Regen
+      run: cd scripts && python3 unicode.py
+    - name: Diff tables
+      run: diff src/tables.rs scripts/tables.rs
+    - name: Diff tests
+      run: diff tests/data/normalization_tests.rs scripts/normalization_tests.rs

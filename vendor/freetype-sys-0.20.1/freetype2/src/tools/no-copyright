@@ -1,0 +1,66 @@
+# Files that don't get a copyright, or which are taken from elsewhere.
+#
+# All lines in this file are patterns (relative to the top-level directory),
+# including the comment lines; this means that e.g. `FTL.TXT' matches all
+# files that have this string in the file name (including the path relative
+# to the current directory, always starting with `./').
+#
+# Don't put empty lines into this file!
+#
+builds/unix/pkg.m4
+#
+docs/FTL.TXT
+docs/GPLv2.TXT
+#
+include/freetype/internal/fthash.h
+#
+src/base/fthash.c
+src/base/md5.c
+src/base/md5.h
+#
+src/bdf/bdf.c
+src/bdf/bdf.h
+src/bdf/bdfdrivr.c
+src/bdf/bdfdrivr.h
+src/bdf/bdferror.h
+src/bdf/bdflib.c
+src/bdf/module.mk
+src/bdf/README
+src/bdf/rules.mk
+#
+src/pcf/module.mk
+src/pcf/pcf.c
+src/pcf/pcf.h
+src/pcf/pcfdrivr.c
+src/pcf/pcfdrivr.h
+src/pcf/pcferror.h
+src/pcf/pcfread.c
+src/pcf/pcfread.h
+src/pcf/pcfutil.c
+src/pcf/pcfutil.h
+src/pcf/README
+src/pcf/rules.mk
+#
+src/gzip/adler32.c
+src/gzip/ftzconf.c
+src/gzip/infblock.c
+src/gzip/infblock.h
+src/gzip/infcodes.c
+src/gzip/infcodes.h
+src/gzip/inffixed.h
+src/gzip/inflate.c
+src/gzip/inftrees.c
+src/gzip/inftrees.h
+src/gzip/infutil.c
+src/gzip/infutil.h
+src/gzip/zconf.h
+src/gzip/zlib.h
+src/gzip/zutil.c
+src/gzip/zutil.h
+#
+src/tools/apinames.c
+src/tools/ftrandom/ftrandom.c
+#
+subprojects/dlg
+#
+# EOF

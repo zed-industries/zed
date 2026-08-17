@@ -1,0 +1,15 @@
+---
+- name: Flow sequence with invalid extra comma
+  from: '@perlpunk'
+  tags: error flow sequence
+  fail: true
+  yaml: |
+    ---
+    [ a, b, c, , ]
+  tree: |
+    +STR
+     +DOC ---
+      +SEQ []
+       =VAL :a
+       =VAL :b
+       =VAL :c

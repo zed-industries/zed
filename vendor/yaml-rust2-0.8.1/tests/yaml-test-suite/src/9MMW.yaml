@@ -1,0 +1,41 @@
+---
+- name: Single Pair Implicit Entries
+  from: '@perlpunk, Spec Example 7.21'
+  tags: flow mapping sequence
+  yaml: |
+    - [ YAML : separate ]
+    - [ "JSON like":adjacent ]
+    - [ {JSON: like}:adjacent ]
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       +SEQ []
+        +MAP {}
+         =VAL :YAML
+         =VAL :separate
+        -MAP
+       -SEQ
+       +SEQ []
+        +MAP {}
+         =VAL "JSON like
+         =VAL :adjacent
+        -MAP
+       -SEQ
+       +SEQ []
+        +MAP {}
+         +MAP {}
+          =VAL :JSON
+          =VAL :like
+         -MAP
+         =VAL :adjacent
+        -MAP
+       -SEQ
+      -SEQ
+     -DOC
+    -STR
+  dump: |
+    - - YAML: separate
+    - - "JSON like": adjacent
+    - - ? JSON: like
+        : adjacent

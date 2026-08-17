@@ -1,0 +1,82 @@
+name: Main CI
+on: [pull_request]
+
+jobs:
+  lint:
+    name: Check and Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install libzmq
+        run: sudo apt update && sudo apt install libzmq3-dev
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: clippy
+      - name: Cache cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/
+          key: cache-cargo-deps-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+      - name: Check Tokio version
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --all --all-targets -- --deny warnings
+      - name: Check Async-std version
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --all --all-targets --no-default-features --features async-std-runtime,all-transport,async-dispatcher-macros -- --deny warnings
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Install libzmq
+        run: sudo apt update && sudo apt install libzmq3-dev
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - name: Cache cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/
+          key: cache-cargo-deps-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+      - name: Test Tokio version
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --all
+      - name: Test Async-std version
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --all --no-default-features --features async-std-runtime,all-transport
+      - name: Test Async-dispatcher version
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --all --no-default-features --features async-dispatcher-runtime,all-transport,async-dispatcher-macros
+
+  fmt:
+    name: Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: nightly
+          override: true
+          components: rustfmt
+      - uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check

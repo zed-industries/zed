@@ -1,0 +1,5 @@
+error: enums with non-integer literal discriminants are not supported yet
+ --> tests/ui/non_integer_discriminant_enum.rs:4:9
+  |
+4 |         Field = 2020 + 1,
+  |         ^^^^^^^^^^^^^^^^

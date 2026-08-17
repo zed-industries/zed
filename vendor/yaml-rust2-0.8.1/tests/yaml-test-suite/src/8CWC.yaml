@@ -1,0 +1,23 @@
+---
+- name: Plain mapping key ending with colon
+  from: '@perlpunk'
+  tags: mapping scalar
+  yaml: |
+    ---
+    key ends with two colons::: value
+  tree: |
+    +STR
+     +DOC ---
+      +MAP
+       =VAL :key ends with two colons::
+       =VAL :value
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "key ends with two colons::": "value"
+    }
+  dump: |
+    ---
+    'key ends with two colons::': value

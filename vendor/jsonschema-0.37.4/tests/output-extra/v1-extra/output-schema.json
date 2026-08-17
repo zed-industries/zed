@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/v1",
+  "$id": "https://json-schema.org/v1/output/schema",
+  "description": "A schema that validates the minimum requirements for validation output",
+
+  "anyOf": [
+    { "$ref": "#/$defs/flag" },
+    { "$ref": "#/$defs/basic" },
+    { "$ref": "#/$defs/hierarchical" }
+  ],
+  "$defs": {
+    "outputUnit":{
+      "properties": {
+        "valid": { "type": "boolean" },
+        "evaluationPath": {
+          "type": "string",
+          "format": "json-pointer"
+        },
+        "schemaLocation": {
+          "type": "string",
+          "format": "uri"
+        },
+        "instanceLocation": {
+          "type": "string",
+          "format": "json-pointer"
+        },
+        "details": {
+          "$ref": "#/$defs/outputUnitArray"
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "droppedAnnotations": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "errors": {
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              { "type": "string" },
+              {
+                "type": "array",
+                "items": { "type": "string" },
+                "minItems": 1
+              }
+            ]
+          }
+        }
+      },
+      "required": [ "valid", "evaluationPath", "schemaLocation", "instanceLocation" ],
+      "allOf": [
+        {
+          "if": {
+            "anyOf": [
+              {
+                "required": [ "errors" ]
+              },
+              {
+                "required": [ "droppedAnnotations" ]
+              }
+            ]
+          },
+          "then": {
+            "properties": {
+              "valid": { "const": false }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [ "annotations" ]
+          },
+          "then": {
+            "properties": {
+              "valid": { "const": true }
+            }
+          }
+        }
+      ]
+    },
+    "outputUnitArray": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/outputUnit" }
+    },
+    "flag": {
+      "properties": {
+        "valid": { "type": "boolean" }
+      },
+      "required": [ "valid" ]
+    },
+    "basic": {
+      "properties": {
+        "valid": { "type": "boolean" },
+        "details": {
+          "$ref": "#/$defs/outputUnitArray"
+        }
+      },
+      "required": [ "valid", "details" ]
+    },
+    "hierarchical": { "$ref": "#/$defs/outputUnit" }
+  }
+}

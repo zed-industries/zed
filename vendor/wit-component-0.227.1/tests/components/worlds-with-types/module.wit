@@ -1,0 +1,10 @@
+package foo:foo;
+
+world module {
+  type t = u32;
+  record r {
+    x: t
+  }
+
+  export a: func(r: r) -> t;
+}

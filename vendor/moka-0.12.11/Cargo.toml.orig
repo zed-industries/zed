@@ -1,0 +1,178 @@
+[package]
+name = "moka"
+version = "0.12.11"
+edition = "2021"
+# Rust 1.70 was released on June 1, 2023.
+rust-version = "1.70"
+description = "A fast and concurrent cache library inspired by Java Caffeine"
+license = "(MIT OR Apache-2.0) AND Apache-2.0"
+# homepage = "https://"
+documentation = "https://docs.rs/moka/"
+repository = "https://github.com/moka-rs/moka"
+keywords = ["cache", "concurrent"]
+categories = ["caching", "concurrency"]
+readme = "README.md"
+exclude = [".devcontainer", ".github", ".gitpod.yml", ".vscode"]
+build = "build.rs"
+
+[features]
+default = []
+
+# Enable this feature to use `moka::sync::{Cache, SegmentedCache}`
+sync = []
+
+# Enable this feature to use `moka::future::Cache`.
+future = ["async-lock", "event-listener", "futures-util"]
+
+# Enable this feature to activate optional logging from caches.
+# Currently cache will emit log only when it encounters a panic in user provided
+# callback closure.
+logging = ["log"]
+
+# Enable this feature to use `quanta::Instant` for some performance critical
+# operations in the cache instead of `std::time::Instant`. As of v0.12.10, this
+# feature will not make any noticeable performance difference, but in the future
+# when cache metrics are added, it will be useful to have this feature enabled.
+quanta = ["dep:quanta"]
+
+# This is an old feature and has no effect in v0.12.10 or newer. It is kept for
+# backward compatibility and will be removed in v0.13.0.
+atomic64 = []
+
+# This unstable feature adds `GlobalDebugCounters::current` function, which returns
+# counters of internal object construction and destruction. It will have some
+# performance impacts and is intended for debugging.
+unstable-debug-counters = ["future", "once_cell"]
+
+[dependencies]
+crossbeam-channel = "0.5.15"
+crossbeam-epoch = "0.9.18"
+crossbeam-utils = "0.8.21"
+equivalent = "1.0"
+parking_lot = "0.12"
+portable-atomic = "1.6"
+smallvec = "1.8"
+tagptr = "0.2"
+uuid = { version = "1.1", features = ["v4"] }
+
+# Optional dependencies (quanta)
+quanta = { version = "0.12.2", optional = true }
+
+# Optional dependencies (future)
+async-lock = { version = "3.3", optional = true }
+event-listener = { version = "5.3", optional = true }
+futures-util = { version = "0.3.17", optional = true }
+
+# Optional dependencies (logging)
+log = { version = "0.4", optional = true }
+
+# Optional dependencies (unstable-debug-counters)
+once_cell = { version = "1.7", optional = true }
+
+[dev-dependencies]
+actix-rt = "2.8"
+ahash = "0.8.3"
+anyhow = "1.0.19"
+env_logger = "0.10.0"
+getrandom = "0.2"
+once_cell = "1.7"
+rand = "0.8.5"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+tokio = { version = "1.19", features = ["fs", "io-util", "macros", "rt-multi-thread", "sync", "time" ] }
+
+# We cannot use `cfg(loom)` here because an indirect dependency `concurrent-queue`
+# uses it.
+[target.'cfg(moka_loom)'.dev-dependencies]
+loom = "0.7"
+
+[target.'cfg(trybuild)'.dev-dependencies]
+trybuild = "1.0"
+
+[target.'cfg(rustver)'.build-dependencies]
+rustc_version = "0.4.0"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+    "cfg(armv5te)",
+    "cfg(beta_clippy)",
+    "cfg(kani)",
+    "cfg(moka_loom)",
+    "cfg(mips)",
+    "cfg(rustver)",
+    "cfg(skip_large_mem_tests)",
+    "cfg(trybuild)",
+] }
+
+# https://docs.rs/about/metadata
+[package.metadata.docs.rs]
+# Build the doc at docs.rs with some features enabled.
+#
+# You can test locally with:
+# ```
+# cargo +nightly -Z unstable-options --config 'build.rustdocflags="--cfg docsrs"' \
+#    doc --no-deps --features 'future, sync'
+# ```
+features = ["future", "sync"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+# Examples
+
+[[example]]
+name = "append_value_async"
+required-features = ["future"]
+
+[[example]]
+name = "append_value_sync"
+required-features = ["sync"]
+
+[[example]]
+name = "basics_async"
+required-features = ["future"]
+
+[[example]]
+name = "basics_sync"
+required-features = ["sync"]
+
+[[example]]
+name = "bounded_counter_async"
+required-features = ["future"]
+
+[[example]]
+name = "bounded_counter_sync"
+required-features = ["sync"]
+
+[[example]]
+name = "cascading_drop_async"
+required-features = ["future"]
+
+[[example]]
+name = "counter_async"
+required-features = ["future"]
+
+[[example]]
+name = "counter_sync"
+required-features = ["sync"]
+
+[[example]]
+name = "eviction_listener_sync"
+required-features = ["sync"]
+
+[[example]]
+name = "jittered_expiry_policy_sync"
+required-features = ["sync"]
+
+[[example]]
+name = "reinsert_expired_entries_sync"
+required-features = ["sync"]
+
+[[example]]
+name = "size_aware_eviction_sync"
+required-features = ["sync"]
+
+[[example]]
+name = "try_append_value_async"
+required-features = ["future"]
+
+[[example]]
+name = "try_append_value_sync"
+required-features = ["sync"]

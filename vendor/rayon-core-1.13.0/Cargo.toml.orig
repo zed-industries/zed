@@ -1,0 +1,35 @@
+[package]
+name = "rayon-core"
+version = "1.13.0"
+description = "Core APIs for Rayon"
+documentation = "https://docs.rs/rayon-core/"
+links = "rayon-core"
+build = "build.rs"
+
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+# This feature switches to a spin-lock implementation on the browser's
+# main thread to avoid the forbidden `atomics.wait`.
+#
+# Only useful on the `wasm32-unknown-unknown` target.
+web_spin_lock = ["dep:wasm_sync"]
+
+[dependencies]
+crossbeam-deque.workspace = true
+crossbeam-utils.workspace = true
+wasm_sync = { workspace = true, optional = true }
+
+[dev-dependencies]
+rand.workspace = true
+rand_xorshift.workspace = true
+scoped-tls.workspace = true
+
+[target.'cfg(unix)'.dev-dependencies]
+libc.workspace = true

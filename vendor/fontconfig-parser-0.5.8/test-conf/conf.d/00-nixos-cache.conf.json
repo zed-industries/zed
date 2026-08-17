@@ -1,0 +1,78 @@
+[
+  {
+    "Dir": {
+      "prefix": "Default",
+      "salt": "",
+      "path": "/nix/store/i1yhgnfvaihqzs079lcx4zjnrdzcvaak-noto-fonts-2020-01-23"
+    }
+  },
+  {
+    "Dir": {
+      "prefix": "Default",
+      "salt": "",
+      "path": "/nix/store/4glxr7vyi0a68c6vgz2gn5c2ljkl7x37-noto-fonts-cjk-2.001"
+    }
+  },
+  {
+    "Dir": {
+      "prefix": "Default",
+      "salt": "",
+      "path": "/nix/store/cwbgs1zpk0pb8jjldgdqmvmdgl3zd5vb-noto-fonts-emoji-2.028"
+    }
+  },
+  {
+    "Dir": {
+      "prefix": "Default",
+      "salt": "",
+      "path": "/nix/store/imnk1n6llkh089xgzqyqpr6yw9qz9b3z-d2codingfont-1.3.2"
+    }
+  },
+  {
+    "Dir": {
+      "prefix": "Default",
+      "salt": "",
+      "path": "/nix/store/41qphrp1ksc1fqm01i7khs30n1zjl56r-fira-code-5.2"
+    }
+  },
+  {
+    "Dir": {
+      "prefix": "Default",
+      "salt": "",
+      "path": "/nix/store/391caw6m9k1fv4fzhgjabkqni7hf1hvj-fira-code-symbols-20160811"
+    }
+  },
+  {
+    "Dir": {
+      "prefix": "Default",
+      "salt": "",
+      "path": "/nix/store/ah9gyp7rxak9ig2q829myn6172jn302f-hack-font-3.003"
+    }
+  },
+  {
+    "Dir": {
+      "prefix": "Default",
+      "salt": "",
+      "path": "/nix/store/314zk48rhqbprza0i2nxch27x0h0jaim-sarasa-gothic-0.32.9"
+    }
+  },
+  {
+    "Dir": {
+      "prefix": "Default",
+      "salt": "",
+      "path": "/nix/store/fn89l2wvilp6p0jj2dgk7iv8p9hcyqbw-nerdfonts-2.1.0"
+    }
+  },
+  {
+    "Dir": {
+      "prefix": "Default",
+      "salt": "",
+      "path": "/nix/store/wnv4za94mh0li42qz0da1za483jmz5kh-mplus-063a"
+    }
+  },
+  {
+    "CacheDir": {
+      "prefix": "Default",
+      "path": "/nix/store/3yd10s1cq2xjqq3f1nlgjmvcwpbh74sf-fc-cache"
+    }
+  }
+]

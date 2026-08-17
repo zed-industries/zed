@@ -1,0 +1,15 @@
+Document:
+  - Comment: " comment1 "
+  - Element:
+      tag_name: root
+      children:
+        - Text: "\n    "
+        - Comment: " comment2 "
+        - Text: "\n    "
+        - PI:
+            target: "target"
+            value: "value"
+        - Text: "\n    "
+        - Element:
+            tag_name: item
+        - Text: "\n    text\n"

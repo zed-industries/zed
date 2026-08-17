@@ -1,0 +1,16 @@
+format_code_in_doc_comments = true
+match_block_trailing_comma = true
+condense_wildcard_suffixes = true
+use_field_init_shorthand = true
+normalize_doc_attributes = true
+overflow_delimited_expr = true
+imports_granularity = "Module"
+use_small_heuristics = "Max"
+normalize_comments = true
+reorder_impl_items = true
+use_try_shorthand = true
+newline_style = "Unix"
+format_strings = true
+wrap_comments = true
+comment_width = 80
+edition = "2021"

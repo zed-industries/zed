@@ -1,0 +1,21 @@
+###############################################################################
+## Bazel Configuration Flags
+##
+## `.bazelrc` is a Bazel configuration file.
+## https://bazel.build/docs/best-practices#bazelrc-file
+###############################################################################
+
+build --enable_platform_specific_config
+build:linux --@rules_rust//:extra_rustc_flags=-Clink-arg=-fuse-ld=lld
+build:linux --cxxopt=-std=c++17
+build:macos --cxxopt=-std=c++17
+
+###############################################################################
+## Custom user flags
+##
+## This should always be the last thing in the `.bazelrc` file to ensure
+## consistent behavior when setting flags in that file as `.bazelrc` files are
+## evaluated top to bottom.
+###############################################################################
+
+try-import %workspace%/user.bazelrc

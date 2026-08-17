@@ -1,0 +1,19 @@
+language: rust
+rust:
+  - stable
+  - beta
+  - nightly
+script:
+  - cargo test --all
+matrix:
+  include:
+    - rust: 1.31.0
+      script: cargo test --tests # skip doctests
+  allow_failures:
+    - rust: nightly
+  fast_finish: true
+
+
+notifications:
+  email:
+    on_success: never

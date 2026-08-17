@@ -1,0 +1,47 @@
+<html>
+<header>
+<title>
+  FreeType&nbsp;2 Project Files for Visual&nbsp;C++ and VS.NET&nbsp;2005
+  (Pocket PC)
+</title>
+
+<body>
+<h1>
+  FreeType&nbsp;2 Project Files for Visual&nbsp;C++ and VS.NET&nbsp;2005
+  (Pocket PC)
+</h1>
+
+<p>This directory contains project files for Visual C++, named
+<tt>freetype.dsp</tt>, and Visual Studio, called <tt>freetype.sln</tt> for
+the following targets:
+
+<ul>
+  <li>PPC/SP 2003 (Pocket PC 2003)</li>
+  <li>PPC/SP WM5 (Windows Mobile 5)</li>
+  <li>PPC/SP WM6 (Windows Mobile 6)</li>
+</ul>
+
+It compiles the following libraries from the FreeType 2.13.2 sources:</p>
+
+<ul>
+  <pre>
+    freetype.lib     - release build; single threaded
+    freetype_D.lib   - debug build;   single threaded
+    freetypeMT.lib   - release build; multi-threaded
+    freetypeMT_D.lib - debug build;   multi-threaded</pre>
+</ul>
+
+<p>Be sure to extract the files with the Windows (CR+LF) line endings.  ZIP
+archives are already stored this way, so no further action is required.  If
+you use some <tt>.tar.*z</tt> archives, be sure to configure your extracting
+tool to convert the line endings.  For example, with <a
+href="https://www.winzip.com">WinZip</a>, you should activate the <em>TAR
+file smart CR/LF Conversion</em> option.  Alternatively, you may consider
+using the <tt>unix2dos</tt> or <tt>u2d</tt> utilities that are floating
+around, which specifically deal with this particular problem.
+
+<p>Build directories are placed in the top-level <tt>objs</tt>
+directory.</p>
+
+</body>
+</html>

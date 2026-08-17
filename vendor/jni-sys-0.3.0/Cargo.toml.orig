@@ -1,0 +1,20 @@
+[package]
+name = "jni-sys"
+version = "0.3.0"
+authors = ["Steven Fackler <sfackler@gmail.com>"]
+license = "MIT/Apache-2.0"
+description = "Rust definitions corresponding to jni.h"
+repository = "https://github.com/sfackler/rust-jni-sys"
+documentation = "https://docs.rs/jni-sys/0.3.0/jni_sys"
+readme = "README.md"
+categories = ["external-ffi-bindings"]
+keywords = ["java", "jni"]
+
+[badges]
+travis-ci = { repository = "sfackler/rust-jni-sys" }
+appveyor = { repository = "sfackler/rust-jni-sys" }
+
+[dependencies]
+
+[workspace]
+members = ["systest"]

@@ -1,0 +1,14 @@
+[bans]
+multiple-versions = "deny"
+deny = []
+skip-tree = [
+    # ignore criterion dev-dependency that often have duplicate dependencies internally
+    { name = "criterion" },
+]
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "Unicode-3.0",
+]

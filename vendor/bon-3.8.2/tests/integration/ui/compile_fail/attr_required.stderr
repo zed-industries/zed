@@ -1,0 +1,74 @@
+error: `#[builder(required)]` can only be applied to members of type `Option<T>` to disable their special handling
+ --> tests/integration/ui/compile_fail/attr_required.rs:5:15
+  |
+5 |     #[builder(required)]
+  |               ^^^^^^^^
+
+error: `start_fn` attribute can't be specified together with `required`
+  --> tests/integration/ui/compile_fail/attr_required.rs:11:15
+   |
+11 |     #[builder(start_fn, required)]
+   |               ^^^^^^^^
+
+error: `finish_fn` attribute can't be specified together with `required`
+  --> tests/integration/ui/compile_fail/attr_required.rs:17:15
+   |
+17 |     #[builder(finish_fn, required)]
+   |               ^^^^^^^^^
+
+error: `skip` attribute can't be specified together with `required`
+  --> tests/integration/ui/compile_fail/attr_required.rs:23:15
+   |
+23 |     #[builder(skip, required)]
+   |               ^^^^
+
+error[E0599]: no method named `maybe_member` found for struct `ValidBuilder<S>` in the current scope
+  --> tests/integration/ui/compile_fail/attr_required.rs:38:30
+   |
+27 | #[derive(Builder)]
+   |          ------- method `maybe_member` not found for this struct
+...
+38 |     let _ = Valid::builder().maybe_member(Some(42));
+   |                              ^^^^^^^^^^^^
+   |
+help: there is a method `member` with a similar name
+   |
+38 -     let _ = Valid::builder().maybe_member(Some(42));
+38 +     let _ = Valid::builder().member(Some(42));
+   |
+
+error[E0599]: no method named `maybe_some_member` found for struct `ValidBuilder<S>` in the current scope
+  --> tests/integration/ui/compile_fail/attr_required.rs:39:30
+   |
+27 | #[derive(Builder)]
+   |          ------- method `maybe_some_member` not found for this struct
+...
+39 |     let _ = Valid::builder().maybe_some_member(Some(()));
+   |                              ^^^^^^^^^^^^^^^^^
+   |
+help: there is a method `some_member` with a similar name
+   |
+39 -     let _ = Valid::builder().maybe_some_member(Some(()));
+39 +     let _ = Valid::builder().some_member(Some(()));
+   |
+
+error[E0277]: the member `Unset<arg1>` was not set, but this method requires it to be set
+  --> tests/integration/ui/compile_fail/attr_required.rs:51:32
+   |
+51 |         let _ = Sut::builder().build();
+   |                                ^^^^^ the member `Unset<arg1>` was not set, but this method requires it to be set
+   |
+   = help: the trait `IsSet` is not implemented for `Unset<arg1>`
+note: required for `sut_builder::Empty` to implement `sut_builder::IsComplete`
+  --> tests/integration/ui/compile_fail/attr_required.rs:45:18
+   |
+45 |         #[derive(Builder)]
+   |                  ^^^^^^^ unsatisfied trait bound introduced in this `derive` macro
+note: required by a bound in `SutBuilder::<S>::build`
+  --> tests/integration/ui/compile_fail/attr_required.rs:45:18
+   |
+45 |         #[derive(Builder)]
+   |                  ^^^^^^^ required by this bound in `SutBuilder::<S>::build`
+46 |         struct Sut {
+   |                --- required by a bound in this associated function
+   = note: this error originates in the derive macro `Builder` (in Nightly builds, run with -Z macro-backtrace for more info)

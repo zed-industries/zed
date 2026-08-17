@@ -1,0 +1,446 @@
+framework = "CoreFoundation"
+crate = "objc2-core-foundation"
+required-crates = []
+custom-lib-rs = true
+macos = "10.0"
+maccatalyst = "13.0"
+ios = "2.0"
+tvos = "9.0"
+watchos = "2.0"
+visionos = "1.0"
+gnustep = true
+
+## Generic types
+typedef.CFArrayRef.generics = ["T"]
+typedef.CFBagRef.generics = ["T"]
+typedef.CFBinaryHeapRef.generics = ["T"]
+typedef.CFDictionaryRef.generics = ["K", "V"]
+typedef.CFSetRef.generics = ["T"]
+typedef.CFMutableArrayRef.generics = ["T"]
+typedef.CFMutableBagRef.generics = ["T"]
+typedef.CFMutableDictionaryRef.generics = ["K", "V"]
+typedef.CFMutableSetRef.generics = ["T"]
+# Not CFTreeRef
+
+# Uses variadics
+fn.CFStringCreateWithFormatAndArguments.skipped = true
+fn.CFStringCreateStringWithValidatedFormatAndArguments.skipped = true
+fn.CFStringAppendFormatAndArguments.skipped = true
+
+# Name clash with containing module
+enum.__CFByteOrder.skipped = true
+
+# Needs FSRef from CoreServices, but CoreServices depends on CoreFoundation
+# so we don't generate these to avoid a cyclic dependency.
+fn.CFURLCreateFromFSRef.skipped = true
+fn.CFURLGetFSRef.skipped = true
+
+# Needs acl_t, which is not exposed by libc
+fn.CFFileSecurityCopyAccessControlList.skipped = true
+fn.CFFileSecuritySetAccessControlList.skipped = true
+
+# Different definition depending on pointer width
+typedef.CGFloat.skipped = true
+
+# Custom definitions for slightly better docs now
+struct.CGPoint.skipped = true
+struct.CGSize.skipped = true
+struct.CGRect.skipped = true
+
+# Custom definition because it's special
+typedef.CFTypeRef.skipped = true
+
+# Implementation details
+fn.__CFRangeMake.skipped = true
+fn.__CFStringMakeConstantString.skipped = true
+
+# Differs based on architecture
+typedef.CFBundleRefNum.skipped = true
+typedef.CFTypeID.skipped = true
+typedef.CFOptionFlags.skipped = true
+typedef.CFHashCode.skipped = true
+typedef.CFIndex.skipped = true
+
+# Custom-defined since they require manual handling.
+# Use `CFRetained` to access these.
+fn.CFAutorelease.skipped = true
+fn.CFRetain.skipped = true
+fn.CFRelease.skipped = true
+fn.CFMakeCollectable.skipped = true # Simply returns the argument on macOS 10.12 or later
+
+# Dependent on target endianness
+fn.CFSwapInt16.skipped = true
+fn.CFSwapInt32.skipped = true
+fn.CFSwapInt64.skipped = true
+fn.CFByteOrderGetCurrent.skipped = true
+fn.CFSwapInt16BigToHost.skipped = true
+fn.CFSwapInt32BigToHost.skipped = true
+fn.CFSwapInt64BigToHost.skipped = true
+fn.CFSwapInt16HostToBig.skipped = true
+fn.CFSwapInt32HostToBig.skipped = true
+fn.CFSwapInt64HostToBig.skipped = true
+fn.CFSwapInt16LittleToHost.skipped = true
+fn.CFSwapInt32LittleToHost.skipped = true
+fn.CFSwapInt64LittleToHost.skipped = true
+fn.CFSwapInt16HostToLittle.skipped = true
+fn.CFSwapInt32HostToLittle.skipped = true
+fn.CFSwapInt64HostToLittle.skipped = true
+fn.CFConvertFloat32HostToSwapped.skipped = true
+fn.CFConvertFloat32SwappedToHost.skipped = true
+fn.CFConvertFloat64HostToSwapped.skipped = true
+fn.CFConvertFloat64SwappedToHost.skipped = true
+fn.CFConvertFloatHostToSwapped.skipped = true
+fn.CFConvertFloatSwappedToHost.skipped = true
+fn.CFConvertDoubleHostToSwapped.skipped = true
+fn.CFConvertDoubleSwappedToHost.skipped = true
+
+# Custom-defined inline functions
+fn.CFRangeMake.skipped = true
+fn.CFUserNotificationCheckBoxChecked.skipped = true
+fn.CFUserNotificationSecureTextField.skipped = true
+fn.CFUserNotificationPopUpSelection.skipped = true
+
+# Conflicts with the Get variants.
+fn.CFReadStreamCopyError.renamed = "copy_error"
+fn.CFWriteStreamCopyError.renamed = "copy_error"
+
+# Customized.
+fn.CFDictionaryContainsKey.renamed = "contains_ptr_key"
+fn.CFDictionaryContainsValue.renamed = "contains_ptr_value"
+fn.CFURLCreateWithString.renamed = "__from_string"
+fn.CFURLGetString.renamed = "__string"
+
+##
+## Safety
+##
+
+# SAFETY: CoreFoundation is a bit complex when it comes to safety.
+# See the comments below for safety considerations. Certain things are also
+# handled in `header-translator`.
+#
+# TODO(breaking): Instead of marking most of these safe, mark the correct
+# nullability instead.
+#
+# TODO(breaking): Generally, review these again.
+unsafe-default-safety.documentation-is-reviewed = true
+# Generally not guaranteed to be bounds-checked.
+# TODO(breaking): Change to `true`.
+unsafe-default-safety.bounds-checked-internally = true
+
+# CFArray
+fn.CFArrayCreateMutableCopy.unsafe = true # UB if capacity not large enough
+fn.CFArrayGetCount.unsafe = false
+fn.CFArrayGetValueAtIndex.unsafe = true # UB if index out of bounds
+fn.CFArrayRemoveValueAtIndex.unsafe = true # UB if index out of bounds
+fn.CFArrayRemoveAllValues.unsafe = false
+fn.CFArrayExchangeValuesAtIndices.unsafe = true # UB if index out of bounds
+fn.CFArrayAppendArray.unsafe = true # UB if range out of bounds
+
+# CFAttributedString
+fn.CFAttributedStringCreate.unsafe = true # CFDictionary can contain anything
+fn.CFAttributedStringCreateWithSubstring.unsafe = true # range must be in bounds
+fn.CFAttributedStringCreateCopy.unsafe = false
+fn.CFAttributedStringCreateMutableCopy.unsafe = false
+fn.CFAttributedStringCreateMutable.unsafe = false
+fn.CFAttributedStringReplaceString.unsafe = true # range must be in bounds
+fn.CFAttributedStringGetMutableString.unsafe = false
+fn.CFAttributedStringSetAttributes.unsafe = true # range must be in bounds
+fn.CFAttributedStringSetAttribute.unsafe = true # range must be in bounds
+fn.CFAttributedStringRemoveAttribute.unsafe = true # range must be in bounds
+fn.CFAttributedStringReplaceAttributedString.unsafe = true # range must be in bounds
+fn.CFAttributedStringBeginEditing.unsafe = false
+fn.CFAttributedStringEndEditing.unsafe = false
+
+# CFBase
+fn.CFAllocatorSetDefault.unsafe = false
+fn.CFAllocatorGetDefault.unsafe = false
+fn.CFAllocatorAllocateBytes.unsafe = false
+fn.CFAllocatorAllocate.unsafe = false
+fn.CFAllocatorGetPreferredSizeForSize.unsafe = false
+fn.CFGetTypeID.unsafe = false
+fn.CFCopyTypeIDDescription.unsafe = false
+fn.CFGetRetainCount.unsafe = false
+fn.CFEqual.unsafe = false
+fn.CFHash.unsafe = false
+fn.CFCopyDescription.unsafe = false
+fn.CFGetAllocator.unsafe = false
+
+# CFBundle
+fn.CFBundleGetMainBundle.unsafe = false
+fn.CFBundleGetBundleWithIdentifier.unsafe = false
+fn.CFBundleGetAllBundles.unsafe = true # Not thread-safe
+fn.CFBundleCreate.unsafe = false
+fn.CFBundleCreateBundlesFromDirectory.unsafe = false
+fn.CFBundleGetValueForInfoDictionaryKey.unsafe = false
+fn.CFBundleCopySupportFilesDirectoryURL.unsafe = false
+fn.CFBundleCopyResourcesDirectoryURL.unsafe = false
+fn.CFBundleCopyPrivateFrameworksURL.unsafe = false
+fn.CFBundleCopySharedFrameworksURL.unsafe = false
+fn.CFBundleCopySharedSupportURL.unsafe = false
+fn.CFBundleCopyBuiltInPlugInsURL.unsafe = false
+fn.CFBundleCopyInfoDictionaryInDirectory.unsafe = false
+fn.CFBundleCopyResourceURL.unsafe = false
+fn.CFBundleCopyResourceURLsOfType.unsafe = false
+fn.CFBundleCopyLocalizedString.unsafe = false
+fn.CFBundleCopyResourceURLInDirectory.unsafe = false
+fn.CFBundleCopyResourceURLsOfTypeInDirectory.unsafe = false
+fn.CFBundleCopyBundleLocalizations.unsafe = false
+fn.CFBundleCopyPreferredLocalizationsFromArray.unsafe = true # CFArray can contain anything
+fn.CFBundleCopyLocalizationsForPreferences.unsafe = true # CFArray can contain anything
+fn.CFBundleCopyResourceURLForLocalization.unsafe = false
+fn.CFBundleCopyResourceURLsOfTypeForLocalization.unsafe = false
+fn.CFBundleCopyInfoDictionaryForURL.unsafe = false
+fn.CFBundleCopyLocalizationsForURL.unsafe = false
+fn.CFBundleCopyExecutableArchitecturesForURL.unsafe = false
+fn.CFBundleCopyExecutableURL.unsafe = false
+fn.CFBundleCopyExecutableArchitectures.unsafe = false
+fn.CFBundleLoadExecutable.unsafe = true # See below
+fn.CFBundleUnloadExecutable.unsafe = true # Seems wildly unsafe?
+fn.CFBundleGetFunctionPointerForName.unsafe = false
+fn.CFBundleGetDataPointerForName.unsafe = false
+fn.CFBundleCopyAuxiliaryExecutableURL.unsafe = false
+fn.CFBundleIsExecutableLoadable.unsafe = false
+fn.CFBundleIsExecutableLoadableForURL.unsafe = false
+fn.CFBundleIsArchitectureLoadable.unsafe = false
+fn.CFBundleGetPlugIn.unsafe = false
+
+# CFCalendar
+fn.CFCalendarCopyCurrent.unsafe = false # Returns a new instance, so still safe to modify
+fn.CFCalendarCreateWithIdentifier.unsafe = false
+fn.CFCalendarSetLocale.unsafe = true
+fn.CFCalendarSetTimeZone.unsafe = false
+
+# CFData
+fn.CFDataCreateCopy.unsafe = false
+fn.CFDataCreateMutable.unsafe = false
+fn.CFDataGetMutableBytePtr.unsafe = false
+fn.CFDataSetLength.unsafe = false
+fn.CFDataIncreaseLength.unsafe = false
+fn.CFDataDeleteBytes.unsafe = false
+
+# CFDate
+fn.CFDateCreate.unsafe = false
+fn.CFDateGetTimeIntervalSinceDate.unsafe = false
+
+# CFDictionary
+fn.CFDictionaryCreateCopy.unsafe = false
+fn.CFDictionaryCreateMutableCopy.unsafe = true # UB if capacity not large enough
+fn.CFDictionaryGetCount.unsafe = false
+fn.CFDictionaryRemoveAllValues.unsafe = false
+
+# CFFileDescriptor
+fn.CFFileDescriptorCreate.unsafe = true # Callout / context must be sendable
+fn.CFFileDescriptorGetNativeDescriptor.unsafe = false
+fn.CFFileDescriptorCreateRunLoopSource.unsafe = false
+
+# CFFileSecurity
+fn.CFFileSecurityCreate.unsafe = false
+fn.CFFileSecurityCreateCopy.unsafe = false
+fn.CFFileSecuritySetOwnerUUID.unsafe = false
+fn.CFFileSecuritySetGroupUUID.unsafe = false
+
+# CFLocale
+fn.CFLocaleCreateCanonicalLanguageIdentifierFromString.unsafe = false
+fn.CFLocaleCreateCanonicalLocaleIdentifierFromString.unsafe = false
+fn.CFLocaleCreateCanonicalLocaleIdentifierFromScriptManagerCodes.unsafe = false
+fn.CFLocaleCreateLocaleIdentifierFromWindowsLocaleCode.unsafe = false
+fn.CFLocaleGetWindowsLocaleCodeFromLocaleIdentifier.unsafe = false
+fn.CFLocaleGetLanguageCharacterDirection.unsafe = false
+fn.CFLocaleGetLanguageLineDirection.unsafe = false
+fn.CFLocaleCreateComponentsFromLocaleIdentifier.unsafe = false
+fn.CFLocaleCreate.unsafe = false
+fn.CFLocaleCreateCopy.unsafe = false
+fn.CFLocaleGetValue.unsafe = false
+fn.CFLocaleCopyDisplayNameForPropertyValue.unsafe = false
+
+# CFMachPort
+fn.CFMachPortSetInvalidationCallBack.unsafe = true # Callback must be sendable
+fn.CFMachPortCreateRunLoopSource.unsafe = false
+
+# CFMessagePort
+fn.CFMessagePortCreateRemote.unsafe = false
+fn.CFMessagePortSetName.unsafe = false
+fn.CFMessagePortSetInvalidationCallBack.unsafe = true # Callback must be sendable
+fn.CFMessagePortCreateRunLoopSource.unsafe = false
+
+# CFPlugIn
+fn.CFPlugInCreate.unsafe = false
+fn.CFPlugInGetBundle.unsafe = false
+fn.CFPlugInSetLoadOnDemand.unsafe = false
+fn.CFPlugInIsLoadOnDemand.unsafe = false
+fn.CFPlugInFindFactoriesForPlugInType.unsafe = false
+fn.CFPlugInFindFactoriesForPlugInTypeInPlugIn.unsafe = false
+fn.CFPlugInInstanceCreate.unsafe = false
+fn.CFPlugInRegisterFactoryFunction.unsafe = false # TODO(breaking): Make this unsafe
+fn.CFPlugInRegisterFactoryFunctionByName.unsafe = false
+fn.CFPlugInUnregisterFactory.unsafe = false
+fn.CFPlugInRegisterPlugInType.unsafe = false
+fn.CFPlugInUnregisterPlugInType.unsafe = false
+fn.CFPlugInAddInstanceForFactory.unsafe = false
+fn.CFPlugInRemoveInstanceForFactory.unsafe = false
+fn.CFPlugInInstanceGetFactoryName.unsafe = false
+fn.CFPlugInInstanceGetInstanceData.unsafe = false
+fn.CFPlugInInstanceCreateWithInstanceDataSize.unsafe = true # Callbacks, must be sendable?
+
+# TODO(breaking): Maybe mark this as `unsafe`?
+fn.CFPreferencesCopyMultiple.unsafe = false
+
+# CFRunLoop
+fn.CFRunLoopGetCurrent.unsafe = false
+fn.CFRunLoopGetMain.unsafe = false
+fn.CFRunLoopCopyCurrentMode.unsafe = false
+fn.CFRunLoopCopyAllModes.unsafe = false
+fn.CFRunLoopAddCommonMode.unsafe = false
+fn.CFRunLoopGetNextTimerFireDate.unsafe = false
+fn.CFRunLoopRun.unsafe = false # Can be run recursively
+fn.CFRunLoopRunInMode.unsafe = false
+fn.CFRunLoopIsWaiting.unsafe = false
+fn.CFRunLoopWakeUp.unsafe = false
+fn.CFRunLoopStop.unsafe = false
+fn.CFRunLoopPerformBlock.unsafe = true # Block must be sendable
+fn.CFRunLoopContainsSource.unsafe = false
+fn.CFRunLoopAddSource.unsafe = false
+fn.CFRunLoopRemoveSource.unsafe = false
+fn.CFRunLoopContainsObserver.unsafe = false
+fn.CFRunLoopAddObserver.unsafe = false
+fn.CFRunLoopRemoveObserver.unsafe = false
+fn.CFRunLoopContainsTimer.unsafe = false
+fn.CFRunLoopAddTimer.unsafe = false
+fn.CFRunLoopRemoveTimer.unsafe = false
+fn.CFRunLoopSourceCreate.unsafe = true # Context must be sendable
+fn.CFRunLoopSourceGetOrder.unsafe = false
+fn.CFRunLoopSourceInvalidate.unsafe = false
+fn.CFRunLoopSourceIsValid.unsafe = false
+fn.CFRunLoopSourceSignal.unsafe = false
+fn.CFRunLoopObserverCreate.unsafe = true # Callout / context must be sendable
+fn.CFRunLoopObserverCreateWithHandler.unsafe = true # Handler must be sendable
+fn.CFRunLoopObserverGetActivities.unsafe = false
+fn.CFRunLoopObserverDoesRepeat.unsafe = false
+fn.CFRunLoopObserverGetOrder.unsafe = false
+fn.CFRunLoopObserverInvalidate.unsafe = false
+fn.CFRunLoopObserverIsValid.unsafe = false
+fn.CFRunLoopTimerCreate.unsafe = true # Callout / context must be sendable
+fn.CFRunLoopTimerCreateWithHandler.unsafe = true # Handler must be sendable
+fn.CFRunLoopTimerGetNextFireDate.unsafe = false
+fn.CFRunLoopTimerSetNextFireDate.unsafe = false
+fn.CFRunLoopTimerGetInterval.unsafe = false
+fn.CFRunLoopTimerDoesRepeat.unsafe = false
+fn.CFRunLoopTimerGetOrder.unsafe = false
+fn.CFRunLoopTimerInvalidate.unsafe = false
+fn.CFRunLoopTimerIsValid.unsafe = false
+fn.CFRunLoopTimerGetTolerance.unsafe = false
+fn.CFRunLoopTimerSetTolerance.unsafe = true # Not thread safe?
+
+# CFSet
+fn.CFSetCreateCopy.unsafe = false
+fn.CFSetCreateMutableCopy.unsafe = true # UB if capacity not large enough
+fn.CFSetGetCount.unsafe = false
+fn.CFSetRemoveAllValues.unsafe = false
+
+# CFSocket
+fn.CFSocketCreate.unsafe = true # Callout/context must be sendable
+fn.CFSocketCreateWithNative.unsafe = true # Callout/context must be sendable
+fn.CFSocketCreateWithSocketSignature.unsafe = true # Callout/context must be sendable
+fn.CFSocketSetAddress.unsafe = false
+fn.CFSocketConnectToAddress.unsafe = false
+fn.CFSocketCreateRunLoopSource.unsafe = false
+fn.CFSocketSendData.unsafe = false
+fn.CFSocketSetDefaultNameRegistryPortNumber.unsafe = false
+fn.CFSocketGetDefaultNameRegistryPortNumber.unsafe = false
+
+# CFStream
+fn.CFWriteStreamCreateWithAllocatedBuffers.unsafe = false
+fn.CFReadStreamCreateWithFile.unsafe = false
+fn.CFWriteStreamCreateWithFile.unsafe = false
+fn.CFReadStreamCopyProperty.unsafe = false
+fn.CFWriteStreamCopyProperty.unsafe = false
+fn.CFReadStreamSetProperty.unsafe = true # CFType can be anything
+fn.CFWriteStreamSetProperty.unsafe = true # CFType can be anything
+fn.CFReadStreamScheduleWithRunLoop.unsafe = false
+fn.CFWriteStreamScheduleWithRunLoop.unsafe = false
+fn.CFReadStreamUnscheduleFromRunLoop.unsafe = false
+fn.CFWriteStreamUnscheduleFromRunLoop.unsafe = false
+
+# CFString
+fn.CFStringCreateWithSubstring.unsafe = true # Unsure if range out of bounds is UB
+fn.CFStringCreateCopy.unsafe = false
+fn.CFStringCreateMutable.unsafe = false
+fn.CFStringCreateMutableCopy.unsafe = false
+fn.CFStringGetCharacterAtIndex.unsafe = true # Maybe UB if out of bounds?
+fn.CFStringCreateFromExternalRepresentation.unsafe = false
+fn.CFStringCreateExternalRepresentation.unsafe = false
+fn.CFStringCompareWithOptionsAndLocale.unsafe = true # Unsure if range out of bounds is UB
+fn.CFStringCompareWithOptions.unsafe = true # Unsure if range out of bounds is UB
+fn.CFStringCompare.unsafe = false
+fn.CFStringCreateArrayWithFindResults.unsafe = true # Unsure if range out of bounds is UB
+fn.CFStringFind.unsafe = false
+fn.CFStringHasPrefix.unsafe = false
+fn.CFStringHasSuffix.unsafe = false
+fn.CFStringGetRangeOfComposedCharactersAtIndex.unsafe = true # UB if out of bounds
+fn.CFStringIsHyphenationAvailableForLocale.unsafe = false
+fn.CFStringCreateByCombiningStrings.unsafe = true # CFArray can contain anything
+fn.CFStringCreateArrayBySeparatingStrings.unsafe = false
+fn.CFStringAppend.unsafe = false
+fn.CFStringInsert.unsafe = true # Maybe UB if out of bounds?
+fn.CFStringDelete.unsafe = true # Unsure if range out of bounds is UB
+fn.CFStringReplace.unsafe = true # Unsure if range out of bounds is UB
+fn.CFStringReplaceAll.unsafe = false
+fn.CFStringFindAndReplace.unsafe = true # Unsure if range out of bounds is UB
+fn.CFStringPad.unsafe = true # Maybe UB if out of bounds?
+fn.CFStringTrim.unsafe = false
+fn.CFStringTrimWhitespace.unsafe = false
+fn.CFStringLowercase.unsafe = false
+fn.CFStringUppercase.unsafe = false
+fn.CFStringCapitalize.unsafe = false
+fn.CFStringNormalize.unsafe = true # Maybe UB if CFStringNormalizationForm is not valid?
+fn.CFStringFold.unsafe = false
+fn.CFStringIsEncodingAvailable.unsafe = false
+fn.CFStringGetListOfAvailableEncodings.unsafe = false
+fn.CFStringGetNameOfEncoding.unsafe = false
+fn.CFShow.unsafe = false
+fn.CFShowStr.unsafe = false
+
+# CFTimeZone
+fn.CFTimeZoneCreateWithTimeIntervalFromGMT.unsafe = false
+fn.CFTimeZoneCreateWithName.unsafe = false
+fn.CFTimeZoneCopyLocalizedName.unsafe = false
+fn.CFTimeZoneCreate.unsafe = true # Unsure
+
+# CFURL
+fn.CFURLCreateData.unsafe = false
+fn.CFURLCreateWithString.unsafe = false
+fn.CFURLCreateWithFileSystemPath.unsafe = false
+fn.CFURLCreateWithFileSystemPathRelativeToBase.unsafe = false
+fn.CFURLCopyAbsoluteURL.unsafe = false
+fn.CFURLCopyParameterString.unsafe = false
+fn.CFURLCopyQueryString.unsafe = false
+fn.CFURLCopyFragment.unsafe = false
+fn.CFURLCreateCopyAppendingPathComponent.unsafe = false
+fn.CFURLCreateCopyDeletingLastPathComponent.unsafe = false
+fn.CFURLCreateCopyAppendingPathExtension.unsafe = false
+fn.CFURLCreateCopyDeletingPathExtension.unsafe = false
+fn.CFURLCreateStringByReplacingPercentEscapes.unsafe = false
+fn.CFURLClearResourcePropertyCacheForKey.unsafe = false
+fn.CFURLClearResourcePropertyCache.unsafe = false
+fn.CFURLSetTemporaryResourcePropertyForKey.unsafe = false
+
+# Documentation says these must be balanced.
+fn.CFURLStartAccessingSecurityScopedResource.unsafe = true
+fn.CFURLStopAccessingSecurityScopedResource.unsafe = true
+
+# CFUserNotification
+fn.CFUserNotificationGetResponseValue.unsafe = true # Unsure about key/idx
+fn.CFUserNotificationGetResponseDictionary.unsafe = false
+fn.CFUserNotificationCreateRunLoopSource.unsafe = true # Callback must be sendable
+fn.CFUserNotificationDisplayNotice.unsafe = false
+
+# CFUUID
+fn.CFUUIDCreate.unsafe = false
+fn.CFUUIDCreateWithBytes.unsafe = false
+fn.CFUUIDCreateFromString.unsafe = false
+fn.CFUUIDCreateString.unsafe = false
+fn.CFUUIDGetConstantUUIDWithBytes.unsafe = false
+fn.CFUUIDCreateFromUUIDBytes.unsafe = false
+
+# UB if out of bounds.
+fn.CFCharacterSetHasMemberInPlane.unsafe = true

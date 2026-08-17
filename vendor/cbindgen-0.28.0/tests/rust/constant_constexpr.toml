@@ -1,0 +1,5 @@
+[const]
+allow_constexpr = false
+
+[struct]
+associated_constants_in_body = true

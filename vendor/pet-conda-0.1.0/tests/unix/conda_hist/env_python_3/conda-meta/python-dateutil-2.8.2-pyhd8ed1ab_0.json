@@ -1,0 +1,350 @@
+{
+  "build": "pyhd8ed1ab_0",
+  "build_number": 0,
+  "channel": "https://conda.anaconda.org/conda-forge/noarch",
+  "constrains": [],
+  "depends": [
+    "python >=3.6",
+    "six >=1.5"
+  ],
+  "extracted_package_dir": "/Users/donjayamanne/miniconda3/pkgs/python-dateutil-2.8.2-pyhd8ed1ab_0",
+  "files": [
+    "lib/python3.12/site-packages/dateutil/__init__.py",
+    "lib/python3.12/site-packages/dateutil/_common.py",
+    "lib/python3.12/site-packages/dateutil/_version.py",
+    "lib/python3.12/site-packages/dateutil/easter.py",
+    "lib/python3.12/site-packages/dateutil/parser/__init__.py",
+    "lib/python3.12/site-packages/dateutil/parser/_parser.py",
+    "lib/python3.12/site-packages/dateutil/parser/isoparser.py",
+    "lib/python3.12/site-packages/dateutil/relativedelta.py",
+    "lib/python3.12/site-packages/dateutil/rrule.py",
+    "lib/python3.12/site-packages/dateutil/tz/__init__.py",
+    "lib/python3.12/site-packages/dateutil/tz/_common.py",
+    "lib/python3.12/site-packages/dateutil/tz/_factories.py",
+    "lib/python3.12/site-packages/dateutil/tz/tz.py",
+    "lib/python3.12/site-packages/dateutil/tz/win.py",
+    "lib/python3.12/site-packages/dateutil/tzwin.py",
+    "lib/python3.12/site-packages/dateutil/utils.py",
+    "lib/python3.12/site-packages/dateutil/zoneinfo/__init__.py",
+    "lib/python3.12/site-packages/dateutil/zoneinfo/dateutil-zoneinfo.tar.gz",
+    "lib/python3.12/site-packages/dateutil/zoneinfo/rebuild.py",
+    "lib/python3.12/site-packages/python_dateutil-2.8.2.dist-info/INSTALLER",
+    "lib/python3.12/site-packages/python_dateutil-2.8.2.dist-info/LICENSE",
+    "lib/python3.12/site-packages/python_dateutil-2.8.2.dist-info/METADATA",
+    "lib/python3.12/site-packages/python_dateutil-2.8.2.dist-info/RECORD",
+    "lib/python3.12/site-packages/python_dateutil-2.8.2.dist-info/REQUESTED",
+    "lib/python3.12/site-packages/python_dateutil-2.8.2.dist-info/WHEEL",
+    "lib/python3.12/site-packages/python_dateutil-2.8.2.dist-info/direct_url.json",
+    "lib/python3.12/site-packages/python_dateutil-2.8.2.dist-info/top_level.txt",
+    "lib/python3.12/site-packages/python_dateutil-2.8.2.dist-info/zip-safe",
+    "lib/python3.12/site-packages/dateutil/__pycache__/__init__.cpython-312.pyc",
+    "lib/python3.12/site-packages/dateutil/__pycache__/_common.cpython-312.pyc",
+    "lib/python3.12/site-packages/dateutil/__pycache__/_version.cpython-312.pyc",
+    "lib/python3.12/site-packages/dateutil/__pycache__/easter.cpython-312.pyc",
+    "lib/python3.12/site-packages/dateutil/parser/__pycache__/__init__.cpython-312.pyc",
+    "lib/python3.12/site-packages/dateutil/parser/__pycache__/_parser.cpython-312.pyc",
+    "lib/python3.12/site-packages/dateutil/parser/__pycache__/isoparser.cpython-312.pyc",
+    "lib/python3.12/site-packages/dateutil/__pycache__/relativedelta.cpython-312.pyc",
+    "lib/python3.12/site-packages/dateutil/__pycache__/rrule.cpython-312.pyc",
+    "lib/python3.12/site-packages/dateutil/tz/__pycache__/__init__.cpython-312.pyc",
+    "lib/python3.12/site-packages/dateutil/tz/__pycache__/_common.cpython-312.pyc",
+    "lib/python3.12/site-packages/dateutil/tz/__pycache__/_factories.cpython-312.pyc",
+    "lib/python3.12/site-packages/dateutil/tz/__pycache__/tz.cpython-312.pyc",
+    "lib/python3.12/site-packages/dateutil/tz/__pycache__/win.cpython-312.pyc",
+    "lib/python3.12/site-packages/dateutil/__pycache__/tzwin.cpython-312.pyc",
+    "lib/python3.12/site-packages/dateutil/__pycache__/utils.cpython-312.pyc",
+    "lib/python3.12/site-packages/dateutil/zoneinfo/__pycache__/__init__.cpython-312.pyc",
+    "lib/python3.12/site-packages/dateutil/zoneinfo/__pycache__/rebuild.cpython-312.pyc"
+  ],
+  "fn": "python-dateutil-2.8.2-pyhd8ed1ab_0.tar.bz2",
+  "license": "Apache-2.0",
+  "link": {
+    "source": "/Users/donjayamanne/miniconda3/pkgs/python-dateutil-2.8.2-pyhd8ed1ab_0",
+    "type": 1
+  },
+  "md5": "dd999d1cc9f79e67dbb855c8924c7984",
+  "name": "python-dateutil",
+  "noarch": "python",
+  "package_tarball_full_path": "/Users/donjayamanne/miniconda3/pkgs/python-dateutil-2.8.2-pyhd8ed1ab_0.tar.bz2",
+  "package_type": "noarch_python",
+  "paths_data": {
+    "paths": [
+      {
+        "_path": "site-packages/dateutil/__init__.py",
+        "path_type": "hardlink",
+        "sha256": "957125012ab0606c2a96b49649e5f5f49c05e417bdb4d79c0daf5e6e4fb48269",
+        "sha256_in_prefix": "957125012ab0606c2a96b49649e5f5f49c05e417bdb4d79c0daf5e6e4fb48269",
+        "size_in_bytes": 222
+      },
+      {
+        "_path": "site-packages/dateutil/_common.py",
+        "path_type": "hardlink",
+        "sha256": "efbc34cb2b64af19586d29fefa50d53d431a6d45d147d237941bffbd0454a946",
+        "sha256_in_prefix": "efbc34cb2b64af19586d29fefa50d53d431a6d45d147d237941bffbd0454a946",
+        "size_in_bytes": 932
+      },
+      {
+        "_path": "site-packages/dateutil/_version.py",
+        "path_type": "hardlink",
+        "sha256": "6b0c87bf63d8bc347ce1dc63ac7cb39a6f2789e17032372eb9284f87e40d90ce",
+        "sha256_in_prefix": "6b0c87bf63d8bc347ce1dc63ac7cb39a6f2789e17032372eb9284f87e40d90ce",
+        "size_in_bytes": 142
+      },
+      {
+        "_path": "site-packages/dateutil/easter.py",
+        "path_type": "hardlink",
+        "sha256": "772062fa52af8a61f5bbf93aa7b6742492bbd9086a56d541b2a072be910f2af7",
+        "sha256_in_prefix": "772062fa52af8a61f5bbf93aa7b6742492bbd9086a56d541b2a072be910f2af7",
+        "size_in_bytes": 2678
+      },
+      {
+        "_path": "site-packages/dateutil/parser/__init__.py",
+        "path_type": "hardlink",
+        "sha256": "c1693a185bb14e98e8820086b6091c789a2d8b8a558e5e3f7c7417a4d39a4988",
+        "sha256_in_prefix": "c1693a185bb14e98e8820086b6091c789a2d8b8a558e5e3f7c7417a4d39a4988",
+        "size_in_bytes": 1766
+      },
+      {
+        "_path": "site-packages/dateutil/parser/_parser.py",
+        "path_type": "hardlink",
+        "sha256": "ee494377289c92c401fd7825fb7500981c33098a2bd40219aa4948713e9d1fff",
+        "sha256_in_prefix": "ee494377289c92c401fd7825fb7500981c33098a2bd40219aa4948713e9d1fff",
+        "size_in_bytes": 58796
+      },
+      {
+        "_path": "site-packages/dateutil/parser/isoparser.py",
+        "path_type": "hardlink",
+        "sha256": "12d2d8ef0db61d6c7e5c9a535b1243dd736ce8b047442a6cefbb4274b9d869df",
+        "sha256_in_prefix": "12d2d8ef0db61d6c7e5c9a535b1243dd736ce8b047442a6cefbb4274b9d869df",
+        "size_in_bytes": 13247
+      },
+      {
+        "_path": "site-packages/dateutil/relativedelta.py",
+        "path_type": "hardlink",
+        "sha256": "1a3571aa90155a71baeeb75b7fba64a08949bd0aa68eef4d49f18272a6e573b5",
+        "sha256_in_prefix": "1a3571aa90155a71baeeb75b7fba64a08949bd0aa68eef4d49f18272a6e573b5",
+        "size_in_bytes": 24904
+      },
+      {
+        "_path": "site-packages/dateutil/rrule.py",
+        "path_type": "hardlink",
+        "sha256": "6fa1955783296436c1849e6a8ad40a472c7cfbf38ac9e01b939ee8af603c0185",
+        "sha256_in_prefix": "6fa1955783296436c1849e6a8ad40a472c7cfbf38ac9e01b939ee8af603c0185",
+        "size_in_bytes": 66556
+      },
+      {
+        "_path": "site-packages/dateutil/tz/__init__.py",
+        "path_type": "hardlink",
+        "sha256": "17e333d77bfa8d8b1e92541ff537bd27a9f370b0e6ab8ee03916bad4adf9fc50",
+        "sha256_in_prefix": "17e333d77bfa8d8b1e92541ff537bd27a9f370b0e6ab8ee03916bad4adf9fc50",
+        "size_in_bytes": 444
+      },
+      {
+        "_path": "site-packages/dateutil/tz/_common.py",
+        "path_type": "hardlink",
+        "sha256": "720cc34c036c397bc473ce9c605efb12c962b9269bf0fbb0a6c979f9b5f7fd2e",
+        "sha256_in_prefix": "720cc34c036c397bc473ce9c605efb12c962b9269bf0fbb0a6c979f9b5f7fd2e",
+        "size_in_bytes": 12977
+      },
+      {
+        "_path": "site-packages/dateutil/tz/_factories.py",
+        "path_type": "hardlink",
+        "sha256": "ba76fa5d0357acf32f7a4b13094f8083c8e6559b384a88e83d47001e95a7aef5",
+        "sha256_in_prefix": "ba76fa5d0357acf32f7a4b13094f8083c8e6559b384a88e83d47001e95a7aef5",
+        "size_in_bytes": 2569
+      },
+      {
+        "_path": "site-packages/dateutil/tz/tz.py",
+        "path_type": "hardlink",
+        "sha256": "268b558c3705d7a873a28b90d24656fb998262eed78faecd23e55082759aa4a1",
+        "sha256_in_prefix": "268b558c3705d7a873a28b90d24656fb998262eed78faecd23e55082759aa4a1",
+        "size_in_bytes": 62857
+      },
+      {
+        "_path": "site-packages/dateutil/tz/win.py",
+        "path_type": "hardlink",
+        "sha256": "c49b335a04b0135c4fc7f1c98f86647a9cae902fe1372d35e9631c5e16d1681f",
+        "sha256_in_prefix": "c49b335a04b0135c4fc7f1c98f86647a9cae902fe1372d35e9631c5e16d1681f",
+        "size_in_bytes": 12935
+      },
+      {
+        "_path": "site-packages/dateutil/tzwin.py",
+        "path_type": "hardlink",
+        "sha256": "ec0af8bdd4029e733498a4773148db20ab19ac155f1e0770b0965cfe619845ec",
+        "sha256_in_prefix": "ec0af8bdd4029e733498a4773148db20ab19ac155f1e0770b0965cfe619845ec",
+        "size_in_bytes": 59
+      },
+      {
+        "_path": "site-packages/dateutil/utils.py",
+        "path_type": "hardlink",
+        "sha256": "74a09c844c3c78e6e2d25a064f1f75ba70719bfed41a5537bff16314c76ac183",
+        "sha256_in_prefix": "74a09c844c3c78e6e2d25a064f1f75ba70719bfed41a5537bff16314c76ac183",
+        "size_in_bytes": 1965
+      },
+      {
+        "_path": "site-packages/dateutil/zoneinfo/__init__.py",
+        "path_type": "hardlink",
+        "sha256": "298834a6d842323729e4c5d21220499f79cc8d978d65abfbae5270e7eb73d52e",
+        "sha256_in_prefix": "298834a6d842323729e4c5d21220499f79cc8d978d65abfbae5270e7eb73d52e",
+        "size_in_bytes": 5889
+      },
+      {
+        "_path": "site-packages/dateutil/zoneinfo/dateutil-zoneinfo.tar.gz",
+        "path_type": "hardlink",
+        "sha256": "02471d071dd7904670312a52fd398e11fac41472ef8313cd0d5230195c5355a2",
+        "sha256_in_prefix": "02471d071dd7904670312a52fd398e11fac41472ef8313cd0d5230195c5355a2",
+        "size_in_bytes": 174394
+      },
+      {
+        "_path": "site-packages/dateutil/zoneinfo/rebuild.py",
+        "path_type": "hardlink",
+        "sha256": "322a98cc2207bcd6cc1fe2dd4582effb84f410803b8432ade462d1d084532dd2",
+        "sha256_in_prefix": "322a98cc2207bcd6cc1fe2dd4582effb84f410803b8432ade462d1d084532dd2",
+        "size_in_bytes": 2392
+      },
+      {
+        "_path": "site-packages/python_dateutil-2.8.2.dist-info/INSTALLER",
+        "path_type": "hardlink",
+        "sha256": "d0edee15f91b406f3f99726e44eb990be6e34fd0345b52b910c568e0eef6a2a8",
+        "sha256_in_prefix": "d0edee15f91b406f3f99726e44eb990be6e34fd0345b52b910c568e0eef6a2a8",
+        "size_in_bytes": 5
+      },
+      {
+        "_path": "site-packages/python_dateutil-2.8.2.dist-info/LICENSE",
+        "path_type": "hardlink",
+        "sha256": "ba00f51a0d92823b5a1cde27d8b5b9d2321e67ed8da9bc163eff96d5e17e577e",
+        "sha256_in_prefix": "ba00f51a0d92823b5a1cde27d8b5b9d2321e67ed8da9bc163eff96d5e17e577e",
+        "size_in_bytes": 2889
+      },
+      {
+        "_path": "site-packages/python_dateutil-2.8.2.dist-info/METADATA",
+        "path_type": "hardlink",
+        "sha256": "9e7635278895a09fd78e8d37e28c4b5b5b517f2c4fac754d4943ef0ad69a2fbb",
+        "sha256_in_prefix": "9e7635278895a09fd78e8d37e28c4b5b5b517f2c4fac754d4943ef0ad69a2fbb",
+        "size_in_bytes": 8196
+      },
+      {
+        "_path": "site-packages/python_dateutil-2.8.2.dist-info/RECORD",
+        "path_type": "hardlink",
+        "sha256": "d8907130a0fc65b745b0cac0ef33fb628369bb42d92542f05fbf51836bcea806",
+        "sha256_in_prefix": "d8907130a0fc65b745b0cac0ef33fb628369bb42d92542f05fbf51836bcea806",
+        "size_in_bytes": 3265
+      },
+      {
+        "_path": "site-packages/python_dateutil-2.8.2.dist-info/REQUESTED",
+        "path_type": "hardlink",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sha256_in_prefix": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_in_bytes": 0
+      },
+      {
+        "_path": "site-packages/python_dateutil-2.8.2.dist-info/WHEEL",
+        "path_type": "hardlink",
+        "sha256": "67e9f2629c2b712ab17ddbb1e4c6e7fc3439db988fec9d831b72601af398c934",
+        "sha256_in_prefix": "67e9f2629c2b712ab17ddbb1e4c6e7fc3439db988fec9d831b72601af398c934",
+        "size_in_bytes": 110
+      },
+      {
+        "_path": "site-packages/python_dateutil-2.8.2.dist-info/direct_url.json",
+        "path_type": "hardlink",
+        "sha256": "6eef3c41ab527120bd71b1e07ef0e7af538f02bb0b87e3503a52d9d29ab49839",
+        "sha256_in_prefix": "6eef3c41ab527120bd71b1e07ef0e7af538f02bb0b87e3503a52d9d29ab49839",
+        "size_in_bytes": 111
+      },
+      {
+        "_path": "site-packages/python_dateutil-2.8.2.dist-info/top_level.txt",
+        "path_type": "hardlink",
+        "sha256": "e2d8dd5a485166f17b2c0fc161efcbf60076c3fa766becf9cba02b8da464a2df",
+        "sha256_in_prefix": "e2d8dd5a485166f17b2c0fc161efcbf60076c3fa766becf9cba02b8da464a2df",
+        "size_in_bytes": 9
+      },
+      {
+        "_path": "site-packages/python_dateutil-2.8.2.dist-info/zip-safe",
+        "path_type": "hardlink",
+        "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+        "sha256_in_prefix": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+        "size_in_bytes": 1
+      },
+      {
+        "_path": "lib/python3.12/site-packages/dateutil/__pycache__/__init__.cpython-312.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.12/site-packages/dateutil/__pycache__/_common.cpython-312.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.12/site-packages/dateutil/__pycache__/_version.cpython-312.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.12/site-packages/dateutil/__pycache__/easter.cpython-312.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.12/site-packages/dateutil/parser/__pycache__/__init__.cpython-312.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.12/site-packages/dateutil/parser/__pycache__/_parser.cpython-312.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.12/site-packages/dateutil/parser/__pycache__/isoparser.cpython-312.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.12/site-packages/dateutil/__pycache__/relativedelta.cpython-312.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.12/site-packages/dateutil/__pycache__/rrule.cpython-312.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.12/site-packages/dateutil/tz/__pycache__/__init__.cpython-312.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.12/site-packages/dateutil/tz/__pycache__/_common.cpython-312.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.12/site-packages/dateutil/tz/__pycache__/_factories.cpython-312.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.12/site-packages/dateutil/tz/__pycache__/tz.cpython-312.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.12/site-packages/dateutil/tz/__pycache__/win.cpython-312.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.12/site-packages/dateutil/__pycache__/tzwin.cpython-312.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.12/site-packages/dateutil/__pycache__/utils.cpython-312.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.12/site-packages/dateutil/zoneinfo/__pycache__/__init__.cpython-312.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.12/site-packages/dateutil/zoneinfo/__pycache__/rebuild.cpython-312.pyc",
+        "path_type": "pyc_file"
+      }
+    ],
+    "paths_version": 1
+  },
+  "requested_spec": "None",
+  "sha256": "54d7785c7678166aa45adeaccfc1d2b8c3c799ca2dc05d4a82bb39b1968bd7da",
+  "size": 245987,
+  "subdir": "noarch",
+  "timestamp": 1626286448000,
+  "url": "https://conda.anaconda.org/conda-forge/noarch/python-dateutil-2.8.2-pyhd8ed1ab_0.tar.bz2",
+  "version": "2.8.2"
+}

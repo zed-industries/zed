@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>{title} - Criterion.rs</title>
+    <style type="text/css">
+        body \{
+            font: 14px Helvetica Neue;
+            text-rendering: optimizelegibility;
+        }
+
+        .body \{
+            width: 960px;
+            margin: auto;
+        }
+
+        th \{
+            font-weight: 200
+        }
+
+        th,
+        td \{
+            padding-right: 3px;
+            padding-bottom: 3px;
+        }
+
+        a:link \{
+            color: #1F78B4;
+            text-decoration: none;
+        }
+
+        th.ci-bound \{
+            opacity: 0.6
+        }
+
+        td.ci-bound \{
+            opacity: 0.5
+        }
+
+        .stats \{
+            width: 80%;
+            margin: auto;
+            display: flex;
+        }
+
+        .additional_stats \{
+            flex: 0 0 60%
+        }
+
+        .additional_plots \{
+            flex: 1
+        }
+
+        h2 \{
+            font-size: 36px;
+            font-weight: 300;
+        }
+
+        h3 \{
+            font-size: 24px;
+            font-weight: 300;
+        }
+
+        #footer \{
+            height: 40px;
+            background: #888;
+            color: white;
+            font-size: larger;
+            font-weight: 300;
+        }
+
+        #footer a \{
+            color: white;
+            text-decoration: underline;
+        }
+
+        #footer p \{
+            text-align: center
+        }
+    </style>
+</head>
+
+<body>
+    <div class="body">
+        <h2>{title}</h2>
+        <div class="absolute">
+            <section class="plots">
+                <table width="100%">
+                    <tbody>
+                        <tr>
+                            <td>
+                                <a href="pdf.svg">
+                                    <img src="pdf_small.svg" alt="PDF of Slope" width="{thumbnail_width}" height="{thumbnail_height}" />
+                                </a>
+                            </td>
+                            <td>
+                                {{- if slope }}
+                                <a href="regression.svg">
+                                    <img src="regression_small.svg" alt="Regression" width="{thumbnail_width}" height="{thumbnail_height}" />
+                                </a>
+                                {{- else }}
+                                <a href="iteration_times.svg">
+                                    <img src="iteration_times_small.svg" alt="Iteration Times" width="{thumbnail_width}" height="{thumbnail_height}" />
+                                </a>
+                                {{- endif }}
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+            <section class="stats">
+                <div class="additional_stats">
+                    <h4>Additional Statistics:</h4>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th></th>
+                                <th title="{confidence} confidence level" class="ci-bound">Lower bound</th>
+                                <th>Estimate</th>
+                                <th title="{confidence} confidence level" class="ci-bound">Upper bound</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {{- if slope }}
+                            <tr>
+                                <td>Slope</td>
+                                <td class="ci-bound">{slope.lower}</td>
+                                <td>{slope.point}</td>
+                                <td class="ci-bound">{slope.upper}</td>
+                            </tr>
+                            {{- endif }}
+                            {{- if throughput }}
+                            <tr>
+                                <td>Throughput</td>
+                                <td class="ci-bound">{throughput.lower}</td>
+                                <td>{throughput.point}</td>
+                                <td class="ci-bound">{throughput.upper}</td>
+                            </tr>
+                            {{- endif }}
+                            <tr>
+                                <td>R&#xb2;</td>
+                                <td class="ci-bound">{r2.lower}</td>
+                                <td>{r2.point}</td>
+                                <td class="ci-bound">{r2.upper}</td>
+                            </tr>
+                            <tr>
+                                <td>Mean</td>
+                                <td class="ci-bound">{mean.lower}</td>
+                                <td>{mean.point}</td>
+                                <td class="ci-bound">{mean.upper}</td>
+                            </tr>
+                            <tr>
+                                <td title="Standard Deviation">Std. Dev.</td>
+                                <td class="ci-bound">{std_dev.lower}</td>
+                                <td>{std_dev.point}</td>
+                                <td class="ci-bound">{std_dev.upper}</td>
+                            </tr>
+                            <tr>
+                                <td>Median</td>
+                                <td class="ci-bound">{median.lower}</td>
+                                <td>{median.point}</td>
+                                <td class="ci-bound">{median.upper}</td>
+                            </tr>
+                            <tr>
+                                <td title="Median Absolute Deviation">MAD</td>
+                                <td class="ci-bound">{mad.lower}</td>
+                                <td>{mad.point}</td>
+                                <td class="ci-bound">{mad.upper}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                {{- if additional_plots }}
+                <div class="additional_plots">
+                    <h4>Additional Plots:</h4>
+                    <ul>
+                        {{for plot in additional_plots }}
+                        <li>
+                            <a href="{plot.url}">{plot.name}</a>
+                        </li>
+                        {{- endfor }}
+                    </ul>
+                </div>
+                {{- endif }}
+            </section>
+            <section class="explanation">
+                <h4>Understanding this report:</h4>
+                <p>The plot on the left displays the average time per iteration for this benchmark. The shaded region
+                    shows the estimated probability of an iteration taking a certain amount of time, while the line
+                    shows the mean. Click on the plot for a larger view showing the outliers.</p>
+                {{- if slope }}
+                <p>The plot on the right shows the linear regression calculated from the measurements. Each point
+                    represents a sample, though here it shows the total time for the sample rather than time per
+                    iteration. The line is the line of best fit for these measurements.</p>
+                {{- else }}
+                <p>The plot on the right shows the average time per iteration for the samples. Each point 
+                    represents one sample.</p>
+                {{- endif }}
+                <p>See <a href="https://bheisler.github.io/criterion.rs/book/user_guide/command_line_output.html#additional-statistics">the
+                        documentation</a> for more details on the additional statistics.</p>
+            </section>
+        </div>
+        {{- if comparison }}
+        <section class="plots">
+            <h3>Change Since Previous Benchmark</h3>
+            <div class="relative">
+                <table width="100%">
+                    <tbody>
+                        <tr>
+                            <td>
+                                <a href="both/pdf.svg">
+                                    <img src="relative_pdf_small.svg" alt="PDF Comparison" width="{thumbnail_width}"
+                                        height="{thumbnail_height}" />
+                                </a>
+                            </td>
+                            <td>
+                                {{- if slope }}
+                                <a href="both/regression.svg">
+                                    <img src="relative_regression_small.svg" alt="Regression Comparison" width="{thumbnail_width}"
+                                        height="{thumbnail_height}" />
+                                </a>
+                                {{- else }}
+                                <a href="both/iteration_times.svg">
+                                    <img src="relative_iteration_times_small.svg" alt="Iteration Time Comparison" width="{thumbnail_width}"
+                                        height="{thumbnail_height}" />
+                                </a>
+                                {{- endif }}
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+        <section class="stats">
+            <div class="additional_stats">
+                <h4>Additional Statistics:</h4>
+                <table>
+                    <thead>
+                        <tr>
+                            <th></th>
+                            <th title="{confidence} confidence level" class="ci-bound">Lower bound</th>
+                            <th>Estimate</th>
+                            <th title="{confidence} confidence level" class="ci-bound">Upper bound</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Change in time</td>
+                            <td class="ci-bound">{comparison.change.lower}</td>
+                            <td>{comparison.change.point}</td>
+                            <td class="ci-bound">{comparison.change.upper}</td>
+                            <td>(p = {comparison.p_value} {comparison.inequality}
+                                {comparison.significance_level})</td>
+                        </tr>
+                        {{- if comparison.thrpt_change }}
+                        <tr>
+                            <td>Change in throughput</td>
+                            <td class="ci-bound">{comparison.thrpt_change.lower}</td>
+                            <td>{comparison.thrpt_change.point}</td>
+                            <td class="ci-bound">{comparison.thrpt_change.upper}</td>
+                            <td></td>
+                        </tr>
+                        {{- endif }}
+                    </tbody>
+                </table>
+                {comparison.explanation}
+            </div>
+            {{- if comparison.additional_plots }}
+            <div class="additional_plots">
+                <h4>Additional Plots:</h4>
+                <ul>
+                    {{ for plot in comparison.additional_plots }}
+                    <li>
+                        <a href="{plot.url}">{plot.name}</a>
+                    </li>
+                    {{- endfor }}
+                </ul>
+            </div>
+            {{- endif }}
+        </section>
+        <section class="explanation">
+            <h4>Understanding this report:</h4>
+            <p>The plot on the left shows the probability of the function taking a certain amount of time. The red
+                curve represents the saved measurements from the last time this benchmark was run, while the blue curve
+                shows the measurements from this run. The lines represent the mean time per iteration. Click on the
+                plot for a larger view.</p>
+            {{- if slope }}
+            <p>The plot on the right shows the two regressions. Again, the red line represents the previous measurement
+                while the blue line shows the current measurement.</p>
+            {{- else }}
+            <p>The plot on the right shows the iteration times for the two measurements. Again, the red dots represent
+                the previous measurement while the blue dots show the current measurement.</p>
+            {{- endif}}
+            <p>See <a href="https://bheisler.github.io/criterion.rs/book/user_guide/command_line_output.html#change">the
+                    documentation</a> for more details on the additional statistics.</p>
+        </section>
+        {{- endif }}
+    </div>
+    <div id="footer">
+        <p>This report was generated by
+            <a href="https://github.com/bheisler/criterion.rs">Criterion.rs</a>, a statistics-driven benchmarking
+            library in Rust.</p>
+    </div>
+</body>
+
+</html>

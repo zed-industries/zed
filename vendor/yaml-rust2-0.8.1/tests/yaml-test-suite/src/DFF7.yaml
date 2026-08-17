@@ -1,0 +1,27 @@
+---
+- name: Spec Example 7.16. Flow Mapping Entries
+  from: http://www.yaml.org/spec/1.2/spec.html#id2791260
+  tags: explicit-key spec flow mapping
+  yaml: |
+    {
+    ? explicit: entry,
+    implicit: entry,
+    ?
+    }
+  tree: |
+    +STR
+     +DOC
+      +MAP {}
+       =VAL :explicit
+       =VAL :entry
+       =VAL :implicit
+       =VAL :entry
+       =VAL :
+       =VAL :
+      -MAP
+     -DOC
+    -STR
+  dump: |
+    explicit: entry
+    implicit: entry
+    :

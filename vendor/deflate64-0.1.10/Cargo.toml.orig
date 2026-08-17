@@ -1,0 +1,26 @@
+[package]
+name = "deflate64"
+version = "0.1.10"
+edition = "2021"
+
+license = "MIT"
+authors = ["anatawa12 <anatawa12@icloud.com>"]
+description = "Deflate64 implementation based on .NET's implementation"
+homepage = "https://github.com/anatawa12/deflate64-rs#readme"
+repository = "https://github.com/anatawa12/deflate64-rs"
+readme = "README.md"
+keywords = ["deflate", "deflate64", "compression"]
+categories = ["compression"]
+
+exclude = [
+    ".github/**",
+    "tests/**",
+    "test-assets/**",
+]
+
+[dependencies]
+
+[dev-dependencies]
+bytemuck = { version = "1.13.1", features = ["derive"] }
+proptest = "1.2.0"
+tempfile = "3.7.1"

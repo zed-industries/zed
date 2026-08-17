@@ -1,0 +1,118 @@
+{
+  "worlds": [
+    {
+      "name": "the-world",
+      "imports": {
+        "interface-0": {
+          "interface": 0
+        },
+        "interface-1": {
+          "interface": 1
+        },
+        "interface-2": {
+          "interface": 2
+        },
+        "a": {
+          "function": {
+            "name": "a",
+            "kind": "freestanding",
+            "params": [],
+            "results": []
+          }
+        }
+      },
+      "exports": {},
+      "package": 0
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "shared-items",
+      "types": {
+        "foo": 0
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "i1",
+      "types": {
+        "foo": 1
+      },
+      "functions": {
+        "a": {
+          "name": "a",
+          "kind": "freestanding",
+          "params": [],
+          "results": [
+            {
+              "type": 1
+            }
+          ]
+        }
+      },
+      "package": 0
+    },
+    {
+      "name": "i2",
+      "types": {
+        "foo": 2
+      },
+      "functions": {
+        "a": {
+          "name": "a",
+          "kind": "freestanding",
+          "params": [],
+          "results": [
+            {
+              "type": 2
+            }
+          ]
+        }
+      },
+      "package": 0
+    }
+  ],
+  "types": [
+    {
+      "name": "foo",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "foo",
+      "kind": {
+        "type": 0
+      },
+      "owner": {
+        "interface": 1
+      }
+    },
+    {
+      "name": "foo",
+      "kind": {
+        "type": 0
+      },
+      "owner": {
+        "interface": 2
+      }
+    }
+  ],
+  "packages": [
+    {
+      "name": "foo:foo",
+      "interfaces": {
+        "shared-items": 0,
+        "i1": 1,
+        "i2": 2
+      },
+      "worlds": {
+        "the-world": 0
+      }
+    }
+  ]
+}

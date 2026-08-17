@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches:
+    - master
+  pull_request: {}
+  schedule:
+    - cron: "33 4 * * 5"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    env:
+      RUSTFLAGS: "-D warnings"
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v3
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check
+        run: cargo check --all --all-features --all-targets
+
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macOS-latest, windows-latest]
+        rust: [stable]
+
+    env:
+      RUSTFLAGS: "-D warnings"
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v3
+
+      - name: Install rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+
+      - name: Test
+        run: |
+          cargo test --all
+          cargo test -p tokio-rustls --features early-data --test early-data
+
+  lints:
+    name: Lints
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v3
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Run cargo fmt
+        run: cargo fmt --all --check
+
+      - name: Run cargo clippy
+        if: always()
+        run: cargo clippy --all-features -- -D warnings

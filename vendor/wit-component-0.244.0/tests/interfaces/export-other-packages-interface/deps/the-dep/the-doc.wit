@@ -1,0 +1,9 @@
+package foo:the-dep;
+
+interface the-interface {
+  type t = u8;
+}
+
+interface unused-interface {
+  type u = u32;
+}

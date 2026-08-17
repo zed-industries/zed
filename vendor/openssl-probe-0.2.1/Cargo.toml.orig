@@ -1,0 +1,17 @@
+[package]
+name = "openssl-probe"
+version = "0.2.1"
+authors = ["Alex Crichton <alex@alexcrichton.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/rustls/openssl-probe"
+homepage = "https://github.com/rustls/openssl-probe"
+description = """
+A library for helping to find system-wide trust anchor ("root") certificate
+locations based on paths typically used by `openssl`.
+"""
+readme = "README.md"
+edition = '2021'
+
+# This was arbitrarily chosen on 2025-01-23 as "pretty old" as previously
+# key didn't exist in `Cargo.toml` prior to that.
+rust-version = '1.60.0'

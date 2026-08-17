@@ -1,0 +1,16 @@
+package foo:foo;
+
+interface i {
+  type t = u16;
+}
+
+world foo {
+  use i.{t as u};
+
+  type t = u32;
+
+  record r {
+  }
+
+  export f: func() -> tuple<t, u, r>;
+}

@@ -1,0 +1,22 @@
+flowchart LR
+  S[Source]
+  A[Service A]
+  B[Service B]
+  C[Service C]
+  D[Service D]
+  T[Target]
+
+  S -->|ingest payload with schema version negotiation| A
+  S -->|ingest payload with schema version negotiation| B
+  S -->|ingest payload with schema version negotiation| C
+  S -->|ingest payload with schema version negotiation| D
+
+  A -->|normalized event with enrichment annotations| T
+  B -->|normalized event with enrichment annotations| T
+  C -->|normalized event with enrichment annotations| T
+  D -->|normalized event with enrichment annotations| T
+
+  A -.->|cross-check| C
+  B -.->|cross-check| D
+  C -.->|cross-check| A
+  D -.->|cross-check| B

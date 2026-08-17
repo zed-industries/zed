@@ -1,0 +1,53 @@
+error[E0277]: `*mut c_void` cannot be sent between threads safely
+  --> tests/subclass_compiletest/06-no-auto-send-sync-with-non-send-sync-ffi-parent.rs:54:11
+   |
+54 |     check(&obj);
+   |     ----- ^^^^ `*mut c_void` cannot be sent between threads safely
+   |     |
+   |     required by a bound introduced by this call
+   |
+   = help: the trait `Send` is not implemented for `*mut c_void`
+   = note: required for `TypedObjectRef<*mut c_void, ()>` to implement `Send`
+note: required because it appears within the type `InitiallyUnowned`
+  --> tests/subclass_compiletest/06-no-auto-send-sync-with-non-send-sync-ffi-parent.rs:3:16
+   |
+ 3 |     pub struct InitiallyUnowned(Object<glib::gobject_ffi::GInitiallyUnowned, glib::gobject_ffi::GInitiallyUnownedClass>);
+   |                ^^^^^^^^^^^^^^^^
+   = note: required for `TypedObjectRef<imp_object::TestObject, InitiallyUnowned>` to implement `Send`
+note: required because it appears within the type `TestObject`
+  --> tests/subclass_compiletest/06-no-auto-send-sync-with-non-send-sync-ffi-parent.rs:41:16
+   |
+41 |     pub struct TestObject(ObjectSubclass<imp_object::TestObject>) @extends InitiallyUnowned;
+   |                ^^^^^^^^^^
+note: required by a bound in `main::check`
+  --> tests/subclass_compiletest/06-no-auto-send-sync-with-non-send-sync-ffi-parent.rs:51:17
+   |
+51 |     fn check<T: Send + Sync>(_obj: &T) {}
+   |                 ^^^^ required by this bound in `check`
+
+error[E0277]: `*mut c_void` cannot be shared between threads safely
+  --> tests/subclass_compiletest/06-no-auto-send-sync-with-non-send-sync-ffi-parent.rs:54:11
+   |
+54 |     check(&obj);
+   |     ----- ^^^^ `*mut c_void` cannot be shared between threads safely
+   |     |
+   |     required by a bound introduced by this call
+   |
+   = help: the trait `Sync` is not implemented for `*mut c_void`
+   = note: required for `TypedObjectRef<*mut c_void, ()>` to implement `Send`
+note: required because it appears within the type `InitiallyUnowned`
+  --> tests/subclass_compiletest/06-no-auto-send-sync-with-non-send-sync-ffi-parent.rs:3:16
+   |
+ 3 |     pub struct InitiallyUnowned(Object<glib::gobject_ffi::GInitiallyUnowned, glib::gobject_ffi::GInitiallyUnownedClass>);
+   |                ^^^^^^^^^^^^^^^^
+   = note: required for `TypedObjectRef<imp_object::TestObject, InitiallyUnowned>` to implement `Send`
+note: required because it appears within the type `TestObject`
+  --> tests/subclass_compiletest/06-no-auto-send-sync-with-non-send-sync-ffi-parent.rs:41:16
+   |
+41 |     pub struct TestObject(ObjectSubclass<imp_object::TestObject>) @extends InitiallyUnowned;
+   |                ^^^^^^^^^^
+note: required by a bound in `main::check`
+  --> tests/subclass_compiletest/06-no-auto-send-sync-with-non-send-sync-ffi-parent.rs:51:17
+   |
+51 |     fn check<T: Send + Sync>(_obj: &T) {}
+   |                 ^^^^ required by this bound in `check`

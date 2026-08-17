@@ -1,0 +1,539 @@
+{
+  "worlds": [],
+  "interfaces": [
+    {
+      "name": "wasi",
+      "types": {
+        "clockid": 0,
+        "timestamp": 1,
+        "errno": 2
+      },
+      "functions": {},
+      "package": 0
+    }
+  ],
+  "types": [
+    {
+      "name": "clockid",
+      "kind": {
+        "enum": {
+          "cases": [
+            {
+              "name": "realtime",
+              "docs": {
+                "contents": "The clock measuring real time. Time value zero corresponds with\n1970-01-01T00:00:00Z."
+              }
+            },
+            {
+              "name": "monotonic",
+              "docs": {
+                "contents": "The store-wide monotonic clock, which is defined as a clock measuring\nreal time, whose value cannot be adjusted and which cannot have negative\nclock jumps. The epoch of this clock is undefined. The absolute time\nvalue of this clock therefore has no meaning."
+              }
+            }
+          ]
+        }
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "timestamp",
+      "kind": {
+        "type": "u64"
+      },
+      "owner": {
+        "interface": 0
+      },
+      "docs": {
+        "contents": "Timestamp in nanoseconds."
+      }
+    },
+    {
+      "name": "errno",
+      "kind": {
+        "enum": {
+          "cases": [
+            {
+              "name": "success",
+              "docs": {
+                "contents": "No error occurred. System call completed successfully."
+              }
+            },
+            {
+              "name": "toobig",
+              "docs": {
+                "contents": "Argument list too long."
+              }
+            },
+            {
+              "name": "access",
+              "docs": {
+                "contents": "Permission denied."
+              }
+            },
+            {
+              "name": "addrinuse",
+              "docs": {
+                "contents": "Address in use."
+              }
+            },
+            {
+              "name": "addrnotavail",
+              "docs": {
+                "contents": "Address not available."
+              }
+            },
+            {
+              "name": "afnosupport",
+              "docs": {
+                "contents": "Address family not supported."
+              }
+            },
+            {
+              "name": "again",
+              "docs": {
+                "contents": "Resource unavailable, or operation would block."
+              }
+            },
+            {
+              "name": "already",
+              "docs": {
+                "contents": "Connection already in progress."
+              }
+            },
+            {
+              "name": "badf",
+              "docs": {
+                "contents": "Bad file descriptor."
+              }
+            },
+            {
+              "name": "badmsg",
+              "docs": {
+                "contents": "Bad message."
+              }
+            },
+            {
+              "name": "busy",
+              "docs": {
+                "contents": "Device or resource busy."
+              }
+            },
+            {
+              "name": "canceled",
+              "docs": {
+                "contents": "Operation canceled."
+              }
+            },
+            {
+              "name": "child",
+              "docs": {
+                "contents": "No child processes."
+              }
+            },
+            {
+              "name": "connaborted",
+              "docs": {
+                "contents": "Connection aborted."
+              }
+            },
+            {
+              "name": "connrefused",
+              "docs": {
+                "contents": "Connection refused."
+              }
+            },
+            {
+              "name": "connreset",
+              "docs": {
+                "contents": "Connection reset."
+              }
+            },
+            {
+              "name": "deadlk",
+              "docs": {
+                "contents": "Resource deadlock would occur."
+              }
+            },
+            {
+              "name": "destaddrreq",
+              "docs": {
+                "contents": "Destination address required."
+              }
+            },
+            {
+              "name": "dom",
+              "docs": {
+                "contents": "Mathematics argument out of domain of function."
+              }
+            },
+            {
+              "name": "dquot",
+              "docs": {
+                "contents": "Reserved."
+              }
+            },
+            {
+              "name": "exist",
+              "docs": {
+                "contents": "File exists."
+              }
+            },
+            {
+              "name": "fault",
+              "docs": {
+                "contents": "Bad address."
+              }
+            },
+            {
+              "name": "fbig",
+              "docs": {
+                "contents": "File too large."
+              }
+            },
+            {
+              "name": "hostunreach",
+              "docs": {
+                "contents": "Host is unreachable."
+              }
+            },
+            {
+              "name": "idrm",
+              "docs": {
+                "contents": "Identifier removed."
+              }
+            },
+            {
+              "name": "ilseq",
+              "docs": {
+                "contents": "Illegal byte sequence."
+              }
+            },
+            {
+              "name": "inprogress",
+              "docs": {
+                "contents": "Operation in progress."
+              }
+            },
+            {
+              "name": "intr",
+              "docs": {
+                "contents": "Interrupted function."
+              }
+            },
+            {
+              "name": "inval",
+              "docs": {
+                "contents": "Invalid argument."
+              }
+            },
+            {
+              "name": "io",
+              "docs": {
+                "contents": "I/O error."
+              }
+            },
+            {
+              "name": "isconn",
+              "docs": {
+                "contents": "Socket is connected."
+              }
+            },
+            {
+              "name": "isdir",
+              "docs": {
+                "contents": "Is a directory."
+              }
+            },
+            {
+              "name": "loop",
+              "docs": {
+                "contents": "Too many levels of symbolic links."
+              }
+            },
+            {
+              "name": "mfile",
+              "docs": {
+                "contents": "File descriptor value too large."
+              }
+            },
+            {
+              "name": "mlink",
+              "docs": {
+                "contents": "Too many links."
+              }
+            },
+            {
+              "name": "msgsize",
+              "docs": {
+                "contents": "Message too large."
+              }
+            },
+            {
+              "name": "multihop",
+              "docs": {
+                "contents": "Reserved."
+              }
+            },
+            {
+              "name": "nametoolong",
+              "docs": {
+                "contents": "Filename too long."
+              }
+            },
+            {
+              "name": "netdown",
+              "docs": {
+                "contents": "Network is down."
+              }
+            },
+            {
+              "name": "netreset",
+              "docs": {
+                "contents": "Connection aborted by network."
+              }
+            },
+            {
+              "name": "netunreach",
+              "docs": {
+                "contents": "Network unreachable."
+              }
+            },
+            {
+              "name": "nfile",
+              "docs": {
+                "contents": "Too many files open in system."
+              }
+            },
+            {
+              "name": "nobufs",
+              "docs": {
+                "contents": "No buffer space available."
+              }
+            },
+            {
+              "name": "nodev",
+              "docs": {
+                "contents": "No such device."
+              }
+            },
+            {
+              "name": "noent",
+              "docs": {
+                "contents": "No such file or directory."
+              }
+            },
+            {
+              "name": "noexec",
+              "docs": {
+                "contents": "Executable file format error."
+              }
+            },
+            {
+              "name": "nolck",
+              "docs": {
+                "contents": "No locks available."
+              }
+            },
+            {
+              "name": "nolink",
+              "docs": {
+                "contents": "Reserved."
+              }
+            },
+            {
+              "name": "nomem",
+              "docs": {
+                "contents": "Not enough space."
+              }
+            },
+            {
+              "name": "nomsg",
+              "docs": {
+                "contents": "No message of the desired type."
+              }
+            },
+            {
+              "name": "noprotoopt",
+              "docs": {
+                "contents": "Protocol not available."
+              }
+            },
+            {
+              "name": "nospc",
+              "docs": {
+                "contents": "No space left on device."
+              }
+            },
+            {
+              "name": "nosys",
+              "docs": {
+                "contents": "Function not supported."
+              }
+            },
+            {
+              "name": "notconn",
+              "docs": {
+                "contents": "The socket is not connected."
+              }
+            },
+            {
+              "name": "notdir",
+              "docs": {
+                "contents": "Not a directory or a symbolic link to a directory."
+              }
+            },
+            {
+              "name": "notempty",
+              "docs": {
+                "contents": "Directory not empty."
+              }
+            },
+            {
+              "name": "notrecoverable",
+              "docs": {
+                "contents": "State not recoverable."
+              }
+            },
+            {
+              "name": "notsock",
+              "docs": {
+                "contents": "Not a socket."
+              }
+            },
+            {
+              "name": "notsup",
+              "docs": {
+                "contents": "Not supported, or operation not supported on socket."
+              }
+            },
+            {
+              "name": "notty",
+              "docs": {
+                "contents": "Inappropriate I/O control operation."
+              }
+            },
+            {
+              "name": "nxio",
+              "docs": {
+                "contents": "No such device or address."
+              }
+            },
+            {
+              "name": "overflow",
+              "docs": {
+                "contents": "Value too large to be stored in data type."
+              }
+            },
+            {
+              "name": "ownerdead",
+              "docs": {
+                "contents": "Previous owner died."
+              }
+            },
+            {
+              "name": "perm",
+              "docs": {
+                "contents": "Operation not permitted."
+              }
+            },
+            {
+              "name": "pipe",
+              "docs": {
+                "contents": "Broken pipe."
+              }
+            },
+            {
+              "name": "proto",
+              "docs": {
+                "contents": "Protocol error."
+              }
+            },
+            {
+              "name": "protonosupport",
+              "docs": {
+                "contents": "Protocol not supported."
+              }
+            },
+            {
+              "name": "prototype",
+              "docs": {
+                "contents": "Protocol wrong type for socket."
+              }
+            },
+            {
+              "name": "range",
+              "docs": {
+                "contents": "Result too large."
+              }
+            },
+            {
+              "name": "rofs",
+              "docs": {
+                "contents": "Read-only file system."
+              }
+            },
+            {
+              "name": "spipe",
+              "docs": {
+                "contents": "Invalid seek."
+              }
+            },
+            {
+              "name": "srch",
+              "docs": {
+                "contents": "No such process."
+              }
+            },
+            {
+              "name": "stale",
+              "docs": {
+                "contents": "Reserved."
+              }
+            },
+            {
+              "name": "timedout",
+              "docs": {
+                "contents": "Connection timed out."
+              }
+            },
+            {
+              "name": "txtbsy",
+              "docs": {
+                "contents": "Text file busy."
+              }
+            },
+            {
+              "name": "xdev",
+              "docs": {
+                "contents": "Cross-device link."
+              }
+            },
+            {
+              "name": "notcapable",
+              "docs": {
+                "contents": "Extension: Capabilities insufficient."
+              }
+            }
+          ]
+        }
+      },
+      "owner": {
+        "interface": 0
+      },
+      "docs": {
+        "contents": "Error codes returned by functions.\nNot all of these error codes are returned by the functions provided by this\nAPI/ some are used in higher-level library layers, and others are provided\nmerely for alignment with POSIX."
+      }
+    }
+  ],
+  "packages": [
+    {
+      "name": "wasi:filesystem",
+      "interfaces": {
+        "wasi": 0
+      },
+      "worlds": {}
+    }
+  ]
+}

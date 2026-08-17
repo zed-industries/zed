@@ -1,0 +1,15 @@
+---
+- name: Multiline implicit keys
+  from: '@perlpunk'
+  tags: error mapping
+  fail: true
+  yaml: |
+    a\nb: 1
+    c
+     d: 1
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :a\\nb
+       =VAL :1

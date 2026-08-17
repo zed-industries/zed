@@ -1,0 +1,21 @@
+{{! this is an invalid template }}
+
+<html>
+  <head>
+    <title>中超联赛 {{year}}</title>
+  </head>
+  <body>
+    <h1>CSL {{year}}</h1>
+    <ul>
+      {{#each teams as |t| ~}}
+      <li class="{{ranking_label true ../teams}}">
+      {{~log @index~}}
+      <b>{{t.name}}</b>: {{format t.pts ~}}
+      </li>
+      {{! mismatched helper close tag }}
+      {{/arch~}}
+    </ul>
+
+    <p>Rendered by Handlebars from {{engine}} data.</p>
+  </body>
+</html>

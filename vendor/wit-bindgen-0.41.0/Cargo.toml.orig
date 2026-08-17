@@ -1,0 +1,22 @@
+[package]
+name = "wit-bindgen"
+authors = ["Alex Crichton <alex@alexcrichton.com>"]
+version = { workspace = true }
+edition = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
+homepage = 'https://github.com/bytecodealliance/wit-bindgen'
+description = """
+Rust bindings generator and runtime support for WIT and the component model.
+Used when compiling Rust programs to the component model.
+"""
+
+[dependencies]
+wit-bindgen-rust-macro = { path = "./macro", optional = true, version = "0.41.0" }
+wit-bindgen-rt = { path = "./rt", version = "0.41.0", features = ["bitflags"] }
+
+[features]
+default = ["macros", "realloc", "async"]
+macros = ["dep:wit-bindgen-rust-macro"]
+realloc = []
+async = ["macros", "wit-bindgen-rt/async", "wit-bindgen-rust-macro/async"]

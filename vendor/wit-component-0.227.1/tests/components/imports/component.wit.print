@@ -1,0 +1,29 @@
+package root:component;
+
+world root {
+  import bar: interface {
+    record x {
+      a: u8,
+    }
+
+    bar1: func(x: string);
+
+    bar2: func(x: x);
+  }
+  import baz: interface {
+    type x = s8;
+
+    baz1: func(x: list<string>);
+
+    baz2: func();
+
+    baz3: func(x: x);
+  }
+  import foo: interface {
+    foo1: func();
+
+    foo2: func(x: u8);
+
+    foo3: func(x: f32);
+  }
+}

@@ -1,0 +1,7 @@
+error: Use #[section(typed)] to create a typed section
+ --> tests/errors/bad_section.rs:3:1
+  |
+3 | #[section(untyped)]
+  | ^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the macro `$crate::__section_parse_impl` which comes from the expansion of the attribute macro `section` (in Nightly builds, run with -Z macro-backtrace for more info)

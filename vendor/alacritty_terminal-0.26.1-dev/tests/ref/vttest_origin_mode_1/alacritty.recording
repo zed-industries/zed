@@ -1,0 +1,367 @@
+[1m[7m%[27m[1m[0m                                                                                ]2;jwilm@jwilm-desk: ~/code/alacritty]1;..ode/alacritty[0m[27m[24m[Jjwilm@jwilm-desk [01;32m➜ [01;32m [36m~/code/alacritty [00m [K[?1h=[?2004h[1m[31mv[0m[39m[1m[31mv[1m[31mt[0m[39m[1m[31mv[1m[31mt[1m[31mt[0m[39m[1m[31mt[1m[31me[0m[39m[1m[31me[1m[31ms[0m[39m[0m[35mv[0m[35mt[0m[35mt[0m[35me[0m[35ms[35mt[39m[?1l>[?2004l
+]2;vttest]1;vttest[0c[?1l[?3l[?4l[?5l[?6l[?7h[?8l[?40h[?45l[r[0m[2J[3;10HVT100 test program, version 2.7 (20140305)[4;10HLine speed 38400bd [5;10HChoose test type:
+[6;1H[0J
+          0. Exit
+          1. Test of cursor movements
+          2. Test of screen features
+          3. Test of character sets
+          4. Test of double-sized characters
+          5. Test of keyboard
+          6. Test of terminal reports
+          7. Test of VT52 mode
+          8. Test of VT102 features (Insert/Delete Char/Line)
+          9. Test of known bugs
+          10. Test of reset and self-test
+          11. Test non-VT100 (e.g., VT220, XTERM) terminals
+          12. Modify test-parameters
+
+          Enter choice number (0 - 12): 1
+[2J[?3l#8[9;10H[1J[18;60H[0J[1K[9;71H[0K[10;10H[1K[10;71H[0K[11;10H[1K[11;71H[0K[12;10H[1K[12;71H[0K[13;10H[1K[13;71H[0K[14;10H[1K[14;71H[0K[15;10H[1K[15;71H[0K[16;10H[1K[16;71H[0K[17;30H[2K[24;1f*[1;1f*[24;2f*[1;2f*[24;3f*[1;3f*[24;4f*[1;4f*[24;5f*[1;5f*[24;6f*[1;6f*[24;7f*[1;7f*[24;8f*[1;8f*[24;9f*[1;9f*[24;10f*[1;10f*[24;11f*[1;11f*[24;12f*[1;12f*[24;13f*[1;13f*[24;14f*[1;14f*[24;15f*[1;15f*[24;16f*[1;16f*[24;17f*[1;17f*[24;18f*[1;18f*[24;19f*[1;19f*[24;20f*[1;20f*[24;21f*[1;21f*[24;22f*[1;22f*[24;23f*[1;23f*[24;24f*[1;24f*[24;25f*[1;25f*[24;26f*[1;26f*[24;27f*[1;27f*[24;28f*[1;28f*[24;29f*[1;29f*[24;30f*[1;30f*[24;31f*[1;31f*[24;32f*[1;32f*[24;33f*[1;33f*[24;34f*[1;34f*[24;35f*[1;35f*[24;36f*[1;36f*[24;37f*[1;37f*[24;38f*[1;38f*[24;39f*[1;39f*[24;40f*[1;40f*[24;41f*[1;41f*[24;42f*[1;42f*[24;43f*[1;43f*[24;44f*[1;44f*[24;45f*[1;45f*[24;46f*[1;46f*[24;47f*[1;47f*[24;48f*[1;48f*[24;49f*[1;49f*[24;50f*[1;50f*[24;51f*[1;51f*[24;52f*[1;52f*[24;53f*[1;53f*[24;54f*[1;54f*[24;55f*[1;55f*[24;56f*[1;56f*[24;57f*[1;57f*[24;58f*[1;58f*[24;59f*[1;59f*[24;60f*[1;60f*[24;61f*[1;61f*[24;62f*[1;62f*[24;63f*[1;63f*[24;64f*[1;64f*[24;65f*[1;65f*[24;66f*[1;66f*[24;67f*[1;67f*[24;68f*[1;68f*[24;69f*[1;69f*[24;70f*[1;70f*[24;71f*[1;71f*[24;72f*[1;72f*[24;73f*[1;73f*[24;74f*[1;74f*[24;75f*[1;75f*[24;76f*[1;76f*[24;77f*[1;77f*[24;78f*[1;78f*[24;79f*[1;79f*[24;80f*[1;80f*[2;2H+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD[23;79H+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM[2;1H*[2;80H*[10DE*[3;80H*[10DE*[4;80H*[10DE*[5;80H*[10DE*[6;80H*[10DE*[7;80H*[10DE*[8;80H*[10DE*[9;80H*[10DE*[10;80H*[10D
+*[11;80H*[10D
+*[12;80H*[10D
+*[13;80H*[10D
+*[14;80H*[10D
+*[15;80H*[10D
+*[16;80H*[10D
+*[17;80H*[10D
+*[18;80H*[10D
+*[19;80H*[10D
+*[20;80H*[10D
+*[21;80H*[10D
+*[22;80H*[10D
+*[23;80H*[10D
+[2;10H[42D[2C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C[23;70H[42C[2D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D[1;1H[10A[1A[0A[24;80H[10B[1B[0B[10;12H                                                          [1B[58D                                                          [1B[58D                                                          [1B[58D                                                          [1B[58D                                                          [1B[58D                                                          [1B[58D[5A[1CThe screen should be cleared,  and have an unbroken bor-[12;13Hder of *'s and +'s around the edge,   and exactly in the[13;13Hmiddle  there should be a frame of E's around this  text[14;13Hwith  one (1) free position around it.    Push <RETURN>[?3h#8[9;36H[1J[18;86H[0J[1K[9;97H[0K[10;36H[1K[10;97H[0K[11;36H[1K[11;97H[0K[12;36H[1K[12;97H[0K[13;36H[1K[13;97H[0K[14;36H[1K[14;97H[0K[15;36H[1K[15;97H[0K[16;36H[1K[16;97H[0K[17;30H[2K[24;1f*[1;1f*[24;2f*[1;2f*[24;3f*[1;3f*[24;4f*[1;4f*[24;5f*[1;5f*[24;6f*[1;6f*[24;7f*[1;7f*[24;8f*[1;8f*[24;9f*[1;9f*[24;10f*[1;10f*[24;11f*[1;11f*[24;12f*[1;12f*[24;13f*[1;13f*[24;14f*[1;14f*[24;15f*[1;15f*[24;16f*[1;16f*[24;17f*[1;17f*[24;18f*[1;18f*[24;19f*[1;19f*[24;20f*[1;20f*[24;21f*[1;21f*[24;22f*[1;22f*[24;23f*[1;23f*[24;24f*[1;24f*[24;25f*[1;25f*[24;26f*[1;26f*[24;27f*[1;27f*[24;28f*[1;28f*[24;29f*[1;29f*[24;30f*[1;30f*[24;31f*[1;31f*[24;32f*[1;32f*[24;33f*[1;33f*[24;34f*[1;34f*[24;35f*[1;35f*[24;36f*[1;36f*[24;37f*[1;37f*[24;38f*[1;38f*[24;39f*[1;39f*[24;40f*[1;40f*[24;41f*[1;41f*[24;42f*[1;42f*[24;43f*[1;43f*[24;44f*[1;44f*[24;45f*[1;45f*[24;46f*[1;46f*[24;47f*[1;47f*[24;48f*[1;48f*[24;49f*[1;49f*[24;50f*[1;50f*[24;51f*[1;51f*[24;52f*[1;52f*[24;53f*[1;53f*[24;54f*[1;54f*[24;55f*[1;55f*[24;56f*[1;56f*[24;57f*[1;57f*[24;58f*[1;58f*[24;59f*[1;59f*[24;60f*[1;60f*[24;61f*[1;61f*[24;62f*[1;62f*[24;63f*[1;63f*[24;64f*[1;64f*[24;65f*[1;65f*[24;66f*[1;66f*[24;67f*[1;67f*[24;68f*[1;68f*[24;69f*[1;69f*[24;70f*[1;70f*[24;71f*[1;71f*[24;72f*[1;72f*[24;73f*[1;73f*[24;74f*[1;74f*[24;75f*[1;75f*[24;76f*[1;76f*[24;77f*[1;77f*[24;78f*[1;78f*[24;79f*[1;79f*[24;80f*[1;80f*[24;81f*[1;81f*[24;82f*[1;82f*[24;83f*[1;83f*[24;84f*[1;84f*[24;85f*[1;85f*[24;86f*[1;86f*[24;87f*[1;87f*[24;88f*[1;88f*[24;89f*[1;89f*[24;90f*[1;90f*[24;91f*[1;91f*[24;92f*[1;92f*[24;93f*[1;93f*[24;94f*[1;94f*[24;95f*[1;95f*[24;96f*[1;96f*[24;97f*[1;97f*[24;98f*[1;98f*[24;99f*[1;99f*[24;100f*[1;100f*[24;101f*[1;101f*[24;102f*[1;102f*[24;103f*[1;103f*[24;104f*[1;104f*[24;105f*[1;105f*[24;106f*[1;106f*[24;107f*[1;107f*[24;108f*[1;108f*[24;109f*[1;109f*[24;110f*[1;110f*[24;111f*[1;111f*[24;112f*[1;112f*[24;113f*[1;113f*[24;114f*[1;114f*[24;115f*[1;115f*[24;116f*[1;116f*[24;117f*[1;117f*[24;118f*[1;118f*[24;119f*[1;119f*[24;120f*[1;120f*[24;121f*[1;121f*[24;122f*[1;122f*[24;123f*[1;123f*[24;124f*[1;124f*[24;125f*[1;125f*[24;126f*[1;126f*[24;127f*[1;127f*[24;128f*[1;128f*[24;129f*[1;129f*[24;130f*[1;130f*[24;131f*[1;131f*[24;132f*[1;132f*[2;2H+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD+[1DD[23;131H+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM+[1DM[2;1H*[2;132H*[10DE*[3;132H*[10DE*[4;132H*[10DE*[5;132H*[10DE*[6;132H*[10DE*[7;132H*[10DE*[8;132H*[10DE*[9;132H*[10DE*[10;132H*[10D
+*[11;132H*[10D
+*[12;132H*[10D
+*[13;132H*[10D
+*[14;132H*[10D
+*[15;132H*[10D
+*[16;132H*[10D
+*[17;132H*[10D
+*[18;132H*[10D
+*[19;132H*[10D
+*[20;132H*[10D
+*[21;132H*[10D
+*[22;132H*[10D
+*[23;132H*[10D
+[2;10H[68D[2C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C+[0C[2D[1C[23;96H[68C[2D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D+[1D[1C[0D[1;1H[10A[1A[0A[24;132H[10B[1B[0B[10;38H                                                          [1B[58D                                                          [1B[58D                                                          [1B[58D                                                          [1B[58D                                                          [1B[58D                                                          [1B[58D[5A[1CThe screen should be cleared,  and have an unbroken bor-[12;39Hder of *'s and +'s around the edge,   and exactly in the[13;39Hmiddle  there should be a frame of E's around this  text[14;39Hwith  one (1) free position around it.    Push <RETURN>[?3l[?3lTest of autowrap, mixing control and print characters.
+The left/right margins should have letters in order:
+[3;21r[?6h[19;1HA[19;80Ha
+[18;80HaB[19;80HB b
+[19;80HC		c[19;2HC
+[19;80H
+[18;1HD[18;80Hd[19;1HE[19;80He
+[18;80HeF[19;80HF f
+[19;80HG		g[19;2HG
+[19;80H
+[18;1HH[18;80Hh[19;1HI[19;80Hi
+[18;80HiJ[19;80HJ j
+[19;80HK		k[19;2HK
+[19;80H
+[18;1HL[18;80Hl[19;1HM[19;80Hm
+[18;80HmN[19;80HN n
+[19;80HO		o[19;2HO
+[19;80H
+[18;1HP[18;80Hp[19;1HQ[19;80Hq
+[18;80HqR[19;80HR r
+[19;80HS		s[19;2HS
+[19;80H
+[18;1HT[18;80Ht[19;1HU[19;80Hu
+[18;80HuV[19;80HV v
+[19;80HW		w[19;2HW
+[19;80H
+[18;1HX[18;80Hx[19;1HY[19;80Hy
+[18;80HyZ[19;80HZ z
+[?6l[r[22;1HPush <RETURN>[?3hTest of autowrap, mixing control and print characters.
+The left/right margins should have letters in order:
+[3;21r[?6h[19;1HA[19;132Ha
+[18;132HaB[19;132HB b
+[19;132HC		c[19;2HC
+[19;132H
+[18;1HD[18;132Hd[19;1HE[19;132He
+[18;132HeF[19;132HF f
+[19;132HG		g[19;2HG
+[19;132H
+[18;1HH[18;132Hh[19;1HI[19;132Hi
+[18;132HiJ[19;132HJ j
+[19;132HK		k[19;2HK
+[19;132H
+[18;1HL[18;132Hl[19;1HM[19;132Hm
+[18;132HmN[19;132HN n
+[19;132HO		o[19;2HO
+[19;132H
+[18;1HP[18;132Hp[19;1HQ[19;132Hq
+[18;132HqR[19;132HR r
+[19;132HS		s[19;2HS
+[19;132H
+[18;1HT[18;132Ht[19;1HU[19;132Hu
+[18;132HuV[19;132HV v
+[19;132HW		w[19;2HW
+[19;132H
+[18;1HX[18;132Hx[19;1HY[19;132Hy
+[18;132HyZ[19;132HZ z
+[?6l[r[22;1HPush <RETURN>[?3l[2J[1;1HTest of cursor-control characters inside ESC sequences.
+Below should be four identical lines:
+
+A B C D E F G H I
+A[2CB[2CC[2CD[2CE[2CF[2CG[2CH[2CI[2C
+A [2CB[4CC[6CD[8CE[10CF[12CG[14CH[16CI
+[20lA [1AB [1AC [1AD [1AE [1AF [1AG [1AH [1AI [1A
+
+Push <RETURN>[2J[1;1HTest of leading zeros in ESC sequences.
+Two lines below you should see the sentence "This is a correct sentence".[00000000004;000000001HT[00000000004;000000002Hh[00000000004;000000003Hi[00000000004;000000004Hs[00000000004;000000005H [00000000004;000000006Hi[00000000004;000000007Hs[00000000004;000000008H [00000000004;000000009Ha[00000000004;0000000010H [00000000004;0000000011Hc[00000000004;0000000012Ho[00000000004;0000000013Hr[00000000004;0000000014Hr[00000000004;0000000015He[00000000004;0000000016Hc[00000000004;0000000017Ht[00000000004;0000000018H [00000000004;0000000019Hs[00000000004;0000000020He[00000000004;0000000021Hn[00000000004;0000000022Ht[00000000004;0000000023He[00000000004;0000000024Hn[00000000004;0000000025Hc[00000000004;0000000026He[20;1HPush <RETURN>
+[2J[3;10HVT100 test program, version 2.7 (20140305)[4;10HLine speed 38400bd [5;10HChoose test type:
+[6;1H[0J
+          0. Exit
+          1. Test of cursor movements
+          2. Test of screen features
+          3. Test of character sets
+          4. Test of double-sized characters
+          5. Test of keyboard
+          6. Test of terminal reports
+          7. Test of VT52 mode
+          8. Test of VT102 features (Insert/Delete Char/Line)
+          9. Test of known bugs
+          10. Test of reset and self-test
+          11. Test non-VT100 (e.g., VT220, XTERM) terminals
+          12. Modify test-parameters
+
+          Enter choice number (0 - 12): 2
+[2J[1;1H[?7h****************************************************************************************************************************************************************[?7l[3;1H****************************************************************************************************************************************************************[?7h[5;1HThis should be three identical lines of *'s completely filling
+the top of the screen without any empty lines between.
+(Test of WRAP AROUND mode setting.)
+Push <RETURN>[2J[3g[1;1H[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[1;4H[0g[6C[0g[6C[0g[6C[0g[6C[0g[6C[0g[6C[0g[6C[0g[6C[0g[6C[0g[6C[0g[6C[0g[6C[0g[6C[1;7H[1g[2g[1;1H	*	*	*	*	*	*	*	*	*	*	*	*	*[2;2H     *     *     *     *     *     *     *     *     *     *     *     *     *[4;1HTest of TAB setting/resetting. These two lines
+should look the same. Push <RETURN>[?5h[?3h[2J[1;1H[3g[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[1;1H12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901[3;3HThis is 132 column mode, light background.[4;4HThis is 132 column mode, light background.[5;5HThis is 132 column mode, light background.[6;6HThis is 132 column mode, light background.[7;7HThis is 132 column mode, light background.[8;8HThis is 132 column mode, light background.[9;9HThis is 132 column mode, light background.[10;10HThis is 132 column mode, light background.[11;11HThis is 132 column mode, light background.[12;12HThis is 132 column mode, light background.[13;13HThis is 132 column mode, light background.[14;14HThis is 132 column mode, light background.[15;15HThis is 132 column mode, light background.[16;16HThis is 132 column mode, light background.[17;17HThis is 132 column mode, light background.[18;18HThis is 132 column mode, light background.[19;19HThis is 132 column mode, light background.[20;20HThis is 132 column mode, light background.Push <RETURN>[?3l[2J[1;1H1234567890123456789012345678901234567890123456789012345678901234567890123456789[3;3HThis is 80 column mode, light background.[4;4HThis is 80 column mode, light background.[5;5HThis is 80 column mode, light background.[6;6HThis is 80 column mode, light background.[7;7HThis is 80 column mode, light background.[8;8HThis is 80 column mode, light background.[9;9HThis is 80 column mode, light background.[10;10HThis is 80 column mode, light background.[11;11HThis is 80 column mode, light background.[12;12HThis is 80 column mode, light background.[13;13HThis is 80 column mode, light background.[14;14HThis is 80 column mode, light background.[15;15HThis is 80 column mode, light background.[16;16HThis is 80 column mode, light background.[17;17HThis is 80 column mode, light background.[18;18HThis is 80 column mode, light background.[19;19HThis is 80 column mode, light background.[20;20HThis is 80 column mode, light background.Push <RETURN>[?5l[?3h[2J[1;1H[3g[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[8CH[1;1H12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901[3;3HThis is 132 column mode, dark background.[4;4HThis is 132 column mode, dark background.[5;5HThis is 132 column mode, dark background.[6;6HThis is 132 column mode, dark background.[7;7HThis is 132 column mode, dark background.[8;8HThis is 132 column mode, dark background.[9;9HThis is 132 column mode, dark background.[10;10HThis is 132 column mode, dark background.[11;11HThis is 132 column mode, dark background.[12;12HThis is 132 column mode, dark background.[13;13HThis is 132 column mode, dark background.[14;14HThis is 132 column mode, dark background.[15;15HThis is 132 column mode, dark background.[16;16HThis is 132 column mode, dark background.[17;17HThis is 132 column mode, dark background.[18;18HThis is 132 column mode, dark background.[19;19HThis is 132 column mode, dark background.[20;20HThis is 132 column mode, dark background.Push <RETURN>[?3l[2J[1;1H1234567890123456789012345678901234567890123456789012345678901234567890123456789[3;3HThis is 80 column mode, dark background.[4;4HThis is 80 column mode, dark background.[5;5HThis is 80 column mode, dark background.[6;6HThis is 80 column mode, dark background.[7;7HThis is 80 column mode, dark background.[8;8HThis is 80 column mode, dark background.[9;9HThis is 80 column mode, dark background.[10;10HThis is 80 column mode, dark background.[11;11HThis is 80 column mode, dark background.[12;12HThis is 80 column mode, dark background.[13;13HThis is 80 column mode, dark background.[14;14HThis is 80 column mode, dark background.[15;15HThis is 80 column mode, dark background.[16;16HThis is 80 column mode, dark background.[17;17HThis is 80 column mode, dark background.[18;18HThis is 80 column mode, dark background.[19;19HThis is 80 column mode, dark background.[20;20HThis is 80 column mode, dark background.Push <RETURN>[2J[?6h[?4h[12;13r[2J[24BSoft scroll up region [12..13] size 2 Line 1
+Soft scroll up region [12..13] size 2 Line 2
+Soft scroll up region [12..13] size 2 Line 3
+Soft scroll up region [12..13] size 2 Line 4
+Soft scroll up region [12..13] size 2 Line 5
+Soft scroll up region [12..13] size 2 Line 6
+Soft scroll up region [12..13] size 2 Line 7
+Soft scroll up region [12..13] size 2 Line 8
+Soft scroll up region [12..13] size 2 Line 9
+Soft scroll up region [12..13] size 2 Line 10
+Soft scroll up region [12..13] size 2 Line 11
+Soft scroll up region [12..13] size 2 Line 12
+Soft scroll up region [12..13] size 2 Line 13
+Soft scroll up region [12..13] size 2 Line 14
+Soft scroll up region [12..13] size 2 Line 15
+Soft scroll up region [12..13] size 2 Line 16
+Soft scroll up region [12..13] size 2 Line 17
+Soft scroll up region [12..13] size 2 Line 18
+Soft scroll up region [12..13] size 2 Line 19
+Soft scroll up region [12..13] size 2 Line 20
+Soft scroll up region [12..13] size 2 Line 21
+Soft scroll up region [12..13] size 2 Line 22
+Soft scroll up region [12..13] size 2 Line 23
+Soft scroll up region [12..13] size 2 Line 24
+Soft scroll up region [12..13] size 2 Line 25
+Soft scroll up region [12..13] size 2 Line 26
+Soft scroll up region [12..13] size 2 Line 27
+Soft scroll up region [12..13] size 2 Line 28
+Soft scroll up region [12..13] size 2 Line 29
+[24ASoft scroll down region [12..13] size 2 Line 1
+MMSoft scroll down region [12..13] size 2 Line 2
+MMSoft scroll down region [12..13] size 2 Line 3
+MMSoft scroll down region [12..13] size 2 Line 4
+MMSoft scroll down region [12..13] size 2 Line 5
+MMSoft scroll down region [12..13] size 2 Line 6
+MMSoft scroll down region [12..13] size 2 Line 7
+MMSoft scroll down region [12..13] size 2 Line 8
+MMSoft scroll down region [12..13] size 2 Line 9
+MMSoft scroll down region [12..13] size 2 Line 10
+MMSoft scroll down region [12..13] size 2 Line 11
+MMSoft scroll down region [12..13] size 2 Line 12
+MMSoft scroll down region [12..13] size 2 Line 13
+MMSoft scroll down region [12..13] size 2 Line 14
+MMSoft scroll down region [12..13] size 2 Line 15
+MMSoft scroll down region [12..13] size 2 Line 16
+MMSoft scroll down region [12..13] size 2 Line 17
+MMSoft scroll down region [12..13] size 2 Line 18
+MMSoft scroll down region [12..13] size 2 Line 19
+MMSoft scroll down region [12..13] size 2 Line 20
+MMSoft scroll down region [12..13] size 2 Line 21
+MMSoft scroll down region [12..13] size 2 Line 22
+MMSoft scroll down region [12..13] size 2 Line 23
+MMSoft scroll down region [12..13] size 2 Line 24
+MMSoft scroll down region [12..13] size 2 Line 25
+MMSoft scroll down region [12..13] size 2 Line 26
+MMSoft scroll down region [12..13] size 2 Line 27
+MMSoft scroll down region [12..13] size 2 Line 28
+MMSoft scroll down region [12..13] size 2 Line 29
+MMPush <RETURN>[1;24r[2J[24BSoft scroll up region [1..24] size 24 Line 1
+Soft scroll up region [1..24] size 24 Line 2
+Soft scroll up region [1..24] size 24 Line 3
+Soft scroll up region [1..24] size 24 Line 4
+Soft scroll up region [1..24] size 24 Line 5
+Soft scroll up region [1..24] size 24 Line 6
+Soft scroll up region [1..24] size 24 Line 7
+Soft scroll up region [1..24] size 24 Line 8
+Soft scroll up region [1..24] size 24 Line 9
+Soft scroll up region [1..24] size 24 Line 10
+Soft scroll up region [1..24] size 24 Line 11
+Soft scroll up region [1..24] size 24 Line 12
+Soft scroll up region [1..24] size 24 Line 13
+Soft scroll up region [1..24] size 24 Line 14
+Soft scroll up region [1..24] size 24 Line 15
+Soft scroll up region [1..24] size 24 Line 16
+Soft scroll up region [1..24] size 24 Line 17
+Soft scroll up region [1..24] size 24 Line 18
+Soft scroll up region [1..24] size 24 Line 19
+Soft scroll up region [1..24] size 24 Line 20
+Soft scroll up region [1..24] size 24 Line 21
+Soft scroll up region [1..24] size 24 Line 22
+Soft scroll up region [1..24] size 24 Line 23
+Soft scroll up region [1..24] size 24 Line 24
+Soft scroll up region [1..24] size 24 Line 25
+Soft scroll up region [1..24] size 24 Line 26
+Soft scroll up region [1..24] size 24 Line 27
+Soft scroll up region [1..24] size 24 Line 28
+Soft scroll up region [1..24] size 24 Line 29
+[24ASoft scroll down region [1..24] size 24 Line 1
+MMSoft scroll down region [1..24] size 24 Line 2
+MMSoft scroll down region [1..24] size 24 Line 3
+MMSoft scroll down region [1..24] size 24 Line 4
+MMSoft scroll down region [1..24] size 24 Line 5
+MMSoft scroll down region [1..24] size 24 Line 6
+MMSoft scroll down region [1..24] size 24 Line 7
+MMSoft scroll down region [1..24] size 24 Line 8
+MMSoft scroll down region [1..24] size 24 Line 9
+MMSoft scroll down region [1..24] size 24 Line 10
+MMSoft scroll down region [1..24] size 24 Line 11
+MMSoft scroll down region [1..24] size 24 Line 12
+MMSoft scroll down region [1..24] size 24 Line 13
+MMSoft scroll down region [1..24] size 24 Line 14
+MMSoft scroll down region [1..24] size 24 Line 15
+MMSoft scroll down region [1..24] size 24 Line 16
+MMSoft scroll down region [1..24] size 24 Line 17
+MMSoft scroll down region [1..24] size 24 Line 18
+MMSoft scroll down region [1..24] size 24 Line 19
+MMSoft scroll down region [1..24] size 24 Line 20
+MMSoft scroll down region [1..24] size 24 Line 21
+MMSoft scroll down region [1..24] size 24 Line 22
+MMSoft scroll down region [1..24] size 24 Line 23
+MMSoft scroll down region [1..24] size 24 Line 24
+MMSoft scroll down region [1..24] size 24 Line 25
+MMSoft scroll down region [1..24] size 24 Line 26
+MMSoft scroll down region [1..24] size 24 Line 27
+MMSoft scroll down region [1..24] size 24 Line 28
+MMSoft scroll down region [1..24] size 24 Line 29
+MMPush <RETURN>[?4l[12;13r[2J[24BJump scroll up region [12..13] size 2 Line 1
+Jump scroll up region [12..13] size 2 Line 2
+Jump scroll up region [12..13] size 2 Line 3
+Jump scroll up region [12..13] size 2 Line 4
+Jump scroll up region [12..13] size 2 Line 5
+Jump scroll up region [12..13] size 2 Line 6
+Jump scroll up region [12..13] size 2 Line 7
+Jump scroll up region [12..13] size 2 Line 8
+Jump scroll up region [12..13] size 2 Line 9
+Jump scroll up region [12..13] size 2 Line 10
+Jump scroll up region [12..13] size 2 Line 11
+Jump scroll up region [12..13] size 2 Line 12
+Jump scroll up region [12..13] size 2 Line 13
+Jump scroll up region [12..13] size 2 Line 14
+Jump scroll up region [12..13] size 2 Line 15
+Jump scroll up region [12..13] size 2 Line 16
+Jump scroll up region [12..13] size 2 Line 17
+Jump scroll up region [12..13] size 2 Line 18
+Jump scroll up region [12..13] size 2 Line 19
+Jump scroll up region [12..13] size 2 Line 20
+Jump scroll up region [12..13] size 2 Line 21
+Jump scroll up region [12..13] size 2 Line 22
+Jump scroll up region [12..13] size 2 Line 23
+Jump scroll up region [12..13] size 2 Line 24
+Jump scroll up region [12..13] size 2 Line 25
+Jump scroll up region [12..13] size 2 Line 26
+Jump scroll up region [12..13] size 2 Line 27
+Jump scroll up region [12..13] size 2 Line 28
+Jump scroll up region [12..13] size 2 Line 29
+[24AJump scroll down region [12..13] size 2 Line 1
+MMJump scroll down region [12..13] size 2 Line 2
+MMJump scroll down region [12..13] size 2 Line 3
+MMJump scroll down region [12..13] size 2 Line 4
+MMJump scroll down region [12..13] size 2 Line 5
+MMJump scroll down region [12..13] size 2 Line 6
+MMJump scroll down region [12..13] size 2 Line 7
+MMJump scroll down region [12..13] size 2 Line 8
+MMJump scroll down region [12..13] size 2 Line 9
+MMJump scroll down region [12..13] size 2 Line 10
+MMJump scroll down region [12..13] size 2 Line 11
+MMJump scroll down region [12..13] size 2 Line 12
+MMJump scroll down region [12..13] size 2 Line 13
+MMJump scroll down region [12..13] size 2 Line 14
+MMJump scroll down region [12..13] size 2 Line 15
+MMJump scroll down region [12..13] size 2 Line 16
+MMJump scroll down region [12..13] size 2 Line 17
+MMJump scroll down region [12..13] size 2 Line 18
+MMJump scroll down region [12..13] size 2 Line 19
+MMJump scroll down region [12..13] size 2 Line 20
+MMJump scroll down region [12..13] size 2 Line 21
+MMJump scroll down region [12..13] size 2 Line 22
+MMJump scroll down region [12..13] size 2 Line 23
+MMJump scroll down region [12..13] size 2 Line 24
+MMJump scroll down region [12..13] size 2 Line 25
+MMJump scroll down region [12..13] size 2 Line 26
+MMJump scroll down region [12..13] size 2 Line 27
+MMJump scroll down region [12..13] size 2 Line 28
+MMJump scroll down region [12..13] size 2 Line 29
+MMPush <RETURN>[1;24r[2J[24BJump scroll up region [1..24] size 24 Line 1
+Jump scroll up region [1..24] size 24 Line 2
+Jump scroll up region [1..24] size 24 Line 3
+Jump scroll up region [1..24] size 24 Line 4
+Jump scroll up region [1..24] size 24 Line 5
+Jump scroll up region [1..24] size 24 Line 6
+Jump scroll up region [1..24] size 24 Line 7
+Jump scroll up region [1..24] size 24 Line 8
+Jump scroll up region [1..24] size 24 Line 9
+Jump scroll up region [1..24] size 24 Line 10
+Jump scroll up region [1..24] size 24 Line 11
+Jump scroll up region [1..24] size 24 Line 12
+Jump scroll up region [1..24] size 24 Line 13
+Jump scroll up region [1..24] size 24 Line 14
+Jump scroll up region [1..24] size 24 Line 15
+Jump scroll up region [1..24] size 24 Line 16
+Jump scroll up region [1..24] size 24 Line 17
+Jump scroll up region [1..24] size 24 Line 18
+Jump scroll up region [1..24] size 24 Line 19
+Jump scroll up region [1..24] size 24 Line 20
+Jump scroll up region [1..24] size 24 Line 21
+Jump scroll up region [1..24] size 24 Line 22
+Jump scroll up region [1..24] size 24 Line 23
+Jump scroll up region [1..24] size 24 Line 24
+Jump scroll up region [1..24] size 24 Line 25
+Jump scroll up region [1..24] size 24 Line 26
+Jump scroll up region [1..24] size 24 Line 27
+Jump scroll up region [1..24] size 24 Line 28
+Jump scroll up region [1..24] size 24 Line 29
+[24AJump scroll down region [1..24] size 24 Line 1
+MMJump scroll down region [1..24] size 24 Line 2
+MMJump scroll down region [1..24] size 24 Line 3
+MMJump scroll down region [1..24] size 24 Line 4
+MMJump scroll down region [1..24] size 24 Line 5
+MMJump scroll down region [1..24] size 24 Line 6
+MMJump scroll down region [1..24] size 24 Line 7
+MMJump scroll down region [1..24] size 24 Line 8
+MMJump scroll down region [1..24] size 24 Line 9
+MMJump scroll down region [1..24] size 24 Line 10
+MMJump scroll down region [1..24] size 24 Line 11
+MMJump scroll down region [1..24] size 24 Line 12
+MMJump scroll down region [1..24] size 24 Line 13
+MMJump scroll down region [1..24] size 24 Line 14
+MMJump scroll down region [1..24] size 24 Line 15
+MMJump scroll down region [1..24] size 24 Line 16
+MMJump scroll down region [1..24] size 24 Line 17
+MMJump scroll down region [1..24] size 24 Line 18
+MMJump scroll down region [1..24] size 24 Line 19
+MMJump scroll down region [1..24] size 24 Line 20
+MMJump scroll down region [1..24] size 24 Line 21
+MMJump scroll down region [1..24] size 24 Line 22
+MMJump scroll down region [1..24] size 24 Line 23
+MMJump scroll down region [1..24] size 24 Line 24
+MMJump scroll down region [1..24] size 24 Line 25
+MMJump scroll down region [1..24] size 24 Line 26
+MMJump scroll down region [1..24] size 24 Line 27
+MMJump scroll down region [1..24] size 24 Line 28
+MMJump scroll down region [1..24] size 24 Line 29
+MMPush <RETURN>[2J[23;24r
+Origin mode test. This line should be at the bottom of the screen.[1;1HThis line should be the one above the bottom of the screen. Push <RETURN>

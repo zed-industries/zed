@@ -1,0 +1,24 @@
+# Using the same .clang-format as libwebrtc
+# https://github.com/webrtc-sdk/webrtc/blob/m104_release/.clang-format
+BasedOnStyle: Chromium
+---
+Language: Java
+BasedOnStyle: Google
+---
+Language: ObjC
+BasedOnStyle: Google
+BinPackParameters: false
+BinPackArguments: false
+ColumnLimit: 100
+ObjCBlockIndentWidth: 2
+AllowAllParametersOfDeclarationOnNextLine: true
+AlignOperands: false
+AlwaysBreakBeforeMultilineStrings: false
+AllowShortFunctionsOnASingleLine: Inline
+BreakBeforeTernaryOperators: false
+IndentWrappedFunctionNames: true
+ContinuationIndentWidth: 4
+ObjCSpaceBeforeProtocolList: true
+---
+Language: Cpp
+IncludeBlocks: Regroup

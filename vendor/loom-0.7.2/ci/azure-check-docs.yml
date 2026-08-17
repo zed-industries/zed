@@ -1,0 +1,15 @@
+jobs:
+# Check docs
+- job: ${{ parameters.name }}
+  displayName: Check docs
+  pool:
+    vmImage: ubuntu-16.04
+  steps:
+    - template: azure-install-rust.yml
+      parameters:
+        rust_version: ${{ parameters.rust }}
+
+    - script: |
+        RUSTDOCFLAGS="--cfg docsrs" cargo doc --lib --no-deps --all-features
+      displayName: Check docs
+

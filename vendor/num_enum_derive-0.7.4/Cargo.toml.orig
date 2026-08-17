@@ -1,0 +1,41 @@
+[package]
+name = "num_enum_derive"
+version = "0.7.4"  # Keep in sync with num_enum.
+rust-version = "1.70.0"
+authors = [
+  "Daniel Wagner-Hall <dawagner@gmail.com>",
+  "Daniel Henry-Mantilla <daniel.henry.mantilla@gmail.com>",
+  "Vincent Esche <regexident@gmail.com>",
+]
+description = "Internal implementation details for ::num_enum (Procedural macros to make inter-operation between primitives and enums easier)"
+edition = "2021"
+repository = "https://github.com/illicitonion/num_enum"
+keywords = []
+categories = []
+license = "BSD-3-Clause OR MIT OR Apache-2.0"
+
+[lib]
+proc-macro = true
+
+[features]
+# Don't depend on proc-macro-crate in no_std environments because it causes an awkward depndency
+# on serde with std.
+#
+# See https://github.com/illicitonion/num_enum/issues/18
+std = ["proc-macro-crate"]
+complex-expressions = ["syn/full"]
+external_doc = []
+
+default = ["std"]  # disable to use in a `no_std` environment
+
+[package.metadata.docs.rs]
+features = ["external_doc"]
+
+[dependencies]
+proc-macro2 = "1.0.60"
+proc-macro-crate = { version = ">= 1, <= 3", optional = true }
+quote = "1"
+syn = { version = "2", features = ["parsing"] }
+
+[dev-dependencies]
+syn = { version = "2", features = ["extra-traits", "parsing"] }

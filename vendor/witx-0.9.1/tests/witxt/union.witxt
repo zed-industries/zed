@@ -1,0 +1,97 @@
+
+(witx
+  (typename $u (union u8))
+)
+(witx
+  (typename $tag (enum (@witx tag u8) $c))
+  (typename $u (union (@witx tag $tag) u8))
+)
+
+(witx
+  (typename $tag (enum $a $b))
+  (typename $u (variant (@witx tag $tag) (case $a) (case $b u16)))
+)
+
+(witx
+  (typename $tag (enum $a $b))
+  (typename $u (variant (@witx tag $tag) (case $a) (case $b)))
+)
+
+
+(witx
+ (typename $u
+  (union
+   u8
+   u16
+   u32
+   u64
+   s8
+   s16
+   s32
+   s64
+   f32
+   f64
+   (@witx usize)
+   (@witx char8)
+  )
+ )
+)
+
+(assert_invalid
+  (witx (typename $u (union (@witx tag $tag) u8 u16)))
+  "Unknown name `tag`"
+)
+
+(assert_invalid
+  (witx
+    (typename $tag string)
+    (typename $u (union (@witx tag $tag) u8 u16))
+  )
+  "Wrong kind of name `tag`: expected enum or builtin, got list"
+)
+
+(assert_invalid
+  (witx
+    (typename $tag (enum $c))
+    (typename $u (variant (@witx tag $tag) (case $b u8)))
+  )
+  "Invalid union field `b`: does not correspond to variant in tag `tag`"
+)
+
+(assert_invalid
+  (witx
+    (typename $tag (enum $c))
+    (typename $u (union (@witx tag $tag) f32 u8))
+  )
+  "Union expected 1 variants, found 2"
+)
+
+(assert_invalid
+  (witx
+    (typename $tag (enum $c $d))
+    (typename $u (union (@witx tag $tag) f32))
+  )
+  "Union expected 2 variants, found 1"
+)
+
+(witx $d1
+  (typename $tag (enum $a $b))
+  (typename $u (union (@witx tag $tag) u8 u16))
+)
+
+(witx $d2
+  (typename $tag (enum $a $b))
+  (typename $u (variant (@witx tag $tag) (case $b u16) (case $a u8)))
+)
+
+;; These two unions should be represented the same:
+(assert_representable eq $d1 "u" $d2 "u")
+(assert_representable eq $d2 "u" $d1 "u")
+
+;; Tag order doesnt matter for validation, but does for rep equality
+(witx $d3
+  (typename $tag (enum $b $a))
+  (typename $u (union (@witx tag $tag) u16 u8))
+)
+
+(assert_representable noteq $d3 "u" $d1 "u")

@@ -1,0 +1,34 @@
+[package]
+name = "system-deps"
+version = "7.0.7"
+authors = [
+    "Guillaume Desmottes <guillaume.desmottes@collabora.com>",
+    "Josh Triplett <josh@joshtriplett.org>",
+]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/gdesmott/system-deps"
+description = "Discover and configure system dependencies from declarative dependencies in Cargo.toml"
+keywords = [
+    "pkg-config",
+    "build-dependencies",
+    "build-depends",
+    "manifest",
+    "metadata",
+]
+edition = "2018"
+rust-version = "1.78.0"
+documentation = "https://docs.rs/system-deps/"
+readme = "README.md"
+
+[dependencies]
+pkg-config = "0.3.25"
+toml = { version = "0.9", default-features = false, features = ["parse", "std"] }
+version-compare = "0.2"
+heck = "0.5"
+# allow cfg-expr between 0.17 and 0.20 to keep MSRV lower
+cfg-expr = { version = ">= 0.17, < 0.21", features = ["targets"] }
+
+[dev-dependencies]
+lazy_static = "1"
+itertools = "0.14"
+assert_matches = "1.5"

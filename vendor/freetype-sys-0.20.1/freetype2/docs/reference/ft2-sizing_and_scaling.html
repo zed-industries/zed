@@ -1,0 +1,2003 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="API Reference Documentation for FreeType-2.13.2">
+      
+      
+      
+        <meta name="author" content="FreeType Contributors">
+      
+      
+      <link rel="icon" href="images/favico.ico">
+      <meta name="generator" content="mkdocs-1.4.3, mkdocs-material-7.1.9">
+    
+    
+      
+        <title>Sizing and Scaling - FreeType-2.13.2 API Reference</title>
+      
+    
+    
+      <link rel="stylesheet" href="assets/stylesheets/main.ca7ac06f.min.css">
+      
+        
+        <link rel="stylesheet" href="assets/stylesheets/palette.f1a3b89f.min.css">
+        
+          
+          
+          <meta name="theme-color" content="#4cae4f">
+        
+      
+    
+    
+    
+      
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Noto+Serif:300,400,400i,700%7CRoboto+Mono&display=fallback">
+        <style>:root{--md-text-font-family:"Noto Serif";--md-code-font-family:"Roboto Mono"}</style>
+      
+    
+    
+    
+      <link rel="stylesheet" href="stylesheets/extra.css">
+    
+    
+      
+
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <script>function __prefix(e){return new URL(".",location).pathname+"."+e}function __get(e,t=localStorage){return JSON.parse(t.getItem(__prefix(e)))}</script>
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#sizing-and-scaling" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-header__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            FreeType-2.13.2 API Reference
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Sizing and Scaling
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+      </label>
+      
+<div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" data-md-state="active" required>
+      <label class="md-search__icon md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+      </label>
+      <button type="reset" class="md-search__icon md-icon" aria-label="Clear" tabindex="-1">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
+      </button>
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+  </nav>
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-nav__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    FreeType-2.13.2 API Reference
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="index.html" class="md-nav__link">
+        TOC
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-index.html" class="md-nav__link">
+        Index
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_3" type="checkbox" id="__nav_3" >
+      
+      <label class="md-nav__link" for="__nav_3">
+        General Remarks
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="General Remarks" data-md-level="1">
+        <label class="md-nav__title" for="__nav_3">
+          <span class="md-nav__icon md-icon"></span>
+          General Remarks
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-preamble.html" class="md-nav__link">
+        Preamble
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_inclusion.html" class="md-nav__link">
+        FreeType's header inclusion scheme
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-user_allocation.html" class="md-nav__link">
+        User allocation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+    
+  
+  
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_4" type="checkbox" id="__nav_4" checked>
+      
+      <label class="md-nav__link" for="__nav_4">
+        Core API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Core API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_4">
+          <span class="md-nav__icon md-icon"></span>
+          Core API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-basic_types.html" class="md-nav__link">
+        Basic Data Types
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-library_setup.html" class="md-nav__link">
+        Library Setup
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-face_creation.html" class="md-nav__link">
+        Face Creation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_testing_macros.html" class="md-nav__link">
+        Font Testing Macros
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+    
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" data-md-toggle="toc" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          Sizing and Scaling
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="ft2-sizing_and_scaling.html" class="md-nav__link md-nav__link--active">
+        Sizing and Scaling
+      </a>
+      
+        
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_size" class="md-nav__link">
+    FT_Size
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_sizerec" class="md-nav__link">
+    FT_SizeRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_size_metrics" class="md-nav__link">
+    FT_Size_Metrics
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_bitmap_size" class="md-nav__link">
+    FT_Bitmap_Size
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_set_char_size" class="md-nav__link">
+    FT_Set_Char_Size
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_set_pixel_sizes" class="md-nav__link">
+    FT_Set_Pixel_Sizes
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_request_size" class="md-nav__link">
+    FT_Request_Size
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_select_size" class="md-nav__link">
+    FT_Select_Size
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_size_request_type" class="md-nav__link">
+    FT_Size_Request_Type
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_size_requestrec" class="md-nav__link">
+    FT_Size_RequestRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_size_request" class="md-nav__link">
+    FT_Size_Request
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_set_transform" class="md-nav__link">
+    FT_Set_Transform
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_transform" class="md-nav__link">
+    FT_Get_Transform
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_retrieval.html" class="md-nav__link">
+        Glyph Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-character_mapping.html" class="md-nav__link">
+        Character Mapping
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-information_retrieval.html" class="md-nav__link">
+        Information Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-other_api_data.html" class="md-nav__link">
+        Other API Data
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_5" type="checkbox" id="__nav_5" >
+      
+      <label class="md-nav__link" for="__nav_5">
+        Extended API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Extended API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_5">
+          <span class="md-nav__icon md-icon"></span>
+          Extended API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_variants.html" class="md-nav__link">
+        Unicode Variation Sequences
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-color_management.html" class="md-nav__link">
+        Glyph Color Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-layer_management.html" class="md-nav__link">
+        Glyph Layer Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_management.html" class="md-nav__link">
+        Glyph Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-mac_specific.html" class="md-nav__link">
+        Mac Specific Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizes_management.html" class="md-nav__link">
+        Size Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_file_macros.html" class="md-nav__link">
+        Header File Macros
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_6" type="checkbox" id="__nav_6" >
+      
+      <label class="md-nav__link" for="__nav_6">
+        Format-Specific API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Format-Specific API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_6">
+          <span class="md-nav__icon md-icon"></span>
+          Format-Specific API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-multiple_masters.html" class="md-nav__link">
+        Multiple Masters
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_tables.html" class="md-nav__link">
+        TrueType Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-type1_tables.html" class="md-nav__link">
+        Type 1 Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sfnt_names.html" class="md-nav__link">
+        SFNT Names
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bdf_fonts.html" class="md-nav__link">
+        BDF and PCF Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cid_fonts.html" class="md-nav__link">
+        CID Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pfr_fonts.html" class="md-nav__link">
+        PFR Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-winfnt_fonts.html" class="md-nav__link">
+        Window FNT Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-svg_fonts.html" class="md-nav__link">
+        OpenType SVG Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_formats.html" class="md-nav__link">
+        Font Formats
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gasp_table.html" class="md-nav__link">
+        Gasp Table
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_7" type="checkbox" id="__nav_7" >
+      
+      <label class="md-nav__link" for="__nav_7">
+        Controlling FreeType Modules
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Controlling FreeType Modules" data-md-level="1">
+        <label class="md-nav__title" for="__nav_7">
+          <span class="md-nav__icon md-icon"></span>
+          Controlling FreeType Modules
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-auto_hinter.html" class="md-nav__link">
+        The auto-hinter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cff_driver.html" class="md-nav__link">
+        The CFF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-t1_cid_driver.html" class="md-nav__link">
+        The Type 1 and CID drivers
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-tt_driver.html" class="md-nav__link">
+        The TrueType driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pcf_driver.html" class="md-nav__link">
+        The PCF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_svg_driver.html" class="md-nav__link">
+        The SVG driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-properties.html" class="md-nav__link">
+        Driver properties
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-parameter_tags.html" class="md-nav__link">
+        Parameter Tags
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lcd_rendering.html" class="md-nav__link">
+        Subpixel Rendering
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_8" type="checkbox" id="__nav_8" >
+      
+      <label class="md-nav__link" for="__nav_8">
+        Cache Sub-System
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Cache Sub-System" data-md-level="1">
+        <label class="md-nav__title" for="__nav_8">
+          <span class="md-nav__icon md-icon"></span>
+          Cache Sub-System
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cache_subsystem.html" class="md-nav__link">
+        Cache Sub-System
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_9" type="checkbox" id="__nav_9" >
+      
+      <label class="md-nav__link" for="__nav_9">
+        Support API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Support API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_9">
+          <span class="md-nav__icon md-icon"></span>
+          Support API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-computations.html" class="md-nav__link">
+        Computations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-list_processing.html" class="md-nav__link">
+        List Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-outline_processing.html" class="md-nav__link">
+        Outline Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-quick_advance.html" class="md-nav__link">
+        Quick retrieval of advance values
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bitmap_handling.html" class="md-nav__link">
+        Bitmap Handling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-raster.html" class="md-nav__link">
+        Scanline Converter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_stroker.html" class="md-nav__link">
+        Glyph Stroker
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-system_interface.html" class="md-nav__link">
+        System Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-module_management.html" class="md-nav__link">
+        Module Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gzip.html" class="md-nav__link">
+        GZIP Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lzw.html" class="md-nav__link">
+        LZW Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bzip2.html" class="md-nav__link">
+        BZIP2 Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-debugging_apis.html" class="md-nav__link">
+        External Debugging APIs
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_10" type="checkbox" id="__nav_10" >
+      
+      <label class="md-nav__link" for="__nav_10">
+        Error Codes
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Error Codes" data-md-level="1">
+        <label class="md-nav__title" for="__nav_10">
+          <span class="md-nav__icon md-icon"></span>
+          Error Codes
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_enumerations.html" class="md-nav__link">
+        Error Enumerations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_code_values.html" class="md-nav__link">
+        Error Code Values
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_11" type="checkbox" id="__nav_11" >
+      
+      <label class="md-nav__link" for="__nav_11">
+        Miscellaneous
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Miscellaneous" data-md-level="1">
+        <label class="md-nav__title" for="__nav_11">
+          <span class="md-nav__icon md-icon"></span>
+          Miscellaneous
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gx_validation.html" class="md-nav__link">
+        TrueTypeGX/AAT Validation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-incremental.html" class="md-nav__link">
+        Incremental Loading
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_engine.html" class="md-nav__link">
+        The TrueType Engine
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_validation.html" class="md-nav__link">
+        OpenType Validation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_size" class="md-nav__link">
+    FT_Size
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_sizerec" class="md-nav__link">
+    FT_SizeRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_size_metrics" class="md-nav__link">
+    FT_Size_Metrics
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_bitmap_size" class="md-nav__link">
+    FT_Bitmap_Size
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_set_char_size" class="md-nav__link">
+    FT_Set_Char_Size
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_set_pixel_sizes" class="md-nav__link">
+    FT_Set_Pixel_Sizes
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_request_size" class="md-nav__link">
+    FT_Request_Size
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_select_size" class="md-nav__link">
+    FT_Select_Size
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_size_request_type" class="md-nav__link">
+    FT_Size_Request_Type
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_size_requestrec" class="md-nav__link">
+    FT_Size_RequestRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_size_request" class="md-nav__link">
+    FT_Size_Request
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_set_transform" class="md-nav__link">
+    FT_Set_Transform
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_transform" class="md-nav__link">
+    FT_Get_Transform
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          <div class="md-content" data-md-component="content">
+            <article class="md-content__inner md-typeset">
+              
+                
+                
+                <p><a href="https://www.freetype.org">FreeType</a> &raquo; <a href="../">Docs</a> &raquo; <a href="index.html#core-api">Core API</a> &raquo; Sizing and Scaling</p>
+<hr />
+<h1 id="sizing-and-scaling">Sizing and Scaling<a class="headerlink" href="#sizing-and-scaling" title="Permanent link">&para;</a></h1>
+<h2 id="synopsis">Synopsis<a class="headerlink" href="#synopsis" title="Permanent link">&para;</a></h2>
+<p>The functions and structures collected in this section are related to selecting and manipulating the size of a font globally.</p>
+<h2 id="ft_size">FT_Size<a class="headerlink" href="#ft_size" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span> FT_SizeRec_*  <b>FT_Size</b>;
+</code></pre></div>
+
+<p>A handle to an object that models a face scaled to a given character size.</p>
+<h4>note</h4>
+
+<p>An <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code> has one <em>active</em> <code>FT_Size</code> object that is used by functions like <code><a href="ft2-glyph_retrieval.html#ft_load_glyph">FT_Load_Glyph</a></code> to determine the scaling transformation that in turn is used to load and hint glyphs and metrics.</p>
+<p>A newly created <code>FT_Size</code> object contains only meaningless zero values. You must use <code><a href="ft2-sizing_and_scaling.html#ft_set_char_size">FT_Set_Char_Size</a></code>, <code><a href="ft2-sizing_and_scaling.html#ft_set_pixel_sizes">FT_Set_Pixel_Sizes</a></code>, <code><a href="ft2-sizing_and_scaling.html#ft_request_size">FT_Request_Size</a></code> or even <code><a href="ft2-sizing_and_scaling.html#ft_select_size">FT_Select_Size</a></code> to change the content (i.e., the scaling values) of the active <code>FT_Size</code>. Otherwise, the scaling and hinting will not be performed.</p>
+<p>You can use <code><a href="ft2-sizes_management.html#ft_new_size">FT_New_Size</a></code> to create additional size objects for a given <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code>, but they won't be used by other functions until you activate it through <code><a href="ft2-sizes_management.html#ft_activate_size">FT_Activate_Size</a></code>. Only one size can be activated at any given time per face.</p>
+<h4>also</h4>
+
+<p>See <code><a href="ft2-sizing_and_scaling.html#ft_sizerec">FT_SizeRec</a></code> for the publicly accessible fields of a given size object.</p>
+<hr>
+
+<h2 id="ft_sizerec">FT_SizeRec<a class="headerlink" href="#ft_sizerec" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_SizeRec_
+  {
+    <a href="ft2-face_creation.html#ft_face">FT_Face</a>           face;      /* parent face object              */
+    <a href="ft2-basic_types.html#ft_generic">FT_Generic</a>        generic;   /* generic pointer for client uses */
+    <a href="ft2-sizing_and_scaling.html#ft_size_metrics">FT_Size_Metrics</a>   metrics;   /* size metrics                    */
+    <a href="ft2-other_api_data.html#ft_size_internal">FT_Size_Internal</a>  internal;
+
+  } <b>FT_SizeRec</b>;
+</code></pre></div>
+
+<p>FreeType root size class structure. A size object models a face object at a given size.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>Handle to the parent face object.</p>
+</td></tr>
+<tr><td class="val" id="generic">generic</td><td class="desc">
+<p>A typeless pointer, unused by the FreeType library or any of its drivers. It can be used by client applications to link their own data to each size object.</p>
+</td></tr>
+<tr><td class="val" id="metrics">metrics</td><td class="desc">
+<p>Metrics for this size object. This field is read-only.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_size_metrics">FT_Size_Metrics<a class="headerlink" href="#ft_size_metrics" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_Size_Metrics_
+  {
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  x_ppem;      /* horizontal pixels per EM               */
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  y_ppem;      /* vertical pixels per EM                 */
+
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>   x_scale;     /* scaling values used to convert font    */
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>   y_scale;     /* units to 26.6 fractional pixels        */
+
+    <a href="ft2-basic_types.html#ft_pos">FT_Pos</a>     ascender;    /* ascender in 26.6 frac. pixels          */
+    <a href="ft2-basic_types.html#ft_pos">FT_Pos</a>     descender;   /* descender in 26.6 frac. pixels         */
+    <a href="ft2-basic_types.html#ft_pos">FT_Pos</a>     height;      /* text height in 26.6 frac. pixels       */
+    <a href="ft2-basic_types.html#ft_pos">FT_Pos</a>     max_advance; /* max horizontal advance, in 26.6 pixels */
+
+  } <b>FT_Size_Metrics</b>;
+</code></pre></div>
+
+<p>The size metrics structure gives the metrics of a size object.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="x_ppem">x_ppem</td><td class="desc">
+<p>The width of the scaled EM square in pixels, hence the term &lsquo;ppem&rsquo; (pixels per EM). It is also referred to as &lsquo;nominal width&rsquo;.</p>
+</td></tr>
+<tr><td class="val" id="y_ppem">y_ppem</td><td class="desc">
+<p>The height of the scaled EM square in pixels, hence the term &lsquo;ppem&rsquo; (pixels per EM). It is also referred to as &lsquo;nominal height&rsquo;.</p>
+</td></tr>
+<tr><td class="val" id="x_scale">x_scale</td><td class="desc">
+<p>A 16.16 fractional scaling value to convert horizontal metrics from font units to 26.6 fractional pixels. Only relevant for scalable font formats.</p>
+</td></tr>
+<tr><td class="val" id="y_scale">y_scale</td><td class="desc">
+<p>A 16.16 fractional scaling value to convert vertical metrics from font units to 26.6 fractional pixels. Only relevant for scalable font formats.</p>
+</td></tr>
+<tr><td class="val" id="ascender">ascender</td><td class="desc">
+<p>The ascender in 26.6 fractional pixels, rounded up to an integer value. See <code><a href="ft2-face_creation.html#ft_facerec">FT_FaceRec</a></code> for the details.</p>
+</td></tr>
+<tr><td class="val" id="descender">descender</td><td class="desc">
+<p>The descender in 26.6 fractional pixels, rounded down to an integer value. See <code><a href="ft2-face_creation.html#ft_facerec">FT_FaceRec</a></code> for the details.</p>
+</td></tr>
+<tr><td class="val" id="height">height</td><td class="desc">
+<p>The height in 26.6 fractional pixels, rounded to an integer value. See <code><a href="ft2-face_creation.html#ft_facerec">FT_FaceRec</a></code> for the details.</p>
+</td></tr>
+<tr><td class="val" id="max_advance">max_advance</td><td class="desc">
+<p>The maximum advance width in 26.6 fractional pixels, rounded to an integer value. See <code><a href="ft2-face_creation.html#ft_facerec">FT_FaceRec</a></code> for the details.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>The scaling values, if relevant, are determined first during a size changing operation. The remaining fields are then set by the driver. For scalable formats, they are usually set to scaled values of the corresponding fields in <code><a href="ft2-face_creation.html#ft_facerec">FT_FaceRec</a></code>. Some values like ascender or descender are rounded for historical reasons; more precise values (for outline fonts) can be derived by scaling the corresponding <code><a href="ft2-face_creation.html#ft_facerec">FT_FaceRec</a></code> values manually, with code similar to the following.
+<div class="highlight"><pre><span></span><code>  scaled_ascender = FT_MulFix( face-&gt;ascender,
+                               size_metrics-&gt;y_scale );
+</code></pre></div></p>
+<p>Note that due to glyph hinting and the selected rendering mode these values are usually not exact; consequently, they must be treated as unreliable with an error margin of at least one pixel!</p>
+<p>Indeed, the only way to get the exact metrics is to render <em>all</em> glyphs. As this would be a definite performance hit, it is up to client applications to perform such computations.</p>
+<p>The <code>FT_Size_Metrics</code> structure is valid for bitmap fonts also.</p>
+<p><strong>TrueType fonts with native bytecode hinting</strong></p>
+<p>All applications that handle TrueType fonts with native hinting must be aware that TTFs expect different rounding of vertical font dimensions. The application has to cater for this, especially if it wants to rely on a TTF's vertical data (for example, to properly align box characters vertically).</p>
+<p>Only the application knows <em>in advance</em> that it is going to use native hinting for TTFs! FreeType, on the other hand, selects the hinting mode not at the time of creating an <code><a href="ft2-sizing_and_scaling.html#ft_size">FT_Size</a></code> object but much later, namely while calling <code><a href="ft2-glyph_retrieval.html#ft_load_glyph">FT_Load_Glyph</a></code>.</p>
+<p>Here is some pseudo code that illustrates a possible solution.
+<div class="highlight"><pre><span></span><code>  font_format = FT_Get_Font_Format( face );
+
+  if ( !strcmp( font_format, &quot;TrueType&quot; ) &amp;&amp;
+       do_native_bytecode_hinting         )
+  {
+    ascender  = ROUND( FT_MulFix( face-&gt;ascender,
+                                  size_metrics-&gt;y_scale ) );
+    descender = ROUND( FT_MulFix( face-&gt;descender,
+                                  size_metrics-&gt;y_scale ) );
+  }
+  else
+  {
+    ascender  = size_metrics-&gt;ascender;
+    descender = size_metrics-&gt;descender;
+  }
+
+  height      = size_metrics-&gt;height;
+  max_advance = size_metrics-&gt;max_advance;
+</code></pre></div></p>
+<hr>
+
+<h2 id="ft_bitmap_size">FT_Bitmap_Size<a class="headerlink" href="#ft_bitmap_size" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_Bitmap_Size_
+  {
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>  height;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>  width;
+
+    <a href="ft2-basic_types.html#ft_pos">FT_Pos</a>    size;
+
+    <a href="ft2-basic_types.html#ft_pos">FT_Pos</a>    x_ppem;
+    <a href="ft2-basic_types.html#ft_pos">FT_Pos</a>    y_ppem;
+
+  } <b>FT_Bitmap_Size</b>;
+</code></pre></div>
+
+<p>This structure models the metrics of a bitmap strike (i.e., a set of glyphs for a given point size and resolution) in a bitmap font. It is used for the <code>available_sizes</code> field of <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code>.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="height">height</td><td class="desc">
+<p>The vertical distance, in pixels, between two consecutive baselines. It is always positive.</p>
+</td></tr>
+<tr><td class="val" id="width">width</td><td class="desc">
+<p>The average width, in pixels, of all glyphs in the strike.</p>
+</td></tr>
+<tr><td class="val" id="size">size</td><td class="desc">
+<p>The nominal size of the strike in 26.6 fractional points. This field is not very useful.</p>
+</td></tr>
+<tr><td class="val" id="x_ppem">x_ppem</td><td class="desc">
+<p>The horizontal ppem (nominal width) in 26.6 fractional pixels.</p>
+</td></tr>
+<tr><td class="val" id="y_ppem">y_ppem</td><td class="desc">
+<p>The vertical ppem (nominal height) in 26.6 fractional pixels.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>Windows FNT: The nominal size given in a FNT font is not reliable. If the driver finds it incorrect, it sets <code>size</code> to some calculated values, and <code>x_ppem</code> and <code>y_ppem</code> to the pixel width and height given in the font, respectively.</p>
+<p>TrueType embedded bitmaps: <code>size</code>, <code>width</code>, and <code>height</code> values are not contained in the bitmap strike itself. They are computed from the global font parameters.</p>
+<hr>
+
+<h2 id="ft_set_char_size">FT_Set_Char_Size<a class="headerlink" href="#ft_set_char_size" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Set_Char_Size</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>     face,
+                    <a href="ft2-basic_types.html#ft_f26dot6">FT_F26Dot6</a>  char_width,
+                    <a href="ft2-basic_types.html#ft_f26dot6">FT_F26Dot6</a>  char_height,
+                    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>     horz_resolution,
+                    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>     vert_resolution );
+</code></pre></div>
+
+<p>Call <code><a href="ft2-sizing_and_scaling.html#ft_request_size">FT_Request_Size</a></code> to request the nominal size (in points).</p>
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to a target face object.</p>
+</td></tr>
+</table>
+
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="char_width">char_width</td><td class="desc">
+<p>The nominal width, in 26.6 fractional points.</p>
+</td></tr>
+<tr><td class="val" id="char_height">char_height</td><td class="desc">
+<p>The nominal height, in 26.6 fractional points.</p>
+</td></tr>
+<tr><td class="val" id="horz_resolution">horz_resolution</td><td class="desc">
+<p>The horizontal resolution in dpi.</p>
+</td></tr>
+<tr><td class="val" id="vert_resolution">vert_resolution</td><td class="desc">
+<p>The vertical resolution in dpi.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>While this function allows fractional points as input values, the resulting ppem value for the given resolution is always rounded to the nearest integer.</p>
+<p>If either the character width or height is zero, it is set equal to the other value.</p>
+<p>If either the horizontal or vertical resolution is zero, it is set equal to the other value.</p>
+<p>A character width or height smaller than 1pt is set to 1pt; if both resolution values are zero, they are set to 72dpi.</p>
+<p>Don't use this function if you are using the FreeType cache API.</p>
+<hr>
+
+<h2 id="ft_set_pixel_sizes">FT_Set_Pixel_Sizes<a class="headerlink" href="#ft_set_pixel_sizes" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Set_Pixel_Sizes</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>  face,
+                      <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>  pixel_width,
+                      <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>  pixel_height );
+</code></pre></div>
+
+<p>Call <code><a href="ft2-sizing_and_scaling.html#ft_request_size">FT_Request_Size</a></code> to request the nominal size (in pixels).</p>
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the target face object.</p>
+</td></tr>
+</table>
+
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="pixel_width">pixel_width</td><td class="desc">
+<p>The nominal width, in pixels.</p>
+</td></tr>
+<tr><td class="val" id="pixel_height">pixel_height</td><td class="desc">
+<p>The nominal height, in pixels.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>You should not rely on the resulting glyphs matching or being constrained to this pixel size. Refer to <code><a href="ft2-sizing_and_scaling.html#ft_request_size">FT_Request_Size</a></code> to understand how requested sizes relate to actual sizes.</p>
+<p>Don't use this function if you are using the FreeType cache API.</p>
+<hr>
+
+<h2 id="ft_request_size">FT_Request_Size<a class="headerlink" href="#ft_request_size" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Request_Size</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>          face,
+                   <a href="ft2-sizing_and_scaling.html#ft_size_request">FT_Size_Request</a>  req );
+</code></pre></div>
+
+<p>Resize the scale of the active <code><a href="ft2-sizing_and_scaling.html#ft_size">FT_Size</a></code> object in a face.</p>
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to a target face object.</p>
+</td></tr>
+</table>
+
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="req">req</td><td class="desc">
+<p>A pointer to a <code><a href="ft2-sizing_and_scaling.html#ft_size_requestrec">FT_Size_RequestRec</a></code>.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>Although drivers may select the bitmap strike matching the request, you should not rely on this if you intend to select a particular bitmap strike. Use <code><a href="ft2-sizing_and_scaling.html#ft_select_size">FT_Select_Size</a></code> instead in that case.</p>
+<p>The relation between the requested size and the resulting glyph size is dependent entirely on how the size is defined in the source face. The font designer chooses the final size of each glyph relative to this size. For more information refer to &lsquo;<a href="https://www.freetype.org/freetype2/docs/glyphs/glyphs-2.html">https://www.freetype.org/freetype2/docs/glyphs/glyphs-2.html</a>&rsquo;.</p>
+<p>Contrary to <code><a href="ft2-sizing_and_scaling.html#ft_set_char_size">FT_Set_Char_Size</a></code>, this function doesn't have special code to normalize zero-valued widths, heights, or resolutions, which are treated as <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_NO_SCALE</a></code>.</p>
+<p>Don't use this function if you are using the FreeType cache API.</p>
+<hr>
+
+<h2 id="ft_select_size">FT_Select_Size<a class="headerlink" href="#ft_select_size" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Select_Size</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>  face,
+                  <a href="ft2-basic_types.html#ft_int">FT_Int</a>   strike_index );
+</code></pre></div>
+
+<p>Select a bitmap strike. To be more precise, this function sets the scaling factors of the active <code><a href="ft2-sizing_and_scaling.html#ft_size">FT_Size</a></code> object in a face so that bitmaps from this particular strike are taken by <code><a href="ft2-glyph_retrieval.html#ft_load_glyph">FT_Load_Glyph</a></code> and friends.</p>
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to a target face object.</p>
+</td></tr>
+</table>
+
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="strike_index">strike_index</td><td class="desc">
+<p>The index of the bitmap strike in the <code>available_sizes</code> field of <code><a href="ft2-face_creation.html#ft_facerec">FT_FaceRec</a></code> structure.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>For bitmaps embedded in outline fonts it is common that only a subset of the available glyphs at a given ppem value is available. FreeType silently uses outlines if there is no bitmap for a given glyph index.</p>
+<p>For GX and OpenType variation fonts, a bitmap strike makes sense only if the default instance is active (that is, no glyph variation takes place); otherwise, FreeType simply ignores bitmap strikes. The same is true for all named instances that are different from the default instance.</p>
+<p>Don't use this function if you are using the FreeType cache API.</p>
+<hr>
+
+<h2 id="ft_size_request_type">FT_Size_Request_Type<a class="headerlink" href="#ft_size_request_type" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">enum</span>  FT_Size_Request_Type_
+  {
+    <a href="ft2-sizing_and_scaling.html#ft_size_request_type_nominal">FT_SIZE_REQUEST_TYPE_NOMINAL</a>,
+    <a href="ft2-sizing_and_scaling.html#ft_size_request_type_real_dim">FT_SIZE_REQUEST_TYPE_REAL_DIM</a>,
+    <a href="ft2-sizing_and_scaling.html#ft_size_request_type_bbox">FT_SIZE_REQUEST_TYPE_BBOX</a>,
+    <a href="ft2-sizing_and_scaling.html#ft_size_request_type_cell">FT_SIZE_REQUEST_TYPE_CELL</a>,
+    <a href="ft2-sizing_and_scaling.html#ft_size_request_type_scales">FT_SIZE_REQUEST_TYPE_SCALES</a>,
+
+    FT_SIZE_REQUEST_TYPE_MAX
+
+  } <b>FT_Size_Request_Type</b>;
+</code></pre></div>
+
+<p>An enumeration type that lists the supported size request types, i.e., what input size (in font units) maps to the requested output size (in pixels, as computed from the arguments of <code><a href="ft2-sizing_and_scaling.html#ft_size_request">FT_Size_Request</a></code>).</p>
+<h4>values</h4>
+<table class="fields long">
+<tr><td class="val" id="ft_size_request_type_nominal">FT_SIZE_REQUEST_TYPE_NOMINAL</td><td class="desc">
+<p>The nominal size. The <code>units_per_EM</code> field of <code><a href="ft2-face_creation.html#ft_facerec">FT_FaceRec</a></code> is used to determine both scaling values.</p>
+<p>This is the standard scaling found in most applications. In particular, use this size request type for TrueType fonts if they provide optical scaling or something similar. Note, however, that <code>units_per_EM</code> is a rather abstract value which bears no relation to the actual size of the glyphs in a font.</p>
+</td></tr>
+<tr><td class="val" id="ft_size_request_type_real_dim">FT_SIZE_REQUEST_TYPE_REAL_DIM</td><td class="desc">
+<p>The real dimension. The sum of the <code>ascender</code> and (minus of) the <code>descender</code> fields of <code><a href="ft2-face_creation.html#ft_facerec">FT_FaceRec</a></code> is used to determine both scaling values.</p>
+</td></tr>
+<tr><td class="val" id="ft_size_request_type_bbox">FT_SIZE_REQUEST_TYPE_BBOX</td><td class="desc">
+<p>The font bounding box. The width and height of the <code>bbox</code> field of <code><a href="ft2-face_creation.html#ft_facerec">FT_FaceRec</a></code> are used to determine the horizontal and vertical scaling value, respectively.</p>
+</td></tr>
+<tr><td class="val" id="ft_size_request_type_cell">FT_SIZE_REQUEST_TYPE_CELL</td><td class="desc">
+<p>The <code>max_advance_width</code> field of <code><a href="ft2-face_creation.html#ft_facerec">FT_FaceRec</a></code> is used to determine the horizontal scaling value; the vertical scaling value is determined the same way as <code><a href="ft2-sizing_and_scaling.html#ft_size_request_type">FT_SIZE_REQUEST_TYPE_REAL_DIM</a></code> does. Finally, both scaling values are set to the smaller one. This type is useful if you want to specify the font size for, say, a window of a given dimension and 80x24 cells.</p>
+</td></tr>
+<tr><td class="val" id="ft_size_request_type_scales">FT_SIZE_REQUEST_TYPE_SCALES</td><td class="desc">
+<p>Specify the scaling values directly.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>The above descriptions only apply to scalable formats. For bitmap formats, the behaviour is up to the driver.</p>
+<p>See the note section of <code><a href="ft2-sizing_and_scaling.html#ft_size_metrics">FT_Size_Metrics</a></code> if you wonder how size requesting relates to scaling values.</p>
+<hr>
+
+<h2 id="ft_size_requestrec">FT_Size_RequestRec<a class="headerlink" href="#ft_size_requestrec" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_Size_RequestRec_
+  {
+    <a href="ft2-sizing_and_scaling.html#ft_size_request_type">FT_Size_Request_Type</a>  type;
+    <a href="ft2-basic_types.html#ft_long">FT_Long</a>               width;
+    <a href="ft2-basic_types.html#ft_long">FT_Long</a>               height;
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>               horiResolution;
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>               vertResolution;
+
+  } <b>FT_Size_RequestRec</b>;
+</code></pre></div>
+
+<p>A structure to model a size request.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="type">type</td><td class="desc">
+<p>See <code><a href="ft2-sizing_and_scaling.html#ft_size_request_type">FT_Size_Request_Type</a></code>.</p>
+</td></tr>
+<tr><td class="val" id="width">width</td><td class="desc">
+<p>The desired width, given as a 26.6 fractional point value (with 72pt = 1in).</p>
+</td></tr>
+<tr><td class="val" id="height">height</td><td class="desc">
+<p>The desired height, given as a 26.6 fractional point value (with 72pt = 1in).</p>
+</td></tr>
+<tr><td class="val" id="horiresolution">horiResolution</td><td class="desc">
+<p>The horizontal resolution (dpi, i.e., pixels per inch). If set to zero, <code>width</code> is treated as a 26.6 fractional <strong>pixel</strong> value, which gets internally rounded to an integer.</p>
+</td></tr>
+<tr><td class="val" id="vertresolution">vertResolution</td><td class="desc">
+<p>The vertical resolution (dpi, i.e., pixels per inch). If set to zero, <code>height</code> is treated as a 26.6 fractional <strong>pixel</strong> value, which gets internally rounded to an integer.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>If <code>width</code> is zero, the horizontal scaling value is set equal to the vertical scaling value, and vice versa.</p>
+<p>If <code>type</code> is <code>FT_SIZE_REQUEST_TYPE_SCALES</code>, <code>width</code> and <code>height</code> are interpreted directly as 16.16 fractional scaling values, without any further modification, and both <code>horiResolution</code> and <code>vertResolution</code> are ignored.</p>
+<hr>
+
+<h2 id="ft_size_request">FT_Size_Request<a class="headerlink" href="#ft_size_request" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span> FT_Size_RequestRec_  *<b>FT_Size_Request</b>;
+</code></pre></div>
+
+<p>A handle to a size request structure.</p>
+<hr>
+
+<h2 id="ft_set_transform">FT_Set_Transform<a class="headerlink" href="#ft_set_transform" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <span class="keyword">void</span> )
+  <b>FT_Set_Transform</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>     face,
+                    <a href="ft2-basic_types.html#ft_matrix">FT_Matrix</a>*  matrix,
+                    <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>*  delta );
+</code></pre></div>
+
+<p>Set the transformation that is applied to glyph images when they are loaded into a glyph slot through <code><a href="ft2-glyph_retrieval.html#ft_load_glyph">FT_Load_Glyph</a></code>.</p>
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the source face object.</p>
+</td></tr>
+</table>
+
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="matrix">matrix</td><td class="desc">
+<p>A pointer to the transformation's 2x2 matrix. Use <code>NULL</code> for the identity matrix.</p>
+</td></tr>
+<tr><td class="val" id="delta">delta</td><td class="desc">
+<p>A pointer to the translation vector. Use <code>NULL</code> for the null vector.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>This function is provided as a convenience, but keep in mind that <code><a href="ft2-basic_types.html#ft_matrix">FT_Matrix</a></code> coefficients are only 16.16 fixed-point values, which can limit the accuracy of the results. Using floating-point computations to perform the transform directly in client code instead will always yield better numbers.</p>
+<p>The transformation is only applied to scalable image formats after the glyph has been loaded. It means that hinting is unaltered by the transformation and is performed on the character size given in the last call to <code><a href="ft2-sizing_and_scaling.html#ft_set_char_size">FT_Set_Char_Size</a></code> or <code><a href="ft2-sizing_and_scaling.html#ft_set_pixel_sizes">FT_Set_Pixel_Sizes</a></code>.</p>
+<p>Note that this also transforms the <code>face.glyph.advance</code> field, but <strong>not</strong> the values in <code>face.glyph.metrics</code>.</p>
+<hr>
+
+<h2 id="ft_get_transform">FT_Get_Transform<a class="headerlink" href="#ft_get_transform" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <span class="keyword">void</span> )
+  <b>FT_Get_Transform</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>     face,
+                    <a href="ft2-basic_types.html#ft_matrix">FT_Matrix</a>*  matrix,
+                    <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>*  delta );
+</code></pre></div>
+
+<p>Return the transformation that is applied to glyph images when they are loaded into a glyph slot through <code><a href="ft2-glyph_retrieval.html#ft_load_glyph">FT_Load_Glyph</a></code>. See <code><a href="ft2-sizing_and_scaling.html#ft_set_transform">FT_Set_Transform</a></code> for more details.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the source face object.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="matrix">matrix</td><td class="desc">
+<p>A pointer to a transformation's 2x2 matrix. Set this to NULL if you are not interested in the value.</p>
+</td></tr>
+<tr><td class="val" id="delta">delta</td><td class="desc">
+<p>A pointer to a translation vector. Set this to NULL if you are not interested in the value.</p>
+</td></tr>
+</table>
+
+<h4>since</h4>
+
+<p>2.11</p>
+<hr>
+                
+              
+              
+                
+
+
+              
+            </article>
+          </div>
+        </div>
+        
+      </main>
+      
+        
+<footer class="md-footer">
+  
+    <nav class="md-footer__inner md-grid" aria-label="Footer">
+      
+        
+        <a href="ft2-font_testing_macros.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: Font Testing Macros" rel="prev">
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+          </div>
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              Font Testing Macros
+            </div>
+          </div>
+        </a>
+      
+      
+        
+        <a href="ft2-glyph_retrieval.html" class="md-footer__link md-footer__link--next" aria-label="Next: Glyph Retrieval" rel="next">
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              Glyph Retrieval
+            </div>
+          </div>
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11H4z"/></svg>
+          </div>
+        </a>
+      
+    </nav>
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-footer-copyright">
+        
+          <div class="md-footer-copyright__highlight">
+            Copyright 2023 <a href = "https://www.freetype.org/license.html">The FreeType Project</a>.
+          </div>
+        
+        Made with
+        <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+          Material for MkDocs
+        </a>
+        
+      </div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    <script id="__config" type="application/json">{"base": ".", "features": [], "search": "assets/javascripts/workers/search.477d984a.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.config.lang": "en", "search.config.pipeline": "trimmer, stopWordFilter", "search.config.separator": "[\\s\\-]+", "search.placeholder": "Search", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version.title": "Select version"}, "version": null}</script>
+    
+    
+      <script src="assets/javascripts/bundle.82b56eb2.min.js"></script>
+      
+        <script src="javascripts/extra.js"></script>
+      
+    
+  </body>
+</html>

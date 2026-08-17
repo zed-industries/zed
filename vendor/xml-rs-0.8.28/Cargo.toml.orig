@@ -1,0 +1,34 @@
+[package]
+name = "xml-rs"
+version = "0.8.28"
+authors = ["Vladimir Matveev <vmatveev@citrine.cc>"]
+license = "MIT"
+description = "An XML library in pure Rust"
+repository = "https://github.com/kornelski/xml-rs"
+homepage = "https://lib.rs/crates/xml"
+documentation = "https://docs.rs/xml/"
+readme = "README.md"
+keywords = ["xml", "parser", "sax", "parsing", "writer"]
+categories = ["parser-implementations"]
+edition = "2021"
+rust-version = "1.70"
+include = ["src/**", "LICENSE", "README.md"]
+
+[lib]
+name = "xml"
+path = "src/lib.rs"
+
+[[bin]]
+name = "xml-analyze"
+path = "src/analyze.rs"
+
+[badges]
+maintenance = { status = "actively-developed" }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+rustdoc-args = ["--generate-link-to-definition"]
+
+[package.metadata.release]
+tag-name = "{{version}}"
+tag-message = ""

@@ -1,0 +1,29 @@
+---
+- name: Block Submapping
+  from: https://github.com/ingydotnet/yaml-pegex-pm/blob/master/test/mapping.tml
+  tags: mapping
+  yaml: |
+    foo:
+      bar: 1
+    baz: 2
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :foo
+       +MAP
+        =VAL :bar
+        =VAL :1
+       -MAP
+       =VAL :baz
+       =VAL :2
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "foo": {
+        "bar": 1
+      },
+      "baz": 2
+    }

@@ -1,0 +1,11 @@
+error: unsupported &mut [T] element type: opaque C++ type is not supported yet
+ --> tests/ui/slice_unsupported.rs:6:17
+  |
+6 |         fn f(_: &mut [Opaque]);
+  |                 ^^^^^^^^^^^^^
+
+error: needs a cxx::ExternType impl in order to be used as a slice element in &mut [Opaque]
+ --> tests/ui/slice_unsupported.rs:4:9
+  |
+4 |         type Opaque;
+  |         ^^^^^^^^^^^

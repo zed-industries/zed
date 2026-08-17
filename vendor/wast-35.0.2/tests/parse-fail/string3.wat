@@ -1,0 +1,3 @@
+(module
+  (import "\0"))
+

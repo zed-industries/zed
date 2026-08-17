@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<draft href="OES_fbo_render_mipmap/">
+  <name>OES_fbo_render_mipmap</name>
+
+  <contact> <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL
+  working group</a> (public_webgl 'at' khronos.org) </contact>
+
+  <contributors>
+    <contributor>Florian Boesch (pyalot 'at' gmail.com)</contributor>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+
+  <number>28</number>
+
+  <depends>
+    <api version="1.0"/>
+    <core version="2.0" />
+  </depends>
+
+  <overview>
+    <mirrors href="https://www.khronos.org/registry/gles/extensions/OES/OES_fbo_render_mipmap.txt"
+             name="OES_fbo_render_mipmap">
+    </mirrors>
+
+    <features>
+      <feature>
+        Any level of a texture can be attached to a framebuffer object.
+      </feature>
+    </features>
+  </overview>
+
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface OES_fbo_render_mipmap {
+};
+  </idl>
+
+  <samplecode xml:space="preserve">
+    <pre>
+        var extension = gl.getExtension('OES_fbo_render_mipmap');
+        if(extension !=== null){
+            var texture = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            var fbos = [];
+            
+            for(var level=0; level&lt;7; level++){
+                var size = 128/Math.pow(2, level);
+                gl.texImage2D(gl.TEXTURE_2D, level, gl.RGBA, size, size, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+                var fbo = gl.createFramebuffer();
+                gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+                gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, level);
+                fbos.push(fbo);
+                
+                var fboStatus = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+                console.assert(fboStatus == gl.FRAMEBUFFER_COMPLETE, 'Framebuffer is not complete');
+            }
+
+            gl.bindTexture(gl.TEXTURE_2D, null);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+            console.assert(gl.getError() == gl.NO_ERROR, 'A GL error occured');
+        }
+    </pre>
+  </samplecode>
+
+  <history>
+    <revision date="2015/01/26">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2015/01/31">
+      <change>Moved to draft.</change>
+    </revision>
+  </history>
+</draft>

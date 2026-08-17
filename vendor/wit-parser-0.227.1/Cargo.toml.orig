@@ -1,0 +1,56 @@
+[package]
+name = "wit-parser"
+authors = ["Alex Crichton <alex@alexcrichton.com>"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+readme = "README.md"
+repository = "https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wit-parser"
+homepage = "https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wit-parser"
+documentation = "https://docs.rs/wit-parser"
+description = """
+Tooling for parsing `*.wit` files and working with their contents.
+"""
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+id-arena = { workspace = true }
+indexmap = { workspace = true, features = ['std'] }
+log = { workspace = true }
+semver = { workspace = true }
+serde = { workspace = true, optional = true }
+serde_derive = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+unicode-xid = "0.2.2"
+wasmparser = { workspace = true, optional = true, features = ['std', 'validate', 'component-model', 'features'] }
+wat = { workspace = true, optional = true, features = ['component-model'] }
+
+[features]
+default = ['serde', 'decoding']
+
+# Enables support for `derive(Serialize, Deserialize)` on many structures, such
+# as `Resolve`, which can assist when encoding `Resolve` as JSON for example.
+serde = ['dep:serde', 'dep:serde_derive', 'indexmap/serde', 'serde_json']
+
+# Enables support for decoding WIT from WebAssembly. This can be done to support
+# decoding a WIT package encoded as wasm automatically.
+decoding = ['dep:wasmparser']
+
+# Enables support for parsing the wasm text format in conjunction with the
+# `decoding` feature.
+wat = ['decoding', 'dep:wat']
+
+[dev-dependencies]
+env_logger = { workspace = true }
+libtest-mimic = { workspace = true }
+pretty_assertions = { workspace = true }
+serde_json = { workspace = true }
+wit-parser = { path = '.', features = ['serde', 'wat'] }
+
+[[test]]
+name = "all"
+harness = false

@@ -1,0 +1,26 @@
+[package]
+name = "cranelift-codegen-meta"
+authors = ["The Cranelift Project Developers"]
+version = "0.123.12"
+description = "Metaprogram for cranelift-codegen code generator library"
+license = "Apache-2.0 WITH LLVM-exception"
+repository = "https://github.com/bytecodealliance/wasmtime"
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--document-private-items"]
+
+[dependencies]
+cranelift-srcgen = { workspace = true }
+cranelift-assembler-x64-meta = { path = "../../assembler-x64/meta", version = "0.123.12" }
+cranelift-codegen-shared = { path = "../shared", version = "0.123.12" }
+pulley-interpreter = { workspace = true, optional = true }
+heck = "0.5.0"
+
+[features]
+pulley = ['dep:pulley-interpreter']

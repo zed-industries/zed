@@ -1,0 +1,30 @@
+[package]
+name = "base64ct"
+version = "1.8.0"
+description = """
+Pure Rust implementation of Base64 (RFC 4648) which avoids any usages of
+data-dependent branches/LUTs and thereby provides portable "best effort"
+constant-time operation and embedded-friendly no_std support
+"""
+authors = ["RustCrypto Developers"]
+license = "Apache-2.0 OR MIT"
+documentation = "https://docs.rs/base64ct"
+homepage = "https://github.com/RustCrypto/formats/tree/master/base64ct"
+repository = "https://github.com/RustCrypto/formats"
+categories = ["cryptography", "encoding", "no-std", "parser-implementations"]
+keywords = ["crypto", "base64", "pem", "phc"]
+readme = "README.md"
+edition = "2024"
+rust-version = "1.85"
+
+[dev-dependencies]
+base64 = "0.22"
+proptest = { version = "1.6", default-features = false, features = ["std"] }
+
+[features]
+alloc = []
+std = ["alloc"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

@@ -1,0 +1,19 @@
+install:
+  - appveyor DownloadFile https://win.rustup.rs/ -FileName rustup-init.exe
+  - rustup-init -yv --default-toolchain nightly
+  - set PATH=%PATH%;%USERPROFILE%\.cargo\bin
+  - rustc -V
+  - cargo -V
+  - git submodule update --init --recursive
+
+build: false
+
+environment:
+    RUST_BACKTRACE: full
+
+test_script:
+  - cargo build --verbose --all
+  - cargo doc   --verbose --all --no-deps
+
+  - cargo test  --verbose --all
+  - cargo test  --verbose --all --features serde

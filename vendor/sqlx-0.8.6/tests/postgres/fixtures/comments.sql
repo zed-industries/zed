@@ -1,0 +1,16 @@
+insert into comment(comment_id, post_id, user_id, content, created_at)
+values ('fbbbb7dc-dc6f-4649-b663-8d3636035164',
+        '252c1d98-a9b0-4f18-8298-e59058bdfe16',
+        '297923c5-a83c-4052-bab0-030887154e52',
+        'lol bet ur still bad, 1v1 me',
+        now() + '50 minutes ago'::interval),
+       ('cb7612a2-cff4-4e3e-a768-055f01f25dc4',
+        '252c1d98-a9b0-4f18-8298-e59058bdfe16',
+        '297923c5-a83c-4052-bab0-030887154e52',
+        'you''re on!',
+        now() + '45 minutes ago'::interval),
+       ('f2164fcc-a770-4f52-8714-d9cc6a1c89cf',
+        '844265f7-2472-4689-9a2e-b21f40dbf401',
+        '297923c5-a83c-4052-bab0-030887154e52',
+        'lol you''re just mad you lost :P',
+        now() + '15 minutes ago'::interval);

@@ -1,0 +1,72 @@
+[package]
+name = "tracy-client"
+version = "0.18.3" # AUTO-BUMP
+authors = ["Simonas Kazlauskas <tracy-client@kazlauskas.me>"]
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+readme = "README.mkd"
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/tracy-client"
+description = """
+High level bindings to the client libraries for the Tracy profiler
+"""
+
+[[test]]
+name = "tests"
+path = "tests/tests.rs"
+harness = false
+
+[[test]]
+name = "loom"
+path = "tests/loom.rs"
+harness = false
+
+[[bench]]
+name = "client"
+path = "benches/client.rs"
+harness = false
+
+[dev-dependencies]
+criterion = "0.5"
+
+[dependencies]
+once_cell = "1.19"
+rustc-demangle = { version = "0.1", optional = true }
+
+[dependencies.sys]
+path = "../tracy-client-sys"
+package = "tracy-client-sys"
+version = ">=0.23.0, <0.28.0" # AUTO-UPDATE
+default-features = false
+
+[target.'cfg(loom)'.dependencies.loom]
+version = "0.7"
+
+[features]
+# Refer to FEATURES.mkd for documentation on features.
+default = [ "enable", "system-tracing", "context-switch-tracing", "sampling", "code-transfer",
+            "broadcast", "callstack-inlines", "crash-handler" ]
+broadcast = ["sys/broadcast"]
+code-transfer = ["sys/code-transfer"]
+context-switch-tracing = ["sys/context-switch-tracing"]
+enable = ["sys/enable"]
+fibers = ["sys/fibers"]
+timer-fallback = ["sys/timer-fallback"]
+ondemand = ["sys/ondemand"]
+only-ipv4 = ["sys/only-ipv4"]
+only-localhost = ["sys/only-localhost"]
+sampling = ["sys/sampling"]
+system-tracing = ["sys/system-tracing"]
+callstack-inlines = ["sys/callstack-inlines"]
+manual-lifetime = ["sys/manual-lifetime"]
+delayed-init = ["sys/delayed-init"]
+flush-on-exit = ["sys/flush-on-exit"]
+demangle = ["sys/demangle", "dep:rustc-demangle"]
+verify = ["sys/verify"]
+debuginfod = ["sys/debuginfod"]
+crash-handler = ["sys/crash-handler"]
+
+[package.metadata.docs.rs]
+all-features = true

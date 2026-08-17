@@ -1,0 +1,13 @@
+[package]
+name = "stringprep"
+version = "0.1.5"
+authors = ["Steven Fackler <sfackler@gmail.com>"]
+license = "MIT/Apache-2.0"
+description = "An implementation of the stringprep algorithm"
+repository = "https://github.com/sfackler/rust-stringprep"
+readme = "README.md"
+
+[dependencies]
+unicode-bidi = "0.3"
+unicode-normalization = "0.1"
+unicode-properties = "0.1.1"

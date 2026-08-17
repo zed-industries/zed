@@ -1,0 +1,5 @@
+name `foo` is defined more than once
+     --> tests/ui/parse-fail/duplicate-type.wit:6:8
+      |
+    6 |   type foo = s32;
+      |        ^--

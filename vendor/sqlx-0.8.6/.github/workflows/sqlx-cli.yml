@@ -1,0 +1,331 @@
+name: SQLx CLI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "*-dev"
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup component add clippy
+          rustup toolchain install beta
+          rustup component add --toolchain beta clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo clippy --manifest-path sqlx-cli/Cargo.toml -- -D warnings
+
+      # Run beta for new warnings but don't break the build.
+      # Use a subdirectory of `target` to avoid clobbering the cache.
+      - run: >
+          cargo +beta clippy
+          --manifest-path sqlx-cli/Cargo.toml
+          --target-dir target/beta/
+
+  integration-test:
+    name: Integration Test
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        # Note: macOS-latest uses M1 Silicon (ARM64)
+        os:
+          - ubuntu-latest
+          # FIXME: migrations tests fail on Windows for whatever reason
+          # - windows-latest
+          - macOS-13
+          - macOS-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo test --manifest-path sqlx-cli/Cargo.toml
+
+  test-mysql:
+    name: Functional Test (MySQL)
+    runs-on: ubuntu-latest
+    # Deliberately not using `tests/docker-compose.yml` because that sets up the database automatically.
+    services:
+      mysql:
+        image: mysql:8
+        ports:
+          - 3306:3306
+        env:
+          MYSQL_ROOT_PASSWORD: password
+    env:
+      BASE_URL: mysql://root:password@localhost
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install SQLx-CLI
+        run:
+          cargo install --locked --debug --path sqlx-cli
+
+      - name: Basic Test
+        env:
+          DATABASE_URL: ${{ env.BASE_URL }}/test1
+        run: |
+          sqlx db setup --source=tests/mysql/migrations
+          
+          sqlx mig info --source=tests/mysql/migrations
+          
+          sqlx db drop -y
+
+      - name: Test .env
+        run: |
+          echo "DATABASE_URL=${{ env.BASE_URL }}/test2" > .env
+          
+          sqlx db setup --source=tests/mysql/migrations
+          
+          sqlx mig info --source=tests/mysql/migrations
+          
+          sqlx db drop -y
+
+      - name: Test --no-dotenv
+        run: |
+          # Allow subcommands to fail
+          set +e
+          
+          echo "DATABASE_URL=${{ env.BASE_URL }}/test3" > .env
+          
+          ERROR=$(sqlx db setup --no-dotenv --source=tests/mysql/migrations)
+          
+          if [[ "$ERROR" == *"--database-url"* ]]; then
+            exit 0
+          else
+            echo "Unexpected error from sqlx-cli: $ERROR"
+            exit 1
+          fi
+
+      - name: Test Reversible Migrations
+        env:
+          DATABASE_URL: ${{ env.BASE_URL }}/test4
+        run: |
+          sqlx db setup --source=tests/mysql/migrations_reversible
+          
+          INFO_BEFORE=$(sqlx mig info --source=tests/mysql/migrations_reversible)
+          
+          sqlx mig revert --target-version=0 --source=tests/mysql/migrations_reversible
+          
+          INFO_AFTER=$(sqlx mig info --source=tests/mysql/migrations_reversible)
+          
+          if [[ "$INFO_BEFORE" == "$INFO_AFTER" ]]; then
+            echo "Error: migration info is identical before and after migrating: $INFO_BEFORE"
+            exit 1
+          fi
+
+  test-postgres:
+    name: Functional Test (PostgreSQL)
+    runs-on: ubuntu-latest
+    # Deliberately not using `tests/docker-compose.yml` because that sets up the database automatically.
+    services:
+      mysql:
+        image: postgres:17
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_PASSWORD: password
+    env:
+      BASE_URL: postgres://postgres:password@localhost
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install SQLx-CLI
+        run:
+          cargo install --locked --debug --path sqlx-cli
+
+      - name: Basic Test
+        env:
+          DATABASE_URL: ${{ env.BASE_URL }}/test1
+        run: |
+          sqlx db setup --source=tests/postgres/migrations
+          
+          sqlx mig info --source=tests/postgres/migrations
+          
+          sqlx db drop -y
+
+      - name: Test .env
+        run: |
+          echo "DATABASE_URL=${{ env.BASE_URL }}/test2" > .env
+          
+          sqlx db setup --source=tests/postgres/migrations
+          
+          sqlx mig info --source=tests/postgres/migrations
+          
+          sqlx db drop -y
+
+      - name: Test --no-dotenv
+        run: |
+          # Allow subcommands to fail
+          set +e
+          
+          echo "DATABASE_URL=${{ env.BASE_URL }}/test3" > .env
+          
+          ERROR=$(sqlx db setup --no-dotenv --source=tests/postgres/migrations)
+          
+          if [[ "$ERROR" == *"--database-url"* ]]; then
+            exit 0
+          else
+            echo "Unexpected error from sqlx-cli: $ERROR"
+            exit 1
+          fi
+
+      - name: Test Reversible Migrations
+        env:
+          DATABASE_URL: ${{ env.BASE_URL }}/test4
+        run: |
+          sqlx db setup --source=tests/postgres/migrations_reversible
+          
+          INFO_BEFORE=$(sqlx mig info --source=tests/postgres/migrations_reversible)
+          
+          sqlx mig revert --target-version=0 --source=tests/postgres/migrations_reversible
+          
+          INFO_AFTER=$(sqlx mig info --source=tests/postgres/migrations_reversible)
+          
+          if [[ "$INFO_BEFORE" == "$INFO_AFTER" ]]; then
+            echo "Error: migration info is identical before and after migrating: $INFO_BEFORE"
+            exit 1
+          fi
+
+  test-sqlite:
+    name: Functional Test (SQLite)
+    runs-on: ubuntu-latest
+    env:
+      BASE_URL: sqlite://.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install SQLx-CLI
+        run:
+          cargo install --locked --debug --path sqlx-cli
+
+      - name: Basic Test
+        env:
+          DATABASE_URL: ${{ env.BASE_URL }}/test1
+        run: |
+          sqlx db setup --source=tests/sqlite/migrations
+          
+          sqlx mig info --source=tests/sqlite/migrations
+          
+          sqlx db drop -y
+
+      - name: Test .env
+        run: |
+          echo "DATABASE_URL=${{ env.BASE_URL }}/test2" > .env
+          
+          sqlx db setup --source=tests/sqlite/migrations
+          
+          sqlx mig info --source=tests/sqlite/migrations
+          
+          sqlx db drop -y
+
+      - name: Test --no-dotenv
+        run: |
+          # Allow subcommands to fail
+          set +e
+          
+          echo "DATABASE_URL=${{ env.BASE_URL }}/test3" > .env
+          
+          ERROR=$(sqlx db setup --no-dotenv --source=tests/sqlite/migrations)
+          
+          if [[ "$ERROR" == *"--database-url"* ]]; then
+            exit 0
+          else
+            echo "Unexpected error from sqlx-cli: $ERROR"
+            exit 1
+          fi
+
+      - name: Test Reversible Migrations
+        env:
+          DATABASE_URL: ${{ env.BASE_URL }}/test4
+        run: |
+          sqlx db setup --source=tests/sqlite/migrations_reversible
+          
+          INFO_BEFORE=$(sqlx mig info --source=tests/sqlite/migrations_reversible)
+          
+          sqlx mig revert --target-version=0 --source=tests/sqlite/migrations_reversible
+          
+          INFO_AFTER=$(sqlx mig info --source=tests/sqlite/migrations_reversible)
+          
+          if [[ "$INFO_BEFORE" == "$INFO_AFTER" ]]; then
+            echo "Error: migration info is identical before and after migrating: $INFO_BEFORE"
+            exit 1
+          fi
+
+  build:
+    name: Build
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        # Note: macOS-latest uses M1 Silicon (ARM64)
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macOS-13
+          - macOS-latest
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            args: --features openssl-vendored
+            bin: target/debug/cargo-sqlx
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: target/debug/cargo-sqlx.exe
+          - os: macOS-13
+            target: x86_64-apple-darwin
+            bin: target/debug/cargo-sqlx
+          - os: macOS-latest
+            target: aarch64-apple-darwin
+            bin: target/debug/cargo-sqlx
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup override set stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo build --manifest-path sqlx-cli/Cargo.toml --bin cargo-sqlx ${{ matrix.args }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cargo-sqlx-${{ matrix.target }}
+          path: ${{ matrix.bin }}

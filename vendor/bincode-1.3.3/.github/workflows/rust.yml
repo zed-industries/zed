@@ -1,0 +1,175 @@
+{
+  "name": "CI",
+  "on": {
+    "push": {
+      "branches": [
+        "trunk",
+        "v*.x"
+      ]
+    },
+    "pull_request": {
+      "branches": [
+        "trunk",
+        "v*.x"
+      ]
+    }
+  },
+  "jobs": {
+    "check": {
+      "name": "Check",
+      "runs-on": "ubuntu-latest",
+      "strategy": {
+        "fail-fast": false,
+        "matrix": {
+          "rust": [
+            "stable",
+            "beta",
+            "nightly",
+            "1.18.0"
+          ]
+        }
+      },
+      "steps": [
+        {
+          "uses": "actions/checkout@v2",
+          "name": "Checkout"
+        },
+        {
+          "uses": "actions-rs/toolchain@v1",
+          "with": {
+            "profile": "minimal",
+            "toolchain": "${{ matrix.rust }}",
+            "override": true
+          },
+          "name": "Install Rust ${{ matrix.rust }}"
+        },
+        {
+          "uses": "actions-rs/cargo@v1",
+          "with": {
+            "command": "check"
+          },
+          "name": "Run `cargo check`"
+        },
+        {
+          "uses": "actions-rs/cargo@v1",
+          "with": {
+            "command": "check",
+            "args": "--examples"
+          },
+          "name": "Check examples",
+          "if": "matrix.rust != '1.18.0'"
+        }
+      ]
+    },
+    "test": {
+      "name": "Test",
+      "runs-on": "ubuntu-latest",
+      "strategy": {
+        "matrix": {
+          "rust": [
+            "stable",
+            "beta",
+            "nightly"
+          ]
+        }
+      },
+      "steps": [
+        {
+          "uses": "actions/checkout@v2",
+          "name": "Checkout"
+        },
+        {
+          "uses": "actions-rs/toolchain@v1",
+          "with": {
+            "profile": "minimal",
+            "toolchain": "${{ matrix.rust }}",
+            "override": true
+          },
+          "name": "Install Rust ${{ matrix.rust }}"
+        },
+        {
+          "uses": "actions-rs/cargo@v1",
+          "with": {
+            "command": "test"
+          },
+          "name": "Run `cargo test`"
+        }
+      ]
+    },
+    "lints": {
+      "name": "Lints",
+      "runs-on": "ubuntu-latest",
+      "steps": [
+        {
+          "uses": "actions/checkout@v2",
+          "name": "Checkout"
+        },
+        {
+          "uses": "actions-rs/toolchain@v1",
+          "with": {
+            "profile": "minimal",
+            "toolchain": "stable",
+            "override": true,
+            "components": "rustfmt, clippy"
+          },
+          "name": "Install Rust stable"
+        },
+        {
+          "uses": "actions-rs/cargo@v1",
+          "with": {
+            "command": "fmt",
+            "args": "--all -- --check"
+          },
+          "name": "Run `cargo fmt`"
+        },
+        {
+          "uses": "actions-rs/cargo@v1",
+          "with": {
+            "command": "clippy",
+            "args": "-- -D warnings"
+          },
+          "name": "Run `cargo clippy`"
+        }
+      ]
+    },
+    "coverage": {
+      "name": "Code Coverage",
+      "runs-on": "ubuntu-latest",
+      "steps": [
+        {
+          "uses": "actions/checkout@v2",
+          "name": "Checkout"
+        },
+        {
+          "uses": "actions-rs/toolchain@v1",
+          "with": {
+            "profile": "minimal",
+            "toolchain": "nightly",
+            "override": true
+          },
+          "name": "Install Rust nightly"
+        },
+        {
+          "name": "Run cargo-tarpaulin",
+          "uses": "actions-rs/tarpaulin@v0.1",
+          "with": {
+            "version": "0.12.3",
+            "args": "--ignore-tests -- --test-threads 1"
+          }
+        },
+        {
+          "name": "Upload to codecov.io",
+          "uses": "codecov/codecov-action@v1"
+        },
+        {
+          "name": "Archive code coverage results",
+          "uses": "actions/upload-artifact@v1",
+          "with": {
+            "name": "code-coverage-report",
+            "path": "cobertura.xml"
+          }
+        }
+      ]
+    }
+  }
+}

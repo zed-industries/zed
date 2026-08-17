@@ -1,0 +1,62 @@
+# Use "cargo install garden-tools" to install garden https://gitlab.com/garden-rs/garden
+#
+# usage:
+#   garden build
+#   garden test
+#   garden check
+#   garden fmt
+#   garden fix
+
+commands:
+    bench: cargo bench "$@"
+    build: cargo build "$@"
+    check>:
+        - check/clippy
+        - check/fmt
+        - build
+        - test
+        - check/profile
+    check/clippy: cargo clippy --all-targets "$@" -- -D warnings
+    check/fmt: cargo fmt --check
+    check/profile: |
+        cargo build \
+            --profile=release-lto \
+            --package gen_large_yaml \
+            --bin gen_large_yaml \
+            --manifest-path tools/gen_large_yaml/Cargo.toml
+    clean: cargo clean "$@"
+    coverage: cargo kcov "$@"
+    doc: cargo doc --no-deps --package yaml-rust2 "$@"
+    ethi/bench: |
+        cargo build --release --all-targets
+        cd ../Yaml-rust && cargo build --release --all-targets
+        cd ../libfyaml/build && ninja
+        cargo bench_compare run_bench
+    fix: cargo clippy --all-targets --fix "$@" -- -D warnings
+    fmt: cargo fmt "$@"
+    test: cargo test "$@"
+    update: cargo update "$@"
+    watch: cargo watch --shell "garden check"
+
+trees:
+    yaml-rust2:
+        description: A pure Rust YAML implementation
+        path: ${GARDEN_CONFIG_DIR}
+        url: "git@github.com:Ethiraric/yaml-rust2.git"
+        remotes:
+            davvid: "git@github.com:davvid/yaml-rust2.git"
+            yaml-rust: "git@github.com:chyh1990/yaml-rust.git"
+        gitconfig:
+            # Access yaml-rust2 pull requests as yaml-rust2/pull/*
+            remote.yaml-rust2.url: "git@github.com:Ethiraric/yaml-rust2.git"
+            remote.yaml-rust2.fetch:
+                - "+refs/pull/*/head:refs/remotes/yaml-rust2/pull/*"
+            # Access yaml-rust pull requests as yaml-rust/pull/*
+            remote.yaml-rust.fetch:
+                - "+refs/heads/*:refs/remotes/yaml-rust/*"
+                - "+refs/pull/*/head:refs/remotes/yaml-rust/pull/*"
+
+    yaml-test-suite:
+        description: Comprehensive, language independent Test Suite for YAML
+        path: tests/yaml-test-suite
+        url: https://github.com/yaml/yaml-test-suite

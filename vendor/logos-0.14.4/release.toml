@@ -1,0 +1,3 @@
+pre-release-commit-message = "chore(version): bump logos version to {{version}}"
+push = false
+tag = false

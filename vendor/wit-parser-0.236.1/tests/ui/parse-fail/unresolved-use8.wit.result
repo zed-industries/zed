@@ -1,0 +1,5 @@
+name `foo` is defined as a world, not an interface
+     --> tests/ui/parse-fail/unresolved-use8.wit:7:9
+      |
+    7 |     use foo.{i32};
+      |         ^--

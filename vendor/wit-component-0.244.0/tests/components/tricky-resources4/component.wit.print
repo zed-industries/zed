@@ -1,0 +1,8 @@
+package root:component;
+
+world root {
+  export foo:bar/name;
+  export name: interface {
+    use foo:bar/name.{handle};
+  }
+}

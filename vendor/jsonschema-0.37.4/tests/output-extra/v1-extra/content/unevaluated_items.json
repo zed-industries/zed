@@ -1,0 +1,38 @@
+[
+    {
+        "description": "unevaluatedItems flags additional array elements",
+        "schema": {
+            "$schema": "https://json-schema.org/v1",
+            "$id": "https://json-schema.org/tests/content/v1-extra/unevaluated_items/0",
+            "type": "array",
+            "prefixItems": [true],
+            "unevaluatedItems": false
+        },
+        "tests": [
+            {
+                "description": "extra item produces unevaluatedItems error",
+                "data": [1, 2],
+                "output": {
+                    "list": {
+                        "$id": "https://json-schema.org/tests/content/v1-extra/unevaluated_items/0/tests/0/list",
+                        "$ref": "/v1/output/schema",
+                        "properties": {
+                            "valid": {"const": false},
+                            "details": {
+                                "contains": {
+                                    "properties": {
+                                        "schemaLocation": {"const": "https://json-schema.org/tests/content/v1-extra/unevaluated_items/0#/unevaluatedItems"},
+                                        "instanceLocation": {"const": "/1"},
+                                        "errors": {}
+                                    },
+                                    "required": ["schemaLocation", "instanceLocation", "errors"]
+                                }
+                            }
+                        },
+                        "required": ["valid", "details"]
+                    }
+                }
+            }
+        ]
+    }
+]

@@ -1,0 +1,205 @@
+{
+  "worlds": [],
+  "interfaces": [
+    {
+      "name": "streams-and-futures",
+      "types": {
+        "t1": 0,
+        "t2": 2,
+        "t3": 3,
+        "t4": 5,
+        "t5": 8,
+        "r1": 9,
+        "t6": 11,
+        "t7": 13,
+        "t8": 14
+      },
+      "functions": {
+        "foo": {
+          "name": "foo",
+          "kind": "freestanding",
+          "params": [
+            {
+              "name": "x",
+              "type": 15
+            },
+            {
+              "name": "y",
+              "type": 11
+            }
+          ],
+          "result": 18
+        }
+      },
+      "package": 0
+    }
+  ],
+  "types": [
+    {
+      "name": "t1",
+      "kind": {
+        "stream": "u8"
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": null,
+      "kind": {
+        "stream": "string"
+      },
+      "owner": null
+    },
+    {
+      "name": "t2",
+      "kind": {
+        "stream": 1
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "t3",
+      "kind": {
+        "future": null
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": null,
+      "kind": {
+        "list": "u8"
+      },
+      "owner": null
+    },
+    {
+      "name": "t4",
+      "kind": {
+        "future": 4
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": null,
+      "kind": {
+        "future": null
+      },
+      "owner": null
+    },
+    {
+      "name": null,
+      "kind": {
+        "stream": 6
+      },
+      "owner": null
+    },
+    {
+      "name": "t5",
+      "kind": {
+        "option": 7
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "r1",
+      "kind": "resource",
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": null,
+      "kind": {
+        "handle": {
+          "own": 9
+        }
+      },
+      "owner": null
+    },
+    {
+      "name": "t6",
+      "kind": {
+        "stream": 10
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": null,
+      "kind": {
+        "result": {
+          "ok": 10,
+          "err": null
+        }
+      },
+      "owner": null
+    },
+    {
+      "name": "t7",
+      "kind": {
+        "future": 12
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "t8",
+      "kind": {
+        "stream": null
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": null,
+      "kind": {
+        "stream": "u32"
+      },
+      "owner": null
+    },
+    {
+      "name": null,
+      "kind": {
+        "list": "string"
+      },
+      "owner": null
+    },
+    {
+      "name": null,
+      "kind": {
+        "result": {
+          "ok": 16,
+          "err": "string"
+        }
+      },
+      "owner": null
+    },
+    {
+      "name": null,
+      "kind": {
+        "future": 17
+      },
+      "owner": null
+    }
+  ],
+  "packages": [
+    {
+      "name": "foo:streams-and-futures",
+      "interfaces": {
+        "streams-and-futures": 0
+      },
+      "worlds": {}
+    }
+  ]
+}

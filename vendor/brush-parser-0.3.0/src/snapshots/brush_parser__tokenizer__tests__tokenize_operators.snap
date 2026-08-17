@@ -1,0 +1,45 @@
+---
+source: brush-parser/src/tokenizer.rs
+expression: "test_tokenizer(\"a>>b\")?"
+---
+TokenizerResult(
+  input: "a>>b",
+  result: [
+    W("a", Loc(
+      start: Pos(
+        idx: 0,
+        line: 1,
+        col: 1,
+      ),
+      end: Pos(
+        idx: 1,
+        line: 1,
+        col: 2,
+      ),
+    )),
+    Op(">>", Loc(
+      start: Pos(
+        idx: 1,
+        line: 1,
+        col: 2,
+      ),
+      end: Pos(
+        idx: 3,
+        line: 1,
+        col: 4,
+      ),
+    )),
+    W("b", Loc(
+      start: Pos(
+        idx: 3,
+        line: 1,
+        col: 4,
+      ),
+      end: Pos(
+        idx: 4,
+        line: 1,
+        col: 5,
+      ),
+    )),
+  ],
+)

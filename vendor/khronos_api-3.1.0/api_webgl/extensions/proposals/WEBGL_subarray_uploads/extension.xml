@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<proposal href="proposals/WEBGL_subarray_uploads/">
+  <name>WEBGL_subarray_uploads</name>
+
+  <contact> <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL
+  working group</a> (public_webgl 'at' khronos.org) </contact>
+
+  <contributors>
+    <contributor>Jeff Gilbert (jgilbert 'at' mozilla.com)</contributor>
+  </contributors>
+
+  <number>k</number>
+
+  <depends>
+    <api version="1.0"/>
+  </depends>
+
+  <overview>
+    <features>
+      <feature>
+        Though no-copy slicing of TypedArrays is already possible, it can still generate
+        considerable garbage, incuring GC load. Allowing for specification of subarray
+        offset and size can eliminate this source of garbage.
+      </feature>
+    </features>
+  </overview>
+
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface WEBGL_subarray_uploads {
+    void bufferSubData(GLenum target, GLsizeiptr bufferOffset, GLsizeiptr subarrayOffset,
+                       GLsizeiptr subarraySize, (ArrayBuffer or SharedArrayBuffer) data);
+
+    void compressedTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset,
+                                 GLsizei width, GLsizei height, GLenum sizedFormat,
+                                 GLsizeiptr subarrayOffset, GLsizeiptr subarraySize,
+                                 (ArrayBuffer or SharedArrayBuffer) data);
+
+    void texSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset,
+                       GLsizei width, GLsizei height, GLenum format, GLenum type,
+                       GLsizeiptr subarrayOffset, GLsizeiptr subarraySize,
+                       (ArrayBuffer or SharedArrayBuffer) data);
+};
+  </idl>
+
+  <newfun>
+    <function name="bufferSubData" type="void">
+      <param name="target" type="GLenum"/>
+      <param name="bufferOffset" type="GLsizeiptr"/>
+      <param name="subarrayOffset" type="GLsizeiptr"/>
+      <param name="subarraySize" type="GLsizeiptr"/>
+      <param name="data" type="ArrayBuffer or SharedArrayBuffer"/>
+      Upload data from a subarray of an ArrayBuffer or SharedArrayBuffer.
+    </function>
+
+    <function name="compressedTexSubImage2D" type="void">
+      <param name="target" type="GLenum"/>
+      <param name="level" type="GLint"/>
+      <param name="xoffset" type="GLint"/>
+      <param name="yoffset" type="GLint"/>
+      <param name="width" type="GLsizei"/>
+      <param name="height" type="GLsizei"/>
+      <param name="sizedFormat" type="GLenum"/>
+      <param name="subarrayOffset" type="GLsizeiptr"/>
+      <param name="subarraySize" type="GLsizeiptr"/>
+      <param name="data" type="ArrayBuffer or SharedArrayBuffer"/>
+      Upload data from a subarray of an ArrayBuffer or SharedArrayBuffer.
+    </function>
+
+    <function name="texSubImage2D" type="void">
+      <param name="target" type="GLenum"/>
+      <param name="level" type="GLint"/>
+      <param name="xoffset" type="GLint"/>
+      <param name="yoffset" type="GLint"/>
+      <param name="width" type="GLsizei"/>
+      <param name="height" type="GLsizei"/>
+      <param name="format" type="GLenum"/>
+      <param name="type" type="GLenum"/>
+      <param name="subarrayOffset" type="GLsizeiptr"/>
+      <param name="subarraySize" type="GLsizeiptr"/>
+      <param name="data" type="ArrayBuffer or SharedArrayBuffer"/>
+      Upload data from a subarray of an ArrayBuffer or SharedArrayBuffer.
+    </function>
+  </newfun>
+
+  <history>
+    <revision date="2016/06/07">
+      <change>Initial revision</change>
+    </revision>
+  </history>
+</proposal>

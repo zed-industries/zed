@@ -1,0 +1,105 @@
+{
+  "events": [
+    {
+      "connection_id": 0,
+      "action": {
+        "Request": {
+          "request": {
+            "uri": "https://test-bucket.s3.us-east-1.amazonaws.com/?list-type=2&prefix=prefix~",
+            "headers": {
+              "x-amz-security-token": [
+                "notarealsessiontoken"
+              ],
+              "authorization": [
+                "AWS4-HMAC-SHA256 Credential=ANOTREAL/20210618/us-east-1/s3/aws4_request, SignedHeaders=amz-sdk-invocation-id;host;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-user-agent, Signature=e7eccf4e792113f5f17a50bfd8f1719479e89ba0b476894e6f3dba030dc87f82"
+              ],
+              "x-amz-user-agent": [
+                "aws-sdk-rust/0.123.test api/test-service/0.123 os/windows/XPSP3 lang/rust/1.50.0"
+              ],
+              "x-amz-date": [
+                "20210618T170728Z"
+              ],
+              "x-amz-content-sha256": [
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              ],
+              "amz-sdk-invocation-id": [
+                "00000000-0000-4000-8000-000000000000"
+              ],
+              "user-agent": [
+                "aws-sdk-rust/0.123.test os/windows/XPSP3 lang/rust/1.50.0"
+              ]
+            },
+            "method": "GET"
+          }
+        }
+      }
+    },
+    {
+      "connection_id": 0,
+      "action": {
+        "Eof": {
+          "ok": true,
+          "direction": "Request"
+        }
+      }
+    },
+    {
+      "connection_id": 0,
+      "action": {
+        "Response": {
+          "response": {
+            "Ok": {
+              "status": 200,
+              "version": "HTTP/1.1",
+              "headers": {
+                "x-amz-request-id": [
+                  "9X5E7C9EAB6AQEP2"
+                ],
+                "x-amz-id-2": [
+                  "gZsrBxajPyo1Q0DE2plGf7T6kAnxd4Xx7/S+8lq18GegL6kFbnVXLLh1LnBzpEpFiHN9XoNHkeA="
+                ],
+                "content-type": [
+                  "application/xml"
+                ],
+                "transfer-encoding": [
+                  "chunked"
+                ],
+                "server": [
+                  "AmazonS3"
+                ],
+                "date": [
+                  "Wed, 26 Apr 2023 14:00:24 GMT"
+                ],
+                "x-amz-bucket-region": [
+                  "us-east-1"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "connection_id": 0,
+      "action": {
+        "Data": {
+          "data": {
+            "Utf8": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListBucketResult>\n    <Name>test-bucket</Name>\n    <Prefix>prefix~</Prefix>\n    <KeyCount>1</KeyCount>\n    <MaxKeys>1000</MaxKeys>\n    <IsTruncated>false</IsTruncated>\n    <Contents>\n        <Key>some-file.file</Key>\n        <LastModified>2009-10-12T17:50:30.000Z</LastModified>\n        <Size>434234</Size>\n        <StorageClass>STANDARD</StorageClass>\n    </Contents>\n</ListBucketResult>"
+          },
+          "direction": "Response"
+        }
+      }
+    },
+    {
+      "connection_id": 0,
+      "action": {
+        "Eof": {
+          "ok": true,
+          "direction": "Response"
+        }
+      }
+    }
+  ],
+  "docs": "One SDK operation invocation. Client retries 3 times, successful response on 3rd attempt. Slow network, one way latency is 2 seconds. Server takes 1 second to generate response. Client clock is 10 minutes behind server clock. One second delay between retries.",
+  "version": "V0"
+}

@@ -1,0 +1,18 @@
+package foo:foo;
+
+interface foo {
+  type t = u32;
+}
+
+interface bar {
+  use foo.{t};
+}
+
+world baz {
+  export foo;
+  import bar;
+  export anon: interface {
+    use foo.{t};
+    use bar.{t as t2};
+  }
+}

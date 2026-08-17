@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="dpms">
+  <copyright><![CDATA[
+    SPDX-FileCopyrightText: 2015 Martin Gräßlin
+
+    SPDX-License-Identifier: LGPL-2.1-or-later
+  ]]></copyright>
+  <interface name="org_kde_kwin_dpms_manager" version="1">
+      <description summary="Output dpms manager">
+          The Dpms manager allows to get a org_kde_kwin_dpms for a given wl_output.
+          The org_kde_kwin_dpms provides the currently used VESA Display Power Management
+          Signaling state (see https://en.wikipedia.org/wiki/VESA_Display_Power_Management_Signaling ).
+          In addition it allows to request a state change. A compositor is not obliged to honor it
+          and will normally automatically switch back to on state.
+
+          Warning! The protocol described in this file is a desktop environment
+          implementation detail. Regular clients must not use this protocol.
+          Backward incompatible changes may be added without bumping the major
+          version of the extension.
+      </description>
+      <request name="get">
+          <description summary="Get org_kde_kwin_dpms for wl_output">
+              Factory request to get the org_kde_kwin_dpms for a given wl_output.
+          </description>
+          <arg name="id" type="new_id" interface="org_kde_kwin_dpms"/>
+          <arg name="output" type="object" interface="wl_output"/>
+      </request>
+  </interface>
+  <interface name="org_kde_kwin_dpms" version="1">
+      <description summary="Dpms for a wl_output">
+          This interface provides information about the VESA DPMS state for a wl_output.
+          It gets created through the request get on the org_kde_kwin_dpms_manager interface.
+
+          On creating the resource the server will push whether DPSM is supported for the output,
+          the currently used DPMS state and notifies the client through the done event once all
+          states are pushed. Whenever a state changes the set of changes is committed with the
+          done event.
+      </description>
+      <event name="supported">
+          <description summary="Event indicating whether DPMS is supported on the wl_output">
+              This event gets pushed on binding the resource and indicates whether the wl_output
+              supports DPMS. There are operation modes of a Wayland server where DPMS might not
+              make sense (e.g. nested compositors).
+          </description>
+          <arg name="supported" type="uint" summary="Boolean value whether DPMS is supported (1) for the wl_output or not (0)"/>
+      </event>
+      <enum name="mode">
+            <entry name="On" value="0"/>
+            <entry name="Standby" value="1"/>
+            <entry name="Suspend" value="2"/>
+            <entry name="Off" value="3"/>
+      </enum>
+      <event name="mode">
+          <description summary="Event indicating used DPMS mode">
+              This mode gets pushed on binding the resource and provides the currently used
+              DPMS mode. It also gets pushed if DPMS is not supported for the wl_output, in that
+              case the value will be On.
+
+              The event is also pushed whenever the state changes.
+          </description>
+          <arg name="mode" type="uint" summary="The new currently used mode"/>
+      </event>
+      <event name="done">
+          <description summary="All changes are pushed">
+              This event gets pushed on binding the resource once all other states are pushed.
+
+              In addition it gets pushed whenever a state changes to tell the client that all
+              state changes have been pushed.
+          </description>
+      </event>
+      <request name="set">
+          <description summary="Request DPMS state change for the wl_output">
+              Requests that the compositor puts the wl_output into the passed mode. The compositor
+              is not obliged to change the state. In addition the compositor might leave the mode
+              whenever it seems suitable. E.g. the compositor might return to On state on user input.
+
+              The client should not assume that the mode changed after requesting a new mode.
+              Instead the client should listen for the mode event.
+          </description>
+          <arg name="mode" type="uint" summary="Requested mode"/>
+      </request>
+      <request name="release" type="destructor">
+        <description summary="release the dpms object"/>
+      </request>
+  </interface>
+</protocol>
+

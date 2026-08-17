@@ -1,0 +1,9 @@
+failed to resolve directory while parsing WIT for path [tests/ui/parse-fail/no-access-to-sibling-use]
+
+Caused by:
+    0: failed to parse package: tests/ui/parse-fail/no-access-to-sibling-use
+    1: interface or world `bar-renamed` does not exist
+            --> tests/ui/parse-fail/no-access-to-sibling-use/foo.wit:3:5
+             |
+           3 | use bar-renamed;
+             |     ^----------

@@ -1,0 +1,4 @@
+package foo:bar;
+interface baz {
+  a-name: func();
+}

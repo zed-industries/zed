@@ -1,0 +1,27 @@
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jjwilm@kurast.local [01;32m➜ [01;32m [36m~/code/alacritty [00m [K[?1h=[?2004h[35ml[39m[35ml[35ml[39m[?1l>[?2004l
+total 16440
+drwxr-xr-x   3 jwilm  staff   102B Nov  2 10:54 [1m[36mAlacritty.app[39;49m[0m
+-rw-r--r--   1 jwilm  staff    53K Nov 19 14:27 Cargo.lock
+-rw-r--r--   1 jwilm  staff   746B Nov 19 14:24 Cargo.toml
+-rw-r--r--   1 jwilm  staff    11K Jun 30 10:44 LICENSE-APACHE
+-rw-r--r--   1 jwilm  staff   1.6K Nov  2 10:52 Makefile
+-rw-r--r--   1 jwilm  staff    49B Jun  9 18:56 TASKS.md
+-rwxr-xr-x   1 jwilm  staff   1.7M Sep 26 10:49 [31malacritty-pre-eloop[39;49m[0m
+-rw-r--r--   1 jwilm  staff   255B Nov 19 14:31 alacritty.recording
+-rw-r--r--   1 jwilm  staff   6.5K Nov 17 17:18 alacritty.yml
+-rw-r--r--   1 jwilm  staff   1.1K Jun 30 10:44 build.rs
+drwxr-xr-x   6 jwilm  staff   204B Oct 10 10:46 [1m[36mcopypasta[39;49m[0m
+drwxr-xr-x   3 jwilm  staff   102B Jun  9 18:56 [1m[36mdocs[39;49m[0m
+-rwxr-xr-x   1 jwilm  staff   2.2M Nov 11 17:53 [31mexitter[39;49m[0m
+drwxr-xr-x   5 jwilm  staff   170B Jun 28 14:50 [1m[36mfont[39;49m[0m
+-rwxr-xr-x   1 jwilm  staff   2.2M Nov 14 13:27 [31mhardcoded_bindings_alacritty[39;49m[0m
+drwxr-xr-x   6 jwilm  staff   204B Nov  2 10:54 [1m[36mmacos[39;49m[0m
+drwxr-xr-x   4 jwilm  staff   136B Oct 27 17:59 [1m[36mres[39;49m[0m
+-rw-r--r--   1 jwilm  staff    19B Nov 11 16:55 rustc-version
+drwxr-xr-x   5 jwilm  staff   170B Oct 10 10:46 [1m[36mscripts[39;49m[0m
+drwxr-xr-x  17 jwilm  staff   578B Nov 19 14:30 [1m[36msrc[39;49m[0m
+drwxr-xr-x   5 jwilm  staff   170B Jun 28 15:49 [1m[36mtarget[39;49m[0m
+-rw-r--r--   1 jwilm  staff   8.1K Nov 17 11:13 thing.log
+-rw-r--r--   1 jwilm  staff   3.5K Sep  1 11:27 tmux-client-23038.log
+-rwxr-xr-x   1 jwilm  staff   1.8M Sep 22 12:03 [31mwith_parallel[39;49m[0m
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jjwilm@kurast.local [01;32m➜ [01;32m [36m~/code/alacritty [00m [K[?1h=[?2004h

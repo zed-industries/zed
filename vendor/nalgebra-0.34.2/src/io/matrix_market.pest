@@ -1,0 +1,16 @@
+WHITESPACE = _{ " " }
+
+Comments = _{ "%" ~ (!NEWLINE ~ ANY)* }
+Header = { "%%" ~ (!NEWLINE ~ ANY)* }
+Shape = { Dimension ~ Dimension ~ Dimension }
+Document = {
+    SOI ~
+    NEWLINE* ~
+    Header ~
+    (NEWLINE ~ Comments)* ~
+    (NEWLINE ~ Shape) ~
+    (NEWLINE ~ Entry?)*
+}
+Dimension = @{ ASCII_DIGIT+ }
+Value = @{ ("+" | "-")? ~ (NUMBER+ ~ ("." ~ NUMBER*)? | "." ~ NUMBER+) ~ (("e" | "E") ~ ("+" | "-")? ~ NUMBER+)? }
+Entry = { Dimension ~ Dimension ~ Value }

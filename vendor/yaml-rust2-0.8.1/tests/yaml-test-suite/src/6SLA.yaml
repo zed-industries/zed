@@ -1,0 +1,27 @@
+---
+- name: Allowed characters in quoted mapping key
+  from: '@perlpunk'
+  tags: mapping single double
+  yaml: |
+    "foo\nbar:baz\tx \\$%^&*()x": 23
+    'x\ny:z\tx $%^&*()x': 24
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL "foo\nbar:baz\tx \\$%^&*()x
+       =VAL :23
+       =VAL 'x\\ny:z\\tx $%^&*()x
+       =VAL :24
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "foo\nbar:baz\tx \\$%^&*()x": 23,
+      "x\\ny:z\\tx $%^&*()x": 24
+    }
+  dump: |
+    ? "foo\nbar:baz\tx \\$%^&*()x"
+    : 23
+    'x\ny:z\tx $%^&*()x': 24

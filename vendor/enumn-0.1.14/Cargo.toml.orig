@@ -1,0 +1,24 @@
+[package]
+name = "enumn"
+version = "0.1.14"
+authors = ["David Tolnay <dtolnay@gmail.com>"]
+categories = ["rust-patterns", "no-std", "no-std::no-alloc"]
+description = "Convert number to enum"
+documentation = "https://docs.rs/enumn"
+edition = "2021"
+keywords = ["enum", "integer"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/dtolnay/enumn"
+rust-version = "1.56"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1.0.74"
+quote = "1.0.35"
+syn = "2.0.46"
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+rustdoc-args = ["--generate-link-to-definition"]

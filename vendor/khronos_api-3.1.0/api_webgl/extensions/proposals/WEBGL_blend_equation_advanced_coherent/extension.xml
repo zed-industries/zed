@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<proposal href="proposals/WEBGL_blend_equation_advanced_coherent/">
+  <name>WEBGL_blend_equation_advanced_coherent</name>
+
+  <contact> <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL
+  working group</a> (public_webgl 'at' khronos.org) </contact>
+  
+  <contributors>
+	<contributor>Ashley Gullen (ashley at scirra dot com)</contributor>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+
+  <number>NN</number>
+
+  <depends>
+    <api version="1.0"/>
+  </depends>
+
+  <overview>
+    <mirrors href="https://www.opengl.org/registry/specs/KHR/blend_equation_advanced.txt"
+             name="KHR_blend_equation_advanced_coherent">
+    </mirrors>
+	
+    <div class="nonnormative">
+      <p>This extension exposes the KHR_blend_equation_advanced_coherent functionality to WebGL.</p>
+
+      <p>CanvasRenderingContext2D provides a series of common blend functions with globalComposeOperation, such as "multiply" and "screen". KHR_blend_equation_advanced_coherent provides, with the exception of "xor", exactly the same list of blend functions for WebGL, as detailed below:</p>
+	  
+	  <ul>
+		<li>"multiply": MULTIPLY_KHR</li>
+		<li>"screen": SCREEN_KHR</li>
+		<li>"overlay": OVERLAY_KHR</li>
+		<li>"darken": DARKEN_KHR</li>
+		<li>"lighten": LIGHTEN_KHR</li>
+		<li>"color-dodge": COLORDODGE_KHR</li>
+		<li>"color-burn": COLORBURN_KHR</li>
+		<li>"hard-light": HARDLIGHT_KHR</li>
+		<li>"soft-light": SOFTLIGHT_KHR</li>
+		<li>"difference": DIFFERENCE_KHR</li>
+		<li>"exclusion": EXCLUSION_KHR</li>
+		<li>"hue": HSL_HUE_KHR</li>
+		<li>"saturation": HSL_SATURATION_KHR</li>
+		<li>"color": HSL_COLOR_KHR</li>
+		<li>"luminosity": HSL_LUMINOSITY_KHR</li>
+	  </ul>
+	  
+	  <p>These effects are useful for high-quality artistic blends. They can be implemented using shaders and rendering via an intermediate texture. However this has a high performance overhead both in draw calls and GPU bandwidth. Advanced blend modes allow a much simpler, high-performance way of implementing these blends. Using shaders rendering to an intermediate texture can be used as a fallback if this extension is not supported.</p>
+	  
+	  <p>Note only the coherent variant of this extension is exposed in order to eliminate the possibility of undefined behavior in KHR_blend_equation_advanced. This also simplifies the extension and removes the need to insert blend barriers during rendering.</p>
+    </div>
+
+    <features>
+      <feature>The <code>blendEquation</code> entry point is extended to accept the enums in the IDL below</feature>
+    </features>
+  </overview>
+
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface WEBGL_blend_equation_advanced_coherent  {
+  const GLenum MULTIPLY       = 0x9294;
+  const GLenum SCREEN         = 0x9295;
+  const GLenum OVERLAY        = 0x9296;
+  const GLenum DARKEN         = 0x9297;
+  const GLenum LIGHTEN        = 0x9298;
+  const GLenum COLORDODGE     = 0x9299;
+  const GLenum COLORBURN      = 0x929A;
+  const GLenum HARDLIGHT      = 0x929B;
+  const GLenum SOFTLIGHT      = 0x929C;
+  const GLenum DIFFERENCE     = 0x929E;
+  const GLenum EXCLUSION      = 0x92A0;
+  const GLenum HSL_HUE        = 0x92AD;
+  const GLenum HSL_SATURATION = 0x92AE;
+  const GLenum HSL_COLOR      = 0x92AF;
+  const GLenum HSL_LUMINOSITY = 0x92B0;
+};
+  </idl>
+
+  <security/>
+
+  <ipstatus/>
+
+  <additions/>
+
+  <!-- Additions to the WebGL Specification -->
+
+  <errors/>
+
+  <newstate/>
+
+  <newimplstate/>
+
+  <!-- New Implementation-Dependent State -->
+
+  <samplecode xml:space="preserve">
+
+    <pre>
+var ext = gl.getExtension("WEBGL_blend_equation_advanced_coherent");
+gl.blendEquation(ext.MULTIPLY);
+gl.getParameter(gl.BLEND_EQUATION) == ext.MULTIPLY;
+    </pre>
+  </samplecode>
+
+  <tests/>
+
+  <issues/>
+
+  <history>
+  
+    <revision date="2018/09/13">
+      <change>Forked from WEBGL_blend_equation_advanced to specify only the coherent variant</change>
+    </revision>
+	
+    <revision date="2018/08/23">
+      <change>Converted to extension XML format</change>
+    </revision>
+	
+	<revision date="2018/08/21">
+      <change>Revised description</change>
+    </revision>
+	
+	<revision date="2015/05/26">
+      <change>Original draft as a TXT file</change>
+    </revision>
+  </history>
+</proposal>

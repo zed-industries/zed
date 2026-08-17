@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ratified href="OES_texture_float/">
+  <name>OES_texture_float</name>
+
+  <contact> <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL
+  working group</a> (public_webgl 'at' khronos.org) </contact>
+
+  <contributors>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+
+  <number>1</number>
+
+  <depends>
+    <api version="1.0"/>
+    <removed version="2.0" />
+  </depends>
+
+  <overview>
+    <mirrors href="http://www.khronos.org/registry/gles/extensions/OES/OES_texture_float.txt"
+             name="OES_texture_float">
+      <addendum>Optional support for <code>FLOAT</code> textures as FBO
+      attachments.</addendum>
+    </mirrors>
+
+    <features>
+      <feature> The <code>texImage2D</code> and <code>texSubImage2D</code>
+      entry points taking <code>ArrayBufferView</code> are extended to accept
+      <code>Float32Array</code> with the pixel type <code>FLOAT</code>.
+      </feature>
+
+      <feature> The <code>texImage2D</code> and <code>texSubImage2D</code>
+      entry points taking <code>ImageData</code>,
+      <code>HTMLImageElement</code>, <code>HTMLCanvasElement</code> and
+      <code>HTMLVideoElement</code> are extended to accept the pixel type
+      <code>FLOAT</code>. </feature>
+
+      <feature>Upon activation of this extension, implementations supporting
+      <a href="../WEBGL_color_buffer_float/">WEBGL_color_buffer_float</a>
+      shall implicitly enable it. This requirement maintains the historical
+      behavior prior to the differentiation of float renderability from float
+      textures, so as to not break existing content.</feature>
+    </features>
+  </overview>
+
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface OES_texture_float { }; </idl>
+
+  <history>
+    <revision date="2010/11/29">
+      <change>Initial revision.</change>
+    </revision>
+
+    <revision date="2010/12/13">
+      <change>Extended to support pixel type FLOAT for texImage2D and
+      texSubImage2D entry points taking ImageData, HTMLImageElement,
+      HTMLCanvasElement and HTMLVideoElement. </change>
+    </revision>
+
+    <revision date="2011/09/12">
+      <change>Added optional ability to use a FLOAT type texture as an FBO's
+      color attachment. </change>
+    </revision>
+
+    <revision date="2012/01/03">
+      <change>Removed webgl module per changes to Web IDL spec.</change>
+    </revision>
+
+    <revision date="2012/12/04">
+      <change>Specify that implementations supporting FLOAT color attachments
+      implicitly enable WEBGL_color_buffer_float.</change>
+    </revision>
+
+    <revision date="2013/05/15">
+      <change>Ratified by Khronos Board of Promoters.</change>
+    </revision>
+
+    <revision date="2014/07/15">
+      <change>Added NoInterfaceObject extended attribute.</change>
+    </revision>
+
+    <revision date="2014/09/11">
+      <change>Corrected link to WEBGL_color_buffer_float.</change>
+    </revision>
+
+    <revision date="2017/09/14">
+      <change>Clarify behaviors regarding WEBGL_color_buffer_float.</change>
+    </revision>
+  </history>
+</ratified>

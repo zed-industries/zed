@@ -1,0 +1,20 @@
+framework = "ObjectiveC"
+crate = "objc2"
+required-crates = []
+link = false
+skipped = true
+is-library = true
+
+macos = "10.0"
+maccatalyst = "13.0"
+ios = "2.0"
+tvos = "9.0"
+watchos = "2.0"
+visionos = "1.0"
+gnustep = true
+
+# Both a protocol and a class, so we use Swift's naming scheme
+protocol.NSObject.renamed = "NSObjectProtocol"
+
+# Return type `oneway void`
+class.NSObject.methods.release.skipped = true

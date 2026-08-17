@@ -1,0 +1,100 @@
+[package]
+name = "value-bag"
+version = "1.12.0"
+authors = ["Ashley Mannix <ashleymannix@live.com.au>"]
+edition = "2021"
+license = "Apache-2.0 OR MIT"
+documentation = "https://docs.rs/value-bag"
+description = "Anonymous structured values"
+repository = "https://github.com/sval-rs/value-bag"
+readme = "README.md"
+keywords = ["serialization", "no_std"]
+categories = ["encoding", "no-std"]
+exclude = [
+    ".github/*",
+]
+
+[package.metadata.docs.rs]
+features = ["std", "error", "sval", "serde", "test", "owned", "seq"]
+
+[workspace]
+members = [
+    "meta/serde1",
+    "meta/sval2",
+]
+
+[features]
+# Store 128bit numbers inline instead of as references
+# This may increase the size of `ValueBag` on some platforms
+inline-i128 = []
+# Store small strings inline instead of as references
+# This requires a more recent Rust toolchain
+inline-str = []
+
+# Use the standard library
+std = [
+    "alloc",
+    "value-bag-sval2?/std",
+    "value-bag-serde1?/std",
+]
+
+# Assume an allocator
+alloc = [
+    "value-bag-sval2?/alloc",
+    "value-bag-serde1?/alloc",
+]
+
+# Support owned values
+owned = [
+    "alloc",
+    "value-bag-serde1?/owned",
+]
+
+# Utilities for working with sequences
+seq = []
+
+# Add support for `sval`
+sval = ["sval2"]
+sval2 = [
+    "value-bag-sval2",
+]
+
+# Add support for `serde`
+serde = ["serde1"]
+serde1 = [
+    "alloc",
+    "value-bag-serde1",
+    "value-bag-sval2?/serde1",
+]
+
+# Add support for `std::error`
+error = [
+    "std",
+]
+
+# Add support for testing the contents of a value bag
+test = ["std"]
+
+[dependencies.value-bag-sval2]
+version = "1.12.0"
+path = "meta/sval2"
+optional = true
+
+[dependencies.value-bag-serde1]
+version = "1.12.0"
+path = "meta/serde1"
+optional = true
+
+[dev-dependencies.value-bag-sval2]
+path = "meta/sval2"
+features = ["test", "json"]
+
+[dev-dependencies.value-bag-serde1]
+path = "meta/serde1"
+features = ["test", "json"]
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies.wasm-bindgen]
+version = "0.2"
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies.wasm-bindgen-test]
+version = "0.3"

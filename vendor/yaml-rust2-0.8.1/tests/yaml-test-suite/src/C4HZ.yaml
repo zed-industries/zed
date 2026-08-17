@@ -1,0 +1,100 @@
+---
+- name: Spec Example 2.24. Global Tags
+  from: http://www.yaml.org/spec/1.2/spec.html#id2761719
+  tags: spec tag alias directive local-tag
+  yaml: |
+    %TAG ! tag:clarkevans.com,2002:
+    --- !shape
+      # Use the ! handle for presenting
+      # tag:clarkevans.com,2002:circle
+    - !circle
+      center: &ORIGIN {x: 73, y: 129}
+      radius: 7
+    - !line
+      start: *ORIGIN
+      finish: { x: 89, y: 102 }
+    - !label
+      start: *ORIGIN
+      color: 0xFFEEBB
+      text: Pretty vector drawing.
+  tree: |
+    +STR
+     +DOC ---
+      +SEQ <tag:clarkevans.com,2002:shape>
+       +MAP <tag:clarkevans.com,2002:circle>
+        =VAL :center
+        +MAP {} &ORIGIN
+         =VAL :x
+         =VAL :73
+         =VAL :y
+         =VAL :129
+        -MAP
+        =VAL :radius
+        =VAL :7
+       -MAP
+       +MAP <tag:clarkevans.com,2002:line>
+        =VAL :start
+        =ALI *ORIGIN
+        =VAL :finish
+        +MAP {}
+         =VAL :x
+         =VAL :89
+         =VAL :y
+         =VAL :102
+        -MAP
+       -MAP
+       +MAP <tag:clarkevans.com,2002:label>
+        =VAL :start
+        =ALI *ORIGIN
+        =VAL :color
+        =VAL :0xFFEEBB
+        =VAL :text
+        =VAL :Pretty vector drawing.
+       -MAP
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      {
+        "center": {
+          "x": 73,
+          "y": 129
+        },
+        "radius": 7
+      },
+      {
+        "start": {
+          "x": 73,
+          "y": 129
+        },
+        "finish": {
+          "x": 89,
+          "y": 102
+        }
+      },
+      {
+        "start": {
+          "x": 73,
+          "y": 129
+        },
+        "color": 16772795,
+        "text": "Pretty vector drawing."
+      }
+    ]
+  dump: |
+    --- !<tag:clarkevans.com,2002:shape>
+    - !<tag:clarkevans.com,2002:circle>
+      center: &ORIGIN
+        x: 73
+        y: 129
+      radius: 7
+    - !<tag:clarkevans.com,2002:line>
+      start: *ORIGIN
+      finish:
+        x: 89
+        y: 102
+    - !<tag:clarkevans.com,2002:label>
+      start: *ORIGIN
+      color: 0xFFEEBB
+      text: Pretty vector drawing.

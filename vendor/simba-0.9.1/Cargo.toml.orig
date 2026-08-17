@@ -1,0 +1,41 @@
+[package]
+name = "simba"
+version = "0.9.1"
+authors = ["sebcrozet <developer@crozet.re>"]
+description = "SIMD algebra for Rust"
+keywords = ["algebra", "simd", "math"]
+readme = "README.md"
+repository = "https://github.com/dimforge/simba"
+categories = ["science", "mathematics", "wasm", "no-std"]
+documentation = "https://docs.rs/simba"
+license = "Apache-2.0"
+edition = "2018"
+
+[badges]
+maintenance = { status = "actively-developed" }
+
+[features]
+default = ["std"]
+std = ["wide/std"]
+portable_simd = ["std"]
+partial_fixed_point_support = ["fixed", "cordic"]
+serde_serialize = ["serde", "fixed/serde"]
+rkyv-serialize = ["rkyv"]
+libm = ["num-traits/libm"]
+
+[dependencies]
+num-traits = { version = "0.2.11", default-features = false }
+approx = { version = "0.5", default-features = false }
+decimal = { version = "2.0", default-features = false, optional = true }
+num-complex = { version = "0.4", default-features = false }
+wide = { version = "0.7", default-features = false, optional = true }
+fixed = { version = "1", optional = true }
+cordic = { version = "0.1", optional = true }
+paste = "1.0"
+rand = { version = "0.8", optional = true }
+serde = { version = "1", default-features = false, optional = true }
+rkyv = { version = "0.7", optional = true }
+libm_force = { package = "libm", version = "0.2", optional = true }
+
+[package.metadata.docs.rs]
+all-features = true

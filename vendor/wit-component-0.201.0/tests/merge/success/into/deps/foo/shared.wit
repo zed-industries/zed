@@ -1,0 +1,23 @@
+package foo:foo;
+
+interface shared-only-into {
+  variant v {
+    c1,
+  }
+
+  bar: func(x: v);
+}
+
+interface shared-items {
+  type a = u32;
+}
+
+world shared-world {
+  import shared-items;
+
+  export shared-items;
+
+  type c = u32;
+
+  import d: interface {}
+}

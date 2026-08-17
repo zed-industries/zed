@@ -1,0 +1,14 @@
+---
+- name: Node anchor in sequence
+  from: '@perlpunk'
+  tags: anchor error sequence
+  fail: true
+  yaml: |
+    - item1
+    &node
+    - item2
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       =VAL :item1

@@ -1,0 +1,72 @@
+//
+// FreeType 2 project for the symbian platform
+//
+
+// Copyright (C) 2008-2023 by
+// David Turner, Robert Wilhelm, and Werner Lemberg.
+//
+// This file is part of the FreeType project, and may only be used, modified,
+// and distributed under the terms of the FreeType project license,
+// LICENSE.TXT.  By continuing to use, modify, or distribute this file you
+// indicate that you have read the license and understand and accept it
+// fully.
+
+PRJ_PLATFORMS
+DEFAULT
+
+PRJ_MMPFILES
+freetype.mmp
+
+PRJ_EXPORTS
+../../include/freetype/ft2build.h
+../../include/freetype/config/ftconfig.h	config/ftconfig.h
+../../include/freetype/config/ftheader.h	config/ftheader.h
+../../include/freetype/config/ftmodule.h	config/ftmodule.h
+../../include/freetype/config/ftoption.h	config/ftoption.h
+../../include/freetype/config/ftstdlib.h	config/ftstdlib.h
+../../include/freetype/freetype.h		freetype.h
+../../include/freetype/ftadvanc.h		ftadvanc.h
+../../include/freetype/ftautoh.h		ftautoh.h
+../../include/freetype/ftbbox.h			ftbbox.h
+../../include/freetype/ftbdf.h			ftbdf.h
+../../include/freetype/ftbitmap.h		ftbitmap.h
+../../include/freetype/ftbzip2.h		ftbzip2.h
+../../include/freetype/ftcache.h		ftcache.h
+../../include/freetype/ftcffdrv.h		ftcffdrv.h
+../../include/freetype/ftcid.h			ftcid.h
+../../include/freetype/fterrdef.h		fterrdef.h
+../../include/freetype/fterrors.h		fterrors.h
+../../include/freetype/ftfntfmt.h		ftfntfmt.h
+../../include/freetype/ftgasp.h			ftgasp.h
+../../include/freetype/ftglyph.h		ftglyph.h
+../../include/freetype/ftgxval.h		ftgxval.h
+../../include/freetype/ftgzip.h			ftgzip.h
+../../include/freetype/ftimage.h		ftimage.h
+../../include/freetype/ftincrem.h		ftincrem.h
+../../include/freetype/ftlcdfil.h		ftlcdfil.h
+../../include/freetype/ftlist.h			ftlist.h
+../../include/freetype/ftlzw.h			ftlzw.h
+../../include/freetype/ftmac.h			ftmac.h
+../../include/freetype/ftmm.h			ftmm.h
+../../include/freetype/ftmodapi.h		ftmodapi.h
+../../include/freetype/ftmoderr.h		ftmoderr.h
+../../include/freetype/ftotval.h		ftotval.h
+../../include/freetype/ftoutln.h		ftoutln.h
+../../include/freetype/ftparams.h		ftparams.h
+../../include/freetype/ftpcfdrv.h		ftpcfdrv.h
+../../include/freetype/ftpfr.h			ftpfr.h
+../../include/freetype/ftrender.h		ftrender.h
+../../include/freetype/ftsizes.h		ftsizes.h
+../../include/freetype/ftsnames.h		ftsnames.h
+../../include/freetype/ftstroke.h		ftstroke.h
+../../include/freetype/ftsynth.h		ftsynth.h
+../../include/freetype/ftsystem.h		ftsystem.h
+../../include/freetype/ftt1drv.h		ftt1drv.h
+../../include/freetype/fttrigon.h		fttrigon.h
+../../include/freetype/ftttdrv.h		ftttdrv.h
+../../include/freetype/fttypes.h		fttypes.h
+../../include/freetype/ftwinfnt.h		ftwinfnt.h
+../../include/freetype/t1tables.h		t1tables.h
+../../include/freetype/ttnameid.h		ttnameid.h
+../../include/freetype/tttables.h		tttables.h
+../../include/freetype/tttags.h			tttags.h

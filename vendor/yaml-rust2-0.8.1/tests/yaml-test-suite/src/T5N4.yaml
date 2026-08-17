@@ -1,0 +1,24 @@
+---
+- name: Spec Example 8.7. Literal Scalar [1.3]
+  from: M9B4, modified for YAML 1.3
+  tags: spec literal scalar whitespace 1.3-mod
+  yaml: |
+    --- |
+     literal
+     ——»text
+    ↵
+    ↵
+  tree: |
+    +STR
+     +DOC ---
+      =VAL |literal\n\ttext\n
+     -DOC
+    -STR
+  json: |
+    "literal\n\ttext\n"
+  dump: |
+    "literal\n\ttext\n"
+  emit: |
+    --- |
+      literal
+      —»text

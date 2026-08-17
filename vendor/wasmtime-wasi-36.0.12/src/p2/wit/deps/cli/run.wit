@@ -1,0 +1,6 @@
+@since(version = 0.2.0)
+interface run {
+  /// Run the program.
+  @since(version = 0.2.0)
+  run: func() -> result;
+}

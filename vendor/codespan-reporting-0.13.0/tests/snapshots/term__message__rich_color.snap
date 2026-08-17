@@ -1,0 +1,13 @@
+---
+source: codespan-reporting/tests/term.rs
+expression: TEST_DATA.emit_color(&config)
+---
+{fg:Red bold bright}error{bold bright}: a message{/}
+
+{fg:Yellow bold bright}warning{bold bright}: a message{/}
+
+{fg:Green bold bright}note{bold bright}: a message{/}
+
+{fg:Cyan bold bright}help{bold bright}: a message{/}
+
+

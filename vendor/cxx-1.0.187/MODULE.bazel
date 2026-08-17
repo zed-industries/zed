@@ -1,0 +1,21 @@
+module(
+    name = "cxx.rs",
+    version = "0.0.0",
+    bazel_compatibility = [">=7.2.1"],
+    compatibility_level = 1,
+)
+
+bazel_dep(name = "bazel_features", version = "1.32.0")
+bazel_dep(name = "bazel_skylib", version = "1.8.1")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_cc", version = "0.2.4")
+bazel_dep(name = "rules_rust", version = "0.65.0")
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(versions = ["1.90.0"])
+use_repo(rust, "rust_toolchains")
+
+register_toolchains("@rust_toolchains//:all")
+
+crate_repositories = use_extension("//tools/bazel:extension.bzl", "crate_repositories")
+use_repo(crate_repositories, "crates.io", "vendor")

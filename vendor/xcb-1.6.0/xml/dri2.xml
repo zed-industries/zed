@@ -1,0 +1,313 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Copyright (C) 2005 Jeremy Kolb.
+Copyright © 2009 Intel Corporation
+All Rights Reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Except as contained in this notice, the names of the authors or their
+institutions shall not be used in advertising or otherwise to promote the
+sale, use or other dealings in this Software without prior written
+authorization from the authors.
+-->
+
+<xcb header="dri2" extension-xname="DRI2" extension-name="DRI2" major-version="1" minor-version="4">
+    <import>xproto</import>
+
+    <enum name="Attachment">
+        <item name="BufferFrontLeft">
+            <value>0</value>
+        </item>
+        <item name="BufferBackLeft">
+            <value>1</value>
+        </item>
+        <item name="BufferFrontRight">
+            <value>2</value>
+        </item>
+        <item name="BufferBackRight">
+            <value>3</value>
+        </item>
+        <item name="BufferDepth">
+            <value>4</value>
+        </item>
+        <item name="BufferStencil">
+            <value>5</value>
+        </item>
+        <item name="BufferAccum">
+            <value>6</value>
+        </item>
+        <item name="BufferFakeFrontLeft">
+            <value>7</value>
+        </item>
+        <item name="BufferFakeFrontRight">
+            <value>8</value>
+        </item>
+        <item name="BufferDepthStencil">
+            <value>9</value>
+        </item>
+        <item name="BufferHiz">
+            <value>10</value>
+        </item>
+    </enum>
+
+    <enum name="DriverType">
+        <item name="DRI">
+            <value>0</value>
+        </item>
+        <item name="VDPAU">
+            <value>1</value>
+        </item>
+    </enum>
+
+    <enum name="EventType">
+        <item name="ExchangeComplete">
+            <value>1</value>
+        </item>
+        <item name="BlitComplete">
+            <value>2</value>
+        </item>
+        <item name="FlipComplete">
+            <value>3</value>
+        </item>
+    </enum>
+
+    <!-- Types -->
+
+    <struct name="DRI2Buffer">
+        <field type="CARD32" name="attachment" enum="Attachment" />
+        <field type="CARD32" name="name" />
+        <field type="CARD32" name="pitch" />
+        <field type="CARD32" name="cpp" />
+        <field type="CARD32" name="flags" />
+    </struct>
+
+    <struct name="AttachFormat">
+        <field type="CARD32" name="attachment" enum="Attachment" />
+        <field type="CARD32" name="format" />
+    </struct>
+
+    <!-- Requests -->
+    <request name="QueryVersion" opcode="0">
+        <field type="CARD32" name="major_version" />
+        <field type="CARD32" name="minor_version" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="major_version" />
+            <field type="CARD32" name="minor_version" />
+        </reply>
+    </request>
+
+    <request name="Connect" opcode="1">
+        <field type="WINDOW" name="window" />
+        <field type="CARD32" name="driver_type" enum="DriverType" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="driver_name_length" />
+            <field type="CARD32" name="device_name_length" />
+            <pad bytes="16" />
+            <list type="char" name="driver_name">
+                <fieldref>driver_name_length</fieldref>
+            </list>
+            <list type="void" name="alignment_pad">
+                <op op="-">
+                    <op op="&amp;">
+                        <op op="+">
+                            <fieldref>driver_name_length</fieldref>
+                            <value>3</value>
+                        </op>
+                        <unop op="~">
+                            <value>3</value>
+                        </unop>
+                    </op>
+                    <fieldref>driver_name_length</fieldref>
+                </op>
+            </list>
+            <list type="char" name="device_name">
+                <fieldref>device_name_length</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="Authenticate" opcode="2">
+        <field type="WINDOW" name="window" />
+        <field type="CARD32" name="magic" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="authenticated" />
+        </reply>
+    </request>
+
+    <request name="CreateDrawable" opcode="3">
+        <field type="DRAWABLE" name="drawable" />
+    </request>
+
+    <request name="DestroyDrawable" opcode="4">
+        <field type="DRAWABLE" name="drawable" />
+    </request>
+
+    <request name="GetBuffers" opcode="5">
+        <field type="DRAWABLE" name="drawable" />
+        <field type="CARD32" name="count" />
+        <list type="CARD32" name="attachments">
+            <!-- The length field should be linked but we can't correct it without breaking API -->
+            <!-- <fieldref>count</fieldref> -->
+        </list>
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="width" />
+            <field type="CARD32" name="height" />
+            <field type="CARD32" name="count" />
+            <pad bytes="12" />
+            <list type="DRI2Buffer" name="buffers">
+                <fieldref>count</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="CopyRegion" opcode="6">
+        <field type="DRAWABLE" name="drawable" />
+        <field type="CARD32" name="region" />
+        <field type="CARD32" name="dest" />
+        <field type="CARD32" name="src" />
+        <reply>
+            <pad bytes="1" />
+        </reply>
+    </request>
+
+    <request name="GetBuffersWithFormat" opcode="7">
+        <field type="DRAWABLE" name="drawable" />
+        <field type="CARD32" name="count" />
+        <list type="AttachFormat" name="attachments">
+            <!-- The length field should be linked but we can't correct it without breaking API -->
+            <!-- <fieldref>count</fieldref> -->
+        </list>
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="width" />
+            <field type="CARD32" name="height" />
+            <field type="CARD32" name="count" />
+            <pad bytes="12" />
+            <list type="DRI2Buffer" name="buffers">
+                <fieldref>count</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <!-- Version 1.2 -->
+
+    <request name="SwapBuffers" opcode="8">
+        <field type="DRAWABLE" name="drawable" />
+        <field type="CARD32" name="target_msc_hi" />
+        <field type="CARD32" name="target_msc_lo" />
+        <field type="CARD32" name="divisor_hi" />
+        <field type="CARD32" name="divisor_lo" />
+        <field type="CARD32" name="remainder_hi" />
+        <field type="CARD32" name="remainder_lo" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="swap_hi" />
+            <field type="CARD32" name="swap_lo" />
+        </reply>
+    </request>
+
+    <request name="GetMSC" opcode="9">
+        <field type="DRAWABLE" name="drawable" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="ust_hi" />
+            <field type="CARD32" name="ust_lo" />
+            <field type="CARD32" name="msc_hi" />
+            <field type="CARD32" name="msc_lo" />
+            <field type="CARD32" name="sbc_hi" />
+            <field type="CARD32" name="sbc_lo" />
+        </reply>
+    </request>
+
+    <request name="WaitMSC" opcode="10">
+        <field type="DRAWABLE" name="drawable" />
+        <field type="CARD32" name="target_msc_hi" />
+        <field type="CARD32" name="target_msc_lo" />
+        <field type="CARD32" name="divisor_hi" />
+        <field type="CARD32" name="divisor_lo" />
+        <field type="CARD32" name="remainder_hi" />
+        <field type="CARD32" name="remainder_lo" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="ust_hi" />
+            <field type="CARD32" name="ust_lo" />
+            <field type="CARD32" name="msc_hi" />
+            <field type="CARD32" name="msc_lo" />
+            <field type="CARD32" name="sbc_hi" />
+            <field type="CARD32" name="sbc_lo" />
+        </reply>
+    </request>
+
+    <request name="WaitSBC" opcode="11">
+        <field type="DRAWABLE" name="drawable" />
+        <field type="CARD32" name="target_sbc_hi" />
+        <field type="CARD32" name="target_sbc_lo" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="ust_hi" />
+            <field type="CARD32" name="ust_lo" />
+            <field type="CARD32" name="msc_hi" />
+            <field type="CARD32" name="msc_lo" />
+            <field type="CARD32" name="sbc_hi" />
+            <field type="CARD32" name="sbc_lo" />
+        </reply>
+    </request>
+
+    <request name="SwapInterval" opcode="12">
+        <field type="DRAWABLE" name="drawable" />
+        <field type="CARD32" name="interval" />
+    </request>
+
+    <!-- Version 1.4 -->
+
+    <request name="GetParam" opcode="13">
+        <field type="DRAWABLE" name="drawable" />
+        <field type="CARD32" name="param" />
+        <reply>
+            <field type="BOOL" name="is_param_recognized" />
+            <field type="CARD32" name="value_hi" />
+            <field type="CARD32" name="value_lo" />
+        </reply>
+    </request>
+
+    <!-- Events -->
+
+    <event name="BufferSwapComplete" number="0">
+        <pad bytes="1" />
+        <field type="CARD16" name="event_type" enum="EventType" />
+        <pad bytes="2" />
+        <field type="DRAWABLE" name="drawable" />
+        <field type="CARD32" name="ust_hi" />
+        <field type="CARD32" name="ust_lo" />
+        <field type="CARD32" name="msc_hi" />
+        <field type="CARD32" name="msc_lo" />
+        <field type="CARD32" name="sbc" />
+    </event>
+
+    <!-- Version 1.3 -->
+
+    <event name="InvalidateBuffers" number="1">
+        <pad bytes="1" />
+        <field type="DRAWABLE" name="drawable" />
+    </event>
+</xcb>

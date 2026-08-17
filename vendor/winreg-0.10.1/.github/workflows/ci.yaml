@@ -1,0 +1,65 @@
+name: CI
+on:
+  - push
+  - pull_request
+jobs:
+  tests:
+    name: CI
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: [stable]
+        target:
+          - x86_64-pc-windows-msvc
+          - x86_64-pc-windows-gnu
+          - i686-pc-windows-msvc
+          - i686-pc-windows-gnu
+        include:
+          - channel: stable
+            target: x86_64-pc-windows-msvc
+            lint: true
+          - channel: 1.31.1
+            target: x86_64-pc-windows-msvc
+    env:
+      RUST_BACKTRACE: full
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install rust-${{ matrix.channel }}
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.channel }}
+          profile: minimal
+          override: true
+      - name: Cache cargo registry
+        uses: actions/cache@v2
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      - name: Check formatting
+        if: matrix.lint
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
+      - name: Lint
+        if: matrix.lint
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --all-features --all-targets
+      - name: Run tests (no features)
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --release --no-default-features
+      - name: Run tests (all features)
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --release --all-features

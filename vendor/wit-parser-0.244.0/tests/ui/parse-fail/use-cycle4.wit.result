@@ -1,0 +1,5 @@
+interface or world `bar` depends on itself
+     --> tests/ui/parse-fail/use-cycle4.wit:10:11
+      |
+   10 | interface bar {
+      |           ^--

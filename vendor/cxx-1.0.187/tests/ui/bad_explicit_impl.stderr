@@ -1,0 +1,5 @@
+error: unsupported Self type of explicit impl
+ --> tests/ui/bad_explicit_impl.rs:7:5
+  |
+7 |     impl fn() -> &S {}
+  |     ^^^^^^^^^^^^^^^^^^

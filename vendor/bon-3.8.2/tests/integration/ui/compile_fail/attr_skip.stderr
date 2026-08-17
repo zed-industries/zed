@@ -1,0 +1,53 @@
+error: `skip` attribute can't be specified together with `into`
+ --> tests/integration/ui/compile_fail/attr_skip.rs:5:15
+  |
+5 |     #[builder(skip, into)]
+  |               ^^^^
+
+error: `skip` attribute can't be specified together with `name`
+  --> tests/integration/ui/compile_fail/attr_skip.rs:11:15
+   |
+11 |     #[builder(skip, name = bar)]
+   |               ^^^^
+
+error: `skip` attribute can't be specified with the `default` attribute; if you wanted to specify a value for the member, then use the following syntax instead `#[builder(skip = value)]`
+  --> tests/integration/ui/compile_fail/attr_skip.rs:17:15
+   |
+17 |     #[builder(skip, default = 42)]
+   |               ^^^^
+
+error: `skip` attribute is not supported on function arguments; use a local variable instead.
+  --> tests/integration/ui/compile_fail/attr_skip.rs:22:41
+   |
+22 | fn skip_on_fn_is_unsupporetd1(#[builder(skip)] _x: u32) {}
+   |                                         ^^^^
+
+error: `skip` attribute is not supported on function arguments; use a local variable instead.
+  --> tests/integration/ui/compile_fail/attr_skip.rs:24:41
+   |
+24 | fn skip_on_fn_is_unsupporetd2(#[builder(skip = "skip".to_owned())] _y: String) {}
+   |                                         ^^^^
+
+error: `skip` attribute is not supported on function arguments; use a local variable instead.
+  --> tests/integration/ui/compile_fail/attr_skip.rs:26:41
+   |
+26 | fn skip_on_fn_is_unsupporetd3(#[builder(skip = vec![42])] _z: Vec<u32>) {}
+   |                                         ^^^^
+
+error[E0599]: no method named `x` found for struct `SkipGeneratesNoSetterBuilder<S>` in the current scope
+  --> tests/integration/ui/compile_fail/attr_skip.rs:38:38
+   |
+29 |     #[derive(Builder)]
+   |              ------- method `x` not found for this struct
+...
+38 |     SkipGeneratesNoSetter::builder().x(42).build();
+   |                                      ^ method not found in `SkipGeneratesNoSetterBuilder`
+
+error[E0599]: no method named `y` found for struct `SkipGeneratesNoSetterBuilder<S>` in the current scope
+  --> tests/integration/ui/compile_fail/attr_skip.rs:39:38
+   |
+29 |     #[derive(Builder)]
+   |              ------- method `y` not found for this struct
+...
+39 |     SkipGeneratesNoSetter::builder().y(42).build();
+   |                                      ^ method not found in `SkipGeneratesNoSetterBuilder`

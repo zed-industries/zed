@@ -1,0 +1,67 @@
+[package]
+name = "agent-client-protocol"
+version = "2.0.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Core protocol types and traits for the Agent Client Protocol"
+keywords = ["acp", "agent", "protocol", "ai"]
+categories = ["development-tools"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = []
+
+# Forward unstable features from agent-client-protocol-schema.
+# Enable these to get support for the corresponding unstable ACP methods.
+unstable = [
+    "unstable_auth_methods",
+    "unstable_elicitation",
+    "unstable_end_turn_token_usage",
+    "unstable_mcp_over_acp",
+    "unstable_session_fork",
+]
+unstable_auth_methods = ["agent-client-protocol-schema/unstable_auth_methods"]
+unstable_elicitation = ["agent-client-protocol-schema/unstable_elicitation"]
+unstable_end_turn_token_usage = ["agent-client-protocol-schema/unstable_end_turn_token_usage"]
+unstable_mcp_over_acp = ["agent-client-protocol-schema/unstable_mcp_over_acp"]
+unstable_session_fork = ["agent-client-protocol-schema/unstable_session_fork"]
+unstable_protocol_v2 = ["agent-client-protocol-schema/unstable_protocol_v2"]
+
+[dependencies]
+agent-client-protocol-schema.workspace = true
+agent-client-protocol-derive.workspace = true
+futures.workspace = true
+futures-concurrency.workspace = true
+rustc-hash.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+async-io.workspace = true
+async-process.workspace = true
+blocking.workspace = true
+shell-words.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_System_Threading"] }
+
+[dev-dependencies]
+agent-client-protocol-test.workspace = true
+clap.workspace = true
+expect-test.workspace = true
+tokio = { workspace = true, features = ["io-std", "io-util", "macros", "rt", "rt-multi-thread", "sync", "time"] }
+tokio-util.workspace = true
+
+[lints]
+workspace = true

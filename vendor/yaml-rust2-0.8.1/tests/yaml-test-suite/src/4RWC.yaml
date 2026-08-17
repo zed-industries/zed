@@ -1,0 +1,27 @@
+---
+- name: Trailing spaces after flow collection
+  tags: flow whitespace
+  from: '@ingydotnet'
+  yaml: |2
+      [1, 2, 3]␣␣
+    ␣␣∎
+  tree: |
+    +STR
+     +DOC
+      +SEQ []
+       =VAL :1
+       =VAL :2
+       =VAL :3
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      1,
+      2,
+      3
+    ]
+  dump: |
+    - 1
+    - 2
+    - 3

@@ -1,0 +1,151 @@
+name: Rust
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install latest stable
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: stable
+            components: clippy
+      - name: check nostd
+        uses: actions-rs/cargo@v1
+        with:
+          command: check
+          args: --no-default-features
+      - name: test nostd
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --no-default-features
+      - name: check constrandom
+        uses: actions-rs/cargo@v1
+        with:
+          command: check
+          args: --no-default-features --features compile-time-rng
+      - name: test constrandom
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --no-default-features --features compile-time-rng
+      - name: check
+        uses: actions-rs/cargo@v1
+        with:
+          command: check
+      - name: test
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+  nightly:
+    name: nightly
+    runs-on: ubuntu-latest
+    env:
+        RUSTFLAGS: -C target-cpu=native
+    steps:
+      - uses: actions/checkout@v2 
+      - name: Install latest nightly
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: nightly
+            override: true
+            components: clippy
+      - name: check nightly
+        uses: actions-rs/cargo@v1
+        with:
+          command: check
+      - name: test nightly
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+      - name: check serde
+        uses: actions-rs/cargo@v1
+        with:
+          command: check
+          args: --features serde
+      - name: test serde
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --features serde
+  linux_arm7:
+    name: Linux ARMv7
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: armv7-unknown-linux-gnueabihf
+      - uses: actions-rs/cargo@v1
+        with:
+          command: check
+          args: --target armv7-unknown-linux-gnueabihf
+  i686-unknown-linux-gnu:
+    name: Linux i686
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: i686-unknown-linux-gnu
+      - name: Install cross compile tools
+        run: sudo apt-get install -y gcc-multilib libc6-i386 libc6-dev-i386
+      - uses: actions-rs/cargo@v1
+        with:
+          command: check
+          args: --target i686-unknown-linux-gnu
+      - uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --target i686-unknown-linux-gnu
+  x86_64-unknown-linux-gnu:
+    name: Linux x86_64 - nightly
+    runs-on: ubuntu-latest
+    env:
+        RUSTFLAGS: -C target-cpu=skylake -C target-feature=+aes
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          override: true
+          target: x86_64-unknown-linux-gnu
+      - uses: actions-rs/cargo@v1
+        with:
+          command: check
+          args: --target x86_64-unknown-linux-gnu
+      - uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --target x86_64-unknown-linux-gnu
+  thumbv6m:
+    name: thumbv6m
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: thumbv6m-none-eabi
+      - uses: actions-rs/cargo@v1
+        with:
+          command: check
+          args: --target thumbv6m-none-eabi --no-default-features
+  wasm32-unknown-unknown:
+    name: wasm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: wasm32-unknown-unknown
+      - uses: actions-rs/cargo@v1
+        with:
+          command: check
+          args: --target wasm32-unknown-unknown

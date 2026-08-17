@@ -1,0 +1,53 @@
+error: #[builder(const)] requires the underlying function to be marked as `const fn`
+ --> tests/integration/ui/compile_fail/attr_const.rs:3:11
+  |
+3 | #[builder(const)]
+  |           ^^^^^
+
+error: #[builder(const)] requires the underlying function to be marked as `const fn`
+  --> tests/integration/ui/compile_fail/attr_const.rs:10:15
+   |
+10 |     #[builder(const)]
+   |               ^^^^^
+
+error: bare #[builder(default)] is incompatible with #[builder(const)] because Default::default() can not be called in const context; provide an explicit value via #[builder(default = ...)] instead
+  --> tests/integration/ui/compile_fail/attr_const.rs:17:15
+   |
+17 |     #[builder(default)]
+   |               ^^^^^^^
+
+error: bare #[builder(skip)] is incompatible with #[builder(const)] because Default::default() can not be called in const context; provide an explicit value via #[builder(skip = ...)] instead
+  --> tests/integration/ui/compile_fail/attr_const.rs:24:15
+   |
+24 |     #[builder(skip)]
+   |               ^^^^
+
+error: bare #[builder(field)] is incompatible with #[builder(const)] because Default::default() can not be called in const context; provide an explicit value via #[builder(field = ...)] instead
+  --> tests/integration/ui/compile_fail/attr_const.rs:31:15
+   |
+31 |     #[builder(field)]
+   |               ^^^^^
+
+error: #[builder(into)] is incompatible with #[builder(const)] because Into::into() can not be called in const context
+  --> tests/integration/ui/compile_fail/attr_const.rs:38:15
+   |
+38 |     #[builder(into)]
+   |               ^^^^
+
+error: from_iter is incompatible with #[builder(const)] because FromIterator::from_iter() can not be called in const context
+  --> tests/integration/ui/compile_fail/attr_const.rs:45:22
+   |
+45 |     #[builder(with = FromIterator::from_iter)]
+   |                      ^^^^^^^^^^^^
+
+error: from_iter is incompatible with #[builder(const)] because FromIterator::from_iter() can not be called in const context
+  --> tests/integration/ui/compile_fail/attr_const.rs:52:22
+   |
+52 |     #[builder(with = <_>::from_iter)]
+   |                      ^
+
+error: this kind of expression is not allowed in this position; if you need to use a complex expression such as this then move it into a separate `const fn` and call that function here instead
+  --> tests/integration/ui/compile_fail/attr_const.rs:59:25
+   |
+59 |     #[builder(default = return 1)]
+   |                         ^^^^^^

@@ -1,0 +1,399 @@
+bzip2(1)                                                 bzip2(1)
+
+
+
+NNAAMMEE
+       bzip2, bunzip2 − a block‐sorting file compressor, v1.0.8
+       bzcat − decompresses files to stdout
+       bzip2recover − recovers data from damaged bzip2 files
+
+
+SSYYNNOOPPSSIISS
+       bbzziipp22 [ −−ccddffkkqqssttvvzzVVLL112233445566778899 ] [ _f_i_l_e_n_a_m_e_s _._._.  ]
+       bbuunnzziipp22 [ −−ffkkvvssVVLL ] [ _f_i_l_e_n_a_m_e_s _._._.  ]
+       bbzzccaatt [ −−ss ] [ _f_i_l_e_n_a_m_e_s _._._.  ]
+       bbzziipp22rreeccoovveerr _f_i_l_e_n_a_m_e
+
+
+DDEESSCCRRIIPPTTIIOONN
+       _b_z_i_p_2  compresses  files  using  the Burrows‐Wheeler block
+       sorting text compression algorithm,  and  Huffman  coding.
+       Compression  is  generally  considerably  better than that
+       achieved by more conventional LZ77/LZ78‐based compressors,
+       and  approaches  the performance of the PPM family of sta­
+       tistical compressors.
+
+       The command‐line options are deliberately very similar  to
+       those of _G_N_U _g_z_i_p_, but they are not identical.
+
+       _b_z_i_p_2  expects  a list of file names to accompany the com­
+       mand‐line flags.  Each file is replaced  by  a  compressed
+       version  of  itself,  with  the  name "original_name.bz2".
+       Each compressed file has the same modification date,  per­
+       missions, and, when possible, ownership as the correspond­
+       ing original, so that these properties  can  be  correctly
+       restored  at  decompression  time.   File name handling is
+       naive in the sense that there is no mechanism for preserv­
+       ing  original file names, permissions, ownerships or dates
+       in filesystems which lack these concepts, or have  serious
+       file name length restrictions, such as MS‐DOS.
+
+       _b_z_i_p_2  and  _b_u_n_z_i_p_2 will by default not overwrite existing
+       files.  If you want this to happen, specify the −f flag.
+
+       If no file names  are  specified,  _b_z_i_p_2  compresses  from
+       standard  input  to  standard output.  In this case, _b_z_i_p_2
+       will decline to write compressed output to a terminal,  as
+       this  would  be  entirely  incomprehensible  and therefore
+       pointless.
+
+       _b_u_n_z_i_p_2 (or _b_z_i_p_2 _−_d_) decompresses  all  specified  files.
+       Files which were not created by _b_z_i_p_2 will be detected and
+       ignored, and a warning issued.  _b_z_i_p_2  attempts  to  guess
+       the  filename  for  the decompressed file from that of the
+       compressed file as follows:
+
+              filename.bz2    becomes   filename
+              filename.bz     becomes   filename
+              filename.tbz2   becomes   filename.tar
+              filename.tbz    becomes   filename.tar
+              anyothername    becomes   anyothername.out
+
+       If the file does not end in one of the recognised endings,
+       _._b_z_2_,  _._b_z_,  _._t_b_z_2 or _._t_b_z_, _b_z_i_p_2 complains that it cannot
+       guess the name of the original file, and uses the original
+       name with _._o_u_t appended.
+
+       As  with compression, supplying no filenames causes decom­
+       pression from standard input to standard output.
+
+       _b_u_n_z_i_p_2 will correctly decompress a file which is the con­
+       catenation of two or more compressed files.  The result is
+       the concatenation of the corresponding uncompressed files.
+       Integrity testing (−t) of concatenated compressed files is
+       also supported.
+
+       You can also compress or decompress files to the  standard
+       output  by giving the −c flag.  Multiple files may be com­
+       pressed and decompressed like this.  The resulting outputs
+       are  fed  sequentially to stdout.  Compression of multiple
+       files in this manner generates a stream containing  multi­
+       ple compressed file representations.  Such a stream can be
+       decompressed correctly only  by  _b_z_i_p_2  version  0.9.0  or
+       later.   Earlier  versions of _b_z_i_p_2 will stop after decom­
+       pressing the first file in the stream.
+
+       _b_z_c_a_t (or _b_z_i_p_2 _‐_d_c_) decompresses all specified  files  to
+       the standard output.
+
+       _b_z_i_p_2  will  read arguments from the environment variables
+       _B_Z_I_P_2 and _B_Z_I_P_, in  that  order,  and  will  process  them
+       before  any  arguments  read  from the command line.  This
+       gives a convenient way to supply default arguments.
+
+       Compression is always performed, even  if  the  compressed
+       file  is slightly larger than the original.  Files of less
+       than about one hundred bytes tend to get larger, since the
+       compression  mechanism  has  a  constant  overhead  in the
+       region of 50 bytes.  Random data (including the output  of
+       most  file  compressors)  is  coded at about 8.05 bits per
+       byte, giving an expansion of around 0.5%.
+
+       As a self‐check for your  protection,  _b_z_i_p_2  uses  32‐bit
+       CRCs  to make sure that the decompressed version of a file
+       is identical to the original.  This guards against corrup­
+       tion  of  the compressed data, and against undetected bugs
+       in _b_z_i_p_2 (hopefully very unlikely).  The chances  of  data
+       corruption  going  undetected  is  microscopic,  about one
+       chance in four billion for each file processed.  Be aware,
+       though,  that  the  check occurs upon decompression, so it
+       can only tell you that something is wrong.  It can’t  help
+       you  recover  the original uncompressed data.  You can use
+       _b_z_i_p_2_r_e_c_o_v_e_r to try to recover data from damaged files.
+
+       Return values: 0 for a normal exit,  1  for  environmental
+       problems  (file not found, invalid flags, I/O errors, &c),
+       2 to indicate a corrupt compressed file, 3 for an internal
+       consistency error (eg, bug) which caused _b_z_i_p_2 to panic.
+
+
+OOPPTTIIOONNSS
+       −−cc ‐‐‐‐ssttddoouutt
+              Compress or decompress to standard output.
+
+       −−dd ‐‐‐‐ddeeccoommpprreessss
+              Force  decompression.  _b_z_i_p_2_, _b_u_n_z_i_p_2 and _b_z_c_a_t are
+              really the same program,  and  the  decision  about
+              what  actions to take is done on the basis of which
+              name is used.  This flag overrides that  mechanism,
+              and forces _b_z_i_p_2 to decompress.
+
+       −−zz ‐‐‐‐ccoommpprreessss
+              The   complement   to   −d:   forces   compression,
+              regardless of the invocation name.
+
+       −−tt ‐‐‐‐tteesstt
+              Check integrity of the specified file(s), but don’t
+              decompress  them.   This  really  performs  a trial
+              decompression and throws away the result.
+
+       −−ff ‐‐‐‐ffoorrccee
+              Force overwrite of output files.   Normally,  _b_z_i_p_2
+              will  not  overwrite  existing  output files.  Also
+              forces _b_z_i_p_2 to break hard links to files, which it
+              otherwise wouldn’t do.
+
+              bzip2  normally  declines to decompress files which
+              don’t have the  correct  magic  header  bytes.   If
+              forced  (‐f),  however,  it  will  pass  such files
+              through unmodified.  This is how GNU gzip  behaves.
+
+       −−kk ‐‐‐‐kkeeeepp
+              Keep  (don’t delete) input files during compression
+              or decompression.
+
+       −−ss ‐‐‐‐ssmmaallll
+              Reduce memory usage, for compression, decompression
+              and  testing.   Files  are  decompressed and tested
+              using a modified algorithm which only requires  2.5
+              bytes  per  block byte.  This means any file can be
+              decompressed in 2300k of memory,  albeit  at  about
+              half the normal speed.
+
+              During  compression,  −s  selects  a  block size of
+              200k, which limits memory use to  around  the  same
+              figure,  at  the expense of your compression ratio.
+              In short, if your  machine  is  low  on  memory  (8
+              megabytes  or  less),  use  −s for everything.  See
+              MEMORY MANAGEMENT below.
+
+       −−qq ‐‐‐‐qquuiieett
+              Suppress non‐essential warning messages.   Messages
+              pertaining  to I/O errors and other critical events
+              will not be suppressed.
+
+       −−vv ‐‐‐‐vveerrbboossee
+              Verbose mode ‐‐ show the compression ratio for each
+              file  processed.   Further  −v’s  increase the ver­
+              bosity level, spewing out lots of information which
+              is primarily of interest for diagnostic purposes.
+
+       −−LL ‐‐‐‐lliicceennssee ‐‐VV ‐‐‐‐vveerrssiioonn
+              Display  the  software  version,  license terms and
+              conditions.
+
+       −−11 ((oorr −−−−ffaasstt)) ttoo −−99 ((oorr −−−−bbeesstt))
+              Set the block size to 100 k, 200 k ..  900  k  when
+              compressing.   Has  no  effect  when decompressing.
+              See MEMORY MANAGEMENT below.  The −−fast and −−best
+              aliases  are  primarily for GNU gzip compatibility.
+              In particular, −−fast doesn’t make things  signifi­
+              cantly  faster.   And  −−best  merely  selects  the
+              default behaviour.
+
+       −−‐‐     Treats all subsequent arguments as file names, even
+              if they start with a dash.  This is so you can han­
+              dle files with names beginning  with  a  dash,  for
+              example: bzip2 −‐ −myfilename.
+
+       −−‐‐rreeppeettiittiivvee‐‐ffaasstt ‐‐‐‐rreeppeettiittiivvee‐‐bbeesstt
+              These  flags  are  redundant  in versions 0.9.5 and
+              above.  They provided some coarse control over  the
+              behaviour  of the sorting algorithm in earlier ver­
+              sions, which was sometimes useful.  0.9.5 and above
+              have  an  improved  algorithm  which  renders these
+              flags irrelevant.
+
+
+MMEEMMOORRYY MMAANNAAGGEEMMEENNTT
+       _b_z_i_p_2 compresses large files in blocks.   The  block  size
+       affects  both  the  compression  ratio  achieved,  and the
+       amount of memory needed for compression and decompression.
+       The  flags  −1  through  −9  specify  the block size to be
+       100,000 bytes through 900,000 bytes (the default)  respec­
+       tively.   At  decompression  time, the block size used for
+       compression is read from  the  header  of  the  compressed
+       file, and _b_u_n_z_i_p_2 then allocates itself just enough memory
+       to decompress the file.  Since block sizes are  stored  in
+       compressed  files,  it follows that the flags −1 to −9 are
+       irrelevant to and so ignored during decompression.
+
+       Compression and decompression requirements, in bytes,  can
+       be estimated as:
+
+              Compression:   400k + ( 8 x block size )
+
+              Decompression: 100k + ( 4 x block size ), or
+                             100k + ( 2.5 x block size )
+
+       Larger  block  sizes  give  rapidly  diminishing  marginal
+       returns.  Most of the compression comes from the first two
+       or  three hundred k of block size, a fact worth bearing in
+       mind when using _b_z_i_p_2  on  small  machines.   It  is  also
+       important  to  appreciate  that  the  decompression memory
+       requirement is set at compression time by  the  choice  of
+       block size.
+
+       For  files  compressed  with  the default 900k block size,
+       _b_u_n_z_i_p_2 will require about 3700 kbytes to decompress.   To
+       support decompression of any file on a 4 megabyte machine,
+       _b_u_n_z_i_p_2 has an option to  decompress  using  approximately
+       half this amount of memory, about 2300 kbytes.  Decompres­
+       sion speed is also halved, so you should use  this  option
+       only where necessary.  The relevant flag is ‐s.
+
+       In general, try and use the largest block size memory con­
+       straints  allow,  since  that  maximises  the  compression
+       achieved.   Compression and decompression speed are virtu­
+       ally unaffected by block size.
+
+       Another significant point applies to files which fit in  a
+       single  block  ‐‐  that  means  most files you’d encounter
+       using a large block  size.   The  amount  of  real  memory
+       touched is proportional to the size of the file, since the
+       file is smaller than a block.  For example, compressing  a
+       file  20,000  bytes  long  with the flag ‐9 will cause the
+       compressor to allocate around 7600k of  memory,  but  only
+       touch 400k + 20000 * 8 = 560 kbytes of it.  Similarly, the
+       decompressor will allocate 3700k but  only  touch  100k  +
+       20000 * 4 = 180 kbytes.
+
+       Here  is a table which summarises the maximum memory usage
+       for different block sizes.  Also  recorded  is  the  total
+       compressed  size for 14 files of the Calgary Text Compres­
+       sion Corpus totalling 3,141,622 bytes.  This column  gives
+       some  feel  for  how  compression  varies with block size.
+       These figures tend to understate the advantage  of  larger
+       block  sizes  for  larger files, since the Corpus is domi­
+       nated by smaller files.
+
+                  Compress   Decompress   Decompress   Corpus
+           Flag     usage      usage       ‐s usage     Size
+
+            ‐1      1200k       500k         350k      914704
+            ‐2      2000k       900k         600k      877703
+            ‐3      2800k      1300k         850k      860338
+            ‐4      3600k      1700k        1100k      846899
+            ‐5      4400k      2100k        1350k      845160
+            ‐6      5200k      2500k        1600k      838626
+            ‐7      6100k      2900k        1850k      834096
+            ‐8      6800k      3300k        2100k      828642
+            ‐9      7600k      3700k        2350k      828642
+
+
+RREECCOOVVEERRIINNGG DDAATTAA FFRROOMM DDAAMMAAGGEEDD FFIILLEESS
+       _b_z_i_p_2 compresses files in blocks, usually 900kbytes  long.
+       Each block is handled independently.  If a media or trans­
+       mission error causes a multi‐block  .bz2  file  to  become
+       damaged,  it  may  be  possible  to  recover data from the
+       undamaged blocks in the file.
+
+       The compressed representation of each block  is  delimited
+       by  a  48‐bit pattern, which makes it possible to find the
+       block boundaries with reasonable  certainty.   Each  block
+       also  carries its own 32‐bit CRC, so damaged blocks can be
+       distinguished from undamaged ones.
+
+       _b_z_i_p_2_r_e_c_o_v_e_r is a  simple  program  whose  purpose  is  to
+       search  for blocks in .bz2 files, and write each block out
+       into its own .bz2 file.  You can then use _b_z_i_p_2 −t to test
+       the integrity of the resulting files, and decompress those
+       which are undamaged.
+
+       _b_z_i_p_2_r_e_c_o_v_e_r takes a single argument, the name of the dam­
+       aged    file,    and    writes    a    number   of   files
+       "rec00001file.bz2",  "rec00002file.bz2",  etc,  containing
+       the   extracted   blocks.   The   output   filenames   are
+       designed  so  that the use of wildcards in subsequent pro­
+       cessing  ‐‐ for example, "bzip2 ‐dc  rec*file.bz2 > recov­
+       ered_data" ‐‐ processes the files in the correct order.
+
+       _b_z_i_p_2_r_e_c_o_v_e_r should be of most use dealing with large .bz2
+       files,  as  these will contain many blocks.  It is clearly
+       futile to use it on damaged single‐block  files,  since  a
+       damaged  block  cannot  be recovered.  If you wish to min­
+       imise any potential data loss through media  or  transmis­
+       sion errors, you might consider compressing with a smaller
+       block size.
+
+
+PPEERRFFOORRMMAANNCCEE NNOOTTEESS
+       The sorting phase of compression gathers together  similar
+       strings  in  the  file.  Because of this, files containing
+       very long runs of  repeated  symbols,  like  "aabaabaabaab
+       ..."   (repeated  several hundred times) may compress more
+       slowly than normal.  Versions 0.9.5 and  above  fare  much
+       better  than previous versions in this respect.  The ratio
+       between worst‐case and average‐case compression time is in
+       the  region  of  10:1.  For previous versions, this figure
+       was more like 100:1.  You can use the −vvvv option to mon­
+       itor progress in great detail, if you want.
+
+       Decompression speed is unaffected by these phenomena.
+
+       _b_z_i_p_2  usually  allocates  several  megabytes of memory to
+       operate in, and then charges all over it in a fairly  ran­
+       dom  fashion.   This means that performance, both for com­
+       pressing and decompressing, is largely determined  by  the
+       speed  at  which  your  machine  can service cache misses.
+       Because of this, small changes to the code to  reduce  the
+       miss  rate  have  been observed to give disproportionately
+       large performance improvements.  I imagine _b_z_i_p_2 will per­
+       form best on machines with very large caches.
+
+
+CCAAVVEEAATTSS
+       I/O  error  messages  are not as helpful as they could be.
+       _b_z_i_p_2 tries hard to detect I/O errors  and  exit  cleanly,
+       but  the  details  of  what  the problem is sometimes seem
+       rather misleading.
+
+       This manual page pertains to version 1.0.8 of _b_z_i_p_2_.  Com­
+       pressed  data created by this version is entirely forwards
+       and  backwards  compatible  with   the   previous   public
+       releases,  versions  0.1pl2,  0.9.0,  0.9.5, 1.0.0, 1.0.1, 
+       1.0.2 and above, but with the  following  exception: 0.9.0
+       and above can  correctly decompress  multiple concatenated
+       compressed files.  0.1pl2  cannot do this;  it  will  stop 
+       after  decompressing just the first file in the stream.
+
+       _b_z_i_p_2_r_e_c_o_v_e_r  versions prior to 1.0.2 used 32‐bit integers
+       to represent bit positions in compressed  files,  so  they
+       could  not handle compressed files more than 512 megabytes
+       long.  Versions 1.0.2 and above use 64‐bit  ints  on  some
+       platforms  which  support them (GNU supported targets, and
+       Windows).  To establish whether or  not  bzip2recover  was
+       built  with  such  a limitation, run it without arguments.
+       In any event you can build yourself an  unlimited  version
+       if  you  can  recompile  it  with MaybeUInt64 set to be an
+       unsigned 64‐bit integer.
+
+
+
+
+AAUUTTHHOORR
+       Julian Seward, jseward@acm.org.
+
+       https://sourceware.org/bzip2/
+
+       The ideas embodied in _b_z_i_p_2 are due to (at least) the fol­
+       lowing  people: Michael Burrows and David Wheeler (for the
+       block sorting transformation), David Wheeler  (again,  for
+       the Huffman coder), Peter Fenwick (for the structured cod­
+       ing model in the original _b_z_i_p_, and many refinements), and
+       Alistair  Moffat,  Radford  Neal  and  Ian Witten (for the
+       arithmetic  coder  in  the  original  _b_z_i_p_)_.   I  am  much
+       indebted for their help, support and advice.  See the man­
+       ual in the source distribution for pointers to sources  of
+       documentation.  Christian von Roques encouraged me to look
+       for faster sorting algorithms, so as to speed up  compres­
+       sion.  Bela Lubkin encouraged me to improve the worst‐case
+       compression performance.  Donna Robinson XMLised the docu­
+       mentation.   The bz* scripts are derived from those of GNU
+       gzip.  Many people sent patches, helped  with  portability
+       problems,  lent  machines,  gave advice and were generally
+       helpful.
+
+
+
+                                                         bzip2(1)

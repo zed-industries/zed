@@ -1,0 +1,45 @@
+name: Publish
+
+on: workflow_dispatch
+
+jobs:
+  cargo-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.version_tag }}
+
+      - name: Fetch tags
+        run: git fetch --prune --unshallow --tags
+
+      - name: Install linux build requirements
+        run: sudo apt install --yes --no-install-recommends libasound2-dev pkg-config
+
+      - name: Publish and tag
+        run: |
+          echo "Current git commit is $(git rev-list -n 1 HEAD)."
+
+          VERSION="$(yq '.package.version' Cargo.toml)"
+          echo "Project version from Cargo.toml is $VERSION"
+          if ! (echo "$VERSION" | grep --quiet "^[0-9]\{1,2\}\.[0-9]\{1,3\}\(\.[0-9]\{1,3\}\)\?$"); then
+            echo "The version format does not look like a release version, not publishing the crate."
+            exit 1
+          fi
+
+          VERSION_TAG="v$VERSION"
+          if git tag | grep --quiet "^$VERSION_TAG$"; then
+            echo "Tag $VERSION_TAG already exists at $(git rev-list -n 1 $VERSION_TAG), not publishing the crate."
+            exit 1
+          fi
+
+          cargo publish --token "${{ secrets.CRATESIO_TOKEN }}"
+
+          echo "Tagging current version with $VERSION_TAG ..."
+          # The bot name and email is taken from here https://github.com/actions/checkout/pull/1707
+          # see also https://api.github.com/users/github-actions%5Bbot%5D
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag --annotate "$VERSION_TAG" --message "Release version $VERSION_TAG"
+          git push origin "$VERSION_TAG"

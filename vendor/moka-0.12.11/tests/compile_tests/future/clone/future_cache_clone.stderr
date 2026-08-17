@@ -1,0 +1,41 @@
+error[E0277]: the trait bound `MyValue: Clone` is not satisfied
+  --> tests/compile_tests/future/clone/future_cache_clone.rs:19:41
+   |
+19 |     let _cache: Cache<MyKey, MyValue> = Cache::new(CAP);
+   |                                         ^^^^^^^^^^ the trait `Clone` is not implemented for `MyValue`
+   |
+note: required by a bound in `moka::future::Cache::<K, V>::new`
+  --> src/future/cache.rs
+   |
+   |     V: Clone + Send + Sync + 'static,
+   |        ^^^^^ required by this bound in `Cache::<K, V>::new`
+...
+   |     pub fn new(max_capacity: u64) -> Self {
+   |            --- required by a bound in this associated function
+help: consider annotating `MyValue` with `#[derive(Clone)]`
+   |
+42  + #[derive(Clone)]
+43  | pub struct MyValue(i32);
+    |
+
+error[E0277]: the trait bound `MyBuildHasher1: Clone` is not satisfied
+  --> tests/compile_tests/future/clone/future_cache_clone.rs:29:84
+   |
+29 |     let _cache: Cache<MyKey, Arc<MyValue>, _> = Cache::builder().build_with_hasher(MyBuildHasher1);
+   |                                                                  ----------------- ^^^^^^^^^^^^^^ the trait `Clone` is not implemented for `MyBuildHasher1`
+   |                                                                  |
+   |                                                                  required by a bound introduced by this call
+   |
+note: required by a bound in `moka::future::CacheBuilder::<K, V, moka::future::Cache<K, V>>::build_with_hasher`
+  --> src/future/builder.rs
+   |
+   |     pub fn build_with_hasher<S>(self, hasher: S) -> Cache<K, V, S>
+   |            ----------------- required by a bound in this associated function
+   |     where
+   |         S: BuildHasher + Clone + Send + Sync + 'static,
+   |                          ^^^^^ required by this bound in `CacheBuilder::<K, V, Cache<K, V>>::build_with_hasher`
+help: consider annotating `MyBuildHasher1` with `#[derive(Clone)]`
+   |
+45  + #[derive(Clone)]
+46  | pub struct MyBuildHasher1;
+    |

@@ -1,0 +1,281 @@
+error: this conflicts with another representation hint
+   --> tests/ui-msrv/struct.rs:167:11
+    |
+167 | #[repr(C, C)] // zerocopy-derive conservatively treats these as conflicting reprs
+    |           ^
+
+error: must have a non-align #[repr(...)] attribute in order to guarantee this type's memory layout
+   --> tests/ui-msrv/struct.rs:172:10
+    |
+172 | #[derive(IntoBytes)]
+    |          ^^^^^^^^^
+    |
+    = note: this error originates in the derive macro `IntoBytes` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: must have a non-align #[repr(...)] attribute in order to guarantee this type's memory layout
+   --> tests/ui-msrv/struct.rs:177:10
+    |
+177 | #[derive(IntoBytes)]
+    |          ^^^^^^^^^
+    |
+    = note: this error originates in the derive macro `IntoBytes` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: must have a non-align #[repr(...)] attribute in order to guarantee this type's memory layout
+   --> tests/ui-msrv/struct.rs:200:10
+    |
+200 | #[derive(IntoBytes)]
+    |          ^^^^^^^^^
+    |
+    = note: this error originates in the derive macro `IntoBytes` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: cannot derive `Unaligned` on type with alignment greater than 1
+   --> tests/ui-msrv/struct.rs:211:11
+    |
+211 | #[repr(C, align(2))]
+    |           ^^^^^
+
+error: this conflicts with another representation hint
+   --> tests/ui-msrv/struct.rs:215:8
+    |
+215 | #[repr(transparent, align(2))]
+    |        ^^^^^^^^^^^
+
+error: this conflicts with another representation hint
+   --> tests/ui-msrv/struct.rs:221:16
+    |
+221 | #[repr(packed, align(2))]
+    |                ^^^^^
+
+error: this conflicts with another representation hint
+   --> tests/ui-msrv/struct.rs:225:18
+    |
+225 | #[repr(align(1), align(2))]
+    |                  ^^^^^
+
+error: this conflicts with another representation hint
+   --> tests/ui-msrv/struct.rs:229:18
+    |
+229 | #[repr(align(2), align(4))]
+    |                  ^^^^^
+
+error: must have #[repr(C)], #[repr(transparent)], or #[repr(packed)] attribute in order to guarantee this type's alignment
+   --> tests/ui-msrv/struct.rs:232:10
+    |
+232 | #[derive(Unaligned)]
+    |          ^^^^^^^^^
+    |
+    = note: this error originates in the derive macro `Unaligned` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: must have #[repr(C)], #[repr(transparent)], or #[repr(packed)] attribute in order to guarantee this type's alignment
+   --> tests/ui-msrv/struct.rs:235:10
+    |
+235 | #[derive(Unaligned)]
+    |          ^^^^^^^^^
+    |
+    = note: this error originates in the derive macro `Unaligned` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: this conflicts with another representation hint
+   --> tests/ui-msrv/struct.rs:245:8
+    |
+245 | #[repr(C, packed(2))]
+    |        ^
+
+error[E0692]: transparent struct cannot have other repr hints
+   --> tests/ui-msrv/struct.rs:215:8
+    |
+215 | #[repr(transparent, align(2))]
+    |        ^^^^^^^^^^^  ^^^^^^^^
+
+error[E0277]: the size for values of type `[u8]` cannot be known at compilation time
+  --> tests/ui-msrv/struct.rs:31:10
+   |
+31 | #[derive(KnownLayout)]
+   |          ^^^^^^^^^^^ doesn't have a size known at compile-time
+   |
+   = help: within `KL00`, the trait `Sized` is not implemented for `[u8]`
+note: required because it appears within the type `KL00`
+  --> tests/ui-msrv/struct.rs:32:8
+   |
+32 | struct KL00(u8, NotKnownLayoutDst);
+   |        ^^^^
+   = help: see issue #48214
+   = note: this error originates in the derive macro `KnownLayout` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the size for values of type `[u8]` cannot be known at compilation time
+  --> tests/ui-msrv/struct.rs:36:10
+   |
+36 | #[derive(KnownLayout)]
+   |          ^^^^^^^^^^^ doesn't have a size known at compile-time
+   |
+   = help: within `KL02`, the trait `Sized` is not implemented for `[u8]`
+note: required because it appears within the type `KL02`
+  --> tests/ui-msrv/struct.rs:37:8
+   |
+37 | struct KL02(u8, [u8]);
+   |        ^^^^
+   = help: see issue #48214
+   = note: this error originates in the derive macro `KnownLayout` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `NotKnownLayoutDst: zerocopy::KnownLayout` is not satisfied
+  --> tests/ui-msrv/struct.rs:41:10
+   |
+41 | #[derive(KnownLayout)]
+   |          ^^^^^^^^^^^ the trait `zerocopy::KnownLayout` is not implemented for `NotKnownLayoutDst`
+   |
+   = help: see issue #48214
+   = note: this error originates in the derive macro `KnownLayout` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `NotKnownLayout: zerocopy::KnownLayout` is not satisfied
+  --> tests/ui-msrv/struct.rs:47:10
+   |
+47 | #[derive(KnownLayout)]
+   |          ^^^^^^^^^^^ the trait `zerocopy::KnownLayout` is not implemented for `NotKnownLayout`
+   |
+   = help: see issue #48214
+   = note: this error originates in the derive macro `KnownLayout` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `UnsafeCell<()>: zerocopy::Immutable` is not satisfied
+  --> tests/ui-msrv/struct.rs:55:10
+   |
+55 | #[derive(Immutable)]
+   |          ^^^^^^^^^ the trait `zerocopy::Immutable` is not implemented for `UnsafeCell<()>`
+   |
+   = help: see issue #48214
+   = note: this error originates in the derive macro `Immutable` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `UnsafeCell<u8>: zerocopy::Immutable` is not satisfied
+  --> tests/ui-msrv/struct.rs:60:10
+   |
+60 | #[derive(Immutable)]
+   |          ^^^^^^^^^ the trait `zerocopy::Immutable` is not implemented for `UnsafeCell<u8>`
+   |
+   = note: required because of the requirements on the impl of `zerocopy::Immutable` for `[UnsafeCell<u8>; 0]`
+   = help: see issue #48214
+   = note: this error originates in the derive macro `Immutable` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `AU16: zerocopy::Unaligned` is not satisfied
+   --> tests/ui-msrv/struct.rs:100:10
+    |
+100 | #[derive(IntoBytes)]
+    |          ^^^^^^^^^ the trait `zerocopy::Unaligned` is not implemented for `AU16`
+    |
+    = help: see issue #48214
+    = note: this error originates in the derive macro `IntoBytes` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `(): PaddingFree<IntoBytes2, 1_usize>` is not satisfied
+   --> tests/ui-msrv/struct.rs:107:10
+    |
+107 | #[derive(IntoBytes)]
+    |          ^^^^^^^^^ the trait `PaddingFree<IntoBytes2, 1_usize>` is not implemented for `()`
+    |
+    = help: the following implementations were found:
+              <() as PaddingFree<T, 0_usize>>
+    = help: see issue #48214
+    = note: this error originates in the derive macro `IntoBytes` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `(): PaddingFree<IntoBytes3, 1_usize>` is not satisfied
+   --> tests/ui-msrv/struct.rs:114:10
+    |
+114 | #[derive(IntoBytes)]
+    |          ^^^^^^^^^ the trait `PaddingFree<IntoBytes3, 1_usize>` is not implemented for `()`
+    |
+    = help: the following implementations were found:
+              <() as PaddingFree<T, 0_usize>>
+    = help: see issue #48214
+    = note: this error originates in the derive macro `IntoBytes` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the size for values of type `[u8]` cannot be known at compilation time
+   --> tests/ui-msrv/struct.rs:130:10
+    |
+130 | #[derive(IntoBytes)]
+    |          ^^^^^^^^^ doesn't have a size known at compile-time
+    |
+    = help: within `IntoBytes4`, the trait `Sized` is not implemented for `[u8]`
+note: required because it appears within the type `IntoBytes4`
+   --> tests/ui-msrv/struct.rs:132:8
+    |
+132 | struct IntoBytes4 {
+    |        ^^^^^^^^^^
+note: required by a bound in `std::mem::size_of`
+   --> $RUST/core/src/mem/mod.rs
+    |
+    | pub const fn size_of<T>() -> usize {
+    |                      ^ required by this bound in `std::mem::size_of`
+    = note: this error originates in the macro `::zerocopy::struct_padding` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the size for values of type `[u8]` cannot be known at compilation time
+   --> tests/ui-msrv/struct.rs:134:8
+    |
+134 |     b: SliceU8,
+    |        ^^^^^^^ doesn't have a size known at compile-time
+    |
+    = help: the trait `Sized` is not implemented for `[u8]`
+note: required by a bound in `std::mem::size_of`
+   --> $RUST/core/src/mem/mod.rs
+    |
+    | pub const fn size_of<T>() -> usize {
+    |                      ^ required by this bound in `std::mem::size_of`
+
+error[E0277]: the trait bound `(): DynamicPaddingFree<IntoBytes5, true>` is not satisfied
+   --> tests/ui-msrv/struct.rs:139:10
+    |
+139 | #[derive(IntoBytes)]
+    |          ^^^^^^^^^ the trait `DynamicPaddingFree<IntoBytes5, true>` is not implemented for `()`
+    |
+    = help: the following implementations were found:
+              <() as DynamicPaddingFree<T, false>>
+    = help: see issue #48214
+    = note: this error originates in the derive macro `IntoBytes` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `(): DynamicPaddingFree<IntoBytes6, true>` is not satisfied
+   --> tests/ui-msrv/struct.rs:148:10
+    |
+148 | #[derive(IntoBytes)]
+    |          ^^^^^^^^^ the trait `DynamicPaddingFree<IntoBytes6, true>` is not implemented for `()`
+    |
+    = help: the following implementations were found:
+              <() as DynamicPaddingFree<T, false>>
+    = help: see issue #48214
+    = note: this error originates in the derive macro `IntoBytes` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `(): DynamicPaddingFree<IntoBytes7, true>` is not satisfied
+   --> tests/ui-msrv/struct.rs:158:10
+    |
+158 | #[derive(IntoBytes)]
+    |          ^^^^^^^^^ the trait `DynamicPaddingFree<IntoBytes7, true>` is not implemented for `()`
+    |
+    = help: the following implementations were found:
+              <() as DynamicPaddingFree<T, false>>
+    = help: see issue #48214
+    = note: this error originates in the derive macro `IntoBytes` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `SplitAtNotKnownLayout: zerocopy::KnownLayout` is not satisfied
+   --> tests/ui-msrv/struct.rs:248:10
+    |
+248 | #[derive(SplitAt)]
+    |          ^^^^^^^ the trait `zerocopy::KnownLayout` is not implemented for `SplitAtNotKnownLayout`
+    |
+note: required by a bound in `SplitAt`
+   --> $WORKSPACE/src/split_at.rs
+    |
+    | pub unsafe trait SplitAt: KnownLayout<PointerMetadata = usize> {
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `SplitAt`
+    = note: this error originates in the derive macro `SplitAt` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `u8: SplitAt` is not satisfied
+   --> tests/ui-msrv/struct.rs:252:10
+    |
+252 | #[derive(SplitAt, KnownLayout)]
+    |          ^^^^^^^ the trait `SplitAt` is not implemented for `u8`
+    |
+    = help: see issue #48214
+    = note: this error originates in the derive macro `SplitAt` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0271]: type mismatch resolving `<u8 as zerocopy::KnownLayout>::PointerMetadata == usize`
+   --> tests/ui-msrv/struct.rs:252:10
+    |
+252 | #[derive(SplitAt, KnownLayout)]
+    |          ^^^^^^^ expected `()`, found `usize`
+    |
+    = help: see issue #48214
+    = note: this error originates in the derive macro `SplitAt` (in Nightly builds, run with -Z macro-backtrace for more info)

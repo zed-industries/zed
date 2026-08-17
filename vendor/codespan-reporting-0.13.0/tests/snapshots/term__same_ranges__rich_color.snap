@@ -1,0 +1,12 @@
+---
+source: codespan-reporting/tests/term.rs
+expression: TEST_DATA.emit_color(& config)
+---
+{fg:Red bold bright}error{bold bright}: Unexpected token{/}
+  {fg:Cyan}┌─{/} same_range:1:5
+  {fg:Cyan}│{/}
+{fg:Cyan}1{/} {fg:Cyan}│{/} ::S {fg:Red}{{/} }
+  {fg:Cyan}│{/}     {fg:Red}^{/}
+  {fg:Cyan}│{/}     {fg:Red}│{/}
+  {fg:Cyan}│{/}     {fg:Red}Unexpected '{'{/}
+  {fg:Cyan}│{/}     {fg:Cyan}Expected '('{/}

@@ -1,0 +1,46 @@
+;; Rewrites of side-effectful instructions.
+;;
+;; These are rules for the `simplify_skeleton` term, rather than `simplify`, and
+;; return a `SkeletonInstSimplification` variant rather than a rewritten-value.
+
+;; Conditional traps that will never trap.
+(rule (simplify_skeleton (trapz (iconst_u _ (u64_when_non_zero)) _))
+      (remove_inst))
+(rule (simplify_skeleton (trapnz (iconst_u _ 0) _))
+      (remove_inst))
+
+;; Constant propagation through `uadd_overflow_trap`.
+(rule (simplify_skeleton (uadd_overflow_trap (iconst_u ty a) (iconst_u ty b) _))
+      (if-let c (checked_add_with_type ty a b))
+      (iconst_u ty c))
+
+;; Summing two zero-extended values cannot overflow.
+(rule (simplify_skeleton (uadd_overflow_trap a @ (uextend ty _) b @ (uextend ty _) _))
+      (iadd ty a b))
+
+;; TODO: We can't simplify into unconditional traps yet. See the comment in
+;; `simplify_skeleton_inst` for more details.
+;;
+;; (rule (simplify_skeleton (trapz (iconst_u _ 0) code))
+;;       (trap code))
+;; (rule (simplify_skeleton (trapnz (iconst_u _ (u64_when_non_zero)) code))
+;;       (trap code))
+;;
+;; (rule (simplify_skeleton (uadd_overflow_trap (iconst_u ty a) (iconst_u ty b) code))
+;;       (if-let true (add_overflows_with_type ty a b))
+;;       (trap code))
+;;
+;; (rule (simplify_skeleton (udiv _ (iconst_u ty 0)))
+;;       (replace_with_val (trap (trap_code_division_by_zero))
+;;                         (iconst_u ty 0)))
+;; (rule (simplify_skeleton (sdiv _ (iconst_s ty 0)))
+;;       (replace_with_val (trap (trap_code_division_by_zero))
+;;                         (iconst_s ty 0)))
+
+(rule
+  (simplify_skeleton (udiv y
+                       (select ty
+                         x
+                         (iconst ty (imm64_power_of_two n))
+                         (iconst ty (imm64_power_of_two m)))))
+  (ushr ty y (select ty x (iconst ty (imm64 n)) (iconst ty (imm64 m)))))

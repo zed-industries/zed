@@ -1,0 +1,146 @@
+//
+// FreeType 2 makefile for the symbian platform
+//
+
+// Copyright (C) 2008-2023 by
+// David Turner, Robert Wilhelm, and Werner Lemberg.
+//
+// This file is part of the FreeType project, and may only be used, modified,
+// and distributed under the terms of the FreeType project license,
+// LICENSE.TXT.  By continuing to use, modify, or distribute this file you
+// indicate that you have read the license and understand and accept it
+// fully.
+
+target 			freetype.lib
+targettype 		lib
+
+macro NDEBUG
+macro FT2_BUILD_LIBRARY
+
+sourcepath ..\..\src\autofit
+
+source autofit.c
+
+sourcepath ..\..\src\base
+
+source ftbase.c
+source ftbbox.c
+source ftbdf.c
+source ftbitmap.c
+source ftcid.c
+source ftfstype.c
+source ftgasp.c
+source ftglyph.c
+source ftgxval.c
+source ftinit.c
+source ftmm.c
+source ftotval.c
+source ftpatent.c
+source ftpfr.c
+source ftstroke.c
+source ftsynth.c
+source ftsystem.c
+source fttype1.c
+source ftwinfnt.c
+
+sourcepath ..\..\src\bdf
+
+source bdf.c
+
+sourcepath ..\..\src\bzip2
+
+source ftbzip2.c
+
+sourcepath ..\..\src\cache
+
+source ftcache.c
+
+sourcepath ..\..\src\cff
+
+source cff.c
+
+sourcepath ..\..\src\cid
+
+source type1cid.c
+
+sourcepath ..\..\src\gzip
+
+source ftgzip.c
+
+sourcepath ..\..\src\lzw
+
+source ftlzw.c
+
+sourcepath ..\..\src\pcf
+
+source pcf.c
+
+sourcepath ..\..\src\pfr
+
+source pfr.c
+
+sourcepath ..\..\src\psaux
+
+source psaux.c
+
+sourcepath ..\..\src\pshinter
+
+source pshinter.c
+
+sourcepath ..\..\src\psnames
+
+source psmodule.c
+
+sourcepath ..\..\src\raster
+
+source raster.c
+
+sourcepath ..\..\src\sfnt
+
+source sfnt.c
+
+sourcepath ..\..\src\smooth
+
+source smooth.c
+
+sourcepath ..\..\src\truetype
+
+source truetype.c
+
+sourcepath ..\..\src\type1
+
+source type1.c
+
+sourcepath ..\..\src\type42
+
+source type42.c
+
+sourcepath ..\..\src\winfonts
+
+source winfnt.c
+
+
+systeminclude		..\..\include
+systeminclude		\epoc32\include\stdapis
+userinclude		..\..\src\autofit
+userinclude		..\..\src\bdf
+userinclude		..\..\src\bzip2
+userinclude		..\..\src\cache
+userinclude		..\..\src\cff
+userinclude		..\..\src\cid
+userinclude		..\..\src\gxvalid
+userinclude		..\..\src\gzip
+userinclude		..\..\src\lzw
+userinclude		..\..\src\otvalid
+userinclude		..\..\src\pcf
+userinclude		..\..\src\pfr
+userinclude		..\..\src\psaux
+userinclude		..\..\src\pshinter
+userinclude		..\..\src\psnames
+userinclude		..\..\src\raster
+userinclude		..\..\src\sfnt
+userinclude		..\..\src\smooth
+userinclude		..\..\src\truetype
+userinclude		..\..\src\type1
+userinclude		..\..\src\type42
+userinclude		..\..\src\winfonts

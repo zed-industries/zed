@@ -1,0 +1,9 @@
+package foo:baz;
+
+interface i {
+  resource my-resource;
+
+  record r {
+    x: borrow<my-resource>,
+  }
+}

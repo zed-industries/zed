@@ -1,0 +1,28 @@
+[package]
+name = "unicode-script"
+version = "0.5.8"
+authors = ["Manish Goregaokar <manishsmail@gmail.com>"]
+edition = "2018"
+
+homepage = "https://github.com/unicode-rs/unicode-script"
+repository = "https://github.com/unicode-rs/unicode-script"
+documentation = "https://docs.rs/unicode-script"
+
+license = "MIT OR Apache-2.0"
+keywords = ["text", "unicode", "script", "language"]
+readme = "README.md"
+description = """
+This crate exposes the Unicode `Script` and `Script_Extension` properties from [UAX #24](http://www.unicode.org/reports/tr24/)
+"""
+
+exclude = [ "target/*", "Cargo.lock", "scripts/tmp", "*.txt" ]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+rustc-dep-of-std = ['std', 'core']
+bench = []
+
+[dependencies]
+std = { version = "1.0", package = "rustc-std-workspace-std", optional = true }
+core = { version = "1.0", package = "rustc-std-workspace-core", optional = true }

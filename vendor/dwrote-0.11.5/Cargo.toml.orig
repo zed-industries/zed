@@ -1,0 +1,26 @@
+[package]
+name = "dwrote"
+description = "Lightweight binding to DirectWrite."
+repository = "https://github.com/servo/dwrote-rs"
+license = "MPL-2.0"
+version = "0.11.5"
+authors = ["The Servo Project Developers", "Vladimir Vukicevic <vladimir@pobox.com>"]
+edition = "2018"
+
+[lib]
+name = "dwrote"
+
+[features]
+default = ["serde_serialization"]
+serde_serialization = ["serde", "serde_derive"]
+
+[dependencies]
+libc = "0.2"
+lazy_static = "1"
+winapi = { version = "0.3.6", features = ["dwrite", "dwrite_1", "dwrite_3", "winnt", "unknwnbase", "libloaderapi", "winnls"] }
+serde = { version = "1.0", optional = true }
+serde_derive = { version = "1.0", optional = true }
+wio = "0.2"
+
+[package.metadata.docs.rs]
+targets = ["x86_64-pc-windows-msvc"]

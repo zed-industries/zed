@@ -1,0 +1,18 @@
+language: rust
+sudo: false
+
+rust:
+- nightly
+- beta
+- stable
+- 1.45.0
+
+script:
+- cargo build
+- cargo test
+- cargo doc
+- if [ $TRAVIS_RUST_VERSION = nightly ]; then rustup target add aarch64-unknown-none; fi
+- if [ $TRAVIS_RUST_VERSION = nightly ]; then RUSTFLAGS="-Zcrate-attr=feature(integer_atomics)" cargo check --target=aarch64-unknown-none; fi
+
+notifications:
+  email: false

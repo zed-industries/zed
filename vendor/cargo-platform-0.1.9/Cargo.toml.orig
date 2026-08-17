@@ -1,0 +1,16 @@
+[package]
+name = "cargo-platform"
+version = "0.1.9"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/cargo-platform"
+description = "Cargo's representation of a target platform."
+
+[dependencies]
+serde.workspace = true
+
+[lints]
+workspace = true

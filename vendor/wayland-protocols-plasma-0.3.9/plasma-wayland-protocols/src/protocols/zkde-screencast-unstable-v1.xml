@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="zkde_screencast_unstable_v1">
+  <copyright><![CDATA[
+      SPDX-FileCopyrightText: 2020-2021 Aleix Pol Gonzalez <aleixpol@kde.org>
+
+    SPDX-License-Identifier: LGPL-2.1-or-later
+  ]]></copyright>
+    <interface name="zkde_screencast_unstable_v1" version="4">
+        <description summary="Protocol for managing PipeWire feeds of the different displays and windows">
+            Warning! The protocol described in this file is a desktop environment
+            implementation detail. Regular clients must not use this protocol.
+            Backward incompatible changes may be added without bumping the major
+            version of the extension.
+        </description>
+
+        <enum name="pointer">
+            <description summary="Stream consumer attachment attributes" />
+            <entry name="hidden" value="1" summary="No cursor"/>
+            <entry name="embedded" value="2" summary="Render the cursor on the stream"/>
+            <entry name="metadata" value="4" summary="Send metadata about where the cursor is through PipeWire"/>
+        </enum>
+
+        <request name="stream_output">
+            <description summary="requests a feed from a given source"/>
+            <arg name="stream" type="new_id" interface="zkde_screencast_stream_unstable_v1"/>
+            <arg name="output" type="object" interface="wl_output"/>
+            <arg name="pointer" type="uint" summary="Requested pointer mode"/>
+        </request>
+        <request name="stream_window">
+            <description summary="requests a feed from a given source"/>
+            <arg name="stream" type="new_id" interface="zkde_screencast_stream_unstable_v1"/>
+            <arg name="window_uuid" type="string" summary="window Identifier"/>
+            <arg name="pointer" type="uint" summary="Requested pointer mode"/>
+        </request>
+
+        <request name="destroy" type="destructor">
+            <description summary="Destroy the zkde_screencast_unstable_v1">
+                Destroy the zkde_screencast_unstable_v1 object.
+            </description>
+        </request>
+
+        <request name="stream_virtual_output" since="2">
+            <description summary="requests a feed from a new virtual output"/>
+            <arg name="stream" type="new_id" interface="zkde_screencast_stream_unstable_v1"/>
+            <arg name="name" type="string" summary="name of the created output"/>
+            <arg name="width" type="int" summary="Logical width resolution"/>
+            <arg name="height" type="int" summary="Logical height resolution"/>
+            <arg name="scale" type="fixed" summary="Scaling factor of the display where it's to be displayed"/>
+            <arg name="pointer" type="uint" summary="Requested pointer mode"/>
+        </request>
+
+        <request name="stream_region" since="3">
+            <description summary="requests a feed from region in the workspace"/>
+            <arg name="stream" type="new_id" interface="zkde_screencast_stream_unstable_v1"/>
+
+            <arg name="x" type="int" summary="Logical left position"/>
+            <arg name="y" type="int" summary="Logical top position"/>
+            <arg name="width" type="uint" summary="Logical width resolution"/>
+            <arg name="height" type="uint" summary="Logical height resolution"/>
+            <arg name="scale" type="fixed" summary="Scaling factor of the output recording"/>
+            <arg name="pointer" type="uint" summary="Requested pointer mode"/>
+        </request>
+
+        <request name="stream_virtual_output_with_description" since="4">
+            <description summary="requests a feed from a new virtual output"/>
+            <arg name="stream" type="new_id" interface="zkde_screencast_stream_unstable_v1"/>
+            <arg name="name" type="string" summary="name of the created output"/>
+            <arg name="description" type="string" summary="user visible description of the created output"/>
+            <arg name="width" type="int" summary="Logical width resolution"/>
+            <arg name="height" type="int" summary="Logical height resolution"/>
+            <arg name="scale" type="fixed" summary="Scaling factor of the display where it's to be displayed"/>
+            <arg name="pointer" type="uint" summary="Requested pointer mode"/>
+        </request>
+    </interface>
+
+    <interface name="zkde_screencast_stream_unstable_v1" version="4">
+        <request name="close" type="destructor">
+            <description summary="Indicates we are done with the stream and the communication is over."/>
+        </request>
+        <event name="closed">
+            <description summary="Notifies that the server has stopped the stream. Clients should now call close."/>
+        </event>
+
+        <event name="created">
+            <description summary="Notifies about a pipewire feed being created"/>
+            <arg name="node" type="uint" summary="node of the pipewire buffer"/>
+        </event>
+        <event name="failed">
+            <description summary="Offers an error message so the client knows the created event will not arrive, and the client should close the resource."/>
+            <arg name="error" type="string" summary="A human readable translated error message."/>
+        </event>
+    </interface>
+</protocol>

@@ -1,0 +1,33 @@
+---
+- name: Spec Example 5.7. Block Scalar Indicators
+  from: http://www.yaml.org/spec/1.2/spec.html#id2773653
+  tags: spec literal folded scalar
+  yaml: |
+    literal: |
+      some
+      text
+    folded: >
+      some
+      text
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :literal
+       =VAL |some\ntext\n
+       =VAL :folded
+       =VAL >some text\n
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "literal": "some\ntext\n",
+      "folded": "some text\n"
+    }
+  dump: |
+    literal: |
+      some
+      text
+    folded: >
+      some text

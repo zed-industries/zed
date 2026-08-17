@@ -1,0 +1,11 @@
+error: unused return value of `LoremBuilder::broken` that must be used
+  --> tests/compile-fail/builder_setter_attr.rs:15:5
+   |
+15 |     LoremBuilder::default().broken(42);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the lint level is defined here
+  --> tests/compile-fail/builder_setter_attr.rs:1:9
+   |
+1  | #![deny(unused_must_use)]
+   |         ^^^^^^^^^^^^^^^

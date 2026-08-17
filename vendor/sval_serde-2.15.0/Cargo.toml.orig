@@ -1,0 +1,32 @@
+[package]
+name = "sval_serde"
+version = "2.15.0"
+authors = ["Ashley Mannix <ashleymannix@live.com.au>"]
+edition = "2021"
+license = "Apache-2.0 OR MIT"
+documentation = "https://docs.rs/sval_serde"
+description = "Integration between serde::Serialize and sval::Value"
+repository = "https://github.com/sval-rs/sval"
+readme = "README.md"
+keywords = ["serialization", "no_std"]
+categories = ["encoding", "no-std"]
+
+[package.metadata.docs.rs]
+features = ["std"]
+
+[features]
+std = ["alloc", "serde_core/std", "sval/std", "sval_nested/std"]
+alloc = ["serde_core/alloc", "sval/alloc", "sval_nested/alloc"]
+
+[dependencies.sval]
+version = "2.15.0"
+path = "../"
+
+[dependencies.sval_nested]
+version = "2.15.0"
+path = "../nested"
+default-features = false
+
+[dependencies.serde_core]
+version = "1"
+default-features = false

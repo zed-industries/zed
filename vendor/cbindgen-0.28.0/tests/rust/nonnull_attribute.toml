@@ -1,0 +1,10 @@
+header = """
+#ifdef __clang__
+#define CBINDGEN_NONNULL _Nonnull
+#else
+#define CBINDGEN_NONNULL
+#endif
+"""
+
+[ptr]
+non_null_attribute = "CBINDGEN_NONNULL"

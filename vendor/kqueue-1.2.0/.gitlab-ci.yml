@@ -1,0 +1,176 @@
+---
+.macos_saas_runners:
+  tags:
+    - saas-macos-medium-m1
+  image: macos-15-xcode-16
+  before_script: |
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+      asdf plugin remove rust
+      brew install rustup-init
+      export CARGO_HOME="${PWD}/.cargo"
+      export PATH="${CARGO_HOME}/bin:${PATH}"
+      rustup-init -y --default-toolchain nightly
+      source "${CARGO_HOME}/env"
+      curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+      cargo binstall cargo-audit cargo-nextest cargo-llvm-cov cargo-sonar gitlab-cargo-audit
+    fi
+  variables:
+    HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
+    HOMEBREW_NO_AUTO_UPDATE: 1
+    HOMEBREW_NO_INSTALL_CLEANUP: 1
+    HOMEBREW_NO_ANALYTICS: 1
+
+stages:
+  - build
+  - test
+  - perf
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+
+.test:cargo:
+  stage: test
+  coverage: '/TOTAL\s+(\d+\s+)+(\d+\.\d+\%)/'
+  script:
+    - rustc --version && cargo --version  # Print version info for debugging
+    - echo -e "\e[0Ksection_start:`date +%s`:lint\r\e[0KLinting"
+    - cargo clippy --message-format=json --all-targets --all-features
+        -- -D warnings
+        > clippy.json
+    - echo -e "\e[0Ksection_end:`date +%s`:lint\r\e[0K"
+    # Coverage testing would go here. However, OpenBSD rust is not built
+    # with the required tooling for profiling builds.
+    - echo -e "\e[0Ksection_start:`date +%s`:test\r\e[0KRunning cargo nextest"
+    - if [[ "$(uname -s)" = "OpenBSD" ]]; then
+        cargo nextest run --workspace --cargo-verbose --tests;
+      else
+        cargo llvm-cov nextest --workspace --cargo-verbose --tests;
+      fi
+    - echo -e "\e[0Ksection_end:`date +%s`:test\r\e[0K"
+    - echo -e "\e[0Ksection_start:`date +%s`:deps\r\e[0KRunning cargo audit"
+    - gitlab-cargo-audit --output-path gl-dep-report.json
+    - echo -e "\e[0Ksection_end:`date +%s`:deps\r\e[0K"
+  after_script:
+    - cargo codeclimate --clippy --codeclimate-path gl-code-quality-report.json
+    - if [[ "$(uname -s)" = "Darwin" || "$(uname -s)" = "FreeBSD" ]]; then
+        cargo llvm-cov report --cobertura --output-path target/llvm-cov-target/cobertura.xml;
+      fi
+  variables:
+    RUST_BACKTRACE: full
+    CARGO_INCREMENTAL: 0
+  artifacts:
+    name: dhat-report
+    paths:
+      - dhat-heap.json
+    reports:
+      junit: target/nextest/default/junit.xml
+      codequality: gl-code-quality-report.json
+      dependency_scanning: gl-dep-report.json
+      coverage_report:
+        coverage_format: cobertura
+        path: target/llvm-cov-target/cobertura.xml
+    expire_in: 1 month
+  cache:
+    key: deps
+    paths:
+      - target/
+      - .cargo/.crates.toml
+      - .cargo/.crates2.json
+      - .cargo/bin/
+      - .cargo/binstall/
+      - .cargo/registry/index/
+      - .cargo/registry/cache/
+      - .cargo/git/db/
+
+test:cargo:openbsd:
+  extends:
+    - .test:cargo
+  tags:
+    - openbsd
+
+test:cargo:macos:
+  extends:
+    - .macos_saas_runners
+    - .test:cargo
+
+# test:cargo:freebsd:
+#   extends:
+#     - .test:cargo
+#   tags:
+#     - freebsd
+
+cross:cargo:
+  image: rust:1.86
+  stage: build
+  tags:
+    - gitlab-org-docker
+  parallel:
+    matrix:
+      - TARGET: x86_64-unknown-netbsd
+      - TARGET: x86_64-unknown-freebsd
+      - TARGET: i686-unknown-freebsd
+      - TARGET: aarch64-apple-darwin
+      - TARGET: x86_64-apple-darwin
+      - TARGET: aarch64-apple-ios
+      - TARGET: x86_64-apple-ios
+  before_script:
+    - rustup component add clippy rustfmt
+    - rustup target add $TARGET
+    - curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+    - cargo binstall cargo-sonar
+  script:
+    - rustc --version && cargo --version  # Print version info for debugging
+    - cargo fmt --check
+    - cargo build --target $TARGET
+    - cargo clippy --target $TARGET --message-format=json --all-targets --all-features
+        -- -D warnings
+        > clippy.json
+  after_script:
+    - cargo codeclimate --clippy --codeclimate-path gl-code-quality-report.json
+  artifacts:
+    reports:
+      codequality: gl-code-quality-report.json
+  cache:
+    key: deps-$TARGET-cross
+    paths:
+      - target/
+
+perf:criterion:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - "src/**.rs"
+  stage: perf
+  tags:
+    - $OS
+  script:
+    - rustc --version && cargo --version  # Print version info for debugging
+    - rm -rf target/criterion
+    - echo -e "\e[0Ksection_start:`date +%s`:main_build\r\e[0KRunning benchmarks on main for baseline"
+    - git checkout "origin/${CI_DEFAULT_BRANCH}"
+    - cargo bench
+    - echo -e "\e[0Ksection_end:`date +%s`:main_build\r\e[0K"
+    - echo -e "\e[0Ksection_start:`date +%s`:mr_build\r\e[0KRunning benchmarks on MR for perf diff"
+    - git checkout "origin/${CI_MERGE_REQUEST_SOURCE_BRANCH_NAME}"
+    - cargo bench
+    - echo -e "\e[0Ksection_end:`date +%s`:mr_build\r\e[0K"
+  variables:
+    RUST_BACKTRACE: full
+    CARGO_INCREMENTAL: 0
+  parallel:
+    matrix:
+      - OS:
+        - openbsd
+        # - freebsd
+  artifacts:
+    name: criterion-report
+    paths:
+      - target/criterion
+  cache:
+    key: perf
+    paths:
+      - target/

@@ -1,0 +1,91 @@
+[package]
+name = "harfrust"
+version = "0.5.0"
+edition = "2021"
+rust-version = "1.85"  # should match https://github.com/googlefonts/fontations/blob/main/Cargo.toml
+description = "A complete HarfBuzz shaping algorithm port to Rust."
+repository = "https://github.com/harfbuzz/harfrust"
+license = "MIT"
+keywords = ["text", "shaping", "opentype", "truetype"]
+categories = ["text-processing"]
+exclude = ["benches/", "tests/"]
+
+[dependencies]
+bitflags = "2.9"
+bytemuck = { version = "1.22", features = ["extern_crate_alloc"] }
+core_maths = "0.1" # only for no_std builds
+read-fonts = { version = "0.37.0", default-features = false, features = ["libm"] }
+# read-fonts = { git = "https://github.com/googlefonts/fontations", default-features = false, features = ["libm"] }
+smallvec = "1.14"
+
+[features]
+default = ["std"]
+std = ["read-fonts/std"]
+
+[dev-dependencies]
+criterion = "0.8.0"
+harfbuzz_rs = { git = "https://github.com/harfbuzz/harfbuzz_rs/", rev = "66dae27" }
+libc = "0.2"
+pico-args = { version = "0.5", features = ["eq-separator"] }
+
+[lib]
+bench = false
+
+[[bench]]
+name = "shaping"
+harness = false
+
+[profile.release]
+strip = true
+lto = "fat"
+overflow-checks = false
+codegen-units = 1
+
+[profile.bench]
+inherits = "release"
+
+[lints.rust]
+unused_qualifications = "warn"
+
+[lints.clippy]
+cargo = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Reviewed Lints
+redundant_closure_for_method_calls = "allow"  # use for Result and Into, allow the rest
+# These are the currently triggering clippy lints, which should be fixed in the subsequent PRs.
+# This list was generated with this command:
+#  cargo clippy --all-targets --workspace --all-features --message-format=json --quiet | jq -r '.message.code.code | select(. != null and startswith("clippy::"))' | sort | uniq -c | sort -h -r
+match_same_arms = "allow"  # 396
+used_underscore_items = "allow"  # 366
+cast_lossless = "allow"  # 274
+cast_sign_loss = "allow"  # 192
+used_underscore_binding = "allow"  # 160
+cast_possible_truncation = "allow"  # 160
+wildcard_imports = "allow"  # 72
+cast_possible_wrap = "allow"  # 66
+must_use_candidate = "allow"  # 62
+if_not_else = "allow"  # 29
+too_many_lines = "allow"  # 26
+doc_markdown = "allow"  # 26
+struct_excessive_bools = "allow"  # 14
+many_single_char_names = "allow"  # 14
+mut_mut = "allow"  # 10
+similar_names = "allow"  # 8
+items_after_statements = "allow"  # 8
+unnested_or_patterns = "allow"  # 6
+unnecessary_wraps = "allow"  # 6
+unnecessary_semicolon = "allow"  # 6
+trivially_copy_pass_by_ref = "allow"  # 4
+return_self_not_must_use = "allow"  # 4
+redundant_else = "allow"  # 4
+range_plus_one = "allow"  # 4
+needless_continue = "allow"  # 4
+missing_panics_doc = "allow"  # 3
+ref_option = "allow"  # 2
+needless_pass_by_value = "allow"  # 2
+inconsistent_struct_constructor = "allow"  # 2
+fn_params_excessive_bools = "allow"  # 2
+default_trait_access = "allow"  # 2
+cast_precision_loss = "allow"  # 2
+ptr_as_ptr = "allow"  # 1
+large_stack_arrays = "allow"  # 1

@@ -1,0 +1,61 @@
+name: Windows
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+
+    strategy:
+      matrix:
+        target:
+          - i686-pc-windows-gnu
+          - i686-pc-windows-msvc
+          - x86_64-pc-windows-gnu
+          - x86_64-pc-windows-msvc
+        channel: [ stable ]
+
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        submodules: recursive
+    - name: setup
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: ${{ matrix.channel }}-${{ matrix.target }}
+        target: ${{ matrix.target }}
+        override: true
+        profile: minimal
+        default: true
+
+    - name: Add mingw32 to path for i686-gnu
+      run: |
+        echo "C:\msys64\mingw32\bin" >> $GITHUB_PATH
+        echo "C:\msys64\usr\bin" >> $GITHUB_PATH
+      if: matrix.target == 'i686-pc-windows-gnu'
+      shell: bash
+    - name: Add mingw64 to path for x86_64-gnu
+      run: |
+        echo "C:\msys64\mingw64\bin" >> $GITHUB_PATH
+        echo "C:\msys64\usr\bin" >> $GITHUB_PATH
+      if: matrix.target == 'x86_64-pc-windows-gnu'
+      shell: bash
+    - name: Update gcc
+      if: matrix.target == 'x86_64-pc-windows-gnu'
+      run: pacman.exe -Sy --noconfirm mingw-w64-x86_64-toolchain
+    - name: Update gcc
+      if: matrix.target == 'i686-pc-windows-gnu'
+      run: pacman.exe -Sy --noconfirm mingw-w64-i686-toolchain
+
+    - name: Build
+      run: cargo build --verbose
+    - name: Run tests
+      run: cargo test --verbose

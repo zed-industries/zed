@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<node>
+  <interface name="org.a11y.atspi.Document">
+
+    <property name="CurrentPageNumber" type="i" access="read"/>
+
+    <property name="PageCount" type="i" access="read"/>
+
+    <method name="GetLocale">
+      <arg direction="out" type="s"/>
+    </method>
+
+    <method name="GetAttributeValue">
+      <arg direction="in" name="attributename" type="s"/>
+      <arg direction="out" type="s"/>
+    </method>
+
+    <method name="GetAttributes">
+      <arg direction="out" type="a{ss}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QSpiAttributeSet"/>
+    </method>
+
+    <method name="GetTextSelections">
+      <arg direction="out" name="selections" type="a((so)i(so)ib)"/>
+    </method>
+
+    <method name="SetTextSelections">
+      <arg direction="in" name="selections" type="a((so)i(so)ib)"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+  </interface>
+</node>

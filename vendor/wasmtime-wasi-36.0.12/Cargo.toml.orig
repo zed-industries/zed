@@ -1,0 +1,71 @@
+[package]
+name = "wasmtime-wasi"
+version.workspace = true
+authors.workspace = true
+description = "WASI implementation in Rust"
+license = "Apache-2.0 WITH LLVM-exception"
+categories = ["wasm"]
+keywords = ["webassembly", "wasm"]
+repository = "https://github.com/bytecodealliance/wasmtime"
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+include = ["src/**/*", "README.md", "LICENSE", "witx/*", "wit/**/*", "tests/*"]
+
+[lints]
+workspace = true
+
+[dependencies]
+wasmtime = { workspace = true, features = ["component-model", "async", "runtime", "std"] }
+wasmtime-wasi-io = { workspace = true, features = ["std"] }
+anyhow = { workspace = true }
+wiggle = { workspace = true, optional = true, features = ["wasmtime"] }
+tokio = { workspace = true,  features = ["time", "sync", "io-std", "io-util", "rt", "rt-multi-thread", "net"] }
+bytes = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+cap-std = { workspace = true }
+cap-rand = { workspace = true }
+cap-fs-ext = { workspace = true }
+cap-net-ext = { workspace = true }
+cap-time-ext = { workspace = true }
+io-lifetimes = { workspace = true }
+fs-set-times = { workspace = true }
+bitflags = { workspace = true }
+async-trait = { workspace = true }
+system-interface = { workspace = true}
+futures = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["time", "sync", "io-std", "io-util", "rt", "rt-multi-thread", "net", "macros", "fs"] }
+test-log = { workspace = true }
+tracing-subscriber = { workspace = true }
+test-programs-artifacts = { workspace = true }
+tempfile = { workspace = true }
+wasmtime = { workspace = true, features = ['cranelift', 'incremental-cache'] }
+wasmtime-test-util = { workspace = true }
+env_logger = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true, features = ["event", "fs", "net"] }
+
+[target.'cfg(windows)'.dependencies]
+io-extras = { workspace = true }
+windows-sys = { workspace = true }
+rustix = { workspace = true, features = ["event", "net"] }
+
+[features]
+default = ["preview1"]
+preview1 = [
+    "dep:wiggle",
+]
+p3 = [
+    "wasmtime/component-model-async",
+    "wasmtime/component-model-async-bytes",
+]
+
+[[test]]
+name = "process_stdin"
+harness = false
+

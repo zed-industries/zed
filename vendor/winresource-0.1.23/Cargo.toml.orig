@@ -1,0 +1,23 @@
+[package]
+edition = "2021"
+name = "winresource"
+description = "Create and set windows icons and metadata for executables"
+version = "0.1.23"
+authors = ["Max Resch <resch.max@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/BenjaminRi/winresource"
+documentation= "https://docs.rs/winresource/*/winresource/"
+
+[lib]
+path = "lib.rs"
+
+[features]
+default = ["toml"]
+
+[dependencies]
+toml = { version = "0.8", optional = true }
+version_check = "0.9"
+
+[dev-dependencies]
+# used for tests
+winapi = { version = "0.3", features = [ "winnt" ] }

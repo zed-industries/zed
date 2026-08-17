@@ -1,0 +1,31 @@
+name: Rust
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Rust ${{matrix.rust}}
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: [stable, 1.68.0]
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{matrix.rust}}
+        components: rustfmt
+    - name: Check bootstrap
+      run: ./bootstrap.sh && git diff --exit-code
+    - name: Run tests
+      run: cargo test --all
+    - name: Run tests with trace feature
+      run: cargo test --all --features trace

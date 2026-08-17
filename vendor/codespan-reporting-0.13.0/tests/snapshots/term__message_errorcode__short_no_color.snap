@@ -1,0 +1,13 @@
+---
+source: codespan-reporting/tests/term.rs
+expression: TEST_DATA.emit_no_color(&config)
+---
+error[E0001]: a message
+warning[W001]: a message
+note[N0815]: a message
+help[H4711]: a message
+error: where did my errorcode go?
+warning: where did my errorcode go?
+note: where did my errorcode go?
+help: where did my errorcode go?
+

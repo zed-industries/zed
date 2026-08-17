@@ -1,0 +1,29 @@
+---
+- name: Flow Sequence in Block Mapping
+  from: NimYAML tests
+  tags: flow sequence mapping
+  yaml: |
+    a: [b, c]
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :a
+       +SEQ []
+        =VAL :b
+        =VAL :c
+       -SEQ
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "a": [
+        "b",
+        "c"
+      ]
+    }
+  dump: |
+    a:
+    - b
+    - c

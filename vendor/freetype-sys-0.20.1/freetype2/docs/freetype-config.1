@@ -1,0 +1,146 @@
+.TH FREETYPE-CONFIG 1 "August 2023" "FreeType 2.13.2"
+.
+.
+.SH NAME
+.
+freetype-config \- Get information about a libfreetype installation
+.
+.
+.SH SYNOPSIS
+.
+.B freetype-config
+.RI [ options ]
+.
+.
+.SH DESCRIPTION
+.
+.B freetype-config
+returns information needed for compiling and linking programs with the
+FreeType library, such as linker flags and compilation parameters.
+.
+Alternatively, it can be used to query information about the
+FreeType library version installed on the system, such as the
+installation (directory path) prefix or the FreeType version number.
+.
+.PP
+If
+.BR pkg-config (1)
+is found in the path,
+.B freetype-config
+acts as a wrapper for
+.BR pkg-config .
+.
+.PP
+This program is part of the FreeType package.
+.
+.
+.SH OPTIONS
+.
+There are two types of options: output/display selection options, and
+path override options.
+.
+.
+.SS Output selection options
+.
+Only one of the output selection options should be given at each program
+invocation.
+.
+.TP
+.B \-\-prefix
+Return the prefix value of the installed FreeType library (the default
+prefix will be `/usr' in most cases for distribution-installed
+packages).
+.
+.TP
+.B \-\-exec-prefix
+Return the executable prefix value of the installed FreeType library
+(will often be the same as the prefix value).
+.
+.TP
+.B \-\-ftversion
+Return the FreeType version number, directly derived from file
+`freetype.h'.
+.
+.TP
+.B \-\-version
+Return the `libtool version' of the FreeType library.
+.
+.TP
+.B \-\-libtool
+Return the library name for linking with libtool.
+.
+.TP
+.B \-\-libs
+Return compiler flags for linking with the installed FreeType library.
+.
+.TP
+.B \-\-cflags
+Return compiler flags for compiling against the installed FreeType library.
+.
+.TP
+.B \-\-static
+Make command line options display flags for static linking.
+.
+.TP
+.B \-\-help
+Show help and exit.
+.
+.
+.SS Path override options
+.
+These affect any selected output option, except the libtool version
+returned by
+.BR \-\-version .
+.
+.TP
+.BI \-\-prefix= PREFIX
+Override
+.B \-\-prefix
+value with
+.IR PREFIX .
+.
+This also sets
+.BI \-\-exec-prefix= PREFIX
+if option
+.B \-\-exec-prefix
+is not explicitly given.
+.
+.TP
+.BI \-\-exec-prefix= EPREFIX
+Override
+.B \-\-exec-prefix
+value with
+.IR EPREFIX .
+.
+.
+.SH BUGS
+In case the libraries FreeType links to are located in non-standard
+directories, and
+.BR pkg-config (1)
+is not available, the output from option
+.B \-\-libs
+might be incomplete.
+.
+It is thus recommended to use the
+.BR pkg-config (1)
+interface instead, which is able to correctly resolve all dependencies.
+.
+.PP
+Setting
+.B \-\-exec-prefix
+(either explicitly or implicitly) might return incorrect results if
+combined with option
+.BR \-\-static .
+.
+The same problem can occur if you set the
+.B SYSROOT
+environment variable.
+.
+.
+.SH AUTHOR
+.
+This manual page was contributed by Nis Martensen <nis.martensen@web.de>,
+with further refinements from the FreeType team.
+.
+.
+.\" eof

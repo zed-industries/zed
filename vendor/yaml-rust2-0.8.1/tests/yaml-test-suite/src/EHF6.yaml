@@ -1,0 +1,33 @@
+---
+- name: Tags for Flow Objects
+  from: NimYAML tests
+  tags: tag flow mapping sequence
+  yaml: |
+    !!map {
+      k: !!seq
+      [ a, !!str b]
+    }
+  tree: |
+    +STR
+     +DOC
+      +MAP {} <tag:yaml.org,2002:map>
+       =VAL :k
+       +SEQ [] <tag:yaml.org,2002:seq>
+        =VAL :a
+        =VAL <tag:yaml.org,2002:str> :b
+       -SEQ
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "k": [
+        "a",
+        "b"
+      ]
+    }
+  dump: |
+    !!map
+    k: !!seq
+    - a
+    - !!str b

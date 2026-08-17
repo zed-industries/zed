@@ -1,0 +1,256 @@
+package wasi:cli@0.3.0-rc-2026-01-06;
+
+@since(version = 0.3.0-rc-2026-01-06)
+interface environment {
+  /// Get the POSIX-style environment variables.
+  ///
+  /// Each environment variable is provided as a pair of string variable names
+  /// and string value.
+  ///
+  /// Morally, these are a value import, but until value imports are available
+  /// in the component model, this import function should return the same
+  /// values each time it is called.
+  @since(version = 0.3.0-rc-2026-01-06)
+  get-environment: func() -> list<tuple<string, string>>;
+
+  /// Get the POSIX-style arguments to the program.
+  @since(version = 0.3.0-rc-2026-01-06)
+  get-arguments: func() -> list<string>;
+
+  /// Return a path that programs should use as their initial current working
+  /// directory, interpreting `.` as shorthand for this.
+  @since(version = 0.3.0-rc-2026-01-06)
+  get-initial-cwd: func() -> option<string>;
+}
+
+@since(version = 0.3.0-rc-2026-01-06)
+interface exit {
+  /// Exit the current instance and any linked instances.
+  @since(version = 0.3.0-rc-2026-01-06)
+  exit: func(status: result);
+
+  /// Exit the current instance and any linked instances, reporting the
+  /// specified status code to the host.
+  ///
+  /// The meaning of the code depends on the context, with 0 usually meaning
+  /// "success", and other values indicating various types of failure.
+  ///
+  /// This function does not return; the effect is analogous to a trap, but
+  /// without the connotation that something bad has happened.
+  @unstable(feature = cli-exit-with-code)
+  exit-with-code: func(status-code: u8);
+}
+
+@since(version = 0.3.0-rc-2026-01-06)
+interface run {
+  /// Run the program.
+  @since(version = 0.3.0-rc-2026-01-06)
+  run: async func() -> result;
+}
+
+@since(version = 0.3.0-rc-2026-01-06)
+interface types {
+  @since(version = 0.3.0-rc-2026-01-06)
+  enum error-code {
+    /// Input/output error
+    io,
+    /// Invalid or incomplete multibyte or wide character
+    illegal-byte-sequence,
+    /// Broken pipe
+    pipe,
+  }
+}
+
+@since(version = 0.3.0-rc-2026-01-06)
+interface stdin {
+  use types.{error-code};
+
+  /// Return a stream for reading from stdin.
+  ///
+  /// This function returns a stream which provides data read from stdin,
+  /// and a future to signal read results.
+  ///
+  /// If the stream's readable end is dropped the future will resolve to success.
+  ///
+  /// If the stream's writable end is dropped the future will either resolve to
+  /// success if stdin was closed by the writer or to an error-code if reading
+  /// failed for some other reason.
+  ///
+  /// Multiple streams may be active at the same time. The behavior of concurrent
+  /// reads is implementation-specific.
+  @since(version = 0.3.0-rc-2026-01-06)
+  read-via-stream: func() -> tuple<stream<u8>, future<result<_, error-code>>>;
+}
+
+@since(version = 0.3.0-rc-2026-01-06)
+interface stdout {
+  use types.{error-code};
+
+  /// Write the given stream to stdout.
+  ///
+  /// If the stream's writable end is dropped this function will either return
+  /// success once the entire contents of the stream have been written or an
+  /// error-code representing a failure.
+  ///
+  /// Otherwise if there is an error the readable end of the stream will be
+  /// dropped and this function will return an error-code.
+  @since(version = 0.3.0-rc-2026-01-06)
+  write-via-stream: async func(data: stream<u8>) -> result<_, error-code>;
+}
+
+@since(version = 0.3.0-rc-2026-01-06)
+interface stderr {
+  use types.{error-code};
+
+  /// Write the given stream to stderr.
+  ///
+  /// If the stream's writable end is dropped this function will either return
+  /// success once the entire contents of the stream have been written or an
+  /// error-code representing a failure.
+  ///
+  /// Otherwise if there is an error the readable end of the stream will be
+  /// dropped and this function will return an error-code.
+  @since(version = 0.3.0-rc-2026-01-06)
+  write-via-stream: async func(data: stream<u8>) -> result<_, error-code>;
+}
+
+/// Terminal input.
+///
+/// In the future, this may include functions for disabling echoing,
+/// disabling input buffering so that keyboard events are sent through
+/// immediately, querying supported features, and so on.
+@since(version = 0.3.0-rc-2026-01-06)
+interface terminal-input {
+  /// The input side of a terminal.
+  @since(version = 0.3.0-rc-2026-01-06)
+  resource terminal-input;
+}
+
+/// Terminal output.
+///
+/// In the future, this may include functions for querying the terminal
+/// size, being notified of terminal size changes, querying supported
+/// features, and so on.
+@since(version = 0.3.0-rc-2026-01-06)
+interface terminal-output {
+  /// The output side of a terminal.
+  @since(version = 0.3.0-rc-2026-01-06)
+  resource terminal-output;
+}
+
+/// An interface providing an optional `terminal-input` for stdin as a
+/// link-time authority.
+@since(version = 0.3.0-rc-2026-01-06)
+interface terminal-stdin {
+  @since(version = 0.3.0-rc-2026-01-06)
+  use terminal-input.{terminal-input};
+
+  /// If stdin is connected to a terminal, return a `terminal-input` handle
+  /// allowing further interaction with it.
+  @since(version = 0.3.0-rc-2026-01-06)
+  get-terminal-stdin: func() -> option<terminal-input>;
+}
+
+/// An interface providing an optional `terminal-output` for stdout as a
+/// link-time authority.
+@since(version = 0.3.0-rc-2026-01-06)
+interface terminal-stdout {
+  @since(version = 0.3.0-rc-2026-01-06)
+  use terminal-output.{terminal-output};
+
+  /// If stdout is connected to a terminal, return a `terminal-output` handle
+  /// allowing further interaction with it.
+  @since(version = 0.3.0-rc-2026-01-06)
+  get-terminal-stdout: func() -> option<terminal-output>;
+}
+
+/// An interface providing an optional `terminal-output` for stderr as a
+/// link-time authority.
+@since(version = 0.3.0-rc-2026-01-06)
+interface terminal-stderr {
+  @since(version = 0.3.0-rc-2026-01-06)
+  use terminal-output.{terminal-output};
+
+  /// If stderr is connected to a terminal, return a `terminal-output` handle
+  /// allowing further interaction with it.
+  @since(version = 0.3.0-rc-2026-01-06)
+  get-terminal-stderr: func() -> option<terminal-output>;
+}
+
+@since(version = 0.3.0-rc-2026-01-06)
+world imports {
+  @since(version = 0.3.0-rc-2026-01-06)
+  import environment;
+  @since(version = 0.3.0-rc-2026-01-06)
+  import exit;
+  @since(version = 0.3.0-rc-2026-01-06)
+  import types;
+  @since(version = 0.3.0-rc-2026-01-06)
+  import stdin;
+  @since(version = 0.3.0-rc-2026-01-06)
+  import stdout;
+  @since(version = 0.3.0-rc-2026-01-06)
+  import stderr;
+  @since(version = 0.3.0-rc-2026-01-06)
+  import terminal-input;
+  @since(version = 0.3.0-rc-2026-01-06)
+  import terminal-output;
+  @since(version = 0.3.0-rc-2026-01-06)
+  import terminal-stdin;
+  @since(version = 0.3.0-rc-2026-01-06)
+  import terminal-stdout;
+  @since(version = 0.3.0-rc-2026-01-06)
+  import terminal-stderr;
+  import wasi:clocks/types@0.3.0-rc-2026-01-06;
+  import wasi:clocks/monotonic-clock@0.3.0-rc-2026-01-06;
+  import wasi:clocks/system-clock@0.3.0-rc-2026-01-06;
+  @unstable(feature = clocks-timezone)
+  import wasi:clocks/timezone@0.3.0-rc-2026-01-06;
+  import wasi:filesystem/types@0.3.0-rc-2026-01-06;
+  import wasi:filesystem/preopens@0.3.0-rc-2026-01-06;
+  import wasi:sockets/types@0.3.0-rc-2026-01-06;
+  import wasi:sockets/ip-name-lookup@0.3.0-rc-2026-01-06;
+  import wasi:random/random@0.3.0-rc-2026-01-06;
+  import wasi:random/insecure@0.3.0-rc-2026-01-06;
+  import wasi:random/insecure-seed@0.3.0-rc-2026-01-06;
+}
+@since(version = 0.3.0-rc-2026-01-06)
+world command {
+  @since(version = 0.3.0-rc-2026-01-06)
+  import environment;
+  @since(version = 0.3.0-rc-2026-01-06)
+  import exit;
+  @since(version = 0.3.0-rc-2026-01-06)
+  import types;
+  @since(version = 0.3.0-rc-2026-01-06)
+  import stdin;
+  @since(version = 0.3.0-rc-2026-01-06)
+  import stdout;
+  @since(version = 0.3.0-rc-2026-01-06)
+  import stderr;
+  @since(version = 0.3.0-rc-2026-01-06)
+  import terminal-input;
+  @since(version = 0.3.0-rc-2026-01-06)
+  import terminal-output;
+  @since(version = 0.3.0-rc-2026-01-06)
+  import terminal-stdin;
+  @since(version = 0.3.0-rc-2026-01-06)
+  import terminal-stdout;
+  @since(version = 0.3.0-rc-2026-01-06)
+  import terminal-stderr;
+  import wasi:clocks/types@0.3.0-rc-2026-01-06;
+  import wasi:clocks/monotonic-clock@0.3.0-rc-2026-01-06;
+  import wasi:clocks/system-clock@0.3.0-rc-2026-01-06;
+  @unstable(feature = clocks-timezone)
+  import wasi:clocks/timezone@0.3.0-rc-2026-01-06;
+  import wasi:filesystem/types@0.3.0-rc-2026-01-06;
+  import wasi:filesystem/preopens@0.3.0-rc-2026-01-06;
+  import wasi:sockets/types@0.3.0-rc-2026-01-06;
+  import wasi:sockets/ip-name-lookup@0.3.0-rc-2026-01-06;
+  import wasi:random/random@0.3.0-rc-2026-01-06;
+  import wasi:random/insecure@0.3.0-rc-2026-01-06;
+  import wasi:random/insecure-seed@0.3.0-rc-2026-01-06;
+
+  @since(version = 0.3.0-rc-2026-01-06)
+  export run;
+}

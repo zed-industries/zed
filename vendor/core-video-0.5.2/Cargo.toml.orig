@@ -1,0 +1,38 @@
+[package]
+name = "core-video"
+description = "Safe bindings to CoreVideo framework"
+homepage.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/core-video"
+version = "0.5.2"
+authors.workspace = true
+license.workspace = true
+categories = ["multimedia::video", "os::macos-apis"]
+keywords = ["corevideo"]
+edition.workspace = true
+
+[dependencies]
+block = "0.1"
+core-foundation.workspace = true
+core-graphics2 = { workspace = true, features = ["display"] }
+io-surface = { version = "0.16", default-features = false }
+libc.workspace = true
+metal = { version = "0.33", optional = true }
+objc2 = { workspace = true, optional = true }
+
+[features]
+default = ["display-link", "link"]
+display-link = []
+link = ["core-foundation/link", "core-graphics2/link"]
+objc = ["dep:objc2", "core-graphics2/objc"]
+
+[package.metadata.docs.rs]
+no-default-features = true
+features = ["display-link", "metal", "objc"]
+default-target = "x86_64-apple-darwin"
+targets = [
+    "aarch64-apple-darwin",
+    "aarch64-apple-ios",
+    "x86_64-apple-darwin",
+    "x86_64-apple-ios",
+]

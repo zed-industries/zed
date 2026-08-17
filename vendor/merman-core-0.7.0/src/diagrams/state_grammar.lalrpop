@@ -1,0 +1,235 @@
+// State diagram grammar (phase 1), based on Mermaid 11.12.2 `stateDiagram.jison`.
+
+grammar;
+
+use crate::diagrams::state::{ClickStmt, Note, RelationStmt, StateStmt, Stmt, Tok};
+
+extern {
+  type Location = usize;
+  type Error = crate::diagrams::state::LexError;
+
+  enum Tok {
+    Newline => Tok::Newline,
+
+    "stateDiagram" => Tok::Sd,
+
+    Id => Tok::Id(<String>),
+    StyledId => Tok::StyledId(<(String, String)>),
+    EdgeState => Tok::EdgeState,
+    Descr => Tok::Descr(<String>),
+    "-->" => Tok::Arrow,
+    "{" => Tok::StructStart,
+    "}" => Tok::StructStop,
+    "as" => Tok::As,
+    Note => Tok::Note,
+    LeftOf => Tok::LeftOf,
+    RightOf => Tok::RightOf,
+    NoteTextTok => Tok::NoteText(<String>),
+
+    StateDescr => Tok::StateDescr(<String>),
+    CompositState => Tok::CompositState(<String>),
+    Fork => Tok::Fork(<String>),
+    Join => Tok::Join(<String>),
+    Choice => Tok::Choice(<String>),
+    Concurrent => Tok::Concurrent,
+    HideEmptyDescription => Tok::HideEmptyDescription,
+    ScaleWidth => Tok::ScaleWidth(<usize>),
+
+    ClassDef => Tok::ClassDef,
+    ClassDefId => Tok::ClassDefId(<String>),
+    ClassDefStyleOpts => Tok::ClassDefStyleOpts(<String>),
+
+    Class => Tok::Class,
+    ClassEntityIds => Tok::ClassEntityIds(<String>),
+    StyleClass => Tok::StyleClass(<String>),
+
+    Style => Tok::Style,
+    StyleIds => Tok::StyleIds(<String>),
+    StyleDefStyleOpts => Tok::StyleDefStyleOpts(<String>),
+
+    Direction => Tok::Direction(<String>),
+    AccTitle => Tok::AccTitle(<String>),
+    AccDescr => Tok::AccDescr(<String>),
+    AccDescrMultiline => Tok::AccDescrMultiline(<String>),
+
+    Click => Tok::Click,
+    Href => Tok::Href,
+    StringLit => Tok::StringLit(<String>),
+  }
+}
+
+pub Root: Vec<Stmt> = {
+  <_p:Prelude> "stateDiagram" <items:Items> => items,
+};
+
+Prelude: () = {
+  => (),
+  Newline <rest:Prelude> => rest,
+};
+
+Items: Vec<Stmt> = {
+  <items:(Item)*> => items.into_iter().filter_map(|i| i).collect()
+};
+
+Item: Option<Stmt> = {
+  Newline => None,
+  <s:Statement> => Some(s),
+};
+
+Statement: Stmt = {
+  <s:ClassDefStatement> => s,
+  <s:StyleStatement> => s,
+  <s:CssClassStatement> => s,
+  <s:DirectionStatement> => s,
+  <s:AccessibilityStatement> => s,
+  <s:ClickStatement> => s,
+  <s:NoteStatement> => s,
+  HideEmptyDescription => Stmt::Noop,
+  ScaleWidth => Stmt::Noop,
+
+  <s1:IdStatement> "-->" <s2:IdStatement> <d:OptDescr> => Stmt::Relation(Box::new(RelationStmt {
+    state1: s1,
+    state2: s2,
+    description: d,
+  })),
+
+  <mut s:IdStatement> <d:OptDescr> => {
+    s.description = d;
+    Stmt::State(s)
+  },
+
+  // `state <id>` without a `{ ... }` is effectively a no-op in Mermaid's parser.
+  <_id:CompositState> => Stmt::Noop,
+
+  <id:CompositState> <doc:Block> => Stmt::State(StateStmt {
+    id,
+    ty: "default".to_string(),
+    description: None,
+    descriptions: Vec::new(),
+    doc: Some(doc),
+    note: None,
+    classes: Vec::new(),
+    styles: Vec::new(),
+    text_styles: Vec::new(),
+    start: None,
+  }),
+
+  <descr:StateDescr> "as" <id:Id> <doc:OptBlock> => {
+    let trimmed = descr.trim().to_string();
+    let mut state_id = id;
+    let description = trimmed;
+    let mut descriptions: Vec<String> = Vec::new();
+    if let Some((a, b)) = state_id
+      .split_once(':')
+      .map(|(a, b)| (a.to_string(), b.to_string())) {
+      state_id = a;
+      let extra = b.trim();
+      if !extra.is_empty() {
+        descriptions.push(extra.to_string());
+      }
+    }
+    Stmt::State(StateStmt {
+      id: state_id,
+      ty: "default".to_string(),
+      description: Some(description),
+      descriptions,
+      doc,
+      note: None,
+      classes: Vec::new(),
+      styles: Vec::new(),
+      text_styles: Vec::new(),
+      start: None,
+    })
+  },
+
+  <id:Fork> => Stmt::State(StateStmt::new_typed(id, "fork")),
+  <id:Join> => Stmt::State(StateStmt::new_typed(id, "join")),
+  <id:Choice> => Stmt::State(StateStmt::new_typed(id, "choice")),
+  Concurrent => Stmt::State(StateStmt::new_typed("__divider__".to_string(), "divider")),
+};
+
+NoteStatement: Stmt = {
+  Note <pos:NotePosition> <id:Id> <text:NoteTextTok> => Stmt::State(StateStmt {
+    id,
+    ty: "default".to_string(),
+    description: None,
+    descriptions: Vec::new(),
+    doc: None,
+    note: Some(Note { position: Some(pos), text }),
+    classes: Vec::new(),
+    styles: Vec::new(),
+    text_styles: Vec::new(),
+    start: None,
+  }),
+  // Mermaid `@11.12.2` accepts the floating note syntax, but it does not participate in the state
+  // diagram model (see upstream `stateDiagram floating notes` specs). Treat it as a no-op.
+  //
+  // Note: downstream relations can still reference the note id; in that case Mermaid will render a
+  // regular state node for that id (the note text is ignored).
+  Note <_text:NoteTextTok> "as" <_id:Id> => Stmt::Noop,
+};
+
+NotePosition: String = {
+  LeftOf => "left of".to_string(),
+  RightOf => "right of".to_string(),
+};
+
+OptDescr: Option<String> = {
+  => None,
+  <d:Descr> => Some(d),
+};
+
+Block: Vec<Stmt> = {
+  "{" <doc:Items> "}" => doc
+};
+
+OptBlock: Option<Vec<Stmt>> = {
+  => None,
+  <b:Block> => Some(b),
+};
+
+ClassDefStatement: Stmt = {
+  ClassDef <id:ClassDefId> <raw:ClassDefStyleOpts> => Stmt::ClassDef { id, classes: raw },
+};
+
+StyleStatement: Stmt = {
+  Style <ids:StyleIds> <raw:StyleDefStyleOpts> => Stmt::Style { ids, styles: raw },
+};
+
+CssClassStatement: Stmt = {
+  Class <ids:ClassEntityIds> <style:StyleClass> => Stmt::ApplyClass { ids, class_name: style },
+};
+
+DirectionStatement: Stmt = {
+  <d:Direction> => Stmt::Direction(d),
+};
+
+AccessibilityStatement: Stmt = {
+  <t:AccTitle> => Stmt::AccTitle(t),
+  <d:AccDescr> => Stmt::AccDescr(d),
+  <d:AccDescrMultiline> => Stmt::AccDescr(d),
+};
+
+ClickStatement: Stmt = {
+  Click <s:IdStatement> <url:StringLit> <tooltip:StringLit> => Stmt::Click(ClickStmt {
+    id: s.id,
+    url,
+    tooltip,
+  }),
+  Click <s:IdStatement> Href <url:StringLit> => Stmt::Click(ClickStmt {
+    id: s.id,
+    url,
+    tooltip: String::new(),
+  }),
+};
+
+IdStatement: StateStmt = {
+  <id:Id> => StateStmt::new(id),
+  EdgeState => StateStmt::new("[*]".to_string()),
+  <pair:StyledId> => {
+    let (id, class_id) = pair;
+    let mut s = StateStmt::new(id);
+    s.classes.push(class_id);
+    s
+  }
+};

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Copyright (C) 2004 Mikko Torni and Josh Triplett.
+All Rights Reserved.  See the file COPYING in this directory
+for licensing information.
+-->
+<xcb header="xc_misc" extension-xname="XC-MISC" extension-name="XCMisc" extension-multiword="true" major-version="1" minor-version="1">
+    <request name="GetVersion" opcode="0">
+        <field type="CARD16" name="client_major_version" />
+        <field type="CARD16" name="client_minor_version" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD16" name="server_major_version" />
+            <field type="CARD16" name="server_minor_version" />
+        </reply>
+    </request>
+
+    <request name="GetXIDRange" opcode="1">
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="start_id" />
+            <field type="CARD32" name="count" />
+        </reply>
+    </request>
+
+    <request name="GetXIDList" opcode="2">
+        <field type="CARD32" name="count" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="ids_len" />
+            <pad bytes="20" />
+            <list type="CARD32" name="ids">
+                <fieldref>ids_len</fieldref>
+            </list>
+        </reply>
+    </request>
+</xcb>

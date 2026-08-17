@@ -1,0 +1,10 @@
+(type T (enum))
+(type U (enum))
+
+(decl t_to_u_1 (T) U)
+(decl t_to_u_2 (T) U)
+
+(convert T U t_to_u_1)
+(convert T U t_to_u_2)
+
+(convert T Undef undefined_term)

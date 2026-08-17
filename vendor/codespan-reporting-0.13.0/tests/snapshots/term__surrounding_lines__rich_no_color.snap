@@ -1,0 +1,30 @@
+---
+source: codespan-reporting/tests/term.rs
+assertion_line: 1157
+expression: TEST_DATA.emit_no_color(& config)
+---
+error: Unknown attribute macro
+  ┌─ surroundingLines.fun:1:3
+  │
+1 │ #[foo]
+  │   ^^^ No attribute macro `foo` known
+2 │ fn main() {
+
+error: Missing argument for format
+  ┌─ surroundingLines.fun:5:9
+  │
+2 │ fn main() {
+3 │     println!(
+4 │         "{}",
+  │          -- Unable to use `{}`-directive to display `Foo`
+5 │         Foo
+  │         ^^^ No instance of std::fmt::Display exists for type Foo
+6 │     );
+
+error: Syntax error
+  ┌─ surroundingLines.fun:9:11
+  │
+7 │ }
+8 │ 
+9 │ struct Foo
+  │           ^ Missing a semicolon

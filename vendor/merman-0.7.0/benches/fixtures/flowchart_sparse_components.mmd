@@ -1,0 +1,29 @@
+flowchart LR
+  subgraph Billing
+    direction TB
+    B1[Invoice]
+    B2[Charge]
+    B3[Receipt]
+    B1 --> B2 --> B3
+  end
+
+  subgraph Auth
+    direction TB
+    A1[Login]
+    A2[MFA]
+    A3[Session]
+    A1 --> A2 --> A3
+  end
+
+  subgraph Analytics
+    direction TB
+    X1[Ingest]
+    X2[Transform]
+    X3[Warehouse]
+    X4[Dashboard]
+    X1 --> X2 --> X3 --> X4
+  end
+
+  B2 -.event.-> X1
+  A3 -.event.-> X1
+  X4 -.alert.-> B1

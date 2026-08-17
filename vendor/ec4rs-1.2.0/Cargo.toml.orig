@@ -1,0 +1,31 @@
+# Cheat sheet: https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[package]
+name = "ec4rs"
+description = "EditorConfig For Rust"
+license = "Apache-2.0"
+homepage = "https://github.com/TheDaemoness/ec4rs"
+repository = "https://github.com/TheDaemoness/ec4rs"
+readme = "README.md"
+keywords = ["editorconfig"]
+categories = ["config", "parser-implementations"]
+edition = "2021"
+
+authors = ["TheDaemoness"]
+include = ["/src", "/README.md", "/rustdoc.md"]
+rust-version = "1.56" # 2021 edition
+version = "1.2.0"
+
+[workspace]
+members = ["tools"]
+
+[features]
+allow-empty-values = []
+track-source = []
+
+[dependencies]
+language-tags = { version = "0.3.2", optional = true }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "doc_unstable"]

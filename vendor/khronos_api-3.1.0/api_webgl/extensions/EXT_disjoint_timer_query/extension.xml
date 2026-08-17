@@ -1,0 +1,358 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<extension href="EXT_disjoint_timer_query/">
+  <name>EXT_disjoint_timer_query</name>
+
+  <contact> <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL
+  working group</a> (public_webgl 'at' khronos.org) </contact>
+
+  <contributors>
+    <contributor>Contributors to ARB_occlusion_query</contributor>
+    <contributor>Contributors to EXT_timer_query</contributor>
+    <contributor>Contributors to ARB_timer_query</contributor>
+    <contributor>Ben Vanik, Google Inc.</contributor>
+    <contributor>Daniel Koch, TransGaming Inc.</contributor>
+    <contributor>Florian Boesch (pyalot 'at' gmail.com)</contributor>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+
+  <number>26</number>
+
+  <depends>
+    <api version="1.0"/>
+  </depends>
+
+  <overview>
+    <mirrors href="http://www.khronos.org/registry/gles/extensions/EXT/EXT_disjoint_timer_query.txt"
+             name="EXT_disjoint_timer_query">
+      <addendum>
+        Specifies that queries' results only become available at certain well-defined times.
+      </addendum>
+    </mirrors>
+
+    <features>
+      <feature>
+        This extension provides a query mechanism that can be used to determine
+        the amount of time it takes to fully complete a set of GL commands, and
+        without stalling the rendering pipeline.  It uses the query object
+        mechanisms first introduced in the occlusion query extension, which allow
+        time intervals to be polled asynchronously by the application.
+      </feature>
+      <feature>
+        This version of the disjoint_timer_query extension is exposed
+        only on on WebGL 1.0 contexts. See the _webgl2 version of the
+        extension for how it is exposed on WebGL 2.0 contexts.
+      </feature>
+    </features>
+  </overview>
+
+  <idl xml:space="preserve">
+typedef unsigned long long GLuint64EXT;
+
+[NoInterfaceObject]
+interface WebGLTimerQueryEXT : WebGLObject {
+};
+
+[NoInterfaceObject]
+interface EXT_disjoint_timer_query {
+  const GLenum QUERY_COUNTER_BITS_EXT      = 0x8864;
+  const GLenum CURRENT_QUERY_EXT           = 0x8865;
+  const GLenum QUERY_RESULT_EXT            = 0x8866;
+  const GLenum QUERY_RESULT_AVAILABLE_EXT  = 0x8867;
+  const GLenum TIME_ELAPSED_EXT            = 0x88BF;
+  const GLenum TIMESTAMP_EXT               = 0x8E28;
+  const GLenum GPU_DISJOINT_EXT            = 0x8FBB;
+
+  WebGLTimerQueryEXT? createQueryEXT();
+  void deleteQueryEXT(WebGLTimerQueryEXT? query);
+  [WebGLHandlesContextLoss] boolean isQueryEXT(WebGLTimerQueryEXT? query);
+  void beginQueryEXT(GLenum target, WebGLTimerQueryEXT query);
+  void endQueryEXT(GLenum target);
+  void queryCounterEXT(WebGLTimerQueryEXT query, GLenum target);
+  any getQueryEXT(GLenum target, GLenum pname);
+  any getQueryObjectEXT(WebGLTimerQueryEXT query, GLenum pname);
+};
+  </idl>
+
+  <newfun>
+    <function name="createQueryEXT" type="WebGLTimerQueryEXT?">
+    </function>
+  </newfun>
+
+  <newfun>
+    <function name="deleteQueryEXT" type="void">
+      <param name="query" type="WebGLTimerQueryEXT?"/>
+    </function>
+  </newfun>
+
+  <newfun>
+    <function name="isQueryEXT" type="boolean">
+      <param name="query" type="WebGLTimerQueryEXT?"/>
+      Returns true if the passed WebGLTimerQueryEXT is valid and false otherwise. Returns false if
+      the query's <a
+      href="http://www.khronos.org/registry/webgl/specs/1.0.1/#webgl-object-invalidated-flag">invalidated
+      flag</a> is set.
+    </function>
+  </newfun>
+
+  <newfun>
+    <function name="beginQueryEXT" type="void">
+      <param name="target" type="GLenum"/>
+      <param name="query" type="WebGLTimerQueryEXT?"/>
+      <code>target</code> accepts <code>TIME_ELAPSED_EXT</code>.
+    </function>
+  </newfun>
+
+  <newfun>
+    <function name="endQueryEXT" type="void">
+      <param name="target" type="GLenum"/>
+      <code>target</code> accepts <code>TIME_ELAPSED_EXT</code>.
+    </function>
+  </newfun>
+
+  <newfun>
+    <function name="queryCounterEXT" type="void">
+      <param name="query" type="WebGLTimerQueryEXT?"/>
+      <param name="target" type="GLenum"/>
+      <code>target</code> accepts <code>TIMESTAMP_EXT</code>.
+    </function>
+  </newfun>
+
+  <newfun>
+    <function name="getQueryEXT" type="any">
+      <param name="target" type="GLenum"/>
+      <param name="pname" type="GLenum"/>
+      <code>target</code> and <code>pname</code> accept the following combinations of
+      parameters. The return type of this method depends on the parameter queried.
+      <br/>
+      <table width="30%">
+      <tr><th>target</th><th>pname</th><th>returned type</th></tr>
+      <tr><td>TIME_ELAPSED_EXT</td><td>CURRENT_QUERY</td><td>WebGLQuery?</td></tr>
+      <tr><td>TIMESTAMP_EXT</td><td>CURRENT_QUERY</td><td>null</td></tr>
+      <tr><td>TIME_ELAPSED_EXT</td><td>QUERY_COUNTER_BITS_EXT</td><td>GLint</td></tr>
+      <tr><td>TIMESTAMP_EXT</td><td>QUERY_COUNTER_BITS_EXT</td><td>GLint</td></tr>
+      </table>      
+    </function>
+  </newfun>
+
+  <newfun>
+    <function name="getQueryObjectEXT" type="any">
+      <param name="query" type="WebGLTimerQueryEXT?"/>
+      <param name="pname" type="GLenum"/>
+      <code>pname</code> accepts <code>QUERY_RESULT_EXT</code> or <code>QUERY_RESULT_AVAILABLE_EXT</code>.
+      <br/>
+      The return type of this method depends on the parameter queried:
+      <table width="30%">
+      <tr><th>pname</th><th>returned type</th></tr>
+      <tr><td>QUERY_RESULT_EXT</td><td>GLuint64EXT</td></tr>
+      <tr><td>QUERY_RESULT_AVAILABLE_EXT</td><td>boolean</td></tr>
+      </table>      
+      <br/>
+      In order to ensure consistent behavior across platforms, queries' results must only be made
+      available when the user agent's <a
+      href="http://www.whatwg.org/specs/web-apps/current-work/multipage/webappapis.html#event-loops">event
+      loop</a> is not executing a task. In other words:
+      <ul>
+        <li> A query's result must not be made available until control has returned to the user
+             agent's main loop. </li>
+        <li> Repeatedly fetching a query's QUERY_RESULT_AVAILABLE_EXT parameter in a loop, without
+             returning control to the user agent, must always return the same value. </li>
+      </ul>
+
+      <div class="note">
+        A query's result may or may not be made available when control returns to the user
+        agent's event loop. It is not guaranteed that using a single setTimeout callback with a
+        delay of 0, or a single requestAnimationFrame callback, will allow sufficient time for
+        the WebGL implementation to supply the query's results.
+      </div>
+
+      <div class="note rationale">
+        This change compared to the original extension specification is enforced in order to prevent
+        applications from relying on being able to issue a query and fetch its result in the same
+        frame. In order to ensure best portability among devices and best performance among
+        implementations, applications must expect that queries' results will become available
+        asynchronously.
+      </div>
+    </function>
+  </newfun>
+  
+  <newtok>
+    <function name="getParameter" type="any">
+      <param name="pname" type="GLenum"/>
+      <code>pname</code> accepts <code>TIMESTAMP_EXT</code> or <code>GPU_DISJOINT_EXT</code>.
+      <br/>
+
+      The return type depends on the parameter queried:
+      <table width="30%">
+      <tr><th>pname</th><th>returned type</th></tr>
+      <tr><td>TIMESTAMP_EXT</td><td>GLuint64EXT</td></tr>
+      <tr><td>GPU_DISJOINT_EXT</td><td>boolean</td></tr>
+      </table>      
+    </function>
+  </newtok>
+
+  <issues>
+    <ol>
+      <li>
+        <p>
+          Can getQueryObjectEXT be exposed in its current form according to ECMAScript
+          semantics?  ECMAScript's <a
+          href="http://wiki.ecmascript.org/doku.php?id=strawman:concurrency">de-facto concurrency
+          model</a> is "shared nothing" communicating event loops. Is it acceptable for sequential
+          calls to getQueryObjectEXT to return different answers? Note that Date.now() advances
+          during script execution, so this may be fine; but if concerns are raised, then the API may
+          need to be redesigned to use callbacks.
+        </p>
+      </li>
+    </ol>
+  </issues>
+
+  <samplecode xml:space="preserve">
+    <pre>
+        // Example (1) -- uses beginQueryEXT/endQueryEXT.
+        var ext = gl.getExtension('EXT_disjoint_timer_query');
+        var query = ext.createQueryEXT();
+        ext.beginQueryEXT(ext.TIME_ELAPSED_EXT, query);
+
+        // Draw object
+        gl.drawElements(...);
+
+        ext.endQueryEXT(ext.TIME_ELAPSED_EXT);
+
+        // ...at some point in the future, after returning control to the browser and being called again:
+        var available = ext.getQueryObjectEXT(query, ext.QUERY_RESULT_AVAILABLE_EXT);
+        var disjoint = gl.getParameter(ext.GPU_DISJOINT_EXT);
+
+        if (available &amp;&amp; !disjoint) {
+          // See how much time the rendering of the object took in nanoseconds.
+          var timeElapsed = ext.getQueryObjectEXT(query, ext.QUERY_RESULT_EXT);
+
+          // Do something useful with the time.  Note that care should be
+          // taken to use all significant bits of the result, not just the
+          // least significant 32 bits.
+          adjustObjectLODBasedOnDrawTime(timeElapsed);
+        }
+
+        //----------------------------------------------------------------------
+
+        // Example (2) -- same as the example above, but uses queryCounterEXT instead.
+        var ext = gl.getExtension('EXT_disjoint_timer_query');
+        var startQuery = ext.createQueryEXT();
+        var endQuery = ext.createQueryEXT();
+        ext.queryCounterEXT(startQuery, ext.TIMESTAMP_EXT);
+
+        // Draw object
+        gl.drawElements(...);
+
+        ext.queryCounterEXT(endQuery, ext.TIMESTAMP_EXT);
+
+        // ...at some point in the future, after returning control to the browser and being called again:
+        var available = ext.getQueryObjectEXT(endQuery, ext.QUERY_RESULT_AVAILABLE_EXT);
+        var disjoint = gl.getParameter(ext.GPU_DISJOINT_EXT);
+
+        if (available &amp;&amp; !disjoint) {
+          // See how much time the rendering of the object took in nanoseconds.
+          var timeStart = ext.getQueryObjectEXT(startQuery, ext.QUERY_RESULT_EXT);
+          var timeEnd = ext.getQueryObjectEXT(endQuery, ext.QUERY_RESULT_EXT);
+
+          // Do something useful with the time.  Note that care should be
+          // taken to use all significant bits of the result, not just the
+          // least significant 32 bits.
+          adjustObjectLODBasedOnDrawTime(timeEnd - timeStart);
+        }
+
+        //----------------------------------------------------------------------
+
+        // Example (3) -- check the number of timestamp bits to determine how to best
+        // measure elapsed time.
+        var ext = gl.getExtension('EXT_disjoint_timer_query');
+        var timeElapsedQuery;
+        var startQuery;
+        var endQuery;
+
+        var useTimestamps = false;
+
+        if (ext.getQueryEXT(ext.TIMESTAMP_EXT, ext.QUERY_COUNTER_BITS_EXT) > 0) {
+          useTimestamps = true;
+        }
+
+        // Clear the disjoint state before starting to work with queries to increase
+        // the chances that the results will be valid.
+        gl.getParameter(ext.GPU_DISJOINT_EXT);
+
+        if (useTimestamps) {
+          startQuery = ext.createQueryEXT();
+          endQuery = ext.createQueryEXT();
+          ext.queryCounterEXT(startQuery, ext.TIMESTAMP_EXT);
+        } else {
+          timeElapsedQuery = ext.createQueryEXT();
+          ext.beginQueryEXT(ext.TIME_ELAPSED_EXT, timeElapsedQuery);
+        }
+
+        // Draw object
+        gl.drawElements(...);
+
+        if (useTimestamps) {
+          ext.queryCounterEXT(endQuery, ext.TIMESTAMP_EXT);
+        } else {
+          ext.endQueryEXT(ext.TIME_ELAPSED_EXT);
+        }
+
+        // ...at some point in the future, after returning control to the browser and being called again:
+        var disjoint = gl.getParameter(ext.GPU_DISJOINT_EXT);
+        if (disjoint) {
+          // Have to redo all of the measurements.
+        } else {
+          var available;
+          if (useTimestamps) {
+            available = ext.getQueryObjectEXT(endQuery, ext.QUERY_RESULT_AVAILABLE_EXT);
+          } else {
+            available = ext.getQueryObjectEXT(timeElapsedQuery, ext.QUERY_RESULT_AVAILABLE_EXT);
+          }
+
+          if (available) {
+            var timeElapsed;
+            if (useTimestamps) {
+              // See how much time the rendering of the object took in nanoseconds.
+              var timeStart = ext.getQueryObjectEXT(startQuery, ext.QUERY_RESULT_EXT);
+              var timeEnd = ext.getQueryObjectEXT(endQuery, ext.QUERY_RESULT_EXT);
+              timeElapsed = timeEnd - timeStart;
+            } else {
+              timeElapsed = ext.getQueryObjectEXT(query, ext.QUERY_RESULT_EXT);
+            }
+
+            // Do something useful with the time.  Note that care should be
+            // taken to use all significant bits of the result, not just the
+            // least significant 32 bits.
+            adjustObjectLODBasedOnDrawTime(timeElapsed);
+          }
+        }
+    </pre>
+  </samplecode>
+
+  <history>
+    <revision date="2013/04/02">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2013/04/03">
+      <change>Based on public_webgl discussion, specified that queries' results only become available at well-defined times.</change>
+    </revision>
+    <revision date="2014/02/12">
+      <change>Recast as EXT_disjoint_timer_query and harmonized with mirrored extension.</change>
+    </revision>
+    <revision date="2014/07/15">
+      <change>Added NoInterfaceObject extended attribute.</change>
+    </revision>
+    <revision date="2015/10/05">
+      <change>Revised language regarding queries' availability based on feedback from Jeff Gilbert.</change>
+    </revision>
+    <revision date="2015/10/19">
+      <change>Promoted to community approved after discussion on public_webgl.</change>
+    </revision>
+    <revision date="2016/06/08">
+      <change>Added example choosing measurement technique based on number of timestamp bits.</change>
+    </revision>
+    <revision date="2016/09/30">
+      <change>Added clarifying note that this document only applies to WebGL 1.0. Minor reformatting and typo fixes.</change>
+    </revision>
+  </history>
+</extension>

@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [auto]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux-ci:
+    name: Linux
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        toolchain: ["stable", "beta", "nightly", "1.36.0"]
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.toolchain }}
+          override: true
+
+      - name: Cargo build
+        run: cargo build
+
+      - name: Cargo doc
+        run: cargo doc
+
+      - name: Cargo test
+        run: cargo test --features 'encoding encoding_rs'
+
+      - name: Cargo bench
+        if: matrix.toolchain == 'nightly'
+        run: cargo test --features bench
+
+  build_result:
+    name: homu build finished
+    runs-on: ubuntu-latest
+    needs:
+      - "linux-ci"
+
+    steps:
+      - name: Mark the job as successful
+        run: exit 0
+        if: success()
+      - name: Mark the job as unsuccessful
+        run: exit 1
+        if: "!success()"

@@ -1,0 +1,49 @@
+---
+- name: Spec Example 5.3. Block Structure Indicators
+  from: http://www.yaml.org/spec/1.2/spec.html#id2772312
+  tags: explicit-key spec mapping sequence
+  yaml: |
+    sequence:
+    - one
+    - two
+    mapping:
+      ? sky
+      : blue
+      sea : green
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :sequence
+       +SEQ
+        =VAL :one
+        =VAL :two
+       -SEQ
+       =VAL :mapping
+       +MAP
+        =VAL :sky
+        =VAL :blue
+        =VAL :sea
+        =VAL :green
+       -MAP
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "sequence": [
+        "one",
+        "two"
+      ],
+      "mapping": {
+        "sky": "blue",
+        "sea": "green"
+      }
+    }
+  dump: |
+    sequence:
+    - one
+    - two
+    mapping:
+      sky: blue
+      sea: green

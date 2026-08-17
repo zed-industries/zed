@@ -1,0 +1,18 @@
+[tasks.test-maths]
+dependencies = [
+    "test-maths-default",
+    "test-maths-legacy",
+    "test-maths-nopanic",
+]
+
+[tasks.test-maths-default]
+command = "cargo"
+args = ["test", "--workspace", "--no-default-features", "--features=maths", "maths", "--", "--skip", "generated"]
+
+[tasks.test-maths-legacy]
+command = "cargo"
+args = ["test", "--workspace", "--no-default-features", "--features=maths,legacy-ops", "maths", "--", "--skip", "generated"]
+
+[tasks.test-maths-nopanic]
+command = "cargo"
+args = ["test", "--workspace", "--no-default-features", "--features=maths-nopanic", "maths", "--", "--skip", "generated"]

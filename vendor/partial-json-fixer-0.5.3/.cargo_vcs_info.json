@@ -1,0 +1,6 @@
+{
+  "git": {
+    "sha1": "5a0a5ecb09df54bcbe36a4aaad18eb6928a20888"
+  },
+  "path_in_vcs": "crates/partial-json-fixer"
+}

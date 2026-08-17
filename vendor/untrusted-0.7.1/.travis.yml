@@ -1,0 +1,15 @@
+language: rust
+sudo: false
+matrix:
+  allow_failures:
+    - rust: nightly
+  include:
+    - rust: stable
+
+    - rust: beta
+
+    - rust: nightly
+
+script:
+  - cargo test -vv --release
+  - cargo test -vv

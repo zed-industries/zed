@@ -1,0 +1,41 @@
+(component
+  (type (;0;)
+    (component
+      (type (;0;)
+        (instance
+          (type (;0;) (flags "b"))
+          (export (;1;) "a" (type (eq 0)))
+          (export (;2;) "b" (type (eq 1)))
+          (type (;3;) (func (result 2)))
+          (export (;0;) "f" (func (type 3)))
+        )
+      )
+      (export (;0;) "foo:foo/foo" (instance (type 0)))
+    )
+  )
+  (export (;1;) "foo" (type 0))
+  (type (;2;)
+    (component
+      (type (;0;)
+        (component
+          (type (;0;)
+            (instance
+              (type (;0;) (flags "b"))
+              (export (;1;) "a" (type (eq 0)))
+              (export (;2;) "b" (type (eq 1)))
+              (type (;3;) (func (result 2)))
+              (export (;0;) "f" (func (type 3)))
+            )
+          )
+          (export (;0;) "foo:foo/foo" (instance (type 0)))
+        )
+      )
+      (export (;0;) "foo:foo/my-world" (component (type 0)))
+    )
+  )
+  (export (;3;) "my-world" (type 2))
+  (@custom "package-docs" "\00{}")
+  (@producers
+    (processed-by "wit-component" "$CARGO_PKG_VERSION")
+  )
+)

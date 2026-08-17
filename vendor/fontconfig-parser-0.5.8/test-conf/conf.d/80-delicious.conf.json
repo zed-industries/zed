@@ -1,0 +1,46 @@
+[
+  {
+    "Match": {
+      "target": "Scan",
+      "tests": [
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Family": {
+              "Simple": {
+                "String": "Delicious"
+              }
+            }
+          }
+        },
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Style": {
+              "Simple": {
+                "String": "Heavy"
+              }
+            }
+          }
+        }
+      ],
+      "edits": [
+        {
+          "mode": "Assign",
+          "binding": "Weak",
+          "value": {
+            "Weight": {
+              "Simple": {
+                "Constant": "Heavy"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+]

@@ -1,0 +1,31 @@
+flowchart TD
+  subgraph Intake
+    direction LR
+    I1[Capture] --> I2[Validate] --> I3[Normalize]
+  end
+
+  subgraph Compute
+    direction LR
+    C1[Queue] --> C2[Worker A]
+    C1 --> C3[Worker B]
+    C1 --> C4[Worker C]
+    C2 --> C5[Join]
+    C3 --> C5
+    C4 --> C5
+  end
+
+  subgraph Delivery
+    direction LR
+    D1[Route] --> D2[Fast Path]
+    D1 --> D3[Archive]
+    D2 --> D4[Notify]
+    D3 --> D4
+  end
+
+  I3 --> C1
+  C5 --> D1
+
+  D4 -.retry.-> I2
+  D3 -.replay.-> C1
+  C4 -.incident.-> I1
+  C5 --> I3

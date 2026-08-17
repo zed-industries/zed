@@ -1,0 +1,1 @@
+- `parser.rs` no longer wraps values in quotes (`"..."`) but expects their `to_css` impl to already wrap it ([Gecko Bug 1854809](https://bugzilla.mozilla.org/show_bug.cgi?id=1854809))

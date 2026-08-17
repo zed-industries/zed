@@ -1,0 +1,53 @@
+{
+  "grammars": [
+    {
+      "name": "rust",
+      "camelcase": "Rust",
+      "scope": "source.rust",
+      "path": ".",
+      "file-types": [
+        "rs"
+      ],
+      "highlights": [
+        "queries/highlights.scm"
+      ],
+      "injections": [
+        "queries/injections.scm"
+      ],
+      "tags": [
+        "queries/tags.scm"
+      ],
+      "injection-regex": "rust"
+    }
+  ],
+  "metadata": {
+    "version": "0.24.2",
+    "license": "MIT",
+    "description": "Rust grammar for tree-sitter",
+    "authors": [
+      {
+        "name": "Maxim Sokolov",
+        "email": "maxim0xff@gmail.com"
+      },
+      {
+        "name": "Max Brunsfeld",
+        "email": "maxbrunsfeld@gmail.com"
+      },
+      {
+        "name": "Amaan Qureshi",
+        "email": "amaanq12@gmail.com"
+      }
+    ],
+    "links": {
+      "repository": "https://github.com/tree-sitter/tree-sitter-rust"
+    }
+  },
+  "bindings": {
+    "c": true,
+    "go": true,
+    "node": true,
+    "python": true,
+    "rust": true,
+    "swift": true
+  }
+}

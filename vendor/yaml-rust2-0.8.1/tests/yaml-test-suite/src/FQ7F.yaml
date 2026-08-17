@@ -1,0 +1,33 @@
+---
+- name: Spec Example 2.1. Sequence of Scalars
+  from: http://www.yaml.org/spec/1.2/spec.html#id2759963
+  tags: spec sequence
+  yaml: |
+    - Mark McGwire
+    - Sammy Sosa
+    - Ken Griffey
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       =VAL :Mark McGwire
+       =VAL :Sammy Sosa
+       =VAL :Ken Griffey
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      "Mark McGwire",
+      "Sammy Sosa",
+      "Ken Griffey"
+    ]
+  toke: |
+    SEQ-MARK 0 1 1 1
+    WS-SPACE 1 1 1 2
+    TEXT-VAL 2 12 1 3 :Mark McGwire
+    WS-NEWLN 14 1 1 15
+    SEQ-MARK 15 1 2 1
+    WS-SPACE 1 1 1 2
+    TEXT-VAL 2 12 1 3 :Sammy Sosa
+    WS-NEWLN 14 1 1 15

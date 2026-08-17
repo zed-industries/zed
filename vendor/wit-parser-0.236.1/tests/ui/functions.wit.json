@@ -1,0 +1,115 @@
+{
+  "worlds": [],
+  "interfaces": [
+    {
+      "name": "functions",
+      "types": {},
+      "functions": {
+        "f1": {
+          "name": "f1",
+          "kind": "freestanding",
+          "params": []
+        },
+        "f2": {
+          "name": "f2",
+          "kind": "freestanding",
+          "params": [
+            {
+              "name": "a",
+              "type": "u32"
+            }
+          ]
+        },
+        "f3": {
+          "name": "f3",
+          "kind": "freestanding",
+          "params": [
+            {
+              "name": "a",
+              "type": "u32"
+            }
+          ]
+        },
+        "f4": {
+          "name": "f4",
+          "kind": "freestanding",
+          "params": [],
+          "result": "u32"
+        },
+        "f6": {
+          "name": "f6",
+          "kind": "freestanding",
+          "params": [],
+          "result": 0
+        },
+        "f7": {
+          "name": "f7",
+          "kind": "freestanding",
+          "params": [
+            {
+              "name": "a",
+              "type": "f32"
+            },
+            {
+              "name": "b",
+              "type": "f32"
+            }
+          ],
+          "result": 0
+        },
+        "f8": {
+          "name": "f8",
+          "kind": "freestanding",
+          "params": [
+            {
+              "name": "a",
+              "type": 1
+            }
+          ],
+          "result": 2
+        }
+      },
+      "package": 0
+    }
+  ],
+  "types": [
+    {
+      "name": null,
+      "kind": {
+        "tuple": {
+          "types": [
+            "u32",
+            "u32"
+          ]
+        }
+      },
+      "owner": null
+    },
+    {
+      "name": null,
+      "kind": {
+        "option": "u32"
+      },
+      "owner": null
+    },
+    {
+      "name": null,
+      "kind": {
+        "result": {
+          "ok": "u32",
+          "err": "f32"
+        }
+      },
+      "owner": null
+    }
+  ],
+  "packages": [
+    {
+      "name": "foo:functions",
+      "interfaces": {
+        "functions": 0
+      },
+      "worlds": {}
+    }
+  ]
+}

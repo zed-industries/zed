@@ -1,0 +1,23 @@
+[package]
+name = "accesskit_atspi_common"
+version = "0.18.0"
+authors.workspace = true
+license.workspace = true
+description = "AccessKit UI accessibility infrastructure: core AT-SPI translation layer"
+categories.workspace = true
+keywords = ["gui", "ui", "accessibility"]
+repository.workspace = true
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+
+[features]
+simplified-api = []
+
+[dependencies]
+accesskit = { version = "0.24.0", path = "../../common" }
+accesskit_consumer = { version = "0.35.0", path = "../../consumer" }
+atspi-common = { version = "0.13", default-features = false }
+phf = { version = "0.13.1", features = ["macros"] }
+serde = "1.0"
+zvariant = { version = "5.4", default-features = false }

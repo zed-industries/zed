@@ -1,0 +1,27 @@
+---
+- name: Spec Example 6.23. Node Properties
+  from: http://www.yaml.org/spec/1.2/spec.html#id2783940
+  tags: spec tag alias
+  yaml: |
+    !!str &a1 "foo":
+      !!str bar
+    &a2 baz : *a1
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL &a1 <tag:yaml.org,2002:str> "foo
+       =VAL <tag:yaml.org,2002:str> :bar
+       =VAL &a2 :baz
+       =ALI *a1
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "foo": "bar",
+      "baz": "foo"
+    }
+  dump: |
+    &a1 !!str "foo": !!str bar
+    &a2 baz: *a1

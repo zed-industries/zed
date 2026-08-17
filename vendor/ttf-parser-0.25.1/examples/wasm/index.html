@@ -1,0 +1,67 @@
+<h2>ttf-parser in WebAssembly</h2>
+<p><small>(supports font files drag and drop)</small></p>
+<p><span id="fileName">TTC.ttc</span>:</p>
+<p><code>ttfp_fonts_in_collection():</code> <code id="fontsInCollection"></code></p>
+<p><code>ttfp_is_variable():</code> <code id="isVariable"></code></p>
+<p><code>ttfp_get_weight():</code> <code id="fontWeight"></code></p>
+<script>
+'use strict';
+
+let wasm;
+
+function update(fontBlob) {
+    const exports = wasm.instance.exports;
+
+    // How our heaped is structured, as ttf-parser doesn't allocate anything
+    // it is all ours and we can decide how to use it
+    const heapStart = exports.__heap_base.value;
+    const fontHandlerAddress = heapStart;
+    const fontHandlerLength = exports.ttfp_face_size_of();
+    const fontDataAddress = heapStart + fontHandlerLength;
+    const fontDataLength = fontBlob.length;
+
+    // Copy the fetched blob into WebAssembly machine
+    const heapu8 = new Uint8Array(exports.memory.buffer);
+    heapu8.set(fontBlob, fontDataAddress);
+
+    fontsInCollection.textContent = exports.ttfp_fonts_in_collection(fontDataAddress, fontDataLength);
+
+    // Create font handler
+    exports.ttfp_face_init(fontDataAddress, fontDataLength, 0/*face index*/, fontHandlerAddress);
+
+    isVariable.textContent = exports.ttfp_is_variable(fontHandlerAddress);
+    fontWeight.textContent = exports.ttfp_get_weight(fontHandlerAddress);
+}
+
+fetch('ttfparser.wasm').then(x => x.arrayBuffer()).then(WebAssembly.instantiate).then(result => {
+    wasm = result;
+    // Extend wasm machine heap once now that we are here, each page is 64kb
+    wasm.instance.exports.memory.grow(400);
+
+    // Could be done in parallel using Promise.all
+    fetch('TTC.ttc').then(x => x.arrayBuffer()).then(result => {
+        update(new Uint8Array(result));
+    });
+});
+
+document.addEventListener('dragover', e => {
+    e.stopPropagation(); e.preventDefault();
+}, false);
+document.addEventListener('dragleave', e => {
+    e.stopPropagation(); e.preventDefault();
+}, false);
+document.addEventListener('drop', e => {
+    e.stopPropagation(); e.preventDefault();
+    handleFontUpdate(e.dataTransfer.files[0]);
+});
+// document.addEventListener('paste', e => {
+//     handleFontUpdate(e.clipboardData.files[0]);
+// });
+function handleFontUpdate(file) {
+    if (!file) return;
+    fileName.textContent = file.name;
+    const reader = new FileReader();
+    reader.addEventListener('load', () => update(new Uint8Array(reader.result)));
+    reader.readAsArrayBuffer(file);
+}
+</script>

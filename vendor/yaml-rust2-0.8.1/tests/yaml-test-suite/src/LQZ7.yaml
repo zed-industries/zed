@@ -1,0 +1,33 @@
+---
+- name: Spec Example 7.4. Double Quoted Implicit Keys
+  from: http://www.yaml.org/spec/1.2/spec.html#id2787420
+  tags: spec scalar flow
+  yaml: |
+    "implicit block key" : [
+      "implicit flow key" : value,
+     ]
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL "implicit block key
+       +SEQ []
+        +MAP {}
+         =VAL "implicit flow key
+         =VAL :value
+        -MAP
+       -SEQ
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "implicit block key": [
+        {
+          "implicit flow key": "value"
+        }
+      ]
+    }
+  dump: |
+    "implicit block key":
+    - "implicit flow key": value

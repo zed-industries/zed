@@ -1,0 +1,88 @@
+name: CI
+on:
+  pull_request:
+  merge_group:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - name: stable linux
+            os: ubuntu-latest
+            rust: stable
+            target: x86_64-unknown-linux-gnu
+          - name: beta linux
+            os: ubuntu-latest
+            rust: beta
+            target: x86_64-unknown-linux-gnu
+          - name: nightly linux
+            os: ubuntu-latest
+            rust: nightly
+            target: x86_64-unknown-linux-gnu
+          - name: stable x86_64-unknown-linux-musl
+            os: ubuntu-20.04
+            rust: stable
+            target: x86_64-unknown-linux-musl
+          - name: stable x86_64 macos
+            os: macos-latest
+            rust: stable
+            target: x86_64-apple-darwin
+          - name: stable aarch64 macos
+            os: macos-latest
+            rust: stable
+            target: aarch64-apple-darwin
+          - name: stable windows-msvc
+            os: windows-latest
+            rust: stable
+            target: x86_64-pc-windows-msvc
+          - name: msrv
+            os: ubuntu-20.04
+            # sync MSRV with docs: guide/src/guide/installation.md and Cargo.toml
+            rust: 1.74.0
+            target: x86_64-unknown-linux-gnu
+    name: ${{ matrix.name }}
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Rust
+      run: bash ci/install-rust.sh ${{ matrix.rust }} ${{ matrix.target }}
+    - name: Build and run tests
+      run: cargo test --locked --target ${{ matrix.target }}
+    - name: Test no default
+      run: cargo test --no-default-features --target ${{ matrix.target }}
+
+  aarch64-cross-builds:
+    runs-on: ubuntu-20.04
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Rust
+      run: bash ci/install-rust.sh stable aarch64-unknown-linux-musl
+    - name: Build
+      run: cargo build --locked --target aarch64-unknown-linux-musl
+
+  rustfmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Rust
+      run: rustup update stable && rustup default stable && rustup component add rustfmt
+    - run: cargo fmt --check
+
+  # The success job is here to consolidate the total success/failure state of
+  # all other jobs. This job is then included in the GitHub branch protection
+  # rule which prevents merges unless all other jobs are passing. This makes
+  # it easier to manage the list of jobs via this yml file and to prevent
+  # accidentally adding new jobs without also updating the branch protections.
+  success:
+    name: Success gate
+    if: always()
+    needs:
+      - test
+      - rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - run: jq --exit-status 'all(.result == "success")' <<< '${{ toJson(needs) }}'
+      - name: Done
+        run: exit 0

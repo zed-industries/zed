@@ -1,0 +1,76 @@
+[
+  {
+    "Match": {
+      "target": "Pattern",
+      "tests": [],
+      "edits": [
+        {
+          "mode": "Append",
+          "binding": "Weak",
+          "value": {
+            "Hinting": {
+              "Simple": {
+                "Bool": true
+              }
+            }
+          }
+        },
+        {
+          "mode": "Append",
+          "binding": "Weak",
+          "value": {
+            "AutoHint": {
+              "Simple": {
+                "Bool": false
+              }
+            }
+          }
+        },
+        {
+          "mode": "Append",
+          "binding": "Weak",
+          "value": {
+            "HintStyle": {
+              "Simple": {
+                "Constant": "Hintslight"
+              }
+            }
+          }
+        },
+        {
+          "mode": "Append",
+          "binding": "Weak",
+          "value": {
+            "Antialias": {
+              "Simple": {
+                "Bool": true
+              }
+            }
+          }
+        },
+        {
+          "mode": "Append",
+          "binding": "Weak",
+          "value": {
+            "Rgba": {
+              "Simple": {
+                "Constant": "Rgb"
+              }
+            }
+          }
+        },
+        {
+          "mode": "Append",
+          "binding": "Weak",
+          "value": {
+            "Lcdfilter": {
+              "Simple": {
+                "Constant": "Lcddefault"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+]

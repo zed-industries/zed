@@ -1,0 +1,26 @@
+[package]
+name = "email_address"
+version = "0.2.9"
+authors = ["Simon Johnston <johnstonskj@gmail.com>"]
+description = "A Rust crate providing an implementation of an RFC-compliant `EmailAddress` newtype. "
+documentation = "https://docs.rs/email_address/"
+repository = "https://github.com/johnstonskj/rust-email_address.git"
+edition = "2018"
+license = "MIT"
+readme = "README.md"
+publish = true
+
+[package.metadata.docs.rs]
+# This only builds a single target for documentation.
+targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+default = ["serde_support"]
+serde_support = ["serde"]
+
+[dependencies]
+serde = { optional = true, version = "1.0" }
+
+[dev-dependencies]
+claims = "0.7.1"
+serde_assert = "0.8.0"

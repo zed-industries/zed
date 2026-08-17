@@ -1,0 +1,63 @@
+package foo:records;
+
+interface records {
+  record single {
+    f: u8,
+  }
+
+  record scalars {
+    a: u32,
+    b: u32,
+  }
+
+  flags really-flags {
+    a,
+    b,
+    c,
+    d,
+    e,
+    f,
+    g,
+    h,
+    i,
+  }
+
+  record aggregates {
+    a: scalars,
+    b: u32,
+    c: single,
+    d: string,
+    e: really-flags,
+  }
+
+  type int-typedef = s32;
+
+  type tuple-typedef2 = tuple<int-typedef>;
+
+  tuple-arg: func(x: tuple<char, u32>);
+
+  tuple-result: func() -> tuple<char, u32>;
+
+  single-arg: func(x: single);
+
+  single-result: func() -> single;
+
+  scalar-arg: func(x: scalars);
+
+  scalar-result: func() -> scalars;
+
+  flags-arg: func(x: really-flags);
+
+  flags-result: func() -> really-flags;
+
+  aggregate-arg: func(x: aggregates);
+
+  aggregate-result: func() -> aggregates;
+
+  typedef-inout: func(e: tuple-typedef2) -> s32;
+}
+
+world records-world {
+  import records;
+  export records;
+}

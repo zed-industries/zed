@@ -1,0 +1,302 @@
+on:
+  pull_request:
+
+name: CI
+
+# If a new push on the PR is done, cancel the build
+concurrency:
+  group: ${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  rustfmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt
+      - run: cargo fmt -- --check
+
+  clippy:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly
+          components: clippy
+      - run: cargo clippy --all-targets --features serde -- -D warnings
+
+  check:
+    name: Check ${{ matrix.toolchain }} / ${{ matrix.triple.target }}
+    runs-on: ${{ matrix.triple.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        triple:
+          - { os: 'ubuntu-latest',  target: 'x86_64-unknown-linux-gnu', cross: false }
+          - { os: 'ubuntu-latest',  target: 'i686-unknown-linux-gnu',   cross: true }
+          - { os: 'macos-latest',   target: 'x86_64-apple-darwin',      cross: false }
+          - { os: 'windows-latest', target: 'x86_64-pc-windows-msvc',   cross: false }
+          ## iOS
+          - { os: 'macos-latest', target: 'aarch64-apple-ios', cross: true }
+          - { os: 'macos-latest', target: 'x86_64-apple-ios', cross: true }
+          ## ARM64
+          - { os: 'ubuntu-latest', target: 'aarch64-unknown-linux-gnu',  cross: true }
+          - { os: 'ubuntu-latest', target: 'aarch64-unknown-linux-musl', cross: true }
+          ## ARMv7
+          - { os: 'ubuntu-latest', target: 'armv7-unknown-linux-gnueabihf',  cross: true }
+          - { os: 'ubuntu-latest', target: 'armv7-unknown-linux-musleabihf', cross: true }
+          ## ARMv6
+          - { os: 'ubuntu-latest', target: 'arm-unknown-linux-gnueabihf',  cross: true }
+          - { os: 'ubuntu-latest', target: 'arm-unknown-linux-musleabihf', cross: true }
+          # Android
+          - { os: 'ubuntu-latest', target: 'aarch64-linux-android', cross: true }
+          - { os: 'ubuntu-latest', target: 'armv7-linux-androideabi', cross: true }
+          - { os: 'ubuntu-latest', target: 'x86_64-linux-android', cross: true }
+          - { os: 'ubuntu-latest', target: 'i686-linux-android', cross: true }
+        toolchain:
+          - "1.74.0"  # minimum supported rust version
+          - stable
+          - nightly
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+
+      - name: Install cross-target
+        run: rustup target add ${{ matrix.triple.target }}
+
+      - name: Check
+        uses: ClementTsang/cargo-action@v0.0.6
+        with:
+          command: rustc
+          args: --target=${{ matrix.triple.target }} --manifest-path=Cargo.toml
+          use-cross: ${{ matrix.triple.cross }}
+
+      - name: Check debug feature
+        uses: ClementTsang/cargo-action@v0.0.6
+        with:
+          command: rustc
+          args: --target=${{ matrix.triple.target }} --manifest-path=Cargo.toml --features=debug
+          use-cross: ${{ matrix.triple.cross }}
+
+      - name: Check debug feature
+        uses: ClementTsang/cargo-action@v0.0.6
+        with:
+          command: rustc
+          args: --target=${{ matrix.triple.target }} --manifest-path=Cargo.toml --no-default-features --features=debug
+          use-cross: ${{ matrix.triple.cross }}
+
+      - name: Check serde feature
+        uses: ClementTsang/cargo-action@v0.0.6
+        with:
+          command: rustc
+          args: --target=${{ matrix.triple.target }} --manifest-path=Cargo.toml --features=serde
+          use-cross: ${{ matrix.triple.cross }}
+
+      - name: Check serde feature
+        uses: ClementTsang/cargo-action@v0.0.6
+        with:
+          command: rustc
+          args: --target=${{ matrix.triple.target }} --manifest-path=Cargo.toml --no-default-features --features=serde
+          use-cross: ${{ matrix.triple.cross }}
+
+      - name: Check debug/serde feature (system)
+        uses: ClementTsang/cargo-action@v0.0.6
+        with:
+          command: rustc
+          args: --target=${{ matrix.triple.target }} --manifest-path=Cargo.toml --no-default-features --features=debug,serde,system
+          use-cross: ${{ matrix.triple.cross }}
+
+      - name: Check debug/serde feature (disk)
+        uses: ClementTsang/cargo-action@v0.0.6
+        with:
+          command: rustc
+          args: --target=${{ matrix.triple.target }} --manifest-path=Cargo.toml --no-default-features --features=debug,serde,disk
+          use-cross: ${{ matrix.triple.cross }}
+
+      - name: Check debug/serde feature (component)
+        uses: ClementTsang/cargo-action@v0.0.6
+        with:
+          command: rustc
+          args: --target=${{ matrix.triple.target }} --manifest-path=Cargo.toml --no-default-features --features=debug,serde,component
+          use-cross: ${{ matrix.triple.cross }}
+
+      - name: Check debug/serde feature (network)
+        uses: ClementTsang/cargo-action@v0.0.6
+        with:
+          command: rustc
+          args: --target=${{ matrix.triple.target }} --manifest-path=Cargo.toml --no-default-features --features=debug,serde,network
+          use-cross: ${{ matrix.triple.cross }}
+
+      - name: Check debug/serde feature (user)
+        uses: ClementTsang/cargo-action@v0.0.6
+        with:
+          command: rustc
+          args: --target=${{ matrix.triple.target }} --manifest-path=Cargo.toml --no-default-features --features=debug,serde,user
+          use-cross: ${{ matrix.triple.cross }}
+
+      - name: Check without multithreading
+        uses: ClementTsang/cargo-action@v0.0.6
+        with:
+          command: check
+          args: --target=${{ matrix.triple.target }} --manifest-path=Cargo.toml --no-default-features
+          use-cross: ${{ matrix.triple.cross }}
+
+      - name: Check features (system)
+        uses: ClementTsang/cargo-action@v0.0.6
+        with:
+          command: check
+          args: --target=${{ matrix.triple.target }} --manifest-path=Cargo.toml --no-default-features --features system
+          use-cross: ${{ matrix.triple.cross }}
+
+      - name: Check features (disk)
+        uses: ClementTsang/cargo-action@v0.0.6
+        with:
+          command: check
+          args: --target=${{ matrix.triple.target }} --manifest-path=Cargo.toml --no-default-features --features disk
+          use-cross: ${{ matrix.triple.cross }}
+
+      - name: Check features (component)
+        uses: ClementTsang/cargo-action@v0.0.6
+        with:
+          command: check
+          args: --target=${{ matrix.triple.target }} --manifest-path=Cargo.toml --no-default-features --features component
+          use-cross: ${{ matrix.triple.cross }}
+
+      - name: Check features (network)
+        uses: ClementTsang/cargo-action@v0.0.6
+        with:
+          command: check
+          args: --target=${{ matrix.triple.target }} --manifest-path=Cargo.toml --no-default-features --features network
+          use-cross: ${{ matrix.triple.cross }}
+
+      - name: Check features (user)
+        uses: ClementTsang/cargo-action@v0.0.6
+        with:
+          command: check
+          args: --target=${{ matrix.triple.target }} --manifest-path=Cargo.toml --no-default-features --features user
+          use-cross: ${{ matrix.triple.cross }}
+
+      - name: Check example
+        uses: ClementTsang/cargo-action@v0.0.6
+        with:
+          command: check
+          args: --target=${{ matrix.triple.target }} --example simple
+          use-cross: ${{ matrix.triple.cross }}
+
+      - name: Check (Apple app store restrictions)
+        if: matrix.triple.os == 'macos-latest'
+        uses: ClementTsang/cargo-action@v0.0.6
+        with:
+          command: check
+          args: --features apple-sandbox --target=${{ matrix.triple.target }} --manifest-path=Cargo.toml
+          use-cross: ${{ matrix.triple.cross }}
+      - name: Check without multithreading (Apple app store restrictions)
+        if: matrix.triple.os == 'macos-latest'
+        uses: ClementTsang/cargo-action@v0.0.6
+        with:
+          command: check
+          args: --features apple-sandbox --target=${{ matrix.triple.target }} --manifest-path=Cargo.toml --no-default-features
+          use-cross: ${{ matrix.triple.cross }}
+
+  tests:
+    needs: [check]
+    name: Test ${{ matrix.os }} (rust ${{matrix.toolchain}})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+        toolchain:
+          - "1.74.0"  # minimum supported rust version
+          - stable
+          - nightly
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+      - name: Check docs
+        run: cargo rustdoc -- -Z unstable-options --generate-link-to-definition
+        if: matrix.toolchain == 'nightly'
+      - name: Check docs with serde
+        run: cargo rustdoc --features serde -- -Z unstable-options --generate-link-to-definition
+        if: matrix.toolchain == 'nightly'
+      - name: Execute tests (not mac)
+        run: cargo test
+        if: matrix.os != 'macos-latest'
+        env:
+          RUST_BACKTRACE: full
+      - name: Execute tests (mac)
+        run: cargo test -- --test-threads 1
+        if: matrix.os == 'macos-latest'
+        env:
+          RUST_BACKTRACE: full
+          APPLE_CI: 1 # FIXME: remove this once CI mac tests are fixed
+      - name: Execute tests (not mac, no features)
+        run: cargo test --no-default-features
+        if: matrix.os != 'macos-latest'
+        env:
+          RUST_BACKTRACE: full
+      - name: Execute tests (mac, no features)
+        run: cargo test --no-default-features -- --test-threads 1
+        if: matrix.os == 'macos-latest'
+        env:
+          RUST_BACKTRACE: full
+          APPLE_CI: 1 # FIXME: remove this once CI mac tests are fixed
+      - name: Run CPU test
+        run: cargo test --lib -- --ignored --test-threads 1
+        env:
+          RUST_BACKTRACE: full
+      - name: Check serde feature
+        run: |
+          cargo check --features serde
+          cargo test --features serde --doc
+        env:
+          RUST_BACKTRACE: full
+
+  c_interface:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - run: make
+
+  unknown-targets:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        toolchain:
+          - "1.74.0" # minimum supported rust version
+          - stable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          components: clippy
+      - run: cargo clippy --features unknown-ci -- -D warnings
+      - run: cargo check --features unknown-ci
+      - run: cargo test --features unknown-ci
+      - run: cargo install wasm-pack
+        if: matrix.toolchain == 'stable'
+      - run: cd test-unknown && wasm-pack build --target web
+        if: matrix.toolchain == 'stable'

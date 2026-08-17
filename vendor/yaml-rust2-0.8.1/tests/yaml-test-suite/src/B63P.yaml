@@ -1,0 +1,10 @@
+---
+- name: Directive without document
+  from: AdaYaml tests
+  tags: error directive document
+  fail: true
+  yaml: |
+    %YAML 1.2
+    ...
+  tree: |
+    +STR

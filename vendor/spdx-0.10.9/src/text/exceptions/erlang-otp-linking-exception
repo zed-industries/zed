@@ -1,0 +1,12 @@
+r#"If you modify this Program, or any covered work, by linking or
+combining it with runtime libraries of Erlang/OTP as released by
+Ericsson on https://www.erlang.org (or a modified version of these
+libraries), containing parts covered by the terms of the Erlang Public
+License (https://www.erlang.org/EPLICENSE), the licensors of this
+Program grant you additional permission to convey the resulting work
+without the need to license the runtime libraries of Erlang/OTP under
+the GNU Affero General Public License. Corresponding Source for a
+non-source form of such a combination shall include the source code
+for the parts of the runtime libraries of Erlang/OTP used as well as
+that of the covered work.
+"#

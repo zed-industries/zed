@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "language": {
+    "version": "3.15",
+    "version_info": {
+      "major": 3,
+      "minor": 15,
+      "micro": 0,
+      "releaselevel": "alpha",
+      "serial": 1
+    }
+  }
+}

@@ -1,0 +1,5 @@
+found a reference to a world which is excluded due to its feature not being activated
+     --> tests/ui/parse-fail/bad-gate2.wit:7:11
+      |
+    7 |   include a;
+      |           ^

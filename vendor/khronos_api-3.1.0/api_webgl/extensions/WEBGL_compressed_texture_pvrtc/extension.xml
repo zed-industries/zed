@@ -1,0 +1,100 @@
+<?xml version="1.0"?>
+
+<extension href="WEBGL_compressed_texture_pvrtc/">
+  <name>WEBGL_compressed_texture_pvrtc</name>
+  <contact>
+    <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL working group</a> (public_webgl 'at' khronos.org)
+  </contact>
+  <contributors>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+  <number>13</number>
+  <depends>
+    <api version="1.0"/>
+  </depends>
+  <overview>
+    <p>
+      This extension exposes the compressed texture formats defined in the 
+      <a href="http://www.khronos.org/registry/gles/extensions/IMG/IMG_texture_compression_pvrtc.txt">
+      IMG_texture_compression_pvrtc</a> OpenGL extension to WebGL.
+    </p>
+    <features>
+      <feature>
+        Compression formats <code>COMPRESSED_RGB_PVRTC_4BPPV1_IMG</code>,
+        <code>COMPRESSED_RGB_PVRTC_2BPPV1_IMG</code>, <code>COMPRESSED_RGBA_PVRTC_4BPPV1_IMG</code>, and
+        <code>COMPRESSED_RGBA_PVRTC_2BPPV1_IMG</code> may be passed to
+        the <code>compressedTexImage2D</code> and <code>compressedTexSubImage2D</code> entry points.
+      </feature>
+      <feature>
+        Calling <code>getParameter</code> with the argument <code>COMPRESSED_TEXTURE_FORMATS</code>
+        will include the 4 formats from this specification.
+      </feature>
+      <feature>
+        <p>The following format-specific restrictions apply to all of the formats described
+          by this extension:
+        </p>
+
+        <p>In <code>compressedTexImage2D</code>, the <code>width</code> and <code>height</code>
+          parameters must be powers of two. Otherwise, an INVALID_VALUE error is generated.
+        </p>
+
+        <p>
+          In <code>compressedTexSubImage2D</code>, the <code>width</code> and <code>height</code>
+          parameters must be equal to the current values of the existing texture image, and the
+          <code>xoffset</code> and <code>yoffset</code> parameters must be zero.
+          Otherwise, an INVALID_VALUE error is generated.
+        </p>
+      </feature>
+      <feature>
+        <p>The following format-specific restrictions must also be enforced:</p>
+        <dl>
+          <dt>COMPRESSED_RGB_PVRTC_4BPPV1_IMG</dt>
+          <dt>COMPRESSED_RGBA_PVRTC_4BPPV1_IMG</dt>
+          <dd><p>The <code>byteLength</code> of the ArrayBufferView, <code>pixels</code>, passed to
+          either <code>compressedTexImage2D</code> or <code>compressedTexSubImage2D</code> must be
+          equal to the following number of bytes:</p>
+          <blockquote><code>
+            max(width, 8) * max(height, 8) / 2
+          </code></blockquote>
+          <p>If it is not, an <code>INVALID_VALUE</code> error is generated.</p>
+          </dd>
+
+          <dt>COMPRESSED_RGB_PVRTC_2BPPV1_IMG</dt>
+          <dt>COMPRESSED_RGBA_PVRTC_2BPPV1_IMG</dt>
+          <dd><p>The <code>byteLength</code> of the ArrayBufferView, <code>pixels</code>, passed to
+          either <code>compressedTexImage2D</code> or <code>compressedTexSubImage2D</code> must be
+          equal to the following number of bytes:</p>
+          <blockquote><code>
+            max(width, 16) * max(height, 8) / 4
+          </code></blockquote>
+          <p>If it is not, an <code>INVALID_VALUE</code> error is generated.</p>
+          </dd>
+        </dl>
+      </feature>
+    </features>
+  </overview>
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface WEBGL_compressed_texture_pvrtc {
+    /* Compressed Texture Formats */
+    const GLenum COMPRESSED_RGB_PVRTC_4BPPV1_IMG      = 0x8C00;
+    const GLenum COMPRESSED_RGB_PVRTC_2BPPV1_IMG      = 0x8C01;
+    const GLenum COMPRESSED_RGBA_PVRTC_4BPPV1_IMG     = 0x8C02;
+    const GLenum COMPRESSED_RGBA_PVRTC_2BPPV1_IMG     = 0x8C03;
+};
+  </idl>
+  <history>
+    <revision date="2012/08/07">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2013/07/03">
+      <change>Clarified that length of ArrayBufferView is actually byteLength.</change>
+    </revision>
+    <revision date="2014/06/27">
+      <change>Moved to community approved after discussion on public_webgl list.</change>
+    </revision>
+    <revision date="2014/07/15">
+      <change>Added NoInterfaceObject extended attribute.</change>
+    </revision>
+  </history>
+</extension>

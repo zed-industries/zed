@@ -1,0 +1,13 @@
+---
+- name: Comment without whitespace after block scalar indicator
+  from: '@perlpunk'
+  tags: folded comment error whitespace
+  fail: true
+  yaml: |
+    block: ># comment
+      scalar
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :block

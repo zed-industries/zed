@@ -1,0 +1,17 @@
+coverage:
+  range: 90..100 # set a high standard for ourselves
+  round: down
+  precision: 2
+  status:
+    project:
+      default:
+        threshold: 1%
+ignore:
+  - "examples" # don't consider examples in coverage report
+  - "tests" # we also don't care about coverage of test code
+  - "src/tests"
+  - "benches" # or coverage of benchmarks
+# Make less noisy comments
+comment:
+  layout: "files"
+  require_changes: yes

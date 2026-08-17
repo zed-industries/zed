@@ -1,0 +1,43 @@
+package foo:foo;
+
+world w {
+  export simple-export;
+  export export-using-import;
+
+  export export-using-export1;
+  export export-using-export2;
+}
+
+interface simple-export {
+  resource a {
+    constructor();
+    static-a: static func() -> u32;
+    method-a: func() -> u32;
+  }
+}
+
+interface export-using-import {
+  use transitive-import.{y};
+  resource a {
+    constructor(y: y);
+    static-a: static func() -> y;
+    method-a: func(y: y) -> y;
+  }
+}
+
+interface transitive-import {
+  resource y;
+}
+
+interface export-using-export1 {
+  resource a {
+    constructor();
+  }
+}
+
+interface export-using-export2 {
+  use export-using-export1.{a};
+  resource b {
+    constructor(a: a);
+  }
+}

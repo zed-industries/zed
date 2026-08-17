@@ -1,0 +1,44 @@
+[package]
+categories             = ["accessibility", "api-bindings"]
+description            = "Primitive types used for sending and receiving Linux accessibility events."
+edition                = "2021"
+include                = ["LICENSE-*", "README.md", "src/**/*", "xml/*"]
+keywords               = ["Accessibility", "Macros"]
+license                = "Apache-2.0 OR MIT"
+name                   = "atspi-common"
+readme                 = "README.md"
+repository             = "https://github.com/odilia-app/atspi"
+rust-version.workspace = true
+version                = "0.13.0"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+zbus     = ["dep:zbus"]
+default  = ["wrappers", "zbus"]
+wrappers = []
+
+[dependencies]
+enumflags2           = "0.7.9"
+serde                = "1.0.200"
+static_assertions    = "1.1.0"
+zbus                 = { workspace = true, optional = true }
+zbus-lockstep        = { version = "0.5.1" }
+zbus-lockstep-macros = { version = "0.5.1" }
+zbus_names           = "4.1.1"
+zvariant             = { version = "5.2", default-features = false }
+
+[dev-dependencies]
+assert_matches    = "1.5.0"
+atspi-connection  = { path = "../atspi-connection" }
+atspi-proxies     = { path = "../atspi-proxies" }
+rename-item       = "0.1.0"
+serde_plain       = "1.0.1"
+static_assertions = "1.1.0"
+tokio             = { version = "1.38.2", default-features = false, features = [ "macros",
+    "rt-multi-thread",
+] }
+tokio-stream   = { version = "0.1.1", default-features = false, features = ["time"] }
+tokio-test        = "0.4.2"
+zbus_xml          = "5.0.2"
+zbus              = { workspace = true }

@@ -1,0 +1,8 @@
+r#"Linking [name of library] statically or dynamically with other modules is making a combined work based on [name of library]. Thus, the terms and conditions of the GNU General Public License cover the whole combination.
+
+As a special exception, the copyright holders of [name of library] give you permission to combine [name of library] program with free software programs or libraries that are released under the GNU LGPL and with independent modules that communicate with [name of library] solely through the [name of library's interface] interface. You may copy and distribute such a system following the terms of the GNU GPL for [name of library] and the licenses of the other code concerned, provided that you include the source code of that other code when and as the GNU GPL requires distribution of source code and provided that you do not modify the [name of library's interface] interface.
+
+Note that people who make modified versions of [name of library] are not obligated to grant this special exception for their modified versions; it is their choice whether to do so. The GNU General Public License gives permission to release a modified version without this exception; this exception also makes it possible to release a modified version which carries forward this exception. If you modify the [name of library's interface] interface, this exception does not apply to your modified version of [name of library], and you must remove this exception when you distribute your modified version.
+
+This exception is an additional permission under section 7 of the GNU General Public License, version 3 ("GPLv3")
+"#

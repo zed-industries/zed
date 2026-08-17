@@ -1,0 +1,93 @@
+;;;; Type Definitions ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Our high-level, RISC-y input IR.
+(type HighLevelInst
+  (enum (Add (a Value) (b Value))
+        (Load (addr Value))
+        (Const (c i32))))
+
+;; A value in our high-level IR is a Rust `Copy` type. Values are either defined
+;; by an instruction, or are a basic block argument.
+(type Value (primitive Value))
+
+;; Our low-level, CISC-y machine instructions.
+(type LowLevelInst
+  (enum (Add (mode AddrMode))
+        (Load (offset i32) (addr Reg))
+        (Const (c i32))))
+
+;; Different kinds of addressing modes for operands to our low-level machine
+;; instructions.
+(type AddrMode
+  (enum
+    ;; Both operands in registers.
+    (RegReg (a Reg) (b Reg))
+    ;; The destination/first operand is a register; the second operand is in
+    ;; memory at `[b + offset]`.
+    (RegMem (a Reg) (b Reg) (offset i32))
+    ;; The destination/first operand is a register, second operand is an
+    ;; immediate.
+    (RegImm (a Reg) (imm i32))))
+
+;; The register type is a Rust `Copy` type.
+(type Reg (primitive Reg))
+
+;;;; Rules ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Declare our top-level lowering function. We will attach rules to this
+;; declaration for lowering various patterns of `HighLevelInst` inputs.
+(decl lower (HighLevelInst) LowLevelInst)
+
+;; Simple rule for lowering constants.
+(rule (lower (HighLevelInst.Const c))
+      (LowLevelInst.Const c))
+
+;; Declare an external constructor that puts a high-level `Value` into a
+;; low-level `Reg`.
+(decl put_in_reg (Value) Reg)
+(extern constructor put_in_reg put_in_reg)
+
+;; Simple rule for lowering adds.
+(rule -1 (lower (HighLevelInst.Add a b))
+      (LowLevelInst.Add
+        (AddrMode.RegReg (put_in_reg a) (put_in_reg b))))
+
+;; Simple rule for lowering loads.
+(rule -1 (lower (HighLevelInst.Load addr))
+      (LowLevelInst.Load 0 (put_in_reg addr)))
+
+;; Declare an external extractor for extracting the instruction that defined a
+;; given operand value.
+(decl inst_result (HighLevelInst) Value)
+(extern extractor inst_result inst_result)
+
+;; Rule to sink loads into adds.
+(rule (lower (HighLevelInst.Add a (inst_result (HighLevelInst.Load addr))))
+      (LowLevelInst.Add
+        (AddrMode.RegMem (put_in_reg a)
+                         (put_in_reg addr)
+                         0)))
+
+;; Rule to sink a load of a base address with a static offset into a single add.
+(rule 1 (lower (HighLevelInst.Add
+               a
+               (inst_result (HighLevelInst.Load
+                              (inst_result (HighLevelInst.Add
+                                             base
+                                             (inst_result (HighLevelInst.Const offset))))))))
+      (LowLevelInst.Add
+        (AddrMode.RegMem (put_in_reg a)
+                         (put_in_reg base)
+                         offset)))
+
+;; Rule for sinking an immediate into an add.
+(rule (lower (HighLevelInst.Add a (inst_result (HighLevelInst.Const c))))
+      (LowLevelInst.Add
+        (AddrMode.RegImm (put_in_reg a) c)))
+
+;; Rule for lowering loads of a base address with a static offset.
+(rule (lower (HighLevelInst.Load
+               (inst_result (HighLevelInst.Add
+                              base
+                              (inst_result (HighLevelInst.Const offset))))))
+      (LowLevelInst.Load offset (put_in_reg base)))

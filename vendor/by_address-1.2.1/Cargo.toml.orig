@@ -1,0 +1,12 @@
+[package]
+name = "by_address"
+version = "1.2.1"
+authors = ["Matt Brubeck <mbrubeck@limpet.net>"]
+license = "MIT OR Apache-2.0"
+description = "Wrapper for comparing and hashing pointers by address"
+repository = "https://github.com/mbrubeck/by_address"
+documentation = "https://docs.rs/by_address"
+keywords = ["hash", "pointer", "reference", "rc", "arc"]
+categories = ["no-std", "data-structures", "rust-patterns"]
+readme = "README.md"
+edition = "2021"

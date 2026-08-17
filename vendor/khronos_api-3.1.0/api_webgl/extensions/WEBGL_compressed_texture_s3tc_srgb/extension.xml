@@ -1,0 +1,113 @@
+<?xml version="1.0"?>
+
+<extension href="WEBGL_compressed_texture_s3tc_srgb/">
+  <name>WEBGL_compressed_texture_s3tc_srgb</name>
+  <contact>
+    <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL working group</a> (public_webgl 'at' khronos.org)
+  </contact>
+  <contributors>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+  <number>32</number>
+  <depends>
+    <api version="1.0"/>
+  </depends>
+  <overview>
+    <p>
+      This extension exposes the sRGB compressed texture formats defined in the 
+      <a href="https://www.opengl.org/registry/specs/EXT/texture_sRGB.txt">
+      EXT_texture_sRGB</a> OpenGL extension to WebGL.
+    </p>
+    <features>
+      <feature>
+        Compression formats <code>COMPRESSED_SRGB_S3TC_DXT1_EXT</code>,
+        <code>COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT</code>, <code>COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT</code>, and
+        <code>COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT</code> may be passed to
+        the <code>compressedTexImage2D</code> and <code>compressedTexSubImage2D</code> entry points.
+      </feature>
+      <feature>
+        Calling <code>getParameter</code> with the argument <code>COMPRESSED_TEXTURE_FORMATS</code>
+        will include the 4 formats from this specification.
+      </feature>
+      <feature>
+        <p>The following format specific restrictions must be enforced:</p>
+        <dl>
+          <dt>COMPRESSED_SRGB_S3TC_DXT1_EXT</dt>
+          <dt>COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT</dt>
+          <dd><p>The <code>byteLength</code> of the ArrayBufferView, <code>pixels</code>, passed to
+          either <code>compressedTexImage2D</code> or <code>compressedTexSubImage2D</code>
+          must match the following equation:</p>
+          <blockquote><code>
+          floor((width + 3) / 4) * floor((height + 3) / 4) * 8
+          </code></blockquote>
+          <p>
+          If it is not an <code>INVALID_VALUE</code> error is generated.
+          </p>
+          <p>When <code>level</code> equals zero <code>width</code> and <code>height</code>
+          must be a multiple of 4. When <code>level</code> is greater than 0 <code>width</code>
+          and <code>height</code> must be 0, 1, 2 or a multiple of 4.</p>
+          <p>
+          If they are not an <code>INVALID_OPERATION</code> error is generated.
+          </p>
+          <p>
+          For <code>compressedTexSubImage2D</code> <code>xoffset</code> and
+          <code>yoffset</code> must be a multiple of 4 and
+          <code>width</code> must be a multiple of 4 or equal to the original
+          width of the <code>level</code>. <code>height</code> must be a multiple of 4 or
+          equal to the original height of the <code>level</code>.
+          If they are not an <code>INVALID_OPERATION</code> error is generated.
+          </p>
+          </dd>
+
+          <dt>COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT</dt>
+          <dt>COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT</dt>
+          <dd><p>The <code>byteLength</code> of the ArrayBufferView, <code>pixels</code>, passed to
+          either <code>compressedTexImage2D</code> or <code>compressedTexSubImage2D</code> must
+          match the following equation:</p>
+          <blockquote><code>
+          floor((width + 3) / 4) * floor((height + 3) / 4) * 16
+          </code></blockquote>
+          <p>
+          If it is not an <code>INVALID_VALUE</code> error is generated.
+          </p>
+          <p>When <code>level</code> equals zero <code>width</code> and <code>height</code>
+          must be a multiple of 4. When <code>level</code> is greater than 0 <code>width</code>
+          and <code>height</code> must be 0, 1, 2 or a multiple of 4.</p>
+          <p>
+          If they are not an <code>INVALID_OPERATION</code> error is generated.
+          </p>
+          <p>
+          For <code>compressedTexSubImage2D</code> <code>xoffset</code> and
+          <code>yoffset</code> must be a multiple of 4 and
+          <code>width</code> must be a multiple of 4 or equal to the original
+          width of the <code>level</code>. <code>height</code> must be a multiple of 4 or
+          equal to the original height of the <code>level</code>.
+          If they are not an <code>INVALID_OPERATION</code> error is generated.
+          </p>
+          </dd>
+        </dl>
+      </feature>
+    </features>
+  </overview>
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface WEBGL_compressed_texture_s3tc_srgb {
+    /* Compressed Texture Formats */
+    const GLenum COMPRESSED_SRGB_S3TC_DXT1_EXT        = 0x8C4C;
+    const GLenum COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT  = 0x8C4D;
+    const GLenum COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT  = 0x8C4E;
+    const GLenum COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT  = 0x8C4F;
+};
+  </idl>
+  <history>
+    <revision date="2016/06/10">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2016/07/21">
+      <change>Moved to draft after discussion in working group, and study of possible dependencies.</change>
+    </revision>
+    <revision date="2017/05/31">
+      <change>Moved to community approved after Mozilla voiced support.</change>
+    </revision>
+  </history>
+</extension>

@@ -1,0 +1,3 @@
+[?2004h[kchibisov@NightLord alacritty]$ [K[kchibisov@NightLord alacritty]$ [K[kchibisov@NightLord alacritty]$ printf "\e[31;1;7;4;9md\n"
+[?2004l[31;1;7;4;9md
+[?2004h[kchibisov@NightLord alacritty]$ printf "\e[31;1;7;4;9md\n"[1Pd\n"[1Pd\n"[1Pd\n"[1Pd\n"[1Pd\n"[1Pd\n"[1Pd\n"[1Pd\n"[1Pd\n"[1Pd\n"[1Pd\n"[1Pd\n"

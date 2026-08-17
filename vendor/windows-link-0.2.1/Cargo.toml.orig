@@ -1,0 +1,14 @@
+
+[package]
+name = "windows-link"
+version = "0.2.1"
+edition = "2021"
+rust-version = "1.71"
+license = "MIT OR Apache-2.0"
+description = "Linking for Windows"
+repository = "https://github.com/microsoft/windows-rs"
+categories = ["os::windows-apis"]
+readme = "readme.md"
+
+[lints]
+workspace = true

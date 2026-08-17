@@ -1,0 +1,9 @@
+# this file is named `clippy-root.toml` so it isn't picked up automagically. Clippy
+# will search up the filesystem for a clippy.toml and this causes problems with tools.
+disallowed-methods = [
+    # fully qualified function/method name:
+    "std::time::SystemTime::now",
+    "std::time::SystemTime::elapsed",
+    "std::time::Instant::now",
+    "std::time::Instant::elapsed"
+]

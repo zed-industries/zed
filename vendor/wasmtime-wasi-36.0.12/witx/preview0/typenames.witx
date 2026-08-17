@@ -1,0 +1,746 @@
+;; Type names used by low-level WASI interfaces.
+;;
+;; Some content here is derived from [CloudABI](https://github.com/NuxiNL/cloudabi).
+;;
+;; This is a `witx` file. See [here](https://github.com/WebAssembly/WASI/tree/main/docs/witx.md)
+;; for an explanation of what that means.
+
+(typename $size u32)
+
+;;; Non-negative file size or length of a region within a file.
+(typename $filesize u64)
+
+;;; Timestamp in nanoseconds.
+(typename $timestamp u64)
+
+;;; Identifiers for clocks.
+(typename $clockid
+  (enum (@witx tag u32)
+    ;;; The clock measuring real time. Time value zero corresponds with
+    ;;; 1970-01-01T00:00:00Z.
+    $realtime
+    ;;; The store-wide monotonic clock, which is defined as a clock measuring
+    ;;; real time, whose value cannot be adjusted and which cannot have negative
+    ;;; clock jumps. The epoch of this clock is undefined. The absolute time
+    ;;; value of this clock therefore has no meaning.
+    $monotonic
+    ;;; The CPU-time clock associated with the current process.
+    $process_cputime_id
+    ;;; The CPU-time clock associated with the current thread.
+    $thread_cputime_id
+  )
+)
+
+;;; Error codes returned by functions.
+;;; Not all of these error codes are returned by the functions provided by this
+;;; API; some are used in higher-level library layers, and others are provided
+;;; merely for alignment with POSIX.
+(typename $errno
+  (enum (@witx tag u16)
+    ;;; No error occurred. System call completed successfully.
+    $success
+    ;;; Argument list too long.
+    $2big
+    ;;; Permission denied.
+    $acces
+    ;;; Address in use.
+    $addrinuse
+    ;;; Address not available.
+    $addrnotavail
+    ;;; Address family not supported.
+    $afnosupport
+    ;;; Resource unavailable, or operation would block.
+    $again
+    ;;; Connection already in progress.
+    $already
+    ;;; Bad file descriptor.
+    $badf
+    ;;; Bad message.
+    $badmsg
+    ;;; Device or resource busy.
+    $busy
+    ;;; Operation canceled.
+    $canceled
+    ;;; No child processes.
+    $child
+    ;;; Connection aborted.
+    $connaborted
+    ;;; Connection refused.
+    $connrefused
+    ;;; Connection reset.
+    $connreset
+    ;;; Resource deadlock would occur.
+    $deadlk
+    ;;; Destination address required.
+    $destaddrreq
+    ;;; Mathematics argument out of domain of function.
+    $dom
+    ;;; Reserved.
+    $dquot
+    ;;; File exists.
+    $exist
+    ;;; Bad address.
+    $fault
+    ;;; File too large.
+    $fbig
+    ;;; Host is unreachable.
+    $hostunreach
+    ;;; Identifier removed.
+    $idrm
+    ;;; Illegal byte sequence.
+    $ilseq
+    ;;; Operation in progress.
+    $inprogress
+    ;;; Interrupted function.
+    $intr
+    ;;; Invalid argument.
+    $inval
+    ;;; I/O error.
+    $io
+    ;;; Socket is connected.
+    $isconn
+    ;;; Is a directory.
+    $isdir
+    ;;; Too many levels of symbolic links.
+    $loop
+    ;;; File descriptor value too large.
+    $mfile
+    ;;; Too many links.
+    $mlink
+    ;;; Message too large.
+    $msgsize
+    ;;; Reserved.
+    $multihop
+    ;;; Filename too long.
+    $nametoolong
+    ;;; Network is down.
+    $netdown
+    ;;; Connection aborted by network.
+    $netreset
+    ;;; Network unreachable.
+    $netunreach
+    ;;; Too many files open in system.
+    $nfile
+    ;;; No buffer space available.
+    $nobufs
+    ;;; No such device.
+    $nodev
+    ;;; No such file or directory.
+    $noent
+    ;;; Executable file format error.
+    $noexec
+    ;;; No locks available.
+    $nolck
+    ;;; Reserved.
+    $nolink
+    ;;; Not enough space.
+    $nomem
+    ;;; No message of the desired type.
+    $nomsg
+    ;;; Protocol not available.
+    $noprotoopt
+    ;;; No space left on device.
+    $nospc
+    ;;; Function not supported.
+    $nosys
+    ;;; The socket is not connected.
+    $notconn
+    ;;; Not a directory or a symbolic link to a directory.
+    $notdir
+    ;;; Directory not empty.
+    $notempty
+    ;;; State not recoverable.
+    $notrecoverable
+    ;;; Not a socket.
+    $notsock
+    ;;; Not supported, or operation not supported on socket.
+    $notsup
+    ;;; Inappropriate I/O control operation.
+    $notty
+    ;;; No such device or address.
+    $nxio
+    ;;; Value too large to be stored in data type.
+    $overflow
+    ;;; Previous owner died.
+    $ownerdead
+    ;;; Operation not permitted.
+    $perm
+    ;;; Broken pipe.
+    $pipe
+    ;;; Protocol error.
+    $proto
+    ;;; Protocol not supported.
+    $protonosupport
+    ;;; Protocol wrong type for socket.
+    $prototype
+    ;;; Result too large.
+    $range
+    ;;; Read-only file system.
+    $rofs
+    ;;; Invalid seek.
+    $spipe
+    ;;; No such process.
+    $srch
+    ;;; Reserved.
+    $stale
+    ;;; Connection timed out.
+    $timedout
+    ;;; Text file busy.
+    $txtbsy
+    ;;; Cross-device link.
+    $xdev
+    ;;; Extension: Capabilities insufficient.
+    $notcapable
+  )
+)
+
+;;; File descriptor rights, determining which actions may be performed.
+(typename $rights
+  (flags (@witx repr u64)
+    ;;; The right to invoke `fd_datasync`.
+    ;;
+    ;;; If `rights::path_open` is set, includes the right to invoke
+    ;;; `path_open` with `fdflags::dsync`.
+    $fd_datasync
+    ;;; The right to invoke `fd_read` and `sock_recv`.
+    ;;
+    ;;; If `rights::fd_seek` is set, includes the right to invoke `fd_pread`.
+    $fd_read
+    ;;; The right to invoke `fd_seek`. This flag implies `rights::fd_tell`.
+    $fd_seek
+    ;;; The right to invoke `fd_fdstat_set_flags`.
+    $fd_fdstat_set_flags
+    ;;; The right to invoke `fd_sync`.
+    ;;
+    ;;; If `rights::path_open` is set, includes the right to invoke
+    ;;; `path_open` with `fdflags::rsync` and `fdflags::dsync`.
+    $fd_sync
+    ;;; The right to invoke `fd_seek` in such a way that the file offset
+    ;;; remains unaltered (i.e., `whence::cur` with offset zero), or to
+    ;;; invoke `fd_tell`.
+    $fd_tell
+    ;;; The right to invoke `fd_write` and `sock_send`.
+    ;;; If `rights::fd_seek` is set, includes the right to invoke `fd_pwrite`.
+    $fd_write
+    ;;; The right to invoke `fd_advise`.
+    $fd_advise
+    ;;; The right to invoke `fd_allocate`.
+    $fd_allocate
+    ;;; The right to invoke `path_create_directory`.
+    $path_create_directory
+    ;;; If `rights::path_open` is set, the right to invoke `path_open` with `oflags::creat`.
+    $path_create_file
+    ;;; The right to invoke `path_link` with the file descriptor as the
+    ;;; source directory.
+    $path_link_source
+    ;;; The right to invoke `path_link` with the file descriptor as the
+    ;;; target directory.
+    $path_link_target
+    ;;; The right to invoke `path_open`.
+    $path_open
+    ;;; The right to invoke `fd_readdir`.
+    $fd_readdir
+    ;;; The right to invoke `path_readlink`.
+    $path_readlink
+    ;;; The right to invoke `path_rename` with the file descriptor as the source directory.
+    $path_rename_source
+    ;;; The right to invoke `path_rename` with the file descriptor as the target directory.
+    $path_rename_target
+    ;;; The right to invoke `path_filestat_get`.
+    $path_filestat_get
+    ;;; The right to change a file's size (there is no `path_filestat_set_size`).
+    ;;; If `rights::path_open` is set, includes the right to invoke `path_open` with `oflags::trunc`.
+    $path_filestat_set_size
+    ;;; The right to invoke `path_filestat_set_times`.
+    $path_filestat_set_times
+    ;;; The right to invoke `fd_filestat_get`.
+    $fd_filestat_get
+    ;;; The right to invoke `fd_filestat_set_size`.
+    $fd_filestat_set_size
+    ;;; The right to invoke `fd_filestat_set_times`.
+    $fd_filestat_set_times
+    ;;; The right to invoke `path_symlink`.
+    $path_symlink
+    ;;; The right to invoke `path_remove_directory`.
+    $path_remove_directory
+    ;;; The right to invoke `path_unlink_file`.
+    $path_unlink_file
+    ;;; If `rights::fd_read` is set, includes the right to invoke `poll_oneoff` to subscribe to `eventtype::fd_read`.
+    ;;; If `rights::fd_write` is set, includes the right to invoke `poll_oneoff` to subscribe to `eventtype::fd_write`.
+    $poll_fd_readwrite
+    ;;; The right to invoke `sock_shutdown`.
+    $sock_shutdown
+  )
+)
+
+;;; A file descriptor handle.
+(typename $fd (handle))
+
+;;; A region of memory for scatter/gather reads.
+(typename $iovec
+  (record
+    ;;; The address of the buffer to be filled.
+    (field $buf (@witx pointer u8))
+    ;;; The length of the buffer to be filled.
+    (field $buf_len $size)
+  )
+)
+
+;;; A region of memory for scatter/gather writes.
+(typename $ciovec
+  (record
+    ;;; The address of the buffer to be written.
+    (field $buf (@witx const_pointer u8))
+    ;;; The length of the buffer to be written.
+    (field $buf_len $size)
+  )
+)
+
+(typename $iovec_array (list $iovec))
+(typename $ciovec_array (list $ciovec))
+
+;;; Relative offset within a file.
+(typename $filedelta s64)
+
+;;; The position relative to which to set the offset of the file descriptor.
+(typename $whence
+  (enum (@witx tag u8)
+    ;;; Seek relative to current position.
+    $cur
+    ;;; Seek relative to end-of-file.
+    $end
+    ;;; Seek relative to start-of-file.
+    $set
+  )
+)
+
+;;; A reference to the offset of a directory entry.
+(typename $dircookie u64)
+
+;;; The type for the `dirent::d_namlen` field of `dirent` struct.
+(typename $dirnamlen u32)
+
+;;; File serial number that is unique within its file system.
+(typename $inode u64)
+
+;;; The type of a file descriptor or file.
+(typename $filetype
+  (enum (@witx tag u8)
+    ;;; The type of the file descriptor or file is unknown or is different from any of the other types specified.
+    $unknown
+    ;;; The file descriptor or file refers to a block device inode.
+    $block_device
+    ;;; The file descriptor or file refers to a character device inode.
+    $character_device
+    ;;; The file descriptor or file refers to a directory inode.
+    $directory
+    ;;; The file descriptor or file refers to a regular file inode.
+    $regular_file
+    ;;; The file descriptor or file refers to a datagram socket.
+    $socket_dgram
+    ;;; The file descriptor or file refers to a byte-stream socket.
+    $socket_stream
+    ;;; The file refers to a symbolic link inode.
+    $symbolic_link
+  )
+)
+
+;;; A directory entry.
+(typename $dirent
+  (record
+    ;;; The offset of the next directory entry stored in this directory.
+    (field $d_next $dircookie)
+    ;;; The serial number of the file referred to by this directory entry.
+    (field $d_ino $inode)
+    ;;; The length of the name of the directory entry.
+    (field $d_namlen $dirnamlen)
+    ;;; The type of the file referred to by this directory entry.
+    (field $d_type $filetype)
+  )
+)
+
+;;; File or memory access pattern advisory information.
+(typename $advice
+  (enum (@witx tag u8)
+    ;;; The application has no advice to give on its behavior with respect to the specified data.
+    $normal
+    ;;; The application expects to access the specified data sequentially from lower offsets to higher offsets.
+    $sequential
+    ;;; The application expects to access the specified data in a random order.
+    $random
+    ;;; The application expects to access the specified data in the near future.
+    $willneed
+    ;;; The application expects that it will not access the specified data in the near future.
+    $dontneed
+    ;;; The application expects to access the specified data once and then not reuse it thereafter.
+    $noreuse
+  )
+)
+
+;;; File descriptor flags.
+(typename $fdflags
+  (flags (@witx repr u16)
+    ;;; Append mode: Data written to the file is always appended to the file's end.
+    $append
+    ;;; Write according to synchronized I/O data integrity completion. Only the data stored in the file is synchronized.
+    $dsync
+    ;;; Non-blocking mode.
+    $nonblock
+    ;;; Synchronized read I/O operations.
+    $rsync
+    ;;; Write according to synchronized I/O file integrity completion. In
+    ;;; addition to synchronizing the data stored in the file, the implementation
+    ;;; may also synchronously update the file's metadata.
+    $sync
+  )
+)
+
+;;; File descriptor attributes.
+(typename $fdstat
+  (record
+    ;;; File type.
+    (field $fs_filetype $filetype)
+    ;;; File descriptor flags.
+    (field $fs_flags $fdflags)
+    ;;; Rights that apply to this file descriptor.
+    (field $fs_rights_base $rights)
+    ;;; Maximum set of rights that may be installed on new file descriptors that
+    ;;; are created through this file descriptor, e.g., through `path_open`.
+    (field $fs_rights_inheriting $rights)
+  )
+)
+
+;;; Identifier for a device containing a file system. Can be used in combination
+;;; with `inode` to uniquely identify a file or directory in the filesystem.
+(typename $device u64)
+
+;;; Which file time attributes to adjust.
+(typename $fstflags
+  (flags (@witx repr u16)
+    ;;; Adjust the last data access timestamp to the value stored in `filestat::atim`.
+    $atim
+    ;;; Adjust the last data access timestamp to the time of clock `clockid::realtime`.
+    $atim_now
+    ;;; Adjust the last data modification timestamp to the value stored in `filestat::mtim`.
+    $mtim
+    ;;; Adjust the last data modification timestamp to the time of clock `clockid::realtime`.
+    $mtim_now
+  )
+)
+
+;;; Flags determining the method of how paths are resolved.
+(typename $lookupflags
+  (flags (@witx repr u32)
+    ;;; As long as the resolved path corresponds to a symbolic link, it is expanded.
+    $symlink_follow
+  )
+)
+
+;;; Open flags used by `path_open`.
+(typename $oflags
+  (flags (@witx repr u16)
+    ;;; Create file if it does not exist.
+    $creat
+    ;;; Fail if not a directory.
+    $directory
+    ;;; Fail if file already exists.
+    $excl
+    ;;; Truncate file to size 0.
+    $trunc
+  )
+)
+
+;;; Number of hard links to an inode.
+(typename $linkcount u32)
+
+;;; File attributes.
+(typename $filestat
+  (record
+    ;;; Device ID of device containing the file.
+    (field $dev $device)
+    ;;; File serial number.
+    (field $ino $inode)
+    ;;; File type.
+    (field $filetype $filetype)
+    ;;; Number of hard links to the file.
+    (field $nlink $linkcount)
+    ;;; For regular files, the file size in bytes. For symbolic links, the length in bytes of the pathname contained in the symbolic link.
+    (field $size $filesize)
+    ;;; Last data access timestamp.
+    (field $atim $timestamp)
+    ;;; Last data modification timestamp.
+    (field $mtim $timestamp)
+    ;;; Last file status change timestamp.
+    (field $ctim $timestamp)
+  )
+)
+
+;;; User-provided value that may be attached to objects that is retained when
+;;; extracted from the implementation.
+(typename $userdata u64)
+
+;;; Type of a subscription to an event or its occurrence.
+(typename $eventtype
+  (enum (@witx tag u8)
+    ;;; The time value of clock `subscription_clock::id` has
+    ;;; reached timestamp `subscription_clock::timeout`.
+    $clock
+    ;;; File descriptor `subscription_fd_readwrite::file_descriptor` has data
+    ;;; available for reading. This event always triggers for regular files.
+    $fd_read
+    ;;; File descriptor `subscription_fd_readwrite::file_descriptor` has capacity
+    ;;; available for writing. This event always triggers for regular files.
+    $fd_write
+  )
+)
+
+;;; The state of the file descriptor subscribed to with
+;;; `eventtype::fd_read` or `eventtype::fd_write`.
+(typename $eventrwflags
+  (flags (@witx repr u16)
+    ;;; The peer of this socket has closed or disconnected.
+    $fd_readwrite_hangup
+  )
+)
+
+;;; The contents of an `event` for the `eventtype::fd_read` and
+;;; `eventtype::fd_write` variants
+(typename $event_fd_readwrite
+  (record
+    ;;; The number of bytes available for reading or writing.
+    (field $nbytes $filesize)
+    ;;; The state of the file descriptor.
+    (field $flags $eventrwflags)
+  )
+)
+
+;;; An event that occurred.
+(typename $event
+  (record
+    ;;; User-provided value that got attached to `subscription::userdata`.
+    (field $userdata $userdata)
+    ;;; If non-zero, an error that occurred while processing the subscription request.
+    (field $error $errno)
+    ;;; The type of event that occurred
+    (field $type $eventtype)
+    ;;; The contents of the event, if it is an `eventtype::fd_read` or
+    ;;; `eventtype::fd_write`. `eventtype::clock` events ignore this field.
+    (field $fd_readwrite $event_fd_readwrite)
+  )
+)
+
+;;; Flags determining how to interpret the timestamp provided in
+;;; `subscription_clock::timeout`.
+(typename $subclockflags
+  (flags (@witx repr u16)
+    ;;; If set, treat the timestamp provided in
+    ;;; `subscription_clock::timeout` as an absolute timestamp of clock
+    ;;; `subscription_clock::id`. If clear, treat the timestamp
+    ;;; provided in `subscription_clock::timeout` relative to the
+    ;;; current time value of clock `subscription_clock::id`.
+    $subscription_clock_abstime
+  )
+)
+
+;;; The contents of a `subscription` when type is `eventtype::clock`.
+(typename $subscription_clock
+  (record
+    ;;; The user-defined unique identifier of the clock.
+    (field $identifier $userdata)
+    ;;; The clock against which to compare the timestamp.
+    (field $id $clockid)
+    ;;; The absolute or relative timestamp.
+    (field $timeout $timestamp)
+    ;;; The amount of time that the implementation may wait additionally
+    ;;; to coalesce with other events.
+    (field $precision $timestamp)
+    ;;; Flags specifying whether the timeout is absolute or relative
+    (field $flags $subclockflags)
+  )
+)
+
+;;; The contents of a `subscription` when the variant is
+;;; `eventtype::fd_read` or `eventtype::fd_write`.
+(typename $subscription_fd_readwrite
+  (record
+    ;;; The file descriptor on which to wait for it to become ready for reading or writing.
+    (field $file_descriptor $fd)
+  )
+)
+
+;;; The contents of a `subscription`.
+(typename $subscription_u
+  (union (@witx tag $eventtype)
+    $subscription_clock
+    $subscription_fd_readwrite
+    $subscription_fd_readwrite
+  )
+)
+
+;;; Subscription to an event.
+(typename $subscription
+  (record
+    ;;; User-provided value that is attached to the subscription in the
+    ;;; implementation and returned through `event::userdata`.
+    (field $userdata $userdata)
+    ;;; The type of the event to which to subscribe.
+    (field $u $subscription_u)
+  )
+)
+
+;;; Exit code generated by a process when exiting.
+(typename $exitcode u32)
+
+;;; Signal condition.
+(typename $signal
+  (enum (@witx tag u8)
+    ;;; No signal. Note that POSIX has special semantics for `kill(pid, 0)`,
+    ;;; so this value is reserved.
+    $none
+    ;;; Hangup.
+    ;;; Action: Terminates the process.
+    $hup
+    ;;; Terminate interrupt signal.
+    ;;; Action: Terminates the process.
+    $int
+    ;;; Terminal quit signal.
+    ;;; Action: Terminates the process.
+    $quit
+    ;;; Illegal instruction.
+    ;;; Action: Terminates the process.
+    $ill
+    ;;; Trace/breakpoint trap.
+    ;;; Action: Terminates the process.
+    $trap
+    ;;; Process abort signal.
+    ;;; Action: Terminates the process.
+    $abrt
+    ;;; Access to an undefined portion of a memory object.
+    ;;; Action: Terminates the process.
+    $bus
+    ;;; Erroneous arithmetic operation.
+    ;;; Action: Terminates the process.
+    $fpe
+    ;;; Kill.
+    ;;; Action: Terminates the process.
+    $kill
+    ;;; User-defined signal 1.
+    ;;; Action: Terminates the process.
+    $usr1
+    ;;; Invalid memory reference.
+    ;;; Action: Terminates the process.
+    $segv
+    ;;; User-defined signal 2.
+    ;;; Action: Terminates the process.
+    $usr2
+    ;;; Write on a pipe with no one to read it.
+    ;;; Action: Ignored.
+    $pipe
+    ;;; Alarm clock.
+    ;;; Action: Terminates the process.
+    $alrm
+    ;;; Termination signal.
+    ;;; Action: Terminates the process.
+    $term
+    ;;; Child process terminated, stopped, or continued.
+    ;;; Action: Ignored.
+    $chld
+    ;;; Continue executing, if stopped.
+    ;;; Action: Continues executing, if stopped.
+    $cont
+    ;;; Stop executing.
+    ;;; Action: Stops executing.
+    $stop
+    ;;; Terminal stop signal.
+    ;;; Action: Stops executing.
+    $tstp
+    ;;; Background process attempting read.
+    ;;; Action: Stops executing.
+    $ttin
+    ;;; Background process attempting write.
+    ;;; Action: Stops executing.
+    $ttou
+    ;;; High bandwidth data is available at a socket.
+    ;;; Action: Ignored.
+    $urg
+    ;;; CPU time limit exceeded.
+    ;;; Action: Terminates the process.
+    $xcpu
+    ;;; File size limit exceeded.
+    ;;; Action: Terminates the process.
+    $xfsz
+    ;;; Virtual timer expired.
+    ;;; Action: Terminates the process.
+    $vtalrm
+    ;;; Profiling timer expired.
+    ;;; Action: Terminates the process.
+    $prof
+    ;;; Window changed.
+    ;;; Action: Ignored.
+    $winch
+    ;;; I/O possible.
+    ;;; Action: Terminates the process.
+    $poll
+    ;;; Power failure.
+    ;;; Action: Terminates the process.
+    $pwr
+    ;;; Bad system call.
+    ;;; Action: Terminates the process.
+    $sys
+  )
+)
+
+;;; Flags provided to `sock_recv`.
+(typename $riflags
+  (flags (@witx repr u16)
+    ;;; Returns the message without removing it from the socket's receive queue.
+    $recv_peek
+    ;;; On byte-stream sockets, block until the full amount of data can be returned.
+    $recv_waitall
+  )
+)
+
+;;; Flags returned by `sock_recv`.
+(typename $roflags
+  (flags (@witx repr u16)
+    ;;; Returned by `sock_recv`: Message data has been truncated.
+    $recv_data_truncated
+  )
+)
+
+;;; Flags provided to `sock_send`. As there are currently no flags
+;;; defined, it must be set to zero.
+(typename $siflags u16)
+
+;;; Which channels on a socket to shut down.
+(typename $sdflags
+  (flags (@witx repr u8)
+    ;;; Disables further receive operations.
+    $rd
+    ;;; Disables further send operations.
+    $wr
+  )
+)
+
+;;; Identifiers for preopened capabilities.
+(typename $preopentype
+  (enum (@witx tag u8)
+    ;;; A pre-opened directory.
+    $dir
+  )
+)
+
+;;; The contents of a $prestat when type is `preopentype::dir`.
+(typename $prestat_dir
+  (record
+    ;;; The length of the directory name for use with `fd_prestat_dir_name`.
+    (field $pr_name_len $size)
+  )
+)
+
+;;; Information about a pre-opened capability.
+(typename $prestat
+  (union (@witx tag $preopentype)
+    $prestat_dir
+  )
+)

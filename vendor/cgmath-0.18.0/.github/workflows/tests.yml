@@ -1,0 +1,86 @@
+name: tests
+on:
+  schedule:
+    # build at least once per week
+    - cron: "0 0 * * 0"
+  pull_request:
+  push:
+    paths-ignore:
+      - "README.md"
+      - "CHANGELOG.md"
+jobs:
+  # TODO: enable after running cargo fmt again
+  # check:
+  #   name: Check formatting
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v2
+  #     - uses: actions-rs/toolchain@v1
+  #       with:
+  #         toolchain: stable
+  #         override: true
+  #         components: rustfmt
+  #         profile: minimal
+  #     - name: Check formatting
+  #       uses: actions-rs/cargo@v1
+  #       with:
+  #         command: fmt
+  #         args: --all -- --check
+  test:
+    name: Test
+    runs-on: ${{ matrix.os }}
+    env:
+      RUST_BACKTRACE: 1
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+        toolchain: [stable, nightly]
+        features:
+          - ""
+          - "serde,mint"
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install latest rust
+        uses: actions-rs/toolchain@v1
+        id: rust
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          override: true
+          profile: minimal
+      - name: Build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --lib --features "${{ matrix.features }}"
+      - name: Test
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --features "${{ matrix.features }}"
+  benchmark:
+    name: Benchmark
+    runs-on: ${{ matrix.os }}
+    env:
+      RUST_BACKTRACE: 1
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        toolchain: [nightly]
+        features:
+          # The benchmark always needs the 'rand' feature
+          - "rand,serde,mint"
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install latest rust
+        uses: actions-rs/toolchain@v1
+        id: rust
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          override: true
+          profile: minimal
+      - name: Benchmark
+        uses: actions-rs/cargo@v1
+        with:
+          command: bench
+          args: --features "${{ matrix.features }}"
+

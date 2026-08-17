@@ -1,0 +1,149 @@
+[package]
+name = "sysinfo"
+version = "0.37.2"
+authors = ["Guillaume Gomez <guillaume1.gomez@gmail.com>"]
+description = "Library to get system information such as processes, CPUs, disks, components and networks"
+repository = "https://github.com/GuillaumeGomez/sysinfo"
+license = "MIT"
+readme = "README.md"
+rust-version = "1.88"
+exclude = ["/test-unknown"]
+keywords = ["system-information", "disk", "process", "network", "cpu"]
+edition = "2024"
+
+[lib]
+name = "sysinfo"
+
+[features]
+default = ["component", "disk", "network", "system", "user"]
+component = [
+    "windows/Win32_Foundation",
+    "windows/Win32_Security",
+    "windows/Win32_System_Com",
+    "windows/Win32_System_Ole",
+    "windows/Win32_System_Rpc",
+    "windows/Win32_System_Variant",
+    "windows/Win32_System_Wmi",
+    "objc2-core-foundation/CFArray",
+    "objc2-core-foundation/CFBase",
+    "objc2-core-foundation/CFDictionary",
+    "objc2-core-foundation/CFNumber",
+    "objc2-core-foundation/CFString",
+    "objc2-io-kit",
+    "objc2-io-kit/hidsystem",
+]
+disk = [
+    "windows/Win32_Foundation",
+    "windows/Win32_Storage_FileSystem",
+    "windows/Win32_Security", # For `windows::Win32::Storage::FileSystem::CreateFileW`.
+    "windows/Win32_System_IO",
+    "windows/Win32_System_Ioctl",
+    "windows/Win32_System_SystemServices",
+    "windows/Win32_System_WindowsProgramming",
+    "objc2-core-foundation/CFArray",
+    "objc2-core-foundation/CFBase",
+    "objc2-core-foundation/CFDictionary",
+    "objc2-core-foundation/CFError",
+    "objc2-core-foundation/CFNumber",
+    "objc2-core-foundation/CFString",
+    "objc2-core-foundation/CFURL",
+    "objc2-io-kit",
+]
+system = [
+    "windows/Win32_Foundation",
+    "windows/Win32_System_Diagnostics_ToolHelp",
+    "windows/Wdk_System_SystemInformation",
+    "windows/Wdk_System_SystemServices",
+    "windows/Wdk_System_Threading",
+    "windows/Win32_Security_Authorization",
+    "windows/Win32_System_Diagnostics_Debug",
+    "windows/Win32_System_Kernel",
+    "windows/Win32_System_Memory",
+    "windows/Win32_System_Performance",
+    "windows/Win32_System_Power",
+    "windows/Win32_System_ProcessStatus",
+    "windows/Win32_System_Registry",
+    "windows/Win32_System_RemoteDesktop",
+    "windows/Win32_System_SystemInformation",
+    "windows/Win32_System_SystemServices",
+    "windows/Win32_System_Threading",
+    "windows/Win32_UI_Shell",
+    "dep:ntapi",
+    "dep:memchr",
+    "objc2-core-foundation/CFBase",
+    "objc2-core-foundation/CFData",
+    "objc2-core-foundation/CFDictionary",
+    "objc2-core-foundation/CFString",
+    "objc2-io-kit",
+]
+network = [
+    "windows/Win32_Foundation",
+    "windows/Win32_NetworkManagement_IpHelper",
+    "windows/Win32_NetworkManagement_Ndis",
+    "windows/Win32_Networking_WinSock",
+]
+user = [
+    "windows/Win32_Foundation",
+    "windows/Win32_NetworkManagement_NetManagement",
+    "windows/Win32_Security",
+    "windows/Win32_Security_Authentication_Identity",
+    "windows/Win32_Security_Authorization",
+]
+apple-sandbox = []
+apple-app-store = ["apple-sandbox"]
+c-interface = ["default"]
+multithread = ["dep:rayon"]
+linux-netdevs = []
+linux-tmpfs = []
+debug = ["libc/extra_traits"]
+# This feature is used on CI to emulate unknown/unsupported target.
+unknown-ci = []
+
+[package.metadata.docs.rs]
+features = ["serde"]
+# Setting this default target to prevent `freebsd` to be the default one.
+default-target = "x86_64-unknown-linux-gnu"
+targets = [
+    "i686-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "i686-pc-windows-msvc",
+    "x86_64-unknown-freebsd",
+]
+cargo-args = ["-Zbuild-std"]
+rustdoc-args = ["--generate-link-to-definition"]
+
+[dependencies]
+memchr = { version = "2.5", optional = true }
+rayon = { version = "^1.8", optional = true }
+serde = { version = "^1.0.190", optional = true, features = ["derive"] }
+
+[target.'cfg(windows)'.dependencies]
+ntapi = { version = "0.4", optional = true }
+# Support a range of versions in order to avoid duplication of this crate. Make sure to test all
+# versions when bumping to a new release, and only increase the minimum when absolutely necessary.
+windows = { version = ">=0.59, <0.62", optional = true }
+
+[target.'cfg(not(any(target_os = "unknown", target_arch = "wasm32")))'.dependencies]
+libc = "^0.2.173"
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+objc2-core-foundation = { version = "0.3.1", optional = true, default-features = false, features = [
+    "std",
+] }
+objc2-io-kit = { version = "0.3.1", optional = true, default-features = false, features = [
+    "std",
+    "libc",
+] }
+
+[dev-dependencies]
+serde_json = "1.0" # Used in documentation tests.
+bstr = "1.9.0"
+tempfile = "3.9"
+itertools = "0.14.0"
+
+[[example]]
+name = "simple"
+path = "examples/simple.rs"
+required-features = ["default"]
+doc-scrape-examples = true

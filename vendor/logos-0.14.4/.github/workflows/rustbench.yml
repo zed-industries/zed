@@ -1,0 +1,100 @@
+on:
+  pull_request:
+    paths:
+    - '**.rs'
+    - '**/Cargo.toml'
+  workflow_dispatch:
+
+name: Benchmark
+
+permissions:
+  pull-requests: write
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install stable toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+
+    - name: Install Critcmp
+      uses: baptiste0928/cargo-install@v3
+      with:
+        crate: critcmp
+        version: latest
+
+    - name: Run Benchmarks on changes
+      run: |
+        cargo bench --workspace --bench bench -- --save-baseline default_changes
+        cargo bench --workspace --bench bench --features forbid_unsafe  -- --save-baseline forbid_unsafe_changes
+
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.pull_request.base.sha }}
+        clean: false
+
+    - name: Run Benchmarks before changes
+      run: |
+        cargo bench --workspace --bench bench -- --save-baseline default_before
+
+        # Skip benchmarking for forbid_unsafe feature if the PR base commit doesn't have the feature
+        if [[ "$(grep forbid_unsafe Cargo.toml)" ]]; then
+          cargo bench --workspace --bench bench --features forbid_unsafe -- --save-baseline forbid_unsafe_before
+        fi
+
+    - name: Compare benchmarks
+      run: |
+        echo 'results<<EOF' >> $GITHUB_OUTPUT
+        critcmp default_before default_changes >> $GITHUB_OUTPUT
+        echo 'EOF' >> $GITHUB_OUTPUT
+      id: compare
+
+    - name: Compare benchmarks for forbid-unsafe
+      run: |
+        echo 'results<<EOF' >> $GITHUB_OUTPUT
+        if [[ "$(grep forbid_unsafe Cargo.toml)" ]]; then
+          critcmp forbid_unsafe_before forbid_unsafe_changes >> $GITHUB_OUTPUT
+        else 
+          echo 'NOTE: PR base commit does not support the "forbid_unsafe" feature;' >> $GITHUB_OUTPUT
+          echo 'comparing forbid_unsafe against the default features on base instead.' >> $GITHUB_OUTPUT
+          critcmp default_before forbid_unsafe_changes >> $GITHUB_OUTPUT
+        fi
+        echo 'EOF' >> $GITHUB_OUTPUT
+      id: compare-forbid-unsafe
+
+    - name: Comment PR with benchmarks
+      uses: thollander/actions-comment-pull-request@v2
+      continue-on-error: true
+      with:
+        message: |
+          Benchmark results with default features:
+          ```
+          ${{ steps.compare.outputs.results }}
+          ```
+
+          Benchmark results with feature "forbid_unsafe":
+          ```
+          ${{ steps.compare-forbid-unsafe.outputs.results }}
+          ```
+
+        comment_tag: benchmarks
+
+      id: comment
+
+    - name: If PR comment failed, write to PR summary
+      if: steps.comment.outcome != 'success'
+      run: |
+        echo '### Benchmark results' >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo '${{ steps.compare.outputs.results }}' >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+
+        echo '### Benchmark results with forbid-unsafe' >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo '${{ steps.compare-forbid-unsafe.outputs.results }}' >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY

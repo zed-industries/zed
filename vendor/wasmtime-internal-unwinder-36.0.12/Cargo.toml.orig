@@ -1,0 +1,29 @@
+[package]
+name = "wasmtime-internal-unwinder"
+authors.workspace = true
+version.workspace = true
+description = "INTERNAL: Wasmtime's unwind format and unwinder"
+license = "Apache-2.0 WITH LLVM-exception"
+documentation = "https://docs.rs/wasmtime-unwinder"
+repository = "https://github.com/bytecodealliance/wasmtime"
+categories = ["no-std"]
+readme = "README.md"
+keywords = ["unwind", "exceptions"]
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cranelift-codegen = { workspace = true, optional = true }
+log = { workspace = true }
+cfg-if = { workspace = true }
+object = { workspace = true }
+anyhow = { workspace = true }
+
+[features]
+default = []
+
+# Enable generation of unwind info from Cranelift metadata.
+cranelift = ["dep:cranelift-codegen"]

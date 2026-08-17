@@ -1,0 +1,28 @@
+[package]
+# https://github.com/madsmtm/objc2/issues/23
+license = "MIT" # All future contributions are licensed under "Zlib OR Apache-2.0 OR MIT".
+
+[dev-dependencies]
+static_assertions = "1.1.0"
+objc2-core-foundation = { workspace = true, features = [
+    "CFString", # FIXME: Remove this once CFString is moved into that feature gate.
+] }
+
+[features]
+# Runtime selection. See `objc2` for details.
+gnustep-1-7 = ["objc2/gnustep-1-7", "block2?/gnustep-1-7"]
+gnustep-1-8 = ["gnustep-1-7", "objc2/gnustep-1-8", "block2?/gnustep-1-8"]
+gnustep-1-9 = ["gnustep-1-8", "objc2/gnustep-1-9", "block2?/gnustep-1-9"]
+gnustep-2-0 = ["gnustep-1-9", "objc2/gnustep-2-0", "block2?/gnustep-2-0"]
+gnustep-2-1 = ["gnustep-2-0", "objc2/gnustep-2-1", "block2?/gnustep-2-1"]
+
+# Make the `ns_string!` macro create the string statically
+unstable-static-nsstring = []
+
+# Make mutation while iterating return NSNull.
+#
+# Useful when fuzzing, but very unsound.
+unstable-mutation-return-null = ["NSNull"]
+
+# TODO(breaking): Remove this
+NSMeasurement = ["NSUnit"]

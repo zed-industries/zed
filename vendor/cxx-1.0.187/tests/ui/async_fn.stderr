@@ -1,0 +1,11 @@
+error: async function is not directly supported yet, but see https://cxx.rs/async.html for a working approach, and https://github.com/pcwalton/cxx-async for some helpers; eventually what you wrote will work but it isn't integrated into the cxx::bridge macro yet
+ --> tests/ui/async_fn.rs:4:9
+  |
+4 |         async fn f();
+  |         ^^^^^^^^^^^^^
+
+error: async function is not directly supported yet, but see https://cxx.rs/async.html for a working approach, and https://github.com/pcwalton/cxx-async for some helpers; eventually what you wrote will work but it isn't integrated into the cxx::bridge macro yet
+ --> tests/ui/async_fn.rs:8:9
+  |
+8 |         async fn g();
+  |         ^^^^^^^^^^^^^

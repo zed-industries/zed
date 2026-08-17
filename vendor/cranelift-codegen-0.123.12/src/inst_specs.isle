@@ -1,0 +1,242 @@
+(model Imm64 (type (bv 64)))
+
+(model IntCC (enum
+    (Equal #x00)
+    (NotEqual #x01)
+    (SignedGreaterThan #x02)
+    (SignedGreaterThanOrEqual #x03)
+    (SignedLessThan #x04)
+    (SignedLessThanOrEqual #x05)
+    (UnsignedGreaterThan #x06)
+    (UnsignedGreaterThanOrEqual #x07)
+    (UnsignedLessThan #x08)
+    (UnsignedLessThanOrEqual #x09)))
+
+(spec (smin x y)
+    (provide (= result (if (bvsle x y) x y))))
+(instantiate smin bv_binary_8_to_64)
+
+(spec (umin x y)
+    (provide (= result (if (bvule x y) x y))))
+(instantiate umin bv_binary_8_to_64)
+
+(spec (smax x y)
+    (provide (= result (if (bvsge x y) x y))))
+(instantiate smax bv_binary_8_to_64)
+
+(spec (umax x y)
+    (provide (= result (if (bvuge x y) x y))))
+(instantiate umax bv_binary_8_to_64)
+
+(spec (iconst arg)
+    (provide (= arg (zero_ext 64 result))))
+(instantiate iconst
+    ((args (bv 64)) (ret (bv 8)) (canon (bv 8)))
+    ((args (bv 64)) (ret (bv 16)) (canon (bv 16)))
+    ((args (bv 64)) (ret (bv 32)) (canon (bv 32)))
+    ((args (bv 64)) (ret (bv 64)) (canon (bv 64)))
+)
+
+(spec (bitselect c x y)
+    (provide (= result (bvor (bvand c x) (bvand (bvnot c) y)))))
+(instantiate bitselect bv_ternary_8_to_64)
+
+(spec (icmp c x y)
+    (provide
+        (= result
+            (switch c
+                ((IntCC.Equal) (if (= x y) #x01 #x00))
+                ((IntCC.NotEqual) (if (not (= x y)) #x01 #x00))
+                ((IntCC.SignedGreaterThan) (if (bvsgt x y) #x01 #x00))
+                ((IntCC.SignedGreaterThanOrEqual) (if (bvsge x y) #x01 #x00))
+                ((IntCC.SignedLessThan) (if (bvslt x y) #x01 #x00))
+                ((IntCC.SignedLessThanOrEqual) (if (bvsle x y) #x01 #x00))
+                ((IntCC.UnsignedGreaterThan) (if (bvugt x y) #x01 #x00))
+                ((IntCC.UnsignedGreaterThanOrEqual) (if (bvuge x y) #x01 #x00))
+                ((IntCC.UnsignedLessThan) (if (bvult x y) #x01 #x00))
+                ((IntCC.UnsignedLessThanOrEqual) (if (bvule x y) #x01 #x00)))))
+    (require
+        ;; AVH TODO: if we understand enums semantically, we can generate this
+        (or
+            (= c (IntCC.Equal))
+            (= c (IntCC.NotEqual))
+            (= c (IntCC.UnsignedGreaterThanOrEqual))
+            (= c (IntCC.UnsignedGreaterThan))
+            (= c (IntCC.UnsignedLessThanOrEqual))
+            (= c (IntCC.UnsignedLessThan))
+            (= c (IntCC.SignedGreaterThanOrEqual))
+            (= c (IntCC.SignedGreaterThan))
+            (= c (IntCC.SignedLessThanOrEqual))
+            (= c (IntCC.SignedLessThan)))))
+(instantiate icmp
+    ((args (bv 8) (bv 8) (bv 8)) (ret (bv 8)) (canon (bv 8)))
+    ((args (bv 8) (bv 16) (bv 16)) (ret (bv 8)) (canon (bv 16)))
+    ((args (bv 8) (bv 32) (bv 32)) (ret (bv 8)) (canon (bv 32)))
+    ((args (bv 8) (bv 64) (bv 64)) (ret (bv 8)) (canon (bv 64)))
+)
+
+(spec (iadd x y)
+    (provide (= result (bvadd x y))))
+(instantiate iadd bv_binary_8_to_64)
+
+(spec (isub x y)
+    (provide (= result (bvsub x y))))
+(instantiate isub bv_binary_8_to_64)
+
+(spec (ineg x)
+    (provide (= result (bvneg x))))
+(instantiate ineg bv_unary_8_to_64)
+
+(spec (iabs x)
+    (provide (= result
+                (if (bvsge x (conv_to (widthof x) #x0000000000000000))
+                    x
+                    (bvneg x)))))
+(instantiate iabs bv_unary_8_to_64)
+
+(spec (imul x y)
+    (provide (= result (bvmul x y))))
+(instantiate imul bv_binary_8_to_64)
+
+(spec (udiv x y)
+    (provide (= result (bvudiv x y)))
+    (require (not (= y (zero_ext (widthof y) #b0)))))
+(instantiate udiv bv_binary_8_to_64)
+
+(spec (sdiv x y)
+    (provide (= result (bvsdiv x y)))
+    (require (not (= y (zero_ext (widthof y) #b0)))))
+(instantiate sdiv bv_binary_8_to_64)
+
+(spec (urem x y)
+    (provide (= result (bvurem x y)))
+    (require (not (= y (zero_ext (widthof y) #b0)))))
+(instantiate urem bv_binary_8_to_64)
+
+(spec (srem x y)
+    (provide (= result (bvsrem x y)))
+    (require (not (= y (zero_ext (widthof y) #b0)))))
+(instantiate srem bv_binary_8_to_64)
+
+(spec (imul_imm x y)
+    (provide (= result (bvmul (sign_ext 64 x) y))))
+
+(spec (band x y)
+    (provide (= result (bvand x y))))
+(instantiate band bv_binary_8_to_64)
+
+(spec (bor x y)
+    (provide (= result (bvor x y))))
+(instantiate bor bv_binary_8_to_64)
+
+(spec (bxor x y)
+    (provide (= result (bvxor x y))))
+(instantiate bxor bv_binary_8_to_64)
+
+(spec (bnot x)
+    (provide (= result (bvnot x)))
+    (require (or (= (widthof x) 8) (= (widthof x) 16) (= (widthof x) 32) (= (widthof x) 64))))
+(instantiate bnot bv_unary_8_to_64)
+
+(spec (band_not x y)
+    (provide (= result (bvand x (bvnot y)))))
+(instantiate band_not bv_binary_8_to_64)
+
+(spec (rotl x y)
+    (provide (= result (rotl x y))))
+(instantiate rotl bv_binary_8_to_64)
+
+(spec (rotr x y)
+    (provide (= result (rotr x y))))
+(instantiate rotr bv_binary_8_to_64)
+
+;; fn shift_mask(&mut self, ty: Type) -> ImmLogic {
+;;     let mask = (ty.lane_bits() - 1) as u64;
+;;     ImmLogic::maybe_from_u64(mask, I32).unwrap()
+;; }
+(spec (ishl x y)
+    (provide
+        (= result
+           (bvshl x
+                  (bvand (conv_to (widthof y) (bvsub (int2bv 64 (widthof y))
+                                                     #x0000000000000001))
+                         y)))))
+(instantiate ishl bv_binary_8_to_64)
+
+(spec (ushr x y)
+    (provide
+        (= result
+           (bvlshr x
+                  (bvand (conv_to (widthof y) (bvsub (int2bv 64 (widthof y))
+                                                     #x0000000000000001))
+                         y)))))
+(instantiate ushr bv_binary_8_to_64)
+
+(spec (sshr x y)
+    (provide
+        (= result
+           (bvashr x
+                  (bvand (conv_to (widthof y) (bvsub (int2bv 64 (widthof y))
+                                                     #x0000000000000001))
+                         y)))))
+(instantiate sshr bv_binary_8_to_64)
+
+(spec (clz x)
+    (provide (= result (clz x))))
+(instantiate clz bv_unary_8_to_64)
+
+(spec (cls x)
+    (provide (= result (cls x))))
+(instantiate cls bv_unary_8_to_64)
+
+(spec (ctz x)
+    (provide (= result (clz (rev x)))))
+(instantiate ctz bv_unary_8_to_64)
+
+(spec (popcnt x)
+    (provide (= result (popcnt x))))
+(instantiate popcnt bv_unary_8_to_64)
+
+(form extend
+    ((args (bv 8)) (ret (bv 8)) (canon (bv 8)))
+    ((args (bv 8)) (ret (bv 16)) (canon (bv 8)))
+    ((args (bv 8)) (ret (bv 32)) (canon (bv 8)))
+    ((args (bv 8)) (ret (bv 64)) (canon (bv 8)))
+    ((args (bv 16)) (ret (bv 16)) (canon (bv 16)))
+    ((args (bv 16)) (ret (bv 32)) (canon (bv 16)))
+    ((args (bv 16)) (ret (bv 64)) (canon (bv 16)))
+    ((args (bv 32)) (ret (bv 32)) (canon (bv 32)))
+    ((args (bv 32)) (ret (bv 64)) (canon (bv 32)))
+    ((args (bv 64)) (ret (bv 64)) (canon (bv 64)))
+)
+
+(spec (uextend x)
+    (provide (= result (zero_ext (widthof result) x))))
+(instantiate uextend extend)
+
+(spec (sextend x)
+    (provide (= result (sign_ext (widthof result) x))))
+(instantiate sextend extend)
+
+
+(form load
+    ((args (bv 16) (bv 64) (bv 32)) (ret (bv 8)) (canon (bv 8)))
+    ((args (bv 16) (bv 64) (bv 32)) (ret (bv 16)) (canon (bv 16)))
+    ((args (bv 16) (bv 64) (bv 32)) (ret (bv 32)) (canon (bv 32)))
+    ((args (bv 16) (bv 64) (bv 32)) (ret (bv 64)) (canon (bv 64)))
+)
+(spec (load flags val offset)
+    (provide 
+       (= result (load_effect flags (widthof result) (bvadd val (sign_ext 64 offset))))))
+(instantiate load load)
+
+(form store
+    ((args (bv 16) (bv 8) (bv 64) (bv 32)) (ret Unit) (canon (bv 8)))
+    ((args (bv 16) (bv 16) (bv 64) (bv 32)) (ret Unit) (canon (bv 16)))
+    ((args (bv 16) (bv 32) (bv 64) (bv 32)) (ret Unit) (canon (bv 32)))
+    ((args (bv 16) (bv 64) (bv 64) (bv 32)) (ret Unit) (canon (bv 64)))
+)
+(spec (store flags val_to_store addr offset)
+    (provide 
+       (= result (store_effect flags (widthof val_to_store) val_to_store (bvadd (zero_ext 64 addr) (sign_ext 64 offset))))))
+(instantiate store store)

@@ -1,0 +1,13 @@
+diff --git a/libyuv.gni b/libyuv.gni
+index 3334df70..9859a121 100644
+--- a/libyuv.gni
++++ b/libyuv.gni
+@@ -24,7 +24,7 @@ declare_args() {
+   # errors on Fuchsia, macOS, and compilation errors on Windows.
+   # TODO: bug 359006069 - Remove the restriction after the linker and
+   # compilation errors are fixed.
+-  libyuv_use_sme = current_cpu == "arm64" && (is_linux || is_android)
++  libyuv_use_sme = current_cpu == "arm64" && (is_linux)
+   libyuv_use_msa =
+       (current_cpu == "mips64el" || current_cpu == "mipsel") && mips_use_msa
+   libyuv_use_mmi =

@@ -1,0 +1,13 @@
+[package]
+name = "partial-json-fixer"
+version = "0.5.3"
+edition = "2021"
+
+license = "MIT"
+description = "Partial JSON fixer fixes partial JSON"
+repository = "https://github.com/maheshbansod/partial-json-fixer"
+readme = "README.md"
+keywords = ["json", "partial-json"]
+categories = ["text-processing", "parsing"]
+
+[dependencies]

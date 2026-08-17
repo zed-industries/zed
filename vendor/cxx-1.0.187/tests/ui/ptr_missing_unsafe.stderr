@@ -1,0 +1,5 @@
+error: pointer argument requires that the function be marked unsafe
+ --> tests/ui/ptr_missing_unsafe.rs:6:27
+  |
+6 |         fn not_unsafe_ptr(c: *mut C);
+  |                           ^^^^^^^^^

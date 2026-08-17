@@ -1,0 +1,36 @@
+[tasks.format]
+clear = true
+workspace = true
+install_crate = "rustfmt"
+command = "cargo"
+args = ["fmt", "--", "--emit=files"]
+
+[tasks.clippy]
+clear = true
+workspace = true
+install_crate = "clippy"
+command = "cargo"
+args = ["clippy"]
+
+[tasks.outdated]
+install_crate = "cargo-outdated"
+command = "cargo"
+args = ["outdated", "-R"]
+
+[tasks.version-minor]
+env = { "RUST_DECIMAL_BUILD_VERSION" = "minor" }
+run_task = "propagate-version"
+
+[tasks.version-revision]
+env = { "RUST_DECIMAL_BUILD_VERSION" = "revision" }
+run_task = "propagate-version"
+
+[tasks.propagate-version]
+private = true
+script_runner = "@rust"
+script = { file = "${CARGO_MAKE_WORKING_DIRECTORY}/make/scripts/version.rs", absolute_path = true }
+
+[tasks.semver-check]
+install_crate = "cargo-semver-checks"
+command = "cargo"
+args = ["semver-checks"]

@@ -1,0 +1,258 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+
+Copyright © 2013 Keith Packard
+
+Permission to use, copy, modify, distribute, and sell this software and its
+documentation for any purpose is hereby granted without fee, provided that
+the above copyright notice appear in all copies and that both that copyright
+notice and this permission notice appear in supporting documentation, and
+that the name of the copyright holders not be used in advertising or
+publicity pertaining to distribution of the software without specific,
+written prior permission.  The copyright holders make no representations
+about the suitability of this software for any purpose.  It is provided "as
+is" without express or implied warranty.
+
+THE COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS SOFTWARE,
+INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS, IN NO
+EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY SPECIAL, INDIRECT OR
+CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE,
+DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE
+OF THIS SOFTWARE.
+-->
+
+<xcb header="present" extension-xname="Present" extension-name="Present" major-version="1" minor-version="2">
+    <import>xproto</import>
+    <import>randr</import>
+    <import>xfixes</import>
+    <import>sync</import>
+
+    <!-- Types -->
+
+    <enum name="Event">
+        <item name="ConfigureNotify">
+            <value>0</value>
+        </item>
+        <item name="CompleteNotify">
+            <value>1</value>
+        </item>
+        <item name="IdleNotify">
+            <value>2</value>
+        </item>
+        <item name="RedirectNotify">
+            <value>3</value>
+        </item>
+    </enum>
+
+    <enum name="EventMask">
+        <item name="NoEvent">
+            <value>0</value>
+        </item>
+        <item name="ConfigureNotify">
+            <bit>0</bit>
+        </item>
+        <item name="CompleteNotify">
+            <bit>1</bit>
+        </item>
+        <item name="IdleNotify">
+            <bit>2</bit>
+        </item>
+        <item name="RedirectNotify">
+            <bit>3</bit>
+        </item>
+    </enum>
+
+    <enum name="Option">
+        <item name="None">
+            <value>0</value>
+        </item>
+        <item name="Async">
+            <bit>0</bit>
+        </item>
+        <item name="Copy">
+            <bit>1</bit>
+        </item>
+        <item name="UST">
+            <bit>2</bit>
+        </item>
+        <item name="Suboptimal">
+            <bit>3</bit>
+        </item>
+    </enum>
+
+    <enum name="Capability">
+        <item name="None">
+            <value>0</value>
+        </item>
+        <item name="Async">
+            <bit>0</bit>
+        </item>
+        <item name="Fence">
+            <bit>1</bit>
+        </item>
+        <item name="UST">
+            <bit>2</bit>
+        </item>
+    </enum>
+
+    <enum name="CompleteKind">
+        <item name="Pixmap">
+            <value>0</value>
+        </item>
+        <item name="NotifyMSC">
+            <value>1</value>
+        </item>
+    </enum>
+
+    <enum name="CompleteMode">
+        <item name="Copy">
+            <value>0</value>
+        </item>
+        <item name="Flip">
+            <value>1</value>
+        </item>
+        <item name="Skip">
+            <value>2</value>
+        </item>
+        <item name="SuboptimalCopy">
+            <value>3</value>
+        </item>
+    </enum>
+
+    <struct name="Notify">
+        <field type="WINDOW" name="window" />
+        <field type="CARD32" name="serial" />
+    </struct>
+
+    <!-- Requests -->
+    <request name="QueryVersion" opcode="0">
+        <field type="CARD32" name="major_version" />
+        <field type="CARD32" name="minor_version" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="major_version" />
+            <field type="CARD32" name="minor_version" />
+        </reply>
+    </request>
+
+    <request name="Pixmap" opcode="1">
+        <required_start_align align="8" />
+        <field type="WINDOW" name="window" />
+        <field type="PIXMAP" name="pixmap" />
+        <field type="CARD32" name="serial" />
+        <field type="REGION" name="valid" />
+        <field type="REGION" name="update" />
+        <field type="INT16" name="x_off" />
+        <field type="INT16" name="y_off" />
+        <field type="CRTC" name="target_crtc" />
+        <field type="FENCE" name="wait_fence" />
+        <field type="FENCE" name="idle_fence" />
+        <field type="CARD32" name="options" />
+        <pad bytes="4" />
+        <field type="CARD64" name="target_msc" />
+        <field type="CARD64" name="divisor" />
+        <field type="CARD64" name="remainder" />
+        <list type="Notify" name="notifies" />
+    </request>
+
+    <request name="NotifyMSC" opcode="2">
+        <required_start_align align="8" />
+        <field type="WINDOW" name="window" />
+        <field type="CARD32" name="serial" />
+        <pad bytes="4" />
+        <field type="CARD64" name="target_msc" />
+        <field type="CARD64" name="divisor" />
+        <field type="CARD64" name="remainder" />
+    </request>
+
+    <xidtype name="EVENT" />
+
+    <request name="SelectInput" opcode="3">
+        <field type="EVENT" name="eid" />
+        <field type="WINDOW" name="window" />
+        <field type="CARD32" name="event_mask" mask="EventMask" />
+    </request>
+
+    <request name="QueryCapabilities" opcode="4">
+        <field type="CARD32" name="target" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="capabilities" />
+        </reply>
+    </request>
+
+    <!-- Events -->
+
+    <event name="Generic" number="0">
+        <field type="CARD8" name="extension" />
+        <field type="CARD32" name="length" />
+        <field type="CARD16" name="evtype" />
+        <pad bytes="2" />
+        <field type="EVENT" name="event" />
+    </event>
+
+    <event name="ConfigureNotify" number="0" xge="true">
+        <pad bytes="2" />
+        <field type="EVENT" name="event" />
+        <field type="WINDOW" name="window" />
+        <field type="INT16" name="x" />
+        <field type="INT16" name="y" />
+        <field type="CARD16" name="width" />
+        <field type="CARD16" name="height" />
+        <field type="INT16" name="off_x" />
+        <field type="INT16" name="off_y" />
+        <field type="CARD16" name="pixmap_width" />
+        <field type="CARD16" name="pixmap_height" />
+        <field type="CARD32" name="pixmap_flags" />
+    </event>
+
+    <event name="CompleteNotify" number="1" xge="true">
+        <required_start_align align="8" />
+        <field type="CARD8" name="kind" enum="CompleteKind" />
+        <field type="CARD8" name="mode" enum="CompleteMode" />
+        <field type="EVENT" name="event" />
+        <field type="WINDOW" name="window" />
+        <field type="CARD32" name="serial" />
+        <field type="CARD64" name="ust" />
+        <field type="CARD64" name="msc" />
+    </event>
+
+    <event name="IdleNotify" number="2" xge="true">
+        <pad bytes="2" />
+        <field type="EVENT" name="event" />
+        <field type="WINDOW" name="window" />
+        <field type="CARD32" name="serial" />
+        <field type="PIXMAP" name="pixmap" />
+        <field type="FENCE" name="idle_fence" />
+    </event>
+
+    <event name="RedirectNotify" number="3" xge="true">
+        <required_start_align align="8" />
+        <field type="BOOL" name="update_window" />
+        <pad bytes="1" />
+        <field type="EVENT" name="event" />
+        <field type="WINDOW" name="event_window" />
+        <field type="WINDOW" name="window" />
+        <field type="PIXMAP" name="pixmap" />
+        <field type="CARD32" name="serial" />
+
+        <field type="REGION" name="valid_region" />
+        <field type="REGION" name="update_region" />
+        <field type="RECTANGLE" name="valid_rect" />
+        <field type="RECTANGLE" name="update_rect" />
+
+        <field type="INT16" name="x_off" />
+        <field type="INT16" name="y_off" />
+        <field type="CRTC" name="target_crtc" />
+        <field type="FENCE" name="wait_fence" />
+        <field type="FENCE" name="idle_fence" />
+        <field type="CARD32" name="options" />
+        <pad bytes="4" />
+        <field type="CARD64" name="target_msc" />
+        <field type="CARD64" name="divisor" />
+        <field type="CARD64" name="remainder" />
+        <list type="Notify" name="notifies" />
+    </event>
+
+</xcb>

@@ -1,0 +1,9 @@
+package foo:foo;
+
+interface a {
+  use b.{the-type};
+}
+
+interface b2 {
+  use b.{the-type};
+}

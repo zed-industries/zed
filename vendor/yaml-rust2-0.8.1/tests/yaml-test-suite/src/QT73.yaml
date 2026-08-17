@@ -1,0 +1,12 @@
+---
+- name: Comment and document-end marker
+  from: '@perlpunk'
+  tags: comment footer
+  yaml: |
+    # comment
+    ...
+  tree: |
+    +STR
+    -STR
+  json: ''
+  dump: ''

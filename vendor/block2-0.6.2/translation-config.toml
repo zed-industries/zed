@@ -1,0 +1,14 @@
+framework = "block"
+crate = "block2"
+required-crates = ["objc2"]
+link = false
+skipped = true
+is-library = true
+
+macos = "10.6"
+maccatalyst = "13.0"
+ios = "3.2"
+tvos = "9.0"
+watchos = "2.0"
+visionos = "1.0"
+gnustep = true

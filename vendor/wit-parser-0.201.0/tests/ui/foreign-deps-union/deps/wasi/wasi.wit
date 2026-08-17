@@ -1,0 +1,6 @@
+package foo:wasi;
+
+world wasi {
+    import filesystem;
+    import clocks;
+}

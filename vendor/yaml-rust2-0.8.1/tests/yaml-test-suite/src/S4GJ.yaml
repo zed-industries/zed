@@ -1,0 +1,14 @@
+---
+- name: Invalid text after block scalar indicator
+  from: '@perlpunk'
+  tags: error folded
+  fail: true
+  yaml: |
+    ---
+    folded: > first line
+      second line
+  tree: |
+    +STR
+     +DOC ---
+      +MAP
+       =VAL :folded

@@ -1,0 +1,22 @@
+r#"The Qt Company GPL Exception 1.0
+
+Exception 1:
+
+As a special exception you may create a larger work which contains the
+output of this application and distribute that work under terms of your
+choice, so long as the work is not otherwise derived from or based on
+this application and so long as the work does not in itself generate
+output that contains the output from this application in its original
+or modified form.
+
+Exception 2:
+
+As a special exception, you have permission to combine this application
+with Plugins licensed under the terms of your choice, to produce an
+executable, and to copy and distribute the resulting executable under
+the terms of your choice. However, the executable must be accompanied
+by a prominent notice offering all users of the executable the entire
+source code to this application, excluding the source code of the
+independent modules, but including any changes you have made to this
+application, under the terms of this license.
+"#

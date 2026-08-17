@@ -1,0 +1,92 @@
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+name: Continuous integration
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      matrix:
+        include:
+          - rust: 1.51.0 # MSRV
+            features: serde
+            experimental: false
+          - rust: 1.70.0
+            features: serde
+            experimental: false
+          - rust: stable
+            features:
+            bench: true
+            experimental: false
+          - rust: beta
+            features: serde
+            experimental: false
+          - rust: nightly
+            features: serde, borsh, zeroize
+            experimental: false
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+      - name: Pin versions for MSRV
+        if: "${{ matrix.rust == '1.51.0' }}"
+        run: |
+          cargo update -p serde_test --precise 1.0.163
+          cargo update -p serde --precise 1.0.69
+      - name: Build
+        run: |
+          cargo build -v --no-default-features
+          cargo build --verbose --features "${{ matrix.features }}"
+      - name: Tests
+        run: |
+          cargo doc --verbose --features "${{ matrix.features }}" --no-deps
+          cargo test --verbose --features "${{ matrix.features }}"
+          cargo test --release --verbose --features "${{ matrix.features }}"
+      - name: Test run benchmarks
+        if: matrix.bench != ''
+        run: cargo test -v --benches
+
+  nostd:
+    runs-on: ubuntu-latest
+    continue-on-error: false
+    strategy:
+      matrix:
+        include:
+          - rust: stable
+            target: thumbv6m-none-eabi
+            features: zeroize
+
+    name: nostd/${{ matrix.target }}/${{ matrix.rust }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+          targets: ${{ matrix.target }}
+      - name: Tests
+        run: |
+          cargo rustc "--target=${{ matrix.target }}" --no-default-features --features "${{ matrix.features }}"
+
+
+  miri:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Miri
+        run: |
+          rustup toolchain install nightly --component miri
+          rustup override set nightly
+          cargo miri setup
+      - name: Test with Miri
+        run: cargo miri test --all-features

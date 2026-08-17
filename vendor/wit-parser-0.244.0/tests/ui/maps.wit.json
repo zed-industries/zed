@@ -1,0 +1,255 @@
+{
+  "worlds": [
+    {
+      "name": "maps-world",
+      "imports": {
+        "interface-0": {
+          "interface": {
+            "id": 0
+          }
+        }
+      },
+      "exports": {
+        "interface-0": {
+          "interface": {
+            "id": 0
+          }
+        }
+      },
+      "package": 0
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "maps",
+      "types": {
+        "string-to-u32": 0,
+        "u32-to-string": 1,
+        "nested-map": 3,
+        "person": 4,
+        "person-map": 5,
+        "complex-map": 8,
+        "int-key-map": 9,
+        "char-key-map": 10
+      },
+      "functions": {
+        "get-value": {
+          "name": "get-value",
+          "kind": "freestanding",
+          "params": [
+            {
+              "name": "m",
+              "type": 2
+            },
+            {
+              "name": "key",
+              "type": "string"
+            }
+          ],
+          "result": 11,
+          "docs": {
+            "contents": "Functions using maps"
+          }
+        },
+        "set-value": {
+          "name": "set-value",
+          "kind": "freestanding",
+          "params": [
+            {
+              "name": "m",
+              "type": 2
+            },
+            {
+              "name": "key",
+              "type": "string"
+            },
+            {
+              "name": "value",
+              "type": "u32"
+            }
+          ],
+          "result": 2
+        },
+        "merge-maps": {
+          "name": "merge-maps",
+          "kind": "freestanding",
+          "params": [
+            {
+              "name": "a",
+              "type": 2
+            },
+            {
+              "name": "b",
+              "type": 2
+            }
+          ],
+          "result": 2
+        }
+      },
+      "package": 0
+    }
+  ],
+  "types": [
+    {
+      "name": "string-to-u32",
+      "kind": {
+        "map": [
+          "string",
+          "u32"
+        ]
+      },
+      "owner": {
+        "interface": 0
+      },
+      "docs": {
+        "contents": "Basic maps"
+      }
+    },
+    {
+      "name": "u32-to-string",
+      "kind": {
+        "map": [
+          "u32",
+          "string"
+        ]
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": null,
+      "kind": {
+        "map": [
+          "string",
+          "u32"
+        ]
+      },
+      "owner": null
+    },
+    {
+      "name": "nested-map",
+      "kind": {
+        "map": [
+          "string",
+          2
+        ]
+      },
+      "owner": {
+        "interface": 0
+      },
+      "docs": {
+        "contents": "Nested maps"
+      }
+    },
+    {
+      "name": "person",
+      "kind": {
+        "record": {
+          "fields": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "age",
+              "type": "u32"
+            }
+          ]
+        }
+      },
+      "owner": {
+        "interface": 0
+      },
+      "docs": {
+        "contents": "Maps with complex types"
+      }
+    },
+    {
+      "name": "person-map",
+      "kind": {
+        "map": [
+          "string",
+          4
+        ]
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": null,
+      "kind": {
+        "list": "u32"
+      },
+      "owner": null
+    },
+    {
+      "name": null,
+      "kind": {
+        "option": 6
+      },
+      "owner": null
+    },
+    {
+      "name": "complex-map",
+      "kind": {
+        "map": [
+          "string",
+          7
+        ]
+      },
+      "owner": {
+        "interface": 0
+      },
+      "docs": {
+        "contents": "Maps with tuples, lists, options"
+      }
+    },
+    {
+      "name": "int-key-map",
+      "kind": {
+        "map": [
+          "u32",
+          "string"
+        ]
+      },
+      "owner": {
+        "interface": 0
+      },
+      "docs": {
+        "contents": "Map with various key types"
+      }
+    },
+    {
+      "name": "char-key-map",
+      "kind": {
+        "map": [
+          "char",
+          "string"
+        ]
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": null,
+      "kind": {
+        "option": "u32"
+      },
+      "owner": null
+    }
+  ],
+  "packages": [
+    {
+      "name": "foo:maps",
+      "interfaces": {
+        "maps": 0
+      },
+      "worlds": {
+        "maps-world": 0
+      }
+    }
+  ]
+}

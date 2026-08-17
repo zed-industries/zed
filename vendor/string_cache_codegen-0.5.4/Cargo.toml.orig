@@ -1,0 +1,19 @@
+[package]
+name = "string_cache_codegen"
+version = "0.5.4"  # Also update ../README.md when making a semver-breaking change
+authors = [ "The Servo Project Developers" ]
+description = "A codegen library for string-cache, developed as part of the Servo project."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/servo/string-cache"
+documentation = "https://docs.rs/string_cache_codegen/"
+edition = "2018"
+
+[lib]
+name = "string_cache_codegen"
+path = "lib.rs"
+
+[dependencies]
+phf_generator = "0.11"
+phf_shared = "0.11"
+proc-macro2 = "1"
+quote = "1"

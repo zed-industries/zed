@@ -1,0 +1,90 @@
+This  file describes various  problems that  have been  encountered in
+compiling,  installing  and   running  FreeType  2.   Suggestions  for
+additions or other improvements to this file are welcome.
+
+----------------------------------------------------------------------
+
+Running Problems
+================
+
+
+* Some Type 1, Multiple Masters, and CID-keyed PostScript fonts aren't
+  handled correctly.
+
+-----
+
+Of course,  there might be  bugs in FreeType,  but some fonts based on
+the  PostScript  format can't  be handled indeed.  The reason  is that
+FreeType  doesn't contain a full  PostScript  interpreter  but applies
+pattern matching instead.  In case a font doesn't follow the  standard
+structure of the given font format, FreeType fails.  A typical example
+is Adobe's `Optima'  font family which  contains extra code  to switch
+between low and high resolution versions of the glyphs.
+
+It might be  possible to patch  FreeType in  some situations,  though.
+Please report failing fonts so that we investigate the problem and set
+up a list of such problematic fonts.
+
+
+* Why do identical FreeType  versions render differently  on different
+  platforms?
+
+-----
+
+Different distributions compile FreeType with different options.   The
+developer  version of  a  distribution's  FreeType  package,  which is
+needed to compile  your program  against FreeType,  includes the  file
+ftoption.h.  Compare  each platform's  copy of ftoption.h to  find the
+differences.
+
+
+----------------------------------------------------------------------
+
+
+Compilation Problems
+====================
+
+
+* I get an `internal compilation error' (ICE) while compiling FreeType
+  2.2.1 with Intel C++.
+
+  This has been reported for the following compiler version:
+
+    Intel(R) C++ Compiler for 32-bit applications,
+      Version 9.0 Build 20050430Z Package ID: W_CC_P_9.0.019
+
+-----
+
+The best solution is to update the compiler to version
+
+  Intel(R) C++ Compiler for 32-bit applications,
+    Version 9.1 Build 20060323Z Package ID: W_CC_P_9.1.022
+
+or newer.  If this isn't feasible, apply the following patch.
+
+
+--- src/cache/ftcbasic.c 20 Mar 2006 12:10:24 -0000 1.20
++++ src/cache/ftcbasic.c.patched 15 May 2006 02:51:02 -0000
+@@ -252,7 +252,7 @@
+   */
+
+   FT_CALLBACK_TABLE_DEF
+-  const FTC_IFamilyClassRec  ftc_basic_image_family_class =
++  FTC_IFamilyClassRec  ftc_basic_image_family_class =
+   {
+     {
+       sizeof ( FTC_BasicFamilyRec ),
+@@ -266,7 +266,7 @@
+
+
+   FT_CALLBACK_TABLE_DEF
+-  const FTC_GCacheClassRec  ftc_basic_image_cache_class =
++  FTC_GCacheClassRec  ftc_basic_image_cache_class =
+   {
+     {
+       ftc_inode_new,
+
+
+----------------------------------------------------------------------
+
+--- end of PROBLEMS ---

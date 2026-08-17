@@ -1,0 +1,38 @@
+[package]
+name = "imara-diff"
+version = "0.2.0"
+edition = "2021"
+authors = ["pascalkuthe <pascalkuthe@pm.me>"]
+rust-version = "1.71"
+license = "Apache-2.0"
+
+description = "A high performance library for computing diffs."
+repository  = "https://github.com/pascalkuthe/imara-diff"
+keywords = ["diff", "difference", "myers", "compare", "changes"]
+readme = "README.md"
+exclude = [
+    "tests",
+    "bench_data",
+    "plt.py",
+]
+
+[dependencies]
+hashbrown = { version = "0.15", default-features = false, features = ["default-hasher", "inline-more"] }
+memchr = "2.7.4"
+
+[features]
+default = ["unified_diff"]
+unified_diff = []
+
+[dev-dependencies]
+# criterion = "0.4.0"
+expect-test = "1.4.0"
+# git-repository = "0.25.0"
+# similar = { version = "2.2.0", features = ["bytes"] }
+
+[profile.release]
+debug = true
+
+# [[bench]]
+# name = "git_repo"
+# harness = false

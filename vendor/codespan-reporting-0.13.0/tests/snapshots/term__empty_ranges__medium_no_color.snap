@@ -1,0 +1,9 @@
+---
+source: codespan-reporting/tests/term.rs
+expression: TEST_DATA.emit_no_color(&config)
+---
+hello:1:7: note: middle
+hello:1:13: note: end of line
+hello:2:11: note: end of line
+hello:3:4: note: end of file
+

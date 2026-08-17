@@ -1,0 +1,76 @@
+name: Rust
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0 # Disables incremental compilation to save disk space
+  # RUSTFLAGS: "-D warnings" # Would deny warnings as errors
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}-latest
+    strategy:
+      fail-fast: false # Don't cancel all jobs if one fails
+      matrix:
+        channel: [stable]
+        os: [ubuntu, macos, windows]
+        features: ["", "-F stream"]
+        # Only run beta/nightly on ubuntu to save resources/space
+        include:
+          - channel: beta
+            os: ubuntu
+            features: ""
+          - channel: nightly
+            os: ubuntu
+            features: ""
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        run: rustup default ${{ matrix.channel }}
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2 # Automatically manages disk space for artifacts
+        with:
+          key: ${{ matrix.os }}-${{ matrix.channel }}
+
+      - name: Check space before build
+        run: df -h
+
+      - name: Build
+        run: cargo build --all-targets ${{ matrix.features }}
+
+      - name: Check space after build
+        run: |
+          echo "Total space used by target:"
+          du -sh target/
+          df -h
+
+      - name: Test
+        run: cargo test ${{ matrix.features }}
+
+      - name: Clean up large artifacts
+        if: always()
+        run: cargo clean --doc # Removes documentation artifacts which can be large
+
+  wasm-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: swatinem/rust-cache@v2
+      - run: |
+          rustup default stable
+          rustup target add wasm32-unknown-unknown
+          cargo build --target=wasm32-unknown-unknown --no-default-features -F jwt-rust-crypto
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --tests --examples

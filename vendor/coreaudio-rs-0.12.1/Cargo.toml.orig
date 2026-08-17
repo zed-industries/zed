@@ -1,0 +1,32 @@
+[package]
+name = "coreaudio-rs"
+version = "0.12.1"
+authors = ["mitchmindtree <mitchell.nordine@gmail.com>", "yupferris <jake@fusetools.com>"]
+description = "A friendly rust interface for Apple's CoreAudio API."
+keywords = ["core", "audio", "unit", "osx", "ios"]
+readme = "README.md"
+license = "MIT/Apache-2.0"
+edition = '2018'
+repository = "https://github.com/RustAudio/coreaudio-rs.git"
+homepage = "https://github.com/RustAudio/coreaudio-rs"
+
+[lib]
+name = "coreaudio"
+
+[features]
+default = ["audio_toolbox", "audio_unit", "core_audio", "open_al", "core_midi"]
+audio_toolbox = ["coreaudio-sys/audio_toolbox"]
+audio_unit = ["coreaudio-sys/audio_unit"]
+core_audio = ["coreaudio-sys/core_audio"]
+open_al = ["coreaudio-sys/open_al"]
+core_midi = ["coreaudio-sys/core_midi"]
+
+[dependencies]
+bitflags = "1.0"
+coreaudio-sys = { version = "0.2", default-features = false }
+core-foundation-sys = "0.8.3"
+
+[package.metadata.docs.rs]
+all-features = true
+default-target = "x86_64-apple-darwin"
+targets = ["x86_64-apple-darwin", "x86_64-apple-ios"]

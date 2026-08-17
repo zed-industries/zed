@@ -1,0 +1,21 @@
+(decl partial X (i64) i64)
+(rule (X -1) -2)
+(rule (X -2) -3)
+(rule (X 0x7fff_ffff_ffff_ffff) -0x8000_0000_0000_0000)
+(rule (X -16) 1)
+
+(decl partial Y (i128) i128)
+
+(rule (Y 0x1000_0000_0000_0000_1234_5678_9abc_def0) -1)
+(rule (Y 0xffff_ffff_ffff_ffff_ffff_ffff_ffff_ffff) 3)
+
+(rule (Y -0x1000_0000_0000_0000_1234_5678_9abc_def0) 1)
+(rule (Y -0xffff_ffff_ffff_ffff_ffff_ffff_ffff_ffff) -3)
+
+;; Test some various syntaxes for numbers
+(decl partial Z (i32) i32)
+(rule (Z 0) 0x01)
+(rule (Z 0x01) 0x0_2)
+(rule (Z 0b10) 3)
+(rule (Z 0b1_1) 0o4)
+(rule (Z 0o7654321) 0b11_00_11_00)

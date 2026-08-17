@@ -1,0 +1,23 @@
+name: Build (WASM)
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ['full-wasm' feature] on ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - wasm32-unknown-unknown
+    steps:
+    - uses: actions/checkout@v4
+    - run: rustup target add ${{ matrix.target }}
+    - run: cargo build --verbose --target ${{ matrix.target }} --features full-wasm

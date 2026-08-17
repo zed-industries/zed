@@ -1,0 +1,20 @@
+---
+- name: Spec Example 7.3. Completely Empty Flow Nodes
+  from: http://www.yaml.org/spec/1.2/spec.html#id2786868
+  tags: empty-key explicit-key spec flow mapping
+  yaml: |
+    {
+      ? foo :,
+      : bar,
+    }
+  tree: |
+    +STR
+     +DOC
+      +MAP {}
+       =VAL :foo
+       =VAL :
+       =VAL :
+       =VAL :bar
+      -MAP
+     -DOC
+    -STR

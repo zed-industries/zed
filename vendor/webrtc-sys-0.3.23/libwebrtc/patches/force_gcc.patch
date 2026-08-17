@@ -1,0 +1,24 @@
+diff --git a/config/compiler/BUILD.gn b/config/compiler/BUILD.gn
+index fca6c9295..31b76f722 100644
+--- a/config/compiler/BUILD.gn
++++ b/config/compiler/BUILD.gn
+@@ -656,6 +656,7 @@ config("compiler") {
+       # standard-compliant __VA_OPT__ added by C++20, and switch the gcc build
+       # to -std=c*.
+       standard_prefix = "gnu"
++      defines += [ "_DEFAULT_SOURCE" ]
+     }
+ 
+     cflags_c += [ "-std=${standard_prefix}11" ]
+diff --git a/config/linux/BUILD.gn b/config/linux/BUILD.gn
+index 131bb71d1..a928badd0 100644
+--- a/config/linux/BUILD.gn
++++ b/config/linux/BUILD.gn
+@@ -15,6 +15,7 @@ group("linux") {
+ # is applied to all targets. It is here to separate out the logic that is
+ # Linux-only. This is not applied to Android, but is applied to ChromeOS.
+ config("compiler") {
++  cflags_cc = [ "-Wno-changes-meaning", "-Wno-unknown-pragmas" ]
+   if (current_cpu == "arm64") {
+     import("//build/config/arm.gni")
+     cflags = []

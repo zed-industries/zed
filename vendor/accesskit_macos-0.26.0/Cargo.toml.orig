@@ -1,0 +1,38 @@
+[package]
+name = "accesskit_macos"
+version = "0.26.0"
+authors.workspace = true
+license.workspace = true
+description = "AccessKit UI accessibility infrastructure: macOS adapter"
+categories.workspace = true
+keywords = ["gui", "ui", "accessibility"]
+repository.workspace = true
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+
+[package.metadata.docs.rs]
+default-target = "x86_64-apple-darwin"
+
+[dependencies]
+accesskit = { version = "0.24.0", path = "../../common" }
+accesskit_consumer = { version = "0.35.0", path = "../../consumer" }
+hashbrown.workspace = true
+objc2 = "0.5.1"
+objc2-foundation = { version = "0.2.0", features = [
+    "NSArray",
+    "NSDictionary",
+    "NSValue",
+    "NSThread",
+] }
+objc2-app-kit = { version = "0.2.0", features = [
+    "NSAccessibility",
+    "NSAccessibilityConstants",
+    "NSAccessibilityElement",
+    "NSAccessibilityProtocols",
+    "NSColor",
+    "NSResponder",
+    "NSText",
+    "NSView",
+    "NSWindow",
+] }

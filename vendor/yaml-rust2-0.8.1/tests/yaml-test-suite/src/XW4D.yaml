@@ -1,0 +1,59 @@
+---
+- name: Various Trailing Comments
+  from: '@perlpunk'
+  tags: comment explicit-key folded 1.3-err
+  yaml: |
+    a: "double
+      quotes" # lala
+    b: plain
+     value  # lala
+    c  : #lala
+      d
+    ? # lala
+     - seq1
+    : # lala
+     - #lala
+      seq2
+    e:
+     &node # lala
+     - x: y
+    block: > # lala
+      abcde
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :a
+       =VAL "double quotes
+       =VAL :b
+       =VAL :plain value
+       =VAL :c
+       =VAL :d
+       +SEQ
+        =VAL :seq1
+       -SEQ
+       +SEQ
+        =VAL :seq2
+       -SEQ
+       =VAL :e
+       +SEQ &node
+        +MAP
+         =VAL :x
+         =VAL :y
+        -MAP
+       -SEQ
+       =VAL :block
+       =VAL >abcde\n
+      -MAP
+     -DOC
+    -STR
+  dump: |
+    a: "double quotes"
+    b: plain value
+    c: d
+    ? - seq1
+    : - seq2
+    e: &node
+    - x: y
+    block: >
+      abcde

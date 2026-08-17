@@ -1,0 +1,123 @@
+# Override values For Indic_Positional_Category
+# Not derivable
+# Initial version based on Unicode 7.0 by Andrew Glass 2014-03-17
+# Updated for Unicode 10.0 by Andrew Glass 2017-07-25
+# Ammended for Unicode 10.0 by Andrew Glass 2018-09-21
+# Updated for L2/19-083    by Andrew Glass 2019-05-06
+# Updated for Unicode 12.1 by Andrew Glass 2019-05-30
+# Updated for Unicode 13.0 by Andrew Glass 2020-07-28
+# Updated for Unicode 14.0 by Andrew Glass 2021-09-28
+# Updated for Unicode 15.0 by Andrew Glass 2022-09-16
+# Updated for Unicode 15.1 by Andrew Glass 2023-09-14
+# Updated for Unicode 16.0 by Andrew Glass 2024-09-11
+
+# ================================================
+# ================================================
+# OVERRIDES TO ASSIGNED VALUES
+# ================================================
+# ================================================
+
+# Indic_Positional_Category=Bottom
+0F72          ; Bottom  # Mn      TIBETAN VOWEL SIGN I # Not really below, but need to override to fit into Universal model
+0F7A..0F7D    ; Bottom  # Mn  [4] TIBETAN VOWEL SIGN E..TIBETAN VOWEL SIGN OO # Not really below, but need to override to fit into Universal model
+0F80          ; Bottom  # Mn      TIBETAN VOWEL SIGN REVERSED I # Not really below, but need to override to fit into Universal model
+A9BF          ; Bottom  # Mc      JAVANESE CONSONANT SIGN CAKRA
+10A38         ; Bottom  # Mn      KHAROSHTHI SIGN BAR ABOVE # Overriden, ccc controls order USE issue #26
+11127..11129  ; Bottom  # Mn  [3] CHAKMA VOWEL SIGN A..CHAKMA VOWEL SIGN II
+1112D         ; Bottom  # Mn      CHAKMA VOWEL SIGN AI
+11130         ; Bottom  # Mn      CHAKMA VOWEL SIGN OI
+1BF2..1BF3    ; Bottom  # Mc  [2] BATAK PANGOLAT..BATAK PANONGONAN # see USE issue #20
+
+# ================================================
+
+# Indic_Positional_Category=Left
+1C29          ; Left    # Mc      LEPCHA VOWEL SIGN OO  # Reduced from Top_And_Left
+
+# ================================================
+
+
+# Indic_Positional_Category=Right
+A9BE          ; Right   # Mc      JAVANESE CONSONANT SIGN PENGKAL # Reduced from Bottom_And_Right
+10A0C         ; Right   # Mn      KHAROSHTHI VOWEL LENGTH MARK    # Follows vowels and precedes vowel modifiers
+11942         ; Right   # Mc      DIVES AKURU MEDIAL RA           # Reduced from Bottom_And_Right
+
+# ================================================
+
+# Indic_Positional_Category=Top
+0F74          ; Top     # Mn       TIBETAN VOWEL SIGN U # Not really above, but need to override to fit into Universal model
+1A18          ; Top     # Mn       BUGINESE VOWEL SIGN U # Workaround to allow below to occur before above by treating all below marks as above
+AA35          ; Top     # Mn       CHAM CONSONANT SIGN
+1112A..1112B  ; Top     # Mn   [2] CHAKMA VOWEL SIGN U..CHAKMA VOWEL SIGN UU  # see USE issue #25
+11131..11132  ; Top     # Mn   [2] CHAKMA O MARK..CHAKMA AU MARK  # see USE issue #25
+1E4EC..1E4EF  ; Top     # Mn   [4] NAG MUNDARI SIGN MUHOR..NAG MUNDARI SIGN SUTUH # 1E4EE is below, but made to for ccc 
+
+# ================================================
+
+# Indic_Positional_Category=Top_And_Right
+0E33          ; Top_And_Right # Lo       THAI CHARACTER SARA AM # IPC has Right, which seems to be a mistake.
+0EB3          ; Top_And_Right # Lo       LAO VOWEL SIGN AM # IPC has Right, which seems to be a mistake.
+
+# ================================================
+# ================================================
+# VALUES NOT ASSIGNED IN Indic_Positional_Category
+# ================================================
+# ================================================
+
+# Indic_Positional_Category=Bottom
+0859..085B    ; Bottom # Mn   [3] MANDAIC AFFRICATION MARK..MANDAIC GEMINATION MARK
+18A9          ; Bottom # Mn       MONGOLIAN LETTER ALI GALI DAGALGA
+10AE5         ; Bottom # Mn       MANICHAEAN ABBREVIATION MARK ABOVE  # Overriden, ccc controls order
+10AE6         ; Bottom # Mn       MANICHAEAN ABBREVIATION MARK BELOW
+10F46..10F47  ; Bottom # Mn   [2] SOGDIAN COMBINING DOT BELOW..SOGDIAN COMBINING TWO DOTS BELOW
+10F48..10F4A  ; Bottom # Mn   [3] SOGDIAN COMBINING DOT ABOVE..SOGDIAN COMBINING CURVE ABOVE     # Overriden, ccc controls order
+10F4B         ; Bottom # Mn       SOGDIAN COMBINING CURVE BELOW
+10F4C         ; Bottom # Mn       SOGDIAN COMBINING HOOK ABOVE        # Overriden, ccc controls order
+10F4D..10F50  ; Bottom # Mn   [4] SOGDIAN COMBINING HOOK BELOW..SOGDIAN COMBINING STROKE BELOW
+10F82         ; Bottom # Mn       OLD UYGHUR COMBINING DOT ABOVE      # Overriden, ccc controls order
+10F83         ; Bottom # Mn       OLD UYGHUR COMBINING DOT BELOW
+10F84         ; Bottom # Mn       OLD UYGHUR COMBINING TWO DOTS ABOVE # Overriden, ccc controls order
+10F85         ; Bottom # Mn       OLD UYGHUR COMBINING TWO DOTS BELOW
+113CF         ; Bottom # Mc       TULU-TIGALARI SIGN LOOPED VIRAMA    # Issue #17
+16F4F         ; Bottom # Mn       MIAO SIGN CONSONANT MODIFIER BAR
+16F51..16F87  ; Bottom # Mc  [55] MIAO SIGN ASPIRATION..MIAO VOWEL SIGN UI
+16F8F..16F92  ; Bottom # Mn   [4] MIAO TONE RIGHT..MIAO TONE BELOW
+1E5EE         ; Bottom # Mn       OL ONAL SIGN MU # Not really below, but need to override to fit into Universal model
+1E5EF         ; Bottom # Mn       OL ONAL SIGN IKIR
+
+# ================================================
+
+# Indic_Positional_Category=Left
+103C          ; Left   # Mc       MYANMAR CONSONANT SIGN MEDIAL RA
+
+# ================================================
+
+# Indic_Positional_Category=Top
+07EB..07F3    ; Top   # Mn   [9] NKO COMBINING SHORT HIGH TONE..NKO COMBINING DOUBLE DOT ABOVE
+07FD          ; Top   # Mn       NKO DANTAYALAN # Not really top, but assigned here to allow ccc to control mark order
+1885..1886    ; Top   # Mn   [2] MONGOLIAN LETTER ALI GALI BALUDA..MONGOLIAN LETTER ALI GALI THREE BALUDA
+1B6C          ; Top   # Mn       BALINESE MUSICAL SYMBOL COMBINING ENDEP 
+1CF8..1CF9    ; Top   # Mn   [2] VEDIC TONE RING ABOVE..VEDIC TONE DOUBLE RING ABOVE
+10D24..10D27  ; Top   # Mn   [4] HANIFI ROHINGYA SIGN HARBAHAY..HANIFI ROHINGYA SIGN TASSI
+10EAB..10EAC  ; Top   # Mn   [2] YEZIDI COMBINING HAMZA MARK..YEZIDI COMBINING MADDA MARK
+10D69..10D6D  ; Top   # Mn   [5] GARAY VOWEL SIGN E..GARAY CONSONANT NASALIZATION MARK
+16B30..16B36  ; Top   # Mn   [7] PAHAWH HMONG MARK CIM TUB..PAHAWH HMONG MARK CIM TAUM
+1E130..1E136  ; Top   # Mn   [7] NYIAKENG PUACHUE HMONG TONE-B..NYIAKENG PUACHUE HMONG TONE-D
+1E2AE         ; Top   # Mn       TOTO SIGN RISING TONE
+1E2EC..1E2EF  ; Top   # Mn   [4] WANCHO TONE TUP..WANCHO TONE KOINI
+1E944..1E94A  ; Top   # Mn   [7] ADLAM ALIF LENGTHENER..ADLAM NUKTA
+
+# ================================================
+
+# Indic_Positional_Category=Overstruck
+1BC9D..1BC9E  ; Overstruck # Mn  [2] DUPLOYAN THICK LETTER SELECTOR..DUPLOYAN DOUBLE MARK
+
+# ================================================
+# ================================================
+# Deliberately suppressed
+# ================================================
+# ================================================
+
+# Indic_Positional_Category=NA
+180B..180D   ; NA        # Mn  [3] MONGOLIAN FREE VARIATION SELECTOR ONE..MONGOLIAN FREE VARIATION SELECTOR THREE
+180F         ; NA        # Mn      MONGOLIAN FREE VARIATION SELECTOR FOUR
+2D7F         ; NA        # Mn      TIFINAGH CONSONANT JOINER

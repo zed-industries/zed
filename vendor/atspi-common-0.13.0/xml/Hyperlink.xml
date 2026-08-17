@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<node>
+  <interface name="org.a11y.atspi.Hyperlink">
+
+    <property name="NAnchors" type="n" access="read"/>
+
+    <property name="StartIndex" type="i" access="read"/>
+
+    <property name="EndIndex" type="i" access="read"/>
+
+    <method name="GetObject">
+      <arg direction="in" name="i" type="i"/>
+      <arg direction="out" type="(so)"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QSpiObjectReference"/>
+    </method>
+
+    <method name="GetURI">
+      <arg direction="in" name="i" type="i"/>
+      <arg direction="out" type="s"/>
+    </method>
+
+    <method name="IsValid">
+      <arg direction="out" type="b"/>
+    </method>
+
+  </interface>
+</node>

@@ -1,0 +1,33 @@
+---
+source: brush-parser/src/tokenizer.rs
+expression: "test_tokenizer(r\"echo $(cat <<HERE\nTEXT\nHERE\n)\")?"
+---
+TokenizerResult(
+  input: "echo $(cat <<HERE\nTEXT\nHERE\n)",
+  result: [
+    W("echo", Loc(
+      start: Pos(
+        idx: 0,
+        line: 1,
+        col: 1,
+      ),
+      end: Pos(
+        idx: 4,
+        line: 1,
+        col: 5,
+      ),
+    )),
+    W("$(cat <<HERE\nTEXT\nHERE\n)", Loc(
+      start: Pos(
+        idx: 5,
+        line: 1,
+        col: 6,
+      ),
+      end: Pos(
+        idx: 29,
+        line: 4,
+        col: 2,
+      ),
+    )),
+  ],
+)

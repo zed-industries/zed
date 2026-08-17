@@ -1,0 +1,79 @@
+---
+source: proptest-macro/src/property_test/codegen/mod.rs
+expression: formatted
+---
+#[test]
+fn foo() {
+    #[derive(Debug)]
+    struct FooArgs {
+        a: i32,
+        arg1: (i32, i32),
+        d: i32,
+        arg3: Wrapper<i32>,
+        arg4: [i32; 2],
+        h: i32,
+        arg6: Point,
+    }
+    impl ::proptest::prelude::Arbitrary for FooArgs {
+        type Parameters = ();
+        type Strategy = ::proptest::strategy::Map<
+            ::proptest::arbitrary::StrategyFor<
+                (i32, (i32, i32), i32, Wrapper<i32>, [i32; 2], i32, Point),
+            >,
+            fn((i32, (i32, i32), i32, Wrapper<i32>, [i32; 2], i32, Point)) -> Self,
+        >;
+        fn arbitrary_with((): Self::Parameters) -> Self::Strategy {
+            use ::proptest::strategy::Strategy;
+            ::proptest::prelude::any::<
+                (i32, (i32, i32), i32, Wrapper<i32>, [i32; 2], i32, Point),
+            >()
+                .prop_map(|(a, arg1, d, arg3, arg4, h, arg6)| Self {
+                    a,
+                    arg1,
+                    d,
+                    arg3,
+                    arg4,
+                    h,
+                    arg6,
+                })
+        }
+    }
+    let config = ::proptest::test_runner::Config {
+        test_name: Some(concat!(module_path!(), "::", stringify!(foo))),
+        source_file: Some(file!()),
+        ..::proptest::test_runner::Config::default()
+    };
+    let mut runner = ::proptest::test_runner::TestRunner::new(config);
+    let result = runner
+        .run(
+            &::proptest::strategy::Strategy::prop_map(
+                ::proptest::prelude::any::<FooArgs>(),
+                |values| {
+                    ::proptest::sugar::NamedArguments(stringify!(FooArgs), values)
+                },
+            ),
+            |
+                ::proptest::sugar::NamedArguments(
+                    _,
+                    FooArgs {
+                        a,
+                        arg1: (b, c),
+                        d,
+                        arg3: Wrapper(e),
+                        arg4: [f,
+                        g,
+                        ],
+                        h,
+                        arg6: Point { x, y },
+                    },
+                )|
+            {
+                let result = {};
+                Ok(result)
+            },
+        );
+    match result {
+        Ok(()) => {}
+        Err(e) => panic!("{}", e),
+    }
+}

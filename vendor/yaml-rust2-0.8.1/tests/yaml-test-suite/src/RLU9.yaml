@@ -1,0 +1,38 @@
+---
+- name: Sequence Indent
+  from: https://github.com/ingydotnet/yaml-pegex-pm/blob/master/test/indent.tml
+  tags: sequence indent
+  yaml: |
+    foo:
+    - 42
+    bar:
+      - 44
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :foo
+       +SEQ
+        =VAL :42
+       -SEQ
+       =VAL :bar
+       +SEQ
+        =VAL :44
+       -SEQ
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "foo": [
+        42
+      ],
+      "bar": [
+        44
+      ]
+    }
+  dump: |
+    foo:
+    - 42
+    bar:
+    - 44

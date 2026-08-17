@@ -1,0 +1,8 @@
+package root:component;
+
+world root {
+  import a:b/name;
+  use a:b/name.{name};
+
+  export a:b/name;
+}

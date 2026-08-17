@@ -1,0 +1,122 @@
+r#"                  The Catharon Open Source LICENSE
+                    ----------------------------
+
+                            2000-Jul-04
+
+          Copyright (C) 2000 by Catharon Productions, Inc.
+
+
+
+Introduction
+============
+
+  This  license  applies to  source  files  distributed by  Catharon
+  Productions,  Inc.  in  several  archive packages.   This  license
+  applies  to all files  found in  such packages  which do  not fall
+  under their own explicit license.
+
+  This  license   was  inspired  by  the  BSD,   Artistic,  and  IJG
+  (Independent JPEG  Group) licenses, which  all encourage inclusion
+  and  use of  free  software in  commercial  and freeware  products
+  alike.  As a consequence, its main points are that:
+
+    o We  don't promise that  this software works.  However,  we are
+      interested in any kind of bug reports. (`as is' distribution)
+
+    o You can  use this software for whatever you  want, in parts or
+      full form, without having to pay us. (`royalty-free' usage)
+
+    o You may not pretend that  you wrote this software.  If you use
+      it, or  only parts of it,  in a program,  you must acknowledge
+      somewhere  in  your  documentation  that  you  have  used  the
+      Catharon Code. (`credits')
+
+  We  specifically  permit  and  encourage  the  inclusion  of  this
+  software, with  or without modifications,  in commercial products.
+  We disclaim  all warranties  covering the packages  distributed by
+  Catharon  Productions, Inc.  and  assume no  liability related  to
+  their use.
+
+
+Legal Terms
+===========
+
+0. Definitions
+--------------
+
+  Throughout this license,  the terms `Catharon Package', `package',
+  and  `Catharon  Code'  refer   to  the  set  of  files  originally
+  distributed by Catharon Productions, Inc.
+
+  `You' refers to  the licensee, or person using  the project, where
+  `using' is a generic term including compiling the project's source
+  code as  well as linking it  to form a  `program' or `executable'.
+  This  program  is referred  to  as `a  program  using  one of  the
+  Catharon Packages'.
+
+  This  license applies  to all  files distributed  in  the original
+  Catharon  Package(s),  including  all  source code,  binaries  and
+  documentation,  unless  otherwise  stated   in  the  file  in  its
+  original, unmodified form as  distributed in the original archive.
+  If you are  unsure whether or not a particular  file is covered by
+  this license, you must contact us to verify this.
+
+  The  Catharon   Packages  are  copyright  (C)   2000  by  Catharon
+  Productions, Inc.  All rights reserved except as specified below.
+
+1. No Warranty
+--------------
+
+  THE CATHARON PACKAGES ARE PROVIDED `AS IS' WITHOUT WARRANTY OF ANY
+  KIND, EITHER  EXPRESS OR IMPLIED,  INCLUDING, BUT NOT  LIMITED TO,
+  WARRANTIES  OF  MERCHANTABILITY   AND  FITNESS  FOR  A  PARTICULAR
+  PURPOSE.  IN NO EVENT WILL ANY OF THE AUTHORS OR COPYRIGHT HOLDERS
+  BE LIABLE FOR ANY DAMAGES CAUSED BY THE USE OF OR THE INABILITY TO
+  USE THE CATHARON PACKAGE.
+
+2. Redistribution
+-----------------
+
+  This  license  grants  a  worldwide, royalty-free,  perpetual  and
+  irrevocable right  and license to use,  execute, perform, compile,
+  display,  copy,   create  derivative  works   of,  distribute  and
+  sublicense the  Catharon Packages (in both source  and object code
+  forms)  and  derivative works  thereof  for  any  purpose; and  to
+  authorize others  to exercise  some or all  of the  rights granted
+  herein, subject to the following conditions:
+
+    o Redistribution  of source code  must retain this  license file
+      (`license.txt') unaltered; any additions, deletions or changes
+      to   the  original   files  must   be  clearly   indicated  in
+      accompanying  documentation.   The  copyright notices  of  the
+      unaltered, original  files must be preserved in  all copies of
+      source files.
+
+    o Redistribution  in binary form must provide  a disclaimer that
+      states  that the  software is  based in  part on  the  work of
+      Catharon Productions, Inc. in the distribution documentation.
+
+  These conditions  apply to any  software derived from or  based on
+  the Catharon Packages, not just  the unmodified files.  If you use
+  our work, you  must acknowledge us.  However, no  fee need be paid
+  to us.
+
+3. Advertising
+--------------
+
+  Neither Catharon Productions, Inc.  and contributors nor you shall
+  use  the  name  of  the  other  for  commercial,  advertising,  or
+  promotional purposes without specific prior written permission.
+
+  We suggest, but do not  require, that you use the following phrase
+  to refer to this software in your documentation: 'this software is
+  based in part on the Catharon Typography Project'.
+
+  As  you have  not signed  this license,  you are  not  required to
+  accept  it.  However,  as  the Catharon  Packages are  copyrighted
+  material, only  this license, or  another one contracted  with the
+  authors, grants you  the right to use, distribute,  and modify it.
+  Therefore,  by  using,  distributing,  or modifying  the  Catharon
+  Packages,  you indicate  that you  understand and  accept  all the
+  terms of this license.
+"#

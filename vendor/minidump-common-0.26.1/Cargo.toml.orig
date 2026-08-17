@@ -1,0 +1,23 @@
+[package]
+name = "minidump-common"
+description = "Some common types for working with minidump files."
+authors = ["Ted Mielczarek <ted@mielczarek.org>"]
+readme = "README.md"
+edition = "2018"
+version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[badges]
+travis-ci = { repository = "rust-minidump/rust-minidump" }
+
+[dependencies]
+arbitrary = { version = "1", optional = true, features = ["derive"] }
+bitflags = "2"
+debugid = "0.8.0"
+num-derive = "0.4"
+num-traits = "0.2"
+range-map = "0.2"
+scroll = { version = "0.12.0", features = ["derive"] }
+smart-default = "0.7.0"

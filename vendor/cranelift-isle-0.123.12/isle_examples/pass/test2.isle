@@ -1,0 +1,23 @@
+(type A (enum
+  (A1 (x B) (y B))))
+(type B (enum
+  (B1 (x u32))
+  (B2 (x u32))))
+
+(decl A2B (A) B)
+
+(rule 1
+  (A2B (A.A1 _ (B.B1 x)))
+  (B.B1 x))
+
+(rule 0
+  (A2B (A.A1 (B.B1 x) _))
+  (B.B1 x))
+
+(rule 0
+  (A2B (A.A1 (B.B2 x) _))
+  (B.B1 x))
+
+(rule -1
+  (A2B (A.A1 _ _))
+  (B.B1 42))

@@ -1,0 +1,19 @@
+[package]
+name = "yazi"
+version = "0.2.1"
+authors = ["Chad Brokaw <cbrokaw@gmail.com>"]
+edition = "2021"
+description = "DEFLATE/zlib compression and decompression."
+license = "Apache-2.0 OR MIT"
+keywords = ["deflate", "zlib", "compression", "decompression"]
+categories = ["compression"]
+repository = "https://github.com/dfrg/yazi"
+homepage = "https://github.com/dfrg/yazi"
+readme = "README.md"
+
+[features]
+default = ["std"]
+std = []
+
+[target.'cfg(target_family = "wasm")'.dev-dependencies]
+wasm-bindgen-test = "0.3.37"

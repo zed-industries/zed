@@ -1,0 +1,3 @@
+[workspace]
+release_always = false
+publish_no_verify = true

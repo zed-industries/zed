@@ -1,0 +1,14 @@
+(type A extern (enum (B (x u32) (y u32))))
+
+(decl get_a (A) u32)
+(extern extractor get_a get_a)
+
+(decl pure partial u32_pure (u32) u32)
+(extern constructor u32_pure u32_pure)
+
+(decl entry (u32) u32)
+(rule (entry x @ (get_a a1))
+      (if-let (get_a a2) x)
+      (if-let (A.B p q) a1)
+      (if-let r (u32_pure p))
+      r)

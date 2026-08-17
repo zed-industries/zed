@@ -1,0 +1,14 @@
+package foo:dep2;
+
+interface types {
+  use foo:nest/types.{t2};
+  record a {
+    foo: t2
+  }
+}
+
+package foo:nest {
+  interface types {
+    type t2 = string;
+  }
+}

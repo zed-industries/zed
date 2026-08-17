@@ -1,0 +1,20 @@
+package foo:foo;
+
+interface name1 {
+  record name {
+    f: u8,
+  }
+}
+
+interface name2 {
+  use name1.{name};
+}
+
+world module {
+  import name1;
+  import name2;
+  export name: interface {
+    use name1.{name};
+    use name2.{name as name1};
+  }
+}

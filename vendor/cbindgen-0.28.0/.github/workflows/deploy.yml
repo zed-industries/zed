@@ -1,0 +1,56 @@
+name: deploy
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+
+  linux-binaries:
+    permissions:
+      # Grant the GITHUB_TOKEN additional permissions necessary for creating a release.
+      # We only run this action for tags, so any code has already been reviewed by
+      # someone with permissions to create a tag.
+      contents: write
+
+    runs-on: ubuntu-20.04
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install stable
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: semver
+      run: |
+        cargo +stable install cargo-semver-checks --locked
+        cargo +stable semver-checks check-release
+
+    - name: Build cbindgen
+      run: |
+        cargo +stable build --release
+
+    - name: Strip cbindgen
+      run: |
+        strip target/release/cbindgen
+
+    - name: Handle release data and files
+      id: tagName
+      run: |
+        VERSION=$(cargo pkgid | cut -d# -f2 | cut -d: -f2)
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+        # Steps to extract the last release notes from CHANGES:
+        #   1. Remove the first three lines
+        #   2. Stop at the next heading level
+        #   3. Remove the last line
+        #   4. Deindent the bullet points to avoid a markdown code block
+        tail -n +3 CHANGES | sed '/^##/q' |
+        sed '$ d' | awk '{$1=$1};1' > CHANGES.txt
+
+    - name: Create a release
+      run: |
+        TAG=${{ steps.tagName.outputs.version }}
+        gh release create ${TAG} --title "${TAG}" --notes-file "CHANGES.txt" --draft 'target/release/cbindgen#cbindgen-ubuntu20.04'
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

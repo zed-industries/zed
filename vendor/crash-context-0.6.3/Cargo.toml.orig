@@ -1,0 +1,28 @@
+[package]
+name = "crash-context"
+version = "0.6.3"
+description = "Provides portable types containing target specific contextual information at the time of a crash"
+repository = "https://github.com/EmbarkStudios/crash-handling"
+authors = [
+    "Embark <opensource@embark-studios.com>",
+    "Jake Shadle <jake.shadle@embark-studios.com>",
+]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+documentation = "https://docs.rs/crash-context"
+homepage = "https://github.com/EmbarkStudios/crash-handling/tree/main/crash-context"
+categories = ["external-ffi-bindings"]
+keywords = ["crash", "libc", "getcontext"]
+rust-version = "1.62.0" # We use `global_asm!`
+
+[dependencies]
+# Nicer cfg handling
+cfg-if = "1.0"
+
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# provides bindings to mach specifics
+mach2 = "0.4"

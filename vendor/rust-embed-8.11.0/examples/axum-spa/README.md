@@ -1,0 +1,1 @@
+A small example for hosting single page application (SPA) files with [axum](https://github.com/tokio-rs/axum) and [rust-embed](https://github.com/pyrossh/rust-embed).

@@ -1,0 +1,5 @@
+error: extern type with generic type parameter is not supported yet
+ --> tests/ui/extern_type_generic.rs:4:22
+  |
+4 |         type Generic<T>;
+  |                      ^

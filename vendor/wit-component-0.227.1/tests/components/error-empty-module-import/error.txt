@@ -1,0 +1,1 @@
+failed to decode world from module: module was not valid: failed to resolve import `$root::foo`: no top-level imported function `foo` specified

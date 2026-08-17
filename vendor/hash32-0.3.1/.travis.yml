@@ -1,0 +1,33 @@
+language: rust
+
+matrix:
+  include:
+    - env: TARGET=x86_64-unknown-linux-gnu
+    - env: TARGET=x86_64-unknown-linux-gnu
+      rust: nightly
+    - env: TARGET=thumbv7m-none-eabi
+      rust: nightly
+
+before_install: set -e
+
+install:
+  - bash ci/install.sh
+
+script:
+  - bash ci/script.sh
+
+after_script: set +e
+
+cache: cargo
+
+before_cache:
+  - chmod -R a+r $HOME/.cargo;
+
+branches:
+  only:
+    - staging
+    - trying
+
+notifications:
+  email:
+    on_success: never

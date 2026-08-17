@@ -1,0 +1,29 @@
+[package]
+name = "zbus-lockstep"
+authors = [
+    "Luuk van der Duim <luukvanderduim@gmail.com>",
+    "Tait Hoyem<tait@tait.tech>",
+]
+description = "Keep types in lockstep with DBus XML definitions"
+version = "0.5.2"
+edition = "2021"
+keywords = ["type-safety", "zbus", "DBus", "IPC"]
+documentation = "https://docs.rs/zbus-lockstep"
+repository = "https://github.com/luukvanderduim/zbus-lockstep"
+readme = "README.md"
+license = "MIT"
+include = ["src/**/*", "LICENSE-MIT", "README.md"]
+publish = true
+
+[badges.maintenance]
+status = "actively-developed"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+zbus_xml = { version = "5.0.2" }
+zvariant = { version = "5.1" }
+
+[dev-dependencies]
+tempfile = "3"
+version-sync = "0.9"

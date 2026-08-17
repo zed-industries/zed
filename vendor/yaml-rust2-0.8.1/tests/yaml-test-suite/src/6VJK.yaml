@@ -1,0 +1,29 @@
+---
+- name: Spec Example 2.15. Folded newlines are preserved for "more indented" and blank lines
+  from: http://www.yaml.org/spec/1.2/spec.html#id2761056
+  tags: spec folded scalar 1.3-err
+  yaml: |
+    >
+     Sammy Sosa completed another
+     fine season with great stats.
+
+       63 Home Runs
+       0.288 Batting Average
+
+     What a year!
+  tree: |
+    +STR
+     +DOC
+      =VAL >Sammy Sosa completed another fine season with great stats.\n\n  63 Home Runs\n  0.288 Batting Average\n\nWhat a year!\n
+     -DOC
+    -STR
+  json: |
+    "Sammy Sosa completed another fine season with great stats.\n\n  63 Home Runs\n  0.288 Batting Average\n\nWhat a year!\n"
+  dump: |
+    >
+      Sammy Sosa completed another fine season with great stats.
+
+        63 Home Runs
+        0.288 Batting Average
+
+      What a year!

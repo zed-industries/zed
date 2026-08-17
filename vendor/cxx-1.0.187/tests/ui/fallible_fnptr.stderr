@@ -1,0 +1,5 @@
+error: function pointer returning Result is not supported yet
+ --> tests/ui/fallible_fnptr.rs:4:24
+  |
+4 |         fn f(callback: fn() -> Result<()>);
+  |                        ^^^^^^^^^^^^^^^^^^

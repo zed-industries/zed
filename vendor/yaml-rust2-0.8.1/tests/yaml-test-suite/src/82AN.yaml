@@ -1,0 +1,17 @@
+---
+- name: Three dashes and content without space
+  from: '@perlpunk'
+  tags: scalar 1.3-err
+  yaml: |
+    ---word1
+    word2
+  tree: |
+    +STR
+     +DOC
+      =VAL :---word1 word2
+     -DOC
+    -STR
+  json: |
+    "---word1 word2"
+  dump: |
+    '---word1 word2'

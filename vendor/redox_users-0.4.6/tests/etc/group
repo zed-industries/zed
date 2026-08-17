@@ -1,0 +1,4 @@
+root;x;0;root
+user;x;1000;user
+wheel;x;1;user,root
+loip;x;1007;loip

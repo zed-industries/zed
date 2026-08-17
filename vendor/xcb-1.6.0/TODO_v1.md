@@ -1,0 +1,43 @@
+# TODO list for v1.0
+
+ - [x] Implementation of the new API
+    - [x] Xid
+    - [x] Xid unions
+    - [x] Structs
+        - [x] Accessors
+        - [x] Constructor
+    - [x] Switches
+        - [x] Constructors
+    - [x] Expressions
+    - [x] Enums / Masks
+    - [x] Unions
+    - [x] Errors
+    - [x] Requests
+    - [x] Events
+ - [x] Porting examples
+ - [x] Porting XML examples
+ - [x] Documentation
+    - [x] link to reply in request
+ - [x] Finalize switches naming (e.g. x::CreateWindowValueList -> x::Cw)
+ - [x] Report request name in protocol errors
+ - [x] Support of xinput::SendExtensionEvent
+ - [ ] Examples
+    - [x] Port old examples
+    - [x] Create example with XInput (pen tablet?)
+        - [ ] Update with valuator classes
+    - [ ] Create example with Vulkan
+    - [ ] Create example with wgpu
+    - [ ] Create example using an Fd API
+ - Missing API tweaks / fixes:
+    - [x] Cw::EventMask should take an EventMask
+    - [x] fix xkb::GetMapReplyMap::VirtualMods takes ModMask
+    - [x] use altenum in xinput for Device (All, Master or Id (or slave?))
+    - [x] xinput::ListInputDevice has incomplete InputInfo
+    - [x] remove fieldrefs in switches
+    - [x] Debug props should match format
+    - [x] Fix Fd API
+    - [x] Reply impl Send and Sync
+    - [x] Fix the wire_len calculation (32 + 4 * length)
+ - [x] Porting toy-xcb
+ - [x] Porting xkbcommon-rs
+ - [x] Porting x11-clipboard

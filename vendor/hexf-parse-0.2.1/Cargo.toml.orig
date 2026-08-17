@@ -1,0 +1,11 @@
+[package]
+name = "hexf-parse"
+version = "0.2.1"
+authors = ["Kang Seonghoon <public+rust@mearie.org>"]
+
+description = "Parses hexadecimal floats (see also hexf)"
+homepage = "https://github.com/lifthrasiir/hexf"
+documentation = "https://docs.rs/hexf-parse/"
+repository = "https://github.com/lifthrasiir/hexf"
+license = "CC0-1.0"
+edition = "2018"

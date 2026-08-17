@@ -1,0 +1,36 @@
+name: Rust
+
+on: [push, pull_request]
+
+jobs:
+  check_libfuzzer_checkout:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Re-vendor libfuzzer
+      run: ./update-libfuzzer.sh
+    - name: Check that nothing changed
+      run: git diff --exit-code
+
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install nightly Rust
+      run: |
+        rustup toolchain install nightly
+        rustup default nightly
+
+    - name: Check rustfmt
+      run: |
+        rustup component add rustfmt --toolchain stable
+        cargo +stable fmt --all -- --check
+
+    - run: cargo install cargo-fuzz
+
+    - name: Run tests
+      run: ./ci/script.sh

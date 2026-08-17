@@ -1,0 +1,100 @@
+[package]
+name = "tungstenite"
+description = "Lightweight stream-based WebSocket implementation"
+categories = ["web-programming::websocket", "network-programming"]
+keywords = ["websocket", "io", "web"]
+authors = ["Alexey Galakhov", "Daniel Abramov"]
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+homepage = "https://github.com/snapview/tungstenite-rs"
+documentation = "https://docs.rs/tungstenite/0.21.0"
+repository = "https://github.com/snapview/tungstenite-rs"
+version = "0.21.0"
+edition = "2018"
+rust-version = "1.51"
+include = ["benches/**/*", "src/**/*", "examples/**/*", "LICENSE-*", "README.md", "CHANGELOG.md"]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+default = ["handshake"]
+handshake = ["data-encoding", "http", "httparse", "sha1", "url"]
+native-tls = ["native-tls-crate"]
+native-tls-vendored = ["native-tls", "native-tls-crate/vendored"]
+rustls-tls-native-roots = ["__rustls-tls", "rustls-native-certs"]
+rustls-tls-webpki-roots = ["__rustls-tls", "webpki-roots"]
+__rustls-tls = ["rustls", "rustls-pki-types"]
+
+[dependencies]
+data-encoding = { version = "2", optional = true }
+byteorder = "1.3.2"
+bytes = "1.0"
+http = { version = "1.0", optional = true }
+httparse = { version = "1.3.4", optional = true }
+log = "0.4.8"
+rand = "0.8.0"
+sha1 = { version = "0.10", optional = true }
+thiserror = "1.0.23"
+url = { version = "2.1.0", optional = true }
+utf-8 = "0.7.5"
+
+[dependencies.native-tls-crate]
+optional = true
+package = "native-tls"
+version = "0.2.3"
+
+[dependencies.rustls]
+optional = true
+version = "0.22.0"
+
+[dependencies.rustls-pki-types]
+optional = true
+version = "1.0"
+
+[dependencies.rustls-native-certs]
+optional = true
+version = "0.7.0"
+
+[dependencies.webpki-roots]
+optional = true
+version = "0.26"
+
+[dev-dependencies]
+criterion = "0.5.0"
+env_logger = "0.10.0"
+input_buffer = "0.5.0"
+rand = "0.8.4"
+socket2 = "0.5.5"
+
+[[bench]]
+name = "buffer"
+harness = false
+
+[[bench]]
+name = "write"
+harness = false
+
+[[example]]
+name = "client"
+required-features = ["handshake"]
+
+[[example]]
+name = "server"
+required-features = ["handshake"]
+
+[[example]]
+name = "autobahn-client"
+required-features = ["handshake"]
+
+[[example]]
+name = "autobahn-server"
+required-features = ["handshake"]
+
+[[example]]
+name = "callback-error"
+required-features = ["handshake"]
+
+[[example]]
+name = "srv_accept_unmasked_frames"
+required-features = ["handshake"]

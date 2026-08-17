@@ -1,0 +1,32 @@
+flowchart LR
+  Core[Core Broker]
+  Join[Joiner]
+
+  Core --> S01[S01]
+  Core --> S02[S02]
+  Core --> S03[S03]
+  Core --> S04[S04]
+  Core --> S05[S05]
+  Core --> S06[S06]
+  Core --> S07[S07]
+  Core --> S08[S08]
+  Core --> S09[S09]
+  Core --> S10[S10]
+
+  S01 --> Join
+  S02 --> Join
+  S03 --> Join
+  S04 --> Join
+  S05 --> Join
+  S06 --> Join
+  S07 --> Join
+  S08 --> Join
+  S09 --> Join
+  S10 --> Join
+
+  S01 -.audit.-> S10
+  S02 -.audit.-> S09
+  S03 -.audit.-> S08
+  S04 -.audit.-> S07
+  S05 -.audit.-> S06
+  Join -.signal.-> Core

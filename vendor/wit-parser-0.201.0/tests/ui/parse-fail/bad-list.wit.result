@@ -1,0 +1,5 @@
+expected '>', found keyword `type`
+     --> tests/ui/parse-fail/bad-list.wit:6:3
+      |
+    6 |   type y = u32
+      |   ^

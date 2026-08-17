@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+      - '[0-9]+.[0-9]+'
+
+env:
+  RUST_BACKTRACE: 1
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  test:
+    name: cargo +${{ matrix.rust }} test (${{ matrix.os }})
+    strategy:
+      matrix:
+        include:
+          - rust: stable
+            os: ubuntu-latest
+          - rust: beta
+            os: ubuntu-latest
+          - rust: nightly
+            os: ubuntu-latest
+          - rust: nightly
+            os: macos-latest
+          - rust: nightly
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Rust
+        # --no-self-update is necessary because the windows environment cannot self-update rustup.exe.
+        run: rustup update ${{ matrix.rust }} --no-self-update && rustup default ${{ matrix.rust }}
+      - run: cargo install cargo-hack
+      - run: cargo hack build --feature-powerset --workspace
+      - run: cargo test --workspace
+      - run: cargo doc --workspace --no-deps
+      - run: cargo bench
+        if: startsWith(matrix.rust, 'nightly')
+      - run: cargo test --features nightly
+        if: startsWith(matrix.rust, 'nightly')
+
+  msrv:
+    name: cargo +${{ matrix.rust }} build
+    strategy:
+      matrix:
+        rust:
+          # This is the minimum Rust version supported by futures 0.1.
+          - 1.15.0
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Rust
+        run: rustup update ${{ matrix.rust }} && rustup default ${{ matrix.rust }}
+      - run: cargo build
+      - run: cargo build --no-default-features

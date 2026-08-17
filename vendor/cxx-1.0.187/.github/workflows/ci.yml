@@ -1,0 +1,338 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule: [cron: "40 1 * * *"]
+
+permissions:
+  contents: read
+
+jobs:
+  pre_ci:
+    uses: dtolnay/.github/.github/workflows/pre_ci.yml@master
+
+  test:
+    name: ${{matrix.name || format('Rust {0}', matrix.rust)}}
+    needs: pre_ci
+    if: needs.pre_ci.outputs.continue
+    runs-on: ${{matrix.runs-on || format('{0}-latest', matrix.os)}}
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: [nightly, beta, stable, 1.87.0]
+        os: [ubuntu]
+        cc: [g++]
+        flags: ['']
+        include:
+          - name: Cargo on macOS
+            rust: nightly
+            os: macos
+          - name: Cargo on Windows (msvc)
+            rust: nightly-x86_64-pc-windows-msvc
+            os: windows
+          - name: Clang
+            rust: nightly
+            os: ubuntu
+            cc: clang++
+            flags: -std=c++20
+          - name: Clang (no exceptions)
+            rust: nightly
+            os: ubuntu
+            cc: clang++
+            flags: -std=c++20 -fno-exceptions
+          - name: C++14 on Linux
+            rust: nightly
+            os: ubuntu
+            cc: g++
+            flags: -std=c++14
+          - name: C++14 on macOS
+            rust: nightly
+            os: macos
+            flags: -std=c++14
+          - name: C++14 on Windows
+            rust: nightly-x86_64-pc-windows-msvc
+            os: windows
+            flags: /std:c++14
+          - name: C++17 on Linux
+            rust: nightly
+            os: ubuntu
+            cc: g++
+            flags: -std=c++17
+          - name: C++17 on macOS
+            rust: nightly
+            os: macos
+            flags: -std=c++17
+          - name: C++17 on Windows
+            rust: nightly-x86_64-pc-windows-msvc
+            os: windows
+            flags: /std:c++17
+          - name: C++20 on Linux
+            rust: nightly
+            os: ubuntu
+            cc: g++
+            flags: -std=c++20
+          - name: C++20 on macOS
+            rust: nightly
+            os: macos
+            flags: -std=c++20
+            runs-on: macos-15
+          - name: C++20 on Windows
+            rust: nightly-x86_64-pc-windows-msvc
+            os: windows
+            flags: /std:c++20
+          - name: Pedantic
+            rust: nightly
+            os: ubuntu
+            cc: clang++
+            flags:
+              -Weverything
+              -Wno-c++98-compat
+              -Wno-c++98-compat-pedantic
+              -Wno-c++20-compat
+              -Wno-implicit-int-conversion
+              -Wno-missing-prototypes
+              -Wno-padded
+              -Wno-sign-conversion
+              -Wno-undefined-func-template
+              -Wno-unsafe-buffer-usage
+              -Wno-unused-macros
+    env:
+      CXX: ${{matrix.cc}}
+      CXXFLAGS: ${{matrix.flags}} ${{matrix.os == 'windows' && '/EHsc /WX' || '-Werror -Wall -Wpedantic'}}
+      RUSTFLAGS: --cfg deny_warnings -Dwarnings
+    timeout-minutes: 45
+    steps:
+      - name: Enable symlinks (windows)
+        if: matrix.os == 'windows'
+        run: git config --global core.symlinks true
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{matrix.rust}}
+          components: rust-src
+      - name: Determine test suite subset
+        # Our Windows and macOS jobs are the longest running, so exclude the
+        # relatively slow compiletest from them to speed up end-to-end CI time,
+        # except during cron builds when no human is presumably waiting on the
+        # build. The extra coverage is not particularly valuable and we can
+        # still ensure the test is kept passing on the basis of the scheduled
+        # builds.
+        run: |
+          echo RUSTFLAGS=$RUSTFLAGS >> $GITHUB_ENV
+          echo exclude=--exclude cxx-test-suite >> $GITHUB_OUTPUT
+        env:
+          RUSTFLAGS: ${{env.RUSTFLAGS}} ${{matrix.os != 'ubuntu' && github.event_name != 'schedule' && '--cfg skip_ui_tests' || ''}}
+        id: testsuite
+        shell: bash
+      - name: Ignore macOS linker warning
+        run: echo RUSTFLAGS=${RUSTFLAGS}\ -Alinker_messages >> $GITHUB_ENV
+        if: matrix.os == 'macos'
+      - run: cargo run --manifest-path demo/Cargo.toml
+      - run: cargo test --workspace ${{steps.testsuite.outputs.exclude}}
+        if: contains(matrix.flags, '-fno-exceptions') == false
+      - run: cargo check --no-default-features --features alloc
+        env:
+          RUSTFLAGS: --cfg compile_error_if_std ${{env.RUSTFLAGS}}
+      - run: cargo check --no-default-features
+        env:
+          RUSTFLAGS: --cfg compile_error_if_alloc --cfg cxx_experimental_no_alloc ${{env.RUSTFLAGS}}
+      - uses: actions/upload-artifact@v4
+        if: matrix.os == 'ubuntu' && matrix.rust == 'nightly' && matrix.cc == '' && matrix.flags == '' && always()
+        with:
+          name: Cargo.lock
+          path: Cargo.lock
+        continue-on-error: true
+
+  wasi:
+    name: WebAssembly
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: wasm32-wasip1
+          components: rust-src
+      - uses: dtolnay/install@wasmtime-cli
+      - run: curl https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-27/wasi-sdk-27.0-x86_64-linux.tar.gz --location --silent --show-error --fail --retry 2 --output ${{runner.temp}}/wasi-sdk-27.0-x86_64-linux.tar.gz
+      - run: tar xf ${{runner.temp}}/wasi-sdk-27.0-x86_64-linux.tar.gz -C ${{runner.temp}}
+      - run: cargo build --target=wasm32-wasip1 --manifest-path=demo/Cargo.toml --release
+          --config='target.wasm32-wasip1.linker="${{runner.temp}}/wasi-sdk-27.0-x86_64-linux/bin/lld"'
+          --config='target.wasm32-wasip1.rustflags=["-Clink-args=-L${{runner.temp}}/wasi-sdk-27.0-x86_64-linux/share/wasi-sysroot/lib/wasm32-wasip1", "-Clink-args=-lc++abi"]'
+        env:
+          CXX: ${{runner.temp}}/wasi-sdk-27.0-x86_64-linux/bin/clang++
+          CXXFLAGS: --sysroot=${{runner.temp}}/wasi-sdk-27.0-x86_64-linux/share/wasi-sysroot
+      - run: wasmtime target/wasm32-wasip1/release/demo.wasm
+
+  emscripten:
+    name: Emscripten
+    needs: pre_ci
+    if: needs.pre_ci.outputs.continue
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: wasm32-unknown-emscripten
+          components: rust-src
+      - name: Disable initramfs update
+        run: sudo sed -i 's/^update_initramfs=yes$/update_initramfs=no/' /etc/initramfs-tools/update-initramfs.conf
+      - name: Disable man-db update
+        run: sudo rm -f /var/lib/man-db/auto-update
+      - name: Install emscripten
+        run: sudo apt-get install emscripten
+      - run: cargo build --target=wasm32-unknown-emscripten --manifest-path=demo/Cargo.toml --release -Zbuild-std
+        env:
+          RUSTFLAGS: -Clink-arg=--emrun ${{env.RUSTFLAGS}}
+      - name: Create demo.html for demo.js
+        run: echo '<!DOCTYPE html><script src="demo.js"></script>' > target/wasm32-unknown-emscripten/release/demo.html
+      - name: Install firefox
+        run: sudo snap install firefox
+      - run: emrun target/wasm32-unknown-emscripten/release/demo.html
+          --browser=/snap/firefox/current/usr/lib/firefox/firefox
+          --browser_args=-headless
+          --safe_firefox_profile
+          --log_stdout=${{runner.temp}}/demo.log
+          --timeout=60
+          --kill_exit
+      - run: cat ${{runner.temp}}/demo.log
+      - run: grep --silent blobid ${{runner.temp}}/demo.log
+
+  reindeer:
+    name: Reindeer
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rust-src
+      - uses: dtolnay/install@reindeer
+      - run: reindeer buckify
+        working-directory: third-party
+      - name: Check reindeer-generated BUCK file up to date
+        run: git diff --exit-code
+
+  bazel:
+    name: Bazel on ${{matrix.os == 'ubuntu' && 'Linux' || matrix.os == 'macos' && 'macOS' || matrix.os == 'windows' && 'Windows' || '???'}}
+    runs-on: ${{matrix.os}}-latest
+    if: github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu, macos, windows]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - name: Disable initramfs update
+        run: sudo sed -i 's/^update_initramfs=yes$/update_initramfs=no/' /etc/initramfs-tools/update-initramfs.conf
+        if: matrix.os == 'ubuntu'
+      - name: Disable man-db update
+        run: sudo rm -f /var/lib/man-db/auto-update
+        if: matrix.os == 'ubuntu'
+      - name: Install lld
+        run: sudo apt-get install lld
+        if: matrix.os == 'ubuntu'
+      - name: Set bazelrc for Windows
+        run: echo "startup --output_user_root=D:/bzl" > user.bazelrc
+        if: matrix.os == 'windows'
+      - run: bazel --version
+      - run: bazel run demo --verbose_failures --noshow_progress ${{matrix.os == 'macos' && '--xcode_version_config=tools/bazel:github_actions_xcodes' || ''}}
+      - run: bazel test ... --verbose_failures --noshow_progress ${{matrix.os == 'macos' && '--xcode_version_config=tools/bazel:github_actions_xcodes' || ''}}
+      - name: Check MODULE.bazel.lock up to date
+        run: git diff --exit-code
+      - run: bazel run //third-party:vendor
+        if: matrix.os == 'ubuntu' || matrix.os == 'macos'
+      - name: Check third-party/bazel up to date
+        run: git diff --exit-code
+        if: matrix.os == 'ubuntu' || matrix.os == 'macos'
+
+  minimal:
+    name: Minimal versions
+    needs: pre_ci
+    if: needs.pre_ci.outputs.continue
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo generate-lockfile -Z minimal-versions
+      - run: cargo check --locked --workspace
+
+  doc:
+    name: Documentation
+    needs: pre_ci
+    if: needs.pre_ci.outputs.continue
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      RUSTDOCFLAGS: -Dwarnings
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - uses: dtolnay/install@cargo-docs-rs
+      - run: cargo docs-rs
+      - run: cargo docs-rs -p cxx-build
+      - run: cargo docs-rs -p cxx-gen
+      - run: cargo docs-rs -p cxxbridge-flags
+      - run: cargo docs-rs -p cxxbridge-macro
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    timeout-minutes: 45
+    env:
+      RUSTFLAGS: -Dwarnings
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: clippy, rust-src
+      - run: cargo clippy --workspace --tests --exclude demo -- -Dclippy::all -Dclippy::pedantic
+      - run: cargo clippy --manifest-path demo/Cargo.toml -- -Dclippy::all
+
+  clang-tidy:
+    name: Clang Tidy
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - name: Disable initramfs update
+        run: sudo sed -i 's/^update_initramfs=yes$/update_initramfs=no/' /etc/initramfs-tools/update-initramfs.conf
+      - name: Disable man-db update
+        run: sudo rm -f /var/lib/man-db/auto-update
+      - name: Install clang-tidy
+        run: sudo apt-get update && sudo apt-get install clang-tidy-20
+      - name: Run clang-tidy
+        run: clang-tidy-20 src/cxx.cc --warnings-as-errors=*
+
+  eslint:
+    name: ESLint
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - run: npm install
+        working-directory: book
+      - run: npx eslint
+        working-directory: book
+
+  outdated:
+    name: Outdated
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/install@cargo-outdated
+      - run: cargo outdated --workspace --exit-code 1

@@ -1,0 +1,27 @@
+[package]
+name = "rand_core"
+version = "0.4.2"
+authors = ["The Rand Project Developers", "The Rust Project Developers"]
+license = "MIT/Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/rust-random/rand"
+documentation = "https://rust-random.github.io/rand/rand_core/"
+homepage = "https://crates.io/crates/rand_core"
+description = """
+Core random number generator traits and tools for implementation.
+"""
+keywords = ["random", "rng"]
+categories = ["algorithms", "no-std"]
+
+[badges]
+travis-ci = { repository = "rust-random/rand" }
+appveyor = { repository = "rust-random/rand" }
+
+[features]
+std = ["alloc"]    # use std library; should be default but for above bug
+alloc = []  # enables Vec and Box support without std
+serde1 = ["serde", "serde_derive"] # enables serde for BlockRng wrapper
+
+[dependencies]
+serde = { version = "1", optional = true }
+serde_derive = { version = "^1.0.38", optional = true }

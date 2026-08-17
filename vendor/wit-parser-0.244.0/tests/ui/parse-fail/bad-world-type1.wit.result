@@ -1,0 +1,5 @@
+import `a` conflicts with prior type of same name
+     --> tests/ui/parse-fail/bad-world-type1.wit:4:10
+      |
+    4 |   import a: func();
+      |          ^

@@ -1,0 +1,9 @@
+GET
+/
+
+host:example.amazonaws.com
+my-header1:value2,value2,value1
+x-amz-date:20150830T123600Z
+
+host;my-header1;x-amz-date
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855

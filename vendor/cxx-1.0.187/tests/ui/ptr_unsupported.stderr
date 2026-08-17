@@ -1,0 +1,17 @@
+error: C++ does not allow pointer to reference as a type
+ --> tests/ui/ptr_unsupported.rs:6:38
+  |
+6 |         fn get_ptr_to_reference() -> *mut &C;
+  |                                      ^^^^^^^
+
+error: unsupported unique_ptr target type
+ --> tests/ui/ptr_unsupported.rs:7:38
+  |
+7 |         fn get_uniqueptr_to_ptr() -> UniquePtr<*mut C>;
+  |                                      ^^^^^^^^^^^^^^^^^
+
+error: unsupported vector element type
+ --> tests/ui/ptr_unsupported.rs:8:45
+  |
+8 |         fn get_vector_of_ptr() -> UniquePtr<CxxVector<*mut C>>;
+  |                                             ^^^^^^^^^^^^^^^^^

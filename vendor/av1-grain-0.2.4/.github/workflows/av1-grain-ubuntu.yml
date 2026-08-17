@@ -1,0 +1,185 @@
+name: av1-grain-ubuntu
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Rust stable
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run rustfmt
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: -- --check --verbose
+
+      - name: Run cargo clippy
+        uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          args: --all-targets --tests --benches -- -D warnings
+
+      - name: Build
+        run: cargo build --verbose --tests --benches
+
+      - name: Run tests
+        run: cargo test --verbose
+
+      - name: Install cargo-msrv
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-msrv
+
+      - name: Validate minimum Rust version
+        run: |
+          cargo msrv verify
+
+      - name: Generate docs
+        run: cargo doc --no-deps
+
+  code-coverage:
+    needs: [build-test]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Generate code coverage
+        run: cargo llvm-cov --lcov --output-path lcov.log
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: lcov.log
+          fail_ci_if_error: true
+
+  memory-and-threads-dynamic-analysis:
+    needs: [build-test]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Rust stable
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Install valgrind
+        run: |
+          sudo apt-get install valgrind
+
+      # FIXME Use binaries
+      - name: Install cargo-valgrind
+        run: |
+          cargo install cargo-valgrind
+
+      # Usage of the `help` command as base command, please replace it
+      # with the effective command that valgrind has to analyze
+      - name: Run cargo-valgrind
+        run: |
+          cargo valgrind run -- --help
+
+  undefined-behaviour-fuzzy-dynamic-analysis:
+    needs: [build-test]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Cache produced data
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-ci-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Install Rust nightly and miri
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          components: miri
+          override: true
+
+      # FIXME Use binaries
+      - name: Install cargo-fuzz
+        run: |
+          cargo install cargo-fuzz --force
+
+      - name: Run miri
+        env:
+          # -Zrandomize-layout makes sure not to rely on the layout of anything
+          # that might change
+          RUSTFLAGS: -Zrandomize-layout
+          # -Zmiri-strict-provenance enables strict provenance checking in Miri.
+          # This means that casting an integer to a pointer will stop execution
+          # because the provenance of the pointer cannot be determined.
+          # -Zmiri-symbolic-alignment-check makes the alignment check more strict.
+          MIRIFLAGS: >
+            -Zmiri-strict-provenance
+            -Zmiri-symbolic-alignment-check
+        run: cargo miri test
+
+      # FIXME Create a template with a dummy series of fuzzy tests
+      - name: Init cargo-fuzz
+        run: cargo fuzz init
+
+      - name: Run cargo-fuzz
+        run: cargo fuzz build
+
+  static-code-analysis:
+    needs: [build-test]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install rust-code-analysis
+        env:
+          RCA_LINK: https://github.com/mozilla/rust-code-analysis/releases/download
+          RCA_VERSION: v0.0.23
+        run: |
+          mkdir -p $HOME/.local/bin
+          curl -L "$RCA_LINK/$RCA_VERSION/rust-code-analysis-linux-cli-x86_64.tar.gz" |
+          tar xz -C $HOME/.local/bin
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Run rust-code-analysis
+        run: |
+          mkdir $HOME/rca-json
+          # FIXME: Update rca version to analyze the entire directory of a repo
+          rust-code-analysis-cli --metrics -O json --pr -o "$HOME/rca-json" -p src/
+
+      - name: Upload rust-code-analysis json
+        uses: actions/upload-artifact@v4
+        with:
+          name: rca-json-ubuntu
+          path: ~/rca-json

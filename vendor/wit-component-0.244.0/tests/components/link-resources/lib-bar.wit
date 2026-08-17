@@ -1,0 +1,13 @@
+package test:test;
+
+interface bar {
+  resource x {
+    constructor(v: u32);
+    get: func() -> u32;
+  }
+}
+
+world lib-bar {
+    import bar;
+    export bar;
+}

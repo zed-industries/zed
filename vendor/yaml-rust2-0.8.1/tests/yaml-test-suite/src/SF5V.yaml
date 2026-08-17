@@ -1,0 +1,11 @@
+---
+- name: Duplicate YAML directive
+  from: '@perlpunk'
+  tags: directive error
+  fail: true
+  yaml: |
+    %YAML 1.2
+    %YAML 1.2
+    ---
+  tree: |
+    +STR

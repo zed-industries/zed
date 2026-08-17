@@ -1,0 +1,18 @@
+[package]
+name = "is_executable"
+version = "1.0.5"
+authors = ["Nick Fitzgerald <fitzgen@gmail.com>"]
+edition = "2021"
+description = "Is there an executable file at the given path?"
+documentation = "https://docs.rs/is_executable"
+readme = "./README.md"
+repository = "https://github.com/fitzgen/is_executable"
+license = "MIT OR Apache-2.0"
+keywords = ["executable", "file", "path", "permissions"]
+categories = ["filesystem"]
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.60", features = ["Win32_Storage_FileSystem"] }
+
+[dev-dependencies]
+diff = "0.1.10"

@@ -1,0 +1,28 @@
+[package]
+name = "convert_case"
+version = "0.10.0"
+authors = ["rutrum <dave@rutrum.net>"]
+edition = "2021"
+description = "Convert strings into any case"
+license = "MIT"
+keywords = [ "casing", "case", "string" ]
+categories = [ "text-processing" ]
+readme = "README.md"
+repository = "https://github.com/rutrum/convert-case"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[profile.release]
+codegen-units = 1
+lto = true
+panic = 'abort'
+
+[dependencies]
+unicode-segmentation = "1.9.0"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "convert"
+harness = false

@@ -1,0 +1,5 @@
+error: expected `,`
+ --> $DIR/derive-invalid-skip.rs:8:18
+  |
+8 |     #[merge(skip = true)]
+  |                  ^

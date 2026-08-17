@@ -1,0 +1,47 @@
+on: [push, pull_request]
+
+name: Continuous integration
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+          - stable
+          - beta
+          - nightly
+          - 1.36.0  # MSRV
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - uses: actions/cache@v2
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+          override: true
+          components: rustfmt, clippy
+
+      - run: cargo test
+
+      - if: ${{ matrix.rust == 'stable' }}
+        run: cargo fmt --all -- --check
+        
+      - if: ${{ matrix.rust == 'stable' }}
+        run: cargo clippy --all -- -D warnings
+
+      # Delete things that shouldn't be cached
+      - run: find ./target/debug -maxdepth 1 -type f -delete
+      - run: rm -rf ./target/debug/deps/tinytemplate*
+      - run: rm -rf ./target/debug/.fingerprint/tinytemplate*
+      - run: rm -f  ./target/.rustc_info.json
+      - run: rm -rf ~/.cargo/registry/index/

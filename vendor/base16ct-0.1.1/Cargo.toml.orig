@@ -1,0 +1,25 @@
+[package]
+name = "base16ct"
+version = "0.1.1" # Also update html_root_url in lib.rs when bumping this
+description = """
+Pure Rust implementation of Base16 a.k.a hexadecimal (RFC 4648) which avoids
+any usages of data-dependent branches/LUTs and thereby provides portable
+"best effort" constant-time operation and embedded-friendly no_std support
+"""
+authors = ["RustCrypto Developers"]
+license = "Apache-2.0 OR MIT"
+documentation = "https://docs.rs/base16ct"
+repository = "https://github.com/RustCrypto/formats/tree/master/base16ct"
+categories = ["cryptography", "encoding", "no-std", "parser-implementations"]
+keywords = ["crypto", "hex", "pem", "phc"]
+readme = "README.md"
+edition = "2021"
+rust-version = "1.56"
+
+[features]
+alloc = []
+std = ["alloc"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

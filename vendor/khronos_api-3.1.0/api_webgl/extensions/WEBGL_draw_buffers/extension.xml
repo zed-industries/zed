@@ -1,0 +1,185 @@
+<?xml version="1.0"?>
+
+<ratified href="WEBGL_draw_buffers/">
+  <name>WEBGL_draw_buffers</name>
+  <contact>
+    <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL working group</a> (public_webgl 'at' khronos.org)
+  </contact>
+  <contributors>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+  <number>18</number>
+  <depends>
+    <api version="1.0"/>
+    <core version="2.0">
+      <glsl version="300 es"/>
+    </core>
+  </depends>
+  <overview>
+    <mirrors href="https://www.khronos.org/registry/gles/extensions/EXT/EXT_draw_buffers.txt" name="EXT_draw_buffers">
+      <addendum>
+        The implementation must support a minimum of 4 color attachments.
+      </addendum>
+      <addendum>
+        The value of the <code>MAX_COLOR_ATTACHMENTS_WEBGL</code> parameter must be greater than or
+        equal to that of the <code>MAX_DRAW_BUFFERS_WEBGL</code> parameter.
+      </addendum>
+      <addendum>
+        If:
+        <ul>
+          <li> A framebuffer's color attachments are all textures allocated with format <code>RGBA</code>
+               and type <code>UNSIGNED_BYTE</code>, and </li>
+          <li> The framebuffer has either:
+            <ul>
+              <li> No depth or stencil attachment </li>
+              <li> A valid <code>DEPTH</code> or <code>DEPTH_STENCIL</code> attachment </li>
+            </ul></li>
+        </ul>
+        Then a call to <code>checkFramebufferStatus</code> against this framebuffer must not return
+        <code>FRAMEBUFFER_UNSUPPORTED</code>. (In other words, the implementation must support the
+        use of <code>RGBA/UNSIGNED_BYTE</code> textures as color attachments, plus either a
+        <code>DEPTH</code> or <code>DEPTH_STENCIL</code> attachment.)
+      </addendum>
+      <addendum>
+        Attaching <code>n</code> consecutive color attachments starting at COLOR_ATTACHMENT0_WEBGL,
+        where <code>n</code> is between 1 and <code>MAX_DRAW_BUFFERS_WEBGL</code>, must not return
+        <code>FRAMEBUFFER_UNSUPPORTED</code> from a call to <code>checkFramebufferStatus</code>. In
+        other words, if <code>MAX_DRAW_BUFFERS_WEBGL</code> is 4, then the implementation is
+        required to support the following combinations of color attachments:
+
+        <ul>
+          <li> <code>COLOR_ATTACHMENT0_WEBGL = RGBA/UNSIGNED_BYTE</code></li>
+          <li> <code>COLOR_ATTACHMENT0_WEBGL = RGBA/UNSIGNED_BYTE</code><br/>
+               <code>COLOR_ATTACHMENT1_WEBGL = RGBA/UNSIGNED_BYTE</code><br/></li>
+          <li> <code>COLOR_ATTACHMENT0_WEBGL = RGBA/UNSIGNED_BYTE</code><br/>
+               <code>COLOR_ATTACHMENT1_WEBGL = RGBA/UNSIGNED_BYTE</code><br/>
+               <code>COLOR_ATTACHMENT2_WEBGL = RGBA/UNSIGNED_BYTE</code><br/></li>
+          <li> <code>COLOR_ATTACHMENT0_WEBGL = RGBA/UNSIGNED_BYTE</code><br/>
+               <code>COLOR_ATTACHMENT1_WEBGL = RGBA/UNSIGNED_BYTE</code><br/>
+               <code>COLOR_ATTACHMENT2_WEBGL = RGBA/UNSIGNED_BYTE</code><br/>
+               <code>COLOR_ATTACHMENT3_WEBGL = RGBA/UNSIGNED_BYTE</code><br/></li>
+        </ul>
+      </addendum>
+      <addendum>
+        Although the extension name is prefixed with WEBGL the extension must be enabled with the 
+        <code>#extension GL_EXT_draw_buffers</code> directive, as shown in the sample code, to use
+        the extension in a shader.
+
+        Likewise the shading language preprocessor <code>#define GL_EXT_draw_buffers</code>, will be defined to 1 if the extension is supported.
+      </addendum>
+      <addendum>
+        The value of <code>gl_MaxDrawBuffers</code> must match <code>MAX_DRAW_BUFFERS_WEBGL</code> from the API if the extension is enabled in a WebGL context; otherwise, the value must be 1. Whether or not the extension is enabled with the <code>#extension GL_EXT_draw_buffers</code> directive in a shader does not affect the value of <code>gl_MaxDrawBuffers</code>. The value of <code>gl_MaxDrawBuffers</code> is a constant in the shader, and is guaranteed to be frozen at program link time. It is implementation-dependent whether it is frozen at shader compile time. (A consequence is that if a program is linked, and later the WEBGL_draw_buffers extension is enabled, the value of <code>gl_MaxDrawBuffers</code> seen by that program will still be 1.)
+      </addendum>
+      <addendum>
+        If the WEBGL_draw_buffers extension is enabled, but the fragment shader does not contain the <code>#extension GL_EXT_draw_buffers</code> directive to enable it, then writes to <code>gl_FragColor</code> are only written to <code>COLOR_ATTACHMENT0_WEBGL</code>, and not broadcast to all color attachments. In this scenario, other color attachments are guaranteed to remain untouched.
+      </addendum>
+      <addendum>
+        If a fragment shader writes to neither <code>gl_FragColor</code> nor <code>gl_FragData</code>, the values of
+        the fragment colors following shader execution are untouched.
+
+        If a fragment shader contains the <code>#extension GL_EXT_draw_buffers</code> directive, all
+        <code>gl_FragData</code> variables (from <code>gl_FragData[0]</code> to <code>gl_FragData[MAX_DRAW_BUFFERS_WEBGL - 1]</code>)
+        default to zero if no values are written to them during a shader execution.
+      </addendum>
+      <addendum>
+        If an image is attached to more than one color attachment point in a framebuffer, <code>checkFramebufferStatus</code>
+        returns <code>FRAMEBUFFER_UNSUPPORTED</code>. An image can be an individual mip level, or a face of cube map.
+      </addendum>
+    </mirrors>
+    <features>
+      <feature>
+      Adds support for multiple color buffers and color outputs from fragment shaders.
+      </feature>
+    </features>
+  </overview>
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface WEBGL_draw_buffers {
+    const GLenum COLOR_ATTACHMENT0_WEBGL     = 0x8CE0;
+    const GLenum COLOR_ATTACHMENT1_WEBGL     = 0x8CE1;
+    const GLenum COLOR_ATTACHMENT2_WEBGL     = 0x8CE2;
+    const GLenum COLOR_ATTACHMENT3_WEBGL     = 0x8CE3;
+    const GLenum COLOR_ATTACHMENT4_WEBGL     = 0x8CE4;
+    const GLenum COLOR_ATTACHMENT5_WEBGL     = 0x8CE5;
+    const GLenum COLOR_ATTACHMENT6_WEBGL     = 0x8CE6;
+    const GLenum COLOR_ATTACHMENT7_WEBGL     = 0x8CE7;
+    const GLenum COLOR_ATTACHMENT8_WEBGL     = 0x8CE8;
+    const GLenum COLOR_ATTACHMENT9_WEBGL     = 0x8CE9;
+    const GLenum COLOR_ATTACHMENT10_WEBGL    = 0x8CEA;
+    const GLenum COLOR_ATTACHMENT11_WEBGL    = 0x8CEB;
+    const GLenum COLOR_ATTACHMENT12_WEBGL    = 0x8CEC;
+    const GLenum COLOR_ATTACHMENT13_WEBGL    = 0x8CED;
+    const GLenum COLOR_ATTACHMENT14_WEBGL    = 0x8CEE;
+    const GLenum COLOR_ATTACHMENT15_WEBGL    = 0x8CEF;
+
+    const GLenum DRAW_BUFFER0_WEBGL          = 0x8825;
+    const GLenum DRAW_BUFFER1_WEBGL          = 0x8826;
+    const GLenum DRAW_BUFFER2_WEBGL          = 0x8827;
+    const GLenum DRAW_BUFFER3_WEBGL          = 0x8828;
+    const GLenum DRAW_BUFFER4_WEBGL          = 0x8829;
+    const GLenum DRAW_BUFFER5_WEBGL          = 0x882A;
+    const GLenum DRAW_BUFFER6_WEBGL          = 0x882B;
+    const GLenum DRAW_BUFFER7_WEBGL          = 0x882C;
+    const GLenum DRAW_BUFFER8_WEBGL          = 0x882D;
+    const GLenum DRAW_BUFFER9_WEBGL          = 0x882E;
+    const GLenum DRAW_BUFFER10_WEBGL         = 0x882F;
+    const GLenum DRAW_BUFFER11_WEBGL         = 0x8830;
+    const GLenum DRAW_BUFFER12_WEBGL         = 0x8831;
+    const GLenum DRAW_BUFFER13_WEBGL         = 0x8832;
+    const GLenum DRAW_BUFFER14_WEBGL         = 0x8833;
+    const GLenum DRAW_BUFFER15_WEBGL         = 0x8834;
+
+    const GLenum MAX_COLOR_ATTACHMENTS_WEBGL = 0x8CDF;
+    const GLenum MAX_DRAW_BUFFERS_WEBGL      = 0x8824;
+
+    void drawBuffersWEBGL(sequence&lt;GLenum&gt; buffers);
+};
+  </idl>
+  <samplecode xml:space="preserve">
+    <pre>
+    #extension GL_EXT_draw_buffers : require
+    precision mediump float;
+    void main() {
+        gl_FragData[0] = vec4(1.0, 0.0, 0.0, 1.0);
+        gl_FragData[1] = vec4(0.0, 1.0, 0.0, 1.0);
+        gl_FragData[2] = vec4(0.0, 0.0, 1.0, 1.0);
+        gl_FragData[3] = vec4(1.0, 1.0, 1.0, 1.0);
+    }
+    </pre>
+  </samplecode>
+  <history>
+    <revision date="2012/10/16">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2012/11/05">
+      <change>Corrected typo in drawBuffersWEBGL. Changed referenced spec version to 1.0 to fix broken link.</change>
+    </revision>
+    <revision date="2013/02/02">
+      <change>Renamed to EXT_draw_buffers per plan of OpenGL ES working group. Moved to draft status. Assigned number.</change>
+    </revision>
+    <revision date="2013/03/05">
+      <change>Renamed to WEBGL_draw_buffers per discussion on public_webgl list. Added guarantees to make it easier for developers to use the extension.</change>
+    </revision>
+    <revision date="2013/06/07">
+      <change>Clarified naming of shader directives.</change>
+    </revision>
+    <revision date="2014/07/15">
+      <change>Added NoInterfaceObject extended attribute.</change>
+    </revision>
+    <revision date="2014/08/08">
+      <change>Ratified by Khronos Board of Promoters.</change>
+    </revision>
+    <revision date="2016/06/28">
+      <change>Revised behavior of gl_MaxDrawBuffers and gl_FragColor broadcasting, to avoid significant performance impact for WebGL 1.0 implementations running on top of the desktop OpenGL API.</change>
+    </revision>
+    <revision date="2016/07/08">
+      <change>Removed undefined behaviors.</change>
+    </revision>
+    <revision date="2016/07/11">
+      <change>Revised user-defined variable behavior to default to zero.</change>
+    </revision>
+    <revision date="2016/07/23">
+      <change>Revised behavior of the same image is attached to more than one color attachment point.</change>
+    </revision>
+  </history>
+</ratified>

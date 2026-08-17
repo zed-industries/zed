@@ -1,0 +1,33 @@
+[package]
+authors = ["The rust-fuzz Project Developers"]
+description = "A wrapper around LLVM's libFuzzer runtime."
+edition = "2018"
+license = "(MIT OR Apache-2.0) AND NCSA"
+name = "libfuzzer-sys"
+readme = "./README.md"
+repository = "https://github.com/rust-fuzz/libfuzzer"
+version = "0.4.10"
+
+[dependencies]
+arbitrary = "1"
+
+[build-dependencies]
+cc = { version = "1.0.83", features = ["parallel"] }
+
+[features]
+default = ["link_libfuzzer"]
+link_libfuzzer = []
+arbitrary-derive = ["arbitrary/derive"]
+
+[workspace]
+members = [
+  "./example/fuzz",
+  "./example_arbitrary/fuzz",
+  "./example_crossover/fuzz",
+  "./example_init/fuzz",
+  "./example_mutator/fuzz",
+]
+
+[dev-dependencies]
+flate2 = "1.0.24"
+rand = "0.8.5"

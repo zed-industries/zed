@@ -1,0 +1,4 @@
+{
+  nan: NaN,
+  neg_nan: -NaN,
+}

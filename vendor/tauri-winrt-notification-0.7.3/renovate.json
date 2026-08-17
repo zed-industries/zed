@@ -1,0 +1,11 @@
+{
+  "extends": ["config:recommended"],
+  "rangeStrategy": "replace",
+  "packageRules": [
+    {
+      "semanticCommitType": "chore",
+      "matchPackageNames": ["*"]
+    }
+  ],
+  "forkProcessing": "enabled"
+}

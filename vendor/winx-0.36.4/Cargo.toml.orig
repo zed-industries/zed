@@ -1,0 +1,38 @@
+[package]
+name = "winx"
+version = "0.36.4"
+authors = [
+    "Jakub Konka <kubkon@jakubkonka.com>",
+    "Dan Gohman <dev@sunfishcode.online>",
+]
+description = "Windows API helper library"
+documentation = "https://docs.rs/winx"
+license = "Apache-2.0 WITH LLVM-exception"
+repository = "https://github.com/sunfishcode/winx"
+edition = "2021"
+exclude = ["/.github"]
+rust-version = "1.63"
+
+[dependencies]
+bitflags = "2.4"
+
+[target.'cfg(windows)'.dependencies.windows-sys]
+version = ">=0.52, <=0.59"
+features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Performance",
+    "Win32_System_SystemServices",
+]
+
+[package.metadata.docs.rs]
+targets = ["x86_64-pc-windows-msvc", "i686-pc-windows-msvc"]
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = [
+    'cfg(feature, values("cargo-clippy"))',
+]

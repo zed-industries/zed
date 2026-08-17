@@ -1,0 +1,91 @@
+[package]
+name = "glam"
+version = "0.14.0" # remember to update html_root_url
+edition = "2018"
+authors = ["Cameron Hart <cameron.hart@gmail.com>"]
+description = "A simple and fast 3D math library for games and graphics"
+repository = "https://github.com/bitshifter/glam-rs"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+keywords = ["gamedev", "math", "matrix", "vector", "quaternion"]
+categories = ["game-engines", "no-std"]
+
+[badges]
+travis-ci = { repository = "bitshifter/glam-rs" }
+coveralls = { repository = "bitshifter/glam-rs" }
+maintenance = { status = "experimental" }
+
+[features]
+default = ["std"]
+
+# enable support for the standard library
+std = []
+
+# enable additional glam checks if debug assertions are enabled
+debug-glam-assert = []
+# always enable additional glam checks
+glam-assert = []
+
+# this is primarily for testing the fallback implementation
+scalar-math = []
+
+# trying out transform types instead of matrices but they are generally slower
+# at everything except for inverse. They are 16 bytes smaller than a Mat4.
+transform-types = []
+
+# libm is required when building no_std
+libm = ["num-traits/libm"]
+
+[dependencies]
+bytemuck = { version = "1.5", optional = true, default-features = false }
+mint = { version = "0.5", optional = true, default-features = false }
+num-traits = { version = "0.2.14", optional = true, default-features = false }
+rand = { version = "0.8", optional = true, default-features = false }
+serde = { version = "1.0", optional = true, features = ["derive"] }
+spirv-std = { version = "0.4.0-alpha.4", optional = true }
+
+[dev-dependencies]
+criterion = "0.3"
+# rand_xoshiro is required for tests if rand is enabled
+rand_xoshiro = "0.6"
+serde_json = "1.0"
+
+[lib]
+bench = false
+
+[[bench]]
+name = "mat2"
+harness = false
+
+[[bench]]
+name = "mat3"
+harness = false
+
+[[bench]]
+name = "mat4"
+harness = false
+
+[[bench]]
+name = "quat"
+harness = false
+
+[[bench]]
+name = "transform"
+harness = false
+required-features = ["transform-types"]
+
+[[bench]]
+name = "vec2"
+harness = false
+
+[[bench]]
+name = "vec3"
+harness = false
+
+[[bench]]
+name = "vec3a"
+harness = false
+
+[[bench]]
+name = "vec4"
+harness = false

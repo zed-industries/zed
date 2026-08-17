@@ -1,0 +1,37 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - book/**
+      - .github/workflows/site.yml
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/install@mdbook
+      - run: mdbook --version
+
+      - name: Build
+        run: book/build.sh
+
+      - name: Push to gh-pages
+        working-directory: book/build
+        run: |
+          REV=$(git rev-parse --short HEAD)
+          git init
+          git remote add upstream https://x-access-token:${{secrets.GITHUB_TOKEN}}@github.com/dtolnay/cxx
+          git config user.name "CXX"
+          git config user.email "dtolnay+cxx@gmail.com"
+          git add -A .
+          git commit -qm "Website @ ${{github.repository}}@${REV}"
+          git push -q upstream HEAD:refs/heads/gh-pages --force

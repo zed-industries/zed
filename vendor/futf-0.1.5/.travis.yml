@@ -1,0 +1,11 @@
+language: rust
+rust:
+  - nightly
+  - beta
+  - stable
+script:
+  - cargo build
+  - "if [ $TRAVIS_RUST_VERSION = nightly ]; then cargo test; fi"
+  - cargo doc
+notifications:
+  webhooks: http://build.servo.org:54856/travis

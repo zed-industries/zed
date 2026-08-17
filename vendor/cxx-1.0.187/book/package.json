@@ -1,0 +1,16 @@
+{
+  "name": "cxx-book-build",
+  "version": "0.0.0",
+  "main": "build.js",
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "html-entities": "^2.5.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.19.0",
+    "eslint": "^9.19.0"
+  },
+  "prettier": {
+    "singleQuote": true
+  }
+}

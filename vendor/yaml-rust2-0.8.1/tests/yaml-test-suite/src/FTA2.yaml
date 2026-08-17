@@ -1,0 +1,22 @@
+---
+- name: Single block sequence with anchor and explicit document start
+  from: '@perlpunk'
+  tags: anchor header sequence
+  yaml: |
+    --- &sequence
+    - a
+  tree: |
+    +STR
+     +DOC ---
+      +SEQ &sequence
+       =VAL :a
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      "a"
+    ]
+  dump: |
+    --- &sequence
+    - a

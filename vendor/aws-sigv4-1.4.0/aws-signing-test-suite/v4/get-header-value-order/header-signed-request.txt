@@ -1,0 +1,9 @@
+GET / HTTP/1.1
+Host:example.amazonaws.com
+My-Header1:value4
+My-Header1:value1
+My-Header1:value3
+My-Header1:value2
+X-Amz-Date:20150830T123600Z
+Authorization:AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, SignedHeaders=host;my-header1;x-amz-date, Signature=08c7e5a9acfcfeb3ab6b2185e75ce8b1deb5e634ec47601a50643f830c755c01
+

@@ -1,0 +1,12 @@
+package foo:foo;
+
+interface a {
+  resource r {
+    constructor();
+  }
+}
+
+world module {
+  import a;
+  export a;
+}

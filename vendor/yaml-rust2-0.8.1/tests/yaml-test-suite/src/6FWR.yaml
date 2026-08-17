@@ -1,0 +1,27 @@
+---
+- name: Block Scalar Keep
+  from: NimYAML tests
+  tags: literal scalar whitespace
+  yaml: |
+    --- |+
+     ab
+    ␣
+    ␣␣
+    ...
+  tree: |
+    +STR
+     +DOC ---
+      =VAL |ab\n\n \n
+     -DOC ...
+    -STR
+  json: |
+    "ab\n\n \n"
+  dump: |
+    "ab\n\n \n"
+    ...
+  emit: |
+    --- |
+      ab
+
+    ␣␣␣
+    ...

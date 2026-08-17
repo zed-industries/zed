@@ -1,0 +1,9 @@
+package root:component;
+
+world root {
+  import foo:foo/my-wasi;
+  import f: func();
+  import f2: func() -> u32;
+  import g: func();
+  import g2: func() -> u32;
+}

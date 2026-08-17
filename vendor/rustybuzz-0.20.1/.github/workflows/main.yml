@@ -1,0 +1,26 @@
+name: Rust
+
+on: [push, pull_request]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-15]
+        rust: [stable]
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+
+    - name: Build without std
+      run: cargo build --no-default-features
+
+    - name: Build with std
+      run: cargo build
+
+    - name: Run tests
+      run: cargo test --verbose

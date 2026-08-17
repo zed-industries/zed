@@ -1,0 +1,8 @@
+package a:b;
+
+interface foo {
+  @unstable(feature = not-active)
+  type gated = u32;
+
+  type foo = gated;
+}

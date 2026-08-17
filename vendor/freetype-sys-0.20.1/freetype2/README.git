@@ -1,0 +1,102 @@
+README.git
+==========
+
+
+repository issues
+-----------------
+
+FreeType's official repository site is
+
+  https://gitlab.freedesktop.org/freetype  ,
+
+from  which the  'freetype.git' and  'freetype-demos.git' repositories
+can be cloned in the usual way.
+
+  git clone https://gitlab.freedesktop.org/freetype/freetype.git
+  git clone https://gitlab.freedesktop.org/freetype/freetype-demos.git
+
+If you  want to  use the  Savannah mirror  instead, you  have to  do a
+slightly different  incantation because  the repository  names contain
+digit '2' for historical reasons.
+
+  git clone \
+    https://git.savannah.nongnu.org/git/freetype/freetype2.git \
+    freetype
+  git clone \
+    https://git.savannah.nongnu.org/git/freetype/freetype2-demos.git \
+    freetype-demos
+
+
+standard builds with `configure`
+--------------------------------
+
+The git repository doesn't contain pre-built configuration scripts for
+UNIXish platforms.  To generate them say
+
+  sh autogen.sh
+
+which in turn depends on the following packages:
+
+  automake (1.10.1)
+  libtool (2.2.4)
+  autoconf (2.62)
+
+The versions given  in parentheses are known to  work.  Newer versions
+should  work too,  of course.   Note  that `autogen.sh`  also sets  up
+proper file permissions for the `configure` and auxiliary scripts.
+
+The `autogen.sh` script checks whether the versions of the above three
+tools match the numbers above.  Otherwise it will complain and suggest
+either  upgrading or  using  environment variables  to  point to  more
+recent versions of the required tools.
+
+Note that  `aclocal` is provided  by the 'automake' package  on Linux,
+and that `libtoolize` is called `glibtoolize` on Darwin (OS X).
+
+
+alternative build methods
+-------------------------
+
+For static  builds that don't use  platform-specific optimizations, no
+configure script is necessary at all; saying
+
+  make setup ansi
+  make
+
+should work on all platforms that have GNU `make` (or `makepp`).
+
+A build  with `cmake`  or `meson`  can be done  directly from  the git
+repository.  However, if you want  to use the `FT_DEBUG_LOGGING` macro
+(see file `docs/DEBUG` for more information) it is currently mandatory
+to execute `autogen.sh`  in advance; this script clones  the 'dlg' git
+submodule and copies some files into FreeType's source tree.
+
+
+Code of Conduct
+---------------
+
+Please note that  this project is released with a  Contributor Code of
+Conduct (CoC).  By participating in this project you agree to abide by
+its terms, which you can find in the following link:
+
+  https://www.freedesktop.org/wiki/CodeOfConduct
+
+CoC issues may  be raised to the project maintainers  at the following
+address:
+
+  wl@gnu.org
+  apodtele@gmail.com
+
+----------------------------------------------------------------------
+
+Copyright (C) 2005-2023 by
+David Turner, Robert Wilhelm, and Werner Lemberg.
+
+This  file is  part of  the FreeType  project, and  may only  be used,
+modified,  and distributed  under the  terms of  the  FreeType project
+license,  LICENSE.TXT.  By  continuing to  use, modify,  or distribute
+this file you  indicate that you have read  the license and understand
+and accept it fully.
+
+
+--- end of README.git ---

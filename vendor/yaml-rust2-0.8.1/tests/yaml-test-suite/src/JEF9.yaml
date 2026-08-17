@@ -1,0 +1,53 @@
+---
+- name: Trailing whitespace in streams
+  from: '@ingydotnet'
+  tags: literal
+  yaml: |
+    - |+
+    ↵
+    ↵
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       =VAL |\n\n
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      "\n\n"
+    ]
+  dump: |
+    - |+
+    ↵
+    ↵
+    ...
+
+- yaml: |
+    - |+
+    ␣␣␣
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       =VAL |\n
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      "\n"
+    ]
+  dump: |
+    - |+
+
+    ...
+
+- yaml: |
+    - |+
+    ␣␣␣∎
+  dump: |
+    - |+
+
+    ...

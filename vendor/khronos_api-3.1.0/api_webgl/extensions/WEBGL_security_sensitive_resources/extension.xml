@@ -1,0 +1,200 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<draft href="WEBGL_security_sensitive_resources/">
+
+  <name>WEBGL_security_sensitive_resources</name>
+
+  <contact>
+    <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL working group</a> (public_webgl 'at' khronos.org)
+  </contact>
+
+  <contributors>
+    <contributor>Max Vujovic (mvujovic 'at' adobe.com)</contributor>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+
+  <number>23</number>
+
+  <depends>
+    <api version="1.0"/>
+    <ext name="EXT_frag_depth"/>
+    <ext name="WEBGL_draw_buffers"/>
+    <ext name="WEBGL_shared_resources"/>
+  </depends>
+
+  <overview>
+    <p>In the <a href="../../../specs/1.0/">WebGL API 1.0</a> specification, section <a href="../../../specs/1.0/#4.2">4.2 Origin Restrictions</a> restricts the following sources for texture upload:</p>
+    <p>
+      <ul>
+        <li>An image or video element whose origin is not the same as the origin of the <code>Document</code> that contains the <code>WebGLRenderingContext</code>'s canvas element.</li>
+        <li>A canvas element whose <i>origin-clean</i> flag is set to false.</li>
+      </ul>
+    </p>
+    <p>This extension allows these sources for texture uploads, with some restrictions regarding their uploading and use.</p>
+
+    <div class="nonnormative">
+      <p>Motivation:</p>
+      <p>This extension enables the processing of cross-origin resources in WebGL. Additionally, it defines a foundation of concepts that can be used in future extensions to process other types of security sensitive content, including arbitrary HTML content.</p>
+      <p>For an example of security sensitive content, consider the rendering of an HTML link. The color of the link can indicate its visited or unvisited state. Third parties must not be able to access or infer this information.</p>
+      <p>Specifically, third parties must not be able read the pixel data of security sensitive content through WebGL or other APIs. Additionally, third parties must not be able to divulge or approximate the pixel data of security sensitive content by timing WebGL operations.</p>
+      <p>Prior to this extension, WebGL restricted the upload of security sensitive content as a texture for graphical processing. This extension enables the uploading and processing of security sensitive content, with some restrictions. Note that this extension imposes no restrictions on the processing of regular, non-security sensitive content.</p>
+      <p>To secure a user’s privacy, a WebGL implementation must not leak information about the contents of security sensitive textures through the execution time of its commands. To achieve this, no part of the underlying graphics pipeline may vary in execution time based on the contents of a security sensitive texture. For example, primitive assembly and depth testing must not vary based on the contents of a security sensitive texture.</p>
+      <p>The vertex shading and fragment shading stages of the graphics pipeline require particular restrictions to keep their execution time independent of the contents of security sensitive textures. Specifically, the contents of a security sensitive texture must only appear in constant-time GLSL operations. A constant-time GLSL operation is an operation whose execution time does not vary based on the values of its operands. This extension will describe how a WebGL implementation can enforce this requirement.</p>
+      <p>Additionally, this extension attempts to identify non-constant-time GLSL operations. All other GLSL operations are assumed to be constant time in both the WebGL implementation and the underlying GPU implementation. If this assumption is false on a particular implementation, then this extension must be disabled for that implementation. In the future, GPU vendors may be able to provide a mechanism to guarantee that the assumed GLSL operations are in fact constant-time.</p>
+    </div>
+
+    <h3>Definitions</h3>
+    <p>This extension relies on the definition of several constructs in GLSL. These constructs are determined statically, after preprocessing.</p>
+
+    <h4>Regular Sampler Variables and Secure Sampler Variables</h4>
+    <p><code>S</code> is a regular sampler if an expression dependent on <code>S</code> appears in one or more of the following constructs:</p>
+    <p>
+      <ul>
+        <li><code>if</code> statement condition</li>
+        <li>selection operator (<code>?</code>) condition</li>
+        <li>loop condition</li>
+        <li>logical and operator (<code>&amp;&amp;</code>)</li>
+        <li>logical or operator (<code>||</code>)</li>
+        <li><code>coord</code>, <code>bias</code>, or <code>lod</code> argument in a texture lookup function call</li>
+        <li>assignment to <code>gl_Position</code></li>
+        <li>assignment to <code>gl_FragDepth</code></li>
+      </ul>
+    </p>
+    <p>Otherwise, <code>S</code> is a secure sampler.</p>
+
+    <h4>Sampler-Dependent Expressions</h4>
+    <p>An expression is dependent on the sampler <code>S</code> if:</p>
+    <p>
+      <ul>
+        <li>It contains a texture lookup function call with <code>S</code> as the <code>sampler</code> argument.</li>
+        <li>It contains an expression that is dependent on the sampler <code>S</code>.</li>
+        <li>It contains a variable that is dependent on the sampler <code>S</code>.</li>
+      </ul>
+    </p>
+
+    <h4>Sampler-Dependent Variables</h4>
+    <p>A variable is dependent on the sampler <code>S</code> if:</p>
+    <p>
+      <ul>
+        <li>It is assigned to an expression dependent on the sampler <code>S</code>. (e.g. If <code>a = b</code> and <code>b</code> is dependent on sampler <code>S</code>, then <code>a</code> is dependent on sampler <code>S</code>.)</li>
+        <li>It is addressed using a sampler-dependent expression in an assignment. (e.g. If <code>a[b] = c</code> and <code>b</code> is dependent on the sampler <code>S</code>, then <code>a</code> is dependent on sampler <code>S</code>.)</li>
+        <li>It is a fragment shader varying and the corresponding vertex shader varying is dependent on the sampler <code>S</code>.</li>
+      </ul>
+    </p>
+
+    <div class="nonnormative">
+      A WebGL implementation can create a dependency graph in its GLSL compiler to implement these GLSL constructs. One closely related implementation is described in a <a href="http://code.google.com/p/mvujovic/wiki/ShaderControlFlowAnalysis">wiki page</a>.
+    </div>
+
+    <h3>Features</h3>
+    <features>
+      <feature>The <code>WebGLRenderingContext</code>'s canvas's <i>origin-clean</i> flag is set to false if the context is created with a <code>WebGLContextAttributes</code> dictionary with <code>securitySensitiveDrawingBuffer</code> set to true.</feature>
+    </features>
+  </overview>
+
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface WEBGL_security_sensitive_resources {
+  WebGLFramebuffer? createSecuritySensitiveFramebuffer();
+  WebGLTexture? createSecuritySensitiveTexture();
+};
+
+dictionary WebGLContextAttributes {
+    GLboolean securitySensitiveDrawingBuffer = false;
+};
+  </idl>
+
+  <newfun>
+    <function name="createSecuritySensitiveFramebuffer" type="WebGLFramebuffer?">Behaves like <code>createFramebuffer</code>, except framebuffers created with this function are referred to as security sensitive framebuffers. Framebuffers created with <code>createFramebuffer</code> are referred to as regular framebuffers.</function>
+    <function name="createSecuritySensitiveTexture" type="WebGLTexture?">Behaves like <code>createTexture</code>, except textures created with this function are known as security sensitive textures. Textures created with <code>createTexture</code> are known as regular textures.</function>
+  </newfun>
+
+  <errors>
+    <error>
+      <div class="nonnormative">
+        <p>In summary, an author cannot:</p>
+        <ul>
+          <li>draw a security sensitive resource into a regular resource,</li>
+          <li>copy from a security sensitive resource into a regular resource,</li>
+          <li>read a security sensitive resource using <code>readPixels</code>,</li>
+          <li>use a security sensitive resource for depth testing or stencil testing,</li>
+          <li>share security sensitive resources with a context that cannot recognize them as security sensitive,</li>
+          <li>use a security sensitive resource to influence geometry, since this can affect the depth buffer.</li>
+        </ul>
+      </div>
+      <p>The error <code>INVALID_OPERATION</code> is generated in the following situations:</p>
+      <ul>
+        <li><code>drawArrays</code> or <code>drawElements</code> is called and a security sensitive texture is bound to a regular sampler.</li>
+        <li>
+          <p><code>drawArrays</code> or <code>drawElements</code> is called and:</p>
+          <ul>
+            <li>a security sensitive texture is bound to a secure sampler,</li>
+            <li>a color output variable <code>gl_FragColor</code> or <code>gl_FragData[i]</code> is dependent on the secure sampler,</li>
+            <li>
+              <p>the output variable writes to either:</p>
+              <ul>
+                <li>a regular texture,</li>
+                <li>a regular renderbuffer,</li>
+                <li>the default framebuffer with <code>securitySensitiveDrawingBuffer</code> set to false in the <code>WebGLContextAttributes</code> dictionary used to create the context.</li>
+              </ul>
+            </li>
+          </ul>
+        </li>
+        <li>
+          <p><code>copyTexImage2D</code> or <code>copyTexSubImage2D</code> is called and:</p>
+          <ul>
+            <li>the default framebuffer is bound,</li>
+            <li><code>securitySensitiveDrawingBuffer</code> was set to true in the <code>WebGLContextAttributes</code> dictionary used to create the context.</li>
+            <li>a regular texture is bound as the destination.</li>
+          </ul>
+        </li>
+        <li>
+          <p><code>copyTexImage2D</code> or <code>copyTexSubImage2D</code> is called and:</p>
+          <ul>
+            <li>a security sensitive renderbuffer is selected as the source,</li>
+            <li>a regular texture is bound as the destination.</li>
+          </ul>
+        </li>
+        <li>
+          <p><code>readPixels</code> is called and:</p>
+          <ul>
+            <li>the default framebuffer is bound,</li>
+            <li><code>securitySensitiveDrawingBuffer</code> was set to true in the <code>WebGLContextAttributes</code> dictionary used to create the context.</li>
+          </ul>
+        </li>
+        <li><code>readPixels</code> is called and a security sensitive renderbuffer is selected as the source.</li>
+        <li>
+          <p><code>framebufferRenderbuffer</code> is called and:</p>
+          <ul>
+            <li><code>attachment</code> is <code>DEPTH_ATTACHMENT</code>, <code>STENCIL_ATTACHMENT</code>, or <code>DEPTH_STENCIL_ATTACHMENT</code>,</li>
+            <li><code>renderbuffer</code> is a security sensitive renderbuffer.</li>
+          </ul>
+        </li>
+        <li>
+          <p><code>acquireSharedResource</code> is called and:</p>
+          <ul>
+            <li><code>resource</code> is a security sensitive texture or a security sensitive renderbuffer,</li>
+            <li>the context acquiring the resource does not have this extension enabled.</li>
+          </ul>
+        </li>
+      </ul>
+    </error>
+  </errors>
+
+  <issues>
+    <ul>
+      <li>
+        <div>Q: Why not mark textures and renderbuffers as security sensitive automatically in the WebGL implementation instead of exposing <code>createSecuritySensitive*</code> to the API consumer?</div>
+        <div>A: This approach could make it difficult for API consumers to determine what operation caused a resource to become security sensitive because a related error could occur much later.</div>
+      </li>
+    </ul>
+  </issues>
+
+  <history>
+    <revision date="2013/09/13">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2014/07/15">
+      <change>Added NoInterfaceObject extended attribute.</change>
+    </revision>
+  </history>
+</draft>

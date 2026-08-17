@@ -1,0 +1,58 @@
+name: Rust
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions: read-all
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: [stable, beta, nightly]
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install Rust
+      run: rustup update ${{ matrix.rust }} && rustup default ${{ matrix.rust }}
+    - name: Run Tests
+      run: cargo test --verbose
+    - run: cargo build --all --all-features --all-targets
+    - name: Catch missing feature flags
+      if: startsWith(matrix.rust, 'nightly')
+      run: cargo check -Z features=dev_dep
+    - name: Install cargo-hack
+      uses: taiki-e/install-action@cargo-hack
+    - run: rustup target add thumbv7m-none-eabi
+    - name: Ensure we don't depend on libstd
+      run: cargo hack build --target thumbv7m-none-eabi --no-dev-deps --no-default-features
+
+  msrv:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        version: [1.38.0]
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install Rust
+      run: rustup update ${{ matrix.version }} && rustup default ${{ matrix.version }}
+    - run: cargo check --all --all-features
+
+  miri:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install Rust
+      run: rustup toolchain install nightly --component miri && rustup default nightly
+    - run: cargo miri test
+      env:
+        MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check -Zmiri-disable-isolation -Zmiri-ignore-leaks
+        RUSTFLAGS: ${{ env.RUSTFLAGS }} -Z randomize-layout

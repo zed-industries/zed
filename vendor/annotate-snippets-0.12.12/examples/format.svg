@@ -1,0 +1,80 @@
+<svg width="740px" height="524px" xmlns="http://www.w3.org/2000/svg">
+  <style>
+    .fg { fill: #AAAAAA }
+    .bg { fill: #000000 }
+    .fg-bright-blue { fill: #5555FF }
+    .fg-bright-red { fill: #FF5555 }
+    .container {
+      padding: 0 10px;
+      line-height: 18px;
+    }
+    .bold { font-weight: bold; }
+    tspan {
+      font: 14px SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace;
+      white-space: pre;
+      line-height: 18px;
+    }
+  </style>
+
+  <rect width="100%" height="100%" y="0" rx="4.5" class="bg" />
+
+  <text xml:space="preserve" class="container fg">
+    <tspan x="10px" y="28px"><tspan class="fg-bright-red bold">error[E0308]</tspan><tspan class="bold">: mismatched types</tspan>
+</tspan>
+    <tspan x="10px" y="46px"><tspan>  </tspan><tspan class="fg-bright-blue bold"> ╭▸ </tspan><tspan>src/format.rs:52:5</tspan>
+</tspan>
+    <tspan x="10px" y="64px"><tspan>   </tspan><tspan class="fg-bright-blue bold">│</tspan>
+</tspan>
+    <tspan x="10px" y="82px"><tspan class="fg-bright-blue bold">51</tspan><tspan> </tspan><tspan class="fg-bright-blue bold">│</tspan><tspan>   ) -&gt; Option&lt;String&gt; {</tspan>
+</tspan>
+    <tspan x="10px" y="100px"><tspan>   </tspan><tspan class="fg-bright-blue bold">│</tspan><tspan>        </tspan><tspan class="fg-bright-blue bold">──────────────</tspan><tspan> </tspan><tspan class="fg-bright-blue bold">expected `Option&lt;String&gt;` because of return type</tspan>
+</tspan>
+    <tspan x="10px" y="118px"><tspan class="fg-bright-blue bold">52</tspan><tspan> </tspan><tspan class="fg-bright-blue bold">│</tspan><tspan> </tspan><tspan class="fg-bright-red bold">┏</tspan><tspan>     for ann in annotations {</tspan>
+</tspan>
+    <tspan x="10px" y="136px"><tspan class="fg-bright-blue bold">53</tspan><tspan> </tspan><tspan class="fg-bright-blue bold">│</tspan><tspan> </tspan><tspan class="fg-bright-red bold">┃</tspan><tspan>         match (ann.range.0, ann.range.1) {</tspan>
+</tspan>
+    <tspan x="10px" y="154px"><tspan class="fg-bright-blue bold">54</tspan><tspan> </tspan><tspan class="fg-bright-blue bold">│</tspan><tspan> </tspan><tspan class="fg-bright-red bold">┃</tspan><tspan>             (None, None) =&gt; continue,</tspan>
+</tspan>
+    <tspan x="10px" y="172px"><tspan class="fg-bright-blue bold">55</tspan><tspan> </tspan><tspan class="fg-bright-blue bold">│</tspan><tspan> </tspan><tspan class="fg-bright-red bold">┃</tspan><tspan>             (Some(start), Some(end)) if start &gt; end_index =&gt; continue,</tspan>
+</tspan>
+    <tspan x="10px" y="190px"><tspan class="fg-bright-blue bold">56</tspan><tspan> </tspan><tspan class="fg-bright-blue bold">│</tspan><tspan> </tspan><tspan class="fg-bright-red bold">┃</tspan><tspan>             (Some(start), Some(end)) if start &gt;= start_index =&gt; {</tspan>
+</tspan>
+    <tspan x="10px" y="208px"><tspan class="fg-bright-blue bold">57</tspan><tspan> </tspan><tspan class="fg-bright-blue bold">│</tspan><tspan> </tspan><tspan class="fg-bright-red bold">┃</tspan><tspan>                 let label = if let Some(ref label) = ann.label {</tspan>
+</tspan>
+    <tspan x="10px" y="226px"><tspan class="fg-bright-blue bold">58</tspan><tspan> </tspan><tspan class="fg-bright-blue bold">│</tspan><tspan> </tspan><tspan class="fg-bright-red bold">┃</tspan><tspan>                     format!(" {}", label)</tspan>
+</tspan>
+    <tspan x="10px" y="244px"><tspan class="fg-bright-blue bold">59</tspan><tspan> </tspan><tspan class="fg-bright-blue bold">│</tspan><tspan> </tspan><tspan class="fg-bright-red bold">┃</tspan><tspan>                 } else {</tspan>
+</tspan>
+    <tspan x="10px" y="262px"><tspan class="fg-bright-blue bold">60</tspan><tspan> </tspan><tspan class="fg-bright-blue bold">│</tspan><tspan> </tspan><tspan class="fg-bright-red bold">┃</tspan><tspan>                     String::from("")</tspan>
+</tspan>
+    <tspan x="10px" y="280px"><tspan class="fg-bright-blue bold">61</tspan><tspan> </tspan><tspan class="fg-bright-blue bold">│</tspan><tspan> </tspan><tspan class="fg-bright-red bold">┃</tspan><tspan>                 };</tspan>
+</tspan>
+    <tspan x="10px" y="298px"><tspan class="fg-bright-blue bold">62</tspan><tspan> </tspan><tspan class="fg-bright-blue bold">│</tspan><tspan> </tspan><tspan class="fg-bright-red bold">┃</tspan>
+</tspan>
+    <tspan x="10px" y="316px"><tspan class="fg-bright-blue bold">63</tspan><tspan> </tspan><tspan class="fg-bright-blue bold">│</tspan><tspan> </tspan><tspan class="fg-bright-red bold">┃</tspan><tspan>                 return Some(format!(</tspan>
+</tspan>
+    <tspan x="10px" y="334px"><tspan class="fg-bright-blue bold">64</tspan><tspan> </tspan><tspan class="fg-bright-blue bold">│</tspan><tspan> </tspan><tspan class="fg-bright-red bold">┃</tspan><tspan>                     "{}{}{}",</tspan>
+</tspan>
+    <tspan x="10px" y="352px"><tspan class="fg-bright-blue bold">65</tspan><tspan> </tspan><tspan class="fg-bright-blue bold">│</tspan><tspan> </tspan><tspan class="fg-bright-red bold">┃</tspan><tspan>                     " ".repeat(start - start_index),</tspan>
+</tspan>
+    <tspan x="10px" y="370px"><tspan class="fg-bright-blue bold">66</tspan><tspan> </tspan><tspan class="fg-bright-blue bold">│</tspan><tspan> </tspan><tspan class="fg-bright-red bold">┃</tspan><tspan>                     "^".repeat(end - start),</tspan>
+</tspan>
+    <tspan x="10px" y="388px"><tspan class="fg-bright-blue bold">67</tspan><tspan> </tspan><tspan class="fg-bright-blue bold">│</tspan><tspan> </tspan><tspan class="fg-bright-red bold">┃</tspan><tspan>                     label</tspan>
+</tspan>
+    <tspan x="10px" y="406px"><tspan class="fg-bright-blue bold">68</tspan><tspan> </tspan><tspan class="fg-bright-blue bold">│</tspan><tspan> </tspan><tspan class="fg-bright-red bold">┃</tspan><tspan>                 ));</tspan>
+</tspan>
+    <tspan x="10px" y="424px"><tspan class="fg-bright-blue bold">69</tspan><tspan> </tspan><tspan class="fg-bright-blue bold">│</tspan><tspan> </tspan><tspan class="fg-bright-red bold">┃</tspan><tspan>             }</tspan>
+</tspan>
+    <tspan x="10px" y="442px"><tspan class="fg-bright-blue bold">70</tspan><tspan> </tspan><tspan class="fg-bright-blue bold">│</tspan><tspan> </tspan><tspan class="fg-bright-red bold">┃</tspan><tspan>             _ =&gt; continue,</tspan>
+</tspan>
+    <tspan x="10px" y="460px"><tspan class="fg-bright-blue bold">71</tspan><tspan> </tspan><tspan class="fg-bright-blue bold">│</tspan><tspan> </tspan><tspan class="fg-bright-red bold">┃</tspan><tspan>         }</tspan>
+</tspan>
+    <tspan x="10px" y="478px"><tspan class="fg-bright-blue bold">72</tspan><tspan> </tspan><tspan class="fg-bright-blue bold">│</tspan><tspan> </tspan><tspan class="fg-bright-red bold">┃</tspan><tspan>     }</tspan>
+</tspan>
+    <tspan x="10px" y="496px"><tspan>   </tspan><tspan class="fg-bright-blue bold">╰╴</tspan><tspan class="fg-bright-red bold">┗━━━━┛</tspan><tspan> </tspan><tspan class="fg-bright-red bold">expected enum `std::option::Option`</tspan>
+</tspan>
+    <tspan x="10px" y="514px">
+</tspan>
+  </text>
+
+</svg>

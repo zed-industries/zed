@@ -1,0 +1,5 @@
+error: duplicate rule `foo`
+ --> $DIR/duplicate_rule.rs:6:10
+  |
+6 |     rule foo() = "xyz" //~ ERROR duplicate rule `foo`
+  |          ^^^

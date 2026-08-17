@@ -1,0 +1,11 @@
+error: FromBytes only supported on repr(u8) enum with 256 variants
+ --> tests/ui-nightly/enum_from_bytes_u8_too_few.rs:15:1
+  |
+ 15 | / #[repr(u8)]
+ 16 | | enum Foo {
+ 17 | |     Variant0,
+ 18 | |     Variant1,
+...   |
+271 | |     Variant254,
+272 | | }
+    | |_^

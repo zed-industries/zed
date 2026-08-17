@@ -1,0 +1,13 @@
+version = 1
+
+default_branch = "master"
+
+[issues_meta_data]
+allowed_authors = ["AS1100K"]
+
+[packages.pastey]
+path = ""
+changelog_file = "CHANGELOG.md"
+pre_release_changelog_file = "PRERELEASE-CHANGELOG.md"
+create_gh_release = true
+package_manager = "cargo"

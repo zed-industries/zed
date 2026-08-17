@@ -1,0 +1,12 @@
+---
+- name: Invalid mapping in plain single line value
+  from: https://gist.github.com/anonymous/0c8db51d151baf8113205ba3ce71d1b4 via @ingydotnet
+  tags: error mapping scalar
+  fail: true
+  yaml: |
+    a: b: c: d
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :a

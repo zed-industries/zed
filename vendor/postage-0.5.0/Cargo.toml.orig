@@ -1,0 +1,75 @@
+[package]
+name = "postage"
+version = "0.5.0"
+description = "An async channel library"
+keywords = ["async", "channels"]
+categories = ["asynchronous"]
+authors = ["Austin Jones <implAustin@gmail.com>"]
+edition = "2018"
+homepage = "https://github.com/austinjones/postage-rs"
+repository = "https://github.com/austinjones/postage-rs"
+license = "MIT"
+readme = "README.md"
+
+[features]
+default = ["logging", "blocking"]
+# enables blocking send and receive
+blocking = ["pollster"]
+# enables debug log statements.  disabled by default in production builds as they are *very verbose*
+debug = ["log", "simple_logger"]
+# enables futures Sink and Stream implementations
+futures-traits = ["futures"]
+# enables combinators that log their messages
+logging = ["log"]
+
+[dependencies]
+atomic = "0.5"
+crossbeam-queue = "0.3"
+log = { version = "0.4", optional = true }
+futures = { version = "0.3", optional = true, default-features = false }
+pin-project = "1"
+pollster = { version = "0.2", optional = true }
+simple_logger = { version = "2.1", optional = true }
+static_assertions = "1.1.0"
+thiserror = "1.0"
+parking_lot = "0.12"
+
+[dev-dependencies]
+futures-test = "0.3"
+tokio = { version = "1.0", features = ["rt", "rt-multi-thread", "macros", "time", "sync"] }
+async-std = { version = "1.9", features = ["attributes"] }
+futures = { version = "0.3", default-features = false }
+criterion = "0.3"
+
+[[bench]]
+name = "broadcast"
+harness = false
+
+[[bench]]
+name = "dispatch"
+harness = false
+
+[[bench]]
+name = "mpsc"
+harness = false
+
+[[bench]]
+name = "watch"
+harness = false
+
+[[bench]]
+name = "tokio_broadcast"
+harness = false
+
+[[bench]]
+name = "tokio_mpsc"
+harness = false
+
+[[bench]]
+name = "tokio_watch"
+harness = false
+
+[[bench]]
+name = "async_std_channel"
+harness = false
+

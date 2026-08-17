@@ -1,0 +1,16 @@
+package foo:bar;
+
+interface foo {
+  resource r;
+
+  type handle = own<r>;
+}
+
+world module {
+  export foo;
+  export anon: interface {
+    use foo.{handle};
+    f: func() -> handle;
+  }
+}
+

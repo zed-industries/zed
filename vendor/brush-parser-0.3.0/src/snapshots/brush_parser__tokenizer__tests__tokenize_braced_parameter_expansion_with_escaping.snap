@@ -1,0 +1,21 @@
+---
+source: brush-parser/src/tokenizer.rs
+expression: "test_tokenizer(r\"a${x\\}}b\")?"
+---
+TokenizerResult(
+  input: "a${x\\}}b",
+  result: [
+    W("a${x\\}}b", Loc(
+      start: Pos(
+        idx: 0,
+        line: 1,
+        col: 1,
+      ),
+      end: Pos(
+        idx: 8,
+        line: 1,
+        col: 9,
+      ),
+    )),
+  ],
+)

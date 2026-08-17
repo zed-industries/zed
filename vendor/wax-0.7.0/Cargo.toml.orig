@@ -1,0 +1,69 @@
+[package]
+name = "wax"
+version = "0.7.0"
+authors = ["Sean Olson <olson.sean.k@gmail.com>"]
+description = "Opinionated and portable globs that can be matched against paths and directory trees."
+repository = "https://github.com/olson-sean-k/wax"
+readme = "README.md"
+edition = "2024"
+rust-version = "1.85.0"
+license = "MIT"
+keywords = [
+    "glob",
+    "pattern",
+    "regex",
+]
+categories = ["filesystem"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "--cfg",
+    "docsrs",
+]
+
+[features]
+default = ["walk"]
+# Integrates with `miette` and provides `Diagnostic` error types and reporting.
+miette = [
+    "dep:miette",
+    "dep:tardar",
+]
+# Provides APIs for matching globs against directory trees.
+walk = ["dep:walkdir"]
+
+[dependencies]
+const_format = "^0.2.0"
+itertools = "^0.14.0"
+nom = "^7.0.0"
+pori = "=0.0.0"
+thiserror = "^2.0.0"
+
+[dependencies.miette]
+version = "^5.10.0"
+default-features = false
+optional = true
+
+[dependencies.regex]
+version = "^1.12.0"
+default-features = false
+features = [
+    "perf",
+    "std",
+    "unicode-case",
+]
+
+[dependencies.tardar]
+version = "^0.1.0"
+optional = true
+
+[dependencies.walkdir]
+version = "^2.5.0"
+optional = true
+
+[dev-dependencies]
+build-fs-tree = "^0.7.0"
+dunce = "^1.0.0"
+expect_macro = "^0.2.0"
+rstest = "^0.26.0"
+tempfile = "^3.24.0"

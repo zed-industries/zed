@@ -1,0 +1,31 @@
+{
+  "build": "4_cp312",
+  "build_number": 4,
+  "channel": "https://conda.anaconda.org/conda-forge/osx-arm64",
+  "constrains": [
+    "python 3.12.* *_cpython"
+  ],
+  "depends": [],
+  "extracted_package_dir": "/Users/donjayamanne/miniconda3/pkgs/python_abi-3.12-4_cp312",
+  "files": [],
+  "fn": "python_abi-3.12-4_cp312.conda",
+  "license": "BSD-3-Clause",
+  "link": {
+    "source": "/Users/donjayamanne/miniconda3/pkgs/python_abi-3.12-4_cp312",
+    "type": 1
+  },
+  "md5": "bbb3a02c78b2d8219d7213f76d644a2a",
+  "name": "python_abi",
+  "package_tarball_full_path": "/Users/donjayamanne/miniconda3/pkgs/python_abi-3.12-4_cp312.conda",
+  "paths_data": {
+    "paths": [],
+    "paths_version": 1
+  },
+  "requested_spec": "None",
+  "sha256": "db25428e4f24f8693ffa39f3ff6dfbb8fd53bc298764b775b57edab1c697560f",
+  "size": 6508,
+  "subdir": "osx-arm64",
+  "timestamp": 1695147497000,
+  "url": "https://conda.anaconda.org/conda-forge/osx-arm64/python_abi-3.12-4_cp312.conda",
+  "version": "3.12"
+}

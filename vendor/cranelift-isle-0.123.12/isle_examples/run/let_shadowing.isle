@@ -1,0 +1,35 @@
+(decl foo (u64) u64)
+(rule (foo x) x)
+
+;; Shadowing of a global name
+(decl test1 (u64) u64)
+(rule (test1 x)
+      (let ((foo u64 x))
+        foo))
+
+;; Shadowing of a parameter
+(decl test2 (u64) u64)
+(rule (test2 x)
+      (let ((x u64 x))
+        x))
+
+;; Shadowing of this binding's name
+(decl test3 (u64) u64)
+(rule (test3 x)
+      (let ((test3 u64 x))
+        test3))
+
+;; Shadowing another let-bound name
+(decl test4 (u64) u64)
+(rule (test4 x)
+      (let ((val u64 x)
+            (val u64 23))
+        val))
+
+;; Shadowing a global with a parameter name
+(decl test5 (u64) u64)
+(rule (test5 foo) foo)
+
+;; Using a previously shadowed global
+(decl test6 (u64) u64)
+(rule (test6 x) (foo x))

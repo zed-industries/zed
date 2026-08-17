@@ -1,0 +1,22 @@
+(form
+  bv_unary_8_to_64
+  ((args (bv  8)) (ret (bv  8)) (canon (bv  8)))
+  ((args (bv 16)) (ret (bv 16)) (canon (bv 16)))
+  ((args (bv 32)) (ret (bv 32)) (canon (bv 32)))
+  ((args (bv 64)) (ret (bv 64)) (canon (bv 64)))
+)
+
+(spec (A i j) (provide (= (if true (= i j) (= i (bvneg j))) (=> false true))))
+(instantiate A ((args (bv 8)) (ret (bv 8)) (canon (bv 8))))
+(decl A (u8 u8) u8)
+
+(spec (B i)
+  (provide (= (bvadd i #xff) #b00000000))
+  (require (= (= 1 2) false)))
+(instantiate B unary_bv_8_to_64)
+(decl B (u8) u8)
+
+(rule first 1 (A x x) x)
+(rule second 0 (A x _) 0)
+
+(rule third 1 (B x) x)

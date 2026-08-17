@@ -1,0 +1,9 @@
+error[E0512]: cannot transmute between types of different sizes, or dependently-sized types
+  --> tests/ui-msrv/try_transmute_mut-alignment-increase.rs:20:48
+   |
+20 |     let _increase_size: Result<&mut AU16, _> = try_transmute_mut!(src);
+   |                                                ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: source type: `AlignOf<[u8; 2]>` (8 bits)
+   = note: target type: `MaxAlignsOf<[u8; 2], AU16>` (16 bits)
+   = note: this error originates in the macro `$crate::assert_align_gt_eq` (in Nightly builds, run with -Z macro-backtrace for more info)

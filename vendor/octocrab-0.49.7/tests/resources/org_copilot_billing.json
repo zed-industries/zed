@@ -1,0 +1,16 @@
+{
+    "seat_breakdown": {
+        "total": 12,
+        "added_this_cycle": 9,
+        "pending_invitation": 0,
+        "pending_cancellation": 0,
+        "active_this_cycle": 12,
+        "inactive_this_cycle": 11
+    },
+    "seat_management_setting": "assign_selected",
+    "ide_chat": "enabled",
+    "platform_chat": "enabled",
+    "cli": "enabled",
+    "public_code_suggestions": "block",
+    "plan_type": "business"
+}

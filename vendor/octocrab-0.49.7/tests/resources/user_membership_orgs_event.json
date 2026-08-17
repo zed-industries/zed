@@ -1,0 +1,82 @@
+[
+    {
+        "url": "https://api.github.com/orgs/elementary/memberships/davidmhewitt",
+        "state": "active",
+        "role": "admin",
+        "organization_url": "https://api.github.com/orgs/elementary",
+        "user": {
+            "login": "davidmhewitt",
+            "id": 3372394,
+            "node_id": "MDQ6VXNlcjMzNzIzOTQ=",
+            "avatar_url": "https://avatars.githubusercontent.com/u/3372394?v=4",
+            "gravatar_id": "",
+            "url": "https://api.github.com/users/davidmhewitt",
+            "html_url": "https://github.com/davidmhewitt",
+            "followers_url": "https://api.github.com/users/davidmhewitt/followers",
+            "following_url": "https://api.github.com/users/davidmhewitt/following{/other_user}",
+            "gists_url": "https://api.github.com/users/davidmhewitt/gists{/gist_id}",
+            "starred_url": "https://api.github.com/users/davidmhewitt/starred{/owner}{/repo}",
+            "subscriptions_url": "https://api.github.com/users/davidmhewitt/subscriptions",
+            "organizations_url": "https://api.github.com/users/davidmhewitt/orgs",
+            "repos_url": "https://api.github.com/users/davidmhewitt/repos",
+            "events_url": "https://api.github.com/users/davidmhewitt/events{/privacy}",
+            "received_events_url": "https://api.github.com/users/davidmhewitt/received_events",
+            "type": "User",
+            "site_admin": false
+        },
+        "organization": {
+            "login": "elementary",
+            "id": 1978534,
+            "node_id": "MDEyOk9yZ2FuaXphdGlvbjE5Nzg1MzQ=",
+            "url": "https://api.github.com/orgs/elementary",
+            "repos_url": "https://api.github.com/orgs/elementary/repos",
+            "events_url": "https://api.github.com/orgs/elementary/events",
+            "hooks_url": "https://api.github.com/orgs/elementary/hooks",
+            "issues_url": "https://api.github.com/orgs/elementary/issues",
+            "members_url": "https://api.github.com/orgs/elementary/members{/member}",
+            "public_members_url": "https://api.github.com/orgs/elementary/public_members{/member}",
+            "avatar_url": "https://avatars.githubusercontent.com/u/1978534?v=4",
+            "description": "The thoughtful, capable, and ethical replacement for Windows and macOS—plus AppCenter, the pay-what-you-can app store"
+        }
+    },
+    {
+        "url": "https://api.github.com/orgs/EpicGames/memberships/davidmhewitt",
+        "state": "active",
+        "role": "member",
+        "organization_url": "https://api.github.com/orgs/EpicGames",
+        "user": {
+            "login": "davidmhewitt",
+            "id": 3372394,
+            "node_id": "MDQ6VXNlcjMzNzIzOTQ=",
+            "avatar_url": "https://avatars.githubusercontent.com/u/3372394?v=4",
+            "gravatar_id": "",
+            "url": "https://api.github.com/users/davidmhewitt",
+            "html_url": "https://github.com/davidmhewitt",
+            "followers_url": "https://api.github.com/users/davidmhewitt/followers",
+            "following_url": "https://api.github.com/users/davidmhewitt/following{/other_user}",
+            "gists_url": "https://api.github.com/users/davidmhewitt/gists{/gist_id}",
+            "starred_url": "https://api.github.com/users/davidmhewitt/starred{/owner}{/repo}",
+            "subscriptions_url": "https://api.github.com/users/davidmhewitt/subscriptions",
+            "organizations_url": "https://api.github.com/users/davidmhewitt/orgs",
+            "repos_url": "https://api.github.com/users/davidmhewitt/repos",
+            "events_url": "https://api.github.com/users/davidmhewitt/events{/privacy}",
+            "received_events_url": "https://api.github.com/users/davidmhewitt/received_events",
+            "type": "User",
+            "site_admin": false
+        },
+        "organization": {
+            "login": "EpicGames",
+            "id": 6615685,
+            "node_id": "MDEyOk9yZ2FuaXphdGlvbjY2MTU2ODU=",
+            "url": "https://api.github.com/orgs/EpicGames",
+            "repos_url": "https://api.github.com/orgs/EpicGames/repos",
+            "events_url": "https://api.github.com/orgs/EpicGames/events",
+            "hooks_url": "https://api.github.com/orgs/EpicGames/hooks",
+            "issues_url": "https://api.github.com/orgs/EpicGames/issues",
+            "members_url": "https://api.github.com/orgs/EpicGames/members{/member}",
+            "public_members_url": "https://api.github.com/orgs/EpicGames/public_members{/member}",
+            "avatar_url": "https://avatars.githubusercontent.com/u/6615685?v=4",
+            "description": ""
+        }
+    }
+]

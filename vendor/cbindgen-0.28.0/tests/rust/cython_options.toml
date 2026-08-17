@@ -1,0 +1,6 @@
+[cython]
+header = '"my_header.h"'
+
+[cython.cimports]
+"libc.stdint" = ["int8_t", "int16_t"]
+"libc.stddef" = ["*"]

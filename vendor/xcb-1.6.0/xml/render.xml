@@ -1,0 +1,858 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Copyright (C) 2002-2004 Carl D. Worth, Jamey Sharp, Bart Massey, Josh Triplett
+All Rights Reserved.  See the file COPYING in this directory
+for licensing information.
+-->
+<xcb header="render" extension-xname="RENDER" extension-name="Render" major-version="0" minor-version="11">
+    <!-- supports version 0.11 -->
+
+    <import>xproto</import>
+
+    <enum name="PictType">
+        <item name="Indexed">
+            <value>0</value>
+        </item>
+        <item name="Direct">
+            <value>1</value>
+        </item>
+    </enum>
+
+    <enum name="Picture">
+        <item name="None">
+            <value>0</value>
+        </item>
+    </enum>
+
+    <!-- Disjoint* and Conjoint* are new in version 0.2 -->
+    <!-- PDF blend modes are new in version 0.11 -->
+    <enum name="PictOp">
+        <item name="Clear">
+            <value>0</value>
+        </item>
+        <item name="Src">
+            <value>1</value>
+        </item>
+        <item name="Dst">
+            <value>2</value>
+        </item>
+        <item name="Over">
+            <value>3</value>
+        </item>
+        <item name="OverReverse">
+            <value>4</value>
+        </item>
+        <item name="In">
+            <value>5</value>
+        </item>
+        <item name="InReverse">
+            <value>6</value>
+        </item>
+        <item name="Out">
+            <value>7</value>
+        </item>
+        <item name="OutReverse">
+            <value>8</value>
+        </item>
+        <item name="Atop">
+            <value>9</value>
+        </item>
+        <item name="AtopReverse">
+            <value>10</value>
+        </item>
+        <item name="Xor">
+            <value>11</value>
+        </item>
+        <item name="Add">
+            <value>12</value>
+        </item>
+        <item name="Saturate">
+            <value>13</value>
+        </item>
+
+        <item name="DisjointClear">
+            <value>16</value>
+        </item>
+        <item name="DisjointSrc">
+            <value>17</value>
+        </item>
+        <item name="DisjointDst">
+            <value>18</value>
+        </item>
+        <item name="DisjointOver">
+            <value>19</value>
+        </item>
+        <item name="DisjointOverReverse">
+            <value>20</value>
+        </item>
+        <item name="DisjointIn">
+            <value>21</value>
+        </item>
+        <item name="DisjointInReverse">
+            <value>22</value>
+        </item>
+        <item name="DisjointOut">
+            <value>23</value>
+        </item>
+        <item name="DisjointOutReverse">
+            <value>24</value>
+        </item>
+        <item name="DisjointAtop">
+            <value>25</value>
+        </item>
+        <item name="DisjointAtopReverse">
+            <value>26</value>
+        </item>
+        <item name="DisjointXor">
+            <value>27</value>
+        </item>
+
+        <item name="ConjointClear">
+            <value>32</value>
+        </item>
+        <item name="ConjointSrc">
+            <value>33</value>
+        </item>
+        <item name="ConjointDst">
+            <value>34</value>
+        </item>
+        <item name="ConjointOver">
+            <value>35</value>
+        </item>
+        <item name="ConjointOverReverse">
+            <value>36</value>
+        </item>
+        <item name="ConjointIn">
+            <value>37</value>
+        </item>
+        <item name="ConjointInReverse">
+            <value>38</value>
+        </item>
+        <item name="ConjointOut">
+            <value>39</value>
+        </item>
+        <item name="ConjointOutReverse">
+            <value>40</value>
+        </item>
+        <item name="ConjointAtop">
+            <value>41</value>
+        </item>
+        <item name="ConjointAtopReverse">
+            <value>42</value>
+        </item>
+        <item name="ConjointXor">
+            <value>43</value>
+        </item>
+
+        <!-- PDF blend modes are new in version 0.11 -->
+        <item name="Multiply">
+            <value>48</value>
+        </item>
+        <item name="Screen">
+            <value>49</value>
+        </item>
+        <item name="Overlay">
+            <value>50</value>
+        </item>
+        <item name="Darken">
+            <value>51</value>
+        </item>
+        <item name="Lighten">
+            <value>52</value>
+        </item>
+        <item name="ColorDodge">
+            <value>53</value>
+        </item>
+        <item name="ColorBurn">
+            <value>54</value>
+        </item>
+        <item name="HardLight">
+            <value>55</value>
+        </item>
+        <item name="SoftLight">
+            <value>56</value>
+        </item>
+        <item name="Difference">
+            <value>57</value>
+        </item>
+        <item name="Exclusion">
+            <value>58</value>
+        </item>
+        <item name="HSLHue">
+            <value>59</value>
+        </item>
+        <item name="HSLSaturation">
+            <value>60</value>
+        </item>
+        <item name="HSLColor">
+            <value>61</value>
+        </item>
+        <item name="HSLLuminosity">
+            <value>62</value>
+        </item>
+    </enum>
+
+    <enum name="PolyEdge">
+        <item name="Sharp">
+            <value>0</value>
+        </item>
+        <item name="Smooth">
+            <value>1</value>
+        </item>
+    </enum>
+
+    <enum name="PolyMode">
+        <item name="Precise">
+            <value>0</value>
+        </item>
+        <item name="Imprecise">
+            <value>1</value>
+        </item>
+    </enum>
+
+    <enum name="CP">
+        <item name="Repeat">
+            <bit>0</bit>
+        </item>
+        <item name="AlphaMap">
+            <bit>1</bit>
+        </item>
+        <item name="AlphaXOrigin">
+            <bit>2</bit>
+        </item>
+        <item name="AlphaYOrigin">
+            <bit>3</bit>
+        </item>
+        <item name="ClipXOrigin">
+            <bit>4</bit>
+        </item>
+        <item name="ClipYOrigin">
+            <bit>5</bit>
+        </item>
+        <item name="ClipMask">
+            <bit>6</bit>
+        </item>
+        <item name="GraphicsExposure">
+            <bit>7</bit>
+        </item>
+        <item name="SubwindowMode">
+            <bit>8</bit>
+        </item>
+        <item name="PolyEdge">
+            <bit>9</bit>
+        </item>
+        <item name="PolyMode">
+            <bit>10</bit>
+        </item>
+        <item name="Dither">
+            <bit>11</bit>
+        </item>
+        <item name="ComponentAlpha">
+            <bit>12</bit>
+        </item>
+    </enum>
+
+    <enum name="SubPixel">
+        <item name="Unknown">
+            <value>0</value>
+        </item>
+        <item name="HorizontalRGB">
+            <value>1</value>
+        </item>
+        <item name="HorizontalBGR">
+            <value>2</value>
+        </item>
+        <item name="VerticalRGB">
+            <value>3</value>
+        </item>
+        <item name="VerticalBGR">
+            <value>4</value>
+        </item>
+        <item name="None">
+            <value>5</value>
+        </item>
+    </enum>
+
+    <!-- Extended repeat attributes introduced in 0.10 -->
+    <enum name="Repeat">
+        <item name="None">
+            <value>0</value>
+        </item>
+        <item name="Normal">
+            <value>1</value>
+        </item>
+        <item name="Pad">
+            <value>2</value>
+        </item>
+        <item name="Reflect">
+            <value>3</value>
+        </item>
+    </enum>
+
+    <typedef oldname="CARD32" newname="GLYPH" />
+    <xidtype name="GLYPHSET" />
+
+    <xidtype name="PICTURE" />
+    <xidtype name="PICTFORMAT" />
+
+    <typedef oldname="INT32" newname="FIXED" />
+
+    <error name="PictFormat" number="0" />
+    <error name="Picture" number="1" />
+    <error name="PictOp" number="2" />
+    <error name="GlyphSet" number="3" />
+    <error name="Glyph" number="4" />
+
+    <struct name="DIRECTFORMAT">
+        <field type="CARD16" name="red_shift" />
+        <field type="CARD16" name="red_mask" />
+        <field type="CARD16" name="green_shift" />
+        <field type="CARD16" name="green_mask" />
+        <field type="CARD16" name="blue_shift" />
+        <field type="CARD16" name="blue_mask" />
+        <field type="CARD16" name="alpha_shift" />
+        <field type="CARD16" name="alpha_mask" />
+    </struct>
+
+    <struct name="PICTFORMINFO">
+        <field type="PICTFORMAT" name="id" />
+        <field type="CARD8" name="type" enum="PictType" />
+        <field type="CARD8" name="depth" />
+        <pad bytes="2" />
+        <field type="DIRECTFORMAT" name="direct" />
+        <field type="COLORMAP" name="colormap" />
+    </struct>
+
+    <struct name="PICTVISUAL">
+        <field type="VISUALID" name="visual" />
+        <field type="PICTFORMAT" name="format" />
+    </struct>
+
+    <struct name="PICTDEPTH">
+        <field type="CARD8" name="depth" />
+        <pad bytes="1" />
+        <field type="CARD16" name="num_visuals" />
+        <pad bytes="4" />
+        <list type="PICTVISUAL" name="visuals">
+            <fieldref>num_visuals</fieldref>
+        </list>
+    </struct>
+
+    <struct name="PICTSCREEN">
+        <field type="CARD32" name="num_depths" />
+        <field type="PICTFORMAT" name="fallback" />
+        <list type="PICTDEPTH" name="depths">
+            <fieldref>num_depths</fieldref>
+        </list>
+    </struct>
+
+    <struct name="INDEXVALUE">
+        <field type="CARD32" name="pixel" />
+        <field type="CARD16" name="red" />
+        <field type="CARD16" name="green" />
+        <field type="CARD16" name="blue" />
+        <field type="CARD16" name="alpha" />
+    </struct>
+
+    <struct name="COLOR">
+        <field type="CARD16" name="red" />
+        <field type="CARD16" name="green" />
+        <field type="CARD16" name="blue" />
+        <field type="CARD16" name="alpha" />
+    </struct>
+
+    <struct name="POINTFIX">
+        <field type="FIXED" name="x" />
+        <field type="FIXED" name="y" />
+    </struct>
+
+    <struct name="LINEFIX">
+        <field type="POINTFIX" name="p1" />
+        <field type="POINTFIX" name="p2" />
+    </struct>
+
+    <struct name="TRIANGLE">
+        <field type="POINTFIX" name="p1" />
+        <field type="POINTFIX" name="p2" />
+        <field type="POINTFIX" name="p3" />
+    </struct>
+
+    <struct name="TRAPEZOID">
+        <field type="FIXED" name="top" />
+        <field type="FIXED" name="bottom" />
+        <field type="LINEFIX" name="left" />
+        <field type="LINEFIX" name="right" />
+    </struct>
+
+    <struct name="GLYPHINFO">
+        <field type="CARD16" name="width" />
+        <field type="CARD16" name="height" />
+        <field type="INT16" name="x" />
+        <field type="INT16" name="y" />
+        <field type="INT16" name="x_off" />
+        <field type="INT16" name="y_off" />
+    </struct>
+
+
+    <request name="QueryVersion" opcode="0">
+        <field type="CARD32" name="client_major_version" />
+        <field type="CARD32" name="client_minor_version" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="major_version" />
+            <field type="CARD32" name="minor_version" />
+            <pad bytes="16" />
+        </reply>
+    </request>
+
+    <request name="QueryPictFormats" opcode="1">
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="num_formats" />
+            <field type="CARD32" name="num_screens" />
+            <field type="CARD32" name="num_depths" />
+            <field type="CARD32" name="num_visuals" />
+            <field type="CARD32" name="num_subpixel" /> <!-- new in version 0.6 -->
+            <pad bytes="4" />
+            <list type="PICTFORMINFO" name="formats">
+                <fieldref>num_formats</fieldref>
+            </list>
+            <list type="PICTSCREEN" name="screens">
+                <fieldref>num_screens</fieldref>
+            </list>
+            <list type="CARD32" name="subpixels" enum="SubPixel">
+                <fieldref>num_subpixel</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <!-- from version 0.7 -->
+    <request name="QueryPictIndexValues" opcode="2">
+        <field type="PICTFORMAT" name="format" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="num_values" />
+            <pad bytes="20" />
+            <list type="INDEXVALUE" name="values">
+                <fieldref>num_values</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <!-- opcode 3 reserved for QueryDithers -->
+
+    <request name="CreatePicture" opcode="4">
+        <field type="PICTURE" name="pid" />
+        <field type="DRAWABLE" name="drawable" />
+        <field type="PICTFORMAT" name="format" />
+        <field type="CARD32" name="value_mask" mask="CP" />
+        <switch name="value_list">
+            <fieldref>value_mask</fieldref>
+            <bitcase>
+                <enumref ref="CP">Repeat</enumref>
+                <field type="CARD32" name="repeat" enum="Repeat" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CP">AlphaMap</enumref>
+                <field type="PICTURE" name="alphamap" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CP">AlphaXOrigin</enumref>
+                <field type="INT32" name="alphaxorigin" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CP">AlphaYOrigin</enumref>
+                <field type="INT32" name="alphayorigin" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CP">ClipXOrigin</enumref>
+                <field type="INT32" name="clipxorigin" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CP">ClipYOrigin</enumref>
+                <field type="INT32" name="clipyorigin" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CP">ClipMask</enumref>
+                <field type="PIXMAP" name="clipmask" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CP">GraphicsExposure</enumref>
+                <field type="CARD32" name="graphicsexposure" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CP">SubwindowMode</enumref>
+                <field type="CARD32" name="subwindowmode" enum="SubwindowMode" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CP">PolyEdge</enumref>
+                <field type="CARD32" name="polyedge" enum="PolyEdge" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CP">PolyMode</enumref>
+                <field type="CARD32" name="polymode" enum="PolyMode" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CP">Dither</enumref>
+                <field type="ATOM" name="dither" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CP">ComponentAlpha</enumref>
+                <field type="CARD32" name="componentalpha" />
+            </bitcase>
+        </switch>
+    </request>
+
+    <request name="ChangePicture" opcode="5">
+        <field type="PICTURE" name="picture" />
+        <field type="CARD32" name="value_mask" mask="CP" />
+        <switch name="value_list">
+            <fieldref>value_mask</fieldref>
+            <bitcase>
+                <enumref ref="CP">Repeat</enumref>
+                <field type="CARD32" name="repeat" enum="Repeat" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CP">AlphaMap</enumref>
+                <field type="PICTURE" name="alphamap" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CP">AlphaXOrigin</enumref>
+                <field type="INT32" name="alphaxorigin" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CP">AlphaYOrigin</enumref>
+                <field type="INT32" name="alphayorigin" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CP">ClipXOrigin</enumref>
+                <field type="INT32" name="clipxorigin" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CP">ClipYOrigin</enumref>
+                <field type="INT32" name="clipyorigin" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CP">ClipMask</enumref>
+                <field type="PIXMAP" name="clipmask" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CP">GraphicsExposure</enumref>
+                <field type="CARD32" name="graphicsexposure" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CP">SubwindowMode</enumref>
+                <field type="CARD32" name="subwindowmode" enum="SubwindowMode" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CP">PolyEdge</enumref>
+                <field type="CARD32" name="polyedge" enum="PolyEdge" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CP">PolyMode</enumref>
+                <field type="CARD32" name="polymode" enum="PolyMode" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CP">Dither</enumref>
+                <field type="ATOM" name="dither" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CP">ComponentAlpha</enumref>
+                <field type="CARD32" name="componentalpha" />
+            </bitcase>
+        </switch>
+    </request>
+
+    <request name="SetPictureClipRectangles" opcode="6">
+        <field type="PICTURE" name="picture" />
+        <field type="INT16" name="clip_x_origin" />
+        <field type="INT16" name="clip_y_origin" />
+        <list type="RECTANGLE" name="rectangles" />
+    </request>
+
+    <request name="FreePicture" opcode="7">
+        <field type="PICTURE" name="picture" />
+    </request>
+
+    <request name="Composite" opcode="8">
+        <field type="CARD8" name="op" enum="PictOp" />
+        <pad bytes="3" />
+        <field type="PICTURE" name="src" />
+        <field type="PICTURE" name="mask" altenum="Picture" />
+        <field type="PICTURE" name="dst" />
+        <field type="INT16" name="src_x" />
+        <field type="INT16" name="src_y" />
+        <field type="INT16" name="mask_x" />
+        <field type="INT16" name="mask_y" />
+        <field type="INT16" name="dst_x" />
+        <field type="INT16" name="dst_y" />
+        <field type="CARD16" name="width" />
+        <field type="CARD16" name="height" />
+    </request>
+
+    <!-- opcode 9 reserved for Scale -->
+
+    <request name="Trapezoids" opcode="10">
+        <field type="CARD8" name="op" enum="PictOp" />
+        <pad bytes="3" />
+        <field type="PICTURE" name="src" />
+        <field type="PICTURE" name="dst" />
+        <field type="PICTFORMAT" name="mask_format" />
+        <field type="INT16" name="src_x" />
+        <field type="INT16" name="src_y" />
+        <list type="TRAPEZOID" name="traps" />
+    </request>
+
+    <request name="Triangles" opcode="11">
+        <field type="CARD8" name="op" enum="PictOp" />
+        <pad bytes="3" />
+        <field type="PICTURE" name="src" />
+        <field type="PICTURE" name="dst" />
+        <field type="PICTFORMAT" name="mask_format" />
+        <field type="INT16" name="src_x" />
+        <field type="INT16" name="src_y" />
+        <list type="TRIANGLE" name="triangles" />
+    </request>
+
+    <request name="TriStrip" opcode="12">
+        <field type="CARD8" name="op" enum="PictOp" />
+        <pad bytes="3" />
+        <field type="PICTURE" name="src" />
+        <field type="PICTURE" name="dst" />
+        <field type="PICTFORMAT" name="mask_format" />
+        <field type="INT16" name="src_x" />
+        <field type="INT16" name="src_y" />
+        <list type="POINTFIX" name="points" />
+    </request>
+
+    <request name="TriFan" opcode="13">
+        <field type="CARD8" name="op" enum="PictOp" />
+        <pad bytes="3" />
+        <field type="PICTURE" name="src" />
+        <field type="PICTURE" name="dst" />
+        <field type="PICTFORMAT" name="mask_format" />
+        <field type="INT16" name="src_x" />
+        <field type="INT16" name="src_y" />
+        <list type="POINTFIX" name="points" />
+    </request>
+
+    <!-- opcode 14 reserved for ColorTrapezoids -->
+
+    <!-- opcode 15 reserved for ColorTriangles -->
+
+    <!-- opcode 16 reserved for Transform -->
+
+    <request name="CreateGlyphSet" opcode="17">
+        <field type="GLYPHSET" name="gsid" />
+        <field type="PICTFORMAT" name="format" />
+    </request>
+
+    <request name="ReferenceGlyphSet" opcode="18">
+        <field type="GLYPHSET" name="gsid" />
+        <field type="GLYPHSET" name="existing" />
+    </request>
+
+    <request name="FreeGlyphSet" opcode="19">
+        <field type="GLYPHSET" name="glyphset" />
+    </request>
+
+    <request name="AddGlyphs" opcode="20">
+        <field type="GLYPHSET" name="glyphset" />
+        <field type="CARD32" name="glyphs_len" />
+        <list type="CARD32" name="glyphids">
+            <fieldref>glyphs_len</fieldref>
+        </list>
+        <list type="GLYPHINFO" name="glyphs">
+            <fieldref>glyphs_len</fieldref>
+        </list>
+        <list type="BYTE" name="data" />
+    </request>
+
+    <!-- opcode 21 reserved for AddGlyphsFromPicture -->
+
+    <request name="FreeGlyphs" opcode="22">
+        <field type="GLYPHSET" name="glyphset" />
+        <list type="GLYPH" name="glyphs" />
+    </request>
+
+    <request name="CompositeGlyphs8" opcode="23">
+        <field type="CARD8" name="op" enum="PictOp" />
+        <pad bytes="3" />
+        <field type="PICTURE" name="src" />
+        <field type="PICTURE" name="dst" />
+        <field type="PICTFORMAT" name="mask_format" />
+        <field type="GLYPHSET" name="glyphset" />
+        <field type="INT16" name="src_x" />
+        <field type="INT16" name="src_y" />
+        <list type="BYTE" name="glyphcmds" />
+    </request>
+
+    <request name="CompositeGlyphs16" opcode="24">
+        <field type="CARD8" name="op" enum="PictOp" />
+        <pad bytes="3" />
+        <field type="PICTURE" name="src" />
+        <field type="PICTURE" name="dst" />
+        <field type="PICTFORMAT" name="mask_format" />
+        <field type="GLYPHSET" name="glyphset" />
+        <field type="INT16" name="src_x" />
+        <field type="INT16" name="src_y" />
+        <list type="BYTE" name="glyphcmds" />
+    </request>
+
+    <request name="CompositeGlyphs32" opcode="25">
+        <field type="CARD8" name="op" enum="PictOp" />
+        <pad bytes="3" />
+        <field type="PICTURE" name="src" />
+        <field type="PICTURE" name="dst" />
+        <field type="PICTFORMAT" name="mask_format" />
+        <field type="GLYPHSET" name="glyphset" />
+        <field type="INT16" name="src_x" />
+        <field type="INT16" name="src_y" />
+        <list type="BYTE" name="glyphcmds" />
+    </request>
+
+    <!-- new in version 0.1 -->
+
+    <request name="FillRectangles" opcode="26">
+        <field type="CARD8" name="op" enum="PictOp" />
+        <pad bytes="3" />
+        <field type="PICTURE" name="dst" />
+        <field type="COLOR" name="color" />
+        <list type="RECTANGLE" name="rects" />
+    </request>
+
+    <!-- new in version 0.5 -->
+
+    <request name="CreateCursor" opcode="27">
+        <field type="CURSOR" name="cid" />
+        <field type="PICTURE" name="source" />
+        <field type="CARD16" name="x" />
+        <field type="CARD16" name="y" />
+    </request>
+
+    <!-- new in version 0.6 -->
+
+    <struct name="TRANSFORM">
+        <field type="FIXED" name="matrix11" />
+        <field type="FIXED" name="matrix12" />
+        <field type="FIXED" name="matrix13" />
+        <field type="FIXED" name="matrix21" />
+        <field type="FIXED" name="matrix22" />
+        <field type="FIXED" name="matrix23" />
+        <field type="FIXED" name="matrix31" />
+        <field type="FIXED" name="matrix32" />
+        <field type="FIXED" name="matrix33" />
+    </struct>
+
+    <request name="SetPictureTransform" opcode="28">
+        <field type="PICTURE" name="picture" />
+        <field type="TRANSFORM" name="transform" />
+    </request>
+
+    <request name="QueryFilters" opcode="29">
+        <field type="DRAWABLE" name="drawable" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="num_aliases" />
+            <field type="CARD32" name="num_filters" />
+            <pad bytes="16" />
+            <list type="CARD16" name="aliases">
+                <fieldref>num_aliases</fieldref>
+            </list>
+            <list type="STR" name="filters">
+                <fieldref>num_filters</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="SetPictureFilter" opcode="30">
+        <field type="PICTURE" name="picture" />
+        <field type="CARD16" name="filter_len" />
+        <pad bytes="2" />
+        <list type="char" name="filter">
+            <fieldref>filter_len</fieldref>
+        </list>
+        <pad align="4" />
+        <list type="FIXED" name="values" />
+    </request>
+
+    <!-- new in version 0.8 -->
+
+    <struct name="ANIMCURSORELT">
+        <field type="CURSOR" name="cursor" />
+        <field type="CARD32" name="delay" />
+    </struct>
+
+    <request name="CreateAnimCursor" opcode="31">
+        <field type="CURSOR" name="cid" />
+        <list type="ANIMCURSORELT" name="cursors" />
+    </request>
+
+    <!-- new in version 0.9 -->
+
+    <struct name="SPANFIX">
+        <field type="FIXED" name="l" />
+        <field type="FIXED" name="r" />
+        <field type="FIXED" name="y" />
+    </struct>
+
+    <struct name="TRAP">
+        <field type="SPANFIX" name="top" />
+        <field type="SPANFIX" name="bot" />
+    </struct>
+
+    <request name="AddTraps" opcode="32">
+        <field type="PICTURE" name="picture" />
+        <field type="INT16" name="x_off" />
+        <field type="INT16" name="y_off" />
+        <list type="TRAP" name="traps" />
+    </request>
+
+    <!-- new in version 0.10 -->
+
+    <request name="CreateSolidFill" opcode="33">
+        <field type="PICTURE" name="picture" />
+        <field type="COLOR" name="color" />
+    </request>
+
+    <request name="CreateLinearGradient" opcode="34">
+        <field type="PICTURE" name="picture" />
+        <field type="POINTFIX" name="p1" />
+        <field type="POINTFIX" name="p2" />
+        <field type="CARD32" name="num_stops" />
+        <list type="FIXED" name="stops">
+            <fieldref>num_stops</fieldref>
+        </list>
+        <list type="COLOR" name="colors">
+            <fieldref>num_stops</fieldref>
+        </list>
+    </request>
+
+    <request name="CreateRadialGradient" opcode="35">
+        <field type="PICTURE" name="picture" />
+        <field type="POINTFIX" name="inner" />
+        <field type="POINTFIX" name="outer" />
+        <field type="FIXED" name="inner_radius" />
+        <field type="FIXED" name="outer_radius" />
+        <field type="CARD32" name="num_stops" />
+        <list type="FIXED" name="stops">
+            <fieldref>num_stops</fieldref>
+        </list>
+        <list type="COLOR" name="colors">
+            <fieldref>num_stops</fieldref>
+        </list>
+    </request>
+
+    <request name="CreateConicalGradient" opcode="36">
+        <field type="PICTURE" name="picture" />
+        <field type="POINTFIX" name="center" />
+        <field type="FIXED" name="angle" /> <!-- degrees -->
+        <field type="CARD32" name="num_stops" />
+        <list type="FIXED" name="stops">
+            <fieldref>num_stops</fieldref>
+        </list>
+        <list type="COLOR" name="colors">
+            <fieldref>num_stops</fieldref>
+        </list>
+    </request>
+</xcb>

@@ -1,0 +1,45 @@
+flowchart TD
+  Hub[Ingress Hub]
+  Sink[Aggregation Sink]
+
+  Hub --> N01[Node 01]
+  Hub --> N02[Node 02]
+  Hub --> N03[Node 03]
+  Hub --> N04[Node 04]
+  Hub --> N05[Node 05]
+  Hub --> N06[Node 06]
+  Hub --> N07[Node 07]
+  Hub --> N08[Node 08]
+  Hub --> N09[Node 09]
+  Hub --> N10[Node 10]
+  Hub --> N11[Node 11]
+  Hub --> N12[Node 12]
+  Hub --> N13[Node 13]
+  Hub --> N14[Node 14]
+  Hub --> N15[Node 15]
+  Hub --> N16[Node 16]
+
+  N01 --> Sink
+  N02 --> Sink
+  N03 --> Sink
+  N04 --> Sink
+  N05 --> Sink
+  N06 --> Sink
+  N07 --> Sink
+  N08 --> Sink
+  N09 --> Sink
+  N10 --> Sink
+  N11 --> Sink
+  N12 --> Sink
+  N13 --> Sink
+  N14 --> Sink
+  N15 --> Sink
+  N16 --> Sink
+
+  N01 -.audit.-> N16
+  N02 -.audit.-> N15
+  N03 -.audit.-> N14
+  N04 -.audit.-> N13
+  N05 -.audit.-> N12
+  N06 -.audit.-> N11
+  N07 -.audit.-> N10

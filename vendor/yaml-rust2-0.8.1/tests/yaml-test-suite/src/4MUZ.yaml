@@ -1,0 +1,56 @@
+---
+- name: Flow mapping colon on line after key
+  from: '@ingydotnet'
+  tags: flow mapping
+  yaml: |
+    {"foo"
+    : "bar"}
+  tree: |
+    +STR
+     +DOC
+      +MAP {}
+       =VAL "foo
+       =VAL "bar
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "foo": "bar"
+    }
+  emit: |
+    "foo": "bar"
+
+- yaml: |
+    {"foo"
+    : bar}
+  tree: |
+    +STR
+     +DOC
+      +MAP {}
+       =VAL "foo
+       =VAL :bar
+      -MAP
+     -DOC
+    -STR
+  emit: |
+    "foo": bar
+
+- yaml: |
+    {foo
+    : bar}
+  tree: |
+    +STR
+     +DOC
+      +MAP {}
+       =VAL :foo
+       =VAL :bar
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "foo": "bar"
+    }
+  emit: |
+    foo: bar

@@ -1,0 +1,19 @@
+[package]
+name = "fork"
+version = "0.4.0"
+authors = ["Nicolas Embriz <nbari@tequila.io>"]
+description = "Library for creating a new process detached from the controlling terminal (daemon)"
+documentation = "https://docs.rs/fork/latest/fork/"
+homepage = "https://docs.rs/fork/latest/fork/"
+repository = "https://github.com/immortal/fork"
+readme = "README.md"
+keywords = ["fork", "setsid", "daemon", "process", "daemonize"]
+categories = ["os::unix-apis", "api-bindings"]
+license = "BSD-3-Clause"
+edition = "2024"
+
+[dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+os_pipe = "1.2"

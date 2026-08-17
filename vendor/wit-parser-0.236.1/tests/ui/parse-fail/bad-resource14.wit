@@ -1,0 +1,7 @@
+package foo:bar;
+
+interface foo {
+  resource a {}
+  type t = own<a>;
+  type b = own<t>;
+}

@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="wl_eglstream_controller">
+  <copyright>
+    SPDX-FileCopyrightText: 2017-2018, NVIDIA CORPORATION. All rights reserved.
+
+    SPDX-License-Identifier: MIT
+  </copyright>
+  <interface name="wl_eglstream_controller" version="2">
+    <!-- Present mode types. This enum defines what the present mode given
+         to a attach_eglstream_consumer_attribs request represents -->
+    <enum name="present_mode">
+      <description summary="Stream present mode">
+          - dont_care: Using this enum will tell the server to make its own
+                       decisions regarding present mode.
+
+          - fifo:      Tells the server to use a fifo present mode. The decision to
+                       use fifo synchronous is left up to the server.
+
+          - mailbox:   Tells the server to use a mailbox present mode.
+      </description>
+      <entry name="dont_care" value="0" summary="Let the Server decide present mode"/>
+      <entry name="fifo" value="1" summary="Use a fifo present mode"/>
+      <entry name="mailbox" value="2" summary="Use a mailbox mode"/>
+    </enum>
+
+    <enum name="attrib">
+      <description summary="Stream consumer attachment attributes">
+          - present_mode: Must be one of wl_eglstream_controller_present_mode. Tells the
+                          server the desired present mode that should be used.
+
+          - fifo_length:  Only valid when the present_mode attrib is provided and its
+                          value is specified as fifo. Tells the server the desired fifo
+                          length to be used when the desired present_mode is fifo.
+      </description>
+      <entry name="present_mode" value="0" summary="Tells the server the desired present mode"/>
+      <entry name="fifo_length" value="1" summary="Tells the server the desired fifo length when the desired presenation_mode is fifo."/>
+    </enum>
+
+    <request name="attach_eglstream_consumer" since="1">
+      <description summary="Create server stream and attach consumer">
+        Creates the corresponding server side EGLStream from the given wl_buffer
+        and attaches a consumer to it.
+      </description>
+      <arg name="wl_surface" type="object" interface="wl_surface"
+        summary="wl_surface corresponds to the client surface associated with
+        newly created eglstream"/>
+      <arg name="wl_resource" type="object" interface="wl_buffer"
+        summary="wl_resource corresponding to an EGLStream"/>
+    </request>
+
+    <request name="attach_eglstream_consumer_attribs" since="2">
+      <description summary="Create server stream and attach consumer using attributes">
+        Creates the corresponding server side EGLStream from the given wl_buffer
+        and attaches a consumer to it using the given attributes.
+      </description>
+      <arg name="wl_surface" type="object" interface="wl_surface"
+        summary="wl_surface corresponds to the client surface associated with
+        newly created eglstream"/>
+      <arg name="wl_resource" type="object" interface="wl_buffer"
+        summary="wl_resource corresponding to an EGLStream"/>
+      <arg name="attribs" type="array"
+        summary="Stream consumer attachment attribs">
+        <description summary="List of attributes with consumer attachment data">
+          It contains key-value pairs compatible with intptr_t type. A key must
+          be one of wl_eglstream_controller_attrib enumeration values. What a value
+          represents is attribute-specific.
+        </description>
+      </arg>
+    </request>
+  </interface>
+</protocol>

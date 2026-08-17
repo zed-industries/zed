@@ -1,0 +1,33 @@
+---
+source: brush-parser/src/tokenizer.rs
+expression: "test_tokenizer(\"a$(echo hi)b c\")?"
+---
+TokenizerResult(
+  input: "a$(echo hi)b c",
+  result: [
+    W("a$(echo hi)b", Loc(
+      start: Pos(
+        idx: 0,
+        line: 1,
+        col: 1,
+      ),
+      end: Pos(
+        idx: 12,
+        line: 1,
+        col: 13,
+      ),
+    )),
+    W("c", Loc(
+      start: Pos(
+        idx: 13,
+        line: 1,
+        col: 14,
+      ),
+      end: Pos(
+        idx: 14,
+        line: 1,
+        col: 15,
+      ),
+    )),
+  ],
+)

@@ -1,0 +1,14 @@
+---
+source: brush-parser/src/word.rs
+expression: "test_parse(\"`echo hi`\")?"
+---
+ParseTestResults(
+  input: "`echo hi`",
+  result: [
+    WordPieceWithSource(
+      piece: BackquotedCommandSubstitution("echo hi"),
+      start_index: 0,
+      end_index: 9,
+    ),
+  ],
+)

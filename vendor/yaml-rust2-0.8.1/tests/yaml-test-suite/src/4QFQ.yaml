@@ -1,0 +1,44 @@
+---
+- name: Spec Example 8.2. Block Indentation Indicator [1.3]
+  from: R4YG, modified for YAML 1.3
+  tags: spec literal folded scalar libyaml-err 1.3-mod whitespace
+  yaml: |
+    - |
+     detected
+    - >
+    ␣
+    ␣␣
+      # detected
+    - |1
+      explicit
+    - >
+     detected
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       =VAL |detected\n
+       =VAL >\n\n# detected\n
+       =VAL | explicit\n
+       =VAL >detected\n
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      "detected\n",
+      "\n\n# detected\n",
+      " explicit\n",
+      "detected\n"
+    ]
+  emit: |
+    - |
+      detected
+    - >2
+
+
+      # detected
+    - |2
+       explicit
+    - >
+      detected

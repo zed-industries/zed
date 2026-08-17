@@ -1,0 +1,110 @@
+
+README for the builds/amiga subdirectory.
+
+Copyright (C) 2005-2023 by
+Werner Lemberg and Detlef Würkner.
+
+This file is part of the FreeType project, and may only be used, modified,
+and distributed under the terms of the FreeType project license,
+LICENSE.TXT.  By continuing to use, modify, or distribute this file you
+indicate that you have read the license and understand and accept it
+fully.
+
+
+The makefile.os4 is for the AmigaOS4 SDK.  To use it, type
+"make -f makefile.os4", it produces a link library libft2_ppc.a.
+
+The makefile is for ppc-morphos-gcc-2.95.3-bin.tgz (gcc 2.95.3 hosted on
+68k-Amiga producing MorphOS-PPC-binaries from http://www.morphos.de).
+To use it, type "make assign", then "make"; it produces a link library
+libft2_ppc.a.
+
+The smakefile is a makefile for Amiga SAS/C 6.58 (no longer available,
+latest sold version was 6.50, updates can be found in Aminet).  It is
+based on the version found in the sourcecode of ttf.library 0.83b for
+FreeType 1.3.1 from Richard Griffith (ragriffi@sprynet.com,
+http://ragriffi.home.sprynet.com).
+
+You will also need the latest include files and amiga.lib from the
+Amiga web site (https://os.amigaworld.de/download.php?id=3) for
+AmigaOS 3.9; the generated code should work under AmigaOS 2.04 and up.
+
+To use it, call "smake assign" and then "smake" from the builds/amiga
+directory.  The results are:
+
+- A link library "ft2_680x0.lib" (where x depends on the setting of
+  the CPU entry in the smakefile) containing all FreeType2 parts
+  except of the init code, debugging code, and the system interface
+  code.
+
+- ftsystem.o, an object module containing the standard version of the
+  system interface code which uses fopen() fclose() fread() fseek()
+  ftell() malloc() realloc() and free() from lib:sc.lib (not pure).
+
+- ftsystempure.o, an object module containing the pure version of the
+  system interface code which uses Open() Close() Read() Seek()
+  ExamineFH() AsmAllocPooled() AsmFreePooled() etc.  This version can
+  be used in both normal programs and in Amiga run-time shared system
+  librarys (can be linked with lib:libinit.o, no copying of DATA and
+  BSS hunks for each OpenLibrary() necessary).  Source code is in
+  src/base/ftsystem.c.
+
+- ftdebug.o, an object module containing the standard version of the
+  debugging code which uses vprintf() and exit() (not pure).
+  Debugging can be turned on in FT:include/freetype/config/ftoption.h
+  and with FT_SetTraceLevel().
+
+- ftdebugpure.o, an object module containing the pure version of the
+  debugging code which uses KVPrintf() from lib:debug.lib and no
+  exit().  For debugging of Amiga run-time shared system libraries.
+  Source code is in src/base/ftdebug.c.
+
+- NO ftinit.o.  Because linking with a link library should result in
+  linking only the needed object modules in it, but standard
+  ftsystem.o would force ALL FreeType2 modules to be linked to your
+  program, I decided to use a different scheme: You must #include
+  FT:src/base/ftinit.c in your sourcecode and specify with #define
+  statements which modules you need.  See
+  include/freetype/config/ftmodule.h.
+
+
+To use in your own programs:
+
+- Insert the #define and #include statements from top of
+  include/freetype/config/ftmodule.h in your source code and
+  uncomment the #define statements for the FreeType2 modules you need.
+
+- You can use either PARAMETERS=REGISTER or PARAMETERS=STACK for
+  calling the FreeType2 functions, because the link library and the
+  object files are compiled with PARAMETERS=BOTH.
+
+- "smake assign" (assign "FT:" to the FreeType2 main directory).
+
+- Compile your program.
+
+- Link with either ftsystem.o or ftsystempure.o, if debugging enabled
+  with either ftdebug.o or (ftdebugpure.o and lib:debug.lib), and with
+  ft2_680x0.lib as link library.
+
+
+To adapt to other compilers:
+
+- The standard ANSI C maximum length of 31 significant characters in
+  identifiers is not enough for FreeType2.  Check if your compiler has
+  a minimum length of 40 significant characters or can be switched to
+  it.  "idlen=40" is the option for SAS/C.  Setting #define
+  HAVE_LIMIT_ON_IDENTS in an include file may also work (not tested).
+
+- Make sure that the include directory in builds/amiga is searched
+  before the normal FreeType2 include directory, so you are able to
+  replace problematic include files with your own version (same may be
+  useful for the src directory).
+
+- An example of how to replace/workaround a problematic include file
+  is include/freetype/config/ftconfig.h; it changes a #define that
+  would prevent SAS/C from generating XDEF's where it should do that and
+  then includes the standard FreeType2 include file.
+
+Local Variables:
+coding: latin-1
+End:

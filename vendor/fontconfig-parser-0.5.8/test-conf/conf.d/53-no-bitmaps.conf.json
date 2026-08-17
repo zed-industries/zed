@@ -1,0 +1,21 @@
+[
+  {
+    "Match": {
+      "target": "Font",
+      "tests": [],
+      "edits": [
+        {
+          "mode": "Assign",
+          "binding": "Weak",
+          "value": {
+            "Embeddedbitmap": {
+              "Simple": {
+                "Bool": false
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+]

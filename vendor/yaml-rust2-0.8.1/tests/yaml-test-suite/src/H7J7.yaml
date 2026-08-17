@@ -1,0 +1,15 @@
+---
+- name: Node anchor not indented
+  from: https://gist.github.com/anonymous/f192e7dab6da31831f264dbf1947cb83 via @ingydotnet
+  tags: anchor error indent tag
+  fail: true
+  yaml: |
+    key: &x
+    !!map
+      a: b
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :key
+       =VAL &x :

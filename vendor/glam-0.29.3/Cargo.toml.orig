@@ -1,0 +1,136 @@
+[package]
+name = "glam"
+version = "0.29.3" # remember to update html_root_url
+edition = "2021"
+authors = ["Cameron Hart <cameron.hart@gmail.com>"]
+description = "A simple and fast 3D math library for games and graphics"
+repository = "https://github.com/bitshifter/glam-rs"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+keywords = ["gamedev", "math", "matrix", "vector", "quaternion"]
+categories = ["game-engines", "no-std"]
+rust-version = "1.68.2"
+
+[badges]
+maintenance = { status = "actively-developed" }
+
+[features]
+default = ["std"]
+
+# enable support for the standard library
+std = []
+
+# enable additional glam checks if debug assertions are enabled
+debug-glam-assert = []
+# always enable additional glam checks
+glam-assert = []
+
+# this is primarily for testing the fallback implementation
+scalar-math = []
+
+# align types to match CUDA requirements
+cuda = []
+
+# Enables platform specific optimizations that might speed-up certain operations.
+# This will cause APIs to output different results depending on the platform used
+# and will likely break cross-platform determinism.
+# This should NOT be enabled by intermediate libraries, deferring the decision to
+# the end binary build instead.
+fast-math = []
+
+# experimental nightly portable-simd support
+core-simd = []
+
+# enables libm and prefers it over std
+libm = ["dep:libm"]
+
+# enables libm but will prefer std if available
+nostd-libm = ["dep:libm"]
+
+[dependencies]
+approx = { version = "0.5", optional = true, default-features = false }
+bytemuck = { version = "1.9", optional = true, default-features = false }
+mint = { version = "0.5.8", optional = true, default-features = false }
+rand = { version = "0.8", optional = true, default-features = false }
+serde = { version = "1.0", optional = true, default-features = false }
+rkyv = { version = "0.7", optional = true, default-features = false }
+bytecheck = { version = "0.7", optional = true, default-features = false }
+libm = { version = "0.2", optional = true, default-features = false}
+
+[dev-dependencies]
+# rand_xoshiro is required for tests if rand is enabled
+rand_xoshiro = "0.6"
+# Set a size_xx feature so that this crate compiles properly with --all-targets --all-features
+rkyv = { version = "0.7", default-features = false, features = ["size_32"] }
+serde_json = "1.0"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+iai-callgrind = "0.14"
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[lib]
+bench = false
+
+[[bench]]
+name = "mat2"
+harness = false
+
+[[bench]]
+name = "mat3"
+harness = false
+
+[[bench]]
+name = "mat3a"
+harness = false
+
+[[bench]]
+name = "affine2"
+harness = false
+
+[[bench]]
+name = "affine3"
+harness = false
+
+[[bench]]
+name = "mat4"
+harness = false
+
+[[bench]]
+name = "quat"
+harness = false
+
+[[bench]]
+name = "support"
+bench = false
+
+[[bench]]
+name = "vec2"
+harness = false
+
+[[bench]]
+name = "vec3"
+harness = false
+
+[[bench]]
+name = "vec3a"
+harness = false
+
+[[bench]]
+name = "vec4"
+harness = false
+
+[[bench]]
+name = "iai"
+harness = false
+
+[workspace]
+members = [
+    "codegen",
+    "test_no_std",
+]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_arch, values("spirv"))'] }

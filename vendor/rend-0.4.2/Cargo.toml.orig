@@ -1,0 +1,23 @@
+[package]
+name = "rend"
+version = "0.4.2"
+authors = ["David Koloski <djkoloski@gmail.com>"]
+edition = "2018"
+description = "Endian-aware primitives for Rust"
+license = "MIT"
+documentation = "https://docs.rs/rend"
+repository = "https://github.com/djkoloski/rend"
+keywords = ["endian", "no_std"]
+categories = ["encoding", "no-std"]
+readme = "crates-io.md"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bytecheck = { version = "~0.6.7", optional = true, default-features = false }
+bytemuck = { version = "^1.4.0", optional = true, features = ["derive"], default-features = false }
+
+[features]
+default = ["std"]
+std = ["bytecheck/std"]
+validation = ["bytecheck"]

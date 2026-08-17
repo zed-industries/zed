@@ -1,0 +1,17 @@
+package root:root;
+
+world module {
+  import a:b/types;
+}
+
+package a:b {
+  interface types {
+    resource fields;
+
+    type trailers = fields;
+
+    resource request {
+      new: static func(trailers: future<trailers>);
+    }
+  }
+}

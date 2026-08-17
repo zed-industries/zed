@@ -1,0 +1,45 @@
+[package]
+name = "qoi"
+version = "0.4.1"
+description = "VERY fast encoder/decoder for QOI (Quite Okay Image) format"
+authors = ["Ivan Smirnov <rust@ivan.smirnov.ie>"]
+edition = "2021"
+readme = "README.md"
+license = "MIT/Apache-2.0"
+repository = "https://github.com/aldanor/qoi-rust"
+homepage = "https://github.com/aldanor/qoi-rust"
+documentation = "https://docs.rs/qoi"
+categories = ["multimedia::images", "multimedia::encoding"]
+keywords = ["qoi", "graphics", "image", "encoding"]
+exclude = [
+    "assets/*",
+]
+rust-version = "1.61.0"
+
+[features]
+default = ["std"]
+alloc = []      # provides access to `Vec` without enabling `std` mode
+std = []        # std mode (enabled by default) - provides access to `std::io`, `Error` and `Vec`
+reference = []  # follows reference encoder implementation precisely, but may be slightly slower
+
+[dependencies]
+bytemuck = "1.12"
+
+[workspace]
+members = ["libqoi", "bench"]
+
+[dev-dependencies]
+anyhow = "1.0"
+png = "0.17"
+walkdir = "2.3"
+cfg-if = "1.0"
+rand = "0.8"
+libqoi = { path = "libqoi"}
+
+[lib]
+name = "qoi"
+path = "src/lib.rs"
+doctest = false
+
+[profile.test]
+opt-level = 3

@@ -1,0 +1,47 @@
+{
+  "worlds": [
+    {
+      "name": "greeter",
+      "imports": {
+        "greet": {
+          "function": {
+            "name": "greet",
+            "kind": "freestanding",
+            "params": [],
+            "results": [
+              {
+                "type": "string"
+              }
+            ]
+          }
+        }
+      },
+      "exports": {
+        "greet": {
+          "function": {
+            "name": "greet",
+            "kind": "freestanding",
+            "params": [],
+            "results": [
+              {
+                "type": "string"
+              }
+            ]
+          }
+        }
+      },
+      "package": 0
+    }
+  ],
+  "interfaces": [],
+  "types": [],
+  "packages": [
+    {
+      "name": "demo:greeter",
+      "interfaces": {},
+      "worlds": {
+        "greeter": 0
+      }
+    }
+  ]
+}

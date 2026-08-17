@@ -1,0 +1,10 @@
+INPUT(
+libwinapi_runtimeobject-api-ms-win-core-winrt-registration-l1-1-0.a
+libwinapi_runtimeobject-api-ms-win-core-winrt-error-l1-1-1.a
+libwinapi_runtimeobject-api-ms-win-ro-typeresolution-l1-1-0.a
+libwinapi_runtimeobject-api-ms-win-core-winrt-error-l1-1-0.a
+libwinapi_runtimeobject-api-ms-win-core-winrt-string-l1-1-0.a
+libwinapi_runtimeobject-api-ms-win-core-winrt-robuffer-l1-1-0.a
+libwinapi_runtimeobject-api-ms-win-core-winrt-roparameterizediid-l1-1-0.a
+libwinapi_runtimeobject-api-ms-win-core-winrt-l1-1-0.a
+)

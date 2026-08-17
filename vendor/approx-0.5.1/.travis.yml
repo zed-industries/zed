@@ -1,0 +1,26 @@
+language: rust
+
+rust:
+  - 1.31.0
+  - nightly
+  - beta
+  - stable
+
+cache: cargo
+
+env:
+  - CARGO_FEATURES=""
+  - CARGO_FEATURES="std"
+  - CARGO_FEATURES="std num-complex"
+
+matrix:
+  allow_failures:
+    - rust: nightly
+
+before_script:
+  - if [ "$TRAVIS_RUST_VERSION" == "1.31.0" ]; then rm -f tests/macro_import.rs; fi
+  - cargo build --verbose
+
+script:
+  - cargo build --verbose --features "$CARGO_FEATURES"
+  - cargo test --verbose --features "$CARGO_FEATURES"

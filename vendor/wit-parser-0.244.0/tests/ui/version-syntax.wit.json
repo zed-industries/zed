@@ -1,0 +1,57 @@
+{
+  "worlds": [],
+  "interfaces": [],
+  "types": [],
+  "packages": [
+    {
+      "name": "a:b@1.0.0-11-a",
+      "interfaces": {},
+      "worlds": {}
+    },
+    {
+      "name": "a:b@1.0.0-11ab",
+      "interfaces": {},
+      "worlds": {}
+    },
+    {
+      "name": "a:b@1.0.0-a1.1-a",
+      "interfaces": {},
+      "worlds": {}
+    },
+    {
+      "name": "a:b@1.0.0",
+      "interfaces": {},
+      "worlds": {}
+    },
+    {
+      "name": "a:b@1.0.1-1+1",
+      "interfaces": {},
+      "worlds": {}
+    },
+    {
+      "name": "a:b@1.0.1--",
+      "interfaces": {},
+      "worlds": {}
+    },
+    {
+      "name": "a:b@1.0.1-1a+1a",
+      "interfaces": {},
+      "worlds": {}
+    },
+    {
+      "name": "a:b@1.0.1-a+a",
+      "interfaces": {},
+      "worlds": {}
+    },
+    {
+      "name": "a:b@1.0.1",
+      "interfaces": {},
+      "worlds": {}
+    },
+    {
+      "name": "foo:root",
+      "interfaces": {},
+      "worlds": {}
+    }
+  ]
+}

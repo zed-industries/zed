@@ -1,0 +1,79 @@
+<?xml version="1.0"?>
+
+<ratified href="WEBGL_debug_shaders/">
+  <name>WEBGL_debug_shaders</name>
+  <contact><a href="mailto:zmo@chromium.org">zmo@chromium.org</a></contact>
+  <contributors>
+    <contributor>Members of the <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL working group</a></contributor>
+  </contributors>
+  <number>7</number>
+  <depends>
+    <api version="1.0"/>
+  </depends>
+  <overview>
+    <p>
+      WebGL uses the GLSL ES 2.0 spec on all platforms, and translates these shaders to the host platform's native language (HLSL, GLSL, and even GLSL ES). For debugging purpose, it is useful to be able to examine the shader after translation. This extension exposes a new function <code>getTranslatedShaderSource</code> for such purposes.
+    </p>
+  </overview>
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface WEBGL_debug_shaders {
+
+      DOMString getTranslatedShaderSource(WebGLShader shader);
+
+};
+  </idl>
+  <newfun>
+    <function name="getTranslatedShaderSource" type="DOMString">
+      <param name="shader" type="WebGLShader" />
+      If no source has been defined, <code>compileShader()</code> has not been called, or the translation has failed for <code>shader</code>, an empty string is returned; otherwise, return the translated source.
+    </function>
+  </newfun>
+  <issues>
+    <p>
+      1) Should this extension be made available on ordinary web pages?</p>
+      <ul>
+        <li> Earlier versions of this extension noted the following concerns:
+        <ol>
+          <li> The precise pattern of how the original shader is translated may yield personally-identifiable information to the web page about the kind of graphics card in the user's computer. </li>
+        </ol>
+
+        User agents (web browsers) should carefully consider whether or not to expose this extension in non-privileged settings due to these concerns. </li>
+
+        <li> On the other hand, benefits of exposing this information to general web pages include:
+
+        <ol>
+          <li> Tools for WebGL developers can provide more detailed information about how the input shader is translated to run on the graphics card, potentially helping the developers make their applications run faster. </li>
+        </ol>
+
+        </li>
+      </ul>
+  </issues>
+  <history>
+    <revision date="2011/10/03">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2011/10/14">
+      <change>Assigned WebGL extension number.</change>
+    </revision>
+    <revision date="2011/10/18">
+      <change>Clarify the meaning of "privileged".</change>
+    </revision>
+    <revision date="2011/12/07">
+      <change>Fixed mistake where extension still indicated draft status.</change>
+      <change>Renamed "New Functions and Methods" section to "New Functions".</change>
+    </revision>
+    <revision date="2012/01/03">
+      <change>Removed webgl module per changes to Web IDL spec.</change>
+    </revision>
+    <revision date="2013/05/15">
+      <change>Ratified by Khronos Board of Promoters.</change>
+    </revision>
+    <revision date="2014/01/28">
+      <change>Added issue on privacy considerations, replacing security section.</change>
+    </revision>
+    <revision date="2014/07/15">
+      <change>Added NoInterfaceObject extended attribute.</change>
+    </revision>
+  </history>
+</ratified>

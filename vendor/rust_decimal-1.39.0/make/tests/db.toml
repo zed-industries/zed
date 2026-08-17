@@ -1,0 +1,56 @@
+[tasks.test-db]
+dependencies = [
+    "test-db-mysql-all",
+    "test-db-postgres-all"
+]
+
+[tasks.test-db-postgres-all]
+dependencies = [
+    "test-db-postgres",
+    "test-db-tokio-postgres",
+    "test-db-diesel-postgres"
+]
+
+# DB Tests require cleaning beforehand to avoid target conflicts
+[tasks.clean-db-postgres]
+alias = "clean"
+
+[tasks.test-db-postgres]
+dependencies = ["clean-db-postgres"]
+command = "cargo"
+args = ["test", "--workspace", "--tests", "--features=db-postgres", "postgres", "--", "--skip", "generated"]
+
+[tasks.clean-db-tokio-postgres]
+alias = "clean"
+
+[tasks.test-db-tokio-postgres]
+dependencies = ["clean-db-tokio-postgres"]
+command = "cargo"
+args = ["test", "--workspace", "--tests", "--features=db-tokio-postgres", "postgres", "--", "--skip", "generated"]
+
+[tasks.test-db-mysql-all]
+dependencies = [
+    "test-db-diesel-mysql",
+]
+
+[tasks.test-db-diesel]
+dependencies = [
+    "test-db-diesel-mysql",
+    "test-db-diesel-postgres",
+]
+
+[tasks.clean-db-diesel-mysql]
+alias = "clean"
+
+[tasks.test-db-diesel-mysql]
+dependencies = ["clean-db-diesel-mysql"]
+command = "cargo"
+args = ["test", "--workspace", "--tests", "--features=db-diesel-mysql", "mysql", "--", "--skip", "generated"]
+
+[tasks.clean-db-diesel-postgres]
+alias = "clean"
+
+[tasks.test-db-diesel-postgres]
+dependencies = ["clean-db-diesel-postgres"]
+command = "cargo"
+args = ["test", "--workspace", "--tests", "--features=db-diesel-postgres", "postgres", "--", "--skip", "generated"]

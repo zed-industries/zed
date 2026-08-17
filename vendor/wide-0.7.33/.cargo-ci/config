@@ -1,0 +1,13 @@
+
+# Note: Cargo doesn't carry these settings to dependencies. They only affect the
+# process of directly building the crate. This is so that we can easily use
+# `cargo test` and `cargo doc` and so on during development.
+
+[build]
+# This can cause weirdness!
+rustflags = ["-Ctarget-cpu=native"]
+rustdocflags = ["-Ctarget-cpu=native"]
+
+[target.wasm32-wasi]
+runner = "wasmtime run --wasm-features all --dir ."
+rustflags = ["-Ctarget-feature=+simd128,+bulk-memory,+nontrapping-fptoint,+sign-ext"]

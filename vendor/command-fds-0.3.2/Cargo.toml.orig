@@ -1,0 +1,21 @@
+[package]
+name = "command-fds"
+version = "0.3.2"
+edition = "2024"
+authors = ["Andrew Walbran <qwandor@google.com>"]
+license = "Apache-2.0"
+description = "A library for passing arbitrary file descriptors when spawning child processes."
+repository = "https://github.com/google/command-fds/"
+keywords = ["command", "process", "child", "subprocess", "fd"]
+categories = ["os::unix-apis"]
+
+[dependencies]
+nix = { version = "0.30.1", features = ["fs"] }
+thiserror = "2.0.3"
+tokio = { version = "1.45.1", optional = true, default-features = false, features = [
+  "process",
+] }
+
+[features]
+default = []
+tokio = ["dep:tokio"]

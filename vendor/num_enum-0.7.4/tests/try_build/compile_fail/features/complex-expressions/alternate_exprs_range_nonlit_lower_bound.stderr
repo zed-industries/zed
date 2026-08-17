@@ -1,0 +1,5 @@
+error: When ranges are used for alternate values, both bounds most be explicitly specified numeric literals
+ --> tests/try_build/compile_fail/features/complex-expressions/alternate_exprs_range_nonlit_lower_bound.rs:7:32
+  |
+7 |     #[num_enum(alternatives = [TWO..=255])]
+  |                                ^^^^^^^^^

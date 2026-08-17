@@ -1,0 +1,109 @@
+name: CI
+on:
+  - push
+  - pull_request
+  - workflow_dispatch
+jobs:
+  tests:
+    name: CI
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: [stable]
+        target:
+          - x86_64-pc-windows-msvc
+          - x86_64-pc-windows-gnu
+          - i686-pc-windows-msvc
+          - i686-pc-windows-gnu
+        include:
+          - channel: stable
+            target: x86_64-pc-windows-msvc
+            lint: true
+          - channel: '1.60'
+            target: x86_64-pc-windows-msvc
+            restrict_deps_versions: true
+    env:
+      RUST_BACKTRACE: full
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install rust-${{ matrix.channel }}
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.channel }}
+          profile: minimal
+          override: true
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+          key: ${{ runner.os }}-cargo-${{ matrix.channel }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.channel }}
+      - name: Create Cargo.lock
+        uses: actions-rs/cargo@v1
+        with:
+          command: generate-lockfile
+      - name: Restrict serde version
+        if: matrix.restrict_deps_versions
+        uses: actions-rs/cargo@v1
+        with:
+          command: update
+          args: --package serde --precise 1.0.210
+      - name: Restrict syn version
+        if: matrix.restrict_deps_versions
+        uses: actions-rs/cargo@v1
+        with:
+          command: update
+          args: --package syn --precise 2.0.67
+      - name: Restrict chrono version
+        if: matrix.restrict_deps_versions
+        uses: actions-rs/cargo@v1
+        with:
+          command: update
+          args: --package chrono --precise 0.4.31
+      - name: Restrict libc version
+        if: matrix.restrict_deps_versions
+        uses: actions-rs/cargo@v1
+        with:
+          command: update
+          args: --package libc --precise 0.2.163
+      - name: Restrict memchr version
+        if: matrix.restrict_deps_versions
+        uses: actions-rs/cargo@v1
+        with:
+          command: update
+          args: --package memchr --precise 2.6.2
+      - name: Setup Taplo
+        if: matrix.lint
+        uses: uncenter/setup-taplo@v1
+        with:
+          version: "0.8.1"
+      - name: Check Cargo.toml formatting
+        if: matrix.lint
+        run: taplo fmt --check --diff
+      - name: Check sourcecode formatting
+        if: matrix.lint
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
+      - name: Lint
+        if: matrix.lint
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --all-features --all-targets
+      - name: Run tests (no features)
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --locked --release --no-fail-fast --no-default-features
+      - name: Run tests (all features)
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --locked --release --no-fail-fast --all-features

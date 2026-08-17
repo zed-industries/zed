@@ -1,0 +1,5 @@
+package foo:foo;
+
+use bar-renamed;
+
+interface bar {}

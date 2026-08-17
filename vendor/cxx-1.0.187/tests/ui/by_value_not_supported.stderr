@@ -1,0 +1,59 @@
+error: using opaque C++ type by value is not supported
+ --> tests/ui/by_value_not_supported.rs:4:9
+  |
+4 |         c: C,
+  |         ^^^^
+
+error: using opaque Rust type by value is not supported
+ --> tests/ui/by_value_not_supported.rs:5:9
+  |
+5 |         r: R,
+  |         ^^^^
+
+error: using C++ string by value is not supported
+ --> tests/ui/by_value_not_supported.rs:6:9
+  |
+6 |         s: CxxString,
+  |         ^^^^^^^^^^^^
+
+error: needs a cxx::ExternType impl in order to be used as a field of `S`, argument of `f` or return value of `f`
+  --> tests/ui/by_value_not_supported.rs:10:9
+   |
+10 |         type C;
+   |         ^^^^^^
+
+error: passing opaque C++ type by value is not supported
+  --> tests/ui/by_value_not_supported.rs:16:14
+   |
+16 |         fn f(c: C) -> C;
+   |              ^^^^
+
+error: returning opaque C++ type by value is not supported
+  --> tests/ui/by_value_not_supported.rs:16:23
+   |
+16 |         fn f(c: C) -> C;
+   |                       ^
+
+error: passing opaque Rust type by value is not supported
+  --> tests/ui/by_value_not_supported.rs:17:14
+   |
+17 |         fn g(r: R) -> R;
+   |              ^^^^
+
+error: returning opaque Rust type by value is not supported
+  --> tests/ui/by_value_not_supported.rs:17:23
+   |
+17 |         fn g(r: R) -> R;
+   |                       ^
+
+error: passing C++ string by value is not supported
+  --> tests/ui/by_value_not_supported.rs:18:14
+   |
+18 |         fn h(s: CxxString) -> CxxString;
+   |              ^^^^^^^^^^^^
+
+error: returning C++ string by value is not supported
+  --> tests/ui/by_value_not_supported.rs:18:31
+   |
+18 |         fn h(s: CxxString) -> CxxString;
+   |                               ^^^^^^^^^

@@ -1,0 +1,97 @@
+## Release v0.9.1 (05 Sept. 2025)
+- `into_arr`, `from_arr`, `map`, `zip_map` are now public on `WideF32x4`, `WideF32x8` and `WideF64x4`.
+- `from_arr` and `into_arr` are now public on `WideBoolF32x4`, `WideBoolF32x8`, `WideBoolF64x4`.
+- Use SIMD implementations of `WideBool*` methods `all`, `any`, and `none`.
+- Inline more `AutoSimd` methods.
+
+## Release v0.9.0 (22 June 2023)
+- The `cuda` feature has been removed, as the toolchain it depends on is long abandoned.
+- The `packed_simd` feature has been removes as it has been incompatible with the `nightly` compiler for several months.
+  Consider using the `portable_simd` feature instead.
+- Add the `portable_simd` feature for supporting `std::simd`.
+- The `ClosedAdd, ClosedMul, etc.` traits no longer require `AddAssign, MulAssign`. Instead they are required for new
+  traits named `ClosedAddAssign, ClosedMulAssign, etc.`
+- The `ComplexField` and `SimdComplexField` (and, by extension, `RealField` and `SimdRealField`) traits now depend on the
+  `SupersetOf<f32>` trait in addition to `SupersetOf<f64>`.
+- Replace the `SimdValue::lanes()` function by an associated constant `SimdValue::LANES`.
+- Add `ZERO` and `ONE` associated consts to all the simd newtypes.
+- Implement `Default` for all simd newtypes.
+
+## Release v0.8.1 (04 Apr. 2023)
+- Add implementation of `rkyv` serialization/deserialization to the `Wide*` wrapper types.
+
+## Release v0.8.0 (14 Jan. 2023)
+- When `rkyv` support is enabled, the archived version of `AutoSimd` and `AutoBoolSimd` are themselves. The
+ `ArchivedAutoSimd` and `ArchivedAutoBoolSimd` types are no longer generated.
+
+## Release v0.7.3 (30 Oct. 2022)
+- Cuda: implement DeviceCopy for AutoSimd
+- Implement `Distribution` (for random number generation) for SIMD types.
+
+## Release v0.7.2 (30 July 2022)
+- Add the optional types `WideF64x4` and `WideBoolF64x4` for 4-lanes SIMD 64-bits float operations based on
+  the `wide` crate.
+- Add the `rkyv-serialize` feature to enable `rkyv` serialization/deserialization of the `AutoSimd` types.
+- Fix build with only the `libm` feature enabled.
+
+## Release v0.7.1 (27 Jan. 2022)
+- Add the optional types `WideF32x8` and `WideBoolF32x8` for 8-lanes SIMD float operations.
+
+## Release v0.7.0 (02 Jan. 2022)
+- Remove the `Bounded` requirement from `RealField`. Replace it by methods returning `Option<Self>` so that they can
+  still be implemented by unbounded types (by returning `None`).
+- The `ComplexField` trait derives  from `FromPrimitive` again. We can actually keep this because all its methods
+  return `Option<Self>`, meaning that it could be implemented by any type.
+- Add the `cuda` cargo feature that enables support for [Rust-Cuda](https://github.com/Rust-GPU/Rust-CUDA) by generating
+  the relevant cuda intrinsics for float operations when running on a cuda kernel.
+
+
+## Release v0.6.0
+- Replace all the `Copy` trait bounds by `Clone`, allowing more types to fulfill the requirements
+  of `ComplexField` and `RealField`.
+- The `ComplexField` trait no longer derive from `FromPrimitive`.
+
+## Release v0.5.0
+- Update the `num-complex` 0.4 dependency.
+
+## Release v0.4.0
+- Update the `rand` 0.8 dependency.
+- Add `SimdComplexField::simd_horizontal_sum` and `SimdComplexField::simd_horizontal_product`
+  for computing the sum or product of all the lanes of a single SIMD value.
+
+## Release v0.3.0
+This release includes a change that is not technically a breaking change because
+it won't cause existing code to not compile anymore. However it is an important
+semantic change to justify a major release:
+- The arguments of `copysign` are now swapped: `a.copysign(b)` will copy the sign of `b` into `a` (the previous
+  behavior copied the sign of `a` into `b`). This change was needed to align with the argument order used by
+  the standard library, thus avoiding hard-to-debug errors due to mismatching conventions.
+- The arguments of `simd_copysign` are now swapped too.
+
+This release also update the `num-complex` dependency to its latest version 0.3.
+
+## Release v0.2.4
+- Make `Fixed.to_bits` and `Fixed::from_bits` const-fn.
+- Make our `Fixed` wrapper type `repr(transparent)`.
+
+## Release v0.2.3
+- Add `.to_bits` to our fixed-point number newtype.
+- Add `::from_bits` to our fixed-point number newtype.
+- Add `Ord` implementation for our fixed-point number newtype.
+- Add `Mul<int>, Div<int>, Rem<int>, MulAssign<int>, DivAssign<int>, RemAssign<int>` implementation for our fixed-point
+  number newtype, where `int` is the underlying integer used by the fixed-point number.
+
+## Release v0.2.2
+- Fix a compilation error when building simba with out `std` and with the `libm` feature.
+
+## Release v0.2.1
+- Add SIMD types named, e.g. `AutoF32x4`, based on auto-vectorization only. They don't call any SIMD intrinsics and let the compiler do the
+vectorization, if it can.
+
+## Release v0.2.0
+- The use of `libm` in `#[no-std]` environments is now opt-in by enabling the `libm` feature.
+- If the `libm` is not enabled in a `#[no-std]` environment, then no `RealField` or `ComplexField` impls will be provided for floats.
+- Add the `libm_force` cargo feature that forces the use of `libm`, even when we don't target `no-std`.
+- Add `copysign` to copy the sign from one number to another.
+- Add `simd_horizontal_min`, `simd_horizontal_max` to compute the min/max among the lanes of a single SIMD number.
+- Wrap all SIMD bools from `packed_simd` into our own `Simd<_>` newtype.

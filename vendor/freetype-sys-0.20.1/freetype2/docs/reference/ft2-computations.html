@@ -1,0 +1,2181 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="API Reference Documentation for FreeType-2.13.2">
+      
+      
+      
+        <meta name="author" content="FreeType Contributors">
+      
+      
+      <link rel="icon" href="images/favico.ico">
+      <meta name="generator" content="mkdocs-1.4.3, mkdocs-material-7.1.9">
+    
+    
+      
+        <title>Computations - FreeType-2.13.2 API Reference</title>
+      
+    
+    
+      <link rel="stylesheet" href="assets/stylesheets/main.ca7ac06f.min.css">
+      
+        
+        <link rel="stylesheet" href="assets/stylesheets/palette.f1a3b89f.min.css">
+        
+          
+          
+          <meta name="theme-color" content="#4cae4f">
+        
+      
+    
+    
+    
+      
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Noto+Serif:300,400,400i,700%7CRoboto+Mono&display=fallback">
+        <style>:root{--md-text-font-family:"Noto Serif";--md-code-font-family:"Roboto Mono"}</style>
+      
+    
+    
+    
+      <link rel="stylesheet" href="stylesheets/extra.css">
+    
+    
+      
+
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <script>function __prefix(e){return new URL(".",location).pathname+"."+e}function __get(e,t=localStorage){return JSON.parse(t.getItem(__prefix(e)))}</script>
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#computations" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-header__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            FreeType-2.13.2 API Reference
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Computations
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+      </label>
+      
+<div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" data-md-state="active" required>
+      <label class="md-search__icon md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+      </label>
+      <button type="reset" class="md-search__icon md-icon" aria-label="Clear" tabindex="-1">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
+      </button>
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+  </nav>
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-nav__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    FreeType-2.13.2 API Reference
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="index.html" class="md-nav__link">
+        TOC
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-index.html" class="md-nav__link">
+        Index
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_3" type="checkbox" id="__nav_3" >
+      
+      <label class="md-nav__link" for="__nav_3">
+        General Remarks
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="General Remarks" data-md-level="1">
+        <label class="md-nav__title" for="__nav_3">
+          <span class="md-nav__icon md-icon"></span>
+          General Remarks
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-preamble.html" class="md-nav__link">
+        Preamble
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_inclusion.html" class="md-nav__link">
+        FreeType's header inclusion scheme
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-user_allocation.html" class="md-nav__link">
+        User allocation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_4" type="checkbox" id="__nav_4" >
+      
+      <label class="md-nav__link" for="__nav_4">
+        Core API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Core API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_4">
+          <span class="md-nav__icon md-icon"></span>
+          Core API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-basic_types.html" class="md-nav__link">
+        Basic Data Types
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-library_setup.html" class="md-nav__link">
+        Library Setup
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-face_creation.html" class="md-nav__link">
+        Face Creation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_testing_macros.html" class="md-nav__link">
+        Font Testing Macros
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizing_and_scaling.html" class="md-nav__link">
+        Sizing and Scaling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_retrieval.html" class="md-nav__link">
+        Glyph Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-character_mapping.html" class="md-nav__link">
+        Character Mapping
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-information_retrieval.html" class="md-nav__link">
+        Information Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-other_api_data.html" class="md-nav__link">
+        Other API Data
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_5" type="checkbox" id="__nav_5" >
+      
+      <label class="md-nav__link" for="__nav_5">
+        Extended API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Extended API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_5">
+          <span class="md-nav__icon md-icon"></span>
+          Extended API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_variants.html" class="md-nav__link">
+        Unicode Variation Sequences
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-color_management.html" class="md-nav__link">
+        Glyph Color Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-layer_management.html" class="md-nav__link">
+        Glyph Layer Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_management.html" class="md-nav__link">
+        Glyph Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-mac_specific.html" class="md-nav__link">
+        Mac Specific Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizes_management.html" class="md-nav__link">
+        Size Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_file_macros.html" class="md-nav__link">
+        Header File Macros
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_6" type="checkbox" id="__nav_6" >
+      
+      <label class="md-nav__link" for="__nav_6">
+        Format-Specific API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Format-Specific API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_6">
+          <span class="md-nav__icon md-icon"></span>
+          Format-Specific API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-multiple_masters.html" class="md-nav__link">
+        Multiple Masters
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_tables.html" class="md-nav__link">
+        TrueType Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-type1_tables.html" class="md-nav__link">
+        Type 1 Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sfnt_names.html" class="md-nav__link">
+        SFNT Names
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bdf_fonts.html" class="md-nav__link">
+        BDF and PCF Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cid_fonts.html" class="md-nav__link">
+        CID Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pfr_fonts.html" class="md-nav__link">
+        PFR Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-winfnt_fonts.html" class="md-nav__link">
+        Window FNT Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-svg_fonts.html" class="md-nav__link">
+        OpenType SVG Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_formats.html" class="md-nav__link">
+        Font Formats
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gasp_table.html" class="md-nav__link">
+        Gasp Table
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_7" type="checkbox" id="__nav_7" >
+      
+      <label class="md-nav__link" for="__nav_7">
+        Controlling FreeType Modules
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Controlling FreeType Modules" data-md-level="1">
+        <label class="md-nav__title" for="__nav_7">
+          <span class="md-nav__icon md-icon"></span>
+          Controlling FreeType Modules
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-auto_hinter.html" class="md-nav__link">
+        The auto-hinter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cff_driver.html" class="md-nav__link">
+        The CFF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-t1_cid_driver.html" class="md-nav__link">
+        The Type 1 and CID drivers
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-tt_driver.html" class="md-nav__link">
+        The TrueType driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pcf_driver.html" class="md-nav__link">
+        The PCF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_svg_driver.html" class="md-nav__link">
+        The SVG driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-properties.html" class="md-nav__link">
+        Driver properties
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-parameter_tags.html" class="md-nav__link">
+        Parameter Tags
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lcd_rendering.html" class="md-nav__link">
+        Subpixel Rendering
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_8" type="checkbox" id="__nav_8" >
+      
+      <label class="md-nav__link" for="__nav_8">
+        Cache Sub-System
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Cache Sub-System" data-md-level="1">
+        <label class="md-nav__title" for="__nav_8">
+          <span class="md-nav__icon md-icon"></span>
+          Cache Sub-System
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cache_subsystem.html" class="md-nav__link">
+        Cache Sub-System
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+    
+  
+  
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_9" type="checkbox" id="__nav_9" checked>
+      
+      <label class="md-nav__link" for="__nav_9">
+        Support API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Support API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_9">
+          <span class="md-nav__icon md-icon"></span>
+          Support API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+    
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" data-md-toggle="toc" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          Computations
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="ft2-computations.html" class="md-nav__link md-nav__link--active">
+        Computations
+      </a>
+      
+        
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_muldiv" class="md-nav__link">
+    FT_MulDiv
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_mulfix" class="md-nav__link">
+    FT_MulFix
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_divfix" class="md-nav__link">
+    FT_DivFix
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_roundfix" class="md-nav__link">
+    FT_RoundFix
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_ceilfix" class="md-nav__link">
+    FT_CeilFix
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_floorfix" class="md-nav__link">
+    FT_FloorFix
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_vector_transform" class="md-nav__link">
+    FT_Vector_Transform
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_matrix_multiply" class="md-nav__link">
+    FT_Matrix_Multiply
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_matrix_invert" class="md-nav__link">
+    FT_Matrix_Invert
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_angle" class="md-nav__link">
+    FT_Angle
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_angle_pi" class="md-nav__link">
+    FT_ANGLE_PI
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_angle_2pi" class="md-nav__link">
+    FT_ANGLE_2PI
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_angle_pi2" class="md-nav__link">
+    FT_ANGLE_PI2
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_angle_pi4" class="md-nav__link">
+    FT_ANGLE_PI4
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_sin" class="md-nav__link">
+    FT_Sin
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_cos" class="md-nav__link">
+    FT_Cos
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_tan" class="md-nav__link">
+    FT_Tan
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_atan2" class="md-nav__link">
+    FT_Atan2
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_angle_diff" class="md-nav__link">
+    FT_Angle_Diff
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_vector_unit" class="md-nav__link">
+    FT_Vector_Unit
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_vector_rotate" class="md-nav__link">
+    FT_Vector_Rotate
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_vector_length" class="md-nav__link">
+    FT_Vector_Length
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_vector_polarize" class="md-nav__link">
+    FT_Vector_Polarize
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_vector_from_polar" class="md-nav__link">
+    FT_Vector_From_Polar
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-list_processing.html" class="md-nav__link">
+        List Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-outline_processing.html" class="md-nav__link">
+        Outline Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-quick_advance.html" class="md-nav__link">
+        Quick retrieval of advance values
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bitmap_handling.html" class="md-nav__link">
+        Bitmap Handling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-raster.html" class="md-nav__link">
+        Scanline Converter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_stroker.html" class="md-nav__link">
+        Glyph Stroker
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-system_interface.html" class="md-nav__link">
+        System Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-module_management.html" class="md-nav__link">
+        Module Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gzip.html" class="md-nav__link">
+        GZIP Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lzw.html" class="md-nav__link">
+        LZW Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bzip2.html" class="md-nav__link">
+        BZIP2 Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-debugging_apis.html" class="md-nav__link">
+        External Debugging APIs
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_10" type="checkbox" id="__nav_10" >
+      
+      <label class="md-nav__link" for="__nav_10">
+        Error Codes
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Error Codes" data-md-level="1">
+        <label class="md-nav__title" for="__nav_10">
+          <span class="md-nav__icon md-icon"></span>
+          Error Codes
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_enumerations.html" class="md-nav__link">
+        Error Enumerations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_code_values.html" class="md-nav__link">
+        Error Code Values
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_11" type="checkbox" id="__nav_11" >
+      
+      <label class="md-nav__link" for="__nav_11">
+        Miscellaneous
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Miscellaneous" data-md-level="1">
+        <label class="md-nav__title" for="__nav_11">
+          <span class="md-nav__icon md-icon"></span>
+          Miscellaneous
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gx_validation.html" class="md-nav__link">
+        TrueTypeGX/AAT Validation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-incremental.html" class="md-nav__link">
+        Incremental Loading
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_engine.html" class="md-nav__link">
+        The TrueType Engine
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_validation.html" class="md-nav__link">
+        OpenType Validation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_muldiv" class="md-nav__link">
+    FT_MulDiv
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_mulfix" class="md-nav__link">
+    FT_MulFix
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_divfix" class="md-nav__link">
+    FT_DivFix
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_roundfix" class="md-nav__link">
+    FT_RoundFix
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_ceilfix" class="md-nav__link">
+    FT_CeilFix
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_floorfix" class="md-nav__link">
+    FT_FloorFix
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_vector_transform" class="md-nav__link">
+    FT_Vector_Transform
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_matrix_multiply" class="md-nav__link">
+    FT_Matrix_Multiply
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_matrix_invert" class="md-nav__link">
+    FT_Matrix_Invert
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_angle" class="md-nav__link">
+    FT_Angle
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_angle_pi" class="md-nav__link">
+    FT_ANGLE_PI
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_angle_2pi" class="md-nav__link">
+    FT_ANGLE_2PI
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_angle_pi2" class="md-nav__link">
+    FT_ANGLE_PI2
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_angle_pi4" class="md-nav__link">
+    FT_ANGLE_PI4
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_sin" class="md-nav__link">
+    FT_Sin
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_cos" class="md-nav__link">
+    FT_Cos
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_tan" class="md-nav__link">
+    FT_Tan
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_atan2" class="md-nav__link">
+    FT_Atan2
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_angle_diff" class="md-nav__link">
+    FT_Angle_Diff
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_vector_unit" class="md-nav__link">
+    FT_Vector_Unit
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_vector_rotate" class="md-nav__link">
+    FT_Vector_Rotate
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_vector_length" class="md-nav__link">
+    FT_Vector_Length
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_vector_polarize" class="md-nav__link">
+    FT_Vector_Polarize
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_vector_from_polar" class="md-nav__link">
+    FT_Vector_From_Polar
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          <div class="md-content" data-md-component="content">
+            <article class="md-content__inner md-typeset">
+              
+                
+                
+                <p><a href="https://www.freetype.org">FreeType</a> &raquo; <a href="../">Docs</a> &raquo; <a href="index.html#support-api">Support API</a> &raquo; Computations</p>
+<hr />
+<h1 id="computations">Computations<a class="headerlink" href="#computations" title="Permanent link">&para;</a></h1>
+<h2 id="synopsis">Synopsis<a class="headerlink" href="#synopsis" title="Permanent link">&para;</a></h2>
+<p>This section contains various functions used to perform computations on 16.16 fixed-point numbers or 2D vectors. FreeType does not use floating-point data types.</p>
+<p><strong>Attention</strong>: Most arithmetic functions take <code>FT_Long</code> as arguments. For historical reasons, FreeType was designed under the assumption that <code>FT_Long</code> is a 32-bit integer; results can thus be undefined if the arguments don't fit into 32 bits.</p>
+<h2 id="ft_muldiv">FT_MulDiv<a class="headerlink" href="#ft_muldiv" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_long">FT_Long</a> )
+  <b>FT_MulDiv</b>( <a href="ft2-basic_types.html#ft_long">FT_Long</a>  a,
+             <a href="ft2-basic_types.html#ft_long">FT_Long</a>  b,
+             <a href="ft2-basic_types.html#ft_long">FT_Long</a>  c );
+</code></pre></div>
+
+<p>Compute <code>(a*b)/c</code> with maximum accuracy, using a 64-bit intermediate integer whenever necessary.</p>
+<p>This function isn't necessarily as fast as some processor-specific operations, but is at least completely portable.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="a">a</td><td class="desc">
+<p>The first multiplier.</p>
+</td></tr>
+<tr><td class="val" id="b">b</td><td class="desc">
+<p>The second multiplier.</p>
+</td></tr>
+<tr><td class="val" id="c">c</td><td class="desc">
+<p>The divisor.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>The result of <code>(a*b)/c</code>. This function never traps when trying to divide by zero; it simply returns &lsquo;MaxInt&rsquo; or &lsquo;MinInt&rsquo; depending on the signs of <code>a</code> and <code>b</code>.</p>
+<hr>
+
+<h2 id="ft_mulfix">FT_MulFix<a class="headerlink" href="#ft_mulfix" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_long">FT_Long</a> )
+  <b>FT_MulFix</b>( <a href="ft2-basic_types.html#ft_long">FT_Long</a>  a,
+             <a href="ft2-basic_types.html#ft_long">FT_Long</a>  b );
+</code></pre></div>
+
+<p>Compute <code>(a*b)/0x10000</code> with maximum accuracy. Its main use is to multiply a given value by a 16.16 fixed-point factor.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="a">a</td><td class="desc">
+<p>The first multiplier.</p>
+</td></tr>
+<tr><td class="val" id="b">b</td><td class="desc">
+<p>The second multiplier. Use a 16.16 factor here whenever possible (see note below).</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>The result of <code>(a*b)/0x10000</code>.</p>
+<h4>note</h4>
+
+<p>This function has been optimized for the case where the absolute value of <code>a</code> is less than 2048, and <code>b</code> is a 16.16 scaling factor. As this happens mainly when scaling from notional units to fractional pixels in FreeType, it resulted in noticeable speed improvements between versions 2.x and 1.x.</p>
+<p>As a conclusion, always try to place a 16.16 factor as the <em>second</em> argument of this function; this can make a great difference.</p>
+<hr>
+
+<h2 id="ft_divfix">FT_DivFix<a class="headerlink" href="#ft_divfix" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_long">FT_Long</a> )
+  <b>FT_DivFix</b>( <a href="ft2-basic_types.html#ft_long">FT_Long</a>  a,
+             <a href="ft2-basic_types.html#ft_long">FT_Long</a>  b );
+</code></pre></div>
+
+<p>Compute <code>(a*0x10000)/b</code> with maximum accuracy. Its main use is to divide a given value by a 16.16 fixed-point factor.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="a">a</td><td class="desc">
+<p>The numerator.</p>
+</td></tr>
+<tr><td class="val" id="b">b</td><td class="desc">
+<p>The denominator. Use a 16.16 factor here.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>The result of <code>(a*0x10000)/b</code>.</p>
+<hr>
+
+<h2 id="ft_roundfix">FT_RoundFix<a class="headerlink" href="#ft_roundfix" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a> )
+  <b>FT_RoundFix</b>( <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>  a );
+</code></pre></div>
+
+<p>Round a 16.16 fixed number.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="a">a</td><td class="desc">
+<p>The number to be rounded.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p><code>a</code> rounded to the nearest 16.16 fixed integer, halfway cases away from zero.</p>
+<h4>note</h4>
+
+<p>The function uses wrap-around arithmetic.</p>
+<hr>
+
+<h2 id="ft_ceilfix">FT_CeilFix<a class="headerlink" href="#ft_ceilfix" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a> )
+  <b>FT_CeilFix</b>( <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>  a );
+</code></pre></div>
+
+<p>Compute the smallest following integer of a 16.16 fixed number.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="a">a</td><td class="desc">
+<p>The number for which the ceiling function is to be computed.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p><code>a</code> rounded towards plus infinity.</p>
+<h4>note</h4>
+
+<p>The function uses wrap-around arithmetic.</p>
+<hr>
+
+<h2 id="ft_floorfix">FT_FloorFix<a class="headerlink" href="#ft_floorfix" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a> )
+  <b>FT_FloorFix</b>( <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>  a );
+</code></pre></div>
+
+<p>Compute the largest previous integer of a 16.16 fixed number.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="a">a</td><td class="desc">
+<p>The number for which the floor function is to be computed.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p><code>a</code> rounded towards minus infinity.</p>
+<hr>
+
+<h2 id="ft_vector_transform">FT_Vector_Transform<a class="headerlink" href="#ft_vector_transform" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <span class="keyword">void</span> )
+  <b>FT_Vector_Transform</b>( <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>*        vector,
+                       <span class="keyword">const</span> <a href="ft2-basic_types.html#ft_matrix">FT_Matrix</a>*  matrix );
+</code></pre></div>
+
+<p>Transform a single vector through a 2x2 matrix.</p>
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="vector">vector</td><td class="desc">
+<p>The target vector to transform.</p>
+</td></tr>
+</table>
+
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="matrix">matrix</td><td class="desc">
+<p>A pointer to the source 2x2 matrix.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>The result is undefined if either <code>vector</code> or <code>matrix</code> is invalid.</p>
+<hr>
+
+<h2 id="ft_matrix_multiply">FT_Matrix_Multiply<a class="headerlink" href="#ft_matrix_multiply" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_GLYPH_H (freetype/ftglyph.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <span class="keyword">void</span> )
+  <b>FT_Matrix_Multiply</b>( <span class="keyword">const</span> <a href="ft2-basic_types.html#ft_matrix">FT_Matrix</a>*  a,
+                      <a href="ft2-basic_types.html#ft_matrix">FT_Matrix</a>*        b );
+</code></pre></div>
+
+<p>Perform the matrix operation <code>b = a*b</code>.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="a">a</td><td class="desc">
+<p>A pointer to matrix <code>a</code>.</p>
+</td></tr>
+</table>
+
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="b">b</td><td class="desc">
+<p>A pointer to matrix <code>b</code>.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>The result is undefined if either <code>a</code> or <code>b</code> is zero.</p>
+<p>Since the function uses wrap-around arithmetic, results become meaningless if the arguments are very large.</p>
+<hr>
+
+<h2 id="ft_matrix_invert">FT_Matrix_Invert<a class="headerlink" href="#ft_matrix_invert" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_GLYPH_H (freetype/ftglyph.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Matrix_Invert</b>( <a href="ft2-basic_types.html#ft_matrix">FT_Matrix</a>*  matrix );
+</code></pre></div>
+
+<p>Invert a 2x2 matrix. Return an error if it can't be inverted.</p>
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="matrix">matrix</td><td class="desc">
+<p>A pointer to the target matrix. Remains untouched in case of error.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<hr>
+
+<h2 id="ft_angle">FT_Angle<a class="headerlink" href="#ft_angle" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRIGONOMETRY_H (freetype/fttrigon.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>  <b>FT_Angle</b>;
+</code></pre></div>
+
+<p>This type is used to model angle values in FreeType. Note that the angle is a 16.16 fixed-point value expressed in degrees.</p>
+<hr>
+
+<h2 id="ft_angle_pi">FT_ANGLE_PI<a class="headerlink" href="#ft_angle_pi" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRIGONOMETRY_H (freetype/fttrigon.h).</p>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_ANGLE_PI</b>  ( 180L &lt;&lt; 16 )
+</code></pre></div>
+
+<p>The angle pi expressed in <code><a href="ft2-computations.html#ft_angle">FT_Angle</a></code> units.</p>
+<hr>
+
+<h2 id="ft_angle_2pi">FT_ANGLE_2PI<a class="headerlink" href="#ft_angle_2pi" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRIGONOMETRY_H (freetype/fttrigon.h).</p>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_ANGLE_2PI</b>  ( <a href="ft2-computations.html#ft_angle_pi">FT_ANGLE_PI</a> * 2 )
+</code></pre></div>
+
+<p>The angle 2*pi expressed in <code><a href="ft2-computations.html#ft_angle">FT_Angle</a></code> units.</p>
+<hr>
+
+<h2 id="ft_angle_pi2">FT_ANGLE_PI2<a class="headerlink" href="#ft_angle_pi2" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRIGONOMETRY_H (freetype/fttrigon.h).</p>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_ANGLE_PI2</b>  ( <a href="ft2-computations.html#ft_angle_pi">FT_ANGLE_PI</a> / 2 )
+</code></pre></div>
+
+<p>The angle pi/2 expressed in <code><a href="ft2-computations.html#ft_angle">FT_Angle</a></code> units.</p>
+<hr>
+
+<h2 id="ft_angle_pi4">FT_ANGLE_PI4<a class="headerlink" href="#ft_angle_pi4" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRIGONOMETRY_H (freetype/fttrigon.h).</p>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_ANGLE_PI4</b>  ( <a href="ft2-computations.html#ft_angle_pi">FT_ANGLE_PI</a> / 4 )
+</code></pre></div>
+
+<p>The angle pi/4 expressed in <code><a href="ft2-computations.html#ft_angle">FT_Angle</a></code> units.</p>
+<hr>
+
+<h2 id="ft_sin">FT_Sin<a class="headerlink" href="#ft_sin" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRIGONOMETRY_H (freetype/fttrigon.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a> )
+  <b>FT_Sin</b>( <a href="ft2-computations.html#ft_angle">FT_Angle</a>  angle );
+</code></pre></div>
+
+<p>Return the sinus of a given angle in fixed-point format.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="angle">angle</td><td class="desc">
+<p>The input angle.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>The sinus value.</p>
+<h4>note</h4>
+
+<p>If you need both the sinus and cosinus for a given angle, use the function <code><a href="ft2-computations.html#ft_vector_unit">FT_Vector_Unit</a></code>.</p>
+<hr>
+
+<h2 id="ft_cos">FT_Cos<a class="headerlink" href="#ft_cos" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRIGONOMETRY_H (freetype/fttrigon.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a> )
+  <b>FT_Cos</b>( <a href="ft2-computations.html#ft_angle">FT_Angle</a>  angle );
+</code></pre></div>
+
+<p>Return the cosinus of a given angle in fixed-point format.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="angle">angle</td><td class="desc">
+<p>The input angle.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>The cosinus value.</p>
+<h4>note</h4>
+
+<p>If you need both the sinus and cosinus for a given angle, use the function <code><a href="ft2-computations.html#ft_vector_unit">FT_Vector_Unit</a></code>.</p>
+<hr>
+
+<h2 id="ft_tan">FT_Tan<a class="headerlink" href="#ft_tan" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRIGONOMETRY_H (freetype/fttrigon.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a> )
+  <b>FT_Tan</b>( <a href="ft2-computations.html#ft_angle">FT_Angle</a>  angle );
+</code></pre></div>
+
+<p>Return the tangent of a given angle in fixed-point format.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="angle">angle</td><td class="desc">
+<p>The input angle.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>The tangent value.</p>
+<hr>
+
+<h2 id="ft_atan2">FT_Atan2<a class="headerlink" href="#ft_atan2" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRIGONOMETRY_H (freetype/fttrigon.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-computations.html#ft_angle">FT_Angle</a> )
+  <b>FT_Atan2</b>( <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>  x,
+            <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>  y );
+</code></pre></div>
+
+<p>Return the arc-tangent corresponding to a given vector (x,y) in the 2d plane.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="x">x</td><td class="desc">
+<p>The horizontal vector coordinate.</p>
+</td></tr>
+<tr><td class="val" id="y">y</td><td class="desc">
+<p>The vertical vector coordinate.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>The arc-tangent value (i.e. angle).</p>
+<hr>
+
+<h2 id="ft_angle_diff">FT_Angle_Diff<a class="headerlink" href="#ft_angle_diff" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRIGONOMETRY_H (freetype/fttrigon.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-computations.html#ft_angle">FT_Angle</a> )
+  <b>FT_Angle_Diff</b>( <a href="ft2-computations.html#ft_angle">FT_Angle</a>  angle1,
+                 <a href="ft2-computations.html#ft_angle">FT_Angle</a>  angle2 );
+</code></pre></div>
+
+<p>Return the difference between two angles. The result is always constrained to the ]-PI..PI] interval.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="angle1">angle1</td><td class="desc">
+<p>First angle.</p>
+</td></tr>
+<tr><td class="val" id="angle2">angle2</td><td class="desc">
+<p>Second angle.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>Constrained value of <code>angle2-angle1</code>.</p>
+<hr>
+
+<h2 id="ft_vector_unit">FT_Vector_Unit<a class="headerlink" href="#ft_vector_unit" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRIGONOMETRY_H (freetype/fttrigon.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <span class="keyword">void</span> )
+  <b>FT_Vector_Unit</b>( <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>*  vec,
+                  <a href="ft2-computations.html#ft_angle">FT_Angle</a>    angle );
+</code></pre></div>
+
+<p>Return the unit vector corresponding to a given angle. After the call, the value of <code>vec.x</code> will be <code>cos(angle)</code>, and the value of <code>vec.y</code> will be <code>sin(angle)</code>.</p>
+<p>This function is useful to retrieve both the sinus and cosinus of a given angle quickly.</p>
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="vec">vec</td><td class="desc">
+<p>The address of target vector.</p>
+</td></tr>
+</table>
+
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="angle">angle</td><td class="desc">
+<p>The input angle.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_vector_rotate">FT_Vector_Rotate<a class="headerlink" href="#ft_vector_rotate" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRIGONOMETRY_H (freetype/fttrigon.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <span class="keyword">void</span> )
+  <b>FT_Vector_Rotate</b>( <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>*  vec,
+                    <a href="ft2-computations.html#ft_angle">FT_Angle</a>    angle );
+</code></pre></div>
+
+<p>Rotate a vector by a given angle.</p>
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="vec">vec</td><td class="desc">
+<p>The address of target vector.</p>
+</td></tr>
+</table>
+
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="angle">angle</td><td class="desc">
+<p>The input angle.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_vector_length">FT_Vector_Length<a class="headerlink" href="#ft_vector_length" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRIGONOMETRY_H (freetype/fttrigon.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a> )
+  <b>FT_Vector_Length</b>( <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>*  vec );
+</code></pre></div>
+
+<p>Return the length of a given vector.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="vec">vec</td><td class="desc">
+<p>The address of target vector.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>The vector length, expressed in the same units that the original vector coordinates.</p>
+<hr>
+
+<h2 id="ft_vector_polarize">FT_Vector_Polarize<a class="headerlink" href="#ft_vector_polarize" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRIGONOMETRY_H (freetype/fttrigon.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <span class="keyword">void</span> )
+  <b>FT_Vector_Polarize</b>( <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>*  vec,
+                      <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>   *length,
+                      <a href="ft2-computations.html#ft_angle">FT_Angle</a>   *angle );
+</code></pre></div>
+
+<p>Compute both the length and angle of a given vector.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="vec">vec</td><td class="desc">
+<p>The address of source vector.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="length">length</td><td class="desc">
+<p>The vector length.</p>
+</td></tr>
+<tr><td class="val" id="angle">angle</td><td class="desc">
+<p>The vector angle.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_vector_from_polar">FT_Vector_From_Polar<a class="headerlink" href="#ft_vector_from_polar" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRIGONOMETRY_H (freetype/fttrigon.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <span class="keyword">void</span> )
+  <b>FT_Vector_From_Polar</b>( <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>*  vec,
+                        <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>    length,
+                        <a href="ft2-computations.html#ft_angle">FT_Angle</a>    angle );
+</code></pre></div>
+
+<p>Compute vector coordinates from a length and angle.</p>
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="vec">vec</td><td class="desc">
+<p>The address of source vector.</p>
+</td></tr>
+</table>
+
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="length">length</td><td class="desc">
+<p>The vector length.</p>
+</td></tr>
+<tr><td class="val" id="angle">angle</td><td class="desc">
+<p>The vector angle.</p>
+</td></tr>
+</table>
+
+<hr>
+                
+              
+              
+                
+
+
+              
+            </article>
+          </div>
+        </div>
+        
+      </main>
+      
+        
+<footer class="md-footer">
+  
+    <nav class="md-footer__inner md-grid" aria-label="Footer">
+      
+        
+        <a href="ft2-cache_subsystem.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: Cache Sub-System" rel="prev">
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+          </div>
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              Cache Sub-System
+            </div>
+          </div>
+        </a>
+      
+      
+        
+        <a href="ft2-list_processing.html" class="md-footer__link md-footer__link--next" aria-label="Next: List Processing" rel="next">
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              List Processing
+            </div>
+          </div>
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11H4z"/></svg>
+          </div>
+        </a>
+      
+    </nav>
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-footer-copyright">
+        
+          <div class="md-footer-copyright__highlight">
+            Copyright 2023 <a href = "https://www.freetype.org/license.html">The FreeType Project</a>.
+          </div>
+        
+        Made with
+        <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+          Material for MkDocs
+        </a>
+        
+      </div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    <script id="__config" type="application/json">{"base": ".", "features": [], "search": "assets/javascripts/workers/search.477d984a.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.config.lang": "en", "search.config.pipeline": "trimmer, stopWordFilter", "search.config.separator": "[\\s\\-]+", "search.placeholder": "Search", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version.title": "Select version"}, "version": null}</script>
+    
+    
+      <script src="assets/javascripts/bundle.82b56eb2.min.js"></script>
+      
+        <script src="javascripts/extra.js"></script>
+      
+    
+  </body>
+</html>

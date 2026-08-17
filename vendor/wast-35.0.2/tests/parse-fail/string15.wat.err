@@ -1,0 +1,5 @@
+expected '}' but found '"'
+     --> tests/parse-fail/string15.wat:1:6
+      |
+    1 | "\u{3"
+      |      ^

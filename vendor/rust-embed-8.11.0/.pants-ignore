@@ -1,0 +1,3 @@
+{
+  "ignore": [{ "id": "sonatype-2021-4646", "reason": "We are handling it this case. Sonatype doesn't recognize that." }]
+}

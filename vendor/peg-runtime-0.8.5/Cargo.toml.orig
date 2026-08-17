@@ -1,0 +1,15 @@
+[package]
+name = "peg-runtime"
+version = "0.8.5"
+authors = [ "Kevin Mehall <km@kevinmehall.net>" ]
+license = "MIT"
+repository = "https://github.com/kevinmehall/rust-peg"
+description = "Runtime support for rust-peg grammars. To use rust-peg, see the `peg` crate."
+edition = "2021"
+
+[lib]
+path = "lib.rs"
+
+[features]
+std = []
+unstable = []

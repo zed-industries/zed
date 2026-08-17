@@ -1,0 +1,23 @@
+package foo:foo;
+
+interface a1 { }
+interface a2 { }
+interface b1 { }
+interface b2 { }
+interface c { }
+interface d { }
+
+world my-world-a {
+    import a1;
+    import b1;
+}
+
+world my-world-b {
+    import a1;
+    import b1;
+}
+
+world union-my-world {
+    include my-world-a;
+    include my-world-b;
+}

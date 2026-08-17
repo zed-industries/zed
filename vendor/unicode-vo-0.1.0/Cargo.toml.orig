@@ -1,0 +1,11 @@
+[package]
+name = "unicode-vo"
+# When updating version, also modify html_root_url in the lib.rs
+version = "0.1.0"
+authors = ["Evgeniy Reizner <razrfalcon@gmail.com>"]
+description = "Unicode vertical orientation detection"
+documentation = "https://docs.rs/unicode-vo/"
+keywords = ["unicode"]
+license = "MIT/Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/RazrFalcon/unicode-vo"

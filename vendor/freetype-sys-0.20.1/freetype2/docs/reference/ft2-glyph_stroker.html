@@ -1,0 +1,2267 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="API Reference Documentation for FreeType-2.13.2">
+      
+      
+      
+        <meta name="author" content="FreeType Contributors">
+      
+      
+      <link rel="icon" href="images/favico.ico">
+      <meta name="generator" content="mkdocs-1.4.3, mkdocs-material-7.1.9">
+    
+    
+      
+        <title>Glyph Stroker - FreeType-2.13.2 API Reference</title>
+      
+    
+    
+      <link rel="stylesheet" href="assets/stylesheets/main.ca7ac06f.min.css">
+      
+        
+        <link rel="stylesheet" href="assets/stylesheets/palette.f1a3b89f.min.css">
+        
+          
+          
+          <meta name="theme-color" content="#4cae4f">
+        
+      
+    
+    
+    
+      
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Noto+Serif:300,400,400i,700%7CRoboto+Mono&display=fallback">
+        <style>:root{--md-text-font-family:"Noto Serif";--md-code-font-family:"Roboto Mono"}</style>
+      
+    
+    
+    
+      <link rel="stylesheet" href="stylesheets/extra.css">
+    
+    
+      
+
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <script>function __prefix(e){return new URL(".",location).pathname+"."+e}function __get(e,t=localStorage){return JSON.parse(t.getItem(__prefix(e)))}</script>
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#glyph-stroker" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-header__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            FreeType-2.13.2 API Reference
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Glyph Stroker
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+      </label>
+      
+<div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" data-md-state="active" required>
+      <label class="md-search__icon md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+      </label>
+      <button type="reset" class="md-search__icon md-icon" aria-label="Clear" tabindex="-1">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
+      </button>
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+  </nav>
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-nav__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    FreeType-2.13.2 API Reference
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="index.html" class="md-nav__link">
+        TOC
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-index.html" class="md-nav__link">
+        Index
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_3" type="checkbox" id="__nav_3" >
+      
+      <label class="md-nav__link" for="__nav_3">
+        General Remarks
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="General Remarks" data-md-level="1">
+        <label class="md-nav__title" for="__nav_3">
+          <span class="md-nav__icon md-icon"></span>
+          General Remarks
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-preamble.html" class="md-nav__link">
+        Preamble
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_inclusion.html" class="md-nav__link">
+        FreeType's header inclusion scheme
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-user_allocation.html" class="md-nav__link">
+        User allocation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_4" type="checkbox" id="__nav_4" >
+      
+      <label class="md-nav__link" for="__nav_4">
+        Core API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Core API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_4">
+          <span class="md-nav__icon md-icon"></span>
+          Core API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-basic_types.html" class="md-nav__link">
+        Basic Data Types
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-library_setup.html" class="md-nav__link">
+        Library Setup
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-face_creation.html" class="md-nav__link">
+        Face Creation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_testing_macros.html" class="md-nav__link">
+        Font Testing Macros
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizing_and_scaling.html" class="md-nav__link">
+        Sizing and Scaling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_retrieval.html" class="md-nav__link">
+        Glyph Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-character_mapping.html" class="md-nav__link">
+        Character Mapping
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-information_retrieval.html" class="md-nav__link">
+        Information Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-other_api_data.html" class="md-nav__link">
+        Other API Data
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_5" type="checkbox" id="__nav_5" >
+      
+      <label class="md-nav__link" for="__nav_5">
+        Extended API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Extended API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_5">
+          <span class="md-nav__icon md-icon"></span>
+          Extended API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_variants.html" class="md-nav__link">
+        Unicode Variation Sequences
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-color_management.html" class="md-nav__link">
+        Glyph Color Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-layer_management.html" class="md-nav__link">
+        Glyph Layer Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_management.html" class="md-nav__link">
+        Glyph Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-mac_specific.html" class="md-nav__link">
+        Mac Specific Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizes_management.html" class="md-nav__link">
+        Size Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_file_macros.html" class="md-nav__link">
+        Header File Macros
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_6" type="checkbox" id="__nav_6" >
+      
+      <label class="md-nav__link" for="__nav_6">
+        Format-Specific API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Format-Specific API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_6">
+          <span class="md-nav__icon md-icon"></span>
+          Format-Specific API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-multiple_masters.html" class="md-nav__link">
+        Multiple Masters
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_tables.html" class="md-nav__link">
+        TrueType Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-type1_tables.html" class="md-nav__link">
+        Type 1 Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sfnt_names.html" class="md-nav__link">
+        SFNT Names
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bdf_fonts.html" class="md-nav__link">
+        BDF and PCF Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cid_fonts.html" class="md-nav__link">
+        CID Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pfr_fonts.html" class="md-nav__link">
+        PFR Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-winfnt_fonts.html" class="md-nav__link">
+        Window FNT Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-svg_fonts.html" class="md-nav__link">
+        OpenType SVG Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_formats.html" class="md-nav__link">
+        Font Formats
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gasp_table.html" class="md-nav__link">
+        Gasp Table
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_7" type="checkbox" id="__nav_7" >
+      
+      <label class="md-nav__link" for="__nav_7">
+        Controlling FreeType Modules
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Controlling FreeType Modules" data-md-level="1">
+        <label class="md-nav__title" for="__nav_7">
+          <span class="md-nav__icon md-icon"></span>
+          Controlling FreeType Modules
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-auto_hinter.html" class="md-nav__link">
+        The auto-hinter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cff_driver.html" class="md-nav__link">
+        The CFF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-t1_cid_driver.html" class="md-nav__link">
+        The Type 1 and CID drivers
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-tt_driver.html" class="md-nav__link">
+        The TrueType driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pcf_driver.html" class="md-nav__link">
+        The PCF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_svg_driver.html" class="md-nav__link">
+        The SVG driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-properties.html" class="md-nav__link">
+        Driver properties
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-parameter_tags.html" class="md-nav__link">
+        Parameter Tags
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lcd_rendering.html" class="md-nav__link">
+        Subpixel Rendering
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_8" type="checkbox" id="__nav_8" >
+      
+      <label class="md-nav__link" for="__nav_8">
+        Cache Sub-System
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Cache Sub-System" data-md-level="1">
+        <label class="md-nav__title" for="__nav_8">
+          <span class="md-nav__icon md-icon"></span>
+          Cache Sub-System
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cache_subsystem.html" class="md-nav__link">
+        Cache Sub-System
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+    
+  
+  
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_9" type="checkbox" id="__nav_9" checked>
+      
+      <label class="md-nav__link" for="__nav_9">
+        Support API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Support API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_9">
+          <span class="md-nav__icon md-icon"></span>
+          Support API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-computations.html" class="md-nav__link">
+        Computations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-list_processing.html" class="md-nav__link">
+        List Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-outline_processing.html" class="md-nav__link">
+        Outline Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-quick_advance.html" class="md-nav__link">
+        Quick retrieval of advance values
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bitmap_handling.html" class="md-nav__link">
+        Bitmap Handling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-raster.html" class="md-nav__link">
+        Scanline Converter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+    
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" data-md-toggle="toc" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          Glyph Stroker
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="ft2-glyph_stroker.html" class="md-nav__link md-nav__link--active">
+        Glyph Stroker
+      </a>
+      
+        
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker" class="md-nav__link">
+    FT_Stroker
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_linejoin" class="md-nav__link">
+    FT_Stroker_LineJoin
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_linecap" class="md-nav__link">
+    FT_Stroker_LineCap
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_strokerborder" class="md-nav__link">
+    FT_StrokerBorder
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_outline_getinsideborder" class="md-nav__link">
+    FT_Outline_GetInsideBorder
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_outline_getoutsideborder" class="md-nav__link">
+    FT_Outline_GetOutsideBorder
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_glyph_stroke" class="md-nav__link">
+    FT_Glyph_Stroke
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_glyph_strokeborder" class="md-nav__link">
+    FT_Glyph_StrokeBorder
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_new" class="md-nav__link">
+    FT_Stroker_New
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_set" class="md-nav__link">
+    FT_Stroker_Set
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_rewind" class="md-nav__link">
+    FT_Stroker_Rewind
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_parseoutline" class="md-nav__link">
+    FT_Stroker_ParseOutline
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_done" class="md-nav__link">
+    FT_Stroker_Done
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_beginsubpath" class="md-nav__link">
+    FT_Stroker_BeginSubPath
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_endsubpath" class="md-nav__link">
+    FT_Stroker_EndSubPath
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_lineto" class="md-nav__link">
+    FT_Stroker_LineTo
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_conicto" class="md-nav__link">
+    FT_Stroker_ConicTo
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_cubicto" class="md-nav__link">
+    FT_Stroker_CubicTo
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_getbordercounts" class="md-nav__link">
+    FT_Stroker_GetBorderCounts
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_exportborder" class="md-nav__link">
+    FT_Stroker_ExportBorder
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_getcounts" class="md-nav__link">
+    FT_Stroker_GetCounts
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_export" class="md-nav__link">
+    FT_Stroker_Export
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-system_interface.html" class="md-nav__link">
+        System Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-module_management.html" class="md-nav__link">
+        Module Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gzip.html" class="md-nav__link">
+        GZIP Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lzw.html" class="md-nav__link">
+        LZW Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bzip2.html" class="md-nav__link">
+        BZIP2 Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-debugging_apis.html" class="md-nav__link">
+        External Debugging APIs
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_10" type="checkbox" id="__nav_10" >
+      
+      <label class="md-nav__link" for="__nav_10">
+        Error Codes
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Error Codes" data-md-level="1">
+        <label class="md-nav__title" for="__nav_10">
+          <span class="md-nav__icon md-icon"></span>
+          Error Codes
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_enumerations.html" class="md-nav__link">
+        Error Enumerations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_code_values.html" class="md-nav__link">
+        Error Code Values
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_11" type="checkbox" id="__nav_11" >
+      
+      <label class="md-nav__link" for="__nav_11">
+        Miscellaneous
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Miscellaneous" data-md-level="1">
+        <label class="md-nav__title" for="__nav_11">
+          <span class="md-nav__icon md-icon"></span>
+          Miscellaneous
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gx_validation.html" class="md-nav__link">
+        TrueTypeGX/AAT Validation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-incremental.html" class="md-nav__link">
+        Incremental Loading
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_engine.html" class="md-nav__link">
+        The TrueType Engine
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_validation.html" class="md-nav__link">
+        OpenType Validation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker" class="md-nav__link">
+    FT_Stroker
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_linejoin" class="md-nav__link">
+    FT_Stroker_LineJoin
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_linecap" class="md-nav__link">
+    FT_Stroker_LineCap
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_strokerborder" class="md-nav__link">
+    FT_StrokerBorder
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_outline_getinsideborder" class="md-nav__link">
+    FT_Outline_GetInsideBorder
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_outline_getoutsideborder" class="md-nav__link">
+    FT_Outline_GetOutsideBorder
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_glyph_stroke" class="md-nav__link">
+    FT_Glyph_Stroke
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_glyph_strokeborder" class="md-nav__link">
+    FT_Glyph_StrokeBorder
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_new" class="md-nav__link">
+    FT_Stroker_New
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_set" class="md-nav__link">
+    FT_Stroker_Set
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_rewind" class="md-nav__link">
+    FT_Stroker_Rewind
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_parseoutline" class="md-nav__link">
+    FT_Stroker_ParseOutline
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_done" class="md-nav__link">
+    FT_Stroker_Done
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_beginsubpath" class="md-nav__link">
+    FT_Stroker_BeginSubPath
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_endsubpath" class="md-nav__link">
+    FT_Stroker_EndSubPath
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_lineto" class="md-nav__link">
+    FT_Stroker_LineTo
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_conicto" class="md-nav__link">
+    FT_Stroker_ConicTo
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_cubicto" class="md-nav__link">
+    FT_Stroker_CubicTo
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_getbordercounts" class="md-nav__link">
+    FT_Stroker_GetBorderCounts
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_exportborder" class="md-nav__link">
+    FT_Stroker_ExportBorder
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_getcounts" class="md-nav__link">
+    FT_Stroker_GetCounts
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_export" class="md-nav__link">
+    FT_Stroker_Export
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          <div class="md-content" data-md-component="content">
+            <article class="md-content__inner md-typeset">
+              
+                
+                
+                <p><a href="https://www.freetype.org">FreeType</a> &raquo; <a href="../">Docs</a> &raquo; <a href="index.html#support-api">Support API</a> &raquo; Glyph Stroker</p>
+<hr />
+<h1 id="glyph-stroker">Glyph Stroker<a class="headerlink" href="#glyph-stroker" title="Permanent link">&para;</a></h1>
+<h2 id="synopsis">Synopsis<a class="headerlink" href="#synopsis" title="Permanent link">&para;</a></h2>
+<p>This component generates stroked outlines of a given vectorial glyph. It also allows you to retrieve the &lsquo;outside&rsquo; and/or the &lsquo;inside&rsquo; borders of the stroke.</p>
+<p>This can be useful to generate &lsquo;bordered&rsquo; glyph, i.e., glyphs displayed with a colored (and anti-aliased) border around their shape.</p>
+<h2 id="ft_stroker">FT_Stroker<a class="headerlink" href="#ft_stroker" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_STROKER_H (freetype/ftstroke.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span> FT_StrokerRec_*  <b>FT_Stroker</b>;
+</code></pre></div>
+
+<p>Opaque handle to a path stroker object.</p>
+<hr>
+
+<h2 id="ft_stroker_linejoin">FT_Stroker_LineJoin<a class="headerlink" href="#ft_stroker_linejoin" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_STROKER_H (freetype/ftstroke.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">enum</span>  FT_Stroker_LineJoin_
+  {
+    <a href="ft2-glyph_stroker.html#ft_stroker_linejoin_round">FT_STROKER_LINEJOIN_ROUND</a>          = 0,
+    <a href="ft2-glyph_stroker.html#ft_stroker_linejoin_bevel">FT_STROKER_LINEJOIN_BEVEL</a>          = 1,
+    <a href="ft2-glyph_stroker.html#ft_stroker_linejoin_miter_variable">FT_STROKER_LINEJOIN_MITER_VARIABLE</a> = 2,
+    <a href="ft2-glyph_stroker.html#ft_stroker_linejoin_miter">FT_STROKER_LINEJOIN_MITER</a>          = <a href="ft2-glyph_stroker.html#ft_stroker_linejoin_miter_variable">FT_STROKER_LINEJOIN_MITER_VARIABLE</a>,
+    <a href="ft2-glyph_stroker.html#ft_stroker_linejoin_miter_fixed">FT_STROKER_LINEJOIN_MITER_FIXED</a>    = 3
+
+  } <b>FT_Stroker_LineJoin</b>;
+</code></pre></div>
+
+<p>These values determine how two joining lines are rendered in a stroker.</p>
+<h4>values</h4>
+<table class="fields long">
+<tr><td class="val" id="ft_stroker_linejoin_round">FT_STROKER_LINEJOIN_ROUND</td><td class="desc">
+<p>Used to render rounded line joins. Circular arcs are used to join two lines smoothly.</p>
+</td></tr>
+<tr><td class="val" id="ft_stroker_linejoin_bevel">FT_STROKER_LINEJOIN_BEVEL</td><td class="desc">
+<p>Used to render beveled line joins. The outer corner of the joined lines is filled by enclosing the triangular region of the corner with a straight line between the outer corners of each stroke.</p>
+</td></tr>
+<tr><td class="val" id="ft_stroker_linejoin_miter_fixed">FT_STROKER_LINEJOIN_MITER_FIXED</td><td class="desc">
+<p>Used to render mitered line joins, with fixed bevels if the miter limit is exceeded. The outer edges of the strokes for the two segments are extended until they meet at an angle. A bevel join (see above) is used if the segments meet at too sharp an angle and the outer edges meet beyond a distance corresponding to the meter limit. This prevents long spikes being created. <code>FT_STROKER_LINEJOIN_MITER_FIXED</code> generates a miter line join as used in PostScript and PDF.</p>
+</td></tr>
+<tr><td class="val" id="ft_stroker_linejoin_miter_variable">FT_STROKER_LINEJOIN_MITER_VARIABLE</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ft_stroker_linejoin_miter">FT_STROKER_LINEJOIN_MITER</td><td class="desc">
+<p>Used to render mitered line joins, with variable bevels if the miter limit is exceeded. The intersection of the strokes is clipped perpendicularly to the bisector, at a distance corresponding to the miter limit. This prevents long spikes being created. <code>FT_STROKER_LINEJOIN_MITER_VARIABLE</code> generates a mitered line join as used in XPS. <code>FT_STROKER_LINEJOIN_MITER</code> is an alias for <code>FT_STROKER_LINEJOIN_MITER_VARIABLE</code>, retained for backward compatibility.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_stroker_linecap">FT_Stroker_LineCap<a class="headerlink" href="#ft_stroker_linecap" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_STROKER_H (freetype/ftstroke.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">enum</span>  FT_Stroker_LineCap_
+  {
+    <a href="ft2-glyph_stroker.html#ft_stroker_linecap_butt">FT_STROKER_LINECAP_BUTT</a> = 0,
+    <a href="ft2-glyph_stroker.html#ft_stroker_linecap_round">FT_STROKER_LINECAP_ROUND</a>,
+    <a href="ft2-glyph_stroker.html#ft_stroker_linecap_square">FT_STROKER_LINECAP_SQUARE</a>
+
+  } <b>FT_Stroker_LineCap</b>;
+</code></pre></div>
+
+<p>These values determine how the end of opened sub-paths are rendered in a stroke.</p>
+<h4>values</h4>
+<table class="fields">
+<tr><td class="val" id="ft_stroker_linecap_butt">FT_STROKER_LINECAP_BUTT</td><td class="desc">
+<p>The end of lines is rendered as a full stop on the last point itself.</p>
+</td></tr>
+<tr><td class="val" id="ft_stroker_linecap_round">FT_STROKER_LINECAP_ROUND</td><td class="desc">
+<p>The end of lines is rendered as a half-circle around the last point.</p>
+</td></tr>
+<tr><td class="val" id="ft_stroker_linecap_square">FT_STROKER_LINECAP_SQUARE</td><td class="desc">
+<p>The end of lines is rendered as a square around the last point.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_strokerborder">FT_StrokerBorder<a class="headerlink" href="#ft_strokerborder" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_STROKER_H (freetype/ftstroke.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">enum</span>  FT_StrokerBorder_
+  {
+    <a href="ft2-glyph_stroker.html#ft_stroker_border_left">FT_STROKER_BORDER_LEFT</a> = 0,
+    <a href="ft2-glyph_stroker.html#ft_stroker_border_right">FT_STROKER_BORDER_RIGHT</a>
+
+  } <b>FT_StrokerBorder</b>;
+</code></pre></div>
+
+<p>These values are used to select a given stroke border in <code><a href="ft2-glyph_stroker.html#ft_stroker_getbordercounts">FT_Stroker_GetBorderCounts</a></code> and <code><a href="ft2-glyph_stroker.html#ft_stroker_exportborder">FT_Stroker_ExportBorder</a></code>.</p>
+<h4>values</h4>
+<table class="fields">
+<tr><td class="val" id="ft_stroker_border_left">FT_STROKER_BORDER_LEFT</td><td class="desc">
+<p>Select the left border, relative to the drawing direction.</p>
+</td></tr>
+<tr><td class="val" id="ft_stroker_border_right">FT_STROKER_BORDER_RIGHT</td><td class="desc">
+<p>Select the right border, relative to the drawing direction.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>Applications are generally interested in the &lsquo;inside&rsquo; and &lsquo;outside&rsquo; borders. However, there is no direct mapping between these and the &lsquo;left&rsquo; and &lsquo;right&rsquo; ones, since this really depends on the glyph's drawing orientation, which varies between font formats.</p>
+<p>You can however use <code><a href="ft2-glyph_stroker.html#ft_outline_getinsideborder">FT_Outline_GetInsideBorder</a></code> and <code><a href="ft2-glyph_stroker.html#ft_outline_getoutsideborder">FT_Outline_GetOutsideBorder</a></code> to get these.</p>
+<hr>
+
+<h2 id="ft_outline_getinsideborder">FT_Outline_GetInsideBorder<a class="headerlink" href="#ft_outline_getinsideborder" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_STROKER_H (freetype/ftstroke.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-glyph_stroker.html#ft_strokerborder">FT_StrokerBorder</a> )
+  <b>FT_Outline_GetInsideBorder</b>( <a href="ft2-outline_processing.html#ft_outline">FT_Outline</a>*  outline );
+</code></pre></div>
+
+<p>Retrieve the <code><a href="ft2-glyph_stroker.html#ft_strokerborder">FT_StrokerBorder</a></code> value corresponding to the &lsquo;inside&rsquo; borders of a given outline.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="outline">outline</td><td class="desc">
+<p>The source outline handle.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>The border index. <code><a href="ft2-glyph_stroker.html#ft_strokerborder">FT_STROKER_BORDER_RIGHT</a></code> for empty or invalid outlines.</p>
+<hr>
+
+<h2 id="ft_outline_getoutsideborder">FT_Outline_GetOutsideBorder<a class="headerlink" href="#ft_outline_getoutsideborder" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_STROKER_H (freetype/ftstroke.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-glyph_stroker.html#ft_strokerborder">FT_StrokerBorder</a> )
+  <b>FT_Outline_GetOutsideBorder</b>( <a href="ft2-outline_processing.html#ft_outline">FT_Outline</a>*  outline );
+</code></pre></div>
+
+<p>Retrieve the <code><a href="ft2-glyph_stroker.html#ft_strokerborder">FT_StrokerBorder</a></code> value corresponding to the &lsquo;outside&rsquo; borders of a given outline.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="outline">outline</td><td class="desc">
+<p>The source outline handle.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>The border index. <code><a href="ft2-glyph_stroker.html#ft_strokerborder">FT_STROKER_BORDER_LEFT</a></code> for empty or invalid outlines.</p>
+<hr>
+
+<h2 id="ft_glyph_stroke">FT_Glyph_Stroke<a class="headerlink" href="#ft_glyph_stroke" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_STROKER_H (freetype/ftstroke.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Glyph_Stroke</b>( <a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a>    *pglyph,
+                   <a href="ft2-glyph_stroker.html#ft_stroker">FT_Stroker</a>   stroker,
+                   <a href="ft2-basic_types.html#ft_bool">FT_Bool</a>      destroy );
+</code></pre></div>
+
+<p>Stroke a given outline glyph object with a given stroker.</p>
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="pglyph">pglyph</td><td class="desc">
+<p>Source glyph handle on input, new glyph handle on output.</p>
+</td></tr>
+</table>
+
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="stroker">stroker</td><td class="desc">
+<p>A stroker handle.</p>
+</td></tr>
+<tr><td class="val" id="destroy">destroy</td><td class="desc">
+<p>A Boolean. If&nbsp;1, the source glyph object is destroyed on success.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>The source glyph is untouched in case of error.</p>
+<p>Adding stroke may yield a significantly wider and taller glyph depending on how large of a radius was used to stroke the glyph. You may need to manually adjust horizontal and vertical advance amounts to account for this added size.</p>
+<hr>
+
+<h2 id="ft_glyph_strokeborder">FT_Glyph_StrokeBorder<a class="headerlink" href="#ft_glyph_strokeborder" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_STROKER_H (freetype/ftstroke.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Glyph_StrokeBorder</b>( <a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a>    *pglyph,
+                         <a href="ft2-glyph_stroker.html#ft_stroker">FT_Stroker</a>   stroker,
+                         <a href="ft2-basic_types.html#ft_bool">FT_Bool</a>      inside,
+                         <a href="ft2-basic_types.html#ft_bool">FT_Bool</a>      destroy );
+</code></pre></div>
+
+<p>Stroke a given outline glyph object with a given stroker, but only return either its inside or outside border.</p>
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="pglyph">pglyph</td><td class="desc">
+<p>Source glyph handle on input, new glyph handle on output.</p>
+</td></tr>
+</table>
+
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="stroker">stroker</td><td class="desc">
+<p>A stroker handle.</p>
+</td></tr>
+<tr><td class="val" id="inside">inside</td><td class="desc">
+<p>A Boolean. If&nbsp;1, return the inside border, otherwise the outside border.</p>
+</td></tr>
+<tr><td class="val" id="destroy">destroy</td><td class="desc">
+<p>A Boolean. If&nbsp;1, the source glyph object is destroyed on success.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>The source glyph is untouched in case of error.</p>
+<p>Adding stroke may yield a significantly wider and taller glyph depending on how large of a radius was used to stroke the glyph. You may need to manually adjust horizontal and vertical advance amounts to account for this added size.</p>
+<hr>
+
+<h2 id="ft_stroker_new">FT_Stroker_New<a class="headerlink" href="#ft_stroker_new" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_STROKER_H (freetype/ftstroke.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Stroker_New</b>( <a href="ft2-library_setup.html#ft_library">FT_Library</a>   library,
+                  <a href="ft2-glyph_stroker.html#ft_stroker">FT_Stroker</a>  *astroker );
+</code></pre></div>
+
+<p>Create a new stroker object.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="library">library</td><td class="desc">
+<p>FreeType library handle.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="astroker">astroker</td><td class="desc">
+<p>A new stroker object handle. <code>NULL</code> in case of error.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<hr>
+
+<h2 id="ft_stroker_set">FT_Stroker_Set<a class="headerlink" href="#ft_stroker_set" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_STROKER_H (freetype/ftstroke.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <span class="keyword">void</span> )
+  <b>FT_Stroker_Set</b>( <a href="ft2-glyph_stroker.html#ft_stroker">FT_Stroker</a>           stroker,
+                  <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>             radius,
+                  <a href="ft2-glyph_stroker.html#ft_stroker_linecap">FT_Stroker_LineCap</a>   line_cap,
+                  <a href="ft2-glyph_stroker.html#ft_stroker_linejoin">FT_Stroker_LineJoin</a>  line_join,
+                  <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>             miter_limit );
+</code></pre></div>
+
+<p>Reset a stroker object's attributes.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="stroker">stroker</td><td class="desc">
+<p>The target stroker handle.</p>
+</td></tr>
+<tr><td class="val" id="radius">radius</td><td class="desc">
+<p>The border radius.</p>
+</td></tr>
+<tr><td class="val" id="line_cap">line_cap</td><td class="desc">
+<p>The line cap style.</p>
+</td></tr>
+<tr><td class="val" id="line_join">line_join</td><td class="desc">
+<p>The line join style.</p>
+</td></tr>
+<tr><td class="val" id="miter_limit">miter_limit</td><td class="desc">
+<p>The maximum reciprocal sine of half-angle at the miter join, expressed as 16.16 fixed-point value.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>The <code>radius</code> is expressed in the same units as the outline coordinates.</p>
+<p>The <code>miter_limit</code> multiplied by the <code>radius</code> gives the maximum size of a miter spike, at which it is clipped for <code><a href="ft2-glyph_stroker.html#ft_stroker_linejoin">FT_STROKER_LINEJOIN_MITER_VARIABLE</a></code> or replaced with a bevel join for <code><a href="ft2-glyph_stroker.html#ft_stroker_linejoin">FT_STROKER_LINEJOIN_MITER_FIXED</a></code>.</p>
+<p>This function calls <code><a href="ft2-glyph_stroker.html#ft_stroker_rewind">FT_Stroker_Rewind</a></code> automatically.</p>
+<hr>
+
+<h2 id="ft_stroker_rewind">FT_Stroker_Rewind<a class="headerlink" href="#ft_stroker_rewind" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_STROKER_H (freetype/ftstroke.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <span class="keyword">void</span> )
+  <b>FT_Stroker_Rewind</b>( <a href="ft2-glyph_stroker.html#ft_stroker">FT_Stroker</a>  stroker );
+</code></pre></div>
+
+<p>Reset a stroker object without changing its attributes. You should call this function before beginning a new series of calls to <code><a href="ft2-glyph_stroker.html#ft_stroker_beginsubpath">FT_Stroker_BeginSubPath</a></code> or <code><a href="ft2-glyph_stroker.html#ft_stroker_endsubpath">FT_Stroker_EndSubPath</a></code>.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="stroker">stroker</td><td class="desc">
+<p>The target stroker handle.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_stroker_parseoutline">FT_Stroker_ParseOutline<a class="headerlink" href="#ft_stroker_parseoutline" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_STROKER_H (freetype/ftstroke.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Stroker_ParseOutline</b>( <a href="ft2-glyph_stroker.html#ft_stroker">FT_Stroker</a>   stroker,
+                           <a href="ft2-outline_processing.html#ft_outline">FT_Outline</a>*  outline,
+                           <a href="ft2-basic_types.html#ft_bool">FT_Bool</a>      opened );
+</code></pre></div>
+
+<p>A convenience function used to parse a whole outline with the stroker. The resulting outline(s) can be retrieved later by functions like <code><a href="ft2-glyph_stroker.html#ft_stroker_getcounts">FT_Stroker_GetCounts</a></code> and <code><a href="ft2-glyph_stroker.html#ft_stroker_export">FT_Stroker_Export</a></code>.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="stroker">stroker</td><td class="desc">
+<p>The target stroker handle.</p>
+</td></tr>
+<tr><td class="val" id="outline">outline</td><td class="desc">
+<p>The source outline.</p>
+</td></tr>
+<tr><td class="val" id="opened">opened</td><td class="desc">
+<p>A boolean. If&nbsp;1, the outline is treated as an open path instead of a closed one.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>If <code>opened</code> is&nbsp;0 (the default), the outline is treated as a closed path, and the stroker generates two distinct &lsquo;border&rsquo; outlines.</p>
+<p>If <code>opened</code> is&nbsp;1, the outline is processed as an open path, and the stroker generates a single &lsquo;stroke&rsquo; outline.</p>
+<p>This function calls <code><a href="ft2-glyph_stroker.html#ft_stroker_rewind">FT_Stroker_Rewind</a></code> automatically.</p>
+<hr>
+
+<h2 id="ft_stroker_done">FT_Stroker_Done<a class="headerlink" href="#ft_stroker_done" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_STROKER_H (freetype/ftstroke.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <span class="keyword">void</span> )
+  <b>FT_Stroker_Done</b>( <a href="ft2-glyph_stroker.html#ft_stroker">FT_Stroker</a>  stroker );
+</code></pre></div>
+
+<p>Destroy a stroker object.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="stroker">stroker</td><td class="desc">
+<p>A stroker handle. Can be <code>NULL</code>.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_stroker_beginsubpath">FT_Stroker_BeginSubPath<a class="headerlink" href="#ft_stroker_beginsubpath" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_STROKER_H (freetype/ftstroke.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Stroker_BeginSubPath</b>( <a href="ft2-glyph_stroker.html#ft_stroker">FT_Stroker</a>  stroker,
+                           <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>*  to,
+                           <a href="ft2-basic_types.html#ft_bool">FT_Bool</a>     open );
+</code></pre></div>
+
+<p>Start a new sub-path in the stroker.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="stroker">stroker</td><td class="desc">
+<p>The target stroker handle.</p>
+</td></tr>
+<tr><td class="val" id="to">to</td><td class="desc">
+<p>A pointer to the start vector.</p>
+</td></tr>
+<tr><td class="val" id="open">open</td><td class="desc">
+<p>A boolean. If&nbsp;1, the sub-path is treated as an open one.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>This function is useful when you need to stroke a path that is not stored as an <code><a href="ft2-outline_processing.html#ft_outline">FT_Outline</a></code> object.</p>
+<hr>
+
+<h2 id="ft_stroker_endsubpath">FT_Stroker_EndSubPath<a class="headerlink" href="#ft_stroker_endsubpath" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_STROKER_H (freetype/ftstroke.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Stroker_EndSubPath</b>( <a href="ft2-glyph_stroker.html#ft_stroker">FT_Stroker</a>  stroker );
+</code></pre></div>
+
+<p>Close the current sub-path in the stroker.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="stroker">stroker</td><td class="desc">
+<p>The target stroker handle.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>You should call this function after <code><a href="ft2-glyph_stroker.html#ft_stroker_beginsubpath">FT_Stroker_BeginSubPath</a></code>. If the subpath was not &lsquo;opened&rsquo;, this function &lsquo;draws&rsquo; a single line segment to the start position when needed.</p>
+<hr>
+
+<h2 id="ft_stroker_lineto">FT_Stroker_LineTo<a class="headerlink" href="#ft_stroker_lineto" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_STROKER_H (freetype/ftstroke.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Stroker_LineTo</b>( <a href="ft2-glyph_stroker.html#ft_stroker">FT_Stroker</a>  stroker,
+                     <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>*  to );
+</code></pre></div>
+
+<p>&lsquo;Draw&rsquo; a single line segment in the stroker's current sub-path, from the last position.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="stroker">stroker</td><td class="desc">
+<p>The target stroker handle.</p>
+</td></tr>
+<tr><td class="val" id="to">to</td><td class="desc">
+<p>A pointer to the destination point.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>You should call this function between <code><a href="ft2-glyph_stroker.html#ft_stroker_beginsubpath">FT_Stroker_BeginSubPath</a></code> and <code><a href="ft2-glyph_stroker.html#ft_stroker_endsubpath">FT_Stroker_EndSubPath</a></code>.</p>
+<hr>
+
+<h2 id="ft_stroker_conicto">FT_Stroker_ConicTo<a class="headerlink" href="#ft_stroker_conicto" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_STROKER_H (freetype/ftstroke.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Stroker_ConicTo</b>( <a href="ft2-glyph_stroker.html#ft_stroker">FT_Stroker</a>  stroker,
+                      <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>*  control,
+                      <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>*  to );
+</code></pre></div>
+
+<p>&lsquo;Draw&rsquo; a single quadratic Bezier in the stroker's current sub-path, from the last position.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="stroker">stroker</td><td class="desc">
+<p>The target stroker handle.</p>
+</td></tr>
+<tr><td class="val" id="control">control</td><td class="desc">
+<p>A pointer to a Bezier control point.</p>
+</td></tr>
+<tr><td class="val" id="to">to</td><td class="desc">
+<p>A pointer to the destination point.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>You should call this function between <code><a href="ft2-glyph_stroker.html#ft_stroker_beginsubpath">FT_Stroker_BeginSubPath</a></code> and <code><a href="ft2-glyph_stroker.html#ft_stroker_endsubpath">FT_Stroker_EndSubPath</a></code>.</p>
+<hr>
+
+<h2 id="ft_stroker_cubicto">FT_Stroker_CubicTo<a class="headerlink" href="#ft_stroker_cubicto" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_STROKER_H (freetype/ftstroke.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Stroker_CubicTo</b>( <a href="ft2-glyph_stroker.html#ft_stroker">FT_Stroker</a>  stroker,
+                      <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>*  control1,
+                      <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>*  control2,
+                      <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>*  to );
+</code></pre></div>
+
+<p>&lsquo;Draw&rsquo; a single cubic Bezier in the stroker's current sub-path, from the last position.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="stroker">stroker</td><td class="desc">
+<p>The target stroker handle.</p>
+</td></tr>
+<tr><td class="val" id="control1">control1</td><td class="desc">
+<p>A pointer to the first Bezier control point.</p>
+</td></tr>
+<tr><td class="val" id="control2">control2</td><td class="desc">
+<p>A pointer to second Bezier control point.</p>
+</td></tr>
+<tr><td class="val" id="to">to</td><td class="desc">
+<p>A pointer to the destination point.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>You should call this function between <code><a href="ft2-glyph_stroker.html#ft_stroker_beginsubpath">FT_Stroker_BeginSubPath</a></code> and <code><a href="ft2-glyph_stroker.html#ft_stroker_endsubpath">FT_Stroker_EndSubPath</a></code>.</p>
+<hr>
+
+<h2 id="ft_stroker_getbordercounts">FT_Stroker_GetBorderCounts<a class="headerlink" href="#ft_stroker_getbordercounts" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_STROKER_H (freetype/ftstroke.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Stroker_GetBorderCounts</b>( <a href="ft2-glyph_stroker.html#ft_stroker">FT_Stroker</a>        stroker,
+                              <a href="ft2-glyph_stroker.html#ft_strokerborder">FT_StrokerBorder</a>  border,
+                              <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>          *anum_points,
+                              <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>          *anum_contours );
+</code></pre></div>
+
+<p>Call this function once you have finished parsing your paths with the stroker. It returns the number of points and contours necessary to export one of the &lsquo;border&rsquo; or &lsquo;stroke&rsquo; outlines generated by the stroker.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="stroker">stroker</td><td class="desc">
+<p>The target stroker handle.</p>
+</td></tr>
+<tr><td class="val" id="border">border</td><td class="desc">
+<p>The border index.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="anum_points">anum_points</td><td class="desc">
+<p>The number of points.</p>
+</td></tr>
+<tr><td class="val" id="anum_contours">anum_contours</td><td class="desc">
+<p>The number of contours.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>When an outline, or a sub-path, is &lsquo;closed&rsquo;, the stroker generates two independent &lsquo;border&rsquo; outlines, named &lsquo;left&rsquo; and &lsquo;right&rsquo;.</p>
+<p>When the outline, or a sub-path, is &lsquo;opened&rsquo;, the stroker merges the &lsquo;border&rsquo; outlines with caps. The &lsquo;left&rsquo; border receives all points, while the &lsquo;right&rsquo; border becomes empty.</p>
+<p>Use the function <code><a href="ft2-glyph_stroker.html#ft_stroker_getcounts">FT_Stroker_GetCounts</a></code> instead if you want to retrieve the counts associated to both borders.</p>
+<hr>
+
+<h2 id="ft_stroker_exportborder">FT_Stroker_ExportBorder<a class="headerlink" href="#ft_stroker_exportborder" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_STROKER_H (freetype/ftstroke.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <span class="keyword">void</span> )
+  <b>FT_Stroker_ExportBorder</b>( <a href="ft2-glyph_stroker.html#ft_stroker">FT_Stroker</a>        stroker,
+                           <a href="ft2-glyph_stroker.html#ft_strokerborder">FT_StrokerBorder</a>  border,
+                           <a href="ft2-outline_processing.html#ft_outline">FT_Outline</a>*       outline );
+</code></pre></div>
+
+<p>Call this function after <code><a href="ft2-glyph_stroker.html#ft_stroker_getbordercounts">FT_Stroker_GetBorderCounts</a></code> to export the corresponding border to your own <code><a href="ft2-outline_processing.html#ft_outline">FT_Outline</a></code> structure.</p>
+<p>Note that this function appends the border points and contours to your outline, but does not try to resize its arrays.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="stroker">stroker</td><td class="desc">
+<p>The target stroker handle.</p>
+</td></tr>
+<tr><td class="val" id="border">border</td><td class="desc">
+<p>The border index.</p>
+</td></tr>
+<tr><td class="val" id="outline">outline</td><td class="desc">
+<p>The target outline handle.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>Always call this function after <code><a href="ft2-glyph_stroker.html#ft_stroker_getbordercounts">FT_Stroker_GetBorderCounts</a></code> to get sure that there is enough room in your <code><a href="ft2-outline_processing.html#ft_outline">FT_Outline</a></code> object to receive all new data.</p>
+<p>When an outline, or a sub-path, is &lsquo;closed&rsquo;, the stroker generates two independent &lsquo;border&rsquo; outlines, named &lsquo;left&rsquo; and &lsquo;right&rsquo;.</p>
+<p>When the outline, or a sub-path, is &lsquo;opened&rsquo;, the stroker merges the &lsquo;border&rsquo; outlines with caps. The &lsquo;left&rsquo; border receives all points, while the &lsquo;right&rsquo; border becomes empty.</p>
+<p>Use the function <code><a href="ft2-glyph_stroker.html#ft_stroker_export">FT_Stroker_Export</a></code> instead if you want to retrieve all borders at once.</p>
+<hr>
+
+<h2 id="ft_stroker_getcounts">FT_Stroker_GetCounts<a class="headerlink" href="#ft_stroker_getcounts" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_STROKER_H (freetype/ftstroke.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Stroker_GetCounts</b>( <a href="ft2-glyph_stroker.html#ft_stroker">FT_Stroker</a>  stroker,
+                        <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>    *anum_points,
+                        <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>    *anum_contours );
+</code></pre></div>
+
+<p>Call this function once you have finished parsing your paths with the stroker. It returns the number of points and contours necessary to export all points/borders from the stroked outline/path.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="stroker">stroker</td><td class="desc">
+<p>The target stroker handle.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="anum_points">anum_points</td><td class="desc">
+<p>The number of points.</p>
+</td></tr>
+<tr><td class="val" id="anum_contours">anum_contours</td><td class="desc">
+<p>The number of contours.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<hr>
+
+<h2 id="ft_stroker_export">FT_Stroker_Export<a class="headerlink" href="#ft_stroker_export" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_STROKER_H (freetype/ftstroke.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <span class="keyword">void</span> )
+  <b>FT_Stroker_Export</b>( <a href="ft2-glyph_stroker.html#ft_stroker">FT_Stroker</a>   stroker,
+                     <a href="ft2-outline_processing.html#ft_outline">FT_Outline</a>*  outline );
+</code></pre></div>
+
+<p>Call this function after <code><a href="ft2-glyph_stroker.html#ft_stroker_getbordercounts">FT_Stroker_GetBorderCounts</a></code> to export all borders to your own <code><a href="ft2-outline_processing.html#ft_outline">FT_Outline</a></code> structure.</p>
+<p>Note that this function appends the border points and contours to your outline, but does not try to resize its arrays.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="stroker">stroker</td><td class="desc">
+<p>The target stroker handle.</p>
+</td></tr>
+<tr><td class="val" id="outline">outline</td><td class="desc">
+<p>The target outline handle.</p>
+</td></tr>
+</table>
+
+<hr>
+                
+              
+              
+                
+
+
+              
+            </article>
+          </div>
+        </div>
+        
+      </main>
+      
+        
+<footer class="md-footer">
+  
+    <nav class="md-footer__inner md-grid" aria-label="Footer">
+      
+        
+        <a href="ft2-raster.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: Scanline Converter" rel="prev">
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+          </div>
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              Scanline Converter
+            </div>
+          </div>
+        </a>
+      
+      
+        
+        <a href="ft2-system_interface.html" class="md-footer__link md-footer__link--next" aria-label="Next: System Interface" rel="next">
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              System Interface
+            </div>
+          </div>
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11H4z"/></svg>
+          </div>
+        </a>
+      
+    </nav>
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-footer-copyright">
+        
+          <div class="md-footer-copyright__highlight">
+            Copyright 2023 <a href = "https://www.freetype.org/license.html">The FreeType Project</a>.
+          </div>
+        
+        Made with
+        <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+          Material for MkDocs
+        </a>
+        
+      </div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    <script id="__config" type="application/json">{"base": ".", "features": [], "search": "assets/javascripts/workers/search.477d984a.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.config.lang": "en", "search.config.pipeline": "trimmer, stopWordFilter", "search.config.separator": "[\\s\\-]+", "search.placeholder": "Search", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version.title": "Select version"}, "version": null}</script>
+    
+    
+      <script src="assets/javascripts/bundle.82b56eb2.min.js"></script>
+      
+        <script src="javascripts/extra.js"></script>
+      
+    
+  </body>
+</html>

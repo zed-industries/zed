@@ -1,0 +1,47 @@
+---
+- name: Spec Example 8.15. Block Sequence Entry Types
+  from: http://www.yaml.org/spec/1.2/spec.html#id2797944
+  tags: comment spec literal sequence
+  yaml: |
+    - # Empty
+    - |
+     block node
+    - - one # Compact
+      - two # sequence
+    - one: two # Compact mapping
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       =VAL :
+       =VAL |block node\n
+       +SEQ
+        =VAL :one
+        =VAL :two
+       -SEQ
+       +MAP
+        =VAL :one
+        =VAL :two
+       -MAP
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      null,
+      "block node\n",
+      [
+        "one",
+        "two"
+      ],
+      {
+        "one": "two"
+      }
+    ]
+  dump: |
+    -
+    - |
+      block node
+    - - one
+      - two
+    - one: two

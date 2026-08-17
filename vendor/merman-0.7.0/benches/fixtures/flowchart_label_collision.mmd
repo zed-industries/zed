@@ -1,0 +1,19 @@
+flowchart LR
+  S[Source] -->|request auth token| G[Gateway]
+  S -->|request profile data| G
+  S -->|request billing details| G
+  S -->|request feature flags| G
+
+  G -->|validate scope| A[Auth]
+  G -->|load account| P[Profile]
+  G -->|load plan| B[Billing]
+  G -->|load rollout| F[Flags]
+
+  A -->|token ok| R[Response]
+  P -->|profile ok| R
+  B -->|billing ok| R
+  F -->|flags ok| R
+
+  B -.payment retry required.-> G
+  F -.refresh stale flag cache.-> G
+  P -.sync profile shard now.-> G

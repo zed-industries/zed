@@ -1,0 +1,22 @@
+name: ci
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  ci:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - name: Run Tests
+        run: cargo test -- --test-threads 1
+      - name: Clippy
+        run: cargo clippy

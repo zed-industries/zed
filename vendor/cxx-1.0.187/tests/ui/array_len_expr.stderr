@@ -1,0 +1,17 @@
+error: array length must be an integer literal
+ --> tests/ui/array_len_expr.rs:4:28
+  |
+4 |         arraystr: [String; "13"],
+  |                            ^^^^
+
+error: unsupported expression, array length must be an integer literal
+ --> tests/ui/array_len_expr.rs:5:28
+  |
+5 |         arraysub: [String; 15 - 1],
+  |                            ^^^^^^
+
+error: array with zero size is not supported
+ --> tests/ui/array_len_expr.rs:6:20
+  |
+6 |         arrayzero: [String; 0],
+  |                    ^^^^^^^^^^^

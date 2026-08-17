@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="idle">
+  <copyright><![CDATA[
+    SPDX-FileCopyrightText: 2015 Martin Gräßlin
+
+    SPDX-License-Identifier: LGPL-2.1-or-later
+  ]]></copyright>
+  <interface  name="org_kde_kwin_idle" version="1">
+      <description summary="User idle time manager">
+        This interface allows to monitor user idle time on a given seat. The interface
+        allows to register timers which trigger after no user activity was registered
+        on the seat for a given interval. It notifies when user activity resumes.
+
+        This is useful for applications wanting to perform actions when the user is not
+        interacting with the system, e.g. chat applications setting the user as away, power
+        management features to dim screen, etc..
+      </description>
+      <request name="get_idle_timeout">
+        <arg name="id" type="new_id" interface="org_kde_kwin_idle_timeout"/>
+        <arg name="seat" type="object" interface="wl_seat"/>
+        <arg name="timeout" type="uint" summary="The idle timeout in msec"/>
+      </request>
+  </interface>
+  <interface name="org_kde_kwin_idle_timeout" version="1">
+      <request name="release" type="destructor">
+        <description summary="release the timeout object"/>
+      </request>
+      <request name="simulate_user_activity">
+          <description summary="Simulates user activity for this timeout, behaves just like real user activity on the seat"/>
+      </request>
+      <event name="idle">
+          <description summary="Triggered when there has not been any user activity in the requested idle time interval"/>
+      </event>
+      <event name="resumed">
+          <description summary="Triggered on the first user activity after an idle event"/>
+      </event>
+  </interface>
+</protocol>

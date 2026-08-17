@@ -1,0 +1,12 @@
+package foo:root;
+package foo:bar {
+  interface i {
+    use foo:qux/i.{};
+  }
+}
+
+package foo:qux {
+  interface i {
+    use foo:bar/i.{};
+  }
+}

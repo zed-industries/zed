@@ -1,0 +1,49 @@
+- name: Directive variants
+  from: '@ingydotnet'
+  tags: directive
+  also: ZYU8
+  fail: true
+  yaml: |
+    %YAML 1.1#...
+    ---
+  tree: |
+    +STR
+
+- fail: true
+  yaml: |
+    %YAML 1.2
+    ---
+    %YAML 1.2
+    ---
+  dump: null
+
+- yaml: |
+    %YAML  1.1
+    ---
+  tree: |
+    +STR
+     +DOC ---
+      =VAL :
+     -DOC
+    -STR
+  json: |
+    null
+  dump: |
+    ---
+
+- yaml: |
+    %YAML ——» 1.1
+    ---
+
+- yaml: |
+    %YAML 1.1  # comment
+    ---
+
+- note: These 2 are reserved directives
+  yaml: |
+    %YAM 1.1
+    ---
+
+- yaml: |
+    %YAMLL 1.1
+    ---

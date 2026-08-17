@@ -1,0 +1,17 @@
+error: loops infinitely because loop body can match without consuming input
+ --> $DIR/nullable_loop.rs:2:27
+  |
+2 |     rule nested() = ("a"*)* //~ ERROR
+  |                           ^
+
+error: loops infinitely because loop body can match without consuming input
+ --> $DIR/nullable_loop.rs:8:35
+  |
+8 |     rule call() = "foo" nullable()* //~ ERROR
+  |                                   ^
+
+error: loops infinitely because loop body can match without consuming input
+  --> $DIR/nullable_loop.rs:10:44
+   |
+10 |     rule more_complex() = ("x" / "a"? "b"?)*<2,> //~ ERROR
+   |                                            ^

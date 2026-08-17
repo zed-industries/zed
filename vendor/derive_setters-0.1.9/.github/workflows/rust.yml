@@ -1,0 +1,37 @@
+name: Rust
+
+on: [push, pull_request]
+
+jobs:
+  build_stable:
+    runs-on: ubuntu-latest
+    steps:
+    - run: rustup toolchain install stable
+    - run: rustup override set stable
+    - uses: actions/checkout@v1
+    - name: Build
+      run: cargo build --verbose
+    - name: Run tests
+      run: cargo test --verbose
+
+  build_msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - run: rustup toolchain install 1.68.0
+      - run: rustup override set 1.68.0
+      - uses: actions/checkout@v1
+      - name: Build
+        run: cargo build --verbose
+      - name: Run tests
+        run: cargo test --verbose
+
+  build_nightly:
+    runs-on: ubuntu-latest
+    steps:
+      - run: rustup toolchain install nightly
+      - run: rustup override set nightly
+      - uses: actions/checkout@v1
+      - name: Build
+        run: cargo build --verbose --all-features
+      - name: Run tests
+        run: cargo test --verbose --all-features

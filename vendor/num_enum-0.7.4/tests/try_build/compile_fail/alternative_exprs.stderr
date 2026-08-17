@@ -1,0 +1,5 @@
+error: Only literals are allowed as num_enum alternate values
+ --> tests/try_build/compile_fail/alternative_exprs.rs:7:39
+  |
+7 |     #[num_enum(alternatives = [-1, 2, THREE])]
+  |                                       ^^^^^

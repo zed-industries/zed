@@ -1,0 +1,50 @@
+#FIXME
+# - valgrind cannot be installed on macos, only on linux
+# - rust-code-analysis is not tested on macos, so no static analysis
+
+name: av1-grain-macos
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-test:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Rust stable
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run rustfmt
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: -- --check --verbose
+
+      - name: Run cargo clippy
+        uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          args: --all-targets --tests --benches -- -D warnings
+
+      - name: Build
+        run: cargo build --verbose --tests --benches
+
+      - name: Run tests
+        run: cargo test --verbose
+
+      - name: Generate docs
+        run: cargo doc --no-deps

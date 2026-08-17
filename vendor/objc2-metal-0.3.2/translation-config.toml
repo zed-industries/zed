@@ -1,0 +1,283 @@
+framework = "Metal"
+crate = "objc2-metal"
+required-crates = ["objc2", "objc2-foundation"]
+custom-lib-rs = true
+macos = "10.11"
+maccatalyst = "13.0"
+ios = "8.0"
+tvos = "9.0"
+visionos = "1.0"
+
+# Duplicated property
+class.MTLRasterizationRateLayerDescriptor.methods.sampleCount.skipped = true
+
+# Gets emitted as an out pointer, but the pointer is actually an array.
+# Swift also skips this.
+class.MTLRasterizationRateMapDescriptor.methods."rasterizationRateMapDescriptorWithScreenSize:layerCount:layers:".skipped = true
+
+# Needs mach / kernel types
+protocol.MTLResource.methods."setOwnerWithIdentity:".skipped = true
+
+# Has a union field, but we'd rather have it as just a struct
+struct._MTLPackedFloat3.skipped = true
+typedef.MTLPackedFloat3.skipped = true
+fn.MTLPackedFloat3Make.skipped = true
+
+# Manually defined to allow it to work on older OSes.
+fn.MTLCopyAllDevices.skipped = true
+
+# isize referencing usize.
+enum.MTLTensorDataType.use-value = true
+
+###
+### Safety
+###
+
+# SAFETY: Metal is has a _lot_ of low-level functionality since it basically
+# has to model the entire GPU, and since it has very tight performance
+# constraints, which we must manually mark a lot of things as unsafe.
+unsafe-default-safety.documentation-is-reviewed = true
+
+# TODO: Can we rely on Metal being bounds-checked?
+# Maybe the various array types are bounds-checked on the CPU side?
+# There are also a lot of false positives from this check.
+unsafe-default-safety.bounds-checked-internally = false
+
+# TODO(breaking): Figure out whether these are bounds-checked or not?
+class.MTLAccelerationStructureGeometryDescriptor.methods."setIntersectionFunctionTableOffset:".unsafe = false
+protocol.MTLAccelerationStructureCommandEncoder.methods."buildAccelerationStructure:descriptor:scratchBuffer:scratchBufferOffset:".unsafe = false
+protocol.MTLAccelerationStructureCommandEncoder.methods."writeCompactedAccelerationStructureSize:toBuffer:offset:".unsafe = false
+protocol.MTLBuffer.methods."didModifyRange:".unsafe = false
+protocol.MTLBuffer.methods."newTextureWithDescriptor:offset:bytesPerRow:".unsafe = false
+protocol.MTLBuffer.methods."addDebugMarker:range:".unsafe = false
+class.MTLAttributeDescriptor.methods."setOffset:".unsafe = false
+protocol.MTLRenderCommandEncoder.methods."setVisibilityResultMode:offset:".unsafe = false
+protocol.MTLBlitCommandEncoder.methods."fillBuffer:range:value:".unsafe = false
+class.MTLArgumentDescriptor.methods."setIndex:".unsafe = false
+protocol.MTLIntersectionFunctionTable.methods."setFunction:atIndex:".unsafe = false
+protocol.MTLDevice.methods."supportsVertexAmplificationCount:".unsafe = false
+class.MTLAccelerationStructureTriangleGeometryDescriptor.methods."setIndexBuffer:".unsafe = false
+class.MTLAccelerationStructureTriangleGeometryDescriptor.methods."setTriangleCount:".unsafe = false
+class.MTLAccelerationStructureBoundingBoxGeometryDescriptor.methods."setBoundingBoxCount:".unsafe = false
+class.MTLInstanceAccelerationStructureDescriptor.methods."setInstanceCount:".unsafe = false
+class.MTLIntersectionFunctionTableDescriptor.methods."setFunctionCount:".unsafe = false
+protocol.MTLDevice.methods."newCommandQueueWithMaxCommandBufferCount:".unsafe = false
+protocol.MTLDevice.methods."supportsTextureSampleCount:".unsafe = false
+protocol.MTLDevice.methods.maxArgumentBufferSamplerCount.unsafe = false
+class.MTLIndirectCommandBufferDescriptor.methods."setMaxVertexBufferBindCount:".unsafe = false
+class.MTLIndirectCommandBufferDescriptor.methods."setMaxFragmentBufferBindCount:".unsafe = false
+class.MTLIndirectCommandBufferDescriptor.methods."setMaxKernelBufferBindCount:".unsafe = false
+class.MTLRenderPassDescriptor.methods."setDefaultRasterSampleCount:".unsafe = false
+class.MTLRenderPipelineDescriptor.methods."setSampleCount:".unsafe = false
+class.MTLRenderPipelineDescriptor.methods."setRasterSampleCount:".unsafe = false
+class.MTLBufferLayoutDescriptor.methods."setStride:".unsafe = false
+class.MTLAccelerationStructureGeometryDescriptor.methods."setPrimitiveDataStride:".unsafe = false
+class.MTLAccelerationStructureTriangleGeometryDescriptor.methods."setVertexStride:".unsafe = false
+class.MTLHeapDescriptor.methods."setSize:".unsafe = false
+class.MTLAccelerationStructureGeometryDescriptor.methods."setPrimitiveDataElementSize:".unsafe = false
+protocol.MTLDevice.methods."heapBufferSizeAndAlignWithLength:options:".unsafe = false
+protocol.MTLDevice.methods."newAccelerationStructureWithSize:".unsafe = false
+protocol.MTLHeap.methods."maxAvailableSizeWithAlignment:".unsafe = false
+
+# SAFETY: The values are checked later:
+# > -[MTLDebugDevice newArgumentTableWithDescriptor:error:]:4160: failed assertion `Argument Table Descriptor Validation
+# > max texture bind count must not be more than 128.
+class.MTL4ArgumentTableDescriptor.methods."setMaxBufferBindCount:".unsafe = false
+class.MTL4ArgumentTableDescriptor.methods."setMaxTextureBindCount:".unsafe = false
+class.MTL4ArgumentTableDescriptor.methods."setMaxSamplerStateBindCount:".unsafe = false
+
+# TODO(breaking): Mark these as unsafe (they take unsafe functions).
+protocol.MTLDevice.methods."newComputePipelineStateWithFunction:error:".unsafe = false
+protocol.MTLComputePipelineState.methods."functionHandleWithFunction:".unsafe = false
+protocol.MTLComputePipelineState.methods."newComputePipelineStateWithAdditionalBinaryFunctions:error:".unsafe = false
+class.MTLComputePipelineDescriptor.methods."setComputeFunction:".unsafe = false
+class.MTLRenderPipelineDescriptor.methods."setVertexFunction:".unsafe = false
+class.MTLRenderPipelineDescriptor.methods."setFragmentFunction:".unsafe = false
+
+# SAFETY: These do not call the given `MTLFunction`s.
+class.MTLLinkedFunctions.methods."setFunctions:".unsafe = false
+class.MTLLinkedFunctions.methods."setBinaryFunctions:".unsafe = false
+class.MTLLinkedFunctions.methods."setGroups:".unsafe = false
+class.MTLLinkedFunctions.methods."setPrivateFunctions:".unsafe = false
+
+# SAFETY: `-ffast-math` is generally frowned upon because it enables
+# optimizations that could theoretically optimize math operations away to
+# nothing. Metal enables this by default, so we must assume that their
+# configuration of it is sound (?), and that we don't need to mark compilation
+# as unsafe.
+#
+# class.MTLCompileOptions.methods."setMathMode:".unsafe = false
+# class.MTLCompileOptions.methods."setFastMathEnabled:".unsafe = false
+
+# SAFETY: Mark any accesses to the contents of `MTLResource`s as unsafe.
+#
+# Reading or writing to resources is unsynchronized and effectively equivalent
+# to (non-atomically?) sharing these between threads. The user needs to
+# explicitly synchronize accesses to these. (Explicit synchronization could
+# maybe in some cases be avoided with `MTLStorageModeShared` and
+# `MTLHazardTrackingModeTracked`, but that's dangerous to solely rely on).
+#
+# In `header-translator`, subprotocols of `MTLResource` is marked as unsafe in
+# argument position to ensure that any accesses to these on the GPU side are
+# properly synchronized.
+#
+# Here, we mark all inherent methods that read/write on these as `unsafe` to
+# also make things unsafe on the CPU side.
+protocol.MTLBuffer.methods.contents.unsafe = false # Raw pointer, unsafe in itself.
+protocol.MTLTensor.methods."getBytes:strides:fromSliceOrigin:sliceDimensions:".unsafe = true
+protocol.MTLTensor.methods."replaceSliceOrigin:sliceDimensions:withBytes:strides:".unsafe = true
+protocol.MTLTexture.methods."getBytes:bytesPerRow:bytesPerImage:fromRegion:mipmapLevel:slice:".unsafe = true
+protocol.MTLTexture.methods."getBytes:bytesPerRow:fromRegion:mipmapLevel:".unsafe = true
+protocol.MTLTexture.methods."replaceRegion:mipmapLevel:slice:withBytes:bytesPerRow:bytesPerImage:".unsafe = true
+protocol.MTLTexture.methods."replaceRegion:mipmapLevel:withBytes:bytesPerRow:".unsafe = true
+protocol.MTLAccelerationStructure.unsafe = true
+protocol.MTLAccelerationStructure.methods.gpuResourceID.unsafe = false
+protocol.MTLAccelerationStructure.methods.size.unsafe = false
+protocol.MTLIndirectCommandBuffer.unsafe = true
+protocol.MTLIndirectCommandBuffer.methods.gpuResourceID.unsafe = false
+protocol.MTLIndirectCommandBuffer.methods.size.unsafe = false
+protocol.MTLIntersectionFunctionTable.unsafe = true
+protocol.MTLIntersectionFunctionTable.methods.gpuResourceID.unsafe = false
+protocol.MTLVisibleFunctionTable.unsafe = true
+protocol.MTLVisibleFunctionTable.methods.gpuResourceID.unsafe = false
+
+# TODO(breaking): Mark these as unsafe, they probably require synchronization.
+class.MTLRenderPassAttachmentDescriptor.methods."setTexture:".unsafe = false
+class.MTLRenderPassAttachmentDescriptor.methods."setResolveTexture:".unsafe = false
+class.MTLAccelerationStructureBoundingBoxGeometryDescriptor.methods."setBoundingBoxBuffer:".unsafe = false
+class.MTLRenderPassDescriptor.methods."setVisibilityResultBuffer:".unsafe = false
+class.MTLInstanceAccelerationStructureDescriptor.methods."setInstanceDescriptorBuffer:".unsafe = false
+class.MTLInstanceAccelerationStructureDescriptor.methods."setInstancedAccelerationStructures:".unsafe = false
+class.MTLAccelerationStructureGeometryDescriptor.methods."setPrimitiveDataBuffer:".unsafe = false
+class.MTLAccelerationStructureTriangleGeometryDescriptor.methods."setVertexBuffer:".unsafe = false
+protocol.MTLBlitCommandEncoder.methods."generateMipmapsForTexture:".unsafe = false
+protocol.MTLBlitCommandEncoder.methods."optimizeContentsForGPUAccess:".unsafe = false
+protocol.MTLAccelerationStructureCommandEncoder.methods."copyAndCompactAccelerationStructure:toAccelerationStructure:".unsafe = false
+
+# SAFETY: Synchronizing a resource is safe, as it:
+# - Doesn't need to the resource to be bound.
+# - Doesn't access the contents of the resource.
+# - Doesn't need the resource to be retained by the user, since it already is
+#   guaranteed to be since they've used the resource elsewhere.
+#   TODO(breaking): Is that claim true?
+protocol.MTLBlitCommandEncoder.methods."synchronizeResource:".unsafe = false
+
+# SAFETY: We consider resource's bound-ness as safe, the safety is moved to
+# command encoding methods such as `setTexture:atIndex:` instead.
+#
+# Calling this with a resource is safe, since it:
+# - Doesn't access the contents of the resource.
+# - Doesn't need the resource to be retained by the user, since it already is
+#   guaranteed to be since they've used the resource elsewhere.
+#
+# TODO(breaking): Are those claims true?
+protocol.MTLAccelerationStructureCommandEncoder.methods."useResource:usage:".unsafe = false
+protocol.MTLComputeCommandEncoder.methods."useResource:usage:".unsafe = false
+protocol.MTLRenderCommandEncoder.methods."useResource:usage:".unsafe = false
+protocol.MTLRenderCommandEncoder.methods."useResource:usage:stages:".unsafe = false
+
+# SAFETY: Resource options are safe to specify:
+# - Hazard tracking and storage modes change the required synchronization, but
+#   we handle that above. Also, we wouldn't really be able to prevent
+#   untracked resources, these are the only option in Metal 4.
+# - The CPU cache mode is safe, it should only affect performance, not
+#   correctness.
+#
+# class.*.methods."setResourceOptions:".unsafe = false
+
+# TODO(breaking): Mark these as unsafe, setting `MTLPurgeableState::Volatile)`
+# is probably not safe, as you have to lock resources to prevent them from
+# being purged while in use.
+# TODO: How would you do such locking?
+protocol.MTLResource.methods."setPurgeableState:".unsafe = false
+protocol.MTLHeap.methods."setPurgeableState:".unsafe = false
+
+# Using the resource's contents in a memory-safe manner is very difficult
+# after this is called.
+protocol.MTLResource.methods.makeAliasable.unsafe = true
+
+# Modifying residency has similar safety as modifying a resource's bound-ness,
+# it does mostly the same thing.
+# protocol.MTLResidencySet.methods."addAllocation:".unsafe = false
+
+# Taking a residency set in or out of residency is only a performance knob,
+# it's similar to controlling what's in the L1/L2/L3 cache on the CPU.
+# protocol.MTLResidencySet.methods.requestResidency.unsafe = false
+# protocol.MTLResidencySet.methods.endResidency.unsafe = false
+
+# TODO(breaking): Mark this as unsafe?
+class.MTLHeapDescriptor.methods."setType:".unsafe = false
+
+# SAFETY: We could consider marking these as unsafe, since they affect
+# lifetime safety, and can cause use-after-free if used incorrectly.
+#
+# Unretained references are the only option for `MTL4CommandBuffer`s though,
+# and we already mark `MTLResource`s as unsafe, so we choose to move the
+# unsafety of this to the resources instead.
+# class.MTLCommandBufferDescriptor.methods."setRetainedReferences:".unsafe = true
+# protocol.MTLCommandQueue.methods.commandBufferWithUnretainedReferences.unsafe = true
+# protocol.MTLIOCommandQueue.methods.commandBufferWithUnretainedReferences.unsafe = true
+
+# Must be a multiple of 4.
+class.MTLVertexBufferLayoutDescriptor.methods."setStride:".unsafe = true
+class.MTLVertexAttributeDescriptor.methods."setOffset:".unsafe = true
+
+# These must be done in lockstep.
+class.MTLVertexBufferLayoutDescriptor.methods."setFunction:".unsafe = true
+class.MTLVertexBufferLayoutDescriptor.methods."setStepRate:".unsafe = true
+
+# MTLCaptureManager is not documented thread-safe, so +sharedCaptureManager
+# is not safe either, since we do interior mutation in it.
+class.MTLCaptureManager.methods.sharedCaptureManager.unsafe = true
+
+# TODO: Sizes must be >= 1, unsure if checked?
+class.MTLTextureDescriptor.methods."texture2DDescriptorWithPixelFormat:width:height:mipmapped:".unsafe = true
+class.MTLTextureDescriptor.methods."textureCubeDescriptorWithPixelFormat:size:mipmapped:".unsafe = true
+class.MTLTextureDescriptor.methods."textureBufferDescriptorWithPixelFormat:width:resourceOptions:usage:".unsafe = true
+
+# Call supportsVertexAmplificationCount: on device first.
+# TODO: Is this a safety requirement?
+class.MTLRenderPipelineDescriptor.methods."setMaxVertexAmplificationCount:".unsafe = true
+
+# Must be specified when layered rendering is enabled.
+# TODO: Is this a safety requirement?
+class.MTLRenderPipelineDescriptor.methods."setInputPrimitiveTopology:".unsafe = true
+
+# Must be between 16 and 64 and depends on tessellationPartitionMode
+class.MTLRenderPipelineDescriptor.methods."setMaxTessellationFactor:".unsafe = true
+# Affects maxTessellationFactor above.
+class.MTLRenderPipelineDescriptor.methods."setTessellationPartitionMode:".unsafe = true
+
+# Requires specific values when using indexed control points.
+class.MTLRenderPipelineDescriptor.methods."setTessellationControlPointIndexType:".unsafe = true
+
+# Takes a MTLGPUAddress
+protocol.MTL4ComputeCommandEncoder.methods."dispatchThreadgroupsWithIndirectBuffer:threadsPerThreadgroup:".unsafe = true
+# Takes a MTL4BufferRange
+class.MTL4InstanceAccelerationStructureDescriptor.methods."setInstanceDescriptorBuffer:".unsafe = true
+class.MTL4IndirectInstanceAccelerationStructureDescriptor.methods."setInstanceDescriptorBuffer:".unsafe = true
+class.MTL4AccelerationStructureGeometryDescriptor.methods."setPrimitiveDataBuffer:".unsafe = true
+class.MTL4AccelerationStructureTriangleGeometryDescriptor.methods."setVertexBuffer:".unsafe = true
+
+# Takes a MTLResourceID, unsure if this allows doing bad things.
+protocol.MTL4ArgumentTable.methods."setResource:atBufferIndex:".unsafe = true
+protocol.MTL4ArgumentTable.methods."setTexture:atIndex:".unsafe = true
+protocol.MTL4ArgumentTable.methods."setSamplerState:atIndex:".unsafe = true
+
+# TODO: Unclear whether changing MTLDataType is safe?
+class.MTLArgumentDescriptor.methods."setDataType:".unsafe = false # TODO(breaking)
+class.MTLFunctionConstantValues.methods."setConstantValue:type:atIndex:".unsafe = true
+class.MTLFunctionConstantValues.methods."setConstantValues:type:withRange:".unsafe = true
+class.MTLFunctionConstantValues.methods."setConstantValue:type:withName:".unsafe = true
+protocol.MTLAccelerationStructureCommandEncoder.methods."writeCompactedAccelerationStructureSize:toBuffer:offset:sizeDataType:".unsafe = true
+
+# TODO: Triage these.
+protocol.MTLBlitCommandEncoder.methods."optimizeContentsForGPUAccess:slice:level:".unsafe = true
+class.MTLTextureDescriptor.methods."setWidth:".unsafe = true
+class.MTLTextureDescriptor.methods."setHeight:".unsafe = true
+class.MTLTextureDescriptor.methods."setDepth:".unsafe = true
+class.MTLTextureDescriptor.methods."setMipmapLevelCount:".unsafe = true
+class.MTLTextureDescriptor.methods."setSampleCount:".unsafe = true
+class.MTLTextureDescriptor.methods."setArrayLength:".unsafe = true
+class.MTLComputePipelineDescriptor.methods."setThreadGroupSizeIsMultipleOfThreadExecutionWidth:".unsafe = true
+protocol.MTLComputePipelineState.methods."imageblockMemoryLengthForDimensions:".unsafe = true

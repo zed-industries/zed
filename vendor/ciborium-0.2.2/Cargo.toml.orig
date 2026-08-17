@@ -1,0 +1,39 @@
+[package]
+name = "ciborium"
+version = "0.2.2"
+authors = ["Nathaniel McCallum <npmccallum@profian.com>"]
+license = "Apache-2.0"
+edition = "2021"
+rust-version = "1.58"
+homepage = "https://github.com/enarx/ciborium"
+repository = "https://github.com/enarx/ciborium"
+description = "serde implementation of CBOR using ciborium-basic"
+readme = "README.md"
+keywords = ["cbor", "serde"]
+categories = ["data-structures", "embedded", "encoding", "no-std", "parsing"]
+
+[badges]
+# See https://doc.rust-lang.org/cargo/reference/manifest.html#the-badges-section
+github = { repository = "enarx/ciborium", workflow = "test" }
+#github = { repository = "enarx/ciborium", workflow = "lint" }
+maintenance = { status = "actively-developed" }
+is-it-maintained-issue-resolution = { repository = "enarx/ciborium" }
+is-it-maintained-open-issues = { repository = "enarx/ciborium" }
+
+[dependencies]
+ciborium-ll = { path = "../ciborium-ll", version = "0.2.2" }
+ciborium-io = { path = "../ciborium-io", version = "0.2.2", features = ["alloc"] }
+serde = { version = "1.0.100", default-features = false, features = ["alloc", "derive"] }
+
+[dev-dependencies]
+serde_bytes = "0.11"
+rstest = "0.11"
+rand = "0.8"
+hex = "0.4"
+
+[features]
+default = ["std"]
+std = ["ciborium-io/std", "serde/std"]
+
+[package.metadata.docs.rs]
+all-features = true

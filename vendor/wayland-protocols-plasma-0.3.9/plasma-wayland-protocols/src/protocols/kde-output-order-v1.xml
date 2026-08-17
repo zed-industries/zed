@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="kde_output_order_v1">
+  <copyright><![CDATA[
+    SPDX-FileCopyrightText: 2022 Xaver Hugl <xaver.hugl@gmail.com>
+
+    SPDX-License-Identifier: MIT-CMU
+    ]]></copyright>
+
+  <interface name="kde_output_order_v1" version="1">
+    <description summary="announce order of outputs">
+        Announce the order in which desktop environment components should be placed on outputs.
+        The compositor will send the list of outputs when the global is bound and whenever there is a change.
+
+        Warning! The protocol described in this file is a desktop environment
+        implementation detail. Regular clients must not use this protocol.
+        Backward incompatible changes may be added without bumping the major
+        version of the extension.
+    </description>
+
+    <event name="output">
+      <description summary="output name">
+        Specifies the output identified by their wl_output.name.
+      </description>
+      <arg name="output_name" type="string" summary="the name of the output"/>
+    </event>
+
+    <event name="done">
+      <description summary="done">
+        Specifies that the output list is complete. On the next output event, a new list begins.
+      </description>
+    </event>
+
+    <request name="destroy" type="destructor">
+      <description summary="Destroy the output order notifier."/>
+    </request>
+  </interface>
+
+</protocol>

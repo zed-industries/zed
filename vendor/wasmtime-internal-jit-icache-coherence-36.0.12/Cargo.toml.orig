@@ -1,0 +1,36 @@
+[package]
+name = "wasmtime-internal-jit-icache-coherence"
+version.workspace = true
+authors.workspace = true
+description = "INTERNAL: Utilities for JIT icache maintenance"
+documentation = "https://docs.rs/jit-icache-coherence"
+license = "Apache-2.0 WITH LLVM-exception"
+repository = "https://github.com/bytecodealliance/wasmtime"
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cfg-if = { workspace = true }
+anyhow = { workspace = true }
+
+[target.'cfg(target_os = "windows")'.dependencies.windows-sys]
+workspace = true
+features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_System_Diagnostics_Debug",
+]
+
+[target.'cfg(any(target_os = "linux", target_vendor = "apple", target_os = "freebsd", target_os = "android"))'.dependencies]
+libc = { workspace = true }
+
+[features]
+# Most modern CPUs are SMP (multicore). However, when only one core is present,
+# some aspects of coherence are much cheaper. For example, RISC-V can use
+# one instruction `fence.i` rather than a syscall that invokes all other cores.
+# This feature enables such optimizations, but the resulting program will *only*
+# be safe to run on one-core systems.
+one-core = []

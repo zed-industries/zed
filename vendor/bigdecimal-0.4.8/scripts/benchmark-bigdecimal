@@ -1,0 +1,52 @@
+#!/bin/bash
+#
+# Run Criterion Benchmarks
+#
+
+# enable bench-only dependencies in Cargo
+sed -i.bak -e 's/# BENCH: //' Cargo.toml
+
+# Run criterion
+cargo bench "$@"
+
+# Restore Cargo.toml with backup
+mv Cargo.toml.bak Cargo.toml
+
+
+# store extra things for the benchmarking report
+if [ -n "$BENCHMARK_EXTRAS" ]; then
+cat <<EOF > index.html
+<!doctype html>
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width" />
+<title>BigDecimal Benchmark Results</title>
+<style>
+a:link { color: #06C; }
+img.probability-distribution-function { max-width:1200px; display:block; margin:1em auto; }
+a.sample-json { max-width:1400px; display:block; margin:0 auto; }
+</style>
+</head>
+
+<small style='color:#AAA; float:right'>${CI_COMMIT_SHA}</small>
+<h1>BigDecimal Benchmark Results</h1>
+<p><b>Criterion Report:</b> <a href='target/criterion/report/'>Report</a></p>
+EOF
+
+# Add svg plots to index html
+find target/criterion -name 'pdf.svg' -type f -print0 |
+sort -z |
+while read -r -d $'\0' svg_file
+do
+  name=$(echo "$svg_file" | cut -d '/' -f 3)
+
+  sample_datafile=target/criterion/$name/new/sample.json
+  if [ -f "$sample_datafile" ]; then
+    echo "<p><a href='${sample_datafile}' class='sample-json'>$name</a>" >> index.html
+  else
+    echo "<p>$name</p>" >> index.html
+  fi
+  echo "<a href='${svg_file}'><img src='${svg_file}' class='probability-distribution-function'></a>" >> index.html
+done
+
+fi

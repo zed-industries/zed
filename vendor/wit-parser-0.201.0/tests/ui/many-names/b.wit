@@ -1,0 +1,5 @@
+package foo:name;
+
+world name {
+  import name: interface {}
+}

@@ -1,0 +1,41 @@
+error[E0277]: the trait bound `MyValue: Clone` is not satisfied
+  --> tests/compile_tests/default/clone/sync_seg_cache_clone.rs:19:50
+   |
+19 |     let _cache: SegmentedCache<MyKey, MyValue> = SegmentedCache::new(CAP, SEG);
+   |                                                  ^^^^^^^^^^^^^^^^^^^ the trait `Clone` is not implemented for `MyValue`
+   |
+note: required by a bound in `SegmentedCache::<K, V>::new`
+  --> src/sync/segment.rs
+   |
+   |     V: Clone + Send + Sync + 'static,
+   |        ^^^^^ required by this bound in `SegmentedCache::<K, V>::new`
+...
+   |     pub fn new(max_capacity: u64, num_segments: usize) -> Self {
+   |            --- required by a bound in this associated function
+help: consider annotating `MyValue` with `#[derive(Clone)]`
+   |
+44 + #[derive(Clone)]
+45 | pub struct MyValue(i32);
+   |
+
+error[E0277]: the trait bound `MyBuildHasher1: Clone` is not satisfied
+  --> tests/compile_tests/default/clone/sync_seg_cache_clone.rs:30:56
+   |
+30 |         SegmentedCache::builder(SEG).build_with_hasher(MyBuildHasher1);
+   |                                      ----------------- ^^^^^^^^^^^^^^ the trait `Clone` is not implemented for `MyBuildHasher1`
+   |                                      |
+   |                                      required by a bound introduced by this call
+   |
+note: required by a bound in `moka::sync::CacheBuilder::<K, V, SegmentedCache<K, V>>::build_with_hasher`
+  --> src/sync/builder.rs
+   |
+   |     pub fn build_with_hasher<S>(self, hasher: S) -> SegmentedCache<K, V, S>
+   |            ----------------- required by a bound in this associated function
+   |     where
+   |         S: BuildHasher + Clone + Send + Sync + 'static,
+   |                          ^^^^^ required by this bound in `CacheBuilder::<K, V, SegmentedCache<K, V>>::build_with_hasher`
+help: consider annotating `MyBuildHasher1` with `#[derive(Clone)]`
+   |
+47  + #[derive(Clone)]
+48  | pub struct MyBuildHasher1;
+    |

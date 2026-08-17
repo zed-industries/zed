@@ -1,0 +1,19 @@
+[package]
+name = "json_dotpath"
+version = "1.1.0"
+authors = ["Ondřej Hruška <ondra@ondrovo.com>"]
+edition = "2018"
+license = "MIT"
+description = "Dotted path access to nested JSON objects (serde_json::Value)"
+repository = "https://git.ondrovo.com/packages/json_dotpath"
+readme = "README.md"
+keywords = ["serde", "json", "dot"]
+categories = [
+    "data-structures"
+]
+
+[dependencies]
+serde = "1"
+serde_derive = "1"
+serde_json = "1"
+thiserror = "1"

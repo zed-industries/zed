@@ -1,0 +1,377 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check-previous-run:
+    name: Check for previous successful run
+    runs-on: ubuntu-latest
+    outputs:
+      should_skip: ${{ steps.check.outputs.should_skip }}
+    steps:
+      - name: Check if commit was already tested
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Current commit: ${{ github.sha }}"
+          echo "Current ref: ${{ github.ref }}"
+          
+          # Check if there's a previous successful workflow run for this exact commit
+          PREVIOUS_RUN=$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${{ github.repository }}/actions/workflows/tests.yml/runs?status=success&per_page=5" \
+            --jq '.workflow_runs[] | select(.head_sha == "${{ github.sha }}") | .id' \
+            | head -n 1)
+          
+          if [ -n "$PREVIOUS_RUN" ] && [ "$PREVIOUS_RUN" != "${{ github.run_id }}" ]; then
+            echo "Found previous successful run: $PREVIOUS_RUN"
+            echo "should_skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "No previous successful run found for this commit"
+            echo "should_skip=false" >> $GITHUB_OUTPUT
+          fi
+
+  test-aarch64:
+    name: Test aarch64
+    needs: check-previous-run
+    if: needs.check-previous-run.outputs.should_skip != 'true'
+    strategy:
+      matrix:
+        os: [ubuntu-22.04-arm, ubuntu-24.04-arm, macos-14, macos-15, macos-26, macos-latest, windows-11-arm]
+        rust-toolchain:
+          - "1.81" # minimum for this crate
+          - "stable"
+          - "nightly"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4 # not pinning to commit hash since this is a GitHub action, which we trust
+      - uses: actions-rust-lang/setup-rust-toolchain@9d7e65c320fdb52dcd45ffaa68deb6c02c8754d9 # v1.12.0
+        with:
+          toolchain: ${{ matrix.rust-toolchain }}
+          components: rustfmt, clippy
+          cache-key: ${{ matrix.os }}-${{ matrix.rust-toolchain }}-v2
+      - name: Check
+        run: cargo check --all-features
+      - name: Architecture check
+        run: cargo run --features cli --bin arch-check
+      - if: ${{ matrix.rust-toolchain != 'nightly' }}
+        name: Format
+        run: cargo fmt -- --check
+      - if: ${{ matrix.rust-toolchain != 'nightly' }}
+        name: Clippy
+        run: cargo clippy --all-features -- -D warnings
+      - name: Test
+        run: cargo test --all-features
+
+  test-x86_64:
+    name: Test x86_64
+    needs: check-previous-run
+    if: needs.check-previous-run.outputs.should_skip != 'true'
+    strategy:
+      matrix:
+        os: [ ubuntu-latest, ubuntu-22.04, ubuntu-24.04, macos-15-intel, windows-2022, windows-2025, windows-latest ]
+        rust-toolchain:
+          - "1.81" # minimum for this crate
+          - "1.89" # when AVX-512 VPCLMULQDQ was stabilized
+          - "stable"
+          - "nightly"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4 # not pinning to commit hash since this is a GitHub action, which we trust
+      - uses: actions-rust-lang/setup-rust-toolchain@9d7e65c320fdb52dcd45ffaa68deb6c02c8754d9 # v1.12.0
+        with:
+          toolchain: ${{ matrix.rust-toolchain }}
+          components: rustfmt, clippy
+          cache-key: ${{ matrix.os }}-${{ matrix.rust-toolchain }}-v2
+      - name: Check
+        run: cargo check --all-features
+      - name: Architecture check
+        run: cargo run --features cli --bin arch-check
+      - if: ${{ matrix.rust-toolchain != 'nightly' }}
+        name: Format
+        run: cargo fmt -- --check
+      - if: ${{ matrix.rust-toolchain != 'nightly' }}
+        name: Clippy
+        run: cargo clippy --all-features -- -D warnings
+      - name: Test
+        run: cargo test --all-features
+
+  test-x86-linux:
+    name:  Test x86 Linux
+    needs: check-previous-run
+    if: needs.check-previous-run.outputs.should_skip != 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [i586-unknown-linux-gnu, i686-unknown-linux-gnu]
+        rust-toolchain:
+          - "1.81" # minimum for this crate
+          - "stable"
+          - "nightly"
+    steps:
+      - uses: actions/checkout@v4 # not pinning to commit hash since this is a GitHub action, which we trust
+      - uses: actions-rust-lang/setup-rust-toolchain@9d7e65c320fdb52dcd45ffaa68deb6c02c8754d9 # v1.12.0
+        with:
+          toolchain: ${{ matrix.rust-toolchain }}
+          components: rustfmt, clippy
+      - name: Set up cross
+        run: cargo install cross --locked --version 0.2.5
+      - name: Check
+        run: cross check --all-features --target ${{ matrix.target }}
+      - name: Architecture check
+        run: cross run --features cli --bin arch-check --target ${{ matrix.target }}
+      - name: Test
+        run: cross test --all-features --target ${{ matrix.target }}
+
+  test-x86-windows:
+    name: Test x86 Windows
+    needs: check-previous-run
+    if: needs.check-previous-run.outputs.should_skip != 'true'
+    runs-on: windows-2022
+    strategy:
+      matrix:
+        rust-toolchain:
+          - "1.81" # minimum for this crate
+          - "stable"
+          - "nightly"
+    steps:
+      - uses: actions/checkout@v4 # not pinning to commit hash since this is a GitHub action, which we trust
+      - uses: actions-rust-lang/setup-rust-toolchain@9d7e65c320fdb52dcd45ffaa68deb6c02c8754d9 # v1.12.0
+        with:
+          toolchain: ${{ matrix.rust-toolchain }}
+          target: i686-pc-windows-msvc
+          components: rustfmt, clippy
+          cache-key: windows-x86-${{ matrix.rust-toolchain }}
+      - name: Check
+        run: cargo check --all-features --target i686-pc-windows-msvc
+      - name: Architecture check
+        run: cargo run --features cli --bin arch-check --target i686-pc-windows-msvc
+      - if: ${{ matrix.rust-toolchain != 'nightly' }}
+        name: Format
+        run: cargo fmt -- --check
+      - if: ${{ matrix.rust-toolchain != 'nightly' }}
+        name: Clippy
+        run: cargo clippy --all-features --target i686-pc-windows-msvc -- -D warnings
+      - name: Test
+        run: cargo test --all-features --target i686-pc-windows-msvc
+
+  test-software:
+    name: Test software fallback
+    needs: check-previous-run
+    if: needs.check-previous-run.outputs.should_skip != 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [powerpc-unknown-linux-gnu, powerpc64-unknown-linux-gnu]
+        rust-toolchain:
+          - "1.81" # minimum for this crate
+          - "stable"
+          - "nightly"
+    steps:
+      - uses: actions/checkout@v4 # not pinning to commit hash since this is a GitHub action, which we trust
+      - uses: actions-rust-lang/setup-rust-toolchain@9d7e65c320fdb52dcd45ffaa68deb6c02c8754d9 # v1.12.0
+        with:
+          toolchain: ${{ matrix.rust-toolchain }}
+          components: rustfmt, clippy
+      - name: Set up cross
+        run: cargo install cross --locked --version 0.2.5
+      - name: Check
+        run: cross check --all-features --target ${{ matrix.target }}
+      - name: Architecture check
+        run: cross run --features cli --bin arch-check --target ${{ matrix.target }}
+      - name: Test
+        run: cross test --all-features --target ${{ matrix.target }}
+
+  miri-test-x86_64:
+    name: Miri Test x86_64
+    needs: [check-previous-run, test-x86_64]
+    if: needs.check-previous-run.outputs.should_skip != 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@9d7e65c320fdb52dcd45ffaa68deb6c02c8754d9
+        with:
+          toolchain: nightly
+          components: miri
+      - name: Detect CPU cores
+        id: cores
+        run: |
+          CORES=$(nproc)
+          echo "count=$CORES" >> $GITHUB_OUTPUT
+          echo "use_nextest=$([[ $CORES -ge 2 ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+      - name: Install nextest
+        if: steps.cores.outputs.use_nextest == 'true'
+        run: cargo install cargo-nextest --locked
+      - name: Setup Miri
+        run: cargo miri setup
+      - name: Run Miri tests (parallel)
+        if: steps.cores.outputs.use_nextest == 'true'
+        run: cargo miri nextest run --all-features -j${{ steps.cores.outputs.count }}
+      - name: Run Miri tests (serial)
+        if: steps.cores.outputs.use_nextest == 'false'
+        run: cargo miri test --all-features
+
+  test-no-std:
+    name: Test no_std
+    needs: check-previous-run
+    if: needs.check-previous-run.outputs.should_skip != 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - thumbv7em-none-eabihf  # ARM Cortex-M4F/M7F
+          - thumbv8m.main-none-eabihf  # ARM Cortex-M33/M35P
+          - riscv32imac-unknown-none-elf  # RISC-V 32-bit
+        rust-toolchain:
+          - "1.81" # minimum for this crate
+          - "stable"
+          - "nightly"
+    steps:
+      - uses: actions/checkout@v4 # not pinning to commit hash since this is a GitHub action, which we trust
+      - uses: actions-rust-lang/setup-rust-toolchain@9d7e65c320fdb52dcd45ffaa68deb6c02c8754d9 # v1.12.0
+        with:
+          toolchain: ${{ matrix.rust-toolchain }}
+          target: ${{ matrix.target }}
+          components: rustfmt, clippy
+          cache-key: ${{ matrix.target }}-${{ matrix.rust-toolchain }}-v2
+      - name: Check no_std (no features)
+        run: cargo check --target ${{ matrix.target }} --no-default-features --features panic-handler --lib
+      - name: Check no_std with alloc
+        run: cargo check --target ${{ matrix.target }} --no-default-features --features alloc,panic-handler --lib
+      - name: Check no_std with cache
+        run: cargo check --target ${{ matrix.target }} --no-default-features --features cache,panic-handler --lib
+      - name: Run no_std tests (on host with std test harness)
+        run: cargo test --test no_std_tests
+
+  test-wasm:
+    name: Test WASM
+    needs: check-previous-run
+    if: needs.check-previous-run.outputs.should_skip != 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # WASM 1.0/2.0 (32-bit) - all toolchains
+          - target: wasm32-unknown-unknown
+            rust-toolchain: "1.81"
+          - target: wasm32-unknown-unknown
+            rust-toolchain: "stable"
+          - target: wasm32-unknown-unknown
+            rust-toolchain: "nightly"
+          # WASI preview 1 (32-bit) - all toolchains
+          - target: wasm32-wasip1
+            rust-toolchain: "1.81"
+          - target: wasm32-wasip1
+            rust-toolchain: "stable"
+          - target: wasm32-wasip1
+            rust-toolchain: "nightly"
+          # WASI preview 2 (32-bit) - nightly only (experimental)
+          - target: wasm32-wasip2
+            rust-toolchain: "nightly"
+          # Note: wasm64-unknown-unknown removed - not consistently available in nightly
+    steps:
+      - uses: actions/checkout@v4 # not pinning to commit hash since this is a GitHub action, which we trust
+      - uses: actions-rust-lang/setup-rust-toolchain@9d7e65c320fdb52dcd45ffaa68deb6c02c8754d9 # v1.12.0
+        with:
+          toolchain: ${{ matrix.rust-toolchain }}
+          target: ${{ matrix.target }}
+          components: rustfmt, clippy
+          cache-key: ${{ matrix.target }}-${{ matrix.rust-toolchain }}-v2
+      - name: Check WASM (no features)
+        run: cargo check --target ${{ matrix.target }} --no-default-features --features panic-handler --lib
+      - name: Check WASM with alloc
+        run: cargo check --target ${{ matrix.target }} --no-default-features --features alloc,panic-handler --lib
+      - name: Check WASM with cache
+        run: cargo check --target ${{ matrix.target }} --no-default-features --features cache,panic-handler --lib
+      - name: Build WASM release
+        run: cargo build --target ${{ matrix.target }} --no-default-features --features alloc,panic-handler --lib --release
+      - name: Run WASM tests (on host with std test harness)
+        run: cargo test --test wasm_tests
+      - if: ${{ matrix.target == 'wasm32-unknown-unknown' && matrix.rust-toolchain == 'stable' }}
+        name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - if: ${{ matrix.target == 'wasm32-unknown-unknown' && matrix.rust-toolchain == 'stable' }}
+        name: Build WASM package with wasm-pack
+        run: wasm-pack build --target web --no-default-features --features alloc,panic-handler
+
+  fuzz-test:
+    name: Fuzz Testing
+    needs: check-previous-run
+    if: needs.check-previous-run.outputs.should_skip != 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+        fuzz-target:
+          - digest_crc32_autosar
+          - digest_crc32_bzip2
+          - digest_crc32_iscsi
+          - digest_crc32_iso_hdlc
+          - digest_crc64_ecma_182
+          - digest_crc64_nvme
+          - checksum_crc32_autosar
+          - checksum_crc32_bzip2
+          - checksum_crc32_iscsi
+          - checksum_crc32_iso_hdlc
+          - checksum_crc64_ecma_182
+          - checksum_crc64_nvme
+    steps:
+      - uses: actions/checkout@v4 # not pinning to commit hash since this is a GitHub action, which we trust
+      - uses: actions-rust-lang/setup-rust-toolchain@9d7e65c320fdb52dcd45ffaa68deb6c02c8754d9 # v1.12.0
+        with:
+          toolchain: nightly
+          cache-key: ${{ matrix.os }}-nightly-fuzz
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+      - name: Run fuzzer
+        run: |
+          cargo fuzz run ${{ matrix.fuzz-target }} -- \
+            -max_total_time=60 \
+            -rss_limit_mb=2048 \
+            -timeout=10 \
+            -print_final_stats=1
+        continue-on-error: true
+      - name: Upload artifacts on crash
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts-${{ matrix.os }}-${{ matrix.fuzz-target }}
+          path: fuzz/artifacts/${{ matrix.fuzz-target }}/
+
+  tests-complete:
+    name: All tests complete
+    needs: [check-previous-run, test-aarch64, test-x86_64, test-x86-linux, test-x86-windows, test-software, miri-test-x86_64, test-no-std, test-wasm, fuzz-test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check test results
+        run: |
+          echo "Checking test results..."
+          echo "Previous run check: ${{ needs.check-previous-run.result }}"
+          echo "Should skip: ${{ needs.check-previous-run.outputs.should_skip }}"
+          
+          if [ "${{ needs.check-previous-run.outputs.should_skip }}" == "true" ]; then
+            echo "✓ Tests were skipped because this commit was already tested successfully"
+            exit 0
+          fi
+          
+          # Check if any test job failed
+          if [ "${{ needs.test-aarch64.result }}" == "failure" ] || \
+             [ "${{ needs.test-x86_64.result }}" == "failure" ] || \
+             [ "${{ needs.test-x86-linux.result }}" == "failure" ] || \
+             [ "${{ needs.test-x86-windows.result }}" == "failure" ] || \
+             [ "${{ needs.test-software.result }}" == "failure" ] || \
+             [ "${{ needs.miri-test-x86_64.result }}" == "failure" ] || \
+             [ "${{ needs.test-no-std.result }}" == "failure" ] || \
+             [ "${{ needs.test-wasm.result }}" == "failure" ] || \
+             [ "${{ needs.fuzz-test.result }}" == "failure" ]; then
+            echo "✗ One or more test jobs failed"
+            exit 1
+          fi
+          
+          echo "✓ All test jobs passed"

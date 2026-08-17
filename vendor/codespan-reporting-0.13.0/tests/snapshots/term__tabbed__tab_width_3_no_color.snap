@@ -1,0 +1,23 @@
+---
+source: codespan-reporting/tests/term.rs
+expression: TEST_DATA.emit_no_color(&config)
+---
+warning: unknown weapon `DogJaw`
+  ┌─ tabbed:3:11
+  │
+3 │       Weapon: DogJaw
+  │               ^^^^^^ the weapon
+
+warning: unknown condition `attack-cooldown`
+  ┌─ tabbed:4:23
+  │
+4 │       ReloadingCondition:  attack-cooldown
+  │                            ^^^^^^^^^^^^^^^ the condition
+
+warning: unknown field `Foo`
+  ┌─ tabbed:5:2
+  │
+5 │    Foo: Bar
+  │    ^^^ the field
+
+

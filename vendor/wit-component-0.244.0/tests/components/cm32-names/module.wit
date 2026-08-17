@@ -1,0 +1,30 @@
+package ns:pkg@0.2.1;
+
+interface i {
+  resource r {
+    constructor(s: string);
+    m: func() -> string;
+  }
+  frob: func(in: r) -> r;
+}
+
+world module {
+  import f: func() -> string;
+  import i;
+  import j: interface {
+    resource r {
+      constructor(s: string);
+      m: func() -> string;
+    }
+    frob: func(in: r) -> r;
+  }
+  export g: func() -> string;
+  export i;
+  export j: interface {
+    resource r {
+      constructor(s: string);
+      m: func() -> string;
+    }
+    frob: func(in: r) -> r;
+  }
+}

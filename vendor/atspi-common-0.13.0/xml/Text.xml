@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<node>
+  <interface name="org.a11y.atspi.Text">
+
+    <property name="CharacterCount" type="i" access="read"/>
+
+    <property name="CaretOffset" type="i" access="read"/>
+
+    <method name="GetStringAtOffset">
+      <arg direction="in" name="offset" type="i"/>
+      <arg direction="in" name="granularity" type="u"/>
+      <arg direction="out" type="s"/>
+      <arg direction="out" name="startOffset" type="i"/>
+      <arg direction="out" name="endOffset" type="i"/>
+    </method>
+
+    <method name="GetText">
+      <arg direction="in" name="startOffset" type="i"/>
+      <arg direction="in" name="endOffset" type="i"/>
+      <arg direction="out" type="s"/>
+    </method>
+
+    <method name="SetCaretOffset">
+      <arg direction="in" name="offset" type="i"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+    <method name="GetTextBeforeOffset">
+      <arg direction="in" name="offset" type="i"/>
+      <arg direction="in" name="type" type="u"/>
+      <arg direction="out" type="s"/>
+      <arg direction="out" name="startOffset" type="i"/>
+      <arg direction="out" name="endOffset" type="i"/>
+    </method>
+
+    <!--
+        GetTextAtOffset:
+
+        Returns the text at the given offset.
+        Deprecated: Use GetStringAtOffset.
+    -->
+    <method name="GetTextAtOffset">
+      <arg direction="in" name="offset" type="i"/>
+      <arg direction="in" name="type" type="u"/>
+      <arg direction="out" type="s"/>
+      <arg direction="out" name="startOffset" type="i"/>
+      <arg direction="out" name="endOffset" type="i"/>
+    </method>
+
+    <method name="GetTextAfterOffset">
+      <arg direction="in" name="offset" type="i"/>
+      <arg direction="in" name="type" type="u"/>
+      <arg direction="out" type="s"/>
+      <arg direction="out" name="startOffset" type="i"/>
+      <arg direction="out" name="endOffset" type="i"/>
+    </method>
+
+    <method name="GetCharacterAtOffset">
+      <arg direction="in" name="offset" type="i"/>
+      <arg direction="out" type="i"/>
+    </method>
+
+    <method name="GetAttributeValue">
+      <arg direction="in" name="offset" type="i"/>
+      <arg direction="in" name="attributeName" type="s"/>
+      <arg direction="out" type="s"/>
+    </method>
+
+    <method name="GetAttributes">
+      <arg direction="in" name="offset" type="i"/>
+      <arg direction="out" type="a{ss}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QSpiAttributeSet"/>
+      <arg direction="out" name="startOffset" type="i"/>
+      <arg direction="out" name="endOffset" type="i"/>
+    </method>
+
+    <method name="GetDefaultAttributes">
+      <arg direction="out" type="a{ss}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QSpiAttributeSet"/>
+    </method>
+
+    <method name="GetCharacterExtents">
+      <arg direction="in" name="offset" type="i"/>
+      <arg direction="in" name="coordType" type="u"/>
+      <arg direction="out" name="x" type="i"/>
+      <arg direction="out" name="y" type="i"/>
+      <arg direction="out" name="width" type="i"/>
+      <arg direction="out" name="height" type="i"/>
+    </method>
+
+    <method name="GetOffsetAtPoint">
+      <arg direction="in" name="x" type="i"/>
+      <arg direction="in" name="y" type="i"/>
+      <arg direction="in" name="coordType" type="u"/>
+      <arg direction="out" type="i"/>
+    </method>
+
+    <method name="GetNSelections">
+      <arg direction="out" type="i"/>
+    </method>
+
+    <method name="GetSelection">
+      <arg direction="in" name="selectionNum" type="i"/>
+      <arg direction="out" name="startOffset" type="i"/>
+      <arg direction="out" name="endOffset" type="i"/>
+    </method>
+
+    <method name="AddSelection">
+      <arg direction="in" name="startOffset" type="i"/>
+      <arg direction="in" name="endOffset" type="i"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+    <method name="RemoveSelection">
+      <arg direction="in" name="selectionNum" type="i"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+    <method name="SetSelection">
+      <arg direction="in" name="selectionNum" type="i"/>
+      <arg direction="in" name="startOffset" type="i"/>
+      <arg direction="in" name="endOffset" type="i"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+    <method name="GetRangeExtents">
+      <arg direction="in" name="startOffset" type="i"/>
+      <arg direction="in" name="endOffset" type="i"/>
+      <arg direction="in" name="coordType" type="u"/>
+      <arg direction="out" name="x" type="i"/>
+      <arg direction="out" name="y" type="i"/>
+      <arg direction="out" name="width" type="i"/>
+      <arg direction="out" name="height" type="i"/>
+    </method>
+
+    <method name="GetBoundedRanges">
+      <arg direction="in" name="x" type="i"/>
+      <arg direction="in" name="y" type="i"/>
+      <arg direction="in" name="width" type="i"/>
+      <arg direction="in" name="height" type="i"/>
+      <arg direction="in" name="coordType" type="u"/>
+      <arg direction="in" name="xClipType" type="u"/>
+      <arg direction="in" name="yClipType" type="u"/>
+      <arg direction="out" type="a(iisv)"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QSpiRangeList"/>
+    </method>
+
+    <method name="GetAttributeRun">
+      <arg direction="in" name="offset" type="i"/>
+      <arg direction="in" name="includeDefaults" type="b"/>
+      <arg direction="out" type="a{ss}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QSpiAttributeSet"/>
+      <arg direction="out" name="startOffset" type="i"/>
+      <arg direction="out" name="endOffset" type="i"/>
+    </method>
+
+    <method name="GetDefaultAttributeSet">
+      <arg direction="out" type="a{ss}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QSpiAttributeSet"/>
+    </method>
+
+    <method name="ScrollSubstringTo">
+      <arg direction="in" name="startOffset" type="i"/>
+      <arg direction="in" name="endOffset" type="i"/>
+      <arg direction="in" name="type" type="u"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+    <method name="ScrollSubstringToPoint">
+      <arg direction="in" name="startOffset" type="i"/>
+      <arg direction="in" name="endOffset" type="i"/>
+      <arg direction="in" name="type" type="u"/>
+      <arg direction="in" name="x" type="i"/>
+      <arg direction="in" name="y" type="i"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+  </interface>
+</node>

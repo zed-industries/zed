@@ -1,0 +1,33 @@
+---
+- name: Aliases in Flow Objects
+  from: NimYAML tests
+  tags: alias complex-key flow
+  yaml: |
+    { &a [a, &b b]: *b, *a : [c, *b, d]}
+  tree: |
+    +STR
+     +DOC
+      +MAP {}
+       +SEQ [] &a
+        =VAL :a
+        =VAL &b :b
+       -SEQ
+       =ALI *b
+       =ALI *a
+       +SEQ []
+        =VAL :c
+        =ALI *b
+        =VAL :d
+       -SEQ
+      -MAP
+     -DOC
+    -STR
+  dump: |
+    ? &a
+    - a
+    - &b b
+    : *b
+    *a :
+    - c
+    - *b
+    - d

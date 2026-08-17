@@ -1,0 +1,11 @@
+
+/// This interface provides a value-export of the default network handle..
+@since(version = 0.2.0)
+interface instance-network {
+    @since(version = 0.2.0)
+    use network.{network};
+
+    /// Get a handle to the default network.
+    @since(version = 0.2.0)
+    instance-network: func() -> network;
+}

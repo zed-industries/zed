@@ -1,0 +1,36 @@
+diff --git a/BUILD.gn b/BUILD.gn
+index ca8d8faa61..13e07a2f28 100644
+--- a/BUILD.gn
++++ b/BUILD.gn
+@@ -24,6 +24,9 @@
+ import("//build/config/linux/pkg_config.gni")
+ import("//build/config/sanitizers/sanitizers.gni")
+ import("webrtc.gni")
++import("//third_party/libaom/options.gni")
++
++
+ if (rtc_enable_protobuf) {
+   import("//third_party/protobuf/proto_library.gni")
+ }
+@@ -331,6 +334,10 @@ config("common_config") {
+     defines += [ "WEBRTC_INCLUDE_INTERNAL_AUDIO_DEVICE" ]
+   }
+ 
++  if (enable_libaom) {
++    defines += [ "RTC_USE_LIBAOM_AV1_ENCODER" ]
++  }
++
+   if (rtc_libvpx_build_vp9) {
+     defines += [ "RTC_ENABLE_VP9" ]
+   }
+@@ -565,6 +572,10 @@ if (!build_with_chromium) {
+       "pc:rtc_pc",
+       "sdk",
+       "video",
++      "//third_party/zlib",
++      "rtc_base:log_sinks",
++      "media:rtc_simulcast_encoder_adapter",
++      "api/crypto:frame_crypto_transformer",
+     ]
+ 
+     if (rtc_include_builtin_audio_codecs) {

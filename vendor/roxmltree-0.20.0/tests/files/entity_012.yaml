@@ -1,0 +1,201 @@
+Document:
+  - Element:
+      tag_name: root
+      children:
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              id: "1"
+            children:
+              - Text: "\n"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              id: "2"
+            children:
+              - Text: "\n\n"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              id: "3"
+            children:
+              - Text: "\n\n\n"
+        - Text: "\n\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              id: "4"
+            children:
+              - Text: "\n"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              id: "5"
+            children:
+              - Text: "\n\n"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              id: "6"
+            children:
+              - Text: "\n\n\n"
+        - Text: "\n\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              id: "7"
+            children:
+              - Text: "\n\n"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              id: "8"
+            children:
+              - Text: "\n\n"
+        - Text: "\n\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              id: "9"
+            children:
+              - Text: "\n\n\n"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              id: "10"
+            children:
+              - Text: "\n\n\n"
+        - Text: "\n\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              id: "11"
+            children:
+              - Text: "\nq\n"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              id: "12"
+            children:
+              - Text: "\nq\n"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              id: "13"
+            children:
+              - Text: "\nq\n"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              id: "14"
+            children:
+              - Text: "\nq\n"
+        - Text: "\n\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              id: "15"
+            children:
+              - Text: "\n\n"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              id: "16"
+            children:
+              - Text: "\n\n"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              id: "17"
+            children:
+              - Text: "\n\n"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              id: "18"
+            children:
+              - Text: "\n\n"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              id: "19"
+            children:
+              - Text: "\n\n"
+        - Text: "\n\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              id: "20"
+            children:
+              - Text: "\n\nq"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              id: "21"
+            children:
+              - Text: "q\n\n"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              id: "22"
+            children:
+              - Text: "q\n\nq"
+        - Text: "\n\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              id: "23"
+            children:
+              - Text: "\n\nq"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              id: "24"
+            children:
+              - Text: "q\n\n"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              id: "25"
+            children:
+              - Text: "q\n\nq"
+        - Text: "\n\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              id: "26"
+            children:
+              - Text: "\n\nq"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              id: "27"
+            children:
+              - Text: "q\n\n"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              id: "28"
+            children:
+              - Text: "q\n\nq"
+        - Text: "\n"

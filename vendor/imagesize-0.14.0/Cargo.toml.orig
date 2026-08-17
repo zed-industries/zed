@@ -1,0 +1,71 @@
+[package]
+name = "imagesize"
+version = "0.14.0"
+authors = ["Maid Dog <maiddogsrl@gmail.com>"]
+edition = "2021"
+description = "Quick probing of image dimensions without loading the entire file."
+documentation = "https://docs.rs/imagesize"
+repository = "https://github.com/Roughsketch/imagesize"
+readme = "README.md"
+keywords = ["dimensions", "image", "metadata", "size"]
+categories = ["multimedia", "multimedia::images"]
+license = "MIT"
+exclude = ["tests/*"]
+
+[dependencies]
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+walkdir = "2.3"
+
+[[bench]]
+name = "parse_benchmark"
+harness = false
+
+[features]
+default = [
+    "aesprite",
+    "bmp",
+    "dds",
+    "exr",
+    "farbfeld",
+    "gif",
+    "hdr",
+    "ico",
+    "ilbm",
+    "jpeg",
+    "jxl",
+    "ktx2",
+    "mod",
+    "png",
+    "pnm",
+    "psd",
+    "qoi",
+    "tga",
+    "tiff",
+    "vtf",
+    "webp",
+    "heif",
+]
+aesprite = []
+bmp = []
+dds = []
+exr = []
+farbfeld = []
+gif = []
+hdr = []
+ico = []
+ilbm = []
+jpeg = []
+jxl = []
+ktx2 = []
+mod = []
+png = []
+pnm = []
+psd = []
+qoi = []
+tga = []
+tiff = []
+vtf = []
+webp = []
+heif = []

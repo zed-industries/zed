@@ -1,0 +1,226 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The root element should be <draft href="~~"> for draft extensions -->
+<!-- The root element should be <proposal href="~~"> for proposed extensions -->
+<!-- The root element should be <ratified href="~~"> for ratified extensions -->
+<!-- @href should be a URI relative to the WebGL extension registry at
+http://www.khronos.org/registry/webgl/extensions/
+-->
+<extension href="template/">
+  <!-- The name of the extension. This is also the string which is passed to the 
+       WebGLRenderingContext getExtension API to enable the extension. For example, if
+       the extension were OES_texture_float, then the extension would be fetched and
+       enabled with a call to getExtension("OES_texture_float")
+
+       Per WebGL convention, the 'GL_' prefix is dropped from all extension and enum
+       names, and the 'gl' prefix dropped from, and capitalization adjusted of, all
+       function names.
+  -->
+
+  <name>template</name>
+
+  <!-- The optional alternate name strings of the extension for draft exts -->
+
+  <aliases>
+    <alias>VENDOR_EXT_NAME</alias>
+
+    <alias>VENDOR_EXT_NAME</alias>
+  </aliases>
+
+  <!-- the email address of the contact of the specification -->
+
+  <!-- prefer to 'at' instead of the '@' character to reduce spam -->
+
+  <contact> <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL
+  working group</a> (public_webgl 'at' khronos.org) </contact>
+
+  <!-- Names and email addresses of individuals who contributed to the development of
+       the specification
+  -->
+
+  <contributors>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+
+  <number>k <!-- extension number in registry --></number>
+
+  <depends>
+    <api version="1.0"/>
+
+    <core version="2.0"/>
+
+    <!-- Version in which the extension functionality was integrated into the core spec -->
+
+    <core version="2.0">
+      <glsl version="300 es"/>
+
+      <!-- GLSL #version required to use the feature, if any -->
+
+      <addendum> Difference in core spec from extension. </addendum>
+    </core>
+
+    <removed version="2.0"/>
+
+    <!-- Version as of which extension is no longer supported -->
+
+    <ext name="WEBGL_required_ext" require="true"/>
+
+    <ext name="WEBGL_base_ext"/>
+
+    <!-- api/extension with hyperlink -->
+  </depends>
+
+  <overview>
+    <!-- use mirrors if this extension wraps another -->
+
+    <mirrors href="http://www.khronos.org/registry/gles/extensions/OES/OES_texture_float.txt"
+             name="OES_texture_float">
+      <!-- list the deviations here if there are any -->
+
+      <addendum>Optional support for <code>FLOAT</code> textures as FBO
+      attachments.</addendum>
+
+      <!-- Tags not 'addendum' replace the default text that says
+           "Consult the above extension for documentation, issues and new functions and enumerants."
+      -->
+    </mirrors>
+
+    <!-- normal free-form XHTML is allowed here -->
+
+    <div class="nonnormative">
+      <p> This template for WebGL extensions is derived from the <a
+      href="http://www.opengl.org/registry/doc/template/txt">OpenGL extension
+      template</a>. Refer to the OpenGL extension template for full
+      documentation of the content that should be contained in the sections
+      below. Because WebGL is fundamentally a Web API, its extensions are
+      specified in XML transformed with XSLT into HTML for easier
+      hyperlinking. </p>
+
+      <p> Because most WebGL extensions are expected to simply mirror existing
+      OpenGL and OpenGL ES extensions, it is desirable to keep the WebGL
+      extension specifications as small as possible and simply refer to the
+      other specifications for the behavioral definitions. </p>
+    </div>
+
+    <features>
+      <!-- a list of features in XHTML -->
+
+      <feature>Frobs the <b>baz</b></feature>
+
+      <!-- can also specify glsl built-ins in structured format -->
+
+      <glsl extname="GL_OES_foo_bar">
+        <alias extname="GL_NV_foo_bar"/>
+
+        <alias extname="GL_ATI_foo_bar"/>
+
+        <stage type="fragment"/>
+
+        <stage type="vertex"/>
+
+        <function name="myfun" type="vec4">
+          <param type="vec4"/>
+        </function>
+      </glsl>
+    </features>
+  </overview>
+
+  <idl xml:space="preserve"> <!-- copied literally into a <pre> -->
+    <!-- Enums and functions introduced by the extension should be specified as
+         'const GLenum' and methods on the extension object. The extension IDL should
+         be written assuming that the typedefs in
+         <a href="../../specs/latest/webgl.idl">webgl.idl</a> and
+         <a href="../../typedarray/specs/latest/typedarrays.idl">typedarrays.idl</a>
+         have already been defined, and may implicitly reference other web platform
+         specifications.
+    -->
+module webgl {
+
+interface OES_foo_bar {
+  const GLenum NEW_ENUM = 0xF00;
+
+  void doSomethingNew(GLenum state, GLuint value);
+}; // interface OES_foo_bar
+
+}; // module webgl
+  </idl>
+
+  <!-- new functions -->
+
+  <newfun>
+    <function name="loseContext" type="void"> XHTML description </function>
+  </newfun>
+
+  <!-- new types -->
+
+  <newtypes>
+    <typedef name="in_pipe"> <type>unsigned long long</type> XHTML </typedef>
+
+    <typedef name="out_pipe"> <type>unsigned long long</type> XHTML </typedef>
+
+    <interface name="Plumber">
+      <member>Plumber work(in_pipe,out_pipe);</member>
+
+      <p>After attempting a connection, the plumber is no longer the same.</p>
+    </interface>
+
+    <interface name="Agency" noobject="true"> <member>void
+    register(Plumber);</member> <member>Plumber find();</member> XHTML
+    </interface>
+  </newtypes>
+
+  <!-- new tokens -->
+
+  <newtok>
+    <function name="getParameter" type="any"> <param name="pname"
+    type="GLenum"/> XHTML </function>
+  </newtok>
+
+  <!-- Refer to the <http://www.opengl.org/registry/doc/template.txt> OpenGL
+       extension template for a description of these sections. These sections
+       should be eliminated for WebGL extensions simply mirroring OpenGL or
+       OpenGL ES extensions.
+  -->
+
+  <!-- these take XHTML markup as contents -->
+
+  <security/>
+
+  <ipstatus/>
+
+  <additions/>
+
+  <!-- Additions to the WebGL Specification -->
+
+  <errors/>
+
+  <newstate/>
+
+  <newimplstate/>
+
+  <!-- New Implementation-Dependent State -->
+
+  <samplecode/>
+
+  <tests/>
+
+  <issues/>
+
+  <history>
+    <!-- a list of revisions in any order -->
+
+    <!-- Include important changes in the evolution of the extension. It's
+         especially important to include this section if the extension is modified
+         after a version has been shipped. Consult the
+         <http://www.opengl.org/registry/doc/template.txt> OpenGL extension template
+         for an example.
+    -->
+
+    <revision date="YYYY/MM/DD">
+      <!-- a list of changes -->
+
+      <change>Quuxed the bar</change>
+
+      <change>Fooed the frob</change>
+    </revision>
+  </history>
+</extension>

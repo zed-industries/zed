@@ -1,0 +1,762 @@
+;;;; Instruction definition ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(type OperandSize extern (enum Size32 Size64))
+
+(decl ty_to_operand_size (Type) OperandSize)
+(rule (ty_to_operand_size $I32) (OperandSize.Size32))
+(rule (ty_to_operand_size $I64) (OperandSize.Size64))
+
+;; Note: in the instructions below, we order destination registers first and
+;; then source registers afterwards.
+(type MInst
+  (enum
+    ;;;; Pseudo-Instructions ;;;;
+
+    ;; A pseudo-instruction that captures register arguments in vregs.
+    (Args (args VecArgPair))
+
+    ;; A pseudo-instruction that moves vregs to return registers.
+    (Rets (rets VecRetPair))
+
+    (DummyUse (reg Reg))
+
+    ;; Implementation of `br_table`, uses `idx` to jump to one of `targets` or
+    ;; jumps to `default` if it's out-of-bounds.
+    (BrTable
+      (idx XReg)
+      (default MachLabel)
+      (targets BoxVecMachLabel))
+
+    ;;;; Actual Instructions ;;;;
+
+    ;; Trap if `cond` is true.
+    (TrapIf (cond Cond) (code TrapCode))
+
+    ;; Nothing.
+    (Nop)
+
+    ;; Move a special register (e.g. sp, fp, lr, etc) in to a general-purpose
+    ;; register.
+    (GetSpecial
+      (dst WritableXReg)
+      (reg XReg))
+
+    ;; Load an external symbol's address into a register.
+    (LoadExtName (dst WritableXReg)
+                 (name BoxExternalName)
+                 (offset i64))
+
+    ;; A direct call to a known callee.
+    (Call (info BoxCallInfo))
+
+    ;; An indirect call to an unknown callee.
+    (IndirectCall (info BoxCallIndInfo))
+
+    ;; A direct return-call macro instruction.
+    (ReturnCall (info BoxReturnCallInfo))
+
+    ;; An indirect return-call macro instruction.
+    (ReturnIndirectCall (info BoxReturnCallIndInfo))
+
+    ;; An indirect call out to a host-defined function. The host function
+    ;; pointer is the first "argument" of this function call.
+    (IndirectCallHost (info BoxCallIndirectHostInfo))
+
+    ;; Unconditional jumps.
+    (Jump (label MachLabel))
+
+    ;; Jump to `then` if `c` is true, otherwise to `else`.
+    (BrIf (cond Cond) (taken MachLabel) (not_taken MachLabel))
+
+    ;; Load the memory address referenced by `mem` into `dst`.
+    (LoadAddr (dst WritableXReg) (mem Amode))
+
+    ;; Load `ty` bytes from memory pointed to by `mem` and store in `dst`.
+    ;;
+    ;; How much is written to the register is defined by `ExtKind`. The `flags`
+    ;; control behavior such as endianness.
+    (XLoad (dst WritableXReg) (mem Amode) (ty Type) (flags MemFlags))
+    (FLoad (dst WritableFReg) (mem Amode) (ty Type) (flags MemFlags))
+    (VLoad (dst WritableVReg) (mem Amode) (ty Type) (flags MemFlags))
+
+    ;; Stores.
+    (XStore (mem Amode) (src XReg) (ty Type) (flags MemFlags))
+    (FStore (mem Amode) (src FReg) (ty Type) (flags MemFlags))
+    (VStore (mem Amode) (src VReg) (ty Type) (flags MemFlags))
+
+    ;; A raw pulley instruction generated at compile-time via Pulley's
+    ;; `for_each_op!` macro. This variant has `pulley_*` constructors to
+    ;; emit this instruction and auto-generated methods for other various
+    ;; bits and pieces of boilerplate in the backend.
+    (Raw (raw RawInst))
+
+    ;; Island generation prior to variable-length instructions.
+    (EmitIsland (space_needed u32))
+  )
+)
+
+;; Helper type on conditional branches and traps to represent what the
+;; condition that is being performed is.
+;;
+;; Used in `BrIf` and `TrapIf` above for example.
+(type Cond
+  (enum
+    ;; True if `reg` contains a nonzero value in the low 32-bits.
+    (If32 (reg XReg))
+    ;; True if `reg` contains a zero in the low 32-bits.
+    (IfNot32 (reg XReg))
+
+    ;; Conditionals for comparing the low 32-bits of two registers.
+    (IfXeq32 (src1 XReg) (src2 XReg))
+    (IfXneq32 (src1 XReg) (src2 XReg))
+    (IfXslt32 (src1 XReg) (src2 XReg))
+    (IfXslteq32 (src1 XReg) (src2 XReg))
+    (IfXult32 (src1 XReg) (src2 XReg))
+    (IfXulteq32 (src1 XReg) (src2 XReg))
+
+    (IfXeq32I32 (src1 XReg) (src2 i32))
+    (IfXneq32I32 (src1 XReg) (src2 i32))
+    (IfXslt32I32 (src1 XReg) (src2 i32))
+    (IfXslteq32I32 (src1 XReg) (src2 i32))
+    (IfXult32I32 (src1 XReg) (src2 u32))
+    (IfXulteq32I32 (src1 XReg) (src2 u32))
+    (IfXsgt32I32 (src1 XReg) (src2 i32))
+    (IfXsgteq32I32 (src1 XReg) (src2 i32))
+    (IfXugt32I32 (src1 XReg) (src2 u32))
+    (IfXugteq32I32 (src1 XReg) (src2 u32))
+
+    ;; Conditionals for comparing two 64-bit registers.
+    (IfXeq64 (src1 XReg) (src2 XReg))
+    (IfXneq64 (src1 XReg) (src2 XReg))
+    (IfXslt64 (src1 XReg) (src2 XReg))
+    (IfXslteq64 (src1 XReg) (src2 XReg))
+    (IfXult64 (src1 XReg) (src2 XReg))
+    (IfXulteq64 (src1 XReg) (src2 XReg))
+
+    (IfXeq64I32 (src1 XReg) (src2 i32))
+    (IfXneq64I32 (src1 XReg) (src2 i32))
+    (IfXslt64I32 (src1 XReg) (src2 i32))
+    (IfXslteq64I32 (src1 XReg) (src2 i32))
+    (IfXult64I32 (src1 XReg) (src2 u32))
+    (IfXulteq64I32 (src1 XReg) (src2 u32))
+    (IfXsgt64I32 (src1 XReg) (src2 i32))
+    (IfXsgteq64I32 (src1 XReg) (src2 i32))
+    (IfXugt64I32 (src1 XReg) (src2 u32))
+    (IfXugteq64I32 (src1 XReg) (src2 u32))
+  )
+)
+
+(decl cond_invert (Cond) Cond)
+(extern constructor cond_invert cond_invert)
+
+(decl raw_inst_to_inst (RawInst) MInst)
+(rule (raw_inst_to_inst inst) (MInst.Raw inst))
+(convert RawInst MInst raw_inst_to_inst)
+
+(type U6 (primitive U6))
+(type BoxCallInfo (primitive BoxCallInfo))
+(type BoxCallIndInfo (primitive BoxCallIndInfo))
+(type BoxReturnCallInfo (primitive BoxReturnCallInfo))
+(type BoxReturnCallIndInfo (primitive BoxReturnCallIndInfo))
+(type UpperXRegSet (primitive UpperXRegSet))
+(type BoxCallIndirectHostInfo (primitive BoxCallIndirectHostInfo))
+
+;;;; Address Modes ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(type ExtKind (enum None Sign32 Sign64 Zero32 Zero64))
+(type VExtKind (enum None S8x8 U8x8 S16x4 U16x4 S32x2 U32x2))
+
+;; Helper to convert a `(Value Offset32)` to `(Value i32)` while peeling off
+;; constant addition within the first `Value` into the static offset, if
+;; possible.
+;;
+;; Note that ideally this wouldn't be necessary and we could rely on the egraph
+;; pass to do this but that's not implemented at this time.
+(type ValueOffset (enum (Both (value Value) (offset i32))))
+(decl pure amode_base (Value Offset32) ValueOffset)
+(rule (amode_base addr (offset32 offset)) (ValueOffset.Both addr offset))
+(rule 1 (amode_base (iadd addr (i32_from_iconst b)) (offset32 offset))
+  (if-let new_offset (i32_checked_add b offset))
+  (ValueOffset.Both addr new_offset))
+
+(type StackAMode extern (enum))
+
+(type Amode
+  (enum
+    (SpOffset (offset i32))
+    (RegOffset (base XReg) (offset i32))
+    (Stack (amode StackAMode))
+  )
+)
+
+(decl amode (Value Offset32) Amode)
+(rule (amode addr offset)
+  (if-let (ValueOffset.Both a o) (amode_base addr offset))
+  (Amode.RegOffset a o))
+
+;;; ISLE representation of the `AddrO32` ("*_o32") addressing mode in Pulley.
+(type AddrO32
+  (enum
+    (Base
+      (addr XReg)
+      (offset i32))))
+
+;; Constructor for the `AddrO32` type used in `*_o32` loads/stores
+(decl addro32 (Value Offset32) AddrO32)
+(rule (addro32 addr offset)
+  (if-let (ValueOffset.Both reg off32) (amode_base addr offset))
+  (AddrO32.Base reg off32))
+
+;;; ISLE representation of the `AddrZ` ("*_z") addressing mode in Pulley.
+(type AddrZ
+  (enum
+    (Base
+      (addr XReg)
+      (offset i32))))
+
+;; Constructor for the `AddrZ` type used in `*_z` loads/stores
+(decl addrz (Value Offset32) AddrZ)
+(rule (addrz addr offset)
+  (if-let (ValueOffset.Both reg off32) (amode_base addr offset))
+  (AddrZ.Base reg off32))
+
+;;; ISLE representation of the `AddrG32` ("*_g32") addressing mode in Pulley.
+(type AddrG32
+  (enum
+    (RegisterBound
+      (host_heap_base XReg)
+      (host_heap_bound XReg)
+      (wasm_addr XReg)
+      (offset u16))))
+
+;;; ISLE representation of the `AddrG32Bne` ("*_g32bne") addressing mode in Pulley.
+(type AddrG32Bne
+  (enum
+    (BoundNe
+      (host_heap_base XReg)
+      (host_heap_bound_addr XReg)
+      (host_heap_bound_offset u8)
+      (wasm_addr XReg)
+      (offset u8))))
+
+;; Helper to determine the endianness of `MemFlags` taking the current target
+;; into account.
+(decl pure endianness (MemFlags) Endianness)
+(extern constructor endianness endianness)
+(type Endianness extern (enum Little Big))
+
+(decl pure is_native_endianness (Endianness) bool)
+(extern constructor is_native_endianness is_native_endianness)
+
+;; Partial constructor and type representing a "sinkable load" which can be
+;; moved into another instruction. Note that `SinkableLoad` should not be used
+;; as-is and should instead be converted to a `SunkLoad`.
+;;
+;; To be a sinkable load the load must pass:
+;;
+;; * The `is_sinkable_inst` shared amongst backends test must be `true`
+;; * The load must be in "native endianness"
+;; * The static offset must fit in an unsigned 8-bit integer.
+;;
+;; If the last two requirements here are too restrictive then multiple helpers
+;; might be needed in the future.
+(type SinkableLoad (enum (Load (inst Inst) (ty Type) (addr Value) (offset u8))))
+(decl pure partial sinkable_load (Value) SinkableLoad)
+(rule (sinkable_load value @ (value_type ty))
+  (if-let inst @ (load flags addr (offset32 offset)) (is_sinkable_inst value))
+  (if-let true (is_native_endianness (endianness flags)))
+  (if-let true (memflags_nontrapping flags))
+  (if-let offset8 (i32_try_into_u8 offset))
+  (SinkableLoad.Load inst ty addr offset8))
+
+;; Representation of a "sunk load" where once this is created it must be used.
+;;
+;; This is paired with `sinkable_load` above where that's used in an `if-let`
+;; and then once the rule is selected this is used to commit to using the load.
+;; Callers will likely match on `SunkLoad` itself to extract the
+;; type/value/offset that the load matches.
+(type SunkLoad (enum (Load (ty Type) (addr Value) (offset u8))))
+(decl sink_load (SinkableLoad) SunkLoad)
+(rule (sink_load (SinkableLoad.Load inst ty addr offset))
+  (let ((_ Unit (sink_inst inst)))
+    (SunkLoad.Load ty addr offset)))
+
+(convert SinkableLoad SunkLoad sink_load)
+
+;; Helper for determining what the pointer width of the host is.
+(type PointerWidth extern (enum PointerWidth32 PointerWidth64))
+(decl pure pointer_width () PointerWidth)
+(extern constructor pointer_width pointer_width)
+
+(decl pure memflags_nontrapping (MemFlags) bool)
+(extern constructor memflags_nontrapping memflags_nontrapping)
+
+(decl pure memflags_is_wasm (MemFlags) bool)
+(extern constructor memflags_is_wasm memflags_is_wasm)
+
+;; Helper type to represent a "pending" `AddrG32` value.
+(type G32 (enum (All (heap_base Value) (heap_bound Value) (wasm_addr Value) (offset u16))))
+
+;; Auto-conversion from `G32` to `AddrG32`.
+(decl gen_addrg32 (G32) AddrG32)
+(rule (gen_addrg32 (G32.All base bound wasm offset))
+  (AddrG32.RegisterBound base bound wasm offset))
+(convert G32 AddrG32 gen_addrg32)
+
+;; Helper type to represent a "pending" `AddrG32Bne` value.
+(type G32Bne (enum (All (heap_base Value) (heap_bound SinkableLoad) (wasm_addr Value) (offset u8))))
+
+;; Auto-conversion from `G32Bne` to `AddrG32Bne`.
+(decl gen_addrg32bne (G32Bne) AddrG32Bne)
+(rule (gen_addrg32bne (G32Bne.All base heap_bound_load wasm offset))
+  (gen_addrg32bne_for_real base heap_bound_load wasm offset))
+(convert G32Bne AddrG32Bne gen_addrg32bne)
+
+;; Small workaround to pattern-match `SunkLoad` here.
+(decl gen_addrg32bne_for_real (XReg SunkLoad XReg u8) AddrG32Bne)
+(rule (gen_addrg32bne_for_real base (SunkLoad.Load _ bound_addr bound_offset) wasm_addr offset)
+  (AddrG32Bne.BoundNe base bound_addr bound_offset wasm_addr offset))
+
+;; Helper to extract `G32Bne` from `G32` if applicable.
+;;
+;; This is possible when the heap bound is itself a sinkable load which can get
+;; folded into `G32Bne`.
+(decl pure partial addrg32bne (G32) G32Bne)
+(rule (addrg32bne (G32.All heap_base heap_bound wasm_addr offset))
+  (if-let heap_bound_load (sinkable_load heap_bound))
+  (if-let offset8 (u16_try_into_u8 offset))
+  (G32Bne.All heap_base heap_bound_load wasm_addr offset8))
+
+;; Main entrypoint for matching a `G32` address which can be used in `*_g32`
+;; pulley instructions for loads/stores.
+;;
+;; Pulley loads/stores are emitted as fallible loads/stores where the only
+;; defined trapping address is null. That's modeled as a load-from-`select`
+;; where an out-of-bounds condition yields null.
+;;
+;; Here the top-layer of this rule matches the `(select ...)` node where 0 is
+;; used if the oob condition is true. Otherwise the raw address is used for the
+;; load/store.
+(decl pure partial wasm_g32 (Value Offset32 MemFlags Type) G32)
+(rule (wasm_g32 (select oob (u64_from_iconst 0) raw_addr) (offset32 0) flags ty)
+  ;; This must be a wasm load/store according to `MemFlags`, namely that it's
+  ;; got a "HEAP_OUT_OF_BOUNDS" trap code and it's little-endian.
+  (if-let true (memflags_is_wasm flags))
+  ;; Peel off the static wasm offset from `raw_addr`, if one is present. If
+  ;; one isn't present then `heap_offset` will be zero. This handles the `N`
+  ;; in wasm instructions `i32.load offset=N`.
+  (if-let (HostOffset.All host_addr heap_offset) (host_offset raw_addr))
+  ;; Next see if the `oob` and `raw_addr` combination match. This will attempt
+  ;; extract a full bounds check from these values. If everything succeeds the
+  ;; final step is then to extract an 8-bit offset of the load/store operation,
+  ;; if appplicable, assuming that the constants used in various places all line
+  ;; up just right.
+  (if-let (OobSelect.All base bound wasm_addr access_size_plus_offset)
+    (wasm_oob_select oob host_addr))
+  (if-let offset16 (g32_offset heap_offset ty access_size_plus_offset))
+  (G32.All base bound wasm_addr offset16))
+
+;; Host helper to do the math to extract the offset here.
+;;
+;; Ensures that the first argument, the heap offset on the load, plus the size
+;; of the type equals the third argument, the bounds-checked static offset. If
+;; the offset then fits within `u16` it's returned.
+(decl pure partial g32_offset (i32 Type u64) u16)
+(extern constructor g32_offset g32_offset)
+
+;; Helper used in `wasm_g32` above to extract `(iadd addr N)` where `N` is a
+;; constant. If there is no constant then the constant 0 is returned instead.
+;;
+;; Note that this also requires `addr` itself to be an `iadd` internally to
+;; represent the host address plus the guest offset. If `addr` isn't internally
+;; an `iadd` then the `N` here is instead probably the static address in the
+;; guest.
+(decl pure host_offset (Value) HostOffset)
+(type HostOffset (enum (All (a Value) (b i32))))
+(rule 0 (host_offset val) (HostOffset.All val 0))
+(rule 1 (host_offset (iadd val @ (iadd _ _) (i32_from_iconst n))) (HostOffset.All val n))
+(rule 2 (host_offset (iadd (i32_from_iconst n) val @ (iadd _ _))) (HostOffset.All val n))
+
+;; Helper to test whether the first argument `oob` contains a condition for
+;; matching whether second argument `addr` is out-of-bounds. Searches for a
+;; variety of structures that optimizations or the frontend may produce.
+(decl pure partial wasm_oob_select (Value Value) OobSelect)
+(type OobSelect (enum (All (a Value) (b Value) (c Value) (d u64))))
+
+;; 32-bit hosts: search either side of the `iadd` for the base address within
+;; `oob` to see if it's a matching condition.
+(rule 0 (wasm_oob_select oob (iadd base wasm_addr @ (value_type $I32)))
+  (if-let (OobCond.All bound n) (wasm_oob_cond wasm_addr oob))
+  (if-let (PointerWidth.PointerWidth32) (pointer_width))
+  (OobSelect.All base bound wasm_addr n))
+(rule 1 (wasm_oob_select oob (iadd wasm_addr @ (value_type $I32) base))
+  (if-let (OobCond.All bound n) (wasm_oob_cond wasm_addr oob))
+  (if-let (PointerWidth.PointerWidth32) (pointer_width))
+  (OobSelect.All base bound wasm_addr n))
+
+;; 64-bit hosts: also search either side, but the wasm address must also be
+;; a `uextend` from a 32-bit value.
+(rule 0 (wasm_oob_select oob (iadd base wasm_addr_ext @ (value_type $I64)))
+  (if-let (OobCond.All bound n) (wasm_oob_cond wasm_addr_ext oob))
+  (if-let wasm_addr (wasm32_addr_for_host64 wasm_addr_ext))
+  (if-let (PointerWidth.PointerWidth64) (pointer_width))
+  (OobSelect.All base bound wasm_addr n))
+(rule 1 (wasm_oob_select oob (iadd wasm_addr_ext @ (value_type $I64) base))
+  (if-let (OobCond.All bound n) (wasm_oob_cond wasm_addr_ext oob))
+  (if-let wasm_addr (wasm32_addr_for_host64 wasm_addr_ext))
+  (if-let (PointerWidth.PointerWidth64) (pointer_width))
+  (OobSelect.All base bound wasm_addr n))
+
+;; Helper to extract a 32-bit `Value` from a 64-bit input. The returned value,
+;; if one is returned, can losslessly represent the original value when zero
+;; extended from 32-bits. That means that this only matches `(uextend ...)` or
+;; an `iconst` which already fits in 32 bits.
+(decl pure partial wasm32_addr_for_host64 (Value) Value)
+(rule (wasm32_addr_for_host64 (uextend addr @ (value_type $I32))) addr)
+(rule (wasm32_addr_for_host64 val @ (u32_from_iconst _)) val)
+
+;; Helper to search for the first argument, `wasm_addr`, within the oob
+;; condition second argument, `oob`. It should appear as an integer comparison
+;; of the address against a particular bound.
+(decl pure partial wasm_oob_cond (Value Value) OobCond)
+(type OobCond (enum (All (a Value) (b u64))))
+(rule (wasm_oob_cond wasm_addr (ugt wasm_addr (isub bound (u64_from_iconst n))))
+  (OobCond.All bound n))
+(rule (wasm_oob_cond wasm_addr (ult (isub bound (u64_from_iconst n)) wasm_addr))
+  (OobCond.All bound n))
+
+;;;; Newtypes for Different Register Classes ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(type XReg (primitive XReg))
+(type WritableXReg (primitive WritableXReg))
+
+(type FReg (primitive FReg))
+(type WritableFReg (primitive WritableFReg))
+
+(type VReg (primitive VReg))
+(type WritableVReg (primitive WritableVReg))
+
+;; Construct a new `XReg` from a `Reg`.
+;;
+;; Asserts that the register has an integer RegClass.
+(decl xreg_new (Reg) XReg)
+(extern constructor xreg_new xreg_new)
+(convert Reg XReg xreg_new)
+
+;; Construct a new `WritableXReg` from a `WritableReg`.
+;;
+;; Asserts that the register has an integer RegClass.
+(decl writable_xreg_new (WritableReg) WritableXReg)
+(extern constructor writable_xreg_new writable_xreg_new)
+(convert WritableReg WritableXReg writable_xreg_new)
+
+;; Put a value into a XReg.
+;;
+;; Asserts that the value goes into a XReg.
+(decl put_in_xreg (Value) XReg)
+(rule (put_in_xreg val) (xreg_new (put_in_reg val)))
+(convert Value XReg put_in_xreg)
+
+;; Construct an `InstOutput` out of a single XReg register.
+(decl output_xreg (XReg) InstOutput)
+(rule (output_xreg x) (output_reg x))
+(convert XReg InstOutput output_xreg)
+
+;; Convert a `WritableXReg` to an `XReg`.
+(decl pure writable_xreg_to_xreg (WritableXReg) XReg)
+(extern constructor writable_xreg_to_xreg writable_xreg_to_xreg)
+(convert WritableXReg XReg writable_xreg_to_xreg)
+
+;; Convert a `WritableXReg` to an `WritableReg`.
+(decl pure writable_xreg_to_writable_reg (WritableXReg) WritableReg)
+(extern constructor writable_xreg_to_writable_reg writable_xreg_to_writable_reg)
+(convert WritableXReg WritableReg writable_xreg_to_writable_reg)
+
+;; Convert a `WritableXReg` to an `Reg`.
+(decl pure writable_xreg_to_reg (WritableXReg) Reg)
+(rule (writable_xreg_to_reg x) (writable_xreg_to_writable_reg x))
+(convert WritableXReg Reg writable_xreg_to_reg)
+
+;; Convert an `XReg` to a `Reg`.
+(decl pure xreg_to_reg (XReg) Reg)
+(extern constructor xreg_to_reg xreg_to_reg)
+(convert XReg Reg xreg_to_reg)
+
+;; Convert a `XReg` to a `ValueRegs`.
+(decl xreg_to_value_regs (XReg) ValueRegs)
+(rule (xreg_to_value_regs x) (value_reg x))
+(convert XReg ValueRegs xreg_to_reg)
+
+;; Convert a `WritableXReg` to a `ValueRegs`.
+(decl writable_xreg_to_value_regs (WritableXReg) ValueRegs)
+(rule (writable_xreg_to_value_regs x) (value_reg x))
+(convert WritableXReg ValueRegs writable_xreg_to_value_regs)
+
+;; Allocates a new `WritableXReg`.
+(decl temp_writable_xreg () WritableXReg)
+(rule (temp_writable_xreg) (temp_writable_reg $I64))
+
+;; Construct a new `FReg` from a `Reg`.
+;;
+;; Asserts that the register has a Float RegClass.
+(decl freg_new (Reg) FReg)
+(extern constructor freg_new freg_new)
+(convert Reg FReg freg_new)
+
+;; Construct a new `WritableFReg` from a `WritableReg`.
+;;
+;; Asserts that the register has a Float RegClass.
+(decl writable_freg_new (WritableReg) WritableFReg)
+(extern constructor writable_freg_new writable_freg_new)
+(convert WritableReg WritableFReg writable_freg_new)
+
+;; Put a value into a FReg.
+;;
+;; Asserts that the value goes into a FReg.
+(decl put_in_freg (Value) FReg)
+(rule (put_in_freg val) (freg_new (put_in_reg val)))
+(convert Value FReg put_in_freg)
+
+;; Construct an `InstOutput` out of a single FReg register.
+(decl output_freg (FReg) InstOutput)
+(rule (output_freg x) (output_reg x))
+(convert FReg InstOutput output_freg)
+
+;; Convert a `WritableFReg` to an `FReg`.
+(decl pure writable_freg_to_freg (WritableFReg) FReg)
+(extern constructor writable_freg_to_freg writable_freg_to_freg)
+(convert WritableFReg FReg writable_freg_to_freg)
+
+;; Convert a `WritableFReg` to an `WritableReg`.
+(decl pure writable_freg_to_writable_reg (WritableFReg) WritableReg)
+(extern constructor writable_freg_to_writable_reg writable_freg_to_writable_reg)
+(convert WritableFReg WritableReg writable_freg_to_writable_reg)
+
+;; Convert a `WritableFReg` to an `Reg`.
+(decl pure writable_freg_to_reg (WritableFReg) Reg)
+(rule (writable_freg_to_reg x) (writable_freg_to_writable_reg x))
+(convert WritableFReg Reg writable_freg_to_reg)
+
+;; Convert an `FReg` to a `Reg`.
+(decl pure freg_to_reg (FReg) Reg)
+(extern constructor freg_to_reg freg_to_reg)
+(convert FReg Reg freg_to_reg)
+
+;; Convert a `FReg` to a `ValueRegs`.
+(decl freg_to_value_regs (FReg) ValueRegs)
+(rule (freg_to_value_regs x) (value_reg x))
+(convert FReg ValueRegs xreg_to_reg)
+
+;; Convert a `WritableFReg` to a `ValueRegs`.
+(decl writable_freg_to_value_regs (WritableFReg) ValueRegs)
+(rule (writable_freg_to_value_regs x) (value_reg x))
+(convert WritableFReg ValueRegs writable_freg_to_value_regs)
+
+;; Allocates a new `WritableFReg`.
+(decl temp_writable_freg () WritableFReg)
+(rule (temp_writable_freg) (temp_writable_reg $F64))
+
+;; Construct a new `VReg` from a `Reg`.
+;;
+;; Asserts that the register has a Vector RegClass.
+(decl vreg_new (Reg) VReg)
+(extern constructor vreg_new vreg_new)
+(convert Reg VReg vreg_new)
+
+;; Construct a new `WritableVReg` from a `WritableReg`.
+;;
+;; Asserts that the register has a Vector RegClass.
+(decl writable_vreg_new (WritableReg) WritableVReg)
+(extern constructor writable_vreg_new writable_vreg_new)
+(convert WritableReg WritableVReg writable_vreg_new)
+
+;; Put a value into a VReg.
+;;
+;; Asserts that the value goes into a VReg.
+(decl put_in_vreg (Value) VReg)
+(rule (put_in_vreg val) (vreg_new (put_in_reg val)))
+(convert Value VReg put_in_vreg)
+
+;; Construct an `InstOutput` out of a single VReg register.
+(decl output_vreg (VReg) InstOutput)
+(rule (output_vreg x) (output_reg x))
+(convert VReg InstOutput output_vreg)
+
+;; Convert a `WritableVReg` to an `VReg`.
+(decl pure writable_vreg_to_vreg (WritableVReg) VReg)
+(extern constructor writable_vreg_to_vreg writable_vreg_to_vreg)
+(convert WritableVReg VReg writable_vreg_to_vreg)
+
+;; Convert a `WritableVReg` to an `WritableReg`.
+(decl pure writable_vreg_to_writable_reg (WritableVReg) WritableReg)
+(extern constructor writable_vreg_to_writable_reg writable_vreg_to_writable_reg)
+(convert WritableVReg WritableReg writable_vreg_to_writable_reg)
+
+;; Convert a `WritableVReg` to an `Reg`.
+(decl pure writable_vreg_to_reg (WritableVReg) Reg)
+(rule (writable_vreg_to_reg x) (writable_vreg_to_writable_reg x))
+(convert WritableVReg Reg writable_vreg_to_reg)
+
+;; Convert an `VReg` to a `Reg`.
+(decl pure vreg_to_reg (VReg) Reg)
+(extern constructor vreg_to_reg vreg_to_reg)
+(convert VReg Reg vreg_to_reg)
+
+;; Convert a `VReg` to a `ValueRegs`.
+(decl vreg_to_value_regs (VReg) ValueRegs)
+(rule (vreg_to_value_regs x) (value_reg x))
+(convert VReg ValueRegs xreg_to_reg)
+
+;; Convert a `WritableVReg` to a `ValueRegs`.
+(decl writable_vreg_to_value_regs (WritableVReg) ValueRegs)
+(rule (writable_vreg_to_value_regs x) (value_reg x))
+(convert WritableVReg ValueRegs writable_vreg_to_value_regs)
+
+;; Allocates a new `WritableVReg`.
+(decl temp_writable_vreg () WritableVReg)
+(rule (temp_writable_vreg) (temp_writable_reg $I8X16))
+
+;;;; Materializing Constants ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Lower a constant into a register.
+(decl imm (i64) Reg)
+
+;; Special case some instructions with no immediates
+(rule 6 (imm 0) (pulley_xzero))
+(rule 5 (imm 1) (pulley_xone))
+
+;; For integer constants use the smallest instructions we can that fits the
+;; desired value
+(rule 4 (imm (i8_from_i64 imm)) (pulley_xconst8 imm))
+(rule 3 (imm (i16_from_i64 imm)) (pulley_xconst16 imm))
+(rule 2 (imm (i32_from_i64 imm)) (pulley_xconst32 imm))
+(rule 1 (imm imm) (pulley_xconst64 imm))
+
+;;;; Instruction Constructors ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(decl pulley_trap_if (Cond TrapCode) SideEffectNoResult)
+(rule (pulley_trap_if cond code)
+      (SideEffectNoResult.Inst (MInst.TrapIf cond code)))
+
+(decl sp_reg () XReg)
+(extern constructor sp_reg sp_reg)
+
+(decl pulley_get_special (XReg) XReg)
+(rule (pulley_get_special reg)
+      (let ((dst WritableXReg (temp_writable_xreg))
+            (_ Unit (emit (MInst.GetSpecial dst reg))))
+        dst))
+
+(decl pulley_jump (MachLabel) SideEffectNoResult)
+(rule (pulley_jump label)
+      (SideEffectNoResult.Inst (MInst.Jump label)))
+
+(decl pulley_br_if (Cond MachLabel MachLabel) SideEffectNoResult)
+(rule (pulley_br_if cond taken not_taken)
+      (SideEffectNoResult.Inst (MInst.BrIf cond taken not_taken)))
+
+(decl pulley_xload (Amode Type MemFlags) XReg)
+(rule (pulley_xload amode ty flags)
+      (let ((dst WritableXReg (temp_writable_xreg))
+            (_ Unit (emit (MInst.XLoad dst amode ty flags))))
+        dst))
+
+(decl pulley_xstore (Amode XReg Type MemFlags) SideEffectNoResult)
+(rule (pulley_xstore amode src ty flags)
+      (SideEffectNoResult.Inst (MInst.XStore amode src ty flags)))
+
+(decl pulley_fload (Amode Type MemFlags) FReg)
+(rule (pulley_fload amode ty flags)
+      (let ((dst WritableFReg (temp_writable_freg))
+            (_ Unit (emit (MInst.FLoad dst amode ty flags))))
+        dst))
+
+(decl pulley_fstore (Amode FReg Type MemFlags) SideEffectNoResult)
+(rule (pulley_fstore amode src ty flags)
+      (SideEffectNoResult.Inst (MInst.FStore amode src ty flags)))
+
+(decl pulley_vload (Amode Type MemFlags) VReg)
+(rule (pulley_vload amode ty flags)
+      (let ((dst WritableVReg (temp_writable_vreg))
+            (_ Unit (emit (MInst.VLoad dst amode ty flags))))
+        dst))
+
+(decl pulley_vstore (Amode VReg Type MemFlags) SideEffectNoResult)
+(rule (pulley_vstore amode src ty flags)
+      (SideEffectNoResult.Inst (MInst.VStore amode src ty flags)))
+
+(decl gen_br_table (XReg MachLabel BoxVecMachLabel) Unit)
+(rule (gen_br_table idx default labels)
+      (emit (MInst.BrTable idx default labels)))
+
+;;;; Helpers for Emitting Calls ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(decl gen_call_info (Sig ExternalName CallArgList CallRetList OptionTryCallInfo) BoxCallInfo)
+(extern constructor gen_call_info gen_call_info)
+
+(decl gen_call_ind_info (Sig Reg CallArgList CallRetList OptionTryCallInfo) BoxCallIndInfo)
+(extern constructor gen_call_ind_info gen_call_ind_info)
+
+(decl gen_call_host_info (Sig ExternalName CallArgList CallRetList OptionTryCallInfo) BoxCallIndirectHostInfo)
+(extern constructor gen_call_host_info gen_call_host_info)
+
+(decl gen_return_call_info (Sig ExternalName CallArgList) BoxReturnCallInfo)
+(extern constructor gen_return_call_info gen_return_call_info)
+
+(decl gen_return_call_ind_info (Sig Reg CallArgList) BoxReturnCallIndInfo)
+(extern constructor gen_return_call_ind_info gen_return_call_ind_info)
+
+;; Helper for creating `MInst.Call` instructions.
+(decl call_impl (BoxCallInfo) SideEffectNoResult)
+(rule (call_impl info)
+      (SideEffectNoResult.Inst (MInst.Call info)))
+
+;; Helper for creating `MInst.IndirectCall` instructions.
+(decl indirect_call_impl (BoxCallIndInfo) SideEffectNoResult)
+(rule (indirect_call_impl info)
+      (SideEffectNoResult.Inst (MInst.IndirectCall info)))
+
+;; Helper for creating `MInst.IndirectCallHost` instructions.
+(decl indirect_call_host_impl (BoxCallIndirectHostInfo) SideEffectNoResult)
+(rule (indirect_call_host_impl info)
+      (SideEffectNoResult.Inst (MInst.IndirectCallHost info)))
+
+;; Helper for creating `MInst.ReturnCall` instructions.
+(decl return_call_impl (BoxReturnCallInfo) SideEffectNoResult)
+(rule (return_call_impl info)
+      (SideEffectNoResult.Inst (MInst.ReturnCall info)))
+
+;; Helper for creating `MInst.ReturnIndirectCall` instructions.
+(decl return_indirect_call_impl (BoxReturnCallIndInfo) SideEffectNoResult)
+(rule (return_indirect_call_impl info)
+      (SideEffectNoResult.Inst (MInst.ReturnIndirectCall info)))
+
+;;;; Helpers for Sign extension ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Sign extend a `Value` to at least 32-bit
+(decl zext32 (Value) XReg)
+(rule (zext32 val @ (value_type $I8)) (pulley_zext8 val))
+(rule (zext32 val @ (value_type $I16)) (pulley_zext16 val))
+(rule (zext32 val @ (value_type $I32)) val)
+(rule (zext32 val @ (value_type $I64)) val)
+
+;; Same as `zext32` but for sign-extension
+(decl sext32 (Value) XReg)
+(rule (sext32 val @ (value_type $I8)) (pulley_sext8 val))
+(rule (sext32 val @ (value_type $I16)) (pulley_sext16 val))
+(rule (sext32 val @ (value_type $I32)) val)
+(rule (sext32 val @ (value_type $I64)) val)
+
+;; Sign extend a `Value` to at least 64-bit
+(decl zext64 (Value) XReg)
+(rule (zext64 val @ (value_type $I8)) (pulley_zext8 val))
+(rule (zext64 val @ (value_type $I16)) (pulley_zext16 val))
+(rule (zext64 val @ (value_type $I32)) (pulley_zext32 val))
+(rule (zext64 val @ (value_type $I64)) val)
+
+;; Same as `zext64` but for sign-extension
+(decl sext64 (Value) XReg)
+(rule (sext64 val @ (value_type $I8)) (pulley_sext8 val))
+(rule (sext64 val @ (value_type $I16)) (pulley_sext16 val))
+(rule (sext64 val @ (value_type $I32)) (pulley_sext32 val))
+(rule (sext64 val @ (value_type $I64)) val)

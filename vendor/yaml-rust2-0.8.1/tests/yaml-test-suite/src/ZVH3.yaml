@@ -1,0 +1,16 @@
+---
+- name: Wrong indented sequence item
+  from: '@perlpunk'
+  tags: error sequence indent
+  fail: true
+  yaml: |
+    - key: value
+     - item1
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       +MAP
+        =VAL :key
+        =VAL :value
+       -MAP

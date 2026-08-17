@@ -1,0 +1,44 @@
+[package]
+name = "asynchronous-codec"
+edition = "2018"
+version = "0.7.0"
+authors = ["Max Inden <mail@max-inden.de>"]
+description = "Utilities for encoding and decoding frames using `async/await`"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/mxinden/asynchronous-codec"
+homepage = "https://github.com/mxinden/asynchronous-codec"
+documentation = "https://docs.rs/crate/asynchronous-codec"
+keywords = ["future", "futures", "async", "codec"]
+categories = ["asynchronous", "network-programming"]
+
+[features]
+default = []
+json = [ "serde", "serde_json" ]
+cbor = [ "serde", "serde_cbor" ]
+
+[dependencies]
+bytes = "1"
+futures-sink = "0.3"
+futures-util = { version = "0.3", features = ["io"] }
+memchr = "2"
+pin-project-lite = "0.2"
+
+[dev-dependencies]
+futures = "0.3"
+
+[dependencies.serde]
+version = "1"
+optional = true
+features = [ "derive" ]
+
+[dependencies.serde_json]
+version = "1"
+optional = true
+
+[dependencies.serde_cbor]
+version = "0.11"
+optional = true
+
+[package.metadata.docs.rs]
+all-features = true

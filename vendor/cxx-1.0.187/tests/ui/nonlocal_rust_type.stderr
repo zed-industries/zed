@@ -1,0 +1,23 @@
+error[E0117]: only traits defined in the current crate can be implemented for types defined outside of the crate
+  --> tests/ui/nonlocal_rust_type.rs:10:9
+   |
+10 |         type OptBuilder<'a>;
+   |         ^^^^^--------------
+   |              |
+   |              `Option` is not defined in the current crate
+   |
+   = note: impl doesn't have any local type before any uncovered type parameters
+   = note: for more information see https://doc.rust-lang.org/reference/items/implementations.html#orphan-rules
+   = note: define and implement a trait or new type instead
+
+error[E0117]: only traits defined in the current crate can be implemented for types defined outside of the crate
+  --> tests/ui/nonlocal_rust_type.rs:14:13
+   |
+14 |         rs: Box<OptBuilder<'a>>,
+   |             ^^^^--------------
+   |                 |
+   |                 `Option` is not defined in the current crate
+   |
+   = note: impl doesn't have any local type before any uncovered type parameters
+   = note: for more information see https://doc.rust-lang.org/reference/items/implementations.html#orphan-rules
+   = note: define and implement a trait or new type instead

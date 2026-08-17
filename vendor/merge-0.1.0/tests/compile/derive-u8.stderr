@@ -1,0 +1,7 @@
+error[E0277]: the trait bound `u8: merge::Merge` is not satisfied
+ --> $DIR/derive-u8.rs:9:5
+  |
+9 |     field2: u8,
+  |     ^^^^^^ the trait `merge::Merge` is not implemented for `u8`
+  |
+  = note: required by `merge::Merge::merge`

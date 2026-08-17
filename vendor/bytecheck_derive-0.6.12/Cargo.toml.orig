@@ -1,0 +1,23 @@
+[package]
+name = "bytecheck_derive"
+description = "Derive macro for bytecheck"
+documentation = "https://docs.rs/bytecheck_derive"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1.0"
+syn = "1.0"
+quote = "1.0"
+
+[features]
+default = ["std"]
+std = []

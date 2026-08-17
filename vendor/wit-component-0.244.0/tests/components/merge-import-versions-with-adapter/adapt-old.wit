@@ -1,0 +1,19 @@
+package foo:foo;
+
+world adapt-old {
+  import a:b/c@0.1.1;
+}
+
+package a:b@0.1.1 {
+  interface c {
+    x: func(x: string);
+    y: func();
+
+    resource r {
+      constructor();
+
+      x: func();
+    }
+  }
+}
+

@@ -1,0 +1,5 @@
+expected an identifier or string, found keyword `u32`
+     --> tests/ui/parse-fail/bad-resource10.wit:4:16
+      |
+    4 |   type t = own<u32>;
+      |                ^--

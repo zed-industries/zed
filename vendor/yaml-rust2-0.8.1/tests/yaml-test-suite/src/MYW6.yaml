@@ -1,0 +1,22 @@
+---
+- name: Block Scalar Strip
+  from: NimYAML tests
+  tags: literal scalar whitespace 1.3-err
+  yaml: |
+    |-
+     ab
+    ␣
+    ␣
+    ...
+  tree: |
+    +STR
+     +DOC
+      =VAL |ab
+     -DOC ...
+    -STR
+  json: |
+    "ab"
+  dump: |
+    |-
+      ab
+    ...

@@ -1,0 +1,8 @@
+status = [ "build (stable)" ]
+
+# As of May 2020 we can expect CI to take roughly 3 minutes based on
+# Based on https://github.com/chinedufn/metal-rs/actions/runs/94020785
+#
+# We round this up to a timeout of 5 minutes to account for any potential future
+# inconsistencies in CI run times.
+timeout-sec = 300

@@ -1,0 +1,17 @@
+---
+- name: Invalid block mapping key on same line as previous key
+  from: '@perlpunk'
+  tags: error flow mapping
+  fail: true
+  yaml: |
+    ---
+    x: { y: z }in: valid
+  tree: |
+    +STR
+     +DOC ---
+      +MAP
+       =VAL :x
+       +MAP {}
+        =VAL :y
+        =VAL :z
+       -MAP

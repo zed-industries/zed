@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+/*******************************************************************************
+ * 1. Package */
+package com.prost_test.test.v1;
+
+/*******************************************************************************
+ * 2. Imports */
+import "google/protobuf/empty.proto";
+
+/*******************************************************************************
+ * 3. File Options */
+
+/*******************************************************************************
+ * 4. service */
+
+/* test service */
+service Test {
+  /* test method */
+  rpc GetTest(google.protobuf.Empty) returns (GetTestResponse);
+}
+
+/******************************************************************************
+ * 5. resource "message" definitions */
+
+/* Test application configuration */
+message TestConfig {
+}
+
+/******************************************************************************
+ * 6. request & response "message" definitions */
+
+/* Test response */
+message GetTestResponse {
+  /* Test config */
+  TestConfig conf = 1;
+}
+
+/******************************************************************************
+ * 7. enum */

@@ -1,0 +1,23 @@
+---
+- name: Anchors in Mapping
+  from: NimYAML tests
+  tags: anchor mapping
+  yaml: |
+    &a a: b
+    c: &d d
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL &a :a
+       =VAL :b
+       =VAL :c
+       =VAL &d :d
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "a": "b",
+      "c": "d"
+    }

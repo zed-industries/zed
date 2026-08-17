@@ -1,0 +1,3341 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="API Reference Documentation for FreeType-2.13.2">
+      
+      
+      
+        <meta name="author" content="FreeType Contributors">
+      
+      
+      <link rel="icon" href="images/favico.ico">
+      <meta name="generator" content="mkdocs-1.4.3, mkdocs-material-7.1.9">
+    
+    
+      
+        <title>TrueType Tables - FreeType-2.13.2 API Reference</title>
+      
+    
+    
+      <link rel="stylesheet" href="assets/stylesheets/main.ca7ac06f.min.css">
+      
+        
+        <link rel="stylesheet" href="assets/stylesheets/palette.f1a3b89f.min.css">
+        
+          
+          
+          <meta name="theme-color" content="#4cae4f">
+        
+      
+    
+    
+    
+      
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Noto+Serif:300,400,400i,700%7CRoboto+Mono&display=fallback">
+        <style>:root{--md-text-font-family:"Noto Serif";--md-code-font-family:"Roboto Mono"}</style>
+      
+    
+    
+    
+      <link rel="stylesheet" href="stylesheets/extra.css">
+    
+    
+      
+
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <script>function __prefix(e){return new URL(".",location).pathname+"."+e}function __get(e,t=localStorage){return JSON.parse(t.getItem(__prefix(e)))}</script>
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#truetype-tables" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-header__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            FreeType-2.13.2 API Reference
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              TrueType Tables
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+      </label>
+      
+<div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" data-md-state="active" required>
+      <label class="md-search__icon md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+      </label>
+      <button type="reset" class="md-search__icon md-icon" aria-label="Clear" tabindex="-1">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
+      </button>
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+  </nav>
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-nav__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    FreeType-2.13.2 API Reference
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="index.html" class="md-nav__link">
+        TOC
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-index.html" class="md-nav__link">
+        Index
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_3" type="checkbox" id="__nav_3" >
+      
+      <label class="md-nav__link" for="__nav_3">
+        General Remarks
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="General Remarks" data-md-level="1">
+        <label class="md-nav__title" for="__nav_3">
+          <span class="md-nav__icon md-icon"></span>
+          General Remarks
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-preamble.html" class="md-nav__link">
+        Preamble
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_inclusion.html" class="md-nav__link">
+        FreeType's header inclusion scheme
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-user_allocation.html" class="md-nav__link">
+        User allocation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_4" type="checkbox" id="__nav_4" >
+      
+      <label class="md-nav__link" for="__nav_4">
+        Core API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Core API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_4">
+          <span class="md-nav__icon md-icon"></span>
+          Core API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-basic_types.html" class="md-nav__link">
+        Basic Data Types
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-library_setup.html" class="md-nav__link">
+        Library Setup
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-face_creation.html" class="md-nav__link">
+        Face Creation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_testing_macros.html" class="md-nav__link">
+        Font Testing Macros
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizing_and_scaling.html" class="md-nav__link">
+        Sizing and Scaling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_retrieval.html" class="md-nav__link">
+        Glyph Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-character_mapping.html" class="md-nav__link">
+        Character Mapping
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-information_retrieval.html" class="md-nav__link">
+        Information Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-other_api_data.html" class="md-nav__link">
+        Other API Data
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_5" type="checkbox" id="__nav_5" >
+      
+      <label class="md-nav__link" for="__nav_5">
+        Extended API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Extended API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_5">
+          <span class="md-nav__icon md-icon"></span>
+          Extended API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_variants.html" class="md-nav__link">
+        Unicode Variation Sequences
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-color_management.html" class="md-nav__link">
+        Glyph Color Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-layer_management.html" class="md-nav__link">
+        Glyph Layer Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_management.html" class="md-nav__link">
+        Glyph Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-mac_specific.html" class="md-nav__link">
+        Mac Specific Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizes_management.html" class="md-nav__link">
+        Size Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_file_macros.html" class="md-nav__link">
+        Header File Macros
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+    
+  
+  
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_6" type="checkbox" id="__nav_6" checked>
+      
+      <label class="md-nav__link" for="__nav_6">
+        Format-Specific API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Format-Specific API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_6">
+          <span class="md-nav__icon md-icon"></span>
+          Format-Specific API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-multiple_masters.html" class="md-nav__link">
+        Multiple Masters
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+    
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" data-md-toggle="toc" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          TrueType Tables
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="ft2-truetype_tables.html" class="md-nav__link md-nav__link--active">
+        TrueType Tables
+      </a>
+      
+        
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_header" class="md-nav__link">
+    TT_Header
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_horiheader" class="md-nav__link">
+    TT_HoriHeader
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_vertheader" class="md-nav__link">
+    TT_VertHeader
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_os2" class="md-nav__link">
+    TT_OS2
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_postscript" class="md-nav__link">
+    TT_Postscript
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_pclt" class="md-nav__link">
+    TT_PCLT
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_maxprofile" class="md-nav__link">
+    TT_MaxProfile
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_sfnt_tag" class="md-nav__link">
+    FT_Sfnt_Tag
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_sfnt_table" class="md-nav__link">
+    FT_Get_Sfnt_Table
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_load_sfnt_table" class="md-nav__link">
+    FT_Load_Sfnt_Table
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_sfnt_table_info" class="md-nav__link">
+    FT_Sfnt_Table_Info
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_cmap_language_id" class="md-nav__link">
+    FT_Get_CMap_Language_ID
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_cmap_format" class="md-nav__link">
+    FT_Get_CMap_Format
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_param_tag_unpatented_hinting" class="md-nav__link">
+    FT_PARAM_TAG_UNPATENTED_HINTING
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_platform_xxx" class="md-nav__link">
+    TT_PLATFORM_XXX
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_apple_id_xxx" class="md-nav__link">
+    TT_APPLE_ID_XXX
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_mac_id_xxx" class="md-nav__link">
+    TT_MAC_ID_XXX
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_iso_id_xxx" class="md-nav__link">
+    TT_ISO_ID_XXX
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_ms_id_xxx" class="md-nav__link">
+    TT_MS_ID_XXX
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_adobe_id_xxx" class="md-nav__link">
+    TT_ADOBE_ID_XXX
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_mac_langid_xxx" class="md-nav__link">
+    TT_MAC_LANGID_XXX
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_ms_langid_xxx" class="md-nav__link">
+    TT_MS_LANGID_XXX
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_name_id_xxx" class="md-nav__link">
+    TT_NAME_ID_XXX
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_ucr_xxx" class="md-nav__link">
+    TT_UCR_XXX
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-type1_tables.html" class="md-nav__link">
+        Type 1 Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sfnt_names.html" class="md-nav__link">
+        SFNT Names
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bdf_fonts.html" class="md-nav__link">
+        BDF and PCF Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cid_fonts.html" class="md-nav__link">
+        CID Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pfr_fonts.html" class="md-nav__link">
+        PFR Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-winfnt_fonts.html" class="md-nav__link">
+        Window FNT Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-svg_fonts.html" class="md-nav__link">
+        OpenType SVG Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_formats.html" class="md-nav__link">
+        Font Formats
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gasp_table.html" class="md-nav__link">
+        Gasp Table
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_7" type="checkbox" id="__nav_7" >
+      
+      <label class="md-nav__link" for="__nav_7">
+        Controlling FreeType Modules
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Controlling FreeType Modules" data-md-level="1">
+        <label class="md-nav__title" for="__nav_7">
+          <span class="md-nav__icon md-icon"></span>
+          Controlling FreeType Modules
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-auto_hinter.html" class="md-nav__link">
+        The auto-hinter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cff_driver.html" class="md-nav__link">
+        The CFF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-t1_cid_driver.html" class="md-nav__link">
+        The Type 1 and CID drivers
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-tt_driver.html" class="md-nav__link">
+        The TrueType driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pcf_driver.html" class="md-nav__link">
+        The PCF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_svg_driver.html" class="md-nav__link">
+        The SVG driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-properties.html" class="md-nav__link">
+        Driver properties
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-parameter_tags.html" class="md-nav__link">
+        Parameter Tags
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lcd_rendering.html" class="md-nav__link">
+        Subpixel Rendering
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_8" type="checkbox" id="__nav_8" >
+      
+      <label class="md-nav__link" for="__nav_8">
+        Cache Sub-System
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Cache Sub-System" data-md-level="1">
+        <label class="md-nav__title" for="__nav_8">
+          <span class="md-nav__icon md-icon"></span>
+          Cache Sub-System
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cache_subsystem.html" class="md-nav__link">
+        Cache Sub-System
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_9" type="checkbox" id="__nav_9" >
+      
+      <label class="md-nav__link" for="__nav_9">
+        Support API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Support API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_9">
+          <span class="md-nav__icon md-icon"></span>
+          Support API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-computations.html" class="md-nav__link">
+        Computations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-list_processing.html" class="md-nav__link">
+        List Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-outline_processing.html" class="md-nav__link">
+        Outline Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-quick_advance.html" class="md-nav__link">
+        Quick retrieval of advance values
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bitmap_handling.html" class="md-nav__link">
+        Bitmap Handling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-raster.html" class="md-nav__link">
+        Scanline Converter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_stroker.html" class="md-nav__link">
+        Glyph Stroker
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-system_interface.html" class="md-nav__link">
+        System Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-module_management.html" class="md-nav__link">
+        Module Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gzip.html" class="md-nav__link">
+        GZIP Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lzw.html" class="md-nav__link">
+        LZW Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bzip2.html" class="md-nav__link">
+        BZIP2 Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-debugging_apis.html" class="md-nav__link">
+        External Debugging APIs
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_10" type="checkbox" id="__nav_10" >
+      
+      <label class="md-nav__link" for="__nav_10">
+        Error Codes
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Error Codes" data-md-level="1">
+        <label class="md-nav__title" for="__nav_10">
+          <span class="md-nav__icon md-icon"></span>
+          Error Codes
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_enumerations.html" class="md-nav__link">
+        Error Enumerations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_code_values.html" class="md-nav__link">
+        Error Code Values
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_11" type="checkbox" id="__nav_11" >
+      
+      <label class="md-nav__link" for="__nav_11">
+        Miscellaneous
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Miscellaneous" data-md-level="1">
+        <label class="md-nav__title" for="__nav_11">
+          <span class="md-nav__icon md-icon"></span>
+          Miscellaneous
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gx_validation.html" class="md-nav__link">
+        TrueTypeGX/AAT Validation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-incremental.html" class="md-nav__link">
+        Incremental Loading
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_engine.html" class="md-nav__link">
+        The TrueType Engine
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_validation.html" class="md-nav__link">
+        OpenType Validation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_header" class="md-nav__link">
+    TT_Header
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_horiheader" class="md-nav__link">
+    TT_HoriHeader
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_vertheader" class="md-nav__link">
+    TT_VertHeader
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_os2" class="md-nav__link">
+    TT_OS2
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_postscript" class="md-nav__link">
+    TT_Postscript
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_pclt" class="md-nav__link">
+    TT_PCLT
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_maxprofile" class="md-nav__link">
+    TT_MaxProfile
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_sfnt_tag" class="md-nav__link">
+    FT_Sfnt_Tag
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_sfnt_table" class="md-nav__link">
+    FT_Get_Sfnt_Table
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_load_sfnt_table" class="md-nav__link">
+    FT_Load_Sfnt_Table
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_sfnt_table_info" class="md-nav__link">
+    FT_Sfnt_Table_Info
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_cmap_language_id" class="md-nav__link">
+    FT_Get_CMap_Language_ID
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_cmap_format" class="md-nav__link">
+    FT_Get_CMap_Format
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_param_tag_unpatented_hinting" class="md-nav__link">
+    FT_PARAM_TAG_UNPATENTED_HINTING
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_platform_xxx" class="md-nav__link">
+    TT_PLATFORM_XXX
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_apple_id_xxx" class="md-nav__link">
+    TT_APPLE_ID_XXX
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_mac_id_xxx" class="md-nav__link">
+    TT_MAC_ID_XXX
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_iso_id_xxx" class="md-nav__link">
+    TT_ISO_ID_XXX
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_ms_id_xxx" class="md-nav__link">
+    TT_MS_ID_XXX
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_adobe_id_xxx" class="md-nav__link">
+    TT_ADOBE_ID_XXX
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_mac_langid_xxx" class="md-nav__link">
+    TT_MAC_LANGID_XXX
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_ms_langid_xxx" class="md-nav__link">
+    TT_MS_LANGID_XXX
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_name_id_xxx" class="md-nav__link">
+    TT_NAME_ID_XXX
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tt_ucr_xxx" class="md-nav__link">
+    TT_UCR_XXX
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          <div class="md-content" data-md-component="content">
+            <article class="md-content__inner md-typeset">
+              
+                
+                
+                <p><a href="https://www.freetype.org">FreeType</a> &raquo; <a href="../">Docs</a> &raquo; <a href="index.html#format-specific-api">Format-Specific API</a> &raquo; TrueType Tables</p>
+<hr />
+<h1 id="truetype-tables">TrueType Tables<a class="headerlink" href="#truetype-tables" title="Permanent link">&para;</a></h1>
+<h2 id="synopsis">Synopsis<a class="headerlink" href="#synopsis" title="Permanent link">&para;</a></h2>
+<p>This section contains definitions of some basic tables specific to TrueType and OpenType as well as some routines used to access and process them.</p>
+<h2 id="tt_header">TT_Header<a class="headerlink" href="#tt_header" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRUETYPE_TABLES_H (freetype/tttables.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  TT_Header_
+  {
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>   Table_Version;
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>   Font_Revision;
+
+    <a href="ft2-basic_types.html#ft_long">FT_Long</a>    CheckSum_Adjust;
+    <a href="ft2-basic_types.html#ft_long">FT_Long</a>    Magic_Number;
+
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  Flags;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  Units_Per_EM;
+
+    <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>   Created [2];
+    <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>   Modified[2];
+
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   xMin;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   yMin;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   xMax;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   yMax;
+
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  Mac_Style;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  Lowest_Rec_PPEM;
+
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   Font_Direction;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   Index_To_Loc_Format;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   Glyph_Data_Format;
+
+  } <b>TT_Header</b>;
+</code></pre></div>
+
+<p>A structure to model a TrueType font header table. All fields follow the OpenType specification. The 64-bit timestamps are stored in two-element arrays <code>Created</code> and <code>Modified</code>, first the upper then the lower 32&nbsp;bits.</p>
+<hr>
+
+<h2 id="tt_horiheader">TT_HoriHeader<a class="headerlink" href="#tt_horiheader" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRUETYPE_TABLES_H (freetype/tttables.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  TT_HoriHeader_
+  {
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>   Version;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   Ascender;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   Descender;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   Line_Gap;
+
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  advance_Width_Max;      /* advance width maximum */
+
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   min_Left_Side_Bearing;  /* minimum left-sb       */
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   min_Right_Side_Bearing; /* minimum right-sb      */
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   xMax_Extent;            /* xmax extents          */
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   caret_Slope_Rise;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   caret_Slope_Run;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   caret_Offset;
+
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   Reserved[4];
+
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   metric_Data_Format;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  number_Of_HMetrics;
+
+    /* The following fields are not defined by the OpenType specification */
+    /* but they are used to connect the metrics header to the relevant    */
+    /* 'hmtx' table.                                                      */
+
+    <span class="keyword">void</span>*      long_metrics;
+    <span class="keyword">void</span>*      short_metrics;
+
+  } <b>TT_HoriHeader</b>;
+</code></pre></div>
+
+<p>A structure to model a TrueType horizontal header, the &lsquo;hhea&rsquo; table, as well as the corresponding horizontal metrics table, &lsquo;hmtx&rsquo;.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="version">Version</td><td class="desc">
+<p>The table version.</p>
+</td></tr>
+<tr><td class="val" id="ascender">Ascender</td><td class="desc">
+<p>The font's ascender, i.e., the distance from the baseline to the top-most of all glyph points found in the font.</p>
+<p>This value is invalid in many fonts, as it is usually set by the font designer, and often reflects only a portion of the glyphs found in the font (maybe ASCII).</p>
+<p>You should use the <code>sTypoAscender</code> field of the &lsquo;OS/2&rsquo; table instead if you want the correct one.</p>
+</td></tr>
+<tr><td class="val" id="descender">Descender</td><td class="desc">
+<p>The font's descender, i.e., the distance from the baseline to the bottom-most of all glyph points found in the font. It is negative.</p>
+<p>This value is invalid in many fonts, as it is usually set by the font designer, and often reflects only a portion of the glyphs found in the font (maybe ASCII).</p>
+<p>You should use the <code>sTypoDescender</code> field of the &lsquo;OS/2&rsquo; table instead if you want the correct one.</p>
+</td></tr>
+<tr><td class="val" id="line_gap">Line_Gap</td><td class="desc">
+<p>The font's line gap, i.e., the distance to add to the ascender and descender to get the BTB, i.e., the baseline-to-baseline distance for the font.</p>
+</td></tr>
+<tr><td class="val" id="advance_width_max">advance_Width_Max</td><td class="desc">
+<p>This field is the maximum of all advance widths found in the font. It can be used to compute the maximum width of an arbitrary string of text.</p>
+</td></tr>
+<tr><td class="val" id="min_left_side_bearing">min_Left_Side_Bearing</td><td class="desc">
+<p>The minimum left side bearing of all glyphs within the font.</p>
+</td></tr>
+<tr><td class="val" id="min_right_side_bearing">min_Right_Side_Bearing</td><td class="desc">
+<p>The minimum right side bearing of all glyphs within the font.</p>
+</td></tr>
+<tr><td class="val" id="xmax_extent">xMax_Extent</td><td class="desc">
+<p>The maximum horizontal extent (i.e., the &lsquo;width&rsquo; of a glyph's bounding box) for all glyphs in the font.</p>
+</td></tr>
+<tr><td class="val" id="caret_slope_rise">caret_Slope_Rise</td><td class="desc">
+<p>The rise coefficient of the cursor's slope of the cursor (slope=rise/run).</p>
+</td></tr>
+<tr><td class="val" id="caret_slope_run">caret_Slope_Run</td><td class="desc">
+<p>The run coefficient of the cursor's slope.</p>
+</td></tr>
+<tr><td class="val" id="caret_offset">caret_Offset</td><td class="desc">
+<p>The cursor's offset for slanted fonts.</p>
+</td></tr>
+<tr><td class="val" id="reserved">Reserved</td><td class="desc">
+<p>8&nbsp;reserved bytes.</p>
+</td></tr>
+<tr><td class="val" id="metric_data_format">metric_Data_Format</td><td class="desc">
+<p>Always&nbsp;0.</p>
+</td></tr>
+<tr><td class="val" id="number_of_hmetrics">number_Of_HMetrics</td><td class="desc">
+<p>Number of HMetrics entries in the &lsquo;hmtx&rsquo; table &ndash; this value can be smaller than the total number of glyphs in the font.</p>
+</td></tr>
+<tr><td class="val" id="long_metrics">long_metrics</td><td class="desc">
+<p>A pointer into the &lsquo;hmtx&rsquo; table.</p>
+</td></tr>
+<tr><td class="val" id="short_metrics">short_metrics</td><td class="desc">
+<p>A pointer into the &lsquo;hmtx&rsquo; table.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>For an OpenType variation font, the values of the following fields can change after a call to <code><a href="ft2-multiple_masters.html#ft_set_var_design_coordinates">FT_Set_Var_Design_Coordinates</a></code> (and friends) if the font contains an &lsquo;MVAR&rsquo; table: <code>caret_Slope_Rise</code>, <code>caret_Slope_Run</code>, and <code>caret_Offset</code>.</p>
+<hr>
+
+<h2 id="tt_vertheader">TT_VertHeader<a class="headerlink" href="#tt_vertheader" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRUETYPE_TABLES_H (freetype/tttables.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  TT_VertHeader_
+  {
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>   Version;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   Ascender;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   Descender;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   Line_Gap;
+
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  advance_Height_Max;      /* advance height maximum */
+
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   min_Top_Side_Bearing;    /* minimum top-sb          */
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   min_Bottom_Side_Bearing; /* minimum bottom-sb       */
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   yMax_Extent;             /* ymax extents            */
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   caret_Slope_Rise;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   caret_Slope_Run;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   caret_Offset;
+
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   Reserved[4];
+
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   metric_Data_Format;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  number_Of_VMetrics;
+
+    /* The following fields are not defined by the OpenType specification */
+    /* but they are used to connect the metrics header to the relevant    */
+    /* 'vmtx' table.                                                      */
+
+    <span class="keyword">void</span>*      long_metrics;
+    <span class="keyword">void</span>*      short_metrics;
+
+  } <b>TT_VertHeader</b>;
+</code></pre></div>
+
+<p>A structure used to model a TrueType vertical header, the &lsquo;vhea&rsquo; table, as well as the corresponding vertical metrics table, &lsquo;vmtx&rsquo;.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="version">Version</td><td class="desc">
+<p>The table version.</p>
+</td></tr>
+<tr><td class="val" id="ascender">Ascender</td><td class="desc">
+<p>The font's ascender, i.e., the distance from the baseline to the top-most of all glyph points found in the font.</p>
+<p>This value is invalid in many fonts, as it is usually set by the font designer, and often reflects only a portion of the glyphs found in the font (maybe ASCII).</p>
+<p>You should use the <code>sTypoAscender</code> field of the &lsquo;OS/2&rsquo; table instead if you want the correct one.</p>
+</td></tr>
+<tr><td class="val" id="descender">Descender</td><td class="desc">
+<p>The font's descender, i.e., the distance from the baseline to the bottom-most of all glyph points found in the font. It is negative.</p>
+<p>This value is invalid in many fonts, as it is usually set by the font designer, and often reflects only a portion of the glyphs found in the font (maybe ASCII).</p>
+<p>You should use the <code>sTypoDescender</code> field of the &lsquo;OS/2&rsquo; table instead if you want the correct one.</p>
+</td></tr>
+<tr><td class="val" id="line_gap">Line_Gap</td><td class="desc">
+<p>The font's line gap, i.e., the distance to add to the ascender and descender to get the BTB, i.e., the baseline-to-baseline distance for the font.</p>
+</td></tr>
+<tr><td class="val" id="advance_height_max">advance_Height_Max</td><td class="desc">
+<p>This field is the maximum of all advance heights found in the font. It can be used to compute the maximum height of an arbitrary string of text.</p>
+</td></tr>
+<tr><td class="val" id="min_top_side_bearing">min_Top_Side_Bearing</td><td class="desc">
+<p>The minimum top side bearing of all glyphs within the font.</p>
+</td></tr>
+<tr><td class="val" id="min_bottom_side_bearing">min_Bottom_Side_Bearing</td><td class="desc">
+<p>The minimum bottom side bearing of all glyphs within the font.</p>
+</td></tr>
+<tr><td class="val" id="ymax_extent">yMax_Extent</td><td class="desc">
+<p>The maximum vertical extent (i.e., the &lsquo;height&rsquo; of a glyph's bounding box) for all glyphs in the font.</p>
+</td></tr>
+<tr><td class="val" id="caret_slope_rise">caret_Slope_Rise</td><td class="desc">
+<p>The rise coefficient of the cursor's slope of the cursor (slope=rise/run).</p>
+</td></tr>
+<tr><td class="val" id="caret_slope_run">caret_Slope_Run</td><td class="desc">
+<p>The run coefficient of the cursor's slope.</p>
+</td></tr>
+<tr><td class="val" id="caret_offset">caret_Offset</td><td class="desc">
+<p>The cursor's offset for slanted fonts.</p>
+</td></tr>
+<tr><td class="val" id="reserved">Reserved</td><td class="desc">
+<p>8&nbsp;reserved bytes.</p>
+</td></tr>
+<tr><td class="val" id="metric_data_format">metric_Data_Format</td><td class="desc">
+<p>Always&nbsp;0.</p>
+</td></tr>
+<tr><td class="val" id="number_of_vmetrics">number_Of_VMetrics</td><td class="desc">
+<p>Number of VMetrics entries in the &lsquo;vmtx&rsquo; table &ndash; this value can be smaller than the total number of glyphs in the font.</p>
+</td></tr>
+<tr><td class="val" id="long_metrics">long_metrics</td><td class="desc">
+<p>A pointer into the &lsquo;vmtx&rsquo; table.</p>
+</td></tr>
+<tr><td class="val" id="short_metrics">short_metrics</td><td class="desc">
+<p>A pointer into the &lsquo;vmtx&rsquo; table.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>For an OpenType variation font, the values of the following fields can change after a call to <code><a href="ft2-multiple_masters.html#ft_set_var_design_coordinates">FT_Set_Var_Design_Coordinates</a></code> (and friends) if the font contains an &lsquo;MVAR&rsquo; table: <code>Ascender</code>, <code>Descender</code>, <code>Line_Gap</code>, <code>caret_Slope_Rise</code>, <code>caret_Slope_Run</code>, and <code>caret_Offset</code>.</p>
+<hr>
+
+<h2 id="tt_os2">TT_OS2<a class="headerlink" href="#tt_os2" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRUETYPE_TABLES_H (freetype/tttables.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  TT_OS2_
+  {
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  version;                /* 0x0001 - more or 0xFFFF */
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   xAvgCharWidth;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  usWeightClass;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  usWidthClass;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  fsType;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   ySubscriptXSize;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   ySubscriptYSize;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   ySubscriptXOffset;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   ySubscriptYOffset;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   ySuperscriptXSize;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   ySuperscriptYSize;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   ySuperscriptXOffset;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   ySuperscriptYOffset;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   yStrikeoutSize;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   yStrikeoutPosition;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   sFamilyClass;
+
+    <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>    panose[10];
+
+    <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>   ulUnicodeRange1;        /* Bits 0-31   */
+    <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>   ulUnicodeRange2;        /* Bits 32-63  */
+    <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>   ulUnicodeRange3;        /* Bits 64-95  */
+    <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>   ulUnicodeRange4;        /* Bits 96-127 */
+
+    <a href="ft2-basic_types.html#ft_char">FT_Char</a>    achVendID[4];
+
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  fsSelection;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  usFirstCharIndex;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  usLastCharIndex;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   sTypoAscender;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   sTypoDescender;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   sTypoLineGap;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  usWinAscent;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  usWinDescent;
+
+    /* only version 1 and higher: */
+
+    <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>   ulCodePageRange1;       /* Bits 0-31   */
+    <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>   ulCodePageRange2;       /* Bits 32-63  */
+
+    /* only version 2 and higher: */
+
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   sxHeight;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   sCapHeight;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  usDefaultChar;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  usBreakChar;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  usMaxContext;
+
+    /* only version 5 and higher: */
+
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  usLowerOpticalPointSize;       /* in twips (1/20 points) */
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  usUpperOpticalPointSize;       /* in twips (1/20 points) */
+
+  } <b>TT_OS2</b>;
+</code></pre></div>
+
+<p>A structure to model a TrueType &lsquo;OS/2&rsquo; table. All fields comply to the OpenType specification.</p>
+<p>Note that we now support old Mac fonts that do not include an &lsquo;OS/2&rsquo; table. In this case, the <code>version</code> field is always set to 0xFFFF.</p>
+<h4>note</h4>
+
+<p>For an OpenType variation font, the values of the following fields can change after a call to <code><a href="ft2-multiple_masters.html#ft_set_var_design_coordinates">FT_Set_Var_Design_Coordinates</a></code> (and friends) if the font contains an &lsquo;MVAR&rsquo; table: <code>sCapHeight</code>, <code>sTypoAscender</code>, <code>sTypoDescender</code>, <code>sTypoLineGap</code>, <code>sxHeight</code>, <code>usWinAscent</code>, <code>usWinDescent</code>, <code>yStrikeoutPosition</code>, <code>yStrikeoutSize</code>, <code>ySubscriptXOffset</code>, <code>ySubScriptXSize</code>, <code>ySubscriptYOffset</code>, <code>ySubscriptYSize</code>, <code>ySuperscriptXOffset</code>, <code>ySuperscriptXSize</code>, <code>ySuperscriptYOffset</code>, and <code>ySuperscriptYSize</code>.</p>
+<p>Possible values for bits in the <code>ulUnicodeRangeX</code> fields are given by the <code><a href="ft2-truetype_tables.html#tt_ucr_xxx">TT_UCR_XXX</a></code> macros.</p>
+<hr>
+
+<h2 id="tt_postscript">TT_Postscript<a class="headerlink" href="#tt_postscript" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRUETYPE_TABLES_H (freetype/tttables.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  TT_Postscript_
+  {
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>  FormatType;
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>  italicAngle;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>  underlinePosition;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>  underlineThickness;
+    <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>  isFixedPitch;
+    <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>  minMemType42;
+    <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>  maxMemType42;
+    <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>  minMemType1;
+    <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>  maxMemType1;
+
+    /* Glyph names follow in the 'post' table, but we don't */
+    /* load them by default.                                */
+
+  } <b>TT_Postscript</b>;
+</code></pre></div>
+
+<p>A structure to model a TrueType &lsquo;post&rsquo; table. All fields comply to the OpenType specification. This structure does not reference a font's PostScript glyph names; use <code><a href="ft2-information_retrieval.html#ft_get_glyph_name">FT_Get_Glyph_Name</a></code> to retrieve them.</p>
+<h4>note</h4>
+
+<p>For an OpenType variation font, the values of the following fields can change after a call to <code><a href="ft2-multiple_masters.html#ft_set_var_design_coordinates">FT_Set_Var_Design_Coordinates</a></code> (and friends) if the font contains an &lsquo;MVAR&rsquo; table: <code>underlinePosition</code> and <code>underlineThickness</code>.</p>
+<hr>
+
+<h2 id="tt_pclt">TT_PCLT<a class="headerlink" href="#tt_pclt" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRUETYPE_TABLES_H (freetype/tttables.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  TT_PCLT_
+  {
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>   Version;
+    <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>   FontNumber;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  Pitch;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  xHeight;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  Style;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  TypeFamily;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  CapHeight;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  SymbolSet;
+    <a href="ft2-basic_types.html#ft_char">FT_Char</a>    TypeFace[16];
+    <a href="ft2-basic_types.html#ft_char">FT_Char</a>    CharacterComplement[8];
+    <a href="ft2-basic_types.html#ft_char">FT_Char</a>    FileName[6];
+    <a href="ft2-basic_types.html#ft_char">FT_Char</a>    StrokeWeight;
+    <a href="ft2-basic_types.html#ft_char">FT_Char</a>    WidthType;
+    <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>    SerifStyle;
+    <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>    Reserved;
+
+  } <b>TT_PCLT</b>;
+</code></pre></div>
+
+<p>A structure to model a TrueType &lsquo;PCLT&rsquo; table. All fields comply to the OpenType specification.</p>
+<hr>
+
+<h2 id="tt_maxprofile">TT_MaxProfile<a class="headerlink" href="#tt_maxprofile" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRUETYPE_TABLES_H (freetype/tttables.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  TT_MaxProfile_
+  {
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>   version;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  numGlyphs;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  maxPoints;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  maxContours;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  maxCompositePoints;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  maxCompositeContours;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  maxZones;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  maxTwilightPoints;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  maxStorage;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  maxFunctionDefs;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  maxInstructionDefs;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  maxStackElements;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  maxSizeOfInstructions;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  maxComponentElements;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  maxComponentDepth;
+
+  } <b>TT_MaxProfile</b>;
+</code></pre></div>
+
+<p>The maximum profile (&lsquo;maxp&rsquo;) table contains many max values, which can be used to pre-allocate arrays for speeding up glyph loading and hinting.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="version">version</td><td class="desc">
+<p>The version number.</p>
+</td></tr>
+<tr><td class="val" id="numglyphs">numGlyphs</td><td class="desc">
+<p>The number of glyphs in this TrueType font.</p>
+</td></tr>
+<tr><td class="val" id="maxpoints">maxPoints</td><td class="desc">
+<p>The maximum number of points in a non-composite TrueType glyph. See also <code>maxCompositePoints</code>.</p>
+</td></tr>
+<tr><td class="val" id="maxcontours">maxContours</td><td class="desc">
+<p>The maximum number of contours in a non-composite TrueType glyph. See also <code>maxCompositeContours</code>.</p>
+</td></tr>
+<tr><td class="val" id="maxcompositepoints">maxCompositePoints</td><td class="desc">
+<p>The maximum number of points in a composite TrueType glyph. See also <code>maxPoints</code>.</p>
+</td></tr>
+<tr><td class="val" id="maxcompositecontours">maxCompositeContours</td><td class="desc">
+<p>The maximum number of contours in a composite TrueType glyph. See also <code>maxContours</code>.</p>
+</td></tr>
+<tr><td class="val" id="maxzones">maxZones</td><td class="desc">
+<p>The maximum number of zones used for glyph hinting.</p>
+</td></tr>
+<tr><td class="val" id="maxtwilightpoints">maxTwilightPoints</td><td class="desc">
+<p>The maximum number of points in the twilight zone used for glyph hinting.</p>
+</td></tr>
+<tr><td class="val" id="maxstorage">maxStorage</td><td class="desc">
+<p>The maximum number of elements in the storage area used for glyph hinting.</p>
+</td></tr>
+<tr><td class="val" id="maxfunctiondefs">maxFunctionDefs</td><td class="desc">
+<p>The maximum number of function definitions in the TrueType bytecode for this font.</p>
+</td></tr>
+<tr><td class="val" id="maxinstructiondefs">maxInstructionDefs</td><td class="desc">
+<p>The maximum number of instruction definitions in the TrueType bytecode for this font.</p>
+</td></tr>
+<tr><td class="val" id="maxstackelements">maxStackElements</td><td class="desc">
+<p>The maximum number of stack elements used during bytecode interpretation.</p>
+</td></tr>
+<tr><td class="val" id="maxsizeofinstructions">maxSizeOfInstructions</td><td class="desc">
+<p>The maximum number of TrueType opcodes used for glyph hinting.</p>
+</td></tr>
+<tr><td class="val" id="maxcomponentelements">maxComponentElements</td><td class="desc">
+<p>The maximum number of simple (i.e., non-composite) glyphs in a composite glyph.</p>
+</td></tr>
+<tr><td class="val" id="maxcomponentdepth">maxComponentDepth</td><td class="desc">
+<p>The maximum nesting depth of composite glyphs.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>This structure is only used during font loading.</p>
+<hr>
+
+<h2 id="ft_sfnt_tag">FT_Sfnt_Tag<a class="headerlink" href="#ft_sfnt_tag" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRUETYPE_TABLES_H (freetype/tttables.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">enum</span>  FT_Sfnt_Tag_
+  {
+    <a href="ft2-truetype_tables.html#ft_sfnt_head">FT_SFNT_HEAD</a>,
+    <a href="ft2-truetype_tables.html#ft_sfnt_maxp">FT_SFNT_MAXP</a>,
+    <a href="ft2-truetype_tables.html#ft_sfnt_os2">FT_SFNT_OS2</a>,
+    <a href="ft2-truetype_tables.html#ft_sfnt_hhea">FT_SFNT_HHEA</a>,
+    <a href="ft2-truetype_tables.html#ft_sfnt_vhea">FT_SFNT_VHEA</a>,
+    <a href="ft2-truetype_tables.html#ft_sfnt_post">FT_SFNT_POST</a>,
+    <a href="ft2-truetype_tables.html#ft_sfnt_pclt">FT_SFNT_PCLT</a>,
+
+    FT_SFNT_MAX
+
+  } <b>FT_Sfnt_Tag</b>;
+
+  /* these constants are deprecated; use the corresponding `<b>FT_Sfnt_Tag</b>` */
+  /* values instead                                                      */
+#<span class="keyword">define</span> ft_sfnt_head  <a href="ft2-truetype_tables.html#ft_sfnt_head">FT_SFNT_HEAD</a>
+#<span class="keyword">define</span> ft_sfnt_maxp  <a href="ft2-truetype_tables.html#ft_sfnt_maxp">FT_SFNT_MAXP</a>
+#<span class="keyword">define</span> ft_sfnt_os2   <a href="ft2-truetype_tables.html#ft_sfnt_os2">FT_SFNT_OS2</a>
+#<span class="keyword">define</span> ft_sfnt_hhea  <a href="ft2-truetype_tables.html#ft_sfnt_hhea">FT_SFNT_HHEA</a>
+#<span class="keyword">define</span> ft_sfnt_vhea  <a href="ft2-truetype_tables.html#ft_sfnt_vhea">FT_SFNT_VHEA</a>
+#<span class="keyword">define</span> ft_sfnt_post  <a href="ft2-truetype_tables.html#ft_sfnt_post">FT_SFNT_POST</a>
+#<span class="keyword">define</span> ft_sfnt_pclt  <a href="ft2-truetype_tables.html#ft_sfnt_pclt">FT_SFNT_PCLT</a>
+</code></pre></div>
+
+<p>An enumeration to specify indices of SFNT tables loaded and parsed by FreeType during initialization of an SFNT font. Used in the <code><a href="ft2-truetype_tables.html#ft_get_sfnt_table">FT_Get_Sfnt_Table</a></code> API function.</p>
+<h4>values</h4>
+<table class="fields">
+<tr><td class="val" id="ft_sfnt_head">FT_SFNT_HEAD</td><td class="desc">
+<p>To access the font's <code><a href="ft2-truetype_tables.html#tt_header">TT_Header</a></code> structure.</p>
+</td></tr>
+<tr><td class="val" id="ft_sfnt_maxp">FT_SFNT_MAXP</td><td class="desc">
+<p>To access the font's <code><a href="ft2-truetype_tables.html#tt_maxprofile">TT_MaxProfile</a></code> structure.</p>
+</td></tr>
+<tr><td class="val" id="ft_sfnt_os2">FT_SFNT_OS2</td><td class="desc">
+<p>To access the font's <code><a href="ft2-truetype_tables.html#tt_os2">TT_OS2</a></code> structure.</p>
+</td></tr>
+<tr><td class="val" id="ft_sfnt_hhea">FT_SFNT_HHEA</td><td class="desc">
+<p>To access the font's <code><a href="ft2-truetype_tables.html#tt_horiheader">TT_HoriHeader</a></code> structure.</p>
+</td></tr>
+<tr><td class="val" id="ft_sfnt_vhea">FT_SFNT_VHEA</td><td class="desc">
+<p>To access the font's <code><a href="ft2-truetype_tables.html#tt_vertheader">TT_VertHeader</a></code> structure.</p>
+</td></tr>
+<tr><td class="val" id="ft_sfnt_post">FT_SFNT_POST</td><td class="desc">
+<p>To access the font's <code><a href="ft2-truetype_tables.html#tt_postscript">TT_Postscript</a></code> structure.</p>
+</td></tr>
+<tr><td class="val" id="ft_sfnt_pclt">FT_SFNT_PCLT</td><td class="desc">
+<p>To access the font's <code><a href="ft2-truetype_tables.html#tt_pclt">TT_PCLT</a></code> structure.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_get_sfnt_table">FT_Get_Sfnt_Table<a class="headerlink" href="#ft_get_sfnt_table" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRUETYPE_TABLES_H (freetype/tttables.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <span class="keyword">void</span>* )
+  <b>FT_Get_Sfnt_Table</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>      face,
+                     <a href="ft2-truetype_tables.html#ft_sfnt_tag">FT_Sfnt_Tag</a>  tag );
+</code></pre></div>
+
+<p>Return a pointer to a given SFNT table stored within a face.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the source.</p>
+</td></tr>
+<tr><td class="val" id="tag">tag</td><td class="desc">
+<p>The index of the SFNT table.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>A type-less pointer to the table. This will be <code>NULL</code> in case of error, or if the corresponding table was not found <strong>OR</strong> loaded from the file.</p>
+<p>Use a typecast according to <code>tag</code> to access the structure elements.</p>
+<h4>note</h4>
+
+<p>The table is owned by the face object and disappears with it.</p>
+<p>This function is only useful to access SFNT tables that are loaded by the sfnt, truetype, and opentype drivers. See <code><a href="ft2-truetype_tables.html#ft_sfnt_tag">FT_Sfnt_Tag</a></code> for a list.</p>
+<h4>example</h4>
+
+<p>Here is an example demonstrating access to the &lsquo;vhea&rsquo; table.
+<div class="highlight"><pre><span></span><code>  TT_VertHeader*  vert_header;
+
+
+  vert_header =
+    (TT_VertHeader*)FT_Get_Sfnt_Table( face, FT_SFNT_VHEA );
+</code></pre></div></p>
+<hr>
+
+<h2 id="ft_load_sfnt_table">FT_Load_Sfnt_Table<a class="headerlink" href="#ft_load_sfnt_table" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRUETYPE_TABLES_H (freetype/tttables.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Load_Sfnt_Table</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>    face,
+                      <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>   tag,
+                      <a href="ft2-basic_types.html#ft_long">FT_Long</a>    offset,
+                      <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>*   buffer,
+                      <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>*  length );
+</code></pre></div>
+
+<p>Load any SFNT font table into client memory.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the source face.</p>
+</td></tr>
+<tr><td class="val" id="tag">tag</td><td class="desc">
+<p>The four-byte tag of the table to load. Use value&nbsp;0 if you want to access the whole font file. Otherwise, you can use one of the definitions found in the <code><a href="ft2-header_file_macros.html#ft_truetype_tags_h">FT_TRUETYPE_TAGS_H</a></code> file, or forge a new one with <code><a href="ft2-basic_types.html#ft_make_tag">FT_MAKE_TAG</a></code>.</p>
+</td></tr>
+<tr><td class="val" id="offset">offset</td><td class="desc">
+<p>The starting offset in the table (or file if tag&nbsp;==&nbsp;0).</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="buffer">buffer</td><td class="desc">
+<p>The target buffer address. The client must ensure that the memory array is big enough to hold the data.</p>
+</td></tr>
+</table>
+
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="length">length</td><td class="desc">
+<p>If the <code>length</code> parameter is <code>NULL</code>, try to load the whole table. Return an error code if it fails.</p>
+<p>Else, if <code>*length</code> is&nbsp;0, exit immediately while returning the table's (or file) full size in it.</p>
+<p>Else the number of bytes to read from the table or file, from the starting offset.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>If you need to determine the table's length you should first call this function with <code>*length</code> set to&nbsp;0, as in the following example:
+<div class="highlight"><pre><span></span><code>  FT_ULong  length = 0;
+
+
+  error = FT_Load_Sfnt_Table( face, tag, 0, NULL, &amp;length );
+  if ( error ) { ... table does not exist ... }
+
+  buffer = malloc( length );
+  if ( buffer == NULL ) { ... not enough memory ... }
+
+  error = FT_Load_Sfnt_Table( face, tag, 0, buffer, &amp;length );
+  if ( error ) { ... could not load table ... }
+</code></pre></div></p>
+<p>Note that structures like <code><a href="ft2-truetype_tables.html#tt_header">TT_Header</a></code> or <code><a href="ft2-truetype_tables.html#tt_os2">TT_OS2</a></code> can't be used with this function; they are limited to <code><a href="ft2-truetype_tables.html#ft_get_sfnt_table">FT_Get_Sfnt_Table</a></code>. Reason is that those structures depend on the processor architecture, with varying size (e.g. 32bit vs. 64bit) or order (big endian vs. little endian).</p>
+<hr>
+
+<h2 id="ft_sfnt_table_info">FT_Sfnt_Table_Info<a class="headerlink" href="#ft_sfnt_table_info" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRUETYPE_TABLES_H (freetype/tttables.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Sfnt_Table_Info</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>    face,
+                      <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>    table_index,
+                      <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>  *tag,
+                      <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>  *length );
+</code></pre></div>
+
+<p>Return information on an SFNT table.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the source face.</p>
+</td></tr>
+<tr><td class="val" id="table_index">table_index</td><td class="desc">
+<p>The index of an SFNT table. The function returns FT_Err_Table_Missing for an invalid value.</p>
+</td></tr>
+</table>
+
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="tag">tag</td><td class="desc">
+<p>The name tag of the SFNT table. If the value is <code>NULL</code>, <code>table_index</code> is ignored, and <code>length</code> returns the number of SFNT tables in the font.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="length">length</td><td class="desc">
+<p>The length of the SFNT table (or the number of SFNT tables, depending on <code>tag</code>).</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>While parsing fonts, FreeType handles SFNT tables with length zero as missing.</p>
+<hr>
+
+<h2 id="ft_get_cmap_language_id">FT_Get_CMap_Language_ID<a class="headerlink" href="#ft_get_cmap_language_id" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRUETYPE_TABLES_H (freetype/tttables.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a> )
+  <b>FT_Get_CMap_Language_ID</b>( <a href="ft2-character_mapping.html#ft_charmap">FT_CharMap</a>  charmap );
+</code></pre></div>
+
+<p>Return cmap language ID as specified in the OpenType standard. Definitions of language ID values are in file <code><a href="ft2-header_file_macros.html#ft_truetype_ids_h">FT_TRUETYPE_IDS_H</a></code>.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="charmap">charmap</td><td class="desc">
+<p>The target charmap.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>The language ID of <code>charmap</code>. If <code>charmap</code> doesn't belong to an SFNT face, just return&nbsp;0 as the default value.</p>
+<p>For a format&nbsp;14 cmap (to access Unicode IVS), the return value is 0xFFFFFFFF.</p>
+<hr>
+
+<h2 id="ft_get_cmap_format">FT_Get_CMap_Format<a class="headerlink" href="#ft_get_cmap_format" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRUETYPE_TABLES_H (freetype/tttables.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_long">FT_Long</a> )
+  <b>FT_Get_CMap_Format</b>( <a href="ft2-character_mapping.html#ft_charmap">FT_CharMap</a>  charmap );
+</code></pre></div>
+
+<p>Return the format of an SFNT &lsquo;cmap&rsquo; table.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="charmap">charmap</td><td class="desc">
+<p>The target charmap.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>The format of <code>charmap</code>. If <code>charmap</code> doesn't belong to an SFNT face, return -1.</p>
+<hr>
+
+<h2 id="ft_param_tag_unpatented_hinting">FT_PARAM_TAG_UNPATENTED_HINTING<a class="headerlink" href="#ft_param_tag_unpatented_hinting" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_PARAM_TAG_UNPATENTED_HINTING</b> \
+          <a href="ft2-basic_types.html#ft_make_tag">FT_MAKE_TAG</a>( 'u', 'n', 'p', 'a' )
+</code></pre></div>
+
+<p>Deprecated, no effect.</p>
+<p>Previously: A constant used as the tag of an <code><a href="ft2-face_creation.html#ft_parameter">FT_Parameter</a></code> structure to indicate that unpatented methods only should be used by the TrueType bytecode interpreter for a typeface opened by <code><a href="ft2-face_creation.html#ft_open_face">FT_Open_Face</a></code>.</p>
+<hr>
+
+<h2 id="tt_platform_xxx">TT_PLATFORM_XXX<a class="headerlink" href="#tt_platform_xxx" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRUETYPE_IDS_H (freetype/ttnameid.h).</p>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <a href="ft2-truetype_tables.html#tt_platform_apple_unicode">TT_PLATFORM_APPLE_UNICODE</a>  0
+#<span class="keyword">define</span> <a href="ft2-truetype_tables.html#tt_platform_macintosh">TT_PLATFORM_MACINTOSH</a>      1
+#<span class="keyword">define</span> <a href="ft2-truetype_tables.html#tt_platform_iso">TT_PLATFORM_ISO</a>            2 /* deprecated */
+#<span class="keyword">define</span> <a href="ft2-truetype_tables.html#tt_platform_microsoft">TT_PLATFORM_MICROSOFT</a>      3
+#<span class="keyword">define</span> <a href="ft2-truetype_tables.html#tt_platform_custom">TT_PLATFORM_CUSTOM</a>         4
+#<span class="keyword">define</span> <a href="ft2-truetype_tables.html#tt_platform_adobe">TT_PLATFORM_ADOBE</a>          7 /* artificial */
+</code></pre></div>
+
+<p>A list of valid values for the <code>platform_id</code> identifier code in <code><a href="ft2-character_mapping.html#ft_charmaprec">FT_CharMapRec</a></code> and <code><a href="ft2-sfnt_names.html#ft_sfntname">FT_SfntName</a></code> structures.</p>
+<h4>values</h4>
+<table class="fields">
+<tr><td class="val" id="tt_platform_apple_unicode">TT_PLATFORM_APPLE_UNICODE</td><td class="desc">
+<p>Used by Apple to indicate a Unicode character map and/or name entry. See <code><a href="ft2-truetype_tables.html#tt_apple_id_xxx">TT_APPLE_ID_XXX</a></code> for corresponding <code>encoding_id</code> values. Note that name entries in this format are coded as big-endian UCS-2 character codes <em>only</em>.</p>
+</td></tr>
+<tr><td class="val" id="tt_platform_macintosh">TT_PLATFORM_MACINTOSH</td><td class="desc">
+<p>Used by Apple to indicate a MacOS-specific charmap and/or name entry. See <code><a href="ft2-truetype_tables.html#tt_mac_id_xxx">TT_MAC_ID_XXX</a></code> for corresponding <code>encoding_id</code> values. Note that most TrueType fonts contain an Apple roman charmap to be usable on MacOS systems (even if they contain a Microsoft charmap as well).</p>
+</td></tr>
+<tr><td class="val" id="tt_platform_iso">TT_PLATFORM_ISO</td><td class="desc">
+<p>This value was used to specify ISO/IEC 10646 charmaps. It is however now deprecated. See <code><a href="ft2-truetype_tables.html#tt_iso_id_xxx">TT_ISO_ID_XXX</a></code> for a list of corresponding <code>encoding_id</code> values.</p>
+</td></tr>
+<tr><td class="val" id="tt_platform_microsoft">TT_PLATFORM_MICROSOFT</td><td class="desc">
+<p>Used by Microsoft to indicate Windows-specific charmaps. See <code><a href="ft2-truetype_tables.html#tt_ms_id_xxx">TT_MS_ID_XXX</a></code> for a list of corresponding <code>encoding_id</code> values. Note that most fonts contain a Unicode charmap using (<code>TT_PLATFORM_MICROSOFT</code>, <code><a href="ft2-truetype_tables.html#tt_ms_id_xxx">TT_MS_ID_UNICODE_CS</a></code>).</p>
+</td></tr>
+<tr><td class="val" id="tt_platform_custom">TT_PLATFORM_CUSTOM</td><td class="desc">
+<p>Used to indicate application-specific charmaps.</p>
+</td></tr>
+<tr><td class="val" id="tt_platform_adobe">TT_PLATFORM_ADOBE</td><td class="desc">
+<p>This value isn't part of any font format specification, but is used by FreeType to report Adobe-specific charmaps in an <code><a href="ft2-character_mapping.html#ft_charmaprec">FT_CharMapRec</a></code> structure. See <code><a href="ft2-truetype_tables.html#tt_adobe_id_xxx">TT_ADOBE_ID_XXX</a></code>.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="tt_apple_id_xxx">TT_APPLE_ID_XXX<a class="headerlink" href="#tt_apple_id_xxx" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRUETYPE_IDS_H (freetype/ttnameid.h).</p>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <a href="ft2-truetype_tables.html#tt_apple_id_default">TT_APPLE_ID_DEFAULT</a>           0 /* Unicode 1.0                   */
+#<span class="keyword">define</span> <a href="ft2-truetype_tables.html#tt_apple_id_unicode_1_1">TT_APPLE_ID_UNICODE_1_1</a>       1 /* specify Hangul at U+34xx      */
+#<span class="keyword">define</span> <a href="ft2-truetype_tables.html#tt_apple_id_iso_10646">TT_APPLE_ID_ISO_10646</a>         2 /* deprecated                    */
+#<span class="keyword">define</span> <a href="ft2-truetype_tables.html#tt_apple_id_unicode_2_0">TT_APPLE_ID_UNICODE_2_0</a>       3 /* or later                      */
+#<span class="keyword">define</span> <a href="ft2-truetype_tables.html#tt_apple_id_unicode_32">TT_APPLE_ID_UNICODE_32</a>        4 /* 2.0 or later, full repertoire */
+#<span class="keyword">define</span> <a href="ft2-truetype_tables.html#tt_apple_id_variant_selector">TT_APPLE_ID_VARIANT_SELECTOR</a>  5 /* variation selector data       */
+#<span class="keyword">define</span> <a href="ft2-truetype_tables.html#tt_apple_id_full_unicode">TT_APPLE_ID_FULL_UNICODE</a>      6 /* used with type 13 cmaps       */
+</code></pre></div>
+
+<p>A list of valid values for the <code>encoding_id</code> for <code><a href="ft2-truetype_tables.html#tt_platform_xxx">TT_PLATFORM_APPLE_UNICODE</a></code> charmaps and name entries.</p>
+<h4>values</h4>
+<table class="fields long">
+<tr><td class="val" id="tt_apple_id_default">TT_APPLE_ID_DEFAULT</td><td class="desc">
+<p>Unicode version 1.0.</p>
+</td></tr>
+<tr><td class="val" id="tt_apple_id_unicode_1_1">TT_APPLE_ID_UNICODE_1_1</td><td class="desc">
+<p>Unicode 1.1; specifies Hangul characters starting at U+34xx.</p>
+</td></tr>
+<tr><td class="val" id="tt_apple_id_iso_10646">TT_APPLE_ID_ISO_10646</td><td class="desc">
+<p>Deprecated (identical to preceding).</p>
+</td></tr>
+<tr><td class="val" id="tt_apple_id_unicode_2_0">TT_APPLE_ID_UNICODE_2_0</td><td class="desc">
+<p>Unicode 2.0 and beyond (UTF-16 BMP only).</p>
+</td></tr>
+<tr><td class="val" id="tt_apple_id_unicode_32">TT_APPLE_ID_UNICODE_32</td><td class="desc">
+<p>Unicode 3.1 and beyond, using UTF-32.</p>
+</td></tr>
+<tr><td class="val" id="tt_apple_id_variant_selector">TT_APPLE_ID_VARIANT_SELECTOR</td><td class="desc">
+<p>From Adobe, not Apple. Not a normal cmap. Specifies variations on a real cmap.</p>
+</td></tr>
+<tr><td class="val" id="tt_apple_id_full_unicode">TT_APPLE_ID_FULL_UNICODE</td><td class="desc">
+<p>Used for fallback fonts that provide complete Unicode coverage with a type&nbsp;13 cmap.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="tt_mac_id_xxx">TT_MAC_ID_XXX<a class="headerlink" href="#tt_mac_id_xxx" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRUETYPE_IDS_H (freetype/ttnameid.h).</p>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> TT_MAC_ID_ROMAN                 0
+#<span class="keyword">define</span> TT_MAC_ID_JAPANESE              1
+#<span class="keyword">define</span> TT_MAC_ID_TRADITIONAL_CHINESE   2
+#<span class="keyword">define</span> TT_MAC_ID_KOREAN                3
+#<span class="keyword">define</span> TT_MAC_ID_ARABIC                4
+#<span class="keyword">define</span> TT_MAC_ID_HEBREW                5
+#<span class="keyword">define</span> TT_MAC_ID_GREEK                 6
+#<span class="keyword">define</span> TT_MAC_ID_RUSSIAN               7
+#<span class="keyword">define</span> TT_MAC_ID_RSYMBOL               8
+#<span class="keyword">define</span> TT_MAC_ID_DEVANAGARI            9
+#<span class="keyword">define</span> TT_MAC_ID_GURMUKHI             10
+#<span class="keyword">define</span> TT_MAC_ID_GUJARATI             11
+#<span class="keyword">define</span> TT_MAC_ID_ORIYA                12
+#<span class="keyword">define</span> TT_MAC_ID_BENGALI              13
+#<span class="keyword">define</span> TT_MAC_ID_TAMIL                14
+#<span class="keyword">define</span> TT_MAC_ID_TELUGU               15
+#<span class="keyword">define</span> TT_MAC_ID_KANNADA              16
+#<span class="keyword">define</span> TT_MAC_ID_MALAYALAM            17
+#<span class="keyword">define</span> TT_MAC_ID_SINHALESE            18
+#<span class="keyword">define</span> TT_MAC_ID_BURMESE              19
+#<span class="keyword">define</span> TT_MAC_ID_KHMER                20
+#<span class="keyword">define</span> TT_MAC_ID_THAI                 21
+#<span class="keyword">define</span> TT_MAC_ID_LAOTIAN              22
+#<span class="keyword">define</span> TT_MAC_ID_GEORGIAN             23
+#<span class="keyword">define</span> TT_MAC_ID_ARMENIAN             24
+#<span class="keyword">define</span> TT_MAC_ID_MALDIVIAN            25
+#<span class="keyword">define</span> TT_MAC_ID_SIMPLIFIED_CHINESE   25
+#<span class="keyword">define</span> TT_MAC_ID_TIBETAN              26
+#<span class="keyword">define</span> TT_MAC_ID_MONGOLIAN            27
+#<span class="keyword">define</span> TT_MAC_ID_GEEZ                 28
+#<span class="keyword">define</span> TT_MAC_ID_SLAVIC               29
+#<span class="keyword">define</span> TT_MAC_ID_VIETNAMESE           30
+#<span class="keyword">define</span> TT_MAC_ID_SINDHI               31
+#<span class="keyword">define</span> TT_MAC_ID_UNINTERP             32
+</code></pre></div>
+
+<p>A list of valid values for the <code>encoding_id</code> for <code><a href="ft2-truetype_tables.html#tt_platform_xxx">TT_PLATFORM_MACINTOSH</a></code> charmaps and name entries.</p>
+<hr>
+
+<h2 id="tt_iso_id_xxx">TT_ISO_ID_XXX<a class="headerlink" href="#tt_iso_id_xxx" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRUETYPE_IDS_H (freetype/ttnameid.h).</p>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <a href="ft2-truetype_tables.html#tt_iso_id_7bit_ascii">TT_ISO_ID_7BIT_ASCII</a>  0
+#<span class="keyword">define</span> <a href="ft2-truetype_tables.html#tt_iso_id_10646">TT_ISO_ID_10646</a>       1
+#<span class="keyword">define</span> <a href="ft2-truetype_tables.html#tt_iso_id_8859_1">TT_ISO_ID_8859_1</a>      2
+</code></pre></div>
+
+<p>A list of valid values for the <code>encoding_id</code> for <code><a href="ft2-truetype_tables.html#tt_platform_xxx">TT_PLATFORM_ISO</a></code> charmaps and name entries.</p>
+<p>Their use is now deprecated.</p>
+<h4>values</h4>
+<table class="fields">
+<tr><td class="val" id="tt_iso_id_7bit_ascii">TT_ISO_ID_7BIT_ASCII</td><td class="desc">
+<p>ASCII.</p>
+</td></tr>
+<tr><td class="val" id="tt_iso_id_10646">TT_ISO_ID_10646</td><td class="desc">
+<p>ISO/10646.</p>
+</td></tr>
+<tr><td class="val" id="tt_iso_id_8859_1">TT_ISO_ID_8859_1</td><td class="desc">
+<p>Also known as Latin-1.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="tt_ms_id_xxx">TT_MS_ID_XXX<a class="headerlink" href="#tt_ms_id_xxx" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRUETYPE_IDS_H (freetype/ttnameid.h).</p>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <a href="ft2-truetype_tables.html#tt_ms_id_symbol_cs">TT_MS_ID_SYMBOL_CS</a>    0
+#<span class="keyword">define</span> <a href="ft2-truetype_tables.html#tt_ms_id_unicode_cs">TT_MS_ID_UNICODE_CS</a>   1
+#<span class="keyword">define</span> <a href="ft2-truetype_tables.html#tt_ms_id_sjis">TT_MS_ID_SJIS</a>         2
+#<span class="keyword">define</span> <a href="ft2-truetype_tables.html#tt_ms_id_prc">TT_MS_ID_PRC</a>          3
+#<span class="keyword">define</span> <a href="ft2-truetype_tables.html#tt_ms_id_big_5">TT_MS_ID_BIG_5</a>        4
+#<span class="keyword">define</span> <a href="ft2-truetype_tables.html#tt_ms_id_wansung">TT_MS_ID_WANSUNG</a>      5
+#<span class="keyword">define</span> <a href="ft2-truetype_tables.html#tt_ms_id_johab">TT_MS_ID_JOHAB</a>        6
+#<span class="keyword">define</span> <a href="ft2-truetype_tables.html#tt_ms_id_ucs_4">TT_MS_ID_UCS_4</a>       10
+
+  /* this value is deprecated */
+#<span class="keyword">define</span> TT_MS_ID_GB2312  <a href="ft2-truetype_tables.html#tt_ms_id_prc">TT_MS_ID_PRC</a>
+</code></pre></div>
+
+<p>A list of valid values for the <code>encoding_id</code> for <code><a href="ft2-truetype_tables.html#tt_platform_xxx">TT_PLATFORM_MICROSOFT</a></code> charmaps and name entries.</p>
+<h4>values</h4>
+<table class="fields">
+<tr><td class="val" id="tt_ms_id_symbol_cs">TT_MS_ID_SYMBOL_CS</td><td class="desc">
+<p>Microsoft symbol encoding. See <code><a href="ft2-character_mapping.html#ft_encoding">FT_ENCODING_MS_SYMBOL</a></code>.</p>
+</td></tr>
+<tr><td class="val" id="tt_ms_id_unicode_cs">TT_MS_ID_UNICODE_CS</td><td class="desc">
+<p>Microsoft WGL4 charmap, matching Unicode. See <code><a href="ft2-character_mapping.html#ft_encoding">FT_ENCODING_UNICODE</a></code>.</p>
+</td></tr>
+<tr><td class="val" id="tt_ms_id_sjis">TT_MS_ID_SJIS</td><td class="desc">
+<p>Shift JIS Japanese encoding. See <code><a href="ft2-character_mapping.html#ft_encoding">FT_ENCODING_SJIS</a></code>.</p>
+</td></tr>
+<tr><td class="val" id="tt_ms_id_prc">TT_MS_ID_PRC</td><td class="desc">
+<p>Chinese encodings as used in the People's Republic of China (PRC). This means the encodings GB&nbsp;2312 and its supersets GBK and GB&nbsp;18030. See <code><a href="ft2-character_mapping.html#ft_encoding">FT_ENCODING_PRC</a></code>.</p>
+</td></tr>
+<tr><td class="val" id="tt_ms_id_big_5">TT_MS_ID_BIG_5</td><td class="desc">
+<p>Traditional Chinese as used in Taiwan and Hong Kong. See <code><a href="ft2-character_mapping.html#ft_encoding">FT_ENCODING_BIG5</a></code>.</p>
+</td></tr>
+<tr><td class="val" id="tt_ms_id_wansung">TT_MS_ID_WANSUNG</td><td class="desc">
+<p>Korean Extended Wansung encoding. See <code><a href="ft2-character_mapping.html#ft_encoding">FT_ENCODING_WANSUNG</a></code>.</p>
+</td></tr>
+<tr><td class="val" id="tt_ms_id_johab">TT_MS_ID_JOHAB</td><td class="desc">
+<p>Korean Johab encoding. See <code><a href="ft2-character_mapping.html#ft_encoding">FT_ENCODING_JOHAB</a></code>.</p>
+</td></tr>
+<tr><td class="val" id="tt_ms_id_ucs_4">TT_MS_ID_UCS_4</td><td class="desc">
+<p>UCS-4 or UTF-32 charmaps. This has been added to the OpenType specification version 1.4 (mid-2001).</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="tt_adobe_id_xxx">TT_ADOBE_ID_XXX<a class="headerlink" href="#tt_adobe_id_xxx" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRUETYPE_IDS_H (freetype/ttnameid.h).</p>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <a href="ft2-truetype_tables.html#tt_adobe_id_standard">TT_ADOBE_ID_STANDARD</a>  0
+#<span class="keyword">define</span> <a href="ft2-truetype_tables.html#tt_adobe_id_expert">TT_ADOBE_ID_EXPERT</a>    1
+#<span class="keyword">define</span> <a href="ft2-truetype_tables.html#tt_adobe_id_custom">TT_ADOBE_ID_CUSTOM</a>    2
+#<span class="keyword">define</span> <a href="ft2-truetype_tables.html#tt_adobe_id_latin_1">TT_ADOBE_ID_LATIN_1</a>   3
+</code></pre></div>
+
+<p>A list of valid values for the <code>encoding_id</code> for <code><a href="ft2-truetype_tables.html#tt_platform_xxx">TT_PLATFORM_ADOBE</a></code> charmaps. This is a FreeType-specific extension!</p>
+<h4>values</h4>
+<table class="fields">
+<tr><td class="val" id="tt_adobe_id_standard">TT_ADOBE_ID_STANDARD</td><td class="desc">
+<p>Adobe standard encoding.</p>
+</td></tr>
+<tr><td class="val" id="tt_adobe_id_expert">TT_ADOBE_ID_EXPERT</td><td class="desc">
+<p>Adobe expert encoding.</p>
+</td></tr>
+<tr><td class="val" id="tt_adobe_id_custom">TT_ADOBE_ID_CUSTOM</td><td class="desc">
+<p>Adobe custom encoding.</p>
+</td></tr>
+<tr><td class="val" id="tt_adobe_id_latin_1">TT_ADOBE_ID_LATIN_1</td><td class="desc">
+<p>Adobe Latin&nbsp;1 encoding.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="tt_mac_langid_xxx">TT_MAC_LANGID_XXX<a class="headerlink" href="#tt_mac_langid_xxx" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRUETYPE_IDS_H (freetype/ttnameid.h).</p>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> TT_MAC_LANGID_ENGLISH                       0
+#<span class="keyword">define</span> TT_MAC_LANGID_FRENCH                        1
+#<span class="keyword">define</span> TT_MAC_LANGID_GERMAN                        2
+#<span class="keyword">define</span> TT_MAC_LANGID_ITALIAN                       3
+#<span class="keyword">define</span> TT_MAC_LANGID_DUTCH                         4
+#<span class="keyword">define</span> TT_MAC_LANGID_SWEDISH                       5
+#<span class="keyword">define</span> TT_MAC_LANGID_SPANISH                       6
+#<span class="keyword">define</span> TT_MAC_LANGID_DANISH                        7
+#<span class="keyword">define</span> TT_MAC_LANGID_PORTUGUESE                    8
+#<span class="keyword">define</span> TT_MAC_LANGID_NORWEGIAN                     9
+#<span class="keyword">define</span> TT_MAC_LANGID_HEBREW                       10
+#<span class="keyword">define</span> TT_MAC_LANGID_JAPANESE                     11
+#<span class="keyword">define</span> TT_MAC_LANGID_ARABIC                       12
+#<span class="keyword">define</span> TT_MAC_LANGID_FINNISH                      13
+#<span class="keyword">define</span> TT_MAC_LANGID_GREEK                        14
+#<span class="keyword">define</span> TT_MAC_LANGID_ICELANDIC                    15
+#<span class="keyword">define</span> TT_MAC_LANGID_MALTESE                      16
+#<span class="keyword">define</span> TT_MAC_LANGID_TURKISH                      17
+#<span class="keyword">define</span> TT_MAC_LANGID_CROATIAN                     18
+#<span class="keyword">define</span> TT_MAC_LANGID_CHINESE_TRADITIONAL          19
+#<span class="keyword">define</span> TT_MAC_LANGID_URDU                         20
+#<span class="keyword">define</span> TT_MAC_LANGID_HINDI                        21
+#<span class="keyword">define</span> TT_MAC_LANGID_THAI                         22
+#<span class="keyword">define</span> TT_MAC_LANGID_KOREAN                       23
+#<span class="keyword">define</span> TT_MAC_LANGID_LITHUANIAN                   24
+#<span class="keyword">define</span> TT_MAC_LANGID_POLISH                       25
+#<span class="keyword">define</span> TT_MAC_LANGID_HUNGARIAN                    26
+#<span class="keyword">define</span> TT_MAC_LANGID_ESTONIAN                     27
+#<span class="keyword">define</span> TT_MAC_LANGID_LETTISH                      28
+#<span class="keyword">define</span> TT_MAC_LANGID_SAAMISK                      29
+#<span class="keyword">define</span> TT_MAC_LANGID_FAEROESE                     30
+#<span class="keyword">define</span> TT_MAC_LANGID_FARSI                        31
+#<span class="keyword">define</span> TT_MAC_LANGID_RUSSIAN                      32
+#<span class="keyword">define</span> TT_MAC_LANGID_CHINESE_SIMPLIFIED           33
+#<span class="keyword">define</span> TT_MAC_LANGID_FLEMISH                      34
+#<span class="keyword">define</span> TT_MAC_LANGID_IRISH                        35
+#<span class="keyword">define</span> TT_MAC_LANGID_ALBANIAN                     36
+#<span class="keyword">define</span> TT_MAC_LANGID_ROMANIAN                     37
+#<span class="keyword">define</span> TT_MAC_LANGID_CZECH                        38
+#<span class="keyword">define</span> TT_MAC_LANGID_SLOVAK                       39
+#<span class="keyword">define</span> TT_MAC_LANGID_SLOVENIAN                    40
+#<span class="keyword">define</span> TT_MAC_LANGID_YIDDISH                      41
+#<span class="keyword">define</span> TT_MAC_LANGID_SERBIAN                      42
+#<span class="keyword">define</span> TT_MAC_LANGID_MACEDONIAN                   43
+#<span class="keyword">define</span> TT_MAC_LANGID_BULGARIAN                    44
+#<span class="keyword">define</span> TT_MAC_LANGID_UKRAINIAN                    45
+#<span class="keyword">define</span> TT_MAC_LANGID_BYELORUSSIAN                 46
+#<span class="keyword">define</span> TT_MAC_LANGID_UZBEK                        47
+#<span class="keyword">define</span> TT_MAC_LANGID_KAZAKH                       48
+#<span class="keyword">define</span> TT_MAC_LANGID_AZERBAIJANI                  49
+#<span class="keyword">define</span> TT_MAC_LANGID_AZERBAIJANI_CYRILLIC_SCRIPT  49
+#<span class="keyword">define</span> TT_MAC_LANGID_AZERBAIJANI_ARABIC_SCRIPT    50
+#<span class="keyword">define</span> TT_MAC_LANGID_ARMENIAN                     51
+#<span class="keyword">define</span> TT_MAC_LANGID_GEORGIAN                     52
+#<span class="keyword">define</span> TT_MAC_LANGID_MOLDAVIAN                    53
+#<span class="keyword">define</span> TT_MAC_LANGID_KIRGHIZ                      54
+#<span class="keyword">define</span> TT_MAC_LANGID_TAJIKI                       55
+#<span class="keyword">define</span> TT_MAC_LANGID_TURKMEN                      56
+#<span class="keyword">define</span> TT_MAC_LANGID_MONGOLIAN                    57
+#<span class="keyword">define</span> TT_MAC_LANGID_MONGOLIAN_MONGOLIAN_SCRIPT   57
+#<span class="keyword">define</span> TT_MAC_LANGID_MONGOLIAN_CYRILLIC_SCRIPT    58
+#<span class="keyword">define</span> TT_MAC_LANGID_PASHTO                       59
+#<span class="keyword">define</span> TT_MAC_LANGID_KURDISH                      60
+#<span class="keyword">define</span> TT_MAC_LANGID_KASHMIRI                     61
+#<span class="keyword">define</span> TT_MAC_LANGID_SINDHI                       62
+#<span class="keyword">define</span> TT_MAC_LANGID_TIBETAN                      63
+#<span class="keyword">define</span> TT_MAC_LANGID_NEPALI                       64
+#<span class="keyword">define</span> TT_MAC_LANGID_SANSKRIT                     65
+#<span class="keyword">define</span> TT_MAC_LANGID_MARATHI                      66
+#<span class="keyword">define</span> TT_MAC_LANGID_BENGALI                      67
+#<span class="keyword">define</span> TT_MAC_LANGID_ASSAMESE                     68
+#<span class="keyword">define</span> TT_MAC_LANGID_GUJARATI                     69
+#<span class="keyword">define</span> TT_MAC_LANGID_PUNJABI                      70
+#<span class="keyword">define</span> TT_MAC_LANGID_ORIYA                        71
+#<span class="keyword">define</span> TT_MAC_LANGID_MALAYALAM                    72
+#<span class="keyword">define</span> TT_MAC_LANGID_KANNADA                      73
+#<span class="keyword">define</span> TT_MAC_LANGID_TAMIL                        74
+#<span class="keyword">define</span> TT_MAC_LANGID_TELUGU                       75
+#<span class="keyword">define</span> TT_MAC_LANGID_SINHALESE                    76
+#<span class="keyword">define</span> TT_MAC_LANGID_BURMESE                      77
+#<span class="keyword">define</span> TT_MAC_LANGID_KHMER                        78
+#<span class="keyword">define</span> TT_MAC_LANGID_LAO                          79
+#<span class="keyword">define</span> TT_MAC_LANGID_VIETNAMESE                   80
+#<span class="keyword">define</span> TT_MAC_LANGID_INDONESIAN                   81
+#<span class="keyword">define</span> TT_MAC_LANGID_TAGALOG                      82
+#<span class="keyword">define</span> TT_MAC_LANGID_MALAY_ROMAN_SCRIPT           83
+#<span class="keyword">define</span> TT_MAC_LANGID_MALAY_ARABIC_SCRIPT          84
+#<span class="keyword">define</span> TT_MAC_LANGID_AMHARIC                      85
+#<span class="keyword">define</span> TT_MAC_LANGID_TIGRINYA                     86
+#<span class="keyword">define</span> TT_MAC_LANGID_GALLA                        87
+#<span class="keyword">define</span> TT_MAC_LANGID_SOMALI                       88
+#<span class="keyword">define</span> TT_MAC_LANGID_SWAHILI                      89
+#<span class="keyword">define</span> TT_MAC_LANGID_RUANDA                       90
+#<span class="keyword">define</span> TT_MAC_LANGID_RUNDI                        91
+#<span class="keyword">define</span> TT_MAC_LANGID_CHEWA                        92
+#<span class="keyword">define</span> TT_MAC_LANGID_MALAGASY                     93
+#<span class="keyword">define</span> TT_MAC_LANGID_ESPERANTO                    94
+#<span class="keyword">define</span> TT_MAC_LANGID_WELSH                       128
+#<span class="keyword">define</span> TT_MAC_LANGID_BASQUE                      129
+#<span class="keyword">define</span> TT_MAC_LANGID_CATALAN                     130
+#<span class="keyword">define</span> TT_MAC_LANGID_LATIN                       131
+#<span class="keyword">define</span> TT_MAC_LANGID_QUECHUA                     132
+#<span class="keyword">define</span> TT_MAC_LANGID_GUARANI                     133
+#<span class="keyword">define</span> TT_MAC_LANGID_AYMARA                      134
+#<span class="keyword">define</span> TT_MAC_LANGID_TATAR                       135
+#<span class="keyword">define</span> TT_MAC_LANGID_UIGHUR                      136
+#<span class="keyword">define</span> TT_MAC_LANGID_DZONGKHA                    137
+#<span class="keyword">define</span> TT_MAC_LANGID_JAVANESE                    138
+#<span class="keyword">define</span> TT_MAC_LANGID_SUNDANESE                   139
+
+  /* The following codes are new as of 2000-03-10 */
+#<span class="keyword">define</span> TT_MAC_LANGID_GALICIAN                    140
+#<span class="keyword">define</span> TT_MAC_LANGID_AFRIKAANS                   141
+#<span class="keyword">define</span> TT_MAC_LANGID_BRETON                      142
+#<span class="keyword">define</span> TT_MAC_LANGID_INUKTITUT                   143
+#<span class="keyword">define</span> TT_MAC_LANGID_SCOTTISH_GAELIC             144
+#<span class="keyword">define</span> TT_MAC_LANGID_MANX_GAELIC                 145
+#<span class="keyword">define</span> TT_MAC_LANGID_IRISH_GAELIC                146
+#<span class="keyword">define</span> TT_MAC_LANGID_TONGAN                      147
+#<span class="keyword">define</span> TT_MAC_LANGID_GREEK_POLYTONIC             148
+#<span class="keyword">define</span> TT_MAC_LANGID_GREELANDIC                  149
+#<span class="keyword">define</span> TT_MAC_LANGID_AZERBAIJANI_ROMAN_SCRIPT    150
+</code></pre></div>
+
+<p>Possible values of the language identifier field in the name records of the SFNT &lsquo;name&rsquo; table if the &lsquo;platform&rsquo; identifier code is <code><a href="ft2-truetype_tables.html#tt_platform_xxx">TT_PLATFORM_MACINTOSH</a></code>. These values are also used as return values for function <code><a href="ft2-truetype_tables.html#ft_get_cmap_language_id">FT_Get_CMap_Language_ID</a></code>.</p>
+<p>The canonical source for Apple's IDs is</p>
+<p><a href="https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6name.html">https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6name.html</a></p>
+<hr>
+
+<h2 id="tt_ms_langid_xxx">TT_MS_LANGID_XXX<a class="headerlink" href="#tt_ms_langid_xxx" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRUETYPE_IDS_H (freetype/ttnameid.h).</p>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> TT_MS_LANGID_ARABIC_SAUDI_ARABIA               0x0401
+#<span class="keyword">define</span> TT_MS_LANGID_ARABIC_IRAQ                       0x0801
+#<span class="keyword">define</span> TT_MS_LANGID_ARABIC_EGYPT                      0x0C01
+#<span class="keyword">define</span> TT_MS_LANGID_ARABIC_LIBYA                      0x1001
+#<span class="keyword">define</span> TT_MS_LANGID_ARABIC_ALGERIA                    0x1401
+#<span class="keyword">define</span> TT_MS_LANGID_ARABIC_MOROCCO                    0x1801
+#<span class="keyword">define</span> TT_MS_LANGID_ARABIC_TUNISIA                    0x1C01
+#<span class="keyword">define</span> TT_MS_LANGID_ARABIC_OMAN                       0x2001
+#<span class="keyword">define</span> TT_MS_LANGID_ARABIC_YEMEN                      0x2401
+#<span class="keyword">define</span> TT_MS_LANGID_ARABIC_SYRIA                      0x2801
+#<span class="keyword">define</span> TT_MS_LANGID_ARABIC_JORDAN                     0x2C01
+#<span class="keyword">define</span> TT_MS_LANGID_ARABIC_LEBANON                    0x3001
+#<span class="keyword">define</span> TT_MS_LANGID_ARABIC_KUWAIT                     0x3401
+#<span class="keyword">define</span> TT_MS_LANGID_ARABIC_UAE                        0x3801
+#<span class="keyword">define</span> TT_MS_LANGID_ARABIC_BAHRAIN                    0x3C01
+#<span class="keyword">define</span> TT_MS_LANGID_ARABIC_QATAR                      0x4001
+#<span class="keyword">define</span> TT_MS_LANGID_BULGARIAN_BULGARIA                0x0402
+#<span class="keyword">define</span> TT_MS_LANGID_CATALAN_CATALAN                   0x0403
+#<span class="keyword">define</span> TT_MS_LANGID_CHINESE_TAIWAN                    0x0404
+#<span class="keyword">define</span> TT_MS_LANGID_CHINESE_PRC                       0x0804
+#<span class="keyword">define</span> TT_MS_LANGID_CHINESE_HONG_KONG                 0x0C04
+#<span class="keyword">define</span> TT_MS_LANGID_CHINESE_SINGAPORE                 0x1004
+#<span class="keyword">define</span> TT_MS_LANGID_CHINESE_MACAO                     0x1404
+#<span class="keyword">define</span> TT_MS_LANGID_CZECH_CZECH_REPUBLIC              0x0405
+#<span class="keyword">define</span> TT_MS_LANGID_DANISH_DENMARK                    0x0406
+#<span class="keyword">define</span> TT_MS_LANGID_GERMAN_GERMANY                    0x0407
+#<span class="keyword">define</span> TT_MS_LANGID_GERMAN_SWITZERLAND                0x0807
+#<span class="keyword">define</span> TT_MS_LANGID_GERMAN_AUSTRIA                    0x0C07
+#<span class="keyword">define</span> TT_MS_LANGID_GERMAN_LUXEMBOURG                 0x1007
+#<span class="keyword">define</span> TT_MS_LANGID_GERMAN_LIECHTENSTEIN              0x1407
+#<span class="keyword">define</span> TT_MS_LANGID_GREEK_GREECE                      0x0408
+#<span class="keyword">define</span> TT_MS_LANGID_ENGLISH_UNITED_STATES             0x0409
+#<span class="keyword">define</span> TT_MS_LANGID_ENGLISH_UNITED_KINGDOM            0x0809
+#<span class="keyword">define</span> TT_MS_LANGID_ENGLISH_AUSTRALIA                 0x0C09
+#<span class="keyword">define</span> TT_MS_LANGID_ENGLISH_CANADA                    0x1009
+#<span class="keyword">define</span> TT_MS_LANGID_ENGLISH_NEW_ZEALAND               0x1409
+#<span class="keyword">define</span> TT_MS_LANGID_ENGLISH_IRELAND                   0x1809
+#<span class="keyword">define</span> TT_MS_LANGID_ENGLISH_SOUTH_AFRICA              0x1C09
+#<span class="keyword">define</span> TT_MS_LANGID_ENGLISH_JAMAICA                   0x2009
+#<span class="keyword">define</span> TT_MS_LANGID_ENGLISH_CARIBBEAN                 0x2409
+#<span class="keyword">define</span> TT_MS_LANGID_ENGLISH_BELIZE                    0x2809
+#<span class="keyword">define</span> TT_MS_LANGID_ENGLISH_TRINIDAD                  0x2C09
+#<span class="keyword">define</span> TT_MS_LANGID_ENGLISH_ZIMBABWE                  0x3009
+#<span class="keyword">define</span> TT_MS_LANGID_ENGLISH_PHILIPPINES               0x3409
+#<span class="keyword">define</span> TT_MS_LANGID_ENGLISH_INDIA                     0x4009
+#<span class="keyword">define</span> TT_MS_LANGID_ENGLISH_MALAYSIA                  0x4409
+#<span class="keyword">define</span> TT_MS_LANGID_ENGLISH_SINGAPORE                 0x4809
+#<span class="keyword">define</span> TT_MS_LANGID_SPANISH_SPAIN_TRADITIONAL_SORT    0x040A
+#<span class="keyword">define</span> TT_MS_LANGID_SPANISH_MEXICO                    0x080A
+#<span class="keyword">define</span> TT_MS_LANGID_SPANISH_SPAIN_MODERN_SORT         0x0C0A
+#<span class="keyword">define</span> TT_MS_LANGID_SPANISH_GUATEMALA                 0x100A
+#<span class="keyword">define</span> TT_MS_LANGID_SPANISH_COSTA_RICA                0x140A
+#<span class="keyword">define</span> TT_MS_LANGID_SPANISH_PANAMA                    0x180A
+#<span class="keyword">define</span> TT_MS_LANGID_SPANISH_DOMINICAN_REPUBLIC        0x1C0A
+#<span class="keyword">define</span> TT_MS_LANGID_SPANISH_VENEZUELA                 0x200A
+#<span class="keyword">define</span> TT_MS_LANGID_SPANISH_COLOMBIA                  0x240A
+#<span class="keyword">define</span> TT_MS_LANGID_SPANISH_PERU                      0x280A
+#<span class="keyword">define</span> TT_MS_LANGID_SPANISH_ARGENTINA                 0x2C0A
+#<span class="keyword">define</span> TT_MS_LANGID_SPANISH_ECUADOR                   0x300A
+#<span class="keyword">define</span> TT_MS_LANGID_SPANISH_CHILE                     0x340A
+#<span class="keyword">define</span> TT_MS_LANGID_SPANISH_URUGUAY                   0x380A
+#<span class="keyword">define</span> TT_MS_LANGID_SPANISH_PARAGUAY                  0x3C0A
+#<span class="keyword">define</span> TT_MS_LANGID_SPANISH_BOLIVIA                   0x400A
+#<span class="keyword">define</span> TT_MS_LANGID_SPANISH_EL_SALVADOR               0x440A
+#<span class="keyword">define</span> TT_MS_LANGID_SPANISH_HONDURAS                  0x480A
+#<span class="keyword">define</span> TT_MS_LANGID_SPANISH_NICARAGUA                 0x4C0A
+#<span class="keyword">define</span> TT_MS_LANGID_SPANISH_PUERTO_RICO               0x500A
+#<span class="keyword">define</span> TT_MS_LANGID_SPANISH_UNITED_STATES             0x540A
+#<span class="keyword">define</span> TT_MS_LANGID_FINNISH_FINLAND                   0x040B
+#<span class="keyword">define</span> TT_MS_LANGID_FRENCH_FRANCE                     0x040C
+#<span class="keyword">define</span> TT_MS_LANGID_FRENCH_BELGIUM                    0x080C
+#<span class="keyword">define</span> TT_MS_LANGID_FRENCH_CANADA                     0x0C0C
+#<span class="keyword">define</span> TT_MS_LANGID_FRENCH_SWITZERLAND                0x100C
+#<span class="keyword">define</span> TT_MS_LANGID_FRENCH_LUXEMBOURG                 0x140C
+#<span class="keyword">define</span> TT_MS_LANGID_FRENCH_MONACO                     0x180C
+#<span class="keyword">define</span> TT_MS_LANGID_HEBREW_ISRAEL                     0x040D
+#<span class="keyword">define</span> TT_MS_LANGID_HUNGARIAN_HUNGARY                 0x040E
+#<span class="keyword">define</span> TT_MS_LANGID_ICELANDIC_ICELAND                 0x040F
+#<span class="keyword">define</span> TT_MS_LANGID_ITALIAN_ITALY                     0x0410
+#<span class="keyword">define</span> TT_MS_LANGID_ITALIAN_SWITZERLAND               0x0810
+#<span class="keyword">define</span> TT_MS_LANGID_JAPANESE_JAPAN                    0x0411
+#<span class="keyword">define</span> TT_MS_LANGID_KOREAN_KOREA                      0x0412
+#<span class="keyword">define</span> TT_MS_LANGID_DUTCH_NETHERLANDS                 0x0413
+#<span class="keyword">define</span> TT_MS_LANGID_DUTCH_BELGIUM                     0x0813
+#<span class="keyword">define</span> TT_MS_LANGID_NORWEGIAN_NORWAY_BOKMAL           0x0414
+#<span class="keyword">define</span> TT_MS_LANGID_NORWEGIAN_NORWAY_NYNORSK          0x0814
+#<span class="keyword">define</span> TT_MS_LANGID_POLISH_POLAND                     0x0415
+#<span class="keyword">define</span> TT_MS_LANGID_PORTUGUESE_BRAZIL                 0x0416
+#<span class="keyword">define</span> TT_MS_LANGID_PORTUGUESE_PORTUGAL               0x0816
+#<span class="keyword">define</span> TT_MS_LANGID_ROMANSH_SWITZERLAND               0x0417
+#<span class="keyword">define</span> TT_MS_LANGID_ROMANIAN_ROMANIA                  0x0418
+#<span class="keyword">define</span> TT_MS_LANGID_RUSSIAN_RUSSIA                    0x0419
+#<span class="keyword">define</span> TT_MS_LANGID_CROATIAN_CROATIA                  0x041A
+#<span class="keyword">define</span> TT_MS_LANGID_SERBIAN_SERBIA_LATIN              0x081A
+#<span class="keyword">define</span> TT_MS_LANGID_SERBIAN_SERBIA_CYRILLIC           0x0C1A
+#<span class="keyword">define</span> TT_MS_LANGID_CROATIAN_BOSNIA_HERZEGOVINA       0x101A
+#<span class="keyword">define</span> TT_MS_LANGID_BOSNIAN_BOSNIA_HERZEGOVINA        0x141A
+#<span class="keyword">define</span> TT_MS_LANGID_SERBIAN_BOSNIA_HERZ_LATIN         0x181A
+#<span class="keyword">define</span> TT_MS_LANGID_SERBIAN_BOSNIA_HERZ_CYRILLIC      0x1C1A
+#<span class="keyword">define</span> TT_MS_LANGID_BOSNIAN_BOSNIA_HERZ_CYRILLIC      0x201A
+#<span class="keyword">define</span> TT_MS_LANGID_SLOVAK_SLOVAKIA                   0x041B
+#<span class="keyword">define</span> TT_MS_LANGID_ALBANIAN_ALBANIA                  0x041C
+#<span class="keyword">define</span> TT_MS_LANGID_SWEDISH_SWEDEN                    0x041D
+#<span class="keyword">define</span> TT_MS_LANGID_SWEDISH_FINLAND                   0x081D
+#<span class="keyword">define</span> TT_MS_LANGID_THAI_THAILAND                     0x041E
+#<span class="keyword">define</span> TT_MS_LANGID_TURKISH_TURKEY                    0x041F
+#<span class="keyword">define</span> TT_MS_LANGID_URDU_PAKISTAN                     0x0420
+#<span class="keyword">define</span> TT_MS_LANGID_INDONESIAN_INDONESIA              0x0421
+#<span class="keyword">define</span> TT_MS_LANGID_UKRAINIAN_UKRAINE                 0x0422
+#<span class="keyword">define</span> TT_MS_LANGID_BELARUSIAN_BELARUS                0x0423
+#<span class="keyword">define</span> TT_MS_LANGID_SLOVENIAN_SLOVENIA                0x0424
+#<span class="keyword">define</span> TT_MS_LANGID_ESTONIAN_ESTONIA                  0x0425
+#<span class="keyword">define</span> TT_MS_LANGID_LATVIAN_LATVIA                    0x0426
+#<span class="keyword">define</span> TT_MS_LANGID_LITHUANIAN_LITHUANIA              0x0427
+#<span class="keyword">define</span> TT_MS_LANGID_TAJIK_TAJIKISTAN                  0x0428
+#<span class="keyword">define</span> TT_MS_LANGID_VIETNAMESE_VIET_NAM               0x042A
+#<span class="keyword">define</span> TT_MS_LANGID_ARMENIAN_ARMENIA                  0x042B
+#<span class="keyword">define</span> TT_MS_LANGID_AZERI_AZERBAIJAN_LATIN            0x042C
+#<span class="keyword">define</span> TT_MS_LANGID_AZERI_AZERBAIJAN_CYRILLIC         0x082C
+#<span class="keyword">define</span> TT_MS_LANGID_BASQUE_BASQUE                     0x042D
+#<span class="keyword">define</span> TT_MS_LANGID_UPPER_SORBIAN_GERMANY             0x042E
+#<span class="keyword">define</span> TT_MS_LANGID_LOWER_SORBIAN_GERMANY             0x082E
+#<span class="keyword">define</span> TT_MS_LANGID_MACEDONIAN_MACEDONIA              0x042F
+#<span class="keyword">define</span> TT_MS_LANGID_SETSWANA_SOUTH_AFRICA             0x0432
+#<span class="keyword">define</span> TT_MS_LANGID_ISIXHOSA_SOUTH_AFRICA             0x0434
+#<span class="keyword">define</span> TT_MS_LANGID_ISIZULU_SOUTH_AFRICA              0x0435
+#<span class="keyword">define</span> TT_MS_LANGID_AFRIKAANS_SOUTH_AFRICA            0x0436
+#<span class="keyword">define</span> TT_MS_LANGID_GEORGIAN_GEORGIA                  0x0437
+#<span class="keyword">define</span> TT_MS_LANGID_FAEROESE_FAEROE_ISLANDS           0x0438
+#<span class="keyword">define</span> TT_MS_LANGID_HINDI_INDIA                       0x0439
+#<span class="keyword">define</span> TT_MS_LANGID_MALTESE_MALTA                     0x043A
+#<span class="keyword">define</span> TT_MS_LANGID_SAMI_NORTHERN_NORWAY              0x043B
+#<span class="keyword">define</span> TT_MS_LANGID_SAMI_NORTHERN_SWEDEN              0x083B
+#<span class="keyword">define</span> TT_MS_LANGID_SAMI_NORTHERN_FINLAND             0x0C3B
+#<span class="keyword">define</span> TT_MS_LANGID_SAMI_LULE_NORWAY                  0x103B
+#<span class="keyword">define</span> TT_MS_LANGID_SAMI_LULE_SWEDEN                  0x143B
+#<span class="keyword">define</span> TT_MS_LANGID_SAMI_SOUTHERN_NORWAY              0x183B
+#<span class="keyword">define</span> TT_MS_LANGID_SAMI_SOUTHERN_SWEDEN              0x1C3B
+#<span class="keyword">define</span> TT_MS_LANGID_SAMI_SKOLT_FINLAND                0x203B
+#<span class="keyword">define</span> TT_MS_LANGID_SAMI_INARI_FINLAND                0x243B
+#<span class="keyword">define</span> TT_MS_LANGID_IRISH_IRELAND                     0x083C
+#<span class="keyword">define</span> TT_MS_LANGID_MALAY_MALAYSIA                    0x043E
+#<span class="keyword">define</span> TT_MS_LANGID_MALAY_BRUNEI_DARUSSALAM           0x083E
+#<span class="keyword">define</span> TT_MS_LANGID_KAZAKH_KAZAKHSTAN                 0x043F
+#<span class="keyword">define</span> TT_MS_LANGID_KYRGYZ_KYRGYZSTAN /* Cyrillic */  0x0440
+#<span class="keyword">define</span> TT_MS_LANGID_KISWAHILI_KENYA                   0x0441
+#<span class="keyword">define</span> TT_MS_LANGID_TURKMEN_TURKMENISTAN              0x0442
+#<span class="keyword">define</span> TT_MS_LANGID_UZBEK_UZBEKISTAN_LATIN            0x0443
+#<span class="keyword">define</span> TT_MS_LANGID_UZBEK_UZBEKISTAN_CYRILLIC         0x0843
+#<span class="keyword">define</span> TT_MS_LANGID_TATAR_RUSSIA                      0x0444
+#<span class="keyword">define</span> TT_MS_LANGID_BENGALI_INDIA                     0x0445
+#<span class="keyword">define</span> TT_MS_LANGID_BENGALI_BANGLADESH                0x0845
+#<span class="keyword">define</span> TT_MS_LANGID_PUNJABI_INDIA                     0x0446
+#<span class="keyword">define</span> TT_MS_LANGID_GUJARATI_INDIA                    0x0447
+#<span class="keyword">define</span> TT_MS_LANGID_ODIA_INDIA                        0x0448
+#<span class="keyword">define</span> TT_MS_LANGID_TAMIL_INDIA                       0x0449
+#<span class="keyword">define</span> TT_MS_LANGID_TELUGU_INDIA                      0x044A
+#<span class="keyword">define</span> TT_MS_LANGID_KANNADA_INDIA                     0x044B
+#<span class="keyword">define</span> TT_MS_LANGID_MALAYALAM_INDIA                   0x044C
+#<span class="keyword">define</span> TT_MS_LANGID_ASSAMESE_INDIA                    0x044D
+#<span class="keyword">define</span> TT_MS_LANGID_MARATHI_INDIA                     0x044E
+#<span class="keyword">define</span> TT_MS_LANGID_SANSKRIT_INDIA                    0x044F
+#<span class="keyword">define</span> TT_MS_LANGID_MONGOLIAN_MONGOLIA /* Cyrillic */ 0x0450
+#<span class="keyword">define</span> TT_MS_LANGID_MONGOLIAN_PRC                     0x0850
+#<span class="keyword">define</span> TT_MS_LANGID_TIBETAN_PRC                       0x0451
+#<span class="keyword">define</span> TT_MS_LANGID_WELSH_UNITED_KINGDOM              0x0452
+#<span class="keyword">define</span> TT_MS_LANGID_KHMER_CAMBODIA                    0x0453
+#<span class="keyword">define</span> TT_MS_LANGID_LAO_LAOS                          0x0454
+#<span class="keyword">define</span> TT_MS_LANGID_GALICIAN_GALICIAN                 0x0456
+#<span class="keyword">define</span> TT_MS_LANGID_KONKANI_INDIA                     0x0457
+#<span class="keyword">define</span> TT_MS_LANGID_SYRIAC_SYRIA                      0x045A
+#<span class="keyword">define</span> TT_MS_LANGID_SINHALA_SRI_LANKA                 0x045B
+#<span class="keyword">define</span> TT_MS_LANGID_INUKTITUT_CANADA                  0x045D
+#<span class="keyword">define</span> TT_MS_LANGID_INUKTITUT_CANADA_LATIN            0x085D
+#<span class="keyword">define</span> TT_MS_LANGID_AMHARIC_ETHIOPIA                  0x045E
+#<span class="keyword">define</span> TT_MS_LANGID_TAMAZIGHT_ALGERIA                 0x085F
+#<span class="keyword">define</span> TT_MS_LANGID_NEPALI_NEPAL                      0x0461
+#<span class="keyword">define</span> TT_MS_LANGID_FRISIAN_NETHERLANDS               0x0462
+#<span class="keyword">define</span> TT_MS_LANGID_PASHTO_AFGHANISTAN                0x0463
+#<span class="keyword">define</span> TT_MS_LANGID_FILIPINO_PHILIPPINES              0x0464
+#<span class="keyword">define</span> TT_MS_LANGID_DHIVEHI_MALDIVES                  0x0465
+#<span class="keyword">define</span> TT_MS_LANGID_HAUSA_NIGERIA                     0x0468
+#<span class="keyword">define</span> TT_MS_LANGID_YORUBA_NIGERIA                    0x046A
+#<span class="keyword">define</span> TT_MS_LANGID_QUECHUA_BOLIVIA                   0x046B
+#<span class="keyword">define</span> TT_MS_LANGID_QUECHUA_ECUADOR                   0x086B
+#<span class="keyword">define</span> TT_MS_LANGID_QUECHUA_PERU                      0x0C6B
+#<span class="keyword">define</span> TT_MS_LANGID_SESOTHO_SA_LEBOA_SOUTH_AFRICA     0x046C
+#<span class="keyword">define</span> TT_MS_LANGID_BASHKIR_RUSSIA                    0x046D
+#<span class="keyword">define</span> TT_MS_LANGID_LUXEMBOURGISH_LUXEMBOURG          0x046E
+#<span class="keyword">define</span> TT_MS_LANGID_GREENLANDIC_GREENLAND             0x046F
+#<span class="keyword">define</span> TT_MS_LANGID_IGBO_NIGERIA                      0x0470
+#<span class="keyword">define</span> TT_MS_LANGID_YI_PRC                            0x0478
+#<span class="keyword">define</span> TT_MS_LANGID_MAPUDUNGUN_CHILE                  0x047A
+#<span class="keyword">define</span> TT_MS_LANGID_MOHAWK_MOHAWK                     0x047C
+#<span class="keyword">define</span> TT_MS_LANGID_BRETON_FRANCE                     0x047E
+#<span class="keyword">define</span> TT_MS_LANGID_UIGHUR_PRC                        0x0480
+#<span class="keyword">define</span> TT_MS_LANGID_MAORI_NEW_ZEALAND                 0x0481
+#<span class="keyword">define</span> TT_MS_LANGID_OCCITAN_FRANCE                    0x0482
+#<span class="keyword">define</span> TT_MS_LANGID_CORSICAN_FRANCE                   0x0483
+#<span class="keyword">define</span> TT_MS_LANGID_ALSATIAN_FRANCE                   0x0484
+#<span class="keyword">define</span> TT_MS_LANGID_YAKUT_RUSSIA                      0x0485
+#<span class="keyword">define</span> TT_MS_LANGID_KICHE_GUATEMALA                   0x0486
+#<span class="keyword">define</span> TT_MS_LANGID_KINYARWANDA_RWANDA                0x0487
+#<span class="keyword">define</span> TT_MS_LANGID_WOLOF_SENEGAL                     0x0488
+#<span class="keyword">define</span> TT_MS_LANGID_DARI_AFGHANISTAN                  0x048C
+</code></pre></div>
+
+<p>Possible values of the language identifier field in the name records of the SFNT &lsquo;name&rsquo; table if the &lsquo;platform&rsquo; identifier code is <code><a href="ft2-truetype_tables.html#tt_platform_xxx">TT_PLATFORM_MICROSOFT</a></code>. These values are also used as return values for function <code><a href="ft2-truetype_tables.html#ft_get_cmap_language_id">FT_Get_CMap_Language_ID</a></code>.</p>
+<p>The canonical source for Microsoft's IDs is</p>
+<p><a href="https://docs.microsoft.com/en-us/windows/desktop/Intl/language-identifier-constants-and-strings">https://docs.microsoft.com/en-us/windows/desktop/Intl/language-identifier-constants-and-strings</a> ,</p>
+<p>however, we only provide macros for language identifiers present in the OpenType specification: Microsoft has abandoned the concept of LCIDs (language code identifiers), and format&nbsp;1 of the &lsquo;name&rsquo; table provides a better mechanism for languages not covered here.</p>
+<p>More legacy values not listed in the reference can be found in the <code><a href="ft2-header_file_macros.html#ft_truetype_ids_h">FT_TRUETYPE_IDS_H</a></code> header file.</p>
+<hr>
+
+<h2 id="tt_name_id_xxx">TT_NAME_ID_XXX<a class="headerlink" href="#tt_name_id_xxx" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRUETYPE_IDS_H (freetype/ttnameid.h).</p>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> TT_NAME_ID_COPYRIGHT              0
+#<span class="keyword">define</span> TT_NAME_ID_FONT_FAMILY            1
+#<span class="keyword">define</span> TT_NAME_ID_FONT_SUBFAMILY         2
+#<span class="keyword">define</span> TT_NAME_ID_UNIQUE_ID              3
+#<span class="keyword">define</span> TT_NAME_ID_FULL_NAME              4
+#<span class="keyword">define</span> TT_NAME_ID_VERSION_STRING         5
+#<span class="keyword">define</span> TT_NAME_ID_PS_NAME                6
+#<span class="keyword">define</span> TT_NAME_ID_TRADEMARK              7
+
+  /* the following values are from the OpenType spec */
+#<span class="keyword">define</span> TT_NAME_ID_MANUFACTURER           8
+#<span class="keyword">define</span> TT_NAME_ID_DESIGNER               9
+#<span class="keyword">define</span> TT_NAME_ID_DESCRIPTION            10
+#<span class="keyword">define</span> TT_NAME_ID_VENDOR_URL             11
+#<span class="keyword">define</span> TT_NAME_ID_DESIGNER_URL           12
+#<span class="keyword">define</span> TT_NAME_ID_LICENSE                13
+#<span class="keyword">define</span> TT_NAME_ID_LICENSE_URL            14
+  /* number 15 is reserved */
+#<span class="keyword">define</span> TT_NAME_ID_TYPOGRAPHIC_FAMILY     16
+#<span class="keyword">define</span> TT_NAME_ID_TYPOGRAPHIC_SUBFAMILY  17
+#<span class="keyword">define</span> TT_NAME_ID_MAC_FULL_NAME          18
+
+  /* The following code is new as of 2000-01-21 */
+#<span class="keyword">define</span> TT_NAME_ID_SAMPLE_TEXT            19
+
+  /* This is new in OpenType 1.3 */
+#<span class="keyword">define</span> TT_NAME_ID_CID_FINDFONT_NAME      20
+
+  /* This is new in OpenType 1.5 */
+#<span class="keyword">define</span> TT_NAME_ID_WWS_FAMILY             21
+#<span class="keyword">define</span> TT_NAME_ID_WWS_SUBFAMILY          22
+
+  /* This is new in OpenType 1.7 */
+#<span class="keyword">define</span> TT_NAME_ID_LIGHT_BACKGROUND       23
+#<span class="keyword">define</span> TT_NAME_ID_DARK_BACKGROUND        24
+
+  /* This is new in OpenType 1.8 */
+#<span class="keyword">define</span> TT_NAME_ID_VARIATIONS_PREFIX      25
+
+  /* these two values are deprecated */
+#<span class="keyword">define</span> TT_NAME_ID_PREFERRED_FAMILY     TT_NAME_ID_TYPOGRAPHIC_FAMILY
+#<span class="keyword">define</span> TT_NAME_ID_PREFERRED_SUBFAMILY  TT_NAME_ID_TYPOGRAPHIC_SUBFAMILY
+</code></pre></div>
+
+<p>Possible values of the &lsquo;name&rsquo; identifier field in the name records of an SFNT &lsquo;name&rsquo; table. These values are platform independent.</p>
+<hr>
+
+<h2 id="tt_ucr_xxx">TT_UCR_XXX<a class="headerlink" href="#tt_ucr_xxx" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TRUETYPE_IDS_H (freetype/ttnameid.h).</p>
+<div class = "codehilite"><pre><code>  /* ulUnicodeRange1 */
+  /* --------------- */
+
+  /* Bit  0   Basic Latin */
+#<span class="keyword">define</span> TT_UCR_BASIC_LATIN                     (1L &lt;&lt;  0) /* U+0020-U+007E */
+  /* Bit  1   C1 Controls and Latin-1 Supplement */
+#<span class="keyword">define</span> TT_UCR_LATIN1_SUPPLEMENT               (1L &lt;&lt;  1) /* U+0080-U+00FF */
+  /* Bit  2   Latin Extended-A */
+#<span class="keyword">define</span> TT_UCR_LATIN_EXTENDED_A                (1L &lt;&lt;  2) /* U+0100-U+017F */
+  /* Bit  3   Latin Extended-B */
+#<span class="keyword">define</span> TT_UCR_LATIN_EXTENDED_B                (1L &lt;&lt;  3) /* U+0180-U+024F */
+  /* Bit  4   IPA Extensions                 */
+  /*          Phonetic Extensions            */
+  /*          Phonetic Extensions Supplement */
+#<span class="keyword">define</span> TT_UCR_IPA_EXTENSIONS                  (1L &lt;&lt;  4) /* U+0250-U+02AF */
+                                                          /* U+1D00-U+1D7F */
+                                                          /* U+1D80-U+1DBF */
+  /* Bit  5   Spacing Modifier Letters */
+  /*          Modifier Tone Letters    */
+#<span class="keyword">define</span> TT_UCR_SPACING_MODIFIER                (1L &lt;&lt;  5) /* U+02B0-U+02FF */
+                                                          /* U+A700-U+A71F */
+  /* Bit  6   Combining Diacritical Marks            */
+  /*          Combining Diacritical Marks Supplement */
+#<span class="keyword">define</span> TT_UCR_COMBINING_DIACRITICAL_MARKS     (1L &lt;&lt;  6) /* U+0300-U+036F */
+                                                          /* U+1DC0-U+1DFF */
+  /* Bit  7   Greek and Coptic */
+#<span class="keyword">define</span> TT_UCR_GREEK                           (1L &lt;&lt;  7) /* U+0370-U+03FF */
+  /* Bit  8   Coptic */
+#<span class="keyword">define</span> TT_UCR_COPTIC                          (1L &lt;&lt;  8) /* U+2C80-U+2CFF */
+  /* Bit  9   Cyrillic            */
+  /*          Cyrillic Supplement */
+  /*          Cyrillic Extended-A */
+  /*          Cyrillic Extended-B */
+#<span class="keyword">define</span> TT_UCR_CYRILLIC                        (1L &lt;&lt;  9) /* U+0400-U+04FF */
+                                                          /* U+0500-U+052F */
+                                                          /* U+2DE0-U+2DFF */
+                                                          /* U+A640-U+A69F */
+  /* Bit 10   Armenian */
+#<span class="keyword">define</span> TT_UCR_ARMENIAN                        (1L &lt;&lt; 10) /* U+0530-U+058F */
+  /* Bit 11   Hebrew */
+#<span class="keyword">define</span> TT_UCR_HEBREW                          (1L &lt;&lt; 11) /* U+0590-U+05FF */
+  /* Bit 12   Vai */
+#<span class="keyword">define</span> TT_UCR_VAI                             (1L &lt;&lt; 12) /* U+A500-U+A63F */
+  /* Bit 13   Arabic            */
+  /*          Arabic Supplement */
+#<span class="keyword">define</span> TT_UCR_ARABIC                          (1L &lt;&lt; 13) /* U+0600-U+06FF */
+                                                          /* U+0750-U+077F */
+  /* Bit 14   NKo */
+#<span class="keyword">define</span> TT_UCR_NKO                             (1L &lt;&lt; 14) /* U+07C0-U+07FF */
+  /* Bit 15   Devanagari */
+#<span class="keyword">define</span> TT_UCR_DEVANAGARI                      (1L &lt;&lt; 15) /* U+0900-U+097F */
+  /* Bit 16   Bengali */
+#<span class="keyword">define</span> TT_UCR_BENGALI                         (1L &lt;&lt; 16) /* U+0980-U+09FF */
+  /* Bit 17   Gurmukhi */
+#<span class="keyword">define</span> TT_UCR_GURMUKHI                        (1L &lt;&lt; 17) /* U+0A00-U+0A7F */
+  /* Bit 18   Gujarati */
+#<span class="keyword">define</span> TT_UCR_GUJARATI                        (1L &lt;&lt; 18) /* U+0A80-U+0AFF */
+  /* Bit 19   Oriya */
+#<span class="keyword">define</span> TT_UCR_ORIYA                           (1L &lt;&lt; 19) /* U+0B00-U+0B7F */
+  /* Bit 20   Tamil */
+#<span class="keyword">define</span> TT_UCR_TAMIL                           (1L &lt;&lt; 20) /* U+0B80-U+0BFF */
+  /* Bit 21   Telugu */
+#<span class="keyword">define</span> TT_UCR_TELUGU                          (1L &lt;&lt; 21) /* U+0C00-U+0C7F */
+  /* Bit 22   Kannada */
+#<span class="keyword">define</span> TT_UCR_KANNADA                         (1L &lt;&lt; 22) /* U+0C80-U+0CFF */
+  /* Bit 23   Malayalam */
+#<span class="keyword">define</span> TT_UCR_MALAYALAM                       (1L &lt;&lt; 23) /* U+0D00-U+0D7F */
+  /* Bit 24   Thai */
+#<span class="keyword">define</span> TT_UCR_THAI                            (1L &lt;&lt; 24) /* U+0E00-U+0E7F */
+  /* Bit 25   Lao */
+#<span class="keyword">define</span> TT_UCR_LAO                             (1L &lt;&lt; 25) /* U+0E80-U+0EFF */
+  /* Bit 26   Georgian            */
+  /*          Georgian Supplement */
+#<span class="keyword">define</span> TT_UCR_GEORGIAN                        (1L &lt;&lt; 26) /* U+10A0-U+10FF */
+                                                          /* U+2D00-U+2D2F */
+  /* Bit 27   Balinese */
+#<span class="keyword">define</span> TT_UCR_BALINESE                        (1L &lt;&lt; 27) /* U+1B00-U+1B7F */
+  /* Bit 28   Hangul Jamo */
+#<span class="keyword">define</span> TT_UCR_HANGUL_JAMO                     (1L &lt;&lt; 28) /* U+1100-U+11FF */
+  /* Bit 29   Latin Extended Additional */
+  /*          Latin Extended-C          */
+  /*          Latin Extended-D          */
+#<span class="keyword">define</span> TT_UCR_LATIN_EXTENDED_ADDITIONAL       (1L &lt;&lt; 29) /* U+1E00-U+1EFF */
+                                                          /* U+2C60-U+2C7F */
+                                                          /* U+A720-U+A7FF */
+  /* Bit 30   Greek Extended */
+#<span class="keyword">define</span> TT_UCR_GREEK_EXTENDED                  (1L &lt;&lt; 30) /* U+1F00-U+1FFF */
+  /* Bit 31   General Punctuation      */
+  /*          Supplemental Punctuation */
+#<span class="keyword">define</span> TT_UCR_GENERAL_PUNCTUATION             (1L &lt;&lt; 31) /* U+2000-U+206F */
+                                                          /* U+2E00-U+2E7F */
+
+  /* ulUnicodeRange2 */
+  /* --------------- */
+
+  /* Bit 32   Superscripts And Subscripts */
+#<span class="keyword">define</span> TT_UCR_SUPERSCRIPTS_SUBSCRIPTS         (1L &lt;&lt;  0) /* U+2070-U+209F */
+  /* Bit 33   Currency Symbols */
+#<span class="keyword">define</span> TT_UCR_CURRENCY_SYMBOLS                (1L &lt;&lt;  1) /* U+20A0-U+20CF */
+  /* Bit 34   Combining Diacritical Marks For Symbols */
+#<span class="keyword">define</span> TT_UCR_COMBINING_DIACRITICAL_MARKS_SYMB \
+                                               (1L &lt;&lt;  2) /* U+20D0-U+20FF */
+  /* Bit 35   Letterlike Symbols */
+#<span class="keyword">define</span> TT_UCR_LETTERLIKE_SYMBOLS              (1L &lt;&lt;  3) /* U+2100-U+214F */
+  /* Bit 36   Number Forms */
+#<span class="keyword">define</span> TT_UCR_NUMBER_FORMS                    (1L &lt;&lt;  4) /* U+2150-U+218F */
+  /* Bit 37   Arrows                           */
+  /*          Supplemental Arrows-A            */
+  /*          Supplemental Arrows-B            */
+  /*          Miscellaneous Symbols and Arrows */
+#<span class="keyword">define</span> TT_UCR_ARROWS                          (1L &lt;&lt;  5) /* U+2190-U+21FF */
+                                                          /* U+27F0-U+27FF */
+                                                          /* U+2900-U+297F */
+                                                          /* U+2B00-U+2BFF */
+  /* Bit 38   Mathematical Operators               */
+  /*          Supplemental Mathematical Operators  */
+  /*          Miscellaneous Mathematical Symbols-A */
+  /*          Miscellaneous Mathematical Symbols-B */
+#<span class="keyword">define</span> TT_UCR_MATHEMATICAL_OPERATORS          (1L &lt;&lt;  6) /* U+2200-U+22FF */
+                                                          /* U+2A00-U+2AFF */
+                                                          /* U+27C0-U+27EF */
+                                                          /* U+2980-U+29FF */
+  /* Bit 39 Miscellaneous Technical */
+#<span class="keyword">define</span> TT_UCR_MISCELLANEOUS_TECHNICAL         (1L &lt;&lt;  7) /* U+2300-U+23FF */
+  /* Bit 40   Control Pictures */
+#<span class="keyword">define</span> TT_UCR_CONTROL_PICTURES                (1L &lt;&lt;  8) /* U+2400-U+243F */
+  /* Bit 41   Optical Character Recognition */
+#<span class="keyword">define</span> TT_UCR_OCR                             (1L &lt;&lt;  9) /* U+2440-U+245F */
+  /* Bit 42   Enclosed Alphanumerics */
+#<span class="keyword">define</span> TT_UCR_ENCLOSED_ALPHANUMERICS          (1L &lt;&lt; 10) /* U+2460-U+24FF */
+  /* Bit 43   Box Drawing */
+#<span class="keyword">define</span> TT_UCR_BOX_DRAWING                     (1L &lt;&lt; 11) /* U+2500-U+257F */
+  /* Bit 44   Block Elements */
+#<span class="keyword">define</span> TT_UCR_BLOCK_ELEMENTS                  (1L &lt;&lt; 12) /* U+2580-U+259F */
+  /* Bit 45   Geometric Shapes */
+#<span class="keyword">define</span> TT_UCR_GEOMETRIC_SHAPES                (1L &lt;&lt; 13) /* U+25A0-U+25FF */
+  /* Bit 46   Miscellaneous Symbols */
+#<span class="keyword">define</span> TT_UCR_MISCELLANEOUS_SYMBOLS           (1L &lt;&lt; 14) /* U+2600-U+26FF */
+  /* Bit 47   Dingbats */
+#<span class="keyword">define</span> TT_UCR_DINGBATS                        (1L &lt;&lt; 15) /* U+2700-U+27BF */
+  /* Bit 48   CJK Symbols and Punctuation */
+#<span class="keyword">define</span> TT_UCR_CJK_SYMBOLS                     (1L &lt;&lt; 16) /* U+3000-U+303F */
+  /* Bit 49   Hiragana */
+#<span class="keyword">define</span> TT_UCR_HIRAGANA                        (1L &lt;&lt; 17) /* U+3040-U+309F */
+  /* Bit 50   Katakana                     */
+  /*          Katakana Phonetic Extensions */
+#<span class="keyword">define</span> TT_UCR_KATAKANA                        (1L &lt;&lt; 18) /* U+30A0-U+30FF */
+                                                          /* U+31F0-U+31FF */
+  /* Bit 51   Bopomofo          */
+  /*          Bopomofo Extended */
+#<span class="keyword">define</span> TT_UCR_BOPOMOFO                        (1L &lt;&lt; 19) /* U+3100-U+312F */
+                                                          /* U+31A0-U+31BF */
+  /* Bit 52   Hangul Compatibility Jamo */
+#<span class="keyword">define</span> TT_UCR_HANGUL_COMPATIBILITY_JAMO       (1L &lt;&lt; 20) /* U+3130-U+318F */
+  /* Bit 53   Phags-Pa */
+#<span class="keyword">define</span> TT_UCR_CJK_MISC                        (1L &lt;&lt; 21) /* U+A840-U+A87F */
+#<span class="keyword">define</span> TT_UCR_KANBUN  TT_UCR_CJK_MISC /* deprecated */
+#<span class="keyword">define</span> TT_UCR_PHAGSPA
+  /* Bit 54   Enclosed CJK Letters and Months */
+#<span class="keyword">define</span> TT_UCR_ENCLOSED_CJK_LETTERS_MONTHS     (1L &lt;&lt; 22) /* U+3200-U+32FF */
+  /* Bit 55   CJK Compatibility */
+#<span class="keyword">define</span> TT_UCR_CJK_COMPATIBILITY               (1L &lt;&lt; 23) /* U+3300-U+33FF */
+  /* Bit 56   Hangul Syllables */
+#<span class="keyword">define</span> TT_UCR_HANGUL                          (1L &lt;&lt; 24) /* U+AC00-U+D7A3 */
+  /* Bit 57   High Surrogates              */
+  /*          High Private Use Surrogates  */
+  /*          Low Surrogates               */
+
+  /* According to OpenType specs v.1.3+,   */
+  /* setting bit 57 implies that there is  */
+  /* at least one codepoint beyond the     */
+  /* Basic Multilingual Plane that is      */
+  /* supported by this font.  So it really */
+  /* means &gt;= U+10000.                     */
+#<span class="keyword">define</span> TT_UCR_SURROGATES                      (1L &lt;&lt; 25) /* U+D800-U+DB7F */
+                                                          /* U+DB80-U+DBFF */
+                                                          /* U+DC00-U+DFFF */
+#<span class="keyword">define</span> TT_UCR_NON_PLANE_0  TT_UCR_SURROGATES
+  /* Bit 58  Phoenician */
+#<span class="keyword">define</span> TT_UCR_PHOENICIAN                      (1L &lt;&lt; 26) /*U+10900-U+1091F*/
+  /* Bit 59   CJK Unified Ideographs             */
+  /*          CJK Radicals Supplement            */
+  /*          Kangxi Radicals                    */
+  /*          Ideographic Description Characters */
+  /*          CJK Unified Ideographs Extension A */
+  /*          CJK Unified Ideographs Extension B */
+  /*          Kanbun                             */
+#<span class="keyword">define</span> TT_UCR_CJK_UNIFIED_IDEOGRAPHS          (1L &lt;&lt; 27) /* U+4E00-U+9FFF */
+                                                          /* U+2E80-U+2EFF */
+                                                          /* U+2F00-U+2FDF */
+                                                          /* U+2FF0-U+2FFF */
+                                                          /* U+3400-U+4DB5 */
+                                                          /*U+20000-U+2A6DF*/
+                                                          /* U+3190-U+319F */
+  /* Bit 60   Private Use */
+#<span class="keyword">define</span> TT_UCR_PRIVATE_USE                     (1L &lt;&lt; 28) /* U+E000-U+F8FF */
+  /* Bit 61   CJK Strokes                             */
+  /*          CJK Compatibility Ideographs            */
+  /*          CJK Compatibility Ideographs Supplement */
+#<span class="keyword">define</span> TT_UCR_CJK_COMPATIBILITY_IDEOGRAPHS    (1L &lt;&lt; 29) /* U+31C0-U+31EF */
+                                                          /* U+F900-U+FAFF */
+                                                          /*U+2F800-U+2FA1F*/
+  /* Bit 62   Alphabetic Presentation Forms */
+#<span class="keyword">define</span> TT_UCR_ALPHABETIC_PRESENTATION_FORMS   (1L &lt;&lt; 30) /* U+FB00-U+FB4F */
+  /* Bit 63   Arabic Presentation Forms-A */
+#<span class="keyword">define</span> TT_UCR_ARABIC_PRESENTATION_FORMS_A     (1L &lt;&lt; 31) /* U+FB50-U+FDFF */
+
+  /* ulUnicodeRange3 */
+  /* --------------- */
+
+  /* Bit 64   Combining Half Marks */
+#<span class="keyword">define</span> TT_UCR_COMBINING_HALF_MARKS            (1L &lt;&lt;  0) /* U+FE20-U+FE2F */
+  /* Bit 65   Vertical forms          */
+  /*          CJK Compatibility Forms */
+#<span class="keyword">define</span> TT_UCR_CJK_COMPATIBILITY_FORMS         (1L &lt;&lt;  1) /* U+FE10-U+FE1F */
+                                                          /* U+FE30-U+FE4F */
+  /* Bit 66   Small Form Variants */
+#<span class="keyword">define</span> TT_UCR_SMALL_FORM_VARIANTS             (1L &lt;&lt;  2) /* U+FE50-U+FE6F */
+  /* Bit 67   Arabic Presentation Forms-B */
+#<span class="keyword">define</span> TT_UCR_ARABIC_PRESENTATION_FORMS_B     (1L &lt;&lt;  3) /* U+FE70-U+FEFE */
+  /* Bit 68   Halfwidth and Fullwidth Forms */
+#<span class="keyword">define</span> TT_UCR_HALFWIDTH_FULLWIDTH_FORMS       (1L &lt;&lt;  4) /* U+FF00-U+FFEF */
+  /* Bit 69   Specials */
+#<span class="keyword">define</span> TT_UCR_SPECIALS                        (1L &lt;&lt;  5) /* U+FFF0-U+FFFD */
+  /* Bit 70   Tibetan */
+#<span class="keyword">define</span> TT_UCR_TIBETAN                         (1L &lt;&lt;  6) /* U+0F00-U+0FFF */
+  /* Bit 71   Syriac */
+#<span class="keyword">define</span> TT_UCR_SYRIAC                          (1L &lt;&lt;  7) /* U+0700-U+074F */
+  /* Bit 72   Thaana */
+#<span class="keyword">define</span> TT_UCR_THAANA                          (1L &lt;&lt;  8) /* U+0780-U+07BF */
+  /* Bit 73   Sinhala */
+#<span class="keyword">define</span> TT_UCR_SINHALA                         (1L &lt;&lt;  9) /* U+0D80-U+0DFF */
+  /* Bit 74   Myanmar */
+#<span class="keyword">define</span> TT_UCR_MYANMAR                         (1L &lt;&lt; 10) /* U+1000-U+109F */
+  /* Bit 75   Ethiopic            */
+  /*          Ethiopic Supplement */
+  /*          Ethiopic Extended   */
+#<span class="keyword">define</span> TT_UCR_ETHIOPIC                        (1L &lt;&lt; 11) /* U+1200-U+137F */
+                                                          /* U+1380-U+139F */
+                                                          /* U+2D80-U+2DDF */
+  /* Bit 76   Cherokee */
+#<span class="keyword">define</span> TT_UCR_CHEROKEE                        (1L &lt;&lt; 12) /* U+13A0-U+13FF */
+  /* Bit 77   Unified Canadian Aboriginal Syllabics */
+#<span class="keyword">define</span> TT_UCR_CANADIAN_ABORIGINAL_SYLLABICS   (1L &lt;&lt; 13) /* U+1400-U+167F */
+  /* Bit 78   Ogham */
+#<span class="keyword">define</span> TT_UCR_OGHAM                           (1L &lt;&lt; 14) /* U+1680-U+169F */
+  /* Bit 79   Runic */
+#<span class="keyword">define</span> TT_UCR_RUNIC                           (1L &lt;&lt; 15) /* U+16A0-U+16FF */
+  /* Bit 80   Khmer         */
+  /*          Khmer Symbols */
+#<span class="keyword">define</span> TT_UCR_KHMER                           (1L &lt;&lt; 16) /* U+1780-U+17FF */
+                                                          /* U+19E0-U+19FF */
+  /* Bit 81   Mongolian */
+#<span class="keyword">define</span> TT_UCR_MONGOLIAN                       (1L &lt;&lt; 17) /* U+1800-U+18AF */
+  /* Bit 82   Braille Patterns */
+#<span class="keyword">define</span> TT_UCR_BRAILLE                         (1L &lt;&lt; 18) /* U+2800-U+28FF */
+  /* Bit 83   Yi Syllables */
+  /*          Yi Radicals  */
+#<span class="keyword">define</span> TT_UCR_YI                              (1L &lt;&lt; 19) /* U+A000-U+A48F */
+                                                          /* U+A490-U+A4CF */
+  /* Bit 84   Tagalog  */
+  /*          Hanunoo  */
+  /*          Buhid    */
+  /*          Tagbanwa */
+#<span class="keyword">define</span> TT_UCR_PHILIPPINE                      (1L &lt;&lt; 20) /* U+1700-U+171F */
+                                                          /* U+1720-U+173F */
+                                                          /* U+1740-U+175F */
+                                                          /* U+1760-U+177F */
+  /* Bit 85   Old Italic */
+#<span class="keyword">define</span> TT_UCR_OLD_ITALIC                      (1L &lt;&lt; 21) /*U+10300-U+1032F*/
+  /* Bit 86   Gothic */
+#<span class="keyword">define</span> TT_UCR_GOTHIC                          (1L &lt;&lt; 22) /*U+10330-U+1034F*/
+  /* Bit 87   Deseret */
+#<span class="keyword">define</span> TT_UCR_DESERET                         (1L &lt;&lt; 23) /*U+10400-U+1044F*/
+  /* Bit 88   Byzantine Musical Symbols      */
+  /*          Musical Symbols                */
+  /*          Ancient Greek Musical Notation */
+#<span class="keyword">define</span> TT_UCR_MUSICAL_SYMBOLS                 (1L &lt;&lt; 24) /*U+1D000-U+1D0FF*/
+                                                          /*U+1D100-U+1D1FF*/
+                                                          /*U+1D200-U+1D24F*/
+  /* Bit 89   Mathematical Alphanumeric Symbols */
+#<span class="keyword">define</span> TT_UCR_MATH_ALPHANUMERIC_SYMBOLS       (1L &lt;&lt; 25) /*U+1D400-U+1D7FF*/
+  /* Bit 90   Private Use (plane 15) */
+  /*          Private Use (plane 16) */
+#<span class="keyword">define</span> TT_UCR_PRIVATE_USE_SUPPLEMENTARY       (1L &lt;&lt; 26) /*U+F0000-U+FFFFD*/
+                                                        /*U+100000-U+10FFFD*/
+  /* Bit 91   Variation Selectors            */
+  /*          Variation Selectors Supplement */
+#<span class="keyword">define</span> TT_UCR_VARIATION_SELECTORS             (1L &lt;&lt; 27) /* U+FE00-U+FE0F */
+                                                          /*U+E0100-U+E01EF*/
+  /* Bit 92   Tags */
+#<span class="keyword">define</span> TT_UCR_TAGS                            (1L &lt;&lt; 28) /*U+E0000-U+E007F*/
+  /* Bit 93   Limbu */
+#<span class="keyword">define</span> TT_UCR_LIMBU                           (1L &lt;&lt; 29) /* U+1900-U+194F */
+  /* Bit 94   Tai Le */
+#<span class="keyword">define</span> TT_UCR_TAI_LE                          (1L &lt;&lt; 30) /* U+1950-U+197F */
+  /* Bit 95   New Tai Lue */
+#<span class="keyword">define</span> TT_UCR_NEW_TAI_LUE                     (1L &lt;&lt; 31) /* U+1980-U+19DF */
+
+  /* ulUnicodeRange4 */
+  /* --------------- */
+
+  /* Bit 96   Buginese */
+#<span class="keyword">define</span> TT_UCR_BUGINESE                        (1L &lt;&lt;  0) /* U+1A00-U+1A1F */
+  /* Bit 97   Glagolitic */
+#<span class="keyword">define</span> TT_UCR_GLAGOLITIC                      (1L &lt;&lt;  1) /* U+2C00-U+2C5F */
+  /* Bit 98   Tifinagh */
+#<span class="keyword">define</span> TT_UCR_TIFINAGH                        (1L &lt;&lt;  2) /* U+2D30-U+2D7F */
+  /* Bit 99   Yijing Hexagram Symbols */
+#<span class="keyword">define</span> TT_UCR_YIJING                          (1L &lt;&lt;  3) /* U+4DC0-U+4DFF */
+  /* Bit 100  Syloti Nagri */
+#<span class="keyword">define</span> TT_UCR_SYLOTI_NAGRI                    (1L &lt;&lt;  4) /* U+A800-U+A82F */
+  /* Bit 101  Linear B Syllabary */
+  /*          Linear B Ideograms */
+  /*          Aegean Numbers     */
+#<span class="keyword">define</span> TT_UCR_LINEAR_B                        (1L &lt;&lt;  5) /*U+10000-U+1007F*/
+                                                          /*U+10080-U+100FF*/
+                                                          /*U+10100-U+1013F*/
+  /* Bit 102  Ancient Greek Numbers */
+#<span class="keyword">define</span> TT_UCR_ANCIENT_GREEK_NUMBERS           (1L &lt;&lt;  6) /*U+10140-U+1018F*/
+  /* Bit 103  Ugaritic */
+#<span class="keyword">define</span> TT_UCR_UGARITIC                        (1L &lt;&lt;  7) /*U+10380-U+1039F*/
+  /* Bit 104  Old Persian */
+#<span class="keyword">define</span> TT_UCR_OLD_PERSIAN                     (1L &lt;&lt;  8) /*U+103A0-U+103DF*/
+  /* Bit 105  Shavian */
+#<span class="keyword">define</span> TT_UCR_SHAVIAN                         (1L &lt;&lt;  9) /*U+10450-U+1047F*/
+  /* Bit 106  Osmanya */
+#<span class="keyword">define</span> TT_UCR_OSMANYA                         (1L &lt;&lt; 10) /*U+10480-U+104AF*/
+  /* Bit 107  Cypriot Syllabary */
+#<span class="keyword">define</span> TT_UCR_CYPRIOT_SYLLABARY               (1L &lt;&lt; 11) /*U+10800-U+1083F*/
+  /* Bit 108  Kharoshthi */
+#<span class="keyword">define</span> TT_UCR_KHAROSHTHI                      (1L &lt;&lt; 12) /*U+10A00-U+10A5F*/
+  /* Bit 109  Tai Xuan Jing Symbols */
+#<span class="keyword">define</span> TT_UCR_TAI_XUAN_JING                   (1L &lt;&lt; 13) /*U+1D300-U+1D35F*/
+  /* Bit 110  Cuneiform                         */
+  /*          Cuneiform Numbers and Punctuation */
+#<span class="keyword">define</span> TT_UCR_CUNEIFORM                       (1L &lt;&lt; 14) /*U+12000-U+123FF*/
+                                                          /*U+12400-U+1247F*/
+  /* Bit 111  Counting Rod Numerals */
+#<span class="keyword">define</span> TT_UCR_COUNTING_ROD_NUMERALS           (1L &lt;&lt; 15) /*U+1D360-U+1D37F*/
+  /* Bit 112  Sundanese */
+#<span class="keyword">define</span> TT_UCR_SUNDANESE                       (1L &lt;&lt; 16) /* U+1B80-U+1BBF */
+  /* Bit 113  Lepcha */
+#<span class="keyword">define</span> TT_UCR_LEPCHA                          (1L &lt;&lt; 17) /* U+1C00-U+1C4F */
+  /* Bit 114  Ol Chiki */
+#<span class="keyword">define</span> TT_UCR_OL_CHIKI                        (1L &lt;&lt; 18) /* U+1C50-U+1C7F */
+  /* Bit 115  Saurashtra */
+#<span class="keyword">define</span> TT_UCR_SAURASHTRA                      (1L &lt;&lt; 19) /* U+A880-U+A8DF */
+  /* Bit 116  Kayah Li */
+#<span class="keyword">define</span> TT_UCR_KAYAH_LI                        (1L &lt;&lt; 20) /* U+A900-U+A92F */
+  /* Bit 117  Rejang */
+#<span class="keyword">define</span> TT_UCR_REJANG                          (1L &lt;&lt; 21) /* U+A930-U+A95F */
+  /* Bit 118  Cham */
+#<span class="keyword">define</span> TT_UCR_CHAM                            (1L &lt;&lt; 22) /* U+AA00-U+AA5F */
+  /* Bit 119  Ancient Symbols */
+#<span class="keyword">define</span> TT_UCR_ANCIENT_SYMBOLS                 (1L &lt;&lt; 23) /*U+10190-U+101CF*/
+  /* Bit 120  Phaistos Disc */
+#<span class="keyword">define</span> TT_UCR_PHAISTOS_DISC                   (1L &lt;&lt; 24) /*U+101D0-U+101FF*/
+  /* Bit 121  Carian */
+  /*          Lycian */
+  /*          Lydian */
+#<span class="keyword">define</span> TT_UCR_OLD_ANATOLIAN                   (1L &lt;&lt; 25) /*U+102A0-U+102DF*/
+                                                          /*U+10280-U+1029F*/
+                                                          /*U+10920-U+1093F*/
+  /* Bit 122  Domino Tiles  */
+  /*          Mahjong Tiles */
+#<span class="keyword">define</span> TT_UCR_GAME_TILES                      (1L &lt;&lt; 26) /*U+1F030-U+1F09F*/
+                                                          /*U+1F000-U+1F02F*/
+  /* Bit 123-127 Reserved for process-internal usage */
+</code></pre></div>
+
+<p>Possible bit mask values for the <code>ulUnicodeRangeX</code> fields in an SFNT &lsquo;OS/2&rsquo; table.</p>
+<hr>
+                
+              
+              
+                
+
+
+              
+            </article>
+          </div>
+        </div>
+        
+      </main>
+      
+        
+<footer class="md-footer">
+  
+    <nav class="md-footer__inner md-grid" aria-label="Footer">
+      
+        
+        <a href="ft2-multiple_masters.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: Multiple Masters" rel="prev">
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+          </div>
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              Multiple Masters
+            </div>
+          </div>
+        </a>
+      
+      
+        
+        <a href="ft2-type1_tables.html" class="md-footer__link md-footer__link--next" aria-label="Next: Type 1 Tables" rel="next">
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              Type 1 Tables
+            </div>
+          </div>
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11H4z"/></svg>
+          </div>
+        </a>
+      
+    </nav>
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-footer-copyright">
+        
+          <div class="md-footer-copyright__highlight">
+            Copyright 2023 <a href = "https://www.freetype.org/license.html">The FreeType Project</a>.
+          </div>
+        
+        Made with
+        <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+          Material for MkDocs
+        </a>
+        
+      </div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    <script id="__config" type="application/json">{"base": ".", "features": [], "search": "assets/javascripts/workers/search.477d984a.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.config.lang": "en", "search.config.pipeline": "trimmer, stopWordFilter", "search.config.separator": "[\\s\\-]+", "search.placeholder": "Search", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version.title": "Select version"}, "version": null}</script>
+    
+    
+      <script src="assets/javascripts/bundle.82b56eb2.min.js"></script>
+      
+        <script src="javascripts/extra.js"></script>
+      
+    
+  </body>
+</html>

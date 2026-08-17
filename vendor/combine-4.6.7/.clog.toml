@@ -1,0 +1,6 @@
+[clog]
+repository = "https://github.com/Marwes/combine"
+
+changelog = "CHANGELOG.md"
+
+from-latest-tag = true

@@ -1,0 +1,23 @@
+[package]
+name = "fs2"
+# NB: When modifying, also modify html_root_url in lib.rs
+version = "0.4.3"
+authors = ["Dan Burkert <dan@danburkert.com>"]
+license = "MIT/Apache-2.0"
+repository = "https://github.com/danburkert/fs2-rs"
+documentation = "https://docs.rs/fs2"
+description = "Cross-platform file locks and file duplication."
+keywords = ["file", "file-system", "lock", "duplicate", "flock"]
+
+[badges]
+travis-ci = { repository = "danburkert/fs2-rs" }
+appveyor = { repository = "danburkert/fs2-rs" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.30"
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["handleapi", "processthreadsapi", "winerror", "fileapi", "winbase", "std"] }
+
+[dev-dependencies]
+tempdir = "0.3"

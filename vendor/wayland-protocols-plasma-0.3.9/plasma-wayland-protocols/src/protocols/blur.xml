@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="blur">
+  <copyright><![CDATA[
+    SPDX-FileCopyrightText: 2015 Martin Gräßlin
+    SPDX-FileCopyrightText: 2015 Marco Martin
+
+    SPDX-License-Identifier: LGPL-2.1-or-later
+  ]]></copyright>
+  <interface name="org_kde_kwin_blur_manager" version="1">
+      <request name="create">
+          <arg name="id" type="new_id" interface="org_kde_kwin_blur"/>
+          <arg name="surface" type="object" interface="wl_surface"/>
+      </request>
+      <request name="unset">
+          <arg name="surface" type="object" interface="wl_surface"/>
+      </request>
+  </interface>
+  <interface name="org_kde_kwin_blur" version="1">
+      <request name="commit">
+      </request>
+      <request name="set_region">
+        <arg name="region" type="object" interface="wl_region" allow-null="true"/>
+      </request>
+      <request name="release" type="destructor">
+        <description summary="release the blur object"/>
+      </request>
+  </interface>
+</protocol>

@@ -1,0 +1,7 @@
+interface new {
+  entrypoint: func();
+}
+
+world adapt-old {
+  export new;
+}

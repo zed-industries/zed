@@ -1,0 +1,23 @@
+[package]
+name = "tendril"
+version = "0.4.3"
+authors = ["Keegan McAllister <mcallister.keegan@gmail.com>",
+           "Simon Sapin <simon.sapin@exyr.org>",
+           "Chris Morgan <me@chrismorgan.info>"]
+repository = "https://github.com/servo/tendril"
+readme = "README.md"
+license = "MIT/Apache-2.0"
+description = "Compact buffer/string type for zero-copy parsing"
+
+[dependencies]
+mac = "0.1"
+encoding = {version = "0.2", optional = true}
+encoding_rs = {version = "0.8.12", optional = true}
+futf = "0.1.5"
+utf-8 = "0.7"
+
+[dev-dependencies]
+rand = "0.4"
+
+[features]
+bench = []

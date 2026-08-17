@@ -1,0 +1,5 @@
+the `float32` type has been renamed to `f32` and is no longer accepted, but the `WIT_REQUIRE_F32_F64=0` environment variable can be used to temporarily disable this error: type `float32` does not exist
+     --> tests/ui/parse-fail/old-float-types.wit:4:13
+      |
+    4 |   type t1 = float32;
+      |             ^------

@@ -1,0 +1,19 @@
+[package]
+name = "lyon_extra"
+version = "1.0.3"
+description = "Various optional utilities for the lyon crate."
+authors = ["Nicolas Silva <nical@fastmail.com>"]
+repository = "https://github.com/nical/lyon"
+documentation = "https://docs.rs/lyon_extra/"
+license = "MIT OR Apache-2.0"
+workspace = "../.."
+
+[lib]
+name = "lyon_extra"
+
+[features]
+serialization = ["lyon_path/serialization"]
+
+[dependencies]
+lyon_path = { version = "1.0.0", path = "../path" }
+thiserror = "1.0"

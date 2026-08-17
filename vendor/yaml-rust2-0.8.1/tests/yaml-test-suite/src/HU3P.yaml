@@ -1,0 +1,14 @@
+---
+- name: Invalid Mapping in plain scalar
+  from: https://gist.github.com/anonymous/d305fd8e54cfe7a484088c91a8a2e533 via @ingydotnet
+  tags: error mapping scalar
+  fail: true
+  yaml: |
+    key:
+      word1 word2
+      no: key
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :key

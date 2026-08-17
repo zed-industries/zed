@@ -1,0 +1,28 @@
+---
+- name: Legal tab after indentation
+  from: '@ingydotnet'
+  tags: indent whitespace
+  yaml: |
+    x:
+     - x
+      ——»x
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :x
+       +SEQ
+        =VAL :x x
+       -SEQ
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "x": [
+        "x x"
+      ]
+    }
+  dump: |
+    x:
+    - x x

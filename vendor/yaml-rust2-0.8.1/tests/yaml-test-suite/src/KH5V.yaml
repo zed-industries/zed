@@ -1,0 +1,40 @@
+---
+- name: Inline tabs in double quoted
+  from: '@ingydotnet'
+  tags: double whitespace
+  yaml: |
+    "1 inline\ttab"
+  tree: |
+    +STR
+     +DOC
+      =VAL "1 inline\ttab
+     -DOC
+    -STR
+  json: |
+    "1 inline\ttab"
+
+- yaml: |
+    "2 inline\——»tab"
+  tree: |
+    +STR
+     +DOC
+      =VAL "2 inline\ttab
+     -DOC
+    -STR
+  json: |
+    "2 inline\ttab"
+  dump: |
+    "2 inline\ttab"
+
+- yaml: |
+    "3 inline———»tab"
+  tree: |
+    +STR
+     +DOC
+      =VAL "3 inline\ttab
+     -DOC
+    -STR
+  json: |
+    "3 inline\ttab"
+  dump: |
+    "3 inline\ttab"

@@ -1,0 +1,35 @@
+[
+    {
+        "description": "unknown keywords produce annotations",
+        "schema": {
+            "$schema": "https://json-schema.org/v1",
+            "$id": "https://json-schema.org/tests/content/v1-extra/unknown_annotations/0",
+            "extra": "annotation"
+        },
+        "tests": [
+            {
+                "description": "list and hierarchical include extra annotation",
+                "data": {},
+                "output": {
+                    "list": {
+                        "$id": "https://json-schema.org/tests/content/v1-extra/unknown_annotations/0/tests/0/list",
+                        "const": {
+                            "valid": true,
+                            "details": [
+                                {
+                                    "valid": true,
+                                    "evaluationPath": "",
+                                    "schemaLocation": "https://json-schema.org/tests/content/v1-extra/unknown_annotations/0#",
+                                    "instanceLocation": "",
+                                    "annotations": {
+                                        "extra": "annotation"
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        ]
+    }
+]

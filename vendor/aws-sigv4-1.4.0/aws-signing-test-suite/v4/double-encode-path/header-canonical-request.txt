@@ -1,0 +1,8 @@
+POST
+/test/%40connections/JBDvjfGEIAMCERw%253D
+
+host:tj9n5r0m12.execute-api.us-east-1.amazonaws.com
+x-amz-date:20210511T154045Z
+
+host;x-amz-date
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855

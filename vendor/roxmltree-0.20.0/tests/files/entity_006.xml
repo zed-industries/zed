@@ -1,0 +1,4 @@
+<!DOCTYPE test [
+    <!ENTITY b 'Some&#x20;text'>
+]>
+<p>&b;</p>

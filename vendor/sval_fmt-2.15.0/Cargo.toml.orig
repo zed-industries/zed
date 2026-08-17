@@ -1,0 +1,29 @@
+[package]
+name = "sval_fmt"
+version = "2.15.0"
+authors = ["Ashley Mannix <ashleymannix@live.com.au>"]
+edition = "2021"
+license = "Apache-2.0 OR MIT"
+documentation = "https://docs.rs/sval_fmt"
+description = "Integration between std::fmt::Debug and sval::Value"
+repository = "https://github.com/sval-rs/sval"
+readme = "README.md"
+keywords = ["serialization", "no_std"]
+categories = ["encoding", "no-std"]
+
+[package.metadata.docs.rs]
+features = ["std"]
+
+[features]
+std = ["alloc", "sval/std"]
+alloc = ["sval/alloc"]
+
+[dependencies.sval]
+version = "2.15.0"
+path = "../"
+
+[dependencies.ryu]
+version = "1"
+
+[dependencies.itoa]
+version = "1"

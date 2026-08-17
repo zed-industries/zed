@@ -1,0 +1,33 @@
+---
+source: brush-parser/src/tokenizer.rs
+expression: "test_tokenizer(\"a$((1+2))b c\")?"
+---
+TokenizerResult(
+  input: "a$((1+2))b c",
+  result: [
+    W("a$((1+2))b", Loc(
+      start: Pos(
+        idx: 0,
+        line: 1,
+        col: 1,
+      ),
+      end: Pos(
+        idx: 10,
+        line: 1,
+        col: 11,
+      ),
+    )),
+    W("c", Loc(
+      start: Pos(
+        idx: 11,
+        line: 1,
+        col: 12,
+      ),
+      end: Pos(
+        idx: 12,
+        line: 1,
+        col: 13,
+      ),
+    )),
+  ],
+)

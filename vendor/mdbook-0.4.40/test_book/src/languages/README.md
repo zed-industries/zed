@@ -1,0 +1,49 @@
+# Syntax Highlighting
+
+This Currently contains following languages
+
+- apache
+- armasm
+- bash
+- c
+- coffeescript
+- cpp
+- csharp
+- css
+- d
+- diff
+- go
+- handlebars
+- haskell
+- http
+- ini
+- java
+- javascript
+- json
+- julia
+- kotlin
+- less
+- lua
+- makefile
+- markdown
+- nginx
+- nim
+- nix
+- objectivec
+- perl
+- php
+- plaintext
+- properties
+- python
+- r
+- ruby
+- rust
+- scala
+- scss
+- shell
+- sql
+- swift
+- typescript
+- x86asm
+- xml
+- yaml

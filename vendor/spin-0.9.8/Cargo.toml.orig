@@ -1,0 +1,75 @@
+[package]
+name = "spin"
+version = "0.9.8"
+authors = [
+    "Mathijs van de Nes <git@mathijs.vd-nes.nl>",
+    "John Ericson <git@JohnEricson.me>",
+    "Joshua Barretto <joshua.s.barretto@gmail.com>",
+]
+license = "MIT"
+repository = "https://github.com/mvdnes/spin-rs.git"
+keywords = ["spinlock", "mutex", "rwlock"]
+description = "Spin-based synchronization primitives"
+rust-version = "1.38"
+
+[dependencies]
+lock_api_crate = { package = "lock_api", version = "0.4", optional = true }
+portable-atomic = { version = "1", optional = true, default-features = false }
+
+[features]
+default = ["lock_api", "mutex", "spin_mutex", "rwlock", "once", "lazy", "barrier"]
+
+# Enables `Mutex`. Must be used with either `spin_mutex` or `use_ticket_mutex`.
+mutex = []
+
+# Enables `SpinMutex` and the default spin mutex implementation for `Mutex`.
+spin_mutex = ["mutex"]
+
+# Enables `TicketMutex`.
+ticket_mutex = ["mutex"]
+
+# Enables `FairMutex`.
+fair_mutex = ["mutex"]
+
+# Enables the non-default ticket mutex implementation for `Mutex`.
+use_ticket_mutex = ["mutex", "ticket_mutex"]
+
+# Enables `RwLock`.
+rwlock = []
+
+# Enables `Once`.
+once = []
+
+# Enables `Lazy`.
+lazy = ["once"]
+
+# Enables `Barrier`. Because this feature uses `mutex`, either `spin_mutex` or `use_ticket_mutex` must be enabled.
+barrier = ["mutex"]
+
+# Enables `lock_api`-compatible types that use the primitives in this crate internally.
+lock_api = ["lock_api_crate"]
+
+# Enables std-only features such as yield-relaxing.
+std = []
+
+# Use the portable_atomic crate to support platforms without native atomic operations.
+# The `portable_atomic_unsafe_assume_single_core` cfg or `critical-section` feature
+# of `portable-atomic` crate must also be set by the final binary crate.
+# When using the cfg, note that it is unsafe and enabling it for multicore systems is unsound.
+# When using the `critical-section` feature, you need to implement the critical-section
+# implementation that sound for your system by implementing an unsafe trait.
+# See the documentation for the `portable-atomic` crate for more information:
+# https://docs.rs/portable-atomic/latest/portable_atomic/#optional-cfg
+portable_atomic = ["portable-atomic"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dev-dependencies]
+criterion = "0.4"
+
+[[bench]]
+name = "mutex"
+harness = false
+required-features = ["ticket_mutex"]

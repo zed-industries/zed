@@ -1,0 +1,5 @@
+error: unsupported receiver type; C++ does not allow member functions on enums
+ --> tests/ui/enum_receiver.rs:7:20
+  |
+7 |         fn f(self: &Enum);
+  |                    ^^^^^

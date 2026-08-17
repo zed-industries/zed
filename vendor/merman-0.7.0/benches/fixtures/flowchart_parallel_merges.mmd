@@ -1,0 +1,30 @@
+flowchart TD
+  H[Head]
+  M[Merge]
+  T[Tail]
+
+  H --> A1[A1]
+  H --> A2[A2]
+  H --> A3[A3]
+  H --> A4[A4]
+  H --> A5[A5]
+  H --> A6[A6]
+
+  A1 --> B1[B1]
+  A2 --> B2[B2]
+  A3 --> B3[B3]
+  A4 --> B4[B4]
+  A5 --> B5[B5]
+  A6 --> B6[B6]
+
+  B1 --> M
+  B2 --> M
+  B3 --> M
+  B4 --> M
+  B5 --> M
+  B6 --> M
+
+  M --> T
+  B6 -.skip.-> A1
+  B5 -.skip.-> A2
+  B4 -.skip.-> A3

@@ -1,0 +1,10 @@
+header = """
+#define MY_ASSERT(...) do { } while (0)
+#define MY_ATTRS __attribute((noinline))
+"""
+
+[enum]
+derive_helper_methods = true
+derive_const_casts = true
+derive_mut_casts = true
+cast_assert_name = "MY_ASSERT"

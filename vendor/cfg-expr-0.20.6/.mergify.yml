@@ -1,0 +1,16 @@
+pull_request_rules:
+  - name: automatic merge when CI passes and 1 reviews
+    conditions:
+      - "#approved-reviews-by>=1"
+      - "#review-requested=0"
+      - "#changes-requested-reviews-by=0"
+      - "#commented-reviews-by=0"
+      - base=master
+      - label!=work-in-progress
+    actions:
+      merge:
+        method: squash
+  - name: delete head branch after merge
+    conditions: []
+    actions:
+      delete_head_branch: {}

@@ -1,0 +1,21 @@
+language: rust
+
+rust:
+- 1.8.0
+- stable
+- nightly
+
+os:
+  - linux
+  - osx
+
+env:
+  matrix:
+    - ARCH=x86_64
+    - ARCH=i686
+
+script:
+  - cargo build --verbose
+  - if [[ $TRAVIS_RUST_VERSION = nightly* ]]; then
+      env RUST_BACKTRACE=1 cargo test -v;
+    fi

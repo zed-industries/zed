@@ -1,0 +1,457 @@
+package wasi:http@0.3.0-rc-2026-01-06;
+
+/// This interface defines all of the types and methods for implementing HTTP
+/// Requests and Responses, as well as their headers, trailers, and bodies.
+interface types {
+  use wasi:clocks/types@0.3.0-rc-2026-01-06.{duration};
+
+  /// This type corresponds to HTTP standard Methods.
+  variant method {
+    get,
+    head,
+    post,
+    put,
+    delete,
+    connect,
+    options,
+    trace,
+    patch,
+    other(string),
+  }
+
+  /// This type corresponds to HTTP standard Related Schemes.
+  variant scheme {
+    HTTP,
+    HTTPS,
+    other(string),
+  }
+
+  /// Defines the case payload type for `DNS-error` above:
+  record DNS-error-payload {
+    rcode: option<string>,
+    info-code: option<u16>,
+  }
+
+  /// Defines the case payload type for `TLS-alert-received` above:
+  record TLS-alert-received-payload {
+    alert-id: option<u8>,
+    alert-message: option<string>,
+  }
+
+  /// Defines the case payload type for `HTTP-response-{header,trailer}-size` above:
+  record field-size-payload {
+    field-name: option<string>,
+    field-size: option<u32>,
+  }
+
+  /// These cases are inspired by the IANA HTTP Proxy Error Types:
+  ///   <https://www.iana.org/assignments/http-proxy-status/http-proxy-status.xhtml#table-http-proxy-error-types>
+  variant error-code {
+    DNS-timeout,
+    DNS-error(DNS-error-payload),
+    destination-not-found,
+    destination-unavailable,
+    destination-IP-prohibited,
+    destination-IP-unroutable,
+    connection-refused,
+    connection-terminated,
+    connection-timeout,
+    connection-read-timeout,
+    connection-write-timeout,
+    connection-limit-reached,
+    TLS-protocol-error,
+    TLS-certificate-error,
+    TLS-alert-received(TLS-alert-received-payload),
+    HTTP-request-denied,
+    HTTP-request-length-required,
+    HTTP-request-body-size(option<u64>),
+    HTTP-request-method-invalid,
+    HTTP-request-URI-invalid,
+    HTTP-request-URI-too-long,
+    HTTP-request-header-section-size(option<u32>),
+    HTTP-request-header-size(option<field-size-payload>),
+    HTTP-request-trailer-section-size(option<u32>),
+    HTTP-request-trailer-size(field-size-payload),
+    HTTP-response-incomplete,
+    HTTP-response-header-section-size(option<u32>),
+    HTTP-response-header-size(field-size-payload),
+    HTTP-response-body-size(option<u64>),
+    HTTP-response-trailer-section-size(option<u32>),
+    HTTP-response-trailer-size(field-size-payload),
+    HTTP-response-transfer-coding(option<string>),
+    HTTP-response-content-coding(option<string>),
+    HTTP-response-timeout,
+    HTTP-upgrade-failed,
+    HTTP-protocol-error,
+    loop-detected,
+    configuration-error,
+    /// This is a catch-all error for anything that doesn't fit cleanly into a
+    /// more specific case. It also includes an optional string for an
+    /// unstructured description of the error. Users should not depend on the
+    /// string for diagnosing errors, as it's not required to be consistent
+    /// between implementations.
+    internal-error(option<string>),
+  }
+
+  /// This type enumerates the different kinds of errors that may occur when
+  /// setting or appending to a `fields` resource.
+  variant header-error {
+    /// This error indicates that a `field-name` or `field-value` was
+    /// syntactically invalid when used with an operation that sets headers in a
+    /// `fields`.
+    invalid-syntax,
+    /// This error indicates that a forbidden `field-name` was used when trying
+    /// to set a header in a `fields`.
+    forbidden,
+    /// This error indicates that the operation on the `fields` was not
+    /// permitted because the fields are immutable.
+    immutable,
+  }
+
+  /// This type enumerates the different kinds of errors that may occur when
+  /// setting fields of a `request-options` resource.
+  variant request-options-error {
+    /// Indicates the specified field is not supported by this implementation.
+    not-supported,
+    /// Indicates that the operation on the `request-options` was not permitted
+    /// because it is immutable.
+    immutable,
+  }
+
+  /// Field names are always strings.
+  ///
+  /// Field names should always be treated as case insensitive by the `fields`
+  /// resource for the purposes of equality checking.
+  type field-name = string;
+
+  /// Field values should always be ASCII strings. However, in
+  /// reality, HTTP implementations often have to interpret malformed values,
+  /// so they are provided as a list of bytes.
+  type field-value = list<u8>;
+
+  /// This following block defines the `fields` resource which corresponds to
+  /// HTTP standard Fields. Fields are a common representation used for both
+  /// Headers and Trailers.
+  ///
+  /// A `fields` may be mutable or immutable. A `fields` created using the
+  /// constructor, `from-list`, or `clone` will be mutable, but a `fields`
+  /// resource given by other means (including, but not limited to,
+  /// `request.headers`) might be be immutable. In an immutable fields, the
+  /// `set`, `append`, and `delete` operations will fail with
+  /// `header-error.immutable`.
+  ///
+  /// A `fields` resource should store `field-name`s and `field-value`s in their
+  /// original casing used to construct or mutate the `fields` resource. The `fields`
+  /// resource should use that original casing when serializing the fields for
+  /// transport or when returning them from a method.
+  resource fields {
+    /// Construct an empty HTTP Fields.
+    ///
+    /// The resulting `fields` is mutable.
+    constructor();
+    /// Construct an HTTP Fields.
+    ///
+    /// The resulting `fields` is mutable.
+    ///
+    /// The list represents each name-value pair in the Fields. Names
+    /// which have multiple values are represented by multiple entries in this
+    /// list with the same name.
+    ///
+    /// The tuple is a pair of the field name, represented as a string, and
+    /// Value, represented as a list of bytes. In a valid Fields, all names
+    /// and values are valid UTF-8 strings. However, values are not always
+    /// well-formed, so they are represented as a raw list of bytes.
+    ///
+    /// An error result will be returned if any header or value was
+    /// syntactically invalid, or if a header was forbidden.
+    from-list: static func(entries: list<tuple<field-name, field-value>>) -> result<fields, header-error>;
+    /// Get all of the values corresponding to a name. If the name is not present
+    /// in this `fields`, an empty list is returned. However, if the name is
+    /// present but empty, this is represented by a list with one or more
+    /// empty field-values present.
+    get: func(name: field-name) -> list<field-value>;
+    /// Returns `true` when the name is present in this `fields`. If the name is
+    /// syntactically invalid, `false` is returned.
+    has: func(name: field-name) -> bool;
+    /// Set all of the values for a name. Clears any existing values for that
+    /// name, if they have been set.
+    ///
+    /// Fails with `header-error.immutable` if the `fields` are immutable.
+    set: func(name: field-name, value: list<field-value>) -> result<_, header-error>;
+    /// Delete all values for a name. Does nothing if no values for the name
+    /// exist.
+    ///
+    /// Fails with `header-error.immutable` if the `fields` are immutable.
+    delete: func(name: field-name) -> result<_, header-error>;
+    /// Delete all values for a name. Does nothing if no values for the name
+    /// exist.
+    ///
+    /// Returns all values previously corresponding to the name, if any.
+    ///
+    /// Fails with `header-error.immutable` if the `fields` are immutable.
+    get-and-delete: func(name: field-name) -> result<list<field-value>, header-error>;
+    /// Append a value for a name. Does not change or delete any existing
+    /// values for that name.
+    ///
+    /// Fails with `header-error.immutable` if the `fields` are immutable.
+    append: func(name: field-name, value: field-value) -> result<_, header-error>;
+    /// Retrieve the full set of names and values in the Fields. Like the
+    /// constructor, the list represents each name-value pair.
+    ///
+    /// The outer list represents each name-value pair in the Fields. Names
+    /// which have multiple values are represented by multiple entries in this
+    /// list with the same name.
+    ///
+    /// The names and values are always returned in the original casing and in
+    /// the order in which they will be serialized for transport.
+    copy-all: func() -> list<tuple<field-name, field-value>>;
+    /// Make a deep copy of the Fields. Equivalent in behavior to calling the
+    /// `fields` constructor on the return value of `copy-all`. The resulting
+    /// `fields` is mutable.
+    clone: func() -> fields;
+  }
+
+  /// Headers is an alias for Fields.
+  type headers = fields;
+
+  /// Trailers is an alias for Fields.
+  type trailers = fields;
+
+  /// Represents an HTTP Request.
+  resource request {
+    /// Construct a new `request` with a default `method` of `GET`, and
+    /// `none` values for `path-with-query`, `scheme`, and `authority`.
+    ///
+    /// `headers` is the HTTP Headers for the Request.
+    ///
+    /// `contents` is the optional body content stream with `none`
+    /// representing a zero-length content stream.
+    /// Once it is closed, `trailers` future must resolve to a result.
+    /// If `trailers` resolves to an error, underlying connection
+    /// will be closed immediately.
+    ///
+    /// `options` is optional `request-options` resource to be used
+    /// if the request is sent over a network connection.
+    ///
+    /// It is possible to construct, or manipulate with the accessor functions
+    /// below, a `request` with an invalid combination of `scheme`
+    /// and `authority`, or `headers` which are not permitted to be sent.
+    /// It is the obligation of the `handler.handle` implementation
+    /// to reject invalid constructions of `request`.
+    ///
+    /// The returned future resolves to result of transmission of this request.
+    new: static func(headers: headers, contents: option<stream<u8>>, trailers: future<result<option<trailers>, error-code>>, options: option<request-options>) -> tuple<request, future<result<_, error-code>>>;
+    /// Get the Method for the Request.
+    get-method: func() -> method;
+    /// Set the Method for the Request. Fails if the string present in a
+    /// `method.other` argument is not a syntactically valid method.
+    set-method: func(method: method) -> result;
+    /// Get the combination of the HTTP Path and Query for the Request.  When
+    /// `none`, this represents an empty Path and empty Query.
+    get-path-with-query: func() -> option<string>;
+    /// Set the combination of the HTTP Path and Query for the Request.  When
+    /// `none`, this represents an empty Path and empty Query. Fails is the
+    /// string given is not a syntactically valid path and query uri component.
+    set-path-with-query: func(path-with-query: option<string>) -> result;
+    /// Get the HTTP Related Scheme for the Request. When `none`, the
+    /// implementation may choose an appropriate default scheme.
+    get-scheme: func() -> option<scheme>;
+    /// Set the HTTP Related Scheme for the Request. When `none`, the
+    /// implementation may choose an appropriate default scheme. Fails if the
+    /// string given is not a syntactically valid uri scheme.
+    set-scheme: func(scheme: option<scheme>) -> result;
+    /// Get the authority of the Request's target URI. A value of `none` may be used
+    /// with Related Schemes which do not require an authority. The HTTP and
+    /// HTTPS schemes always require an authority.
+    get-authority: func() -> option<string>;
+    /// Set the authority of the Request's target URI. A value of `none` may be used
+    /// with Related Schemes which do not require an authority. The HTTP and
+    /// HTTPS schemes always require an authority. Fails if the string given is
+    /// not a syntactically valid URI authority.
+    set-authority: func(authority: option<string>) -> result;
+    /// Get the `request-options` to be associated with this request
+    ///
+    /// The returned `request-options` resource is immutable: `set-*` operations
+    /// will fail if invoked.
+    ///
+    /// This `request-options` resource is a child: it must be dropped before
+    /// the parent `request` is dropped, or its ownership is transferred to
+    /// another component by e.g. `handler.handle`.
+    get-options: func() -> option<request-options>;
+    /// Get the headers associated with the Request.
+    ///
+    /// The returned `headers` resource is immutable: `set`, `append`, and
+    /// `delete` operations will fail with `header-error.immutable`.
+    get-headers: func() -> headers;
+    /// Get body of the Request.
+    ///
+    /// Stream returned by this method represents the contents of the body.
+    /// Once the stream is reported as closed, callers should await the returned
+    /// future to determine whether the body was received successfully.
+    /// The future will only resolve after the stream is reported as closed.
+    ///
+    /// This function takes a `res` future as a parameter, which can be used to
+    /// communicate an error in handling of the request.
+    ///
+    /// Note that function will move the `request`, but references to headers or
+    /// request options acquired from it previously will remain valid.
+    consume-body: static func(this: request, res: future<result<_, error-code>>) -> tuple<stream<u8>, future<result<option<trailers>, error-code>>>;
+  }
+
+  /// Parameters for making an HTTP Request. Each of these parameters is
+  /// currently an optional timeout applicable to the transport layer of the
+  /// HTTP protocol.
+  ///
+  /// These timeouts are separate from any the user may use to bound an
+  /// asynchronous call.
+  resource request-options {
+    /// Construct a default `request-options` value.
+    constructor();
+    /// The timeout for the initial connect to the HTTP Server.
+    get-connect-timeout: func() -> option<duration>;
+    /// Set the timeout for the initial connect to the HTTP Server. An error
+    /// return value indicates that this timeout is not supported or that this
+    /// handle is immutable.
+    set-connect-timeout: func(duration: option<duration>) -> result<_, request-options-error>;
+    /// The timeout for receiving the first byte of the Response body.
+    get-first-byte-timeout: func() -> option<duration>;
+    /// Set the timeout for receiving the first byte of the Response body. An
+    /// error return value indicates that this timeout is not supported or that
+    /// this handle is immutable.
+    set-first-byte-timeout: func(duration: option<duration>) -> result<_, request-options-error>;
+    /// The timeout for receiving subsequent chunks of bytes in the Response
+    /// body stream.
+    get-between-bytes-timeout: func() -> option<duration>;
+    /// Set the timeout for receiving subsequent chunks of bytes in the Response
+    /// body stream. An error return value indicates that this timeout is not
+    /// supported or that this handle is immutable.
+    set-between-bytes-timeout: func(duration: option<duration>) -> result<_, request-options-error>;
+    /// Make a deep copy of the `request-options`.
+    /// The resulting `request-options` is mutable.
+    clone: func() -> request-options;
+  }
+
+  /// This type corresponds to the HTTP standard Status Code.
+  type status-code = u16;
+
+  /// Represents an HTTP Response.
+  resource response {
+    /// Construct a new `response`, with a default `status-code` of `200`.
+    /// If a different `status-code` is needed, it must be set via the
+    /// `set-status-code` method.
+    ///
+    /// `headers` is the HTTP Headers for the Response.
+    ///
+    /// `contents` is the optional body content stream with `none`
+    /// representing a zero-length content stream.
+    /// Once it is closed, `trailers` future must resolve to a result.
+    /// If `trailers` resolves to an error, underlying connection
+    /// will be closed immediately.
+    ///
+    /// The returned future resolves to result of transmission of this response.
+    new: static func(headers: headers, contents: option<stream<u8>>, trailers: future<result<option<trailers>, error-code>>) -> tuple<response, future<result<_, error-code>>>;
+    /// Get the HTTP Status Code for the Response.
+    get-status-code: func() -> status-code;
+    /// Set the HTTP Status Code for the Response. Fails if the status-code
+    /// given is not a valid http status code.
+    set-status-code: func(status-code: status-code) -> result;
+    /// Get the headers associated with the Response.
+    ///
+    /// The returned `headers` resource is immutable: `set`, `append`, and
+    /// `delete` operations will fail with `header-error.immutable`.
+    get-headers: func() -> headers;
+    /// Get body of the Response.
+    ///
+    /// Stream returned by this method represents the contents of the body.
+    /// Once the stream is reported as closed, callers should await the returned
+    /// future to determine whether the body was received successfully.
+    /// The future will only resolve after the stream is reported as closed.
+    ///
+    /// This function takes a `res` future as a parameter, which can be used to
+    /// communicate an error in handling of the response.
+    ///
+    /// Note that function will move the `response`, but references to headers
+    /// acquired from it previously will remain valid.
+    consume-body: static func(this: response, res: future<result<_, error-code>>) -> tuple<stream<u8>, future<result<option<trailers>, error-code>>>;
+  }
+}
+
+/// This interface defines a handler of HTTP Requests.
+///
+/// In a `wasi:http/service` this interface is exported to respond to an
+/// incoming HTTP Request with a Response.
+///
+/// In `wasi:http/middleware` this interface is both exported and imported as
+/// the "downstream" and "upstream" directions of the middleware chain.
+interface handler {
+  use types.{request, response, error-code};
+
+  /// This function may be called with either an incoming request read from the
+  /// network or a request synthesized or forwarded by another component.
+  handle: async func(request: request) -> result<response, error-code>;
+}
+
+/// This interface defines an HTTP client for sending "outgoing" requests.
+///
+/// Most components are expected to import this interface to provide the
+/// capability to send HTTP requests to arbitrary destinations on a network.
+///
+/// The type signature of `client.send` is the same as `handler.handle`. This
+/// duplication is currently necessary because some Component Model tooling
+/// (including WIT itself) is unable to represent a component importing two
+/// instances of the same interface. A `client.send` import may be linked
+/// directly to a `handler.handle` export to bypass the network.
+interface client {
+  use types.{request, response, error-code};
+
+  /// This function may be used to either send an outgoing request over the
+  /// network or to forward it to another component.
+  send: async func(request: request) -> result<response, error-code>;
+}
+
+/// The `wasi:http/service` world captures a broad category of HTTP services
+/// including web applications, API servers, and proxies. It may be `include`d
+/// in more specific worlds such as `wasi:http/middleware`.
+world service {
+  import wasi:cli/types@0.3.0-rc-2026-01-06;
+  import wasi:cli/stdout@0.3.0-rc-2026-01-06;
+  import wasi:cli/stderr@0.3.0-rc-2026-01-06;
+  import wasi:cli/stdin@0.3.0-rc-2026-01-06;
+  import wasi:clocks/types@0.3.0-rc-2026-01-06;
+  import types;
+  import client;
+  import wasi:clocks/monotonic-clock@0.3.0-rc-2026-01-06;
+  import wasi:clocks/system-clock@0.3.0-rc-2026-01-06;
+  @unstable(feature = clocks-timezone)
+  import wasi:clocks/timezone@0.3.0-rc-2026-01-06;
+  import wasi:random/random@0.3.0-rc-2026-01-06;
+  import wasi:random/insecure@0.3.0-rc-2026-01-06;
+  import wasi:random/insecure-seed@0.3.0-rc-2026-01-06;
+
+  export handler;
+}
+/// The `wasi:http/middleware` world captures HTTP services that forward HTTP
+/// Requests to another handler.
+///
+/// Components may implement this world to allow them to participate in handler
+/// "chains" where a `request` flows through handlers on its way to some terminal
+/// `service` and corresponding `response` flows in the opposite direction.
+world middleware {
+  import wasi:clocks/types@0.3.0-rc-2026-01-06;
+  import types;
+  import handler;
+  import wasi:cli/types@0.3.0-rc-2026-01-06;
+  import wasi:cli/stdout@0.3.0-rc-2026-01-06;
+  import wasi:cli/stderr@0.3.0-rc-2026-01-06;
+  import wasi:cli/stdin@0.3.0-rc-2026-01-06;
+  import client;
+  import wasi:clocks/monotonic-clock@0.3.0-rc-2026-01-06;
+  import wasi:clocks/system-clock@0.3.0-rc-2026-01-06;
+  @unstable(feature = clocks-timezone)
+  import wasi:clocks/timezone@0.3.0-rc-2026-01-06;
+  import wasi:random/random@0.3.0-rc-2026-01-06;
+  import wasi:random/insecure@0.3.0-rc-2026-01-06;
+  import wasi:random/insecure-seed@0.3.0-rc-2026-01-06;
+
+  export handler;
+}

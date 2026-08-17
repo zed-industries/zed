@@ -1,0 +1,22 @@
+[book]
+#title = "Rust ♡ C++"
+authors = ["David Tolnay"]
+description = "CXX — safe interop between Rust and C++ by David Tolnay. This library provides a safe mechanism for calling C++ code from Rust and Rust code from C++."
+
+[rust]
+edition = "2021"
+
+[build]
+build-dir = "build"
+create-missing = false
+
+[output.html]
+additional-css = ["css/cxx.css"]
+cname = "cxx.rs"
+git-repository-url = "https://github.com/dtolnay/cxx"
+playground = { copyable = false }
+print = { enable = false }
+
+[output.html.redirect]
+"binding/index.html" = "../bindings.html"
+"build/index.html" = "../building.html"

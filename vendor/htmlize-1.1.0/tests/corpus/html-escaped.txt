@@ -1,0 +1,13 @@
+&lt;!DOCTYPE html&gt;
+&lt;html lang="en"&gt;
+  &lt;head&gt;
+    &lt;meta charset="UTF-8"&gt;
+    &lt;title&gt;demon.horse&lt;/title&gt;
+    &lt;link rel="shortcut icon" href="/favicon.png"&gt;
+    &lt;link rel="stylesheet" media="all" href="css/all.css"&gt;
+  &lt;/head&gt;
+  &lt;body&gt;
+    &lt;h1&gt;👹 &amp; 🐴&lt;/h1&gt;
+    &lt;h2&gt;otherwise known as 🦄&lt;/h2&gt;
+  &lt;/body&gt;
+&lt;/html&gt;

@@ -1,0 +1,5 @@
+---
+source: proptest-macro/src/property_test/codegen/mod.rs
+expression: arb.to_string()
+---
+impl :: proptest :: prelude :: Arbitrary for FooArgs { type Parameters = () ; type Strategy = :: proptest :: strategy :: Map < :: proptest :: arbitrary :: StrategyFor < (i32 , u8 ,) > , fn ((i32 , u8 ,)) -> Self > ; fn arbitrary_with (() : Self :: Parameters) -> Self :: Strategy { use :: proptest :: strategy :: Strategy ; :: proptest :: prelude :: any :: < (i32 , u8 ,) > () . prop_map (| (x , y ,) | Self { x , y , }) } }

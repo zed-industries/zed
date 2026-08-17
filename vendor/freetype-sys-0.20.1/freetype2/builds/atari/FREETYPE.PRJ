@@ -1,0 +1,32 @@
+;FreeType project file
+
+FREETYPE.LIB
+
+.C [-K -P -R -A]
+.L [-J -V]
+.S
+
+=
+
+..\..\src\base\ftsystem.c
+..\..\src\base\ftdebug.c
+
+..\..\src\base\ftinit.c
+..\..\src\base\ftglyph.c
+..\..\src\base\ftmm
+..\..\src\base\ftbbox
+
+..\..\src\base\ftbase.c
+..\..\src\autohint\autohint.c
+;..\..\src\cache\ftcache.c
+..\..\src\cff\cff.c
+..\..\src\cid\type1cid.c
+..\..\src\psaux\psaux.c
+..\..\src\pshinter\pshinter.c
+..\..\src\psnames\psnames.c
+..\..\src\raster\raster.c
+..\..\src\sfnt\sfnt.c
+..\..\src\smooth\smooth.c
+..\..\src\truetype\truetype.c
+..\..\src\type1\type1.c
+..\..\src\type42\type42.c

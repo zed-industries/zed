@@ -1,0 +1,120 @@
+on: [push, pull_request]
+name: sct.rs
+
+jobs:
+  build:
+    name: Build+test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        # test a bunch of toolchains on ubuntu
+        rust:
+          - stable
+          - beta
+          - nightly
+          - 1.61.0 # our MSRV
+        os: [ubuntu-latest]
+        # but only stable on macos/windows (slower platforms)
+        include:
+          - os: macos-latest
+            rust: stable
+          - os: windows-latest
+            rust: stable
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install ${{ matrix.rust }} toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+
+      - name: cargo build (debug; default features)
+        run: cargo build
+
+      - name: cargo test (debug; default features)
+        run: cargo test
+        env:
+          RUST_BACKTRACE: 1
+
+      - name: cargo test (debug; all features)
+        run: cargo test --all-features
+        env:
+          RUST_BACKTRACE: 1
+
+      - name: cargo test (release; no run)
+        run: cargo test --release --no-run
+
+  coverage:
+    name: Measure coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: llvm-tools
+
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov
+
+      - name: Measure coverage
+        run: cargo llvm-cov --lcov --output-path ./lcov.info
+
+      - name: Report to codecov.io
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./lcov.info
+          fail_ci_if_error: false
+
+  minver:
+    name: Check minimum versions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: cargo test (debug; all features; -Z minimal-versions)
+        run: cargo -Z minimal-versions test --all-features
+
+  format:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Install rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Install rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: cargo clippy -- --deny warnings
+
+  clippy-nightly:
+    name: Clippy (Nightly)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Install rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: clippy
+      - run: cargo clippy

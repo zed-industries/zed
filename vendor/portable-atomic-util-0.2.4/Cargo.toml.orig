@@ -1,0 +1,52 @@
+[package]
+name = "portable-atomic-util"
+version = "0.2.4" #publish:version
+edition = "2018"
+rust-version = "1.34"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/taiki-e/portable-atomic"
+keywords = ["atomic"]
+categories = ["concurrency", "data-structures", "embedded", "no-std"]
+description = """
+Synchronization primitives built with portable-atomic.
+"""
+
+[package.metadata.docs.rs]
+all-features = true
+targets = ["x86_64-unknown-linux-gnu"]
+
+[package.metadata.cargo_check_external_types]
+# The following are external types that are allowed to be exposed in our public API.
+allowed_external_types = [
+]
+
+[lib]
+doc-scrape-examples = false
+
+[features]
+default = []
+
+# Use `std`.
+#
+# Note:
+# - This implicitly enables the `alloc` feature.
+std = ["alloc"]
+
+# Use `alloc`.
+#
+# Note:
+# - The MSRV when this feature is enabled and the `std` feature is *not* enabled is Rust 1.36 that `alloc` crate stabilized.
+alloc = []
+
+# TODO: https://github.com/taiki-e/portable-atomic/issues/1
+# # Provides generic `atomic<t>` type.
+# generic = []
+
+[dependencies]
+portable-atomic = { version = "1.5.1", path = "..", default-features = false, features = ["require-cas"] }
+
+[dev-dependencies]
+build-context = "0.1"
+
+[lints]
+workspace = true

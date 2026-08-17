@@ -1,0 +1,3 @@
+POST / HTTP/1.1
+Host:example.amazonaws.com
+My-Header1:value1

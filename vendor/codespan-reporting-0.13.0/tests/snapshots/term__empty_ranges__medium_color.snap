@@ -1,0 +1,9 @@
+---
+source: codespan-reporting/tests/term.rs
+expression: TEST_DATA.emit_color(&config)
+---
+hello:1:7: {fg:Green bold bright}note{bold bright}: middle{/}
+hello:1:13: {fg:Green bold bright}note{bold bright}: end of line{/}
+hello:2:11: {fg:Green bold bright}note{bold bright}: end of line{/}
+hello:3:4: {fg:Green bold bright}note{bold bright}: end of file{/}
+

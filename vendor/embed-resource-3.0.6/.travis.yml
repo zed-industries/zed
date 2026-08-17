@@ -1,0 +1,74 @@
+sudo: false
+language: generic
+cache: cargo
+
+matrix:
+  include:
+    - env: LANGUAGE=Rust
+      language: rust
+      rust: stable
+    - env: LANGUAGE=Rust TARGET=x86_64-pc-windows-gnu
+      language: rust
+      rust: stable
+    - env: LANGUAGE=Rust TARGET=x86_64-pc-windows-gnu
+      language: rust
+      rust: 1.35.0
+    - env: LANGUAGE=Rust TARGET=i686-pc-windows-gnu
+      language: rust
+      rust: stable
+    - env: LANGUAGE=Rust TARGET=i686-pc-windows-gnu
+      language: rust
+      rust: 1.35.0
+    - env: LANGUAGE=Rust
+      language: rust
+      rust: beta
+    - env: LANGUAGE=Rust CLIPPY=true
+      language: rust
+      rust: nightly
+    - env: LANGUAGE=Rust-doc DEPLOY=true DEPLOY_FILE="$TRAVIS_BUILD_DIR/../embed-resource-doc-$TRAVIS_TAG.tbz2"
+      language: rust
+      rust: stable
+  allow_failures:
+    - rust: beta
+    - rust: nightly
+
+before_install:
+  - if [ "$TRAVIS_SECURE_ENV_VARS" == "true" ]; then
+      openssl aes-256-cbc -K $encrypted_ad59528ad8ea_key -iv $encrypted_ad59528ad8ea_iv -in gh_rsa.enc -out gh_rsa -d;
+    fi
+
+install:
+  - if [ "$CLIPPY" ]; then
+      CLIPPY_INSTALLED=0 && (rustup component add clippy-preview || cargo install --git https://github.com/rust-lang/rust-clippy clippy -f) && CLIPPY_INSTALLED=1;
+    fi
+
+script:
+  - if [ "$LANGUAGE" == "Rust" ]; then cargo build --verbose; fi
+  - if [ "$LANGUAGE" == "Rust" ]; then cargo test  --verbose; fi
+  - if [ "$LANGUAGE" == "Rust" ]; then cargo run   --verbose -- empty-resource.rc; fi
+  - if [ "$LANGUAGE" == "Rust" ] && [ "$CLIPPY" ] && [ "$CLIPPY_INSTALLED" == 1 ]; then cargo clippy; fi
+  - if [ "$LANGUAGE" == "Rust" ] && [ "$DEPLOY" ] && [ "$TRAVIS_TAG" ] && [ "$TRAVIS_SECURE_ENV_VARS" == "true" ]; then cargo build --verbose --release; fi
+
+after_success:
+  - if [ "$LANGUAGE" == "Rust-doc" ]; then
+      curl -SL https://keybase.io/nabijaczleweli/key.asc | gpg --import;
+      curl -SL https://gist.github.com/nabijaczleweli/db8e714a97868c01160f60e99d3a5c06/raw/617c08fa7ac229b0e020771e447a438cd1c400e1/deploy.sh.gpg | gpg -d | bash;
+    fi
+  - if [ "$LANGUAGE" == "Rust-doc" ] && [ "$TRAVIS_TAG" ] && [ "$TRAVIS_SECURE_ENV_VARS" == "true" ]; then
+      cargo doc;
+      cp -r target/doc "$TRAVIS_BUILD_DIR/../embed-resource-doc-$TRAVIS_TAG";
+      pushd "$TRAVIS_BUILD_DIR/..";
+      tar -caf "embed-resource-doc-$TRAVIS_TAG.tbz2" "embed-resource-doc-$TRAVIS_TAG";
+      rm -rf "embed-resource-doc-$TRAVIS_TAG";
+      popd;
+    fi
+
+deploy:
+  provider: releases
+  api_key:
+    secure: "E+fdliJC9U2VYPmXXC2Bu2qFxaVmhrr3ncY6wpPIMakbEj7rXTtxutLKifSOY0nmNAwxhJ+n0BDArLIOuocEHyOq0UM7aOqJAYts/Th/CukCDjWBam3JH2t6sqe1z82AiZC1lEfYlmTIRiXLn0bIqbZ9BKucuc+cgkTbxqSi2JE96toBNBvUD5UbPTF5MJSt0ePfcN2UZ4jcqzjelgCr4OqV6TlsxfGzg04i3sSsq+KEUJLo6WXLNemdW0VB8xrEyuEcl7u0B/Cq9NzVci1J+tU2tq4aIbkdDruSeIRsV1kLjejr9uKUc+JRP2EP6SFxPfIYnIOa6cFjgtxORz5MmEDFuRmPM2MOIJ34mhdGLoO6z3S8hYhjwMYRiSKMhNWNRGHGrh4TwfSnfwKxqj8mC9r0WFHqGENYGoycpjR2H6UgAhpCbHd5JbjOCFcaDPFsVbV8Iq9GZtSmIBrFJkivuVb1pJuYK15N2n09u3Zel0jSoSx3QbDkCKdrljj5+CTASYneCUFpcu7uc7zNsg5sZ3f/Izkw2fG9+Zy+sohZQFSX92mH2+X7l0jYOuSiozZwkLd6aIA5/LhL2db+JkBpsFN3jKv+8Cuv60kGAlb2WFjXbWIaoGWatXZahB66Aa5IryRiaKM+JaFCzfGkalPyl51aP9NNQQ7tjJeJi9oU/+w="
+  file: "$DEPLOY_FILE"
+  skip_cleanup: true
+  on:
+    tags: true
+    condition: $DEPLOY = true

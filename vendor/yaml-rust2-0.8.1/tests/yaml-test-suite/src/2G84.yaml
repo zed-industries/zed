@@ -1,0 +1,38 @@
+---
+- name: Literal modifers
+  from: '@ingydotnet'
+  tags: literal scalar
+  fail: true
+  yaml: |
+    --- |0
+  tree: |
+    +STR
+     +DOC ---
+
+- fail: true
+  yaml: |
+    --- |10
+
+- yaml: |
+    --- |1-∎
+  tree: |
+    +STR
+     +DOC ---
+      =VAL |
+     -DOC
+    -STR
+  json: |
+    ""
+  emit: |
+    --- ""
+
+- yaml: |
+    --- |1+∎
+  tree: |
+    +STR
+     +DOC ---
+      =VAL |
+     -DOC
+    -STR
+  emit: |
+    --- ""

@@ -1,0 +1,160 @@
+//! This module contains `Diagnostic` and the types/functions it uses for deserialization.
+
+#[cfg(feature = "builder")]
+use derive_builder::Builder;
+use serde::{Deserialize, Serialize};
+use std::fmt;
+
+/// The error code associated to this diagnostic.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "builder", derive(Builder))]
+#[non_exhaustive]
+#[cfg_attr(feature = "builder", builder(pattern = "owned", setter(into)))]
+pub struct DiagnosticCode {
+    /// The code itself.
+    pub code: String,
+    /// An explanation for the code
+    pub explanation: Option<String>,
+}
+
+/// A line of code associated with the Diagnostic
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "builder", derive(Builder))]
+#[non_exhaustive]
+#[cfg_attr(feature = "builder", builder(pattern = "owned", setter(into)))]
+pub struct DiagnosticSpanLine {
+    /// The line of code associated with the error
+    pub text: String,
+    /// Start of the section of the line to highlight. 1-based, character offset in self.text
+    pub highlight_start: usize,
+    /// End of the section of the line to highlight. 1-based, character offset in self.text
+    pub highlight_end: usize,
+}
+
+/// Macro expansion information associated with a diagnostic.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "builder", derive(Builder))]
+#[non_exhaustive]
+#[cfg_attr(feature = "builder", builder(pattern = "owned", setter(into)))]
+pub struct DiagnosticSpanMacroExpansion {
+    /// span where macro was applied to generate this code; note that
+    /// this may itself derive from a macro (if
+    /// `span.expansion.is_some()`)
+    pub span: DiagnosticSpan,
+
+    /// name of macro that was applied (e.g., "foo!" or "#[derive(Eq)]")
+    pub macro_decl_name: String,
+
+    /// span where macro was defined (if known)
+    pub def_site_span: Option<DiagnosticSpan>,
+}
+
+/// A section of the source code associated with a Diagnostic
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "builder", derive(Builder))]
+#[non_exhaustive]
+#[cfg_attr(feature = "builder", builder(pattern = "owned", setter(into)))]
+pub struct DiagnosticSpan {
+    /// The file name or the macro name this diagnostic comes from.
+    pub file_name: String,
+    /// The byte offset in the file where this diagnostic starts from.
+    pub byte_start: u32,
+    /// The byte offset in the file where this diagnostic ends.
+    pub byte_end: u32,
+    /// 1-based. The line in the file.
+    pub line_start: usize,
+    /// 1-based. The line in the file.
+    pub line_end: usize,
+    /// 1-based, character offset.
+    pub column_start: usize,
+    /// 1-based, character offset.
+    pub column_end: usize,
+    /// Is this a "primary" span -- meaning the point, or one of the points,
+    /// where the error occurred?
+    ///
+    /// There are rare cases where multiple spans are marked as primary,
+    /// e.g. "immutable borrow occurs here" and "mutable borrow ends here" can
+    /// be two separate spans both "primary". Top (parent) messages should
+    /// always have at least one primary span, unless it has 0 spans. Child
+    /// messages may have 0 or more primary spans.
+    pub is_primary: bool,
+    /// Source text from the start of line_start to the end of line_end.
+    pub text: Vec<DiagnosticSpanLine>,
+    /// Label that should be placed at this location (if any)
+    pub label: Option<String>,
+    /// If we are suggesting a replacement, this will contain text
+    /// that should be sliced in atop this span.
+    pub suggested_replacement: Option<String>,
+    /// If the suggestion is approximate
+    pub suggestion_applicability: Option<Applicability>,
+    /// Macro invocations that created the code at this span, if any.
+    pub expansion: Option<Box<DiagnosticSpanMacroExpansion>>,
+}
+
+/// Whether a suggestion can be safely applied.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Applicability {
+    /// The suggested replacement can be applied automatically safely
+    MachineApplicable,
+    /// The suggested replacement has placeholders that will need to be manually
+    /// replaced.
+    HasPlaceholders,
+    /// The suggested replacement may be incorrect in some circumstances. Needs
+    /// human review.
+    MaybeIncorrect,
+    /// The suggested replacement will probably not work.
+    Unspecified,
+}
+
+/// The diagnostic level
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+#[serde(rename_all = "lowercase")]
+pub enum DiagnosticLevel {
+    /// Internal compiler error
+    #[serde(rename = "error: internal compiler error")]
+    Ice,
+    /// Error
+    Error,
+    /// Warning
+    Warning,
+    /// Failure note
+    #[serde(rename = "failure-note")]
+    FailureNote,
+    /// Note
+    Note,
+    /// Help
+    Help,
+}
+
+/// A diagnostic message generated by rustc
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "builder", derive(Builder))]
+#[non_exhaustive]
+#[cfg_attr(feature = "builder", builder(pattern = "owned", setter(into)))]
+pub struct Diagnostic {
+    /// The error message of this diagnostic.
+    pub message: String,
+    /// The associated error code for this diagnostic
+    pub code: Option<DiagnosticCode>,
+    /// "error: internal compiler error", "error", "warning", "note", "help"
+    pub level: DiagnosticLevel,
+    /// A list of source code spans this diagnostic is associated with.
+    pub spans: Vec<DiagnosticSpan>,
+    /// Associated diagnostic messages.
+    pub children: Vec<Diagnostic>,
+    /// The message as rustc would render it
+    pub rendered: Option<String>,
+}
+
+impl fmt::Display for Diagnostic {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if let Some(ref rendered) = self.rendered {
+            f.write_str(rendered)?;
+        } else {
+            f.write_str("cargo didn't render this message")?;
+        }
+        Ok(())
+    }
+}

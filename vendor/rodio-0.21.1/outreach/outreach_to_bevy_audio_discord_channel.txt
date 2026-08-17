@@ -1,0 +1,5 @@
+Hi all, I am the current maintainer of Rodio. We recently discovered we need to make a rather large change to rodio to fix a group of bugs. We have a few options. We find it hard to make a choice since none of us know if and how this affects Bevy. 
+
+I think it could make sense to talk to Bevy users and devs. It would help us improve Rodio and we might be able to offer advice on how to best use it in and with Bevy. 
+
+If you have the time please look at https://github.com/RustAudio/rodio/issues/712 and let us know if such a setup would work for you. We would also love your input on whats missing here: https://github.com/RustAudio/rodio/issues/626.

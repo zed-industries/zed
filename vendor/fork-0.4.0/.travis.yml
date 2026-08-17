@@ -1,0 +1,19 @@
+language: rust
+rust:
+  - stable
+  - beta
+
+os:
+  - linux
+  - osx
+
+before_script:
+  - rustup component add clippy
+script:
+  - cargo clippy --all-targets --all-features -- -D clippy::pedantic -D clippy::nursery
+  - cargo build --all --all-targets
+  - cargo test --all
+
+notifications:
+  email:
+    on_sucess: never

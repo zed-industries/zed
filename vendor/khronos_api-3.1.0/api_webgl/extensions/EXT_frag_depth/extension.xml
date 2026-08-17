@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ratified href="EXT_frag_depth/">
+  <name>EXT_frag_depth</name>
+  <contact> <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL
+  working group</a> (public_webgl 'at' khronos.org) </contact>
+
+  <contributors>
+    <contributor>Florian Boesch (pyalot 'at' gmail.com)</contributor>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+
+  <number>16</number>
+
+  <depends>
+    <api version="1.0"/>
+    <core version="2.0">
+      <glsl version="300 es"/>
+    </core>
+  </depends>
+
+  <overview>
+    <mirrors href="http://www.khronos.org/registry/gles/extensions/EXT/EXT_frag_depth.txt"
+             name="EXT_frag_depth">
+    </mirrors>
+
+    <features>
+      <feature>
+            Adds the ability to set the depth value of a fragment from
+            within the fragment shader with the built-in output variable gl_FragDepthEXT.
+      </feature>
+      <glsl extname="GL_EXT_frag_depth">
+        <stage type="fragment"/>
+        <output name="gl_FragDepthEXT" type="float" />
+      </glsl>
+    </features>
+  </overview>
+  
+  <idl xml:space="preserve">
+    [NoInterfaceObject]
+    interface EXT_frag_depth {
+    };
+  </idl>
+
+  <samplecode xml:space="preserve">
+    <pre>
+    void main(){
+        gl_FragColor = vec4(1.0, 0.0, 1.0, 1.0);
+        gl_FragDepthEXT = 0.5;
+    }
+    </pre>
+  </samplecode>
+
+  <history>
+    <revision date="2012/11/22">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2012/12/17">
+      <change>Moved to draft.</change>
+    </revision>
+    <revision date="2014/05/13">
+      <change>Moved to community approved.</change>
+    </revision>
+    <revision date="2014/07/15">
+      <change>Added NoInterfaceObject extended attribute.</change>
+    </revision>
+    <revision date="2015/05/29">
+      <change>Ratified by Khronos Board of Promoters.</change>
+    </revision>
+  </history>
+</ratified>

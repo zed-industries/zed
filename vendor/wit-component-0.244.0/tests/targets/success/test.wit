@@ -1,0 +1,14 @@
+package test:foo;
+
+interface bar {
+    f: func();
+}
+
+interface foo {
+    f: func();
+}
+
+world foobar {
+    export bar;
+    export foo;
+}

@@ -1,0 +1,13 @@
+---
+- name: Flow Mapping Key on two lines
+  from: '@perlpunk'
+  tags: error flow mapping
+  fail: true
+  yaml: |
+    [23
+    ]: 42
+  tree: |
+    +STR
+     +DOC
+      +SEQ []
+       =VAL :23

@@ -1,0 +1,32 @@
+[package]
+name = "xattr"
+edition = "2021"
+version = "1.6.1"
+authors = ["Steven Allen <steven@stebalien.com>"]
+description = "unix extended filesystem attributes"
+
+documentation = "https://docs.rs/xattr"
+repository = "https://github.com/Stebalien/xattr"
+keywords = ["xattr", "filesystem", "unix"]
+license = "MIT OR Apache-2.0"
+
+[features]
+default = ["unsupported"]
+# Adds a dummy implementation for unsupported platforms. This is useful when
+# developing platform-independent code that doesn't absolutely need xattr
+# support.
+#
+# You can disable this feature if you want compilation to fail on unsupported
+# platforms. This would make sense if you absolutely need xattr support.
+unsupported = []
+
+[target.'cfg(any(target_os = "android", target_os = "linux", target_os = "macos", target_os = "hurd"))'.dependencies.rustix]
+version = "1.0.0"
+default-features = false
+features = ["fs", "std"]
+
+[target.'cfg(any(target_os = "freebsd", target_os = "netbsd"))'.dependencies]
+libc = "0.2.150"
+
+[dev-dependencies]
+tempfile = "3"

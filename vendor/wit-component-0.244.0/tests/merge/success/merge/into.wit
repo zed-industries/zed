@@ -1,0 +1,8 @@
+package foo:into;
+
+interface b {
+  use foo:foo/only-into@1.0.0.{r};
+
+  foo: func();
+}
+

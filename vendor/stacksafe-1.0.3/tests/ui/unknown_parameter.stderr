@@ -1,0 +1,5 @@
+error: unknown attribute parameter `unknown`
+  --> tests/ui/unknown_parameter.rs:17:13
+   |
+17 | #[stacksafe(unknown = true)]
+   |             ^^^^^^^

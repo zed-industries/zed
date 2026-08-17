@@ -1,0 +1,67 @@
+{
+  "worlds": [],
+  "interfaces": [
+    {
+      "name": "foo",
+      "types": {
+        "r": 0
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "foo",
+      "types": {
+        "r": 1,
+        "t": 2
+      },
+      "functions": {},
+      "package": 1
+    }
+  ],
+  "types": [
+    {
+      "name": "r",
+      "kind": "resource",
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "r",
+      "kind": {
+        "type": 0
+      },
+      "owner": {
+        "interface": 1
+      }
+    },
+    {
+      "name": "t",
+      "kind": {
+        "handle": {
+          "own": 1
+        }
+      },
+      "owner": {
+        "interface": 1
+      }
+    }
+  ],
+  "packages": [
+    {
+      "name": "some:dep",
+      "interfaces": {
+        "foo": 0
+      },
+      "worlds": {}
+    },
+    {
+      "name": "foo:bar",
+      "interfaces": {
+        "foo": 1
+      },
+      "worlds": {}
+    }
+  ]
+}

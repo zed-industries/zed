@@ -1,0 +1,7 @@
+error: #[derive(num_enum::FromPrimitive)] requires enum to be exhaustive, or a variant marked with `#[default]`, `#[num_enum(default)]`, or `#[num_enum(catch_all)`
+ --> $DIR/missing_default.rs:1:10
+  |
+1 | #[derive(num_enum::FromPrimitive)]
+  |          ^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the derive macro `num_enum::FromPrimitive` (in Nightly builds, run with -Z macro-backtrace for more info)

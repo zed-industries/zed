@@ -1,0 +1,16 @@
+insert into comment(comment_id, post_id, user_id, content, created_at)
+values (1,
+        1,
+        2,
+        'lol bet ur still bad, 1v1 me',
+        timestamp(now(), '-0:50:00')),
+       (2,
+        1,
+        1,
+        'you''re on!',
+        timestamp(now(), '-0:45:00')),
+       (3,
+        2,
+        1,
+        'lol you''re just mad you lost :P',
+        timestamp(now(), '-0:15:00'));

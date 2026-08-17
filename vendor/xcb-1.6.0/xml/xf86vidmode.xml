@@ -1,0 +1,509 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Copyright (C) 2009 Open Text Corporation.  All Rights Reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Except as contained in this notice, the names of the authors or their
+institutions shall not be used in advertising or otherwise to promote the
+sale, use or other dealings in this Software without prior written
+authorization from the authors.
+-->
+
+<xcb header="xf86vidmode" extension-xname="XFree86-VidModeExtension" extension-name="XF86VidMode" major-version="2" minor-version="2">
+
+    <!-- In places where there are multiple versions of the protocol, this
+	 describes version 2.2. If you do not call xcb_xf86vidmode_set_client_version()
+	 then some requests may fail and some replies may not be what you expect. -->
+
+    <typedef oldname="CARD32" newname="SYNCRANGE" /> <!-- Min and Max fixed-decimal-point values -->
+    <typedef oldname="CARD32" newname="DOTCLOCK" /> <!-- A single fixed-decimal-point value -->
+
+    <enum name="ModeFlag">
+        <item name="Positive_HSync">
+            <bit>0</bit>
+        </item>
+        <item name="Negative_HSync">
+            <bit>1</bit>
+        </item>
+        <item name="Positive_VSync">
+            <bit>2</bit>
+        </item>
+        <item name="Negative_VSync">
+            <bit>3</bit>
+        </item>
+        <item name="Interlace">
+            <bit>4</bit>
+        </item>
+        <item name="Composite_Sync">
+            <bit>5</bit>
+        </item>
+        <item name="Positive_CSync">
+            <bit>6</bit>
+        </item>
+        <item name="Negative_CSync">
+            <bit>7</bit>
+        </item>
+        <item name="HSkew">
+            <bit>8</bit>
+        </item>
+        <item name="Broadcast">
+            <bit>9</bit>
+        </item>
+        <item name="Pixmux">
+            <bit>10</bit>
+        </item>
+        <item name="Double_Clock">
+            <bit>11</bit>
+        </item>
+        <item name="Half_Clock">
+            <bit>12</bit>
+        </item>
+    </enum>
+
+    <enum name="ClockFlag">
+        <item name="Programable">
+            <bit>0</bit>
+        </item>
+    </enum>
+
+    <enum name="Permission">
+        <item name="Read">
+            <bit>0</bit>
+        </item>
+        <item name="Write">
+            <bit>1</bit>
+        </item>
+    </enum>
+
+    <struct name="ModeInfo">
+        <field type="DOTCLOCK" name="dotclock" />
+        <field type="CARD16" name="hdisplay" />
+        <field type="CARD16" name="hsyncstart" />
+        <field type="CARD16" name="hsyncend" />
+        <field type="CARD16" name="htotal" />
+        <field type="CARD32" name="hskew" />
+        <field type="CARD16" name="vdisplay" />
+        <field type="CARD16" name="vsyncstart" />
+        <field type="CARD16" name="vsyncend" />
+        <field type="CARD16" name="vtotal" />
+        <pad bytes="4" />
+        <field type="CARD32" name="flags" mask="ModeFlag" />
+        <pad bytes="12" />
+        <field type="CARD32" name="privsize" />
+    </struct>
+
+    <request name="QueryVersion" opcode="0">
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD16" name="major_version" />
+            <field type="CARD16" name="minor_version" />
+        </reply>
+    </request>
+
+    <request name="GetModeLine" opcode="1">
+        <field type="CARD16" name="screen" />
+        <pad bytes="2" />
+        <reply>
+            <pad bytes="1" />
+            <field type="DOTCLOCK" name="dotclock" />
+            <field type="CARD16" name="hdisplay" />
+            <field type="CARD16" name="hsyncstart" />
+            <field type="CARD16" name="hsyncend" />
+            <field type="CARD16" name="htotal" />
+            <field type="CARD16" name="hskew" />
+            <field type="CARD16" name="vdisplay" />
+            <field type="CARD16" name="vsyncstart" />
+            <field type="CARD16" name="vsyncend" />
+            <field type="CARD16" name="vtotal" />
+            <pad bytes="2" />
+            <field type="CARD32" name="flags" mask="ModeFlag" />
+            <pad bytes="12" />
+            <field type="CARD32" name="privsize" />
+            <list type="CARD8" name="private">
+                <fieldref>privsize</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="ModModeLine" opcode="2">
+        <field type="CARD32" name="screen" />
+        <field type="CARD16" name="hdisplay" />
+        <field type="CARD16" name="hsyncstart" />
+        <field type="CARD16" name="hsyncend" />
+        <field type="CARD16" name="htotal" />
+        <field type="CARD16" name="hskew" />
+        <field type="CARD16" name="vdisplay" />
+        <field type="CARD16" name="vsyncstart" />
+        <field type="CARD16" name="vsyncend" />
+        <field type="CARD16" name="vtotal" />
+        <pad bytes="2" />
+        <field type="CARD32" name="flags" mask="ModeFlag" />
+        <pad bytes="12" />
+        <field type="CARD32" name="privsize" />
+        <list type="CARD8" name="private">
+            <fieldref>privsize</fieldref>
+        </list>
+    </request>
+
+    <request name="SwitchMode" opcode="3">
+        <field type="CARD16" name="screen" />
+        <field type="CARD16" name="zoom" />
+    </request>
+
+    <request name="GetMonitor" opcode="4">
+        <field type="CARD16" name="screen" />
+        <pad bytes="2" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD8" name="vendor_length" />
+            <field type="CARD8" name="model_length" />
+            <field type="CARD8" name="num_hsync" />
+            <field type="CARD8" name="num_vsync" />
+            <pad bytes="20" />
+            <list type="SYNCRANGE" name="hsync">
+                <fieldref>num_hsync</fieldref>
+            </list>
+            <list type="SYNCRANGE" name="vsync">
+                <fieldref>num_vsync</fieldref>
+            </list>
+            <list type="char" name="vendor">
+                <fieldref>vendor_length</fieldref>
+            </list>
+            <list type="void" name="alignment_pad">
+                <op op="-">
+                    <op op="&amp;">
+                        <op op="+">
+                            <fieldref>vendor_length</fieldref>
+                            <value>3</value>
+                        </op>
+                        <unop op="~">
+                            <value>3</value>
+                        </unop>
+                    </op>
+                    <fieldref>vendor_length</fieldref>
+                </op>
+            </list>
+            <list type="char" name="model">
+                <fieldref>model_length</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="LockModeSwitch" opcode="5">
+        <field type="CARD16" name="screen" />
+        <field type="CARD16" name="lock" />
+    </request>
+
+    <request name="GetAllModeLines" opcode="6">
+        <field type="CARD16" name="screen" />
+        <pad bytes="2" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="modecount" />
+            <pad bytes="20" />
+            <list type="ModeInfo" name="modeinfo">
+                <fieldref>modecount</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="AddModeLine" opcode="7">
+        <field type="CARD32" name="screen" />
+        <field type="DOTCLOCK" name="dotclock" />
+        <field type="CARD16" name="hdisplay" />
+        <field type="CARD16" name="hsyncstart" />
+        <field type="CARD16" name="hsyncend" />
+        <field type="CARD16" name="htotal" />
+        <field type="CARD16" name="hskew" />
+        <field type="CARD16" name="vdisplay" />
+        <field type="CARD16" name="vsyncstart" />
+        <field type="CARD16" name="vsyncend" />
+        <field type="CARD16" name="vtotal" />
+        <pad bytes="2" />
+        <field type="CARD32" name="flags" mask="ModeFlag" />
+        <pad bytes="12" />
+        <field type="CARD32" name="privsize" />
+        <field type="DOTCLOCK" name="after_dotclock" />
+        <field type="CARD16" name="after_hdisplay" />
+        <field type="CARD16" name="after_hsyncstart" />
+        <field type="CARD16" name="after_hsyncend" />
+        <field type="CARD16" name="after_htotal" />
+        <field type="CARD16" name="after_hskew" />
+        <field type="CARD16" name="after_vdisplay" />
+        <field type="CARD16" name="after_vsyncstart" />
+        <field type="CARD16" name="after_vsyncend" />
+        <field type="CARD16" name="after_vtotal" />
+        <pad bytes="2" />
+        <field type="CARD32" name="after_flags" mask="ModeFlag" />
+        <pad bytes="12" />
+        <list type="CARD8" name="private">
+            <fieldref>privsize</fieldref>
+        </list>
+    </request>
+
+    <request name="DeleteModeLine" opcode="8">
+        <field type="CARD32" name="screen" />
+        <field type="DOTCLOCK" name="dotclock" />
+        <field type="CARD16" name="hdisplay" />
+        <field type="CARD16" name="hsyncstart" />
+        <field type="CARD16" name="hsyncend" />
+        <field type="CARD16" name="htotal" />
+        <field type="CARD16" name="hskew" />
+        <field type="CARD16" name="vdisplay" />
+        <field type="CARD16" name="vsyncstart" />
+        <field type="CARD16" name="vsyncend" />
+        <field type="CARD16" name="vtotal" />
+        <pad bytes="2" />
+        <field type="CARD32" name="flags" mask="ModeFlag" />
+        <pad bytes="12" />
+        <field type="CARD32" name="privsize" />
+        <list type="CARD8" name="private">
+            <fieldref>privsize</fieldref>
+        </list>
+    </request>
+
+    <request name="ValidateModeLine" opcode="9">
+        <field type="CARD32" name="screen" />
+        <field type="DOTCLOCK" name="dotclock" />
+        <field type="CARD16" name="hdisplay" />
+        <field type="CARD16" name="hsyncstart" />
+        <field type="CARD16" name="hsyncend" />
+        <field type="CARD16" name="htotal" />
+        <field type="CARD16" name="hskew" />
+        <field type="CARD16" name="vdisplay" />
+        <field type="CARD16" name="vsyncstart" />
+        <field type="CARD16" name="vsyncend" />
+        <field type="CARD16" name="vtotal" />
+        <pad bytes="2" />
+        <field type="CARD32" name="flags" mask="ModeFlag" />
+        <pad bytes="12" />
+        <field type="CARD32" name="privsize" />
+        <list type="CARD8" name="private">
+            <fieldref>privsize</fieldref>
+        </list>
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="status" />
+            <pad bytes="20" />
+        </reply>
+    </request>
+
+    <request name="SwitchToMode" opcode="10">
+        <field type="CARD32" name="screen" />
+        <field type="DOTCLOCK" name="dotclock" />
+        <field type="CARD16" name="hdisplay" />
+        <field type="CARD16" name="hsyncstart" />
+        <field type="CARD16" name="hsyncend" />
+        <field type="CARD16" name="htotal" />
+        <field type="CARD16" name="hskew" />
+        <field type="CARD16" name="vdisplay" />
+        <field type="CARD16" name="vsyncstart" />
+        <field type="CARD16" name="vsyncend" />
+        <field type="CARD16" name="vtotal" />
+        <pad bytes="2" />
+        <field type="CARD32" name="flags" mask="ModeFlag" />
+        <pad bytes="12" />
+        <field type="CARD32" name="privsize" />
+        <list type="CARD8" name="private">
+            <fieldref>privsize</fieldref>
+        </list>
+    </request>
+
+    <request name="GetViewPort" opcode="11">
+        <field type="CARD16" name="screen" />
+        <pad bytes="2" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="x" />
+            <field type="CARD32" name="y" />
+            <pad bytes="16" />
+        </reply>
+    </request>
+
+    <request name="SetViewPort" opcode="12">
+        <field type="CARD16" name="screen" />
+        <pad bytes="2" />
+        <field type="CARD32" name="x" />
+        <field type="CARD32" name="y" />
+    </request>
+
+    <!-- new for version 2.x  -->
+    <request name="GetDotClocks" opcode="13">
+        <field type="CARD16" name="screen" />
+        <pad bytes="2" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="flags" mask="ClockFlag" />
+            <field type="CARD32" name="clocks" />
+            <field type="CARD32" name="maxclocks" />
+            <pad bytes="12" />
+            <list type="CARD32" name="clock">
+                <!-- Only if flags does not include Programable:
+		    (1 - (flags & 1)) * clocks
+		-->
+                <op op="*">
+                    <op op="-">
+                        <value>1</value>
+                        <op op="&amp;">
+                            <fieldref>flags</fieldref>
+                            <value>1</value>
+                        </op>
+                    </op>
+                    <fieldref>clocks</fieldref>
+                </op>
+            </list>
+        </reply>
+    </request>
+
+    <request name="SetClientVersion" opcode="14">
+        <field type="CARD16" name="major" />
+        <field type="CARD16" name="minor" />
+    </request>
+
+    <request name="SetGamma" opcode="15">
+        <field type="CARD16" name="screen" />
+        <pad bytes="2" />
+        <field type="CARD32" name="red" />
+        <field type="CARD32" name="green" />
+        <field type="CARD32" name="blue" />
+        <pad bytes="12" />
+    </request>
+
+    <request name="GetGamma" opcode="16">
+        <field type="CARD16" name="screen" />
+        <pad bytes="26" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="red" />
+            <field type="CARD32" name="green" />
+            <field type="CARD32" name="blue" />
+            <pad bytes="12" />
+        </reply>
+    </request>
+
+    <request name="GetGammaRamp" opcode="17">
+        <field type="CARD16" name="screen" />
+        <field type="CARD16" name="size" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD16" name="size" />
+            <pad bytes="22" />
+            <list type="CARD16" name="red">
+                <op op="&amp;">
+                    <op op="+">
+                        <fieldref>size</fieldref>
+                        <value>1</value>
+                    </op>
+                    <unop op="~">
+                        <value>1</value>
+                    </unop>
+                </op>
+            </list>
+            <list type="CARD16" name="green">
+                <op op="&amp;">
+                    <op op="+">
+                        <fieldref>size</fieldref>
+                        <value>1</value>
+                    </op>
+                    <unop op="~">
+                        <value>1</value>
+                    </unop>
+                </op>
+            </list>
+            <list type="CARD16" name="blue">
+                <op op="&amp;">
+                    <op op="+">
+                        <fieldref>size</fieldref>
+                        <value>1</value>
+                    </op>
+                    <unop op="~">
+                        <value>1</value>
+                    </unop>
+                </op>
+            </list>
+        </reply>
+    </request>
+
+    <request name="SetGammaRamp" opcode="18">
+        <field type="CARD16" name="screen" />
+        <field type="CARD16" name="size" />
+        <list type="CARD16" name="red">
+            <op op="&amp;">
+                <op op="+">
+                    <fieldref>size</fieldref>
+                    <value>1</value>
+                </op>
+                <unop op="~">
+                    <value>1</value>
+                </unop>
+            </op>
+        </list>
+        <list type="CARD16" name="green">
+            <op op="&amp;">
+                <op op="+">
+                    <fieldref>size</fieldref>
+                    <value>1</value>
+                </op>
+                <unop op="~">
+                    <value>1</value>
+                </unop>
+            </op>
+        </list>
+        <list type="CARD16" name="blue">
+            <op op="&amp;">
+                <op op="+">
+                    <fieldref>size</fieldref>
+                    <value>1</value>
+                </op>
+                <unop op="~">
+                    <value>1</value>
+                </unop>
+            </op>
+        </list>
+    </request>
+
+    <request name="GetGammaRampSize" opcode="19">
+        <field type="CARD16" name="screen" />
+        <pad bytes="2" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD16" name="size" />
+            <pad bytes="22" />
+        </reply>
+    </request>
+
+    <request name="GetPermissions" opcode="20">
+        <field type="CARD16" name="screen" />
+        <pad bytes="2" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="permissions" mask="Permission" />
+            <pad bytes="20" />
+        </reply>
+    </request>
+
+    <error name="BadClock" number="0" />
+    <error name="BadHTimings" number="1" />
+    <error name="BadVTimings" number="2" />
+    <error name="ModeUnsuitable" number="3" />
+    <error name="ExtensionDisabled" number="4" />
+    <error name="ClientNotLocal" number="5" />
+    <error name="ZoomLocked" number="6" />
+
+</xcb>

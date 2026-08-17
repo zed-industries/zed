@@ -1,0 +1,30 @@
+[package]
+name = "memfd"
+version = "0.6.5"
+edition = "2018"
+authors = [
+    "Luca Bruno <lucab@lucabruno.net>",
+    "Simonas Kazlauskas <memfd@kazlauskas.me>",
+]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/lucab/memfd-rs"
+documentation = "https://docs.rs/memfd"
+description = "A pure-Rust library to work with Linux memfd and sealing"
+keywords = ["Linux", "memfd", "memfd_create", "seal"]
+categories = ["filesystem", "os", "os::unix-apis"]
+exclude = [".gitignore", ".travis.yml"]
+
+[dependencies]
+# Private dependencies.
+rustix = { version = "1.0", features = ["fs"] }
+
+[package.metadata.release]
+publish = false
+push = false
+pre-release-commit-message = "cargo: memfd release {{version}}"
+sign-commit = true
+sign-tag = true
+tag-message = "memfd {{version}}"
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--cfg", "docsrs"]

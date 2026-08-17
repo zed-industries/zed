@@ -1,0 +1,26 @@
+[package]
+name = "derive_builder_core"
+version = "0.12.0"
+authors = ["Colin Kiegel <kiegel@gmx.de>",
+           "Pascal Hertleif <killercup@gmail.com>",
+           "Jan-Erik Rediger <janerik@fnordig.de>",
+           "Ted Driggs <ted.driggs@outlook.com>"]
+
+description = "Internal helper library for the derive_builder crate."
+repository = "https://github.com/colin-kiegel/rust-derive-builder"
+documentation = "https://docs.rs/derive_builder_core"
+
+license = "MIT/Apache-2.0"
+readme = "README.md"
+
+[features]
+clippy = []
+
+[dependencies]
+darling = "0.14.0"
+proc-macro2 = "1.0.37"
+quote = "1.0.18"
+syn = { version = "1.0.91", features = ["full", "extra-traits"] }
+
+[dev-dependencies]
+pretty_assertions = "0.6.1"

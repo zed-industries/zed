@@ -1,0 +1,28 @@
+---
+- name: Mapping, key and flow sequence item anchors
+  from: '@perlpunk'
+  tags: anchor complex-key flow mapping sequence
+  yaml: |
+    ---
+    &mapping
+    &key [ &item a, b, c ]: value
+  tree: |
+    +STR
+     +DOC ---
+      +MAP &mapping
+       +SEQ [] &key
+        =VAL &item :a
+        =VAL :b
+        =VAL :c
+       -SEQ
+       =VAL :value
+      -MAP
+     -DOC
+    -STR
+  dump: |
+    --- &mapping
+    ? &key
+    - &item a
+    - b
+    - c
+    : value

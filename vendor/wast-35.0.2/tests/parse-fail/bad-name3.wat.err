@@ -1,0 +1,5 @@
+expected a string
+     --> tests/parse-fail/bad-name3.wat:1:22
+      |
+    1 | (module (func (@name 2)))
+      |                      ^

@@ -1,0 +1,6 @@
+{
+  "git": {
+    "sha1": "d703accad71996d6b66b65738731d5b4cd8f78ca"
+  },
+  "path_in_vcs": "crates/jupyter-protocol"
+}

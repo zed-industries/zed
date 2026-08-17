@@ -1,0 +1,23 @@
+package foo:foo;
+
+world simple {
+  record foo {
+    f: u8,
+  }
+
+  type bar = foo;
+
+  import a: func(a: foo) -> bar;
+  export b: func(a: foo) -> bar;
+}
+
+interface import-me {
+  type foo = u32;
+}
+
+world with-imports {
+  use import-me.{foo};
+
+  import a: func(a: foo);
+  export b: func(a: foo);
+}

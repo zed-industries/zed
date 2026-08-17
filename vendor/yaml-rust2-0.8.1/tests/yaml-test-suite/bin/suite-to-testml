@@ -1,0 +1,64 @@
+#!/usr/bin/env perl
+
+#------------------------------------------------------------------------------
+#
+# This program turns all the tests in the src/ directory into TestML tests
+# under a testml/ directory.
+# It is run by the `make testml` command.
+#
+#------------------------------------------------------------------------------
+
+use strict; use warnings;
+use FindBin;
+use lib $FindBin::Bin;
+use base 'YAMLTestSuite';
+use Encode;
+
+main->new->run([@ARGV]);
+
+sub initial {
+    my ($self) = @_;
+    $self->{tml} = '';
+    mkdir 'testml';
+}
+
+sub done {
+    my ($self) = @_;
+    open my $out, '>', "testml/$self->{id}.tml" or die;
+    print $out encode_utf8($self->{tml});
+    close $out;
+    $self->{tml} = '';
+}
+
+my $name;
+sub make {
+    my ($self) = @_;
+
+    my ($id, $ID, $num, $data) =
+        @$self{qw<id ID num data>};
+
+    my ($name, $yaml, $tree, $fail) =
+        @$data{qw<name yaml tree fail>};
+
+    $yaml =~ s/^(.)/    $1/gm;
+    $tree =~ s/^\ +//gm;
+
+    $self->{tml} .= <<"...";
+=== $ID - $name
+
+--- in-yaml(<)
+$yaml
+...
+
+    if ($fail) {
+        $self->{tml} .= "--- error\n\n";
+    }
+    else {
+        $self->{tml} .= "--- test-event\n$tree\n";
+    }
+}
+
+sub final {
+    my ($self) = @_;
+    warn "Wrote $self->{file} TestML files.\n";
+}

@@ -1,0 +1,26 @@
+error: BOOM
+ --> $DIR/proc_macro_hack.rs:8:25
+  |
+8 |     let nine = add_one!(two) + add_one!(2 + 3);
+  |                         ^^^
+  |
+  = note: this error originates in a macro (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: BOOM
+ --> $DIR/proc_macro_hack.rs:8:41
+  |
+8 |     let nine = add_one!(two) + add_one!(2 + 3);
+  |                                         ^^^^^
+  |
+  = note: this error originates in a macro (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable expression
+ --> $DIR/proc_macro_hack.rs:8:32
+  |
+8 |     let nine = add_one!(two) + add_one!(2 + 3);
+  |                -------------   ^^^^^^^^^^^^^^^ unreachable expression
+  |                |
+  |                any code following this expression is unreachable
+  |
+  = note: `#[warn(unreachable_code)]` on by default
+  = note: this warning originates in a macro (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -1,0 +1,172 @@
+---
+- name: Tabs that look like indentation
+  from: '@ingydotnet'
+  tags: indent whitespace
+  yaml: |
+    foo:
+     ———»bar
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :foo
+       =VAL :bar
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "foo" : "bar"
+    }
+  emit: |
+    ---
+    foo: bar
+
+- fail: true
+  yaml: |
+    foo: "bar
+    ————»baz"
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :foo
+
+- yaml: |
+    foo: "bar
+      ——»baz"
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :foo
+       =VAL "bar baz
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "foo" : "bar baz"
+    }
+  emit: |
+    ---
+    foo: "bar baz"
+
+- yaml: |2
+     ———»
+    foo: 1
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :foo
+       =VAL :1
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "foo" : 1
+    }
+  emit: |
+    ---
+    foo: 1
+
+- yaml: |
+    foo: 1
+    ————»
+    bar: 2
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :foo
+       =VAL :1
+       =VAL :bar
+       =VAL :2
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "foo" : 1,
+      "bar" : 2
+    }
+  emit: |
+    ---
+    foo: 1
+    bar: 2
+
+- yaml: |
+    foo: 1
+     ———»
+    bar: 2
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :foo
+       =VAL :1
+       =VAL :bar
+       =VAL :2
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "foo" : 1,
+      "bar" : 2
+    }
+  emit: |
+    ---
+    foo: 1
+    bar: 2
+
+- fail: true
+  yaml: |
+    foo:
+      a: 1
+      ——»b: 2
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :foo
+       +MAP
+        =VAL :a
+        =VAL :1
+
+- yaml: |
+    %YAML 1.2
+    ————»
+    ---
+  tree: |
+    +STR
+     +DOC ---
+      =VAL :
+     -DOC
+    -STR
+  json: |
+    null
+  emit: |
+    --- null
+
+- yaml: |
+    foo: "bar
+     ———» ——» baz ——» ——» "
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :foo
+       =VAL "bar baz \t \t␣
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "foo" : "bar baz \t \t "
+    }
+  emit: |
+    ---
+    foo: "bar baz \t \t "

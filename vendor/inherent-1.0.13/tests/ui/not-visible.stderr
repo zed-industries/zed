@@ -1,0 +1,8 @@
+error[E0624]: associated function `f` is private
+  --> tests/ui/not-visible.rs:17:20
+   |
+12 |         fn f() {}
+   |         ------ private associated function defined here
+...
+17 |     types::Struct::f();
+   |                    ^ private associated function

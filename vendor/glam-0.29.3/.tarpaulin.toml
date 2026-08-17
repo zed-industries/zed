@@ -1,0 +1,47 @@
+[sse2_math]
+features = "approx bytemuck mint rand rkyv serde debug-glam-assert"
+exclude-files = [
+    "codegen/*",
+    "src/neon.rs",
+    "src/bool/neon/*",
+    "src/f32/neon/*",
+    "src/swizzles/neon/*",
+    "src/wasm32.rs",
+    "src/bool/wasm32/*",
+    "src/f32/wasm32/*",
+    "src/swizzles/wasm32/*",
+    "benches/*",
+    "tests/support.rs"
+]
+
+[scalar_math]
+features = "scalar-math approx bytemuck mint rand rkyv serde debug-glam-assert"
+exclude-files = [
+    "codegen/*",
+    "src/neon.rs",
+    "src/bool/neon/*",
+    "src/f32/neon/*",
+    "src/swizzles/neon/*",
+    "src/wasm32.rs",
+    "src/bool/wasm32/*",
+    "src/f32/wasm32/*",
+    "src/swizzles/wasm32/*",
+    "benches/*",
+    "tests/support.rs"
+]
+
+[core_simd]
+features = "core-simd approx bytemuck mint rand rkyv serde debug-glam-assert"
+exclude-files = [
+    "codegen/*",
+    "src/neon.rs",
+    "src/bool/neon/*",
+    "src/f32/neon/*",
+    "src/swizzles/neon/*",
+    "src/wasm32.rs",
+    "src/bool/wasm32/*",
+    "src/f32/wasm32/*",
+    "src/swizzles/wasm32/*",
+    "benches/*",
+    "tests/support.rs"
+]

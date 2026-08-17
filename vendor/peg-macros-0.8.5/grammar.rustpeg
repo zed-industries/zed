@@ -1,0 +1,178 @@
+pub grammar peg() for FlatTokenStream {
+
+use crate::ast::*;
+use crate::ast::Expr::*;
+use crate::tokens::FlatTokenStream;
+use proc_macro2::{ TokenStream, Ident, Group, Literal, Delimiter, Span };
+
+pub rule peg_grammar() -> Grammar
+    = doc:rust_doc_comment() visibility:rust_visibility() "grammar" name:IDENT() lifetime_params:rust_lifetime_params()? args:grammar_args() "for" input_type:$(rust_type()) "{" items:item()* "}"
+        { Grammar { doc, visibility, name, lifetime_params, args, input_type, items } }
+
+    rule rust_lifetime_params() -> Vec<TokenStream>
+        = "<" p:(($(LIFETIME())) ++ ",") ","? ">" { p }
+
+rule grammar_args() -> Vec<(Ident, TokenStream)>
+    = "(" args:((i:IDENT() ":" t:$(rust_type()) { (i, t) })**",") ","? ")" { args }
+
+rule peg_rule() -> Rule
+    = doc:rust_doc_comment() cache:cacheflag() no_eof:no_eof_flag() visibility:rust_visibility()
+      span:sp() "rule"
+      header:(
+          &("_" / "__" / "___") name:IDENT() ("(" ")")? { (name, None, Vec::new()) }
+        / name:IDENT() ty_params:rust_ty_params()? params:rule_params() { (name, ty_params, params) }
+      )
+      ret_type:("->" t:$(rust_type()) {t})?
+      where_clause:$(rust_where_clause())?
+      "=" expr:expression() ";"?
+        { Rule { span, doc, name:header.0, ty_params:header.1, params:header.2, expr, ret_type, where_clause, visibility, no_eof, cache } }
+
+    rule cacheflag() -> Option<Cache> = "#" "[" "cache" "]" {Some(Cache::Simple)} / "#" "[" "cache_left_rec" "]" {Some(Cache::Recursive)} / {None}
+
+    rule no_eof_flag() -> bool = "#" "[" "no_eof" "]" {true} / {false}
+
+    rule rule_param_ty() -> RuleParamTy
+        = "rule" "<" r:$(rust_type()) ">" { RuleParamTy::Rule(r) }
+        / t:$(rust_type()) { RuleParamTy::Rust(t) }
+
+    rule rule_params() -> Vec<RuleParam>
+        = "(" params:(x:(name:IDENT() ":" ty:rule_param_ty() { RuleParam { name, ty} }) ++ "," ","? {x})? ")" { params.unwrap_or_default() }
+
+rule item() -> Item
+    = u:rust_use()     { Item::Use(u) }
+    / r:peg_rule()     { Item::Rule(r) }
+
+rule rust_doc_comment() -> Option<TokenStream> = $(("#" "[" "doc" "=" LITERAL() "]")*)?
+
+rule rust_visibility() -> Option<TokenStream> = $("pub" PAREN_GROUP()?)?
+
+rule rust_use() -> TokenStream
+    = v:$("use" rust_path() (
+        "::" "*"
+        / "::" "{" ((IDENT() ("as" IDENT())?) ++ "," ","?) "}"
+        / ("as" IDENT())?
+    ) ";") { v.to_owned() }
+
+rule rust_path()
+    = ("crate" "::")? IDENT() ++ "::"
+
+rule rust_type()
+    = BRACKET_GROUP()
+    / "&" LIFETIME()? "mut"? rust_type()
+    / "dyn" rust_ty_param_bound() ++ "+"
+    / "impl" rust_ty_param_bound() ++ "+"
+    / "(" (rust_type() ++ "," ","?)? ")"
+    / ("<" rust_type() ("as" rust_ty_path())? ">")? rust_ty_path()
+
+rule rust_ty_path()
+    = "::"? (IDENT() ("::"? (rust_generic_args() / PAREN_GROUP() ("->" rust_type())?))?) ++ "::"
+
+rule rust_ty_params() -> Vec<TokenStream>
+    = "<" p:($(rust_generic_param()) ++ ",") ","? ">" { p }
+
+rule rust_where_clause()
+    = "where" (
+        LIFETIME() (":" LIFETIME() ++ "+")?
+        / rust_for_lifetimes()? rust_type() ":" rust_ty_param_bound() ++ "+"
+    ) ** "," ","?
+
+rule rust_generic_param()
+    = LIFETIME() (":" LIFETIME() ++ "+")?
+    / IDENT() (":" rust_ty_param_bound() ++ "+")?
+
+rule rust_for_lifetimes()
+    = "for" rust_ty_params()
+
+rule rust_ty_param_bound()
+    = LIFETIME() 
+    / "?"? rust_for_lifetimes()? rust_ty_path()
+    / "(" "?"? rust_for_lifetimes()? rust_ty_path() ")"
+
+rule rust_generic_args()
+    = "<" (LIFETIME() / rust_type() / BRACE_GROUP() / LITERAL()) ++ "," ","? ">"
+
+rule expression() -> SpannedExpr = choice()
+
+rule choice() -> SpannedExpr = sp:sp() s:sequence() ++ "/" {
+    if s.len() == 1 {
+        s.into_iter().next().unwrap()
+    } else {
+        ChoiceExpr(s).at(sp)
+    }
+}
+
+rule sequence() -> SpannedExpr
+    = sp:sp() elements:labeled()* code:BRACE_GROUP()? {
+        if let Some(code) = code {
+            ActionExpr(elements, Some(code)).at(sp)
+        } else if elements.len() != 1 {
+            ActionExpr(elements, None).at(sp)
+        } else {
+            elements.into_iter().next().unwrap().expr
+        }
+    }
+
+rule labeled() -> TaggedExpr
+    = label:(l:IDENT() ":" {l})? expression:suffixed()
+        { TaggedExpr{ name: label, expr: expression } }
+
+rule suffixed() -> SpannedExpr
+    = e:prefixed() sp:sp() "?" { OptionalExpr(Box::new(e)).at(sp) }
+    / e:prefixed() sp:sp() "**" count:repeatcount() sep:primary() { Repeat { inner: Box::new(e), bound: count, sep: Some(Box::new(sep)) }.at(sp) }
+    / e:prefixed() sp:sp() "++" sep:primary() { Repeat { inner: Box::new(e), bound: BoundedRepeat::Plus, sep: Some(Box::new(sep)) }.at(sp )}
+    / e:prefixed() sp:sp() "*" count:repeatcount() { Repeat { inner: Box::new(e), bound: count, sep: None }.at(sp) }
+    / e:prefixed() sp:sp() "+" { Repeat { inner: Box::new(e), bound: BoundedRepeat::Plus, sep: None }.at(sp) }
+    / prefixed()
+
+rule repeatcount() -> BoundedRepeat
+    = "<" n:repeatnum() ">" { BoundedRepeat::Exact(n) }
+    / "<" min:repeatnum()? "," max:repeatnum()? ">" { BoundedRepeat::Both(min, max) }
+    / { BoundedRepeat::None }
+
+rule repeatnum() -> TokenStream = $(INTEGER() / BRACE_GROUP())
+
+rule prefixed() -> SpannedExpr
+    = sp:sp() "$" expression:primary() { MatchStrExpr(Box::new(expression)).at(sp) }
+    / sp:sp() "&" expression:primary() { PosAssertExpr(Box::new(expression)).at(sp) }
+    / sp:sp() "!" expression:primary() { NegAssertExpr(Box::new(expression)).at(sp) }
+    / primary()
+
+#[cache]
+rule primary() -> SpannedExpr
+  = sp:sp() "precedence" "!" "{" levels:precedence_level()**"--" "}" { PrecedenceExpr{ levels:levels }.at(sp) }
+  / sp:sp() "position" "!" "(" ")" { PositionExpr.at(sp) }
+  / sp:sp() "quiet" "!" "{" e:expression() "}" { QuietExpr(Box::new(e)).at(sp) }
+  / sp:sp() "expected" "!" s:PAREN_GROUP() { FailExpr(s).at(sp) }
+  / &("_" / "__" / "___") sp:sp() name:IDENT() { RuleExpr(name, None, Vec::new()).at(sp) }
+  / sp:sp() name:IDENT() generics:$("::" rust_generic_args())? "(" args:(rule_arg() ** ",") ")" { RuleExpr(name, generics, args).at(sp) }
+  / sp:sp() l:LITERAL() { LiteralExpr(l).at(sp) }
+  / sp:sp() p:BRACKET_GROUP() { PatternExpr(p).at(sp) }
+  / "(" sp:sp() "@" ")" { MarkerExpr(true).at(sp) }
+  / sp:sp() "@" { MarkerExpr(false).at(sp) }
+  / sp:sp() "##" method:IDENT() args:PAREN_GROUP() { MethodExpr(method, args.stream()).at(sp) }
+  / sp:sp() "#" code:BRACE_GROUP() { CustomExpr(code).at(sp) }
+  / "(" expression:expression() ")" { expression }
+
+    rule rule_arg() -> RuleArg
+        = "<" e:expression() ">" { RuleArg::Peg(e) }
+        / tt:$( #{|input, pos| input.eat_until(pos, ',')}+ ) { RuleArg::Rust(tt) }
+
+rule precedence_level() -> PrecedenceLevel
+  = operators:precedence_op()+
+  { PrecedenceLevel{ operators: operators } }
+
+rule precedence_op() -> PrecedenceOperator
+  = span:sp() elements:labeled()* action:BRACE_GROUP()
+  { PrecedenceOperator{ span, elements, action } }
+
+rule sp() -> Span = #{|input, pos| input.next_span(pos)}
+rule KEYWORD() = "pub" / "rule" / "use" / "type" / "where"
+rule IDENT() -> Ident = !KEYWORD() i:#{|input, pos| input.ident(pos)} {i}
+rule LITERAL() -> Literal = #{|input, pos| input.literal(pos)}
+rule PAREN_GROUP()   -> Group = #{|input, pos| input.group(pos, Delimiter::Parenthesis)}
+rule BRACE_GROUP()   -> Group = #{|input, pos| input.group(pos, Delimiter::Brace)}
+rule BRACKET_GROUP() -> Group = #{|input, pos| input.group(pos, Delimiter::Bracket)}
+rule LIFETIME() = "'" IDENT()
+rule INTEGER() = LITERAL()
+
+}

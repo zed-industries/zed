@@ -1,0 +1,17 @@
+(module
+  (@dylink.0
+    (mem-info (memory 1 4))
+    (needed "bar")
+  )
+  (type (func))
+  (type (func (param i32)))
+  (type (func (result i32)))
+  (import "env" "__memory_base" (global $__memory_base  i32))
+  (import "env" "__table_base" (global $__table_base  i32))
+  (import "GOT.mem" "__stack_high" (global  (mut i32)))
+  (import "GOT.mem" "__stack_low" (global  (mut i32)))
+  (import "env" "memory" (memory  1))
+  (import "env" "__indirect_function_table" (table  0 funcref))
+  (func $__wasm_apply_data_relocs  (type 0))
+  (export "__wasm_apply_data_relocs" (func $__wasm_apply_data_relocs))
+)

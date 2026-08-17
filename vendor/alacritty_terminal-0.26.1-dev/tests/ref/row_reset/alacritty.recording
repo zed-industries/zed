@@ -1,0 +1,616 @@
+[undeadleech@archhq row_reset]$ cat ~/downloads/dmesg.txt 
+[32m[228741.085647] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[228741.091432] [0m[33mwlp3s0[0m: authenticate with 00:00:00:00:00:00
+[32m[228741.097335] [0m[33mwlp3s0[0m: send auth to 00:00:00:00:00:00 (try 1/3)
+[32m[228741.135972] [0m[33mwlp3s0[0m: authenticated
+[32m[228741.141525] [0m[33mwlp3s0[0m: associate with 00:00:00:00:00:00 (try 1/3)
+[32m[228741.142955] [0m[33mwlp3s0[0m: RX ReassocResp from 00:00:00:00:00:00 (capab=0x1411 status=0 aid=1)
+[32m[228741.144318] [0m[33mwlp3s0[0m: associated
+[32m[228741.154942] [0m[33mwlp3s0[0m: Limiting TX power to 23 (23 - 0) dBm as advertised by 00:00:00:00:00:00
+[32m[228918.086333] [0m[33mwlp3s0[0m: deauthenticated from 00:00:00:00:00:00 (Reason: 6=CLASS2_FRAME_FROM_NONAUTH_STA)
+[32m[229303.946685] [0m[33mwlp3s0[0m: authenticated
+[32m[229303.947705] [0m[33mwlp3s0[0m: associate with 00:00:00:00:00:00 (try 1/3)
+[32m[229303.948917] [0m[33mwlp3s0[0m: RX ReassocResp from 00:00:00:00:00:00 (capab=0x1411 status=0 aid=1)
+[32m[229303.949916] [0m[33mwlp3s0[0m: associated
+[32m[229304.048604] [0m[33mwlp3s0[0m: Limiting TX power to 23 (23 - 0) dBm as advertised by 00:00:00:00:00:00
+[32m[229396.541447] [0m[33mwlp3s0[0m: deauthenticated from 00:00:00:00:00:00 (Reason: 6=CLASS2_FRAME_FROM_NONAUTH_STA)
+[32m[229398.267553] [0m[33mwlp3s0[0m: authenticate with 00:00:00:00:00:00
+[32m[229398.273829] [0m[33mwlp3s0[0m: send auth to 00:00:00:00:00:00 (try 1/3)
+[32m[229398.314512] [0m[33mwlp3s0[0m: authenticated
+[32m[229398.315473] [0m[33mwlp3s0[0m: associate with 00:00:00:00:00:00 (try 1/3)
+[32m[229398.316742] [0m[33mwlp3s0[0m: RX AssocResp from 00:00:00:00:00:00 (capab=0x1411 status=0 aid=3)
+[32m[229398.318551] [0m[33mwlp3s0[0m: associated
+[32m[229398.373686] [0m[33mwlp3s0[0m: Limiting TX power to 30 (30 - 0) dBm as advertised by 00:00:00:00:00:00
+[32m[229430.169385] [0m[33mwlp3s0[0m: disconnect from AP 00:00:00:00:00:00 for new auth to 00:00:00:00:00:00
+[32m[229430.209398] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209406] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209409] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209411] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209414] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209417] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209419] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209421] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209424] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209426] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209429] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209431] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209433] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209435] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209441] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209444] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209446] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209447] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209449] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209451] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209453] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209455] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209457] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209458] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209462] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209464] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209466] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209468] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209470] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209472] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209474] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209476] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209478] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209480] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209481] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209483] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209485] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209487] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209490] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209493] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209495] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209500] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209503] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.209506] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213606] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213610] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213612] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213614] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213616] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213617] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213619] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213621] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213623] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213624] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213626] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213628] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213630] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213632] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213634] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213635] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213639] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213641] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213642] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213644] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213646] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213649] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213651] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213654] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213656] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213658] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213661] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213663] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213666] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213668] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213670] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213673] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213674] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213676] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213678] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213680] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213681] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213683] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213685] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213689] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213691] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213693] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213694] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213696] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213698] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213700] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213701] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213704] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213706] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213708] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213711] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213713] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.213716] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218481] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218509] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218521] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218528] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218546] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218551] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218561] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218566] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218590] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218597] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218609] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218614] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218622] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218626] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218635] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218639] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218647] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218650] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218660] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218663] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218673] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218677] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218681] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218685] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218697] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218700] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218707] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218710] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218716] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218723] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218726] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218733] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218736] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218743] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.218747] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.219801] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.219834] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.219853] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.219858] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.219866] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.219870] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.219878] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229430.221124] [0m[33mwlp3s0[0m: authenticate with 00:00:00:00:00:00
+[32m[229430.222243] [0m[33mwlp3s0[0m: send auth to 00:00:00:00:00:00 (try 1/3)
+[32m[229430.262505] [0m[33mwlp3s0[0m: authenticated
+[32m[229430.263310] [0m[33mwlp3s0[0m: associate with 00:00:00:00:00:00 (try 1/3)
+[32m[229430.264564] [0m[33mwlp3s0[0m: RX ReassocResp from 00:00:00:00:00:00 (capab=0x1411 status=0 aid=1)
+[32m[229430.266358] [0m[33mwlp3s0[0m: associated
+[32m[229430.307441] [0m[33mwlp3s0[0m: Limiting TX power to 23 (23 - 0) dBm as advertised by 00:00:00:00:00:00
+[32m[229517.132398] [0m[33mwlp3s0[0m: deauthenticated from 00:00:00:00:00:00 (Reason: 6=CLASS2_FRAME_FROM_NONAUTH_STA)
+[32m[229518.888561] [0m[33mwlp3s0[0m: authenticate with 00:00:00:00:00:00
+[32m[229518.894662] [0m[33mwlp3s0[0m: send auth to 00:00:00:00:00:00 (try 1/3)
+[32m[229518.937199] [0m[33mwlp3s0[0m: authenticated
+[32m[229518.939160] [0m[33mwlp3s0[0m: associate with 00:00:00:00:00:00 (try 1/3)
+[32m[229518.940460] [0m[33mwlp3s0[0m: RX AssocResp from 00:00:00:00:00:00 (capab=0x1411 status=0 aid=3)
+[32m[229518.942378] [0m[33mwlp3s0[0m: associated
+[32m[229519.001616] [0m[33mwlp3s0[0m: Limiting TX power to 30 (30 - 0) dBm as advertised by 00:00:00:00:00:00
+[32m[229824.281089] [0m[33mwlp3s0[0m: disconnect from AP 00:00:00:00:00:00 for new auth to 00:00:00:00:00:00
+[32m[229824.291293] [0m[33mwlp3s0[0m: authenticate with 00:00:00:00:00:00
+[32m[229824.297136] [0m[33mwlp3s0[0m: send auth to 00:00:00:00:00:00 (try 1/3)
+[32m[229824.336092] [0m[33mwlp3s0[0m: authenticated
+[32m[229824.338750] [0m[33mwlp3s0[0m: associate with 00:00:00:00:00:00 (try 1/3)
+[32m[229824.340205] [0m[33mwlp3s0[0m: RX ReassocResp from 00:00:00:00:00:00 (capab=0x1411 status=0 aid=1)
+[32m[229824.341469] [0m[33mwlp3s0[0m: associated
+[32m[229824.343528] [0m[33mwlp3s0[0m: Limiting TX power to 23 (23 - 0) dBm as advertised by 00:00:00:00:00:00
+[32m[229879.108005] [0m[33mwlp3s0[0m: deauthenticated from 00:00:00:00:00:00 (Reason: 6=CLASS2_FRAME_FROM_NONAUTH_STA)
+[32m[229880.382542] [0m[33mwlp3s0[0m: authenticate with 00:00:00:00:00:00
+[32m[229880.389268] [0m[33mwlp3s0[0m: send auth to 00:00:00:00:00:00 (try 1/3)
+[32m[229880.429992] [0m[33mwlp3s0[0m: authenticated
+[32m[229880.433634] [0m[33mwlp3s0[0m: associate with 00:00:00:00:00:00 (try 1/3)
+[32m[229880.434832] [0m[33mwlp3s0[0m: RX AssocResp from 00:00:00:00:00:00 (capab=0x1411 status=0 aid=3)
+[32m[229880.436867] [0m[33mwlp3s0[0m: associated
+[32m[229880.475867] [0m[33mwlp3s0[0m: Limiting TX power to 30 (30 - 0) dBm as advertised by 00:00:00:00:00:00
+[32m[229893.920859] [0m[33mwlp3s0[0m: disconnect from AP 00:00:00:00:00:00 for new auth to 00:00:00:00:00:00
+[32m[229893.927177] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229893.927189] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229893.927191] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229893.927194] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229893.927196] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229893.927198] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229893.927201] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[229893.930495] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x703
+[0m[32m[229893.930531] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x703
+[0m[32m[229893.930536] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x703
+[0m[32m[229893.930541] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x703
+[0m[32m[229893.930548] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x703
+[0m[32m[229893.930552] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x703
+[0m[32m[229893.930557] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x703
+[0m[32m[229893.935133] [0m[33mwlp3s0[0m: authenticate with 00:00:00:00:00:00
+[32m[229893.940801] [0m[33mwlp3s0[0m: send auth to 00:00:00:00:00:00 (try 1/3)
+[32m[229893.981689] [0m[33mwlp3s0[0m: authenticated
+[32m[229893.986136] [0m[33mwlp3s0[0m: associate with 00:00:00:00:00:00 (try 1/3)
+[32m[229893.989747] [0m[33mwlp3s0[0m: RX ReassocResp from 00:00:00:00:00:00 (capab=0x1411 status=0 aid=1)
+[32m[229893.992245] [0m[33mwlp3s0[0m: associated
+[32m[229894.077777] [0m[33mwlp3s0[0m: Limiting TX power to 23 (23 - 0) dBm as advertised by 00:00:00:00:00:00
+[32m[230231.830965] [0m[33mCPU9[0m[1m[31m: Core temperature above threshold, cpu clock throttled (total events = 15794)[0m
+[32m[230231.830966] [0m[33mCPU8[0m[1m[31m: Package temperature above threshold, cpu clock throttled (total events = 23046)[0m
+[32m[230231.830967] [0m[33mCPU3[0m[1m[31m: Core temperature above threshold, cpu clock throttled (total events = 15794)[0m
+[32m[230231.830968] [0m[33mCPU2[0m[1m[31m: Package temperature above threshold, cpu clock throttled (total events = 23046)[0m
+[32m[230231.830969] [0m[33mCPU3[0m[1m[31m: Package temperature above threshold, cpu clock throttled (total events = 23046)[0m
+[32m[230231.830972] [0m[33mCPU9[0m[1m[31m: Package temperature above threshold, cpu clock throttled (total events = 23046)[0m
+[32m[230231.831043] [0m[33mCPU0[0m[1m[31m: Package temperature above threshold, cpu clock throttled (total events = 23046)[0m
+[32m[230231.831044] [0m[33mCPU1[0m[1m[31m: Package temperature above threshold, cpu clock throttled (total events = 23046)[0m
+[32m[230231.831045] [0m[33mCPU7[0m[1m[31m: Package temperature above threshold, cpu clock throttled (total events = 23046)[0m
+[32m[230231.831047] [0m[33mCPU10[0m[1m[31m: Package temperature above threshold, cpu clock throttled (total events = 23046)[0m
+[32m[230231.831047] [0m[33mCPU6[0m[1m[31m: Package temperature above threshold, cpu clock throttled (total events = 23046)[0m
+[32m[230231.831049] [0m[33mCPU4[0m[1m[31m: Package temperature above threshold, cpu clock throttled (total events = 23046)[0m
+[32m[230231.831051] [0m[33mCPU11[0m[1m[31m: Package temperature above threshold, cpu clock throttled (total events = 23046)[0m
+[32m[230231.831052] [0m[33mCPU5[0m[1m[31m: Package temperature above threshold, cpu clock throttled (total events = 23046)[0m
+[32m[230231.837979] [0m[33mCPU3[0m: Core temperature/speed normal
+[32m[230231.837980] [0m[33mCPU9[0m: Core temperature/speed normal
+[32m[230231.837981] [0m[33mCPU2[0m: Package temperature/speed normal
+[32m[230231.837982] [0m[33mCPU8[0m: Package temperature/speed normal
+[32m[230231.837983] [0m[33mCPU6[0m: Package temperature/speed normal
+[32m[230231.837984] [0m[33mCPU0[0m: Package temperature/speed normal
+[32m[230231.837985] [0m[33mCPU5[0m: Package temperature/speed normal
+[32m[230231.837987] [0m[33mCPU10[0m: Package temperature/speed normal
+[32m[230231.837988] [0m[33mCPU1[0m: Package temperature/speed normal
+[32m[230231.837989] [0m[33mCPU11[0m: Package temperature/speed normal
+[32m[230231.837991] [0m[33mCPU7[0m: Package temperature/speed normal
+[32m[230231.837992] [0m[33mCPU4[0m: Package temperature/speed normal
+[32m[230231.837994] [0m[33mCPU9[0m: Package temperature/speed normal
+[32m[230231.838001] [0m[33mCPU3[0m: Package temperature/speed normal
+[32m[230236.392394] [0m[33mwlp3s0[0m: deauthenticated from 00:00:00:00:00:00 (Reason: 3=DEAUTH_LEAVING)
+[32m[230237.780651] [0m[33mwlp3s0[0m: authenticate with 00:00:00:00:00:00
+[32m[230237.787938] [0m[33mwlp3s0[0m: send auth to 00:00:00:00:00:00 (try 1/3)
+[32m[230237.828603] [0m[33mwlp3s0[0m: authenticated
+[32m[230237.832087] [0m[33mwlp3s0[0m: associate with 00:00:00:00:00:00 (try 1/3)
+[32m[230237.833363] [0m[33mwlp3s0[0m: RX AssocResp from 00:00:00:00:00:00 (capab=0x1411 status=0 aid=3)
+[32m[230237.834675] [0m[33mwlp3s0[0m: associated
+[32m[230237.854441] [0m[33mwlp3s0[0m: Limiting TX power to 30 (30 - 0) dBm as advertised by 00:00:00:00:00:00
+[32m[230257.232908] [0m[33mwlp3s0[0m: disconnect from AP 00:00:00:00:00:00 for new auth to 00:00:00:00:00:00
+[32m[230257.238433] [0m[33miwlwifi 0000:03:00.0[0m[31m: expected hw-decrypted unicast frame for station
+[0m[32m[230257.238455] [0m[33miwlwifi 0000:03:00.0[0m[31m: expected hw-decrypted unicast frame for station
+[0m[32m[230257.238511] [0m[33miwlwifi 0000:03:00.0[0m[31m: expected hw-decrypted unicast frame for station
+[0m[32m[230257.238519] [0m[33miwlwifi 0000:03:00.0[0m[31m: expected hw-decrypted unicast frame for station
+[0m[32m[230257.238530] [0m[33miwlwifi 0000:03:00.0[0m[31m: expected hw-decrypted unicast frame for station
+[0m[32m[230257.238537] [0m[33miwlwifi 0000:03:00.0[0m[31m: expected hw-decrypted unicast frame for station
+[0m[32m[230257.238562] [0m[33miwlwifi 0000:03:00.0[0m[31m: expected hw-decrypted unicast frame for station
+[0m[32m[230257.238572] [0m[33miwlwifi 0000:03:00.0[0m[31m: expected hw-decrypted unicast frame for station
+[0m[32m[230257.238586] [0m[33miwlwifi 0000:03:00.0[0m[31m: expected hw-decrypted unicast frame for station
+[0m[32m[230257.238595] [0m[33miwlwifi 0000:03:00.0[0m[31m: expected hw-decrypted unicast frame for station
+[0m[32m[230257.240338] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.240418] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.240471] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.240489] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.240506] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.240525] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.240557] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.240571] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.240606] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.240618] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.240635] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.240653] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.240688] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.240714] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.240741] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.240755] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.240774] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243219] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243261] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243279] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243291] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243304] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243318] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243334] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243346] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243362] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243374] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243388] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243400] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243422] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243435] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243448] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243458] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243491] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243504] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243533] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243544] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243558] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243568] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243581] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243590] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243600] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243611] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243641] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243650] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243671] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243680] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243691] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243700] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243719] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.243728] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247443] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247471] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247484] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247492] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247501] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247509] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247517] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247525] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247550] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247559] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247567] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247575] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247596] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247604] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247612] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247620] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247629] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247637] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247648] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247655] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247663] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247671] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247680] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247688] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247698] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247707] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247716] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247723] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247733] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247741] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247749] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247756] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247765] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247773] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247781] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247788] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247809] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.247817] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.251792] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.251818] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.251832] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.251842] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.251851] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.251860] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.251897] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.251908] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.251919] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.251928] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.251939] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.251949] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.251960] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.251970] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.251982] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.252017] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.252032] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.252042] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.252054] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.252065] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.252076] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.252086] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.252101] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.252111] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.252123] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.252133] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.252140] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.252147] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.252157] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.252167] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.252178] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.252187] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.252197] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.252207] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.252220] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.252230] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.252240] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.252250] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.252265] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.252276] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.252287] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.252294] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.252302] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256114] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256136] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256148] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256158] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256168] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256176] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256185] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256192] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256210] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256220] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256230] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256240] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256251] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256259] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256266] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256273] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256281] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256288] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256295] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256302] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256310] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256317] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256325] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256332] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256343] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256353] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256376] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256384] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256392] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256407] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256419] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256426] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256433] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256441] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256448] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256456] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256465] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256472] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256480] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256488] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256499] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256510] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256520] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256527] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256535] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256542] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256549] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256556] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256564] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256571] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.256579] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260414] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260471] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260502] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260515] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260559] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260574] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260590] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260606] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260622] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260632] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260646] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260671] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260685] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260696] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260710] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260722] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260742] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260768] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260782] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260792] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260815] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260827] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260843] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260855] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260869] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260880] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260891] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260903] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260916] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260928] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260947] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260962] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260975] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.260986] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.264813] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.264838] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.264851] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.264862] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.264873] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.264883] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.264892] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.264899] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.264907] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.264914] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.264921] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.264933] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.264946] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.264953] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.264961] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.264968] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.264984] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.264992] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.264999] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.265006] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.265014] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.265021] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.265028] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.265036] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.265044] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.265051] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.265062] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.265069] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.265078] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.265087] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.265103] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.265110] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.265120] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.265127] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.265135] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.265142] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.265151] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.265158] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269374] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269404] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269418] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269429] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269439] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269448] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269458] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269467] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269476] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269485] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269502] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269511] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269520] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269529] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269539] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269550] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269561] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269570] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269582] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269592] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269603] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269613] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269627] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269637] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269650] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269659] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269677] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269686] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269697] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269708] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269740] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269749] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269762] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269771] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269783] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269793] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269807] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269817] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269829] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269839] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269851] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269860] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.269874] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[230257.275363] [0m[33mwlp3s0[0m: authenticate with 00:00:00:00:00:00
+[32m[230257.281231] [0m[33mwlp3s0[0m: send auth to 00:00:00:00:00:00 (try 1/3)
+[32m[230257.326172] [0m[33mwlp3s0[0m: authenticated
+[32m[230257.332040] [0m[33mwlp3s0[0m: associate with 00:00:00:00:00:00 (try 1/3)
+[32m[230257.333311] [0m[33mwlp3s0[0m: RX ReassocResp from 00:00:00:00:00:00 (capab=0x1411 status=0 aid=1)
+[32m[230257.334472] [0m[33mwlp3s0[0m: associated
+[32m[230257.393437] [0m[33mwlp3s0[0m: Limiting TX power to 23 (23 - 0) dBm as advertised by 00:00:00:00:00:00
+[32m[230356.680918] [0m[33mwlp3s0[0m: deauthenticated from 00:00:00:00:00:00 (Reason: 3=DEAUTH_LEAVING)
+[32m[230359.780467] [0m[33mwlp3s0[0m: authenticate with 00:00:00:00:00:00
+[32m[230359.786813] [0m[33mwlp3s0[0m: send auth to 00:00:00:00:00:00 (try 1/3)
+[32m[230359.827649] [0m[33mwlp3s0[0m: authenticated
+[32m[230359.831632] [0m[33mwlp3s0[0m: associate with 00:00:00:00:00:00 (try 1/3)
+[32m[230359.832798] [0m[33mwlp3s0[0m: RX AssocResp from 00:00:00:00:00:00 (capab=0x1411 status=0 aid=3)
+[32m[230359.834228] [0m[33mwlp3s0[0m: associated
+[32m[230359.915722] [0m[33mwlp3s0[0m: Limiting TX power to 30 (30 - 0) dBm as advertised by 00:00:00:00:00:00
+[32m[230391.707400] [0m[33mwlp3s0[0m: disconnect from AP 00:00:00:00:00:00 for new auth to 00:00:00:00:00:00
+[32m[230391.710358] [0m[33mwlp3s0[0m: authenticate with 00:00:00:00:00:00
+[32m[230391.716647] [0m[33mwlp3s0[0m: send auth to 00:00:00:00:00:00 (try 1/3)
+[32m[230391.756364] [0m[33mwlp3s0[0m: authenticated
+[32m[230391.759536] [0m[33mwlp3s0[0m: associate with 00:00:00:00:00:00 (try 1/3)
+[32m[230391.760897] [0m[33mwlp3s0[0m: RX ReassocResp from 00:00:00:00:00:00 (capab=0x1411 status=0 aid=1)
+[32m[230391.762833] [0m[33mwlp3s0[0m: associated
+[32m[230391.844511] [0m[33mwlp3s0[0m: Limiting TX power to 23 (23 - 0) dBm as advertised by 00:00:00:00:00:00
+[32m[231412.503669] [0m[33mwlp3s0[0m: disconnect from AP 00:00:00:00:00:00 for new auth to 00:00:00:00:00:00
+[32m[231412.513884] [0m[33miwlwifi 0000:03:00.0[0m[31m: expected hw-decrypted unicast frame for station
+[0m[32m[231412.513892] [0m[33miwlwifi 0000:03:00.0[0m[31m: expected hw-decrypted unicast frame for station
+[0m[32m[231412.515316] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[231412.515352] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[231412.515359] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[231412.515363] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[231412.515368] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[231412.515373] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[231412.516316] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[231412.516327] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[231412.516333] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[231412.516338] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[231412.516343] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[231412.516347] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[231412.517875] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[231412.517893] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[231412.517909] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[231412.517921] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[231412.517940] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[231412.517951] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[231412.518917] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[231412.518942] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[231412.518961] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[231412.518975] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[231412.519007] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[231412.519022] [0m[33miwlwifi 0000:03:00.0[0m[31m: Unhandled alg: 0x707
+[0m[32m[231412.523892] [0m[33mwlp3s0[0m: authenticate with 00:00:00:00:00:00
+[32m[231412.529652] [0m[33mwlp3s0[0m: send auth to 00:00:00:00:00:00 (try 1/3)
+[32m[231412.575449] [0m[33mwlp3s0[0m: authenticated
+[undeadleech@archhq row_reset]$ exit
+exit

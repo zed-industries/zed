@@ -1,0 +1,5 @@
+package test:test;
+
+world module {
+  import wasi:cli/environment@0.2.0;
+}

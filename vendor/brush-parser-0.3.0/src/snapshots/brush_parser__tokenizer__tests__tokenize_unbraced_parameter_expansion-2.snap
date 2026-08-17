@@ -1,0 +1,21 @@
+---
+source: brush-parser/src/tokenizer.rs
+expression: "test_tokenizer(\"a$x\")?"
+---
+TokenizerResult(
+  input: "a$x",
+  result: [
+    W("a$x", Loc(
+      start: Pos(
+        idx: 0,
+        line: 1,
+        col: 1,
+      ),
+      end: Pos(
+        idx: 3,
+        line: 1,
+        col: 4,
+      ),
+    )),
+  ],
+)

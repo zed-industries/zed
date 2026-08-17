@@ -1,0 +1,13 @@
+---
+- name: Double quoted string without closing quote
+  from: '@perlpunk'
+  tags: error double
+  fail: true
+  yaml: |
+    ---
+    key: "missing closing quote
+  tree: |
+    +STR
+     +DOC ---
+      +MAP
+       =VAL :key

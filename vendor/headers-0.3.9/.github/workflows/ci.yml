@@ -1,0 +1,43 @@
+name: CI
+
+on: [push, pull_request]
+
+env:
+  minrust: 1.56.0
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        rust: [stable, beta, nightly]
+
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: rustfmt
+      - run: cargo test --workspace
+      - if: matrix.rust == 'nightly'
+        run: cargo test --benches
+      - name: Check minimal versions
+        if: matrix.rust == 'nightly'
+        run: |
+          cargo clean
+          cargo update -Z minimal-versions
+          cargo check
+      - run: cargo fmt --all --check
+
+  MSRV:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install rust ${{ env.minrust }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.minrust }}
+      - run: cargo build

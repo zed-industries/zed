@@ -1,0 +1,7 @@
+error[E0119]: conflicting implementations of trait `Clone` for type `Struct`
+ --> tests/ui/derive_duplicate.rs:3:21
+  |
+3 |     #[derive(Clone, Clone)]
+  |              -----  ^^^^^ conflicting implementation for `Struct`
+  |              |
+  |              first implementation here

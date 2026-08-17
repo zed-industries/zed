@@ -1,0 +1,5 @@
+package root:component;
+
+world root {
+  export a: func() -> string;
+}

@@ -1,0 +1,17 @@
+r#"The copyright holders of Gmsh give you permission to combine Gmsh
+  with code included in the standard release of Netgen (from Joachim
+  Sch"oberl), METIS (from George Karypis at the University of
+  Minnesota), OpenCASCADE (from Open CASCADE S.A.S) and ParaView
+  (from Kitware, Inc.) under their respective licenses. You may copy
+  and distribute such a system following the terms of the GNU GPL for
+  Gmsh and the licenses of the other code concerned, provided that
+  you include the source code of that other code when and as the GNU
+  GPL requires distribution of source code.
+
+  Note that people who make modified versions of Gmsh are not
+  obligated to grant this special exception for their modified
+  versions; it is their choice whether to do so. The GNU General
+  Public License gives permission to release a modified version
+  without this exception; this exception also makes it possible to
+  release a modified version which carries forward this exception.
+"#

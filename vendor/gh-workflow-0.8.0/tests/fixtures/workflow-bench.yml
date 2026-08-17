@@ -1,0 +1,100 @@
+name: "Run benchmark"
+on:
+  pull_request_target:
+    types: [assigned, opened, synchronize, reopened, edited]
+  push:
+    branches:
+      - main
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  packages: write
+jobs:
+  build:
+    if: github.event.head_commit.message != 'Update performance results in README.md'
+    runs-on: benchmarking-runner
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    strategy:
+      matrix:
+        service:
+          [
+            apollo_server,
+            caliban,
+            netflix_dgs,
+            gqlgen,
+            tailcall,
+            async_graphql,
+            hasura,
+            graphql_jit,
+          ]
+    steps:
+      - name: Checkout (GitHub)
+        uses: actions/checkout@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build devcontainer and run setup and benchmark
+        uses: devcontainers/ci@v0.3
+        with:
+          imageName: ghcr.io/tailcallhq/graphql-benchmark
+          push: always
+          runCmd: |
+            bash ./graphql/${{ matrix.service }}/setup.sh
+            bash run_benchmarks.sh ${{ matrix.service }}
+
+      - name: List benchmark files
+        run: |
+          ls -la bench*.txt || echo "No matching files found"
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v3
+        with:
+          name: benchmark-results
+          path: bench*.txt
+
+  analyze:
+    needs: [build]
+    runs-on: benchmarking-runner
+    steps:
+      - name: Checkout (GitHub)
+        uses: actions/checkout@v5
+
+      - name: Download all benchmark results
+        uses: actions/download-artifact@v3
+        with:
+          name: benchmark-results
+          path: .
+
+      - name: List downloaded artifacts
+        run: ls -la bench*.txt || echo "No matching files found"
+
+      - name: Analyze results
+        run: |
+          bash run_analyze_script.sh
+
+      - name: Print benchmark results
+        run: cat ./results.md
+
+      - name: Comment benchmark results on PR
+        if: github.event_name == 'pull_request_target'
+        uses: peter-evans/commit-comment@v3
+        with:
+          sha: ${{ github.event.pull_request.head.sha }}
+          body-path: "results.md"
+          reactions: eyes
+
+      - name: Commit and push changes (on main branch)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          branch: main
+          commit_author: Author <actions@github.com>
+          commit_message: "[ci skip] update performance results in README.md"

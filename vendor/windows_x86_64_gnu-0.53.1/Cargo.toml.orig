@@ -1,0 +1,17 @@
+[package]
+name = "windows_x86_64_gnu"
+version = "0.53.1"
+edition = "2021"
+rust-version = "1.60"
+license = "MIT OR Apache-2.0"
+description = "Import lib for Windows"
+repository = "https://github.com/microsoft/windows-rs"
+categories = ["os::windows-apis"]
+readme = "readme.md"
+
+[package.metadata.docs.rs]
+default-target = "x86_64-pc-windows-msvc"
+targets = []
+
+[lints]
+workspace = true

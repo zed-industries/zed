@@ -1,0 +1,10 @@
+extend = [
+    { path = "make/benchmark.toml" },
+    { path = "make/coverage.toml" },
+    { path = "make/fuzz.toml" },
+    { path = "make/tests.toml" },
+    { path = "make/utils.toml" }
+]
+
+[config]
+default_to_workspace = false

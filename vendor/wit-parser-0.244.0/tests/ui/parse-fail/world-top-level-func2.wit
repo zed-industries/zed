@@ -1,0 +1,4 @@
+package foo:foo;
+world foo {
+  import foo: func(a: b);
+}

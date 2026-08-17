@@ -1,0 +1,105 @@
+[?2004h[kchibisov@NightLord alacritty]$ [K[kchibisov@NightLord alacritty]$ [K[kchibisov@NightLord alacritty]$ ls -lah
+[?2004ltotal 308K
+drwxr-xr-x 17 kchibisov kchibisov 4.0K Nov 16 05:14 .
+drwxr-xr-x 17 kchibisov kchibisov 4.0K Nov 15 23:21 ..
+-rw-r--r--  1 kchibisov kchibisov   10 Sep 26 16:22 .agignore
+drwxr-xr-x  4 kchibisov kchibisov 4.0K Nov 13 20:02 alacritty
+-rw-r--r--  1 kchibisov kchibisov  133 Nov 16 05:14 alacritty.recording
+drwxr-xr-x  5 kchibisov kchibisov 4.0K Nov 13 20:02 alacritty_terminal
+-rw-r--r--  1 kchibisov kchibisov  17K Nov 13 20:02 alacritty.yml
+-rw-r--r--  1 kchibisov kchibisov 128K Nov 13 20:02 Cargo.lock
+-rw-r--r--  1 kchibisov kchibisov  245 Nov  3 09:50 Cargo.toml
+-rw-r--r--  1 kchibisov kchibisov  22K Nov 16 04:47 CHANGELOG.md
+drwxr-xr-x  4 kchibisov kchibisov 4.0K Nov 13 20:02 ci
+-rw-r--r--  1 kchibisov kchibisov 5.5K Nov 13 20:02 CONTRIBUTING.md
+drwxr-xr-x  2 kchibisov kchibisov 4.0K Nov  3 09:50 .copr
+drwxr-xr-x  5 kchibisov kchibisov 4.0K Nov 13 20:02 copypasta
+drwxr-xr-x  2 kchibisov kchibisov 4.0K Sep 26 16:22 docs
+drwxr-xr-x  7 kchibisov kchibisov 4.0K Nov 13 20:02 extra
+drwxr-xr-x  3 kchibisov kchibisov 4.0K Nov 13 20:02 font
+drwxr-xr-x  8 kchibisov kchibisov 4.0K Nov 16 05:08 .git
+drwxr-xr-x  2 kchibisov kchibisov 4.0K Sep 26 16:22 .github
+-rw-r--r--  1 kchibisov kchibisov  333 Nov  3 09:50 .gitignore
+-rw-r--r--  1 kchibisov kchibisov 9.1K Nov 13 20:02 INSTALL.md
+-rw-r--r--  1 kchibisov kchibisov  11K Sep 26 16:22 LICENSE-APACHE
+-rw-r--r--  1 kchibisov kchibisov 1.5K Nov  5 10:25 Makefile
+-rw-r--r--  1 kchibisov kchibisov 6.8K Nov 13 20:02 README.md
+drwxr-xr-x  2 kchibisov kchibisov 4.0K Nov  3 09:50 res
+-rw-r--r--  1 kchibisov kchibisov  358 Nov 13 20:02 rustfmt.toml
+drwxr-xr-x  2 kchibisov kchibisov 4.0K Nov  3 09:50 scripts
+drwxr-xr-x  3 kchibisov kchibisov 4.0K Nov  3 09:50 servo-freetype-proxy
+drwxr-xr-x  4 kchibisov kchibisov 4.0K Nov 12 16:22 target
+-rw-r--r--  1 kchibisov kchibisov 1.7K Nov 13 20:02 .travis.yml
+drwxr-xr-x  3 kchibisov kchibisov 4.0K Nov 13 20:02 winpty
+[?2004h[kchibisov@NightLord alacritty]$ ls -lah
+[?2004ltotal 308K
+drwxr-xr-x 17 kchibisov kchibisov 4.0K Nov 16 05:14 .
+drwxr-xr-x 17 kchibisov kchibisov 4.0K Nov 15 23:21 ..
+-rw-r--r--  1 kchibisov kchibisov   10 Sep 26 16:22 .agignore
+drwxr-xr-x  4 kchibisov kchibisov 4.0K Nov 13 20:02 alacritty
+-rw-r--r--  1 kchibisov kchibisov 2.2K Nov 16 05:14 alacritty.recording
+drwxr-xr-x  5 kchibisov kchibisov 4.0K Nov 13 20:02 alacritty_terminal
+-rw-r--r--  1 kchibisov kchibisov  17K Nov 13 20:02 alacritty.yml
+-rw-r--r--  1 kchibisov kchibisov 128K Nov 13 20:02 Cargo.lock
+-rw-r--r--  1 kchibisov kchibisov  245 Nov  3 09:50 Cargo.toml
+-rw-r--r--  1 kchibisov kchibisov  22K Nov 16 04:47 CHANGELOG.md
+drwxr-xr-x  4 kchibisov kchibisov 4.0K Nov 13 20:02 ci
+-rw-r--r--  1 kchibisov kchibisov 5.5K Nov 13 20:02 CONTRIBUTING.md
+drwxr-xr-x  2 kchibisov kchibisov 4.0K Nov  3 09:50 .copr
+drwxr-xr-x  5 kchibisov kchibisov 4.0K Nov 13 20:02 copypasta
+drwxr-xr-x  2 kchibisov kchibisov 4.0K Sep 26 16:22 docs
+drwxr-xr-x  7 kchibisov kchibisov 4.0K Nov 13 20:02 extra
+drwxr-xr-x  3 kchibisov kchibisov 4.0K Nov 13 20:02 font
+drwxr-xr-x  8 kchibisov kchibisov 4.0K Nov 16 05:08 .git
+drwxr-xr-x  2 kchibisov kchibisov 4.0K Sep 26 16:22 .github
+-rw-r--r--  1 kchibisov kchibisov  333 Nov  3 09:50 .gitignore
+-rw-r--r--  1 kchibisov kchibisov 9.1K Nov 13 20:02 INSTALL.md
+-rw-r--r--  1 kchibisov kchibisov  11K Sep 26 16:22 LICENSE-APACHE
+-rw-r--r--  1 kchibisov kchibisov 1.5K Nov  5 10:25 Makefile
+-rw-r--r--  1 kchibisov kchibisov 6.8K Nov 13 20:02 README.md
+drwxr-xr-x  2 kchibisov kchibisov 4.0K Nov  3 09:50 res
+-rw-r--r--  1 kchibisov kchibisov  358 Nov 13 20:02 rustfmt.toml
+drwxr-xr-x  2 kchibisov kchibisov 4.0K Nov  3 09:50 scripts
+drwxr-xr-x  3 kchibisov kchibisov 4.0K Nov  3 09:50 servo-freetype-proxy
+drwxr-xr-x  4 kchibisov kchibisov 4.0K Nov 12 16:22 target
+-rw-r--r--  1 kchibisov kchibisov 1.7K Nov 13 20:02 .travis.yml
+drwxr-xr-x  3 kchibisov kchibisov 4.0K Nov 13 20:02 winpty
+[?2004h[kchibisov@NightLord alacritty]$ ls - [Klah
+[?2004ltotal 312K
+drwxr-xr-x 17 kchibisov kchibisov 4.0K Nov 16 05:14 .
+drwxr-xr-x 17 kchibisov kchibisov 4.0K Nov 15 23:21 ..
+-rw-r--r--  1 kchibisov kchibisov   10 Sep 26 16:22 .agignore
+drwxr-xr-x  4 kchibisov kchibisov 4.0K Nov 13 20:02 alacritty
+-rw-r--r--  1 kchibisov kchibisov 4.1K Nov 16 05:14 alacritty.recording
+drwxr-xr-x  5 kchibisov kchibisov 4.0K Nov 13 20:02 alacritty_terminal
+-rw-r--r--  1 kchibisov kchibisov  17K Nov 13 20:02 alacritty.yml
+-rw-r--r--  1 kchibisov kchibisov 128K Nov 13 20:02 Cargo.lock
+-rw-r--r--  1 kchibisov kchibisov  245 Nov  3 09:50 Cargo.toml
+-rw-r--r--  1 kchibisov kchibisov  22K Nov 16 04:47 CHANGELOG.md
+drwxr-xr-x  4 kchibisov kchibisov 4.0K Nov 13 20:02 ci
+-rw-r--r--  1 kchibisov kchibisov 5.5K Nov 13 20:02 CONTRIBUTING.md
+drwxr-xr-x  2 kchibisov kchibisov 4.0K Nov  3 09:50 .copr
+drwxr-xr-x  5 kchibisov kchibisov 4.0K Nov 13 20:02 copypasta
+drwxr-xr-x  2 kchibisov kchibisov 4.0K Sep 26 16:22 docs
+drwxr-xr-x  7 kchibisov kchibisov 4.0K Nov 13 20:02 extra
+drwxr-xr-x  3 kchibisov kchibisov 4.0K Nov 13 20:02 font
+drwxr-xr-x  8 kchibisov kchibisov 4.0K Nov 16 05:08 .git
+drwxr-xr-x  2 kchibisov kchibisov 4.0K Sep 26 16:22 .github
+-rw-r--r--  1 kchibisov kchibisov  333 Nov  3 09:50 .gitignore
+-rw-r--r--  1 kchibisov kchibisov 9.1K Nov 13 20:02 INSTALL.md
+-rw-r--r--  1 kchibisov kchibisov  11K Sep 26 16:22 LICENSE-APACHE
+-rw-r--r--  1 kchibisov kchibisov 1.5K Nov  5 10:25 Makefile
+-rw-r--r--  1 kchibisov kchibisov 6.8K Nov 13 20:02 README.md
+drwxr-xr-x  2 kchibisov kchibisov 4.0K Nov  3 09:50 res
+-rw-r--r--  1 kchibisov kchibisov  358 Nov 13 20:02 rustfmt.toml
+drwxr-xr-x  2 kchibisov kchibisov 4.0K Nov  3 09:50 scripts
+drwxr-xr-x  3 kchibisov kchibisov 4.0K Nov  3 09:50 servo-freetype-proxy
+drwxr-xr-x  4 kchibisov kchibisov 4.0K Nov 12 16:22 target
+-rw-r--r--  1 kchibisov kchibisov 1.7K Nov 13 20:02 .travis.yml
+drwxr-xr-x  3 kchibisov kchibisov 4.0K Nov 13 20:02 winpty
+[?2004h[kchibisov@NightLord alacritty]$ echo -e "\[K[K[K[K[K[K[K[K[K[K[11P(reverse-i-search)`':[C[24@p':  printf "\e[31;1;4;9m"[1@r[C[C[C[C[1@i[C[C[C[C[8@[kchibisov@NightLord alacritty]$[C[C
+[?2004l[31;1;4;9m[?2004h[kchibisov@NightLord alacritty]$ echo =e "[K[K[K[K-e \{[K[K"\e[10H"
+[?2004l[10H
+[?2004h[kchibisov@NightLord alacritty]$ echo -e "\p[K[K\e[[[K1-[K0M"
+[?2004l[10M
+[?2004h[kchibisov@NightLord alacritty]$ 

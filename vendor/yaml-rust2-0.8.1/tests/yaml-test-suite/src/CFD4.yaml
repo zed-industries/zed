@@ -1,0 +1,29 @@
+---
+- name: Empty implicit key in single pair flow sequences
+  from: '@perlpunk'
+  tags: empty-key flow sequence
+  yaml: |
+    - [ : empty key ]
+    - [: another empty key]
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       +SEQ []
+        +MAP {}
+         =VAL :
+         =VAL :empty key
+        -MAP
+       -SEQ
+       +SEQ []
+        +MAP {}
+         =VAL :
+         =VAL :another empty key
+        -MAP
+       -SEQ
+      -SEQ
+     -DOC
+    -STR
+  dump: |
+    - - : empty key
+    - - : another empty key

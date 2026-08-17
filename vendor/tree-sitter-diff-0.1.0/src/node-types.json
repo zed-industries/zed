@@ -1,0 +1,453 @@
+[
+  {
+    "type": "addition",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "binary_change",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "filename",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "block",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "binary_change",
+          "named": true
+        },
+        {
+          "type": "command",
+          "named": true
+        },
+        {
+          "type": "file_change",
+          "named": true
+        },
+        {
+          "type": "hunks",
+          "named": true
+        },
+        {
+          "type": "index",
+          "named": true
+        },
+        {
+          "type": "new_file",
+          "named": true
+        },
+        {
+          "type": "old_file",
+          "named": true
+        },
+        {
+          "type": "similarity",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "changes",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "addition",
+          "named": true
+        },
+        {
+          "type": "context",
+          "named": true
+        },
+        {
+          "type": "deletion",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "command",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "argument",
+          "named": true
+        },
+        {
+          "type": "filename",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "comment",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "deletion",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "file_change",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "filename",
+          "named": true
+        },
+        {
+          "type": "mode",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "filename",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "hunk",
+    "named": true,
+    "fields": {
+      "changes": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "changes",
+            "named": true
+          }
+        ]
+      },
+      "location": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "location",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "hunks",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "hunk",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "index",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "commit",
+          "named": true
+        },
+        {
+          "type": "mode",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "location",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "linerange",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "mode",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "new_file",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "filename",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "old_file",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "filename",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "similarity",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "score",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "source",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "addition",
+          "named": true
+        },
+        {
+          "type": "binary_change",
+          "named": true
+        },
+        {
+          "type": "block",
+          "named": true
+        },
+        {
+          "type": "comment",
+          "named": true
+        },
+        {
+          "type": "context",
+          "named": true
+        },
+        {
+          "type": "deletion",
+          "named": true
+        },
+        {
+          "type": "file_change",
+          "named": true
+        },
+        {
+          "type": "index",
+          "named": true
+        },
+        {
+          "type": "location",
+          "named": true
+        },
+        {
+          "type": "new_file",
+          "named": true
+        },
+        {
+          "type": "old_file",
+          "named": true
+        },
+        {
+          "type": "similarity",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "#",
+    "named": false
+  },
+  {
+    "type": "%",
+    "named": false
+  },
+  {
+    "type": "+",
+    "named": false
+  },
+  {
+    "type": "++",
+    "named": false
+  },
+  {
+    "type": "+++",
+    "named": false
+  },
+  {
+    "type": "++++",
+    "named": false
+  },
+  {
+    "type": "-",
+    "named": false
+  },
+  {
+    "type": "--",
+    "named": false
+  },
+  {
+    "type": "---",
+    "named": false
+  },
+  {
+    "type": "----",
+    "named": false
+  },
+  {
+    "type": "..",
+    "named": false
+  },
+  {
+    "type": "@@",
+    "named": false
+  },
+  {
+    "type": "Binary",
+    "named": false
+  },
+  {
+    "type": "and",
+    "named": false
+  },
+  {
+    "type": "argument",
+    "named": true
+  },
+  {
+    "type": "commit",
+    "named": true
+  },
+  {
+    "type": "context",
+    "named": true
+  },
+  {
+    "type": "deleted",
+    "named": false
+  },
+  {
+    "type": "diff",
+    "named": false
+  },
+  {
+    "type": "differ",
+    "named": false
+  },
+  {
+    "type": "file",
+    "named": false
+  },
+  {
+    "type": "files",
+    "named": false
+  },
+  {
+    "type": "from",
+    "named": false
+  },
+  {
+    "type": "index",
+    "named": false
+  },
+  {
+    "type": "linerange",
+    "named": true
+  },
+  {
+    "type": "mode",
+    "named": false
+  },
+  {
+    "type": "new",
+    "named": false
+  },
+  {
+    "type": "old",
+    "named": false
+  },
+  {
+    "type": "rename",
+    "named": false
+  },
+  {
+    "type": "score",
+    "named": true
+  },
+  {
+    "type": "similarity",
+    "named": false
+  },
+  {
+    "type": "to",
+    "named": false
+  }
+]

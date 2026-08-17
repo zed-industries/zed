@@ -1,0 +1,408 @@
+[package]
+name = "wasmtime"
+version.workspace = true
+authors.workspace = true
+description = "High-level API to expose the Wasmtime runtime"
+documentation = "https://docs.rs/wasmtime"
+license = "Apache-2.0 WITH LLVM-exception"
+repository = "https://github.com/bytecodealliance/wasmtime"
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+
+[dependencies]
+wasmtime-asm-macros = { workspace = true, optional = true }
+wasmtime-environ = { workspace = true }
+wasmtime-jit-debug = { workspace = true, optional = true }
+wasmtime-jit-icache-coherence = { workspace = true, optional = true }
+wasmtime-cache = { workspace = true, optional = true }
+wasmtime-fiber = { workspace = true, optional = true }
+wasmtime-cranelift = { workspace = true, optional = true, features = ['pulley'] }
+wasmtime-unwinder = { workspace = true, optional = true }
+wasmtime-winch = { workspace = true, optional = true }
+wasmtime-component-macro = { workspace = true, optional = true }
+wasmtime-component-util = { workspace = true, optional = true }
+wasmtime-slab = { workspace = true, optional = true }
+wasmtime-versioned-export-macros = { workspace = true }
+wasmtime-wmemcheck = { workspace = true, optional = true }
+wasmtime-math = { workspace = true }
+pulley-interpreter = { workspace = true }
+target-lexicon = { workspace = true }
+wasmparser = { workspace = true }
+wasm-encoder = { workspace = true, optional = true }
+wasm-wave = { workspace = true, optional = true }
+anyhow = { workspace = true }
+libc = { workspace = true }
+cfg-if = { workspace = true }
+log = { workspace = true }
+wat = { workspace = true, optional = true }
+serde = { workspace = true }
+serde_derive = { workspace = true }
+serde_json = { workspace = true, optional = true }
+postcard = { workspace = true }
+indexmap = { workspace = true }
+once_cell = { version = "1.12.0", optional = true }
+rayon = { version = "1.0", optional = true }
+object = { workspace = true, features = ['unaligned'] }
+async-trait = { workspace = true, optional = true }
+encoding_rs = { version = "0.8.31", optional = true }
+bumpalo = "3.11.0"
+fxprof-processed-profile = { version = "0.6.0", optional = true }
+gimli = { workspace = true, optional = true }
+addr2line = { workspace = true, optional = true }
+semver = { workspace = true, optional = true }
+smallvec = { workspace = true, optional = true }
+hashbrown = { workspace = true, features = ["default-hasher"] }
+bitflags = { workspace = true }
+futures = { workspace = true, features = ["alloc"], optional = true }
+bytes = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "windows")'.dependencies.windows-sys]
+workspace = true
+optional = true
+features = [
+  "Win32_Foundation",
+  "Win32_System_Kernel",
+  "Win32_System_Memory",
+  "Win32_System_Diagnostics_Debug",
+  "Win32_System_SystemInformation",
+  "Win32_Storage_FileSystem",
+  "Win32_Security",
+]
+
+# Allow-list the platforms that `ittapi` builds on since it's got C code that
+# doesn't compile by default on all platforms just yet. Also note that this is
+# only enabled for `x86_64` targets as well.
+[target.'cfg(all(target_arch = "x86_64", target_os = "linux"))'.dependencies]
+ittapi = { workspace = true, optional = true }
+[target.'cfg(all(target_arch = "x86_64", target_os = "macos"))'.dependencies]
+ittapi = { workspace = true, optional = true }
+[target.'cfg(all(target_arch = "x86_64", target_os = "windows"))'.dependencies]
+ittapi = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+memfd = { workspace = true, optional = true }
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+mach2 = { workspace = true, optional = true }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true, optional = true, features = ["mm", "param"] }
+
+[dev-dependencies]
+env_logger = { workspace = true }
+proptest = { workspace = true }
+rand = { workspace = true }
+tempfile = { workspace = true }
+wasi-common = { path = "../wasi-common", default-features = true }
+libtest-mimic = { workspace = true }
+cranelift-native = { workspace = true }
+wasmtime-test-util = { workspace = true }
+
+[build-dependencies]
+cc = { workspace = true, optional = true }
+wasmtime-versioned-export-macros = { workspace = true, optional = true }
+
+[[test]]
+name = "host_segfault"
+harness = false
+
+[[test]]
+name = "pooling_alloc_near_oom"
+harness = false
+
+# =============================================================================
+#
+# Features for the Wasmtime crate.
+#
+# This section contains the compile-time features of the `wasmtime` crate. These
+# features can be used to add more functionality and APIs exposed from the
+# crate's API. Most of them are enabled by default. Disabling features can be
+# done to cut down on binary size by disabling features that are not required
+# for a particular embedding.
+[features]
+default = [
+  'async',
+  'cache',
+  'gc',
+  'gc-drc',
+  'gc-null',
+  'wat',
+  'profiling',
+  'parallel-compilation',
+  'cranelift',
+  'pooling-allocator',
+  'demangle',
+  'addr2line',
+  'coredump',
+  'debug-builtins',
+  'runtime',
+  'component-model',
+  'threads',
+  'stack-switching',
+  'std',
+]
+
+# An on-by-default feature enabling runtime compilation of WebAssembly modules
+# with the Cranelift compiler. Cranelift is the default compilation backend of
+# Wasmtime. If disabled then WebAssembly modules can only be created from
+# precompiled WebAssembly modules.
+cranelift = ["dep:wasmtime-cranelift", "std", "wasmtime-unwinder/cranelift"]
+
+# Enables support for Winch, the WebAssembly baseline compiler. The Winch compiler
+# strategy in `Config` will be available. It is currently in active development
+# and shouldn't be used in production applications.
+winch = ["dep:wasmtime-winch", "std"]
+
+# Enables support for Pulley, the WebAssembly interpreter. When paired with the
+# `cranelift` feature, the compiler backends for the `pulley32` and `pulley64`
+# targets will be available. When paired with the `runtime` feature, the Pulley
+# interpreter will be built into the runtime and you can interpret WebAssembly
+# modules that have been compiled to Pulley bytecode.
+pulley = [
+  # Note that this is intentionally empty. This feature is dynamically activated
+  # in `build.rs` as well when the host platform does not have Cranelift support
+  # for example. That means that dependencies for pulley need to be already
+  # activated anyway.
+]
+
+# Enables support for incremental compilation cache to be enabled in `Config`.
+incremental-cache = ["wasmtime-cranelift?/incremental-cache", "std"]
+
+# Enables support for profiling guest modules.
+profiling = [
+  "dep:fxprof-processed-profile",
+  "dep:ittapi",
+  "dep:rustix",
+  "rustix/thread",
+  "dep:serde_json",
+  "std",
+  "wasmtime-jit-debug/perf_jitdump",
+]
+
+# Enables parallel compilation of WebAssembly code.
+parallel-compilation = ["dep:rayon", "std"]
+
+# Enables support for automatic cache configuration to be enabled in `Config`.
+cache = ["dep:wasmtime-cache", "std"]
+
+# Enables support for "async stores" as well as defining host functions as
+# `async fn` and calling functions asynchronously.
+async = [
+  "dep:wasmtime-fiber",
+  "dep:async-trait",
+  "wasmtime-component-macro?/async",
+  "runtime",
+]
+
+# Enables support for the pooling instance allocation strategy
+pooling-allocator = [
+  "runtime",
+  "std",                 # not ported to no_std yet
+]
+
+# Enables support for all architectures in Cranelift, allowing
+# cross-compilation using the `wasmtime` crate's API, notably the
+# `Engine::precompile_module` function.
+all-arch = ["wasmtime-cranelift?/all-arch", "wasmtime-winch?/all-arch", "pulley"]
+
+# Enables in-progress support for the component model. Note that this feature is
+# in-progress, buggy, and incomplete. This is primarily here for internal
+# testing purposes.
+component-model = [
+  "wasmtime-environ/component-model",
+  "wasmtime-cranelift?/component-model",
+  "wasmtime-winch?/component-model",
+  "dep:wasmtime-component-macro",
+  "dep:wasmtime-component-util",
+  "dep:encoding_rs",
+  "dep:semver",
+]
+
+wmemcheck = [
+  "dep:wasmtime-wmemcheck",
+  "wasmtime-cranelift?/wmemcheck",
+  "wasmtime-winch?/wmemcheck",
+  "wasmtime-environ/wmemcheck",
+  "std",
+]
+
+# Enables detailed internal compiler logging via WASMTIME_LOG
+trace-log = ["wasmtime-cranelift?/trace-log"]
+
+# Enables support for demangling WebAssembly function names at runtime in
+# errors such as backtraces.
+demangle = ["wasmtime-environ/demangle", "std"]
+
+# Enable support for generating core dumps on traps.
+coredump = ["dep:wasm-encoder", "runtime", "std"]
+
+# Export some symbols from the final binary to assist in debugging
+# Cranelift-generated code with native debuggers like GDB and LLDB.
+debug-builtins = [
+  "wasmtime-jit-debug/gdb_jit_int",
+]
+
+# Enable support for executing compiled Wasm modules.
+runtime = [
+  "dep:cc",
+  "dep:smallvec",
+  "dep:mach2",
+  "dep:memfd",
+  "dep:wasmtime-asm-macros",
+  "dep:wasmtime-slab",
+  "dep:wasmtime-versioned-export-macros",
+  "dep:windows-sys",
+  "pulley-interpreter/interp",
+  "dep:wasmtime-unwinder",
+]
+
+# Enable support for garbage collection-related things.
+#
+# This Cargo feature is required to compile or run Wasm that uses any of the
+# following Wasm proposals:
+#
+# * Reference types: https://github.com/WebAssembly/reference-types/
+# * Typed function references: https://github.com/WebAssembly/function-references/
+# * Garbage collection: https://github.com/WebAssembly/gc
+#
+# When a compiler Cargo feature (`cranelift` or `winch`) is enabled, this
+# feature gates the ability to compile Wasm that uses those proposals.
+#
+# When the `runtime` Cargo feature is enabled, this feature gates the ability to
+# load and run Wasm that uses those proposals.
+#
+# You can additionally configure which GC implementations are enabled via the
+# `gc-drc` and `gc-null` features.
+gc = [
+  "wasmtime-environ/gc",
+  "wasmtime-cranelift?/gc",
+  "wasmtime-winch?/gc",
+]
+
+# Enable the deferred reference counting garbage collector.
+gc-drc = [
+  "gc",
+  "wasmtime-environ/gc-drc",
+  "wasmtime-cranelift?/gc-drc",
+  "wasmtime-winch?/gc-drc",
+]
+
+# Enable the null garbage collector.
+gc-null = [
+  "gc",
+  "wasmtime-environ/gc-null",
+  "wasmtime-cranelift?/gc-null",
+  "wasmtime-winch?/gc-null",
+]
+
+# Enable runtime support for the WebAssembly threads proposal.
+threads = [
+  "wasmtime-cranelift?/threads",
+  "wasmtime-winch?/threads",
+  "std",
+]
+
+stack-switching = [
+  "runtime",
+  "std",
+  "wasmtime-environ/stack-switching",
+  "wasmtime-cranelift?/stack-switching",
+  "wasmtime-winch?/stack-switching",
+]
+
+# Controls whether backtraces will attempt to parse DWARF information in
+# WebAssembly modules and components to provide filenames and line numbers in
+# stack traces.
+addr2line = ["dep:addr2line", "dep:gimli", "std"]
+
+# Enables support for the Rust standard library, enabling APIs that require
+# types and traits from Rust's `std` such as `Path` and `Error`.
+#
+# Many features of the Wasmtime crate implicitly require this `std` feature.
+# This will be automatically enabled if necessary.
+std = [
+  'postcard/use-std',
+  'wasmtime-environ/std',
+  'object/std',
+  'once_cell',
+  'wasmtime-fiber?/std',
+  'pulley-interpreter/std',
+  'wasmtime-math/std',
+  'addr2line?/std',
+  "dep:rustix",
+  "wasmtime-jit-icache-coherence",
+  "wasmtime-jit-debug?/std",
+]
+
+# Enables support for the `Store::call_hook` API which enables injecting custom
+# logic around all entries/exits from WebAssembly. This has a slight performance
+# cost for all host functions.
+call-hook = []
+
+# Enables support for "memory protection keys" which can be used in conjunction
+# with the pooling allocator on x64 to compact linear memory allocations.
+memory-protection-keys = ["pooling-allocator"]
+
+# Enables a re-export of wasmparser, so that an embedder of Wasmtime can use
+# exactly the version of the parser library that Wasmtime does. Sometimes this
+# is necessary, e.g. to guarantee that there will not be any mismatches in
+# which modules are accepted due to Wasm feature configuration or support
+# levels.
+#
+# Note that when this feature is enabled, the version of wasmparser that is
+# re-exported is *not subject to semver*: we reserve the right to make patch
+# releases of Wasmtime that bump the version of wasmparser used, and hence the
+# version re-exported, in semver-incompatible ways. This is the tradeoff that
+# the embedder needs to opt into: in order to stay exactly in sync with an
+# internal detail of Wasmtime, the cost is visibility into potential internal
+# version changes. This is why the re-export is guarded by a feature flag which
+# is off by default.
+reexport-wasmparser = []
+
+# Enables instances of the traits defined in the wasm-wave crate, which
+# provides a human-readable text format for component values.
+wave = ["dep:wasm-wave", 'component-model']
+
+# For platforms that Wasmtime does not have support for Wasmtime will disable
+# the use of virtual memory by default, for example allocating linear memories
+# with `malloc` instead. This feature can be used, for these platforms, to
+# instead use a C API defined in `wasmtime-platform.h` instead.
+#
+# For some more information see
+# https://docs.wasmtime.dev/stability-platform-support.html#support-for-no_std
+#
+# This feature is not necessary for supported platforms like Unix and Windows as
+# virtual memory is always enabled there.
+custom-virtual-memory = []
+
+# Same as `custom-virtual-memory` above, but for custom signal-handling APIs.
+custom-native-signals = []
+
+# Off-by-default support to profile the Pulley interpreter. This has a
+# performance hit, even when not profiling, so it's disabled by default at
+# compile time.
+profile-pulley = ['pulley', 'profiling', 'pulley-interpreter/profile']
+
+# Enables support for the Component Model Async ABI, along with `future`,
+# `stream`, and `error-context` types.
+component-model-async = [
+  "async",
+  "component-model",
+  "std",
+  "wasmtime-component-macro?/component-model-async",
+  "dep:futures",
+  "futures/std",
+]
+
+# Enables support for `stream` interop with the `bytes` crate.
+component-model-async-bytes = [
+  "component-model-async",
+  "dep:bytes",
+]

@@ -1,0 +1,13 @@
+C4Context
+  Person(admin, "Admin")
+  Person(user, "User")
+  System(sys, "Inventory")
+  SystemDb(db, "Main DB")
+  Rel(admin, sys, "Manages")
+  Rel(user, sys, "Uses")
+  Rel(sys, db, "Reads/Writes")
+  Boundary(b0, "Services") {
+    Container(api, "API")
+    Container(worker, "Worker")
+    Rel(api, worker, "Queues")
+  }

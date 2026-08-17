@@ -1,0 +1,37 @@
+[package]
+name = "wit-bindgen"
+authors = ["Alex Crichton <alex@alexcrichton.com>"]
+version = { workspace = true }
+edition = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
+rust-version = { workspace = true }
+homepage = 'https://github.com/bytecodealliance/wit-bindgen'
+description = """
+Rust bindings generator and runtime support for WIT and the component model.
+Used when compiling Rust programs to the component model.
+"""
+
+[package.metadata.docs.rs]
+all-features = true
+
+[dependencies]
+wit-bindgen-rust-macro = { path = "./macro", optional = true, version = "0.46.0" }
+bitflags = { workspace = true, optional = true }
+futures = { version = "0.3.30", optional = true }
+once_cell = { version = "1.19.0", optional = true }
+
+# When built as part of libstd
+core = { version = "1.0", optional = true, package = "rustc-std-workspace-core" }
+alloc = { version = "1.0", optional = true, package = "rustc-std-workspace-alloc" }
+
+[features]
+default = ["macros", "realloc", "async", "std", "bitflags"]
+macros = ["dep:wit-bindgen-rust-macro"]
+realloc = []
+std = []
+async = ["macros", "std", "dep:futures", "dep:once_cell", "wit-bindgen-rust-macro/async"]
+bitflags = ["dep:bitflags"]
+
+# Unstable feature to support being a libstd dependency
+rustc-dep-of-std = ["dep:core", "dep:alloc"]

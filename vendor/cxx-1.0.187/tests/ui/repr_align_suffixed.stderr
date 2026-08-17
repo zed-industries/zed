@@ -1,0 +1,7 @@
+error: invalid suffix `int` for number literal
+ --> tests/ui/repr_align_suffixed.rs:3:18
+  |
+3 |     #[repr(align(2int))]
+  |                  ^^^^ invalid suffix `int`
+  |
+  = help: the suffix must be one of the numeric types (`u32`, `isize`, `f32`, etc.)

@@ -1,0 +1,6 @@
+disable_all_formatting = true
+use_small_heuristics = "Off"
+reorder_modules = false
+reorder_imports = false
+# imports_layout = "HorizontalVertical"
+# generics = "Visual"

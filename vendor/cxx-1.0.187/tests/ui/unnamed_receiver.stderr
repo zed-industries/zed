@@ -1,0 +1,11 @@
+error: unnamed receiver type is only allowed if the surrounding extern block contains exactly one extern type; use `self: &mut TheType`
+ --> tests/ui/unnamed_receiver.rs:6:14
+  |
+6 |         fn f(&mut self);
+  |              ^^^^^^^^^
+
+error: unnamed receiver type is only allowed if the surrounding extern block contains exactly one extern type; use `self: &TheType`
+  --> tests/ui/unnamed_receiver.rs:10:20
+   |
+10 |         fn f(self: &Self);
+   |                    ^^^^^

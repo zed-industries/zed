@@ -1,0 +1,5 @@
+As a special  exception, FreeType can also be  built with the 'makepp'
+build tool, available from https://makepp.sourceforge.net.
+
+Note, however,  that  you will need at least version 2.0  and pass the
+option --norc-substitution to have it work correctly.

@@ -1,0 +1,83 @@
+syntax = "proto3";
+
+package livekit.agent;
+
+option go_package = "github.com/livekit/protocol/livekit/agent";
+option csharp_namespace = "LiveKit.Proto";
+option ruby_package = "LiveKit::Proto";
+
+import "google/protobuf/timestamp.proto";
+
+enum ChatRole {
+  DEVELOPER = 0;
+  SYSTEM = 1;
+  USER = 2;
+  ASSISTANT = 3;
+}
+
+message MetricsReport {
+  google.protobuf.Timestamp started_speaking_at = 1;
+  google.protobuf.Timestamp stopped_speaking_at = 2;
+
+  optional double transcription_delay = 3;
+  optional double end_of_turn_delay = 4;
+  optional double on_user_turn_completed_delay = 5;
+  optional double llm_node_ttft = 6;
+  optional double tts_node_ttfb = 7;
+  optional double e2e_latency = 8;
+}
+
+message ChatMessage {
+  message ChatContent {
+    oneof payload {
+      string text = 1;
+    }
+  }
+  
+  string id = 1;
+  ChatRole role = 2;
+  repeated ChatContent content = 3;
+  bool interrupted = 4;
+  optional double transcript_confidence = 5;
+  map<string, string> extra = 6;
+  MetricsReport metrics = 7;
+  google.protobuf.Timestamp created_at = 8;
+}
+
+message FunctionCall {
+  string id = 1;
+  string call_id = 2;
+  string arguments = 3;
+  string name = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+message FunctionCallOutput {
+  string id = 1;
+  string name = 2;
+  string call_id = 3;
+  string output = 4;
+  bool is_error = 5;
+  google.protobuf.Timestamp created_at = 6;
+}
+
+message AgentHandoff {
+  string id = 1;
+  optional string old_agent_id = 2;
+  string new_agent_id = 3;
+  google.protobuf.Timestamp created_at = 4;
+}
+
+message ChatContext {
+  message ChatItem {
+    oneof item {
+      ChatMessage message = 1;
+      FunctionCall function_call = 2;
+      FunctionCallOutput function_call_output = 3;
+      AgentHandoff agent_handoff = 4;
+    }
+  }
+
+  repeated ChatItem items = 1;
+}
+

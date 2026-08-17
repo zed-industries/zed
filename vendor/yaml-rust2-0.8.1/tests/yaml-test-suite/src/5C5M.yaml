@@ -1,0 +1,42 @@
+---
+- name: Spec Example 7.15. Flow Mappings
+  from: http://www.yaml.org/spec/1.2/spec.html#id2791018
+  tags: spec flow mapping
+  yaml: |
+    - { one : two , three: four , }
+    - {five: six,seven : eight}
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       +MAP {}
+        =VAL :one
+        =VAL :two
+        =VAL :three
+        =VAL :four
+       -MAP
+       +MAP {}
+        =VAL :five
+        =VAL :six
+        =VAL :seven
+        =VAL :eight
+       -MAP
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      {
+        "one": "two",
+        "three": "four"
+      },
+      {
+        "five": "six",
+        "seven": "eight"
+      }
+    ]
+  dump: |
+    - one: two
+      three: four
+    - five: six
+      seven: eight

@@ -1,0 +1,49 @@
+---
+- name: Spec Example 2.8. Play by Play Feed from a Game
+  from: http://www.yaml.org/spec/1.2/spec.html#id2760519
+  tags: spec header
+  yaml: |
+    ---
+    time: 20:03:20
+    player: Sammy Sosa
+    action: strike (miss)
+    ...
+    ---
+    time: 20:03:47
+    player: Sammy Sosa
+    action: grand slam
+    ...
+  tree: |
+    +STR
+     +DOC ---
+      +MAP
+       =VAL :time
+       =VAL :20:03:20
+       =VAL :player
+       =VAL :Sammy Sosa
+       =VAL :action
+       =VAL :strike (miss)
+      -MAP
+     -DOC ...
+     +DOC ---
+      +MAP
+       =VAL :time
+       =VAL :20:03:47
+       =VAL :player
+       =VAL :Sammy Sosa
+       =VAL :action
+       =VAL :grand slam
+      -MAP
+     -DOC ...
+    -STR
+  json: |
+    {
+      "time": "20:03:20",
+      "player": "Sammy Sosa",
+      "action": "strike (miss)"
+    }
+    {
+      "time": "20:03:47",
+      "player": "Sammy Sosa",
+      "action": "grand slam"
+    }

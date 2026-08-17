@@ -1,0 +1,5 @@
+expected keyword `func`, found keyword `static`
+     --> tests/ui/parse-fail/async-bad2.wit:5:14
+      |
+    5 |     x: async static func();
+      |              ^

@@ -1,0 +1,47 @@
+[package]
+name = "cap-primitives"
+version = "3.4.4"
+description = "Capability-based primitives"
+authors = [
+    "Dan Gohman <dev@sunfishcode.online>",
+    "Jakub Konka <kubkon@jakubkonka.com>",
+]
+license = "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
+keywords = ["api", "network", "file"]
+categories = ["filesystem", "network-programming"]
+repository = "https://github.com/bytecodealliance/cap-std"
+edition = "2021"
+
+[dependencies]
+ambient-authority = "0.0.2"
+arbitrary = { version = "1.0.0", optional = true, features = ["derive"] }
+ipnet = "2.5.0"
+maybe-owned = "0.3.4"
+fs-set-times = "0.20.0"
+io-extras = "0.18.3"
+io-lifetimes = { version = "2.0.0", default-features = false }
+
+[dev-dependencies]
+cap-tempfile = { path = "../cap-tempfile" }
+
+[target.'cfg(not(windows))'.dependencies]
+rustix = { version = "1.0.0", features = ["fs", "process", "termios", "time"] }
+
+[target.'cfg(any(target_os = "android", target_os = "linux"))'.dependencies]
+rustix-linux-procfs = "0.1.1"
+
+[target.'cfg(windows)'.dependencies]
+winx = "0.36.0"
+
+[target.'cfg(windows)'.dependencies.windows-sys]
+version = ">=0.52, <=0.59"
+features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Kernel",
+    "Win32_System_WindowsProgramming",
+    "Win32_System_IO",
+    "Wdk_Storage_FileSystem",
+    "Wdk_Foundation",
+]

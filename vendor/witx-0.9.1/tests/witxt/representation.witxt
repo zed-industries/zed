@@ -1,0 +1,60 @@
+;; type names don't matter
+(witx $a
+  (typename $a (flags (@witx repr u8) $b $c)))
+(witx $b
+  (typename $b (flags (@witx repr u8) $b $c)))
+
+(assert_representable eq $a "a" $b "b")
+(assert_representable eq $b "b" $a "a")
+
+(; TODO: perhaps add assertions eventually for document-level representability?
+;; flags
+(witx $a
+  (typename $a (flags (@witx bitflags u8) $b $c)))
+(witx $b
+  (typename $b (flags (@witx bitflags u8) $b $c $d)))
+
+(assert_representable noteq $b "b" $a "a")
+(assert_representable superset $a "a" $b "b")
+
+(witx $c
+  (typename $c (flags (@witx bitflags u8) $b $e)))
+(assert_representable noteq $a "a" $c "c")
+(assert_representable noteq $c "c" $a "a")
+
+(witx $d
+  (typename $d (flags (@witx bitflags u16) $b $c)))
+(assert_representable noteq $a "a" $d "d")
+(assert_representable superset $d "d" $a "a")
+(assert_representable superset $d "d" $b "b")
+;)
+
+;; enums
+(witx $a
+  (typename $a (enum $b $c)))
+(witx $b
+  (typename $b (enum $b $c $d)))
+(assert_representable superset $a "a" $b "b")
+(assert_representable noteq $b "b" $a "a")
+
+(witx $c
+  (typename $c (enum (@witx tag u16) $b $c)))
+(assert_representable superset $c "c" $a "a")
+(assert_representable superset $c "c" $b "b")
+
+;; unions
+(witx $a
+  (typename $tag (enum $b $c))
+  (typename $a (union (@witx tag $tag) u32 f32)))
+(witx $b
+  (typename $tag (enum $b $c $d))
+  (typename $b (union (@witx tag $tag) u32 f32 f64)))
+(assert_representable superset $a "a" $b "b")
+(assert_representable noteq $b "b" $a "a")
+
+(witx $c
+  (typename $tag (enum $b $c))
+  (typename $c (variant (@witx tag $tag) (case $c f32) (case $b u32))))
+(assert_representable eq $a "a" $c "c")
+(assert_representable eq $c "c" $a "a")
+(assert_representable superset $c "c" $b "b")

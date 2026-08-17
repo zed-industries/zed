@@ -1,0 +1,3 @@
+GET /?X-Amz-Algorithm=AWS4-ECDSA-P256-SHA256&X-Amz-Credential=AKIDEXAMPLE%2F20150830%2Fservice%2Faws4_request&X-Amz-Date=20150830T123600Z&X-Amz-SignedHeaders=host&X-Amz-Expires=3600&X-Amz-Security-Token=6e86291e8372ff2a2260956d9b8aae1d763fbf315fa00fa31553b73ebf194267&X-Amz-Region-Set=us-east-1&X-Amz-Signature=304502207cdbb61908b9d4cf6c84e03ff7dac10a9a4637784d335a7d8bf1d1a6931bc3ba022100ee78b054e5441b71ab155632174df6b68bdaa00eabf939bf0c7299e1367e02a4 HTTP/1.1
+Host:example.amazonaws.com
+

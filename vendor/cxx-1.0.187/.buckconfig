@@ -1,0 +1,30 @@
+[cells]
+root = .
+prelude = tools/buck/prelude
+toolchains = tools/buck/toolchains
+none = none
+
+[external_cells]
+prelude = bundled
+
+[cell_aliases]
+config = prelude
+fbcode = none
+fbsource = none
+
+[project]
+# Hide BUCK files under target/package/ from `buck build ...`. Otherwise:
+#   $ buck build ...
+#   //target/package/cxx-0.3.0/tests:ffi references non-existing file or directory 'target/package/cxx-0.3.0/tests/ffi/lib.rs'
+#
+# Also hide some Bazel-managed directories that contain symlinks to the repo root.
+ignore = \
+    .git, \
+    bazel-bin, \
+    bazel-cxx, \
+    bazel-out, \
+    bazel-testlogs, \
+    target
+
+[parser]
+target_platform_detector_spec = target:root//...->prelude//platforms:default

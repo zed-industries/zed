@@ -1,0 +1,17 @@
+package foo:bar;
+
+interface foo {
+  resource name;
+}
+
+interface name {
+  use foo.{name};
+}
+
+world module {
+  export foo;
+  export name;
+  export name: interface {
+    use name.{name};
+  }
+}

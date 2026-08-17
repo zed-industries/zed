@@ -1,0 +1,5 @@
+expected a type, found '('
+     --> tests/ui/parse-fail/resources-multiple-returns-borrow.wit:4:30
+      |
+    4 |   t1: func(a: borrow<r1>) -> ();
+      |                              ^

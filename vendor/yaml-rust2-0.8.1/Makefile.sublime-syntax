@@ -1,0 +1,641 @@
+%YAML 1.2
+# http://www.sublimetext.com/docs/3/syntax.html
+# https://www.gnu.org/software/make/manual/make.html
+--- #---------------------------------------------------------------------------
+# Converted from Makefile Improved by Kay-Uwe (Kiwi) Lorenz
+# Includes a few improvement like special-target, a bit more shell command,
+# better variable recognition, fix ifeq/ifneq missing highlight ...
+# Rewritten by Raoul Wols on May 2017.
+#
+# All number references refer to the "Make manual" (see link above).
+name: Makefile
+file_extensions:
+  - make
+  - GNUmakefile
+  - makefile
+  - Makefile
+  - OCamlMakefile
+  - mak
+  - mk
+first_line_match: ^#!\s*/usr/bin/make\b
+scope: source.makefile
+#-------------------------------------------------------------------------------
+variables:
+
+  varassign: (\?|\+|::?)?=
+  shellassign: '!='
+  startdirective: ifn?(def|eq)
+  include: '[s-]?include'
+  ruleassign: :(?!=)
+  function_call_token_begin: \$\$?\(
+
+  # The big "rule lookahead". What we want to do is here is detect if the
+  # line that we are parsing is going to define a rule. So we need to check
+  # if we have something of the form <rule-name> : <rule-prerequisites>
+  # However matters become complicated by the fact that we can have arbitrary
+  # variable substitutions anywhere. We try to remedy this by hacking in a
+  # regex that matches up to four levels of nested parentheses, and ignores
+  # whatever's inside the parentheses.
+  nps: '[^()]*'
+  open: '(?:\('
+  close: '\))?'       # ignore this invalid.illegal
+  just_eat: |         # WARNING: INSANITY FOLLOWS!
+    (?x)              # ignore whitespace in this regex
+      {{nps}}         #       level 0
+      {{open}}        # start level 1                      __
+        {{nps}}       #       level 1          _______    /*_>-<
+        {{open}}      # start level 2      ___/ _____ \__/ /
+          {{nps}}     #       level 2     <____/     \____/
+          {{open}}    # start level 3     is like snek... (by Valerie Haecky)
+            {{nps}}   #       level 3
+            {{open}}  # start level 4
+              {{nps}} #       level 4
+            {{close}} #   end level 4
+            {{nps}}   #       level 3
+          {{close}}   #   end level 3
+          {{nps}}     #       level 2
+          {{open}}    # start level 3
+            {{nps}}   #       level 3
+            {{open}}  # start level 4
+              {{nps}} #       level 4
+            {{close}} #   end level 4
+            {{nps}}   #       level 3
+          {{close}}   #   end level 3
+          {{nps}}     #       level 2
+        {{close}}     #   end level 2
+        {{nps}}       #       level 1
+        {{open}}      # start level 2
+          {{nps}}     #       level 2
+          {{open}}    # start level 3
+            {{nps}}   #       level 3
+            {{open}}  # start level 4
+              {{nps}} #       level 4
+            {{close}} #   end level 4
+            {{nps}}   #       level 3
+          {{close}}   #   end level 3
+          {{nps}}     #       level 2
+          {{open}}    # start level 3
+            {{nps}}   #       level 3
+            {{open}}  # start level 4
+              {{nps}} #       level 4
+            {{close}} #   end level 4
+            {{nps}}   #       level 3
+          {{close}}   #   end level 3
+          {{nps}}     #       level 2
+          {{open}}    # start level 3
+            {{nps}}   #       level 3
+            {{open}}  # start level 4
+              {{nps}} #       level 4
+            {{close}} #   end level 4
+            {{nps}}   #       level 3
+          {{close}}   #   end level 3
+          {{nps}}     #       level 2
+        {{close}}     #   end level 2
+        {{nps}}       #       level 1
+      {{close}}       #   end level 1
+      {{nps}}         #       level 0
+  rule_lookahead: '{{just_eat}}{{ruleassign}}{{just_eat}}'
+
+  var_lookahead_base: '{{just_eat}}({{varassign}}|{{shellassign}}){{just_eat}}'
+  # Just as with rules we want to look ahead if we are going to define a var.
+  # However, due to the possibility of "target-specific" variables (see 6.11),
+  # we want to NOT match if there's a {{ruleassign}} before a {{varassign}}.
+  var_lookahead: (?!{{rule_lookahead}}){{var_lookahead_base}}
+
+  first_assign_then_colon: |
+    (?x)
+      {{just_eat}}
+        {{varassign}}
+      {{just_eat}}
+        {{ruleassign}}
+      {{just_eat}}
+
+#-------------------------------------------------------------------------------
+contexts:
+
+  # 3.1 What Makefiles Contain
+  # Makefiles contain five kinds of things: explicit rules, implicit rules,
+  # variable definitions, directives, and comments.
+  main:
+    - include: comments
+    - include: variable-definitions
+    - match: (?={{rule_lookahead}})
+      push: expect-rule
+    - include: variable-substitutions
+    - include: control-flow
+    - match: ^\s*(endef)
+      captures:
+        1: invalid.illegal.stray.endef.makefile
+
+  inside-control-flow:
+    - meta_scope: meta.group.makefile
+    - match: "'"
+      scope: punctuation.definition.string.begin.makefile
+      push:
+        - meta_scope: string.quoted.single.makefile
+        - match: "'"
+          scope: punctuation.definition.string.end.makefile
+          pop: true
+        - include: escape-literals
+        - include: line-continuation
+        - include: variable-substitutions
+    - match: '"'
+      scope: punctuation.definition.string.begin.makefile
+      push:
+        - meta_scope: string.quoted.double.makefile
+        - match: '"'
+          scope: punctuation.definition.string.end.makefile
+          pop: true
+        - include: escape-literals
+        - include: line-continuation
+        - include: variable-substitutions
+    - match: \(
+      scope: punctuation.section.group.begin.makefile
+      push:
+        - match: \)
+          scope: punctuation.section.group.end.makefile
+          pop: true
+        - include: variable-substitutions
+        - match: \,
+          scope: punctuation.separator.makefile
+    - match: \)
+      scope: invalid.illegal.stray.paren.makefile
+    - include: continuation-or-pop-on-line-end
+
+  control-flow:
+    - match: ^\s*(vpath)\s
+      captures:
+        1: keyword.control.vpath.makefile
+      push:
+        - include: highlight-wildcard-sign
+        - match: \s
+          set:
+            - meta_content_scope: string.unquoted.makefile
+            - include: pop-on-line-end
+        - include: pop-on-line-end
+    - match: ^\s*(vpath)$
+      captures: keyword.control.vpath.makefile
+    - match: ^\s*({{include}})\s+
+      captures:
+        1: keyword.control.import.makefile
+      push:
+        - meta_content_scope: string.unquoted.makefile
+        - include: continuation-or-pop-on-line-end
+        - include: variable-substitutions
+        - include: comments
+    - match: \b{{startdirective}}\b
+      scope: keyword.control.conditional.makefile
+      push: inside-control-flow
+    - match: ^\s*(else)\b
+      captures:
+        1: keyword.control.conditional.makefile
+      push:
+        - include: control-flow
+        - include: comments
+        - include: pop-on-line-end
+    - match: ^\s*(endif)\b
+      captures:
+        1: keyword.control.conditional.makefile
+      push:
+        - include: comments
+        - include: pop-on-line-end
+
+  highlight-percentage-sign:
+    - match: \%
+      scope: variable.language.makefile
+
+  highlight-wildcard-sign:
+    - match: \*
+      scope: variable.language.wildcard.makefile
+
+  expect-rule:
+    # Anything before the colon is part of the rule's name.
+    - meta_scope: meta.function.makefile entity.name.function.makefile
+    - include: line-continuation
+    - include: variable-substitutions
+    - include: highlight-percentage-sign
+    - match: (?= *::?[^=]+[!:?]?=)
+      set:
+        - match: ::?
+          scope: keyword.operator.assignment.makefile
+          set:
+            - include: variable-definitions
+            - include: variable-substitutions
+            - include: continuation-or-pop-on-line-end
+    - match: (?= *::?)
+      set:
+        - match: (::?)\s*
+          captures:
+            1: keyword.operator.assignment.makefile
+          set:
+            - meta_content_scope:
+                meta.function.arguments.makefile
+                string.unquoted.makefile
+            - include: line-continuation
+            - include: variable-substitutions
+            - include: highlight-percentage-sign
+            - match: (?=#)
+              set:
+                - match: \#
+                  scope: punctuation.definition.comment.makefile
+                  set:
+                    - meta_scope: comment.line.number-sign.makefile
+                    - match: $
+                      set: recipe-junction-between-spaces-or-tabs
+            - match: $
+              set: recipe-junction-between-spaces-or-tabs
+            - match: (?=\s*;)
+              set:
+                - match: ;
+                  scope: punctuation.terminator.makefile
+                  set: recipe-inline
+
+  recipe-junction-between-spaces-or-tabs:
+    - meta_content_scope: meta.function.body.makefile
+    - include: comments
+    - match: ^\s*({{startdirective}})
+      captures:
+        1: keyword.control.conditional.makefile
+      push:
+        - include: inside-control-flow
+        - include: recipe-junction-between-spaces-or-tabs
+    - match: ^(?=[ ]+([-@]{1,2})?)
+      set: recipe-with-spaces
+    - match: ^(?=\t([-@]{1,2})?)
+      set: recipe-with-tabs
+    - match: ^
+      pop: true
+
+  recipe-inline:
+    - meta_content_scope: meta.function.body.makefile
+    - include: recipe-junction-between-spaces-or-tabs
+    - include: control-flow
+    - match: $
+      set: recipe-junction-between-spaces-or-tabs
+    - match: ""
+      push: shell
+
+  recipe-with-spaces:
+    - meta_content_scope: meta.function.body.makefile
+    - match: ^([ ]+)([-@]{1,2})?
+      captures:
+        2: constant.language.makefile
+      push: shell
+    - match: ^(\t)([-@]{1,2})?
+      captures:
+        1: invalid.illegal.inconsistent.expected.spaces.makefile
+        2: constant.language.makefile
+    - include: recipe-common
+    - match: ^(?![ ]+)
+      pop: true
+
+  recipe-with-tabs:
+    - meta_content_scope: meta.function.body.makefile
+    - match: ^\t([-@]{1,2})?
+      captures:
+        1: constant.language.makefile
+      push: shell
+    - match: ^([ ]+)([-@]{1,2})?
+      captures:
+        1: invalid.illegal.inconsistent.expected.tab.makefile
+        2: constant.language.makefile
+    - include: recipe-common
+    - match: ^(?!\t)
+      pop: true
+
+  recipe-common:
+    - include: control-flow
+    - match: ^\n
+    
+  shell:
+    # Due to how the shell syntax handles comments, we must account for the case
+    # where a recipe-line is a single comment in combination with an "@" or "-"
+    # from Make.
+    - match: \s*(#)
+      captures:
+        1: punctuation.definition.comment.begin.shell
+      set:
+        # I don't like putting the string "source.shell" here, as the delegation
+        # seeps into this syntax now. But I don't see a cleaner way right now.
+        - meta_scope: source.shell comment.line.number-sign.shell
+        - include: pop-on-line-end
+    # Otherwise, delegate to the shell syntax (with various extra prototypes).
+    - match: ""
+      set: scope:source.shell
+      with_prototype:
+        - include: line-continuation
+        - include: variable-substitutions
+        - include: pop-on-line-end
+
+  line-continuation:
+    - match: (\\)([ ]*)$\n?
+      captures:
+        1: punctuation.separator.continuation.line.makefile
+      # make sure to resume parsing at next line
+      push:
+        - match: (?=\S|^\s*$)
+          pop: true
+
+  pop-on-line-end:
+    - match: $
+      pop: true
+
+  continuation-or-pop-on-line-end:
+    - include: line-continuation
+    - include: pop-on-line-end
+
+  quoted-string:
+    - match: "'"
+      scope: punctuation.definition.string.begin.makefile
+      push:
+        - meta_scope: string.quoted.single.makefile
+        - match: "'"
+          scope: punctuation.definition.string.end.makefile
+          pop: true
+        - include: escape-literals
+        - include: line-continuation
+        - include: variable-substitutions
+    - match: '"'
+      scope: punctuation.definition.string.begin.makefile
+      push:
+        - meta_scope: string.quoted.double.makefile
+        - match: '"'
+          scope: punctuation.definition.string.end.makefile
+          pop: true
+        - include: escape-literals
+        - include: line-continuation
+        - include: variable-substitutions
+
+  escape-literals:
+    - match: \\.
+      scope: constant.character.escape.makefile
+
+  comments:
+    # This hack is here in order to circumvent false-positives for the big
+    # rule lookahead. For example, if this match is not present, then things
+    # like
+    #
+    #     # A comment with a : colon
+    #
+    # will match the rule-lookahead.
+    - match: (?=^\s*#)
+      push:
+        - match: \#
+          scope: punctuation.definition.comment.makefile
+          set:
+            - meta_scope: comment.line.number-sign.makefile
+            - include: pop-on-line-end
+    # This is the "normal" comment parsing logic, but not sufficient in every
+    # case (see above).
+    - match: \#
+      scope: punctuation.definition.comment.makefile
+      push:
+        - meta_scope: comment.line.number-sign.makefile
+        - include: pop-on-line-end
+
+  inside-function-call:
+    - meta_content_scope: meta.function-call.arguments.makefile
+    - match: \)
+      scope: keyword.other.block.end.makefile
+      pop: true
+    - match: \(
+      push: textual-parenthesis-balancer
+    - match: \,
+      scope: punctuation.separator.makefile
+    - include: variable-substitutions
+    - include: quoted-string
+
+  function-invocations:
+    - match: ({{function_call_token_begin}})(call)\s
+      captures:
+        0: meta.function-call.makefile
+        1: keyword.other.block.begin.makefile
+        2: constant.language.call.makefile
+      push:
+        - meta_content_scope:
+            meta.function-call.makefile
+            variable.function.makefile
+        - match: (?=,)
+          set:
+            - meta_content_scope: meta.function-call.makefile
+            - match: \,
+              scope: punctuation.separator.makefile
+              set: inside-function-call
+        - include: variable-substitutions
+    - match: ({{function_call_token_begin}})(patsubst|filter)\s
+      captures:
+        0: meta.function-call.makefile
+        1: keyword.other.block.begin.makefile
+        2: support.function.builtin.makefile
+      push:
+        - meta_content_scope: meta.function-call.arguments.makefile
+        - include: highlight-percentage-sign
+        - include: inside-function-call
+    - match: ({{function_call_token_begin}})(wildcard)\s
+      captures:
+        0: meta.function-call.makefile
+        1: keyword.other.block.begin.makefile
+        2: support.function.builtin.makefile
+      push:
+        - meta_content_scope: meta.function-call.arguments.makefile
+        - include: inside-function-call
+        - include: highlight-wildcard-sign
+    - match: ({{function_call_token_begin}})(info|warning|error)\s
+      captures:
+        0: meta.function-call.makefile
+        1: keyword.other.block.begin.makefile
+        2: support.function.builtin.makefile
+      push:
+        - meta_content_scope: meta.function-call.arguments.makefile
+        - match: \)
+          scope: keyword.other.block.end.makefile
+          pop: true
+        - match: \(
+          push: textual-parenthesis-balancer
+        - match: \,
+          scope: punctuation.separator.makefile
+        - include: variable-substitutions
+    - match: | # multiline string
+        (?x)   # ignore whitespace
+        ({{function_call_token_begin}})
+          (
+            subst|
+            strip|
+            findstring|
+            filter-out|
+            sort|
+            word|
+            wordlist|
+            words|
+            firstword|
+            lastword|
+            dir|
+            notdir|
+            suffix|
+            basename|
+            addsuffix|
+            addprefix|
+            join|
+            realpath|
+            abspath|
+            if|
+            or|
+            and|
+            foreach|
+            file|
+            value|
+            eval|
+            origin|
+            flavor|
+            guile
+          )
+          \s
+      captures:
+        0: meta.function-call.makefile
+        1: keyword.other.block.begin.makefile
+        2: support.function.builtin.makefile
+      push: inside-function-call
+    - match: ({{function_call_token_begin}})(shell)\s
+      captures:
+        1: keyword.other.block.begin.makefile
+        2: support.function.builtin.makefile
+      push:
+        - match: \)
+          scope: keyword.other.block.end.makefile
+          pop: true
+        - match: ''
+          push: scope:source.shell
+          with_prototype:
+            - match: (?=\))
+              pop: true
+            - include: variable-substitutions
+            - include: quoted-string
+            - match: \(
+              push: textual-parenthesis-balancer
+
+  variable-definitions:
+    - match: \s*(override)\b
+      captures:
+        1: keyword.control.makefile
+      set:
+        - match: \bdefine\b
+          scope: keyword.control.makefile
+          push: inside-define-directive-context
+        - include: variable-definitions
+        - include: continuation-or-pop-on-line-end
+    - match: \s*(define)\b
+      captures:
+        1: keyword.control.makefile
+      push: inside-define-directive-context
+    - match: ^\s*(export)\b
+      captures:
+        1: keyword.control.makefile
+      push:
+        - meta_content_scope: variable.other.makefile
+        - include: continuation-or-pop-on-line-end
+        - include: variable-substitutions
+        - match: (\?|\+|::?)?=
+          scope: keyword.operator.assignment.makefile
+          set: [value-to-be-defined, eat-whitespace-then-pop]
+    - match: (?={{var_lookahead}}|{{first_assign_then_colon}})
+      push:
+        - meta_content_scope: variable.other.makefile
+        - match: (?=\s*!=)
+          set:
+            - match: '!='
+              scope: keyword.operator.assignment.makefile
+              set: scope:source.shell
+              with_prototype:
+                - include: variable-substitutions
+                - include: pop-on-line-end
+                - include: textual-parenthesis-balancer
+        - match: (?=\s*(!|\?|\+|::?)?=)
+          set:
+            - match: (!|\?|\+|::?)?=
+              scope: keyword.operator.assignment.makefile
+              set: [value-to-be-defined, eat-whitespace-then-pop]
+            - include: variable-substitutions
+            - include: continuation-or-pop-on-line-end
+        - include: variable-substitutions
+
+  textual-parenthesis-balancer:
+    - match: \)
+      pop: true
+    - include: variable-substitutions
+
+  eat-whitespace-then-pop:
+    - clear_scopes: 1
+    - match: \s*
+      pop: true
+
+  value-to-be-defined:
+    - meta_content_scope: string.unquoted.makefile
+    - include: escape-literals
+    - match: (?=#)
+      set:
+        - match: \#
+          scope: punctuation.definition.comment.makefile
+          set:
+            - meta_scope: comment.line.number-sign.makefile
+            - include: pop-on-line-end
+    - include: variable-substitutions
+    - include: continuation-or-pop-on-line-end
+
+  inside-define-directive-context:
+    - meta_content_scope: variable.other.makefile
+    - match: \s*(?=(!|\?|\+|::?)?=\s*$\n)
+      set:
+        - match: ((!|\?|\+|::?)?=)\s*$\n
+          captures:
+            1: keyword.operator.assignment.makefile
+          set:
+            - meta_content_scope: string.unquoted.makefile
+            - match: ^\s*(endef)
+              captures:
+                1: keyword.control.makefile
+              pop: true
+    # Need to eat the actual newline character in order to start the
+    # string.unquoted scope on the next line.
+    - match: $\n
+      set:
+        - meta_content_scope: string.unquoted.makefile
+        - match: ^\s*(endef)
+          captures:
+            1: keyword.control.makefile
+          pop: true
+    - include: variable-substitutions
+
+  variable-sub-common:
+    - match: ':'
+      scope: punctuation.definition.substitution.makefile
+    - match: =
+      scope: punctuation.definition.assignment.makefile
+    - include: highlight-percentage-sign
+    - include: variable-substitutions
+
+  variable-substitutions:
+    - include: function-invocations
+    - match: \$\$?\(
+      scope: keyword.other.block.begin.makefile
+      push:
+        - meta_scope: variable.parameter.makefile
+        - match: \)
+          scope: keyword.other.block.end.makefile
+          pop: true
+        - include: variable-sub-common
+    - match: \$\$?{
+      scope: keyword.other.block.begin.makefile
+      push:
+        - meta_scope: variable.parameter.makefile
+        - match: \}
+          scope: keyword.other.block.end.makefile
+          pop: true
+        - include: variable-sub-common
+    - match: \$\$?[@%<?^+|*]
+      scope: variable.language.automatic.makefile
+    - match: \$\$
+      scope: constant.character.escape.makefile
+    - match: (\$)[[:alpha:]]
+      captures:
+        0: variable.parameter.makefile
+        1: keyword.other.single-character-variable.makefile

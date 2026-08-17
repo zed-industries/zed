@@ -1,0 +1,41 @@
+[export.body]
+"MyFancyStruct" = """
+#ifdef __cplusplus
+    inline void foo();
+#endif
+"""
+
+"MyFancyEnum" = """
+#ifdef __cplusplus
+    inline void wohoo();
+#endif
+"""
+
+"MyCLikeEnum" = """
+  BogusVariantForSerializationForExample,
+"""
+
+"MyUnion" = """
+  int32_t extra_member;
+"""
+
+[export.pre_body]
+"MyFancyStruct_Prepended" = """
+#ifdef __cplusplus
+    inline void prepended_wohoo();
+#endif
+"""
+
+"MyFancyEnum_Prepended" = """
+#ifdef __cplusplus
+    inline void wohoo();
+#endif
+"""
+
+"MyCLikeEnum_Prepended" = """
+  BogusVariantForSerializationForExample,
+"""
+
+"MyUnion_Prepended" = """
+    int32_t extra_member;
+"""

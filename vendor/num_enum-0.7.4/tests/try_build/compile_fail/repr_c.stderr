@@ -1,0 +1,5 @@
+error: repr(C) doesn't have a well defined size
+ --> $DIR/repr_c.rs:2:8
+  |
+2 | #[repr(C)]
+  |        ^

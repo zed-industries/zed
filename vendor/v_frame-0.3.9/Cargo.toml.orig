@@ -1,0 +1,59 @@
+[package]
+name = "v_frame"
+version = "0.3.9"
+rust-version = "1.80.0"
+description = "Video Frame data structures, originally part of rav1e"
+license = "BSD-2-Clause"
+authors = ["Luca Barbato <lu_zero@gentoo.org>"]
+edition = "2021"
+repository = "https://github.com/rust-av/v_frame"
+
+[features]
+serialize = ["serde", "aligned-vec/serde"]
+profiling = ["dep:profiling"]
+tracing = ["profiling", "dep:tracing", "profiling/profile-with-tracing"]
+
+[dependencies]
+num-traits = "0.2"
+serde = { version = "1.0", features = ["derive"], optional = true }
+aligned-vec = ">=0.5.0, <0.7"
+
+# Profiling dependencies
+profiling = { version = "1", optional = true }
+tracing = { version = "0.1.40", optional = true }
+
+[[bench]]
+name = "bench"
+harness = false
+
+#
+# WebAssembly/wasm32 target support below
+#
+# There are two main WASM targets:
+# - wasm32-unknown-unknown: Base WebAssembly standard, used in browsers
+# - wasm32-wasi: Newer extension/standard, comes with basic std library,
+#   not supported in browsers (yet)
+#
+# Some things work in all WASM configurations, some work only on one of these two,
+# some things don't work on wasm32 at all.
+#
+# wasm32-unknown-unknown requires wasm_bindgen and wasm_bindgen_test to work,
+# but these can cause problems on wasm32-wasi. So we use either
+# - target_arch = "wasm32" for things that (don't) work on all WebAssembly targets or
+# - explicit targetting for wasm32-unknown-unknown or wasm32-wasi.
+#   In Cargo.toml, this is done via [target.<target-triple>.dependencies]
+#   In code, this is done via cfg(all(target_arch = "wasm32", target_os = "wasi"/"unknown"))
+
+# The rayon feature does not work on any wasm32 target
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+criterion = "0.6"
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+criterion = { version = "0.6", default-features = false }
+
+# wasm-bindgen is only needed for wasm32-unknown-unknown and not other wasm32 targets
+[target.wasm32-unknown-unknown.dependencies]
+wasm-bindgen = "0.2"
+
+[target.wasm32-unknown-unknown.dev-dependencies]
+wasm-bindgen-test = "0.3"

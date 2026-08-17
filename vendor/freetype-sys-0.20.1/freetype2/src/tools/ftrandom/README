@@ -1,0 +1,69 @@
+ftrandom
+========
+
+This program expects a set of directories containing good fonts, and a set
+of extensions of fonts to be tested.  It will randomly pick a font, copy it,
+introduce an error and then test it.
+
+The FreeType tests are quite basic; for each erroneous font ftrandom
+
+  . forks off a new tester,
+  . initializes the library,
+  . opens each font in the file,
+  . loads each glyph,
+  . optionally reviews the contours of the glyph,
+  . optionally rasterizes the glyph, and
+  . closes the face.
+
+If a tester takes longer than 20 seconds, ftrandom saves the erroneous font
+and continues.  If the tester exits normally or with an error, then the
+superstructure removes the test font and continues.
+
+
+Command line options
+--------------------
+
+  --all                    Test every font in the directory(ies) no matter
+                           what its extension.
+  --check-outlines         Call `FT_Outline_Decompose' on each glyph.
+  --dir <dir>              Append <dir> to the list of directories to search
+                           for good fonts.  No recursive search.
+  --error-count <cnt>      Introduce <cnt> single-byte errors into the
+                           erroneous fonts (default: 1).
+  --error-fraction <frac>  Multiply the file size of the font by <frac> and
+                           introduce that many errors into the erroneous
+                           font file.  <frac> should be in the range [0;1]
+                           (default: 0.0).
+  --ext <ext>              Add <ext> to the set of font types tested.
+  --help                   Print out this list of options.
+  --nohints                Specify FT_LOAD_NO_HINTING when loading glyphs.
+  --rasterize              Call `FT_Render_Glyph' as well as loading it.
+  --result <dir>           This is the directory in which test files are
+                           placed.
+  --test <file>            Run a single test on a pre-generated testcase.
+                           This is done in the current process so it can be
+                           debugged more easily.
+
+The default font extensions tested by ftrandom are
+
+  .ttf .otf .ttc .cid .pfb .pfa .bdf .pcf .pfr .fon .otb .cff
+
+The default font directory is controlled by the macro `GOOD_FONTS_DIR' in
+the source code (and can be thus specified during compilation); its default
+value is
+
+  /usr/local/share/fonts
+
+The default result directory is `results' (in the current directory).
+
+
+Compilation
+-----------
+
+Two possible solutions.
+
+. Run ftrandom within a debugging tool like `valgrind' to catch various
+  memory issues.
+
+. Compile FreeType with sanitizer flags as provided by gcc or clang, for
+  example, then link it with ftrandom.

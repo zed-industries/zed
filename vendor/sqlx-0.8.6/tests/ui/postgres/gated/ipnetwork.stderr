@@ -1,0 +1,31 @@
+error: optional sqlx feature `ipnetwork` required for type INET of column #1 ("inet")
+ --> $DIR/ipnetwork.rs:2:13
+  |
+2 |     let _ = sqlx::query!("select '127.0.0.1'::inet");
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in a macro (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: optional sqlx feature `ipnetwork` required for type CIDR of column #1 ("cidr")
+ --> $DIR/ipnetwork.rs:4:13
+  |
+4 |     let _ = sqlx::query!("select '2001:4f8:3:ba::/64'::cidr");
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in a macro (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: optional sqlx feature `ipnetwork` required for type INET of param #1
+ --> $DIR/ipnetwork.rs:6:13
+  |
+6 |     let _ = sqlx::query!("select $1::inet", ());
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in a macro (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: optional sqlx feature `ipnetwork` required for type CIDR of param #1
+ --> $DIR/ipnetwork.rs:8:13
+  |
+8 |     let _ = sqlx::query!("select $1::cidr", ());
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in a macro (in Nightly builds, run with -Z macro-backtrace for more info)

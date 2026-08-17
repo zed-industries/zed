@@ -1,0 +1,21 @@
+r#"As a special exception, the authors of sane-airscan give permission for
+additional uses of the libraries contained in this release of sane-airscan.
+
+The exception is that, if you link a sane-airscan library with other files
+to produce an executable, this does not by itself cause the
+resulting executable to be covered by the GNU General Public
+License. Your use of that executable is in no way restricted on
+account of linking the sane-airscan library code into it.
+
+This exception does not, however, invalidate any other reasons why
+the executable file might be covered by the GNU General Public
+License.
+
+If you submit changes to sane-airscan to the maintainers to be included in
+a subsequent release, you agree by submitting the changes that
+those changes may be distributed with this exception intact.
+
+If you write modifications of your own for sane-airscan, it is your choice
+whether to permit this exception to apply to your modifications.
+If you do not wish that, delete this exception notice.
+"#

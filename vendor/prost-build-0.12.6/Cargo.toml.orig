@@ -1,0 +1,45 @@
+[package]
+name = "prost-build"
+version = "0.12.6"
+authors = [
+  "Dan Burkert <dan@danburkert.com>",
+  "Lucio Franco <luciofranco14@gmail.com>",
+  "Casper Meijn <casper@meijn.net>",
+  "Tokio Contributors <team@tokio.rs>",
+]
+license = "Apache-2.0"
+repository = "https://github.com/tokio-rs/prost"
+documentation = "https://docs.rs/prost-build"
+readme = "README.md"
+description = "Generate Prost annotated Rust types from Protocol Buffers files."
+edition = "2021"
+rust-version = "1.70"
+
+[features]
+default = ["format"]
+format = ["dep:prettyplease", "dep:syn"]
+cleanup-markdown = ["dep:pulldown-cmark", "dep:pulldown-cmark-to-cmark"]
+
+[dependencies]
+bytes = { version = "1", default-features = false }
+heck = { version = ">=0.4, <=0.5" }
+itertools = { version = ">=0.10, <=0.12", default-features = false, features = ["use_alloc"] }
+log = "0.4.4"
+multimap = { version = ">=0.8, <=0.10", default-features = false }
+petgraph = { version = "0.6", default-features = false }
+prost = { version = "0.12.6", path = "../prost", default-features = false }
+prost-types = { version = "0.12.6", path = "../prost-types", default-features = false }
+tempfile = "3"
+once_cell = "1.17.1"
+regex = { version = "1.8.1", default-features = false, features = ["std", "unicode-bool"] }
+
+# feature: format
+prettyplease = { version = "0.2", optional = true }
+syn = { version = "2", features = ["full"], optional = true }
+
+# These two must be kept in sync, used for `cleanup-markdown` feature.
+pulldown-cmark = { version = "0.9.1", optional = true, default-features = false }
+pulldown-cmark-to-cmark = { version = "10.0.1", optional = true }
+
+[dev-dependencies]
+env_logger = { version = "0.10", default-features = false }

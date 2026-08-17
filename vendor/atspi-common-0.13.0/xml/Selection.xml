@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<node>
+  <interface name="org.a11y.atspi.Selection">
+
+    <property name="NSelectedChildren" type="i" access="read"/>
+
+    <method name="GetSelectedChild">
+      <arg direction="in" name="selectedChildIndex" type="i"/>
+      <arg direction="out" type="(so)"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QSpiObjectReference"/>
+    </method>
+
+    <method name="SelectChild">
+      <arg direction="in" name="childIndex" type="i"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+    <method name="DeselectSelectedChild">
+      <arg direction="in" name="selectedChildIndex" type="i"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+    <method name="IsChildSelected">
+      <arg direction="in" name="childIndex" type="i"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+    <method name="SelectAll">
+      <arg direction="out" type="b"/>
+    </method>
+
+    <method name="ClearSelection">
+      <arg direction="out" type="b"/>
+    </method>
+
+    <method name="DeselectChild">
+      <arg direction="in" name="childIndex" type="i"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+  </interface>
+</node>

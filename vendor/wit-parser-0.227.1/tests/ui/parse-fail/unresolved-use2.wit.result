@@ -1,0 +1,5 @@
+name `x` is not defined
+     --> tests/ui/parse-fail/unresolved-use2.wit:6:12
+      |
+    6 |   use bar.{x};
+      |            ^

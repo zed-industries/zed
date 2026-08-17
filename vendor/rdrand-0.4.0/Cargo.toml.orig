@@ -1,0 +1,16 @@
+[package]
+name = "rdrand"
+version = "0.4.0"
+authors = ["Simonas Kazlauskas <rdrand@kazlauskas.me>"]
+description = "An implementation of random number generator based on rdrand and rdseed instructions"
+keywords = ["rand", "rdrand", "rdseed", "random"]
+license = "ISC"
+repository = "https://github.com/nagisa/rust_rdrand/"
+documentation = "https://docs.rs/rdrand/0.4.0/"
+
+[dependencies]
+rand_core = { version = "0.3", default-features = false }
+
+[features]
+default = ["std"]
+std = []

@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_INCREMENTAL: 0
+  RUSTFLAGS: "-Cdebuginfo=0 --deny=warnings"
+  RUSTDOCFLAGS: "--deny=warnings"
+
+jobs:
+  fmt:
+    name: Check Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: hecrj/setup-rust-action@v1
+        with:
+          rust-version: nightly
+          components: rustfmt
+      - name: Check Formatting
+        run: cargo +nightly fmt --all -- --check
+
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust_version: ["1.65", stable, nightly]
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - uses: hecrj/setup-rust-action@v1
+        with:
+          rust-version: ${{ matrix.rust_version }}
+
+      - name: Check documentation
+        run: cargo doc --no-deps --document-private-items
+
+      - name: Run tests
+        run: cargo test --verbose
+
+      - name: Run tests with no default features
+        run: cargo test --verbose --no-default-features --tests

@@ -1,0 +1,46 @@
+* `enable` – enables the Tracy client. Corresponds to the `TRACY_ENABLE` define.
+* `flush-on-exit` – waits for Tracy to connect and read out the profiling data before the program
+  terminates. Corresponds to the `TRACY_NO_EXIT` define. Does not work in combination with the
+  `manual-lifetime` feature.
+* `manual-lifetime` – allow for manual initialization and deinitialization of the profiler data
+  structures. Corresponds to the `TRACY_MANUAL_LIFETIME` define. `tracy_client::Client`
+  transparently switches to manual lifetime management when this feature is enabled. Implies
+  `delayed-init`.
+* `system-tracing` – enable capture of system level details. Corresponds to the
+  `TRACY_NO_SYSTEM_TRACING` define.
+* `context-switch-tracing` – enable capture of the context switch data. Corresponds to the
+  `TRACY_NO_CONTEXT_SWITCH` define.
+* `sampling` – enable periodic sampling of the call stack. Corresponds to the
+  `TRACY_NO_SAMPLING` define.
+* `code-transfer` – enable transfer of the machine code to the profiler. Corresponds to the
+  `TRACY_NO_CODE_TRANSFER` define.
+* `broadcast` – announce presence of the client to the profilers on the local network.
+  Corresponds to the `TRACY_NO_BROADCAST` define.
+* `only-localhost` – listen for profilers on the localhost interface only. Corresponds to the
+  `TRACY_ONLY_LOCALHOST` define.
+* `only-ipv4` – listen for profilers on IPv4 interfaces only. Corresponds to the
+  `TRACY_ONLY_IPV4` define.
+* `timer-fallback` – allow running on devices without a high resolution timer support.
+  Corresponds to the `TRACY_TIMER_FALLBACK` define.
+* `ondemand` – start collecting traces only when a server connects to the client. Corresponds
+  to the `TRACY_ON_DEMAND` define.
+* `fibers` – enable support for instrumenting fibers, coroutines and similar such asynchrony
+  primitives. Corresponds to the `TRACY_FIBERS` define.
+* `callstack-inlines` - enables resolution of inline frames for call stacks. Disabling it will make
+  the profiler use the basic but much faster frame resolution mode. Corresponds to the
+  `TRACY_NO_CALLSTACK_INLINES` define.
+* `delayed-init` – initializes trace structures upon a first request, rather than at load time.
+  Corresponds to the `TRACY_DELAYED_INIT` define.
+* `demangle` - requires that the demangling function be defined by the user.
+  See the `register_demangler!` macro for more details.
+  Corresponds to the `TRACY_DEMANGLE` define.
+* `verify` - enables verification that instrumentation is well formed. Enabling this introduces
+  additional instrumentation overhead (~50% for 0 callstack depth spans.) When disabled
+  corresponds to the `TRACY_NO_VERIFY` define.
+* `debuginfod` - enables debuginfo for system libraries on systems supporting debuginfod.
+  Corresponds to the `TRACY_DEBUGINFOD` define.
+* `crash-handler` – activate signal handler that intercepts application crashes. Corresponds to the
+  `TRACY_NO_CRASH_HANDLER` define.
+
+Refer to this package's `Cargo.toml` for the list of the features enabled by default. Refer to
+the `Tracy` manual for more information on the implications of each feature.

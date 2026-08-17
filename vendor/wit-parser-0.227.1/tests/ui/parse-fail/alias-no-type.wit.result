@@ -1,0 +1,5 @@
+type `bar` does not exist
+     --> tests/ui/parse-fail/alias-no-type.wit:5:14
+      |
+    5 |   type foo = bar;
+      |              ^--

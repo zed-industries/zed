@@ -1,0 +1,24 @@
+[package]
+authors = ["The Cranelift Project Developers"]
+name = "cranelift-entity"
+version = "0.123.12"
+description = "Data structures using entity references as mapping keys"
+license = "Apache-2.0 WITH LLVM-exception"
+documentation = "https://docs.rs/cranelift-entity"
+repository = "https://github.com/bytecodealliance/wasmtime"
+categories = ["no-std"]
+readme = "README.md"
+keywords = ["entity", "set", "map"]
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cranelift-bitset = { workspace=true }
+serde = { workspace = true, optional = true }
+serde_derive = { workspace = true, optional = true }
+
+[features]
+enable-serde = ["serde", "serde_derive", "cranelift-bitset/enable-serde"]

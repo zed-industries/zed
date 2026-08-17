@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Basic",
+  "type": "object",
+  "properties": {
+    "bare_field": {
+      "description": "Basic field, no attribute",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "display_from_str": {
+      "description": "Field that directly uses `DisplayFromStr`",
+      "type": "string"
+    },
+    "same": {
+      "description": "Same does not implement `JsonSchema` directly so this checks that the\ncorrect schemars attribute was injected.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "box_same": {
+      "description": "This checks that Same still works when wrapped in a box.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "vec_same": {
+      "description": "Same thing, but with a Vec this time.",
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "format": "uint32",
+        "minimum": 0
+      }
+    },
+    "lowercase_hex": {
+      "description": "A vector of bytes that's serialized as a lowercase hex string.",
+      "type": "string",
+      "pattern": "^(?:[0-9A-Fa-f]{2})*$"
+    },
+    "uppercase_hex": {
+      "description": "A vector of bytes that's serialized as an uppercase hex string.",
+      "type": "string",
+      "pattern": "^(?:[0-9A-Fa-f]{2})*$"
+    },
+    "base58": {
+      "description": "A vector of bytes that's serialized as a base58 string.",
+      "type": "string"
+    },
+    "base58_flickr": {
+      "description": "A vector of bytes that's serialized as a base58 string in `Flickr`\ncharset.",
+      "type": "string"
+    },
+    "base64": {
+      "description": "A vector of bytes that's serialized as a base64 string.",
+      "type": "string",
+      "contentEncoding": "base64"
+    },
+    "base64_urlsafe": {
+      "description": "A vector of bytes that's serialized as a base64 string in URL-safe\ncharset.",
+      "type": "string",
+      "contentEncoding": "base64"
+    }
+  },
+  "required": [
+    "bare_field",
+    "display_from_str",
+    "same",
+    "box_same",
+    "vec_same",
+    "lowercase_hex",
+    "uppercase_hex",
+    "base58",
+    "base58_flickr",
+    "base64",
+    "base64_urlsafe"
+  ]
+}

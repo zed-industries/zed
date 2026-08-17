@@ -1,0 +1,7 @@
+[sse2_math]
+features = "approx bytemuck mint rand rkyv serde debug-glam-assert"
+exclude-files = ["src/transform.rs", "src/core/wasm32/*", "src/swizzles/vec3a_impl_wasm32.rs", "src/swizzles/vec4_impl_wasm32.rs", "benches/*", "tests/support/mod.rs"]
+
+[scalar_math]
+features = "scalar-math approx bytemuck mint rand rkyv serde debug-glam-assert"
+exclude-files = ["src/transform.rs", "src/core/wasm32/*", "src/swizzles/vec3a_impl_wasm32.rs", "src/swizzles/vec4_impl_wasm32.rs", "benches/*", "tests/support/mod.rs"]

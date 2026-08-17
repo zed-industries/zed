@@ -1,0 +1,25 @@
+[package]
+name = "borrow-or-share"
+version = "0.2.4"
+authors = ["Scallop Ye <yescallop@gmail.com>"]
+edition = "2021"
+rust-version = "1.65"
+description = "Traits for either borrowing or sharing data."
+documentation = "https://docs.rs/borrow-or-share"
+repository = "https://github.com/yescallop/borrow-or-share"
+license = "MIT-0"
+keywords = ["borrow", "share"]
+categories = ["rust-patterns"]
+
+[features]
+default = ["alloc"]
+std = ["alloc"]
+alloc = []
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(no_rc, no_sync, no_global_oom_handling)'] }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

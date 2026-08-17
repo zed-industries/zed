@@ -1,0 +1,177 @@
+This document contains instructions on how to cross-build the FreeType
+library on Unix systems, for example, building binaries for Linux/MIPS
+on  FreeBSD/i386.  Before  reading this  document, please  consult the
+file  `INSTALL.UNIX' for  required tools  and the  basic self-building
+procedure.
+
+
+  1. Required Tools
+  -----------------
+
+    For self-building the FreeType library  on a Unix system, GNU Make
+    3.81 or newer  is required.  `INSTALL.UNIX' contains  hints how to
+    check the installed `make'.
+
+    The GNU C  compiler to cross-build the target  system is required.
+    Currently, using a non-GNU cross  compiler is untested.  The cross
+    compiler is  expected to be  installed with a system  prefix.  For
+    example, if  your building system  is FreeBSD/i386 and  the target
+    system is Linux/MIPS, the cross  compiler should be installed with
+    the name `mips-ip22-linuxelf-gcc'.
+
+    A C  compiler for a self-build  is required also, to  build a tool
+    (`apinames') that is executed during the build procedure.  Non-GNU
+    self compilers are acceptable, but such a setup is untested.
+
+
+  2. Configuration
+  ----------------
+
+    2.1. Building and target system
+
+      To configure  a cross-build,  the options  `--host=<system>' and
+      `--build=<system>'  must be  passed to  the `configure'  script.
+      For example, if your build system is FreeBSD/i386 and the target
+      system is Linux/MIPS, say
+
+        ./configure \
+          --build=i386-unknown-freebsd \
+          --host=mips-ip22-linuxelf \
+          [other options]
+
+      It should  be noted that `--host=<system>'  specifies the system
+      where the built binaries will  be executed, not the system where
+      the build actually happens.   Older versions of GNU autoconf use
+      the option  pair `--host=' and `--target='.  This  is broken and
+      doesn't work.  Similarly, an explicit CC specification like
+
+        env CC=mips-ip22-linux-gcc ./configure                 # BAD
+
+      or
+
+        env CC=/usr/local/mips-ip22-linux/bin/gcc ./configure  # BAD
+
+      doesn't   work  either;  such   a  configuration   confuses  the
+      `configure' script while  trying to find the cross  and native C
+      compilers.
+
+
+    2.2. The prefix to install FreeType2
+
+      Setting `--prefix=<prefix>'  properly is important.   The prefix
+      to  install  FreeType2  is written  into  the  `freetype-config'
+      script and `freetype2.pc' configuration file.
+
+      If  the built  FreeType  2 library  is  used as  a  part of  the
+      cross-building system,  the prefix  is expected to  be different
+      from  the self-building  system.  For  example, a  configuration
+      with   `--prefix=/usr/local'   installs    binaries   into   the
+      system-wide `/usr/local' directory, which then can't be executed
+      due  to the  incorrect architecture.   This causes  confusion in
+      configuration of all applications  that use FreeType2.  Instead,
+      use a prefix  to install the cross-build into  a separate system
+      tree, for example, `--prefix=/usr/local/mips-ip22-linux/'.
+
+      On the other hand, if the built  FreeType 2 library is used as a
+      part of the target system,  the prefix to install should reflect
+      the file system structure of the target system.
+
+
+    2.3. Library dependencies
+
+      FreeType normally depends on external libraries like `libpng' or
+      `libharfbuzz'.   The  easiest case  is  to  deactivate all  such
+      dependencies  using the  `--without-XXX' configuration  options.
+      However, if you  want to use those libraries,  you should ensure
+      that  they  are available  both  on  the  target system  and  as
+      (cross-compiled) libraries on the build system.
+
+      FreeType uses  `pkg-config' to find  most of the  libraries; the
+      other libraries it links to  are expected in the standard system
+      directories.   Since the  default pkg-config's  meta-information
+      files (like `harfbuzz.pc') of the build platform don't work, use
+      one of the two possible solutions below.
+
+        o Use pkg-config's meta-information files that are adjusted to
+          cross-compile  and  cross-link  with the  target  platform's
+          libraries.  Make sure those files are found before the build
+          system's default files.  Example:
+
+            ./configure \
+              --build=i386-unknown-freebsd \
+              --host=mips-ip22-linuxelf \
+              PKG_CONFIG_LIBDIR="/usr/local/mips-ip22-linux/lib/pkgconfig" \
+              [other options]
+
+          See the manpage of `pkg-config' for more details.
+
+        o Set variables like LIBPNG_LIBS  as additional options to the
+          `configure' script, overriding the values `pkg-config' would
+          provide.  `configure --help' shows the available environment
+          variables.  Example:
+
+            ./configure \
+              --build=i386-unknown-freebsd \
+              --host=mips-ip22-linuxelf \
+              LIBPNG_CFLAGS="-I/usr/local/mips-ip22-linux/include" \
+              LIBPNG_LIBS="-L/usr/local/mips-ip22-linux/lib -lpng12" \
+              [other options]
+
+
+  3. Building command
+  -------------------
+
+    If  the  configuration  finishes successfully,  invoking  GNU make
+    builds FreeType2.  Just say
+
+      make
+
+    or
+
+      gmake
+
+    depending on the name the GNU make binary actually has.
+
+
+  4. Installation
+  ---------------
+
+    Saying
+
+      make install
+
+    as usual to install FreeType2 into the directory tree specified by
+    the argument of the `--prefix' option.
+
+    As noted in section 2.2,  FreeType2  is sometimes configured to be
+    installed  into the  system directory  of the  target  system, and
+    should  not be installed  in the  cross-building system.   In such
+    cases, the  make variable `DESTDIR'  is useful to change  the root
+    directory in the installation.  For example, after
+
+      make DESTDIR=/mnt/target_system_root/ install
+
+    the built FreeType2 library files are installed into the directory
+    `/mnt/target_system_root/<prefix_in_configure>/lib'.
+
+
+  5. TODO
+  -------
+
+    Cross building between Cygwin (or MSys) and Unix must be tested.
+
+
+----------------------------------------------------------------------
+
+Copyright (C) 2006-2023 by
+suzuki toshiya, David Turner, Robert Wilhelm, and Werner Lemberg.
+
+
+This  file is  part of  the FreeType  project, and  may only  be used,
+modified,  and distributed  under the  terms of  the  FreeType project
+license,  LICENSE.TXT.  By  continuing to  use, modify,  or distribute
+this file you  indicate that you have read  the license and understand
+and accept it fully.
+
+
+--- end of INSTALL.CROSS ---

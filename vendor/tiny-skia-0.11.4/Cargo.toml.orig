@@ -1,0 +1,40 @@
+[package]
+name = "tiny-skia"
+version = "0.11.4"
+authors = ["Yevhenii Reizner <razrfalcon@gmail.com>"]
+edition = "2018"
+description = "A tiny Skia subset ported to Rust."
+documentation = "https://docs.rs/tiny-skia/"
+readme = "README.md"
+repository = "https://github.com/RazrFalcon/tiny-skia"
+license = "BSD-3-Clause"
+keywords = ["2d", "rendering", "skia"]
+categories = ["rendering"]
+
+[workspace]
+members = ["path"]
+
+[dependencies]
+arrayref = "0.3.6"
+arrayvec = { version = "0.7", default-features = false }
+bytemuck = { version = "1.12", features = ["aarch64_simd"] }
+cfg-if = "1"
+log = "0.4"
+png = { version = "0.17", optional = true }
+tiny-skia-path = { version = "0.11.4", path = "path", default-features = false }
+
+[features]
+default = ["std", "simd", "png-format"]
+
+# Enables the use of the standard library. Deactivate this and activate the no-std-float
+# feature to compile for targets that don't have std.
+std = ["tiny-skia-path/std"]
+no-std-float = ["tiny-skia-path/no-std-float"]
+
+# Enables SIMD instructions on x86 (from SSE up to AVX2), WebAssembly (SIMD128)
+# and AArch64 (Neon).
+# Has no effect on other targets. Present mainly for testing.
+simd = []
+
+# Allows loading and saving `Pixmap` as PNG.
+png-format = ["std", "png"]

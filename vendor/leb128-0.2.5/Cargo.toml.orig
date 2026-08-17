@@ -1,0 +1,22 @@
+[package]
+authors = ["Nick Fitzgerald <fitzgen@gmail.com>", "Philip Craig <philipjcraig@gmail.com>"]
+name = "leb128"
+version = "0.2.5"
+edition = "2018"
+
+description = "Read and write DWARF's \"Little Endian Base 128\" (LEB128) variable length integer encoding."
+
+license = "Apache-2.0/MIT"
+readme = "./README.md"
+keywords = ["LEB128", "DWARF", "variable", "length", "encoding"]
+documentation = "https://docs.rs/leb128"
+repository = "https://github.com/gimli-rs/leb128"
+exclude = ["/.travis.yml", "/.coveralls.yml", "/format"]
+
+[dependencies]
+
+[dev-dependencies]
+quickcheck = "0.8.0"
+
+[features]
+nightly = []

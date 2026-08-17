@@ -1,0 +1,20 @@
+---
+source: crates/gh-workflow/src/generate.rs
+expression: workflow.to_string().unwrap()
+snapshot_kind: text
+---
+name: All jobs were added to workflow
+jobs:
+  base_job:
+    name: Base job
+    runs-on: ubuntu-latest
+  with-dependency-1:
+    needs:
+    - base_job
+    name: The first job that has dependency for base_job
+    runs-on: ubuntu-latest
+  with-dependency-2:
+    needs:
+    - base_job
+    name: The second job that has dependency for base_job
+    runs-on: ubuntu-latest

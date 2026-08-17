@@ -1,0 +1,10 @@
+os: osx
+language: rust
+cache: cargo
+rust:
+  - stable
+  - beta
+  - nightly
+branches:
+  except:
+    - master

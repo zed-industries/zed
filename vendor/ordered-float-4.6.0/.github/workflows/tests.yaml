@@ -1,0 +1,60 @@
+on: [push, pull_request]
+
+name: Tests
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+          - stable
+          - 1.60.0
+    steps:
+      - uses: r7kamura/rust-problem-matchers@v1
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          rustup toolchain install ${{ matrix.rust }} --profile=minimal
+          rustup override set ${{ matrix.rust }}
+
+      - name: Install rustfmt + clippy
+        if: matrix.rust == 'stable'
+        run: |
+          # remove non-rustup-managed versions already present in default image
+          rm -f /home/runner/.cargo/bin/{rustfmt,cargo-fmt}
+
+          rustup toolchain install ${{ matrix.rust }} --profile=minimal --component=clippy,rustfmt
+
+      - name: Check Fmt
+        if: matrix.rust == 'stable'
+        run: cargo fmt --check
+
+      - name: Check Lints (all features)
+        if: matrix.rust == 'stable'
+        run: cargo clippy --tests --features ${{ env.all_features }}
+
+      - name: Test (default features)
+        run: cargo test
+
+      - name: Test (no default features)
+        run: cargo test --no-default-features
+
+      - name: Test (schema features subset)
+        if: matrix.rust == 'stable'
+        run: cargo test --features "std,schemars"
+
+      - name: Test (rand features subset)
+        if: matrix.rust == 'stable'
+        run: cargo test --features "rand,randtest"
+
+      - name: Test (all features)
+        if: matrix.rust == 'stable'
+        run: cargo test --features ${{ env.all_features }}
+
+env:
+  all_features: "arbitrary,bytemuck,rand,randtest,serde,schemars,proptest,rkyv,rkyv_ck,speedy"

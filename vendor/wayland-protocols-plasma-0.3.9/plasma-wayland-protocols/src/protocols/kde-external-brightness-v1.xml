@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="kde_external_brightness_v1">
+  <copyright><![CDATA[
+    SPDX-FileCopyrightText: 2024 Xaver Hugl <xaver.hugl@gmail.com>
+
+    SPDX-License-Identifier: MIT-CMU
+    ]]></copyright>
+
+  <interface name="kde_external_brightness_v1" version="2">
+    <description summary="external brightness control">
+      Some brightness control mechanisms are somewhat unstable, or require root
+      privileges, so putting them inside of the compositor is not desired.
+      This protocol is for outsourcing the actual brightness-setting to a
+      process outside of the compositor.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="Destroy the object."/>
+    </request>
+
+    <request name="create_brightness_control">
+      <description summary="registers a brightness device with the compositor"/>
+      <arg name="id" type="new_id" interface="kde_external_brightness_device_v1"/>
+    </request>
+  </interface>
+
+  <interface name="kde_external_brightness_device_v1" version="2">
+    <description summary="brightness control device">
+      After creating this object, the client should issue all relevant setup requests
+      (set_internal, set_edid, set_max_brightness, optionally set_observed_brightness)
+      and finish the sequence with commit.
+      Afterwards, for each change in values, the client must call commit again.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the object and unregister the brightness control device"/>
+    </request>
+
+    <request name="set_internal">
+      <description summary="sets whether or not the brightness device belongs to an internal display"/>
+      <arg name="internal" type="uint" summary="1 if it's an internal panel, 0 if not"/>
+    </request>
+
+    <request name="set_edid">
+      <description summary="set the EDID data for identification of the display"/>
+      <arg name="string" type="string" summary="base-64 encoded string of the first 128 bytes of the EDID"/>
+    </request>
+
+    <request name="set_max_brightness">
+      <description summary="notifies the compositor of the maximum brightness that can be set on this device"/>
+      <arg name="value" type="uint" summary="the maximum value that can be set"/>
+    </request>
+
+    <request name="commit">
+      <description summary="notifies the compositor that all relevant identifiers and values have been sent"/>
+    </request>
+
+    <event name="requested_brightness">
+      <description summary="requests the client to change the brightness to this value">
+        The client must ensure that if the brightness level changes due to external factors,
+        that it either overwrites those changes with what the compositor last requested,
+        or commit again with set_observed_brightness specifying the changed brightness.
+      </description>
+      <arg name="value" type="uint" summary="the value to set the device to"/>
+    </event>
+
+    <request name="set_observed_brightness" since="2">
+      <description summary="notifies the compositor of the brightness that was read from this device">
+        The client can set this to notify the compositor of the device's initial brightness.
+        It can also set this again after the initial commit to notify the compositor that
+        the brightness level has changed due to external factors.
+        The compositor is free to use or ignore this value as it sees fit.
+      </description>
+      <arg name="value" type="uint" summary="the observed value that was read"/>
+    </request>
+
+  </interface>
+</protocol>

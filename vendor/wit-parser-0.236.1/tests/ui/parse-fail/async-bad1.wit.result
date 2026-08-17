@@ -1,0 +1,5 @@
+expected `constructor` or identifier, found keyword `async`
+     --> tests/ui/parse-fail/async-bad1.wit:5:5
+      |
+    5 |     async constructor();
+      |     ^----

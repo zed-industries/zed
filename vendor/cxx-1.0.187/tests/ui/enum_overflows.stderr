@@ -1,0 +1,5 @@
+error: discriminant overflow on value after 18446744073709551615
+  --> tests/ui/enum_overflows.rs:13:9
+   |
+13 |         F,
+   |         ^

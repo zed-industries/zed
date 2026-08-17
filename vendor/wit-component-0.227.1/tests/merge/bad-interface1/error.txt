@@ -1,0 +1,1 @@
+failed to merge package `foo:foo` into existing copy: failed to merge interface `a`: expected type `a` to be present

@@ -1,0 +1,11 @@
+package foo:foo;
+
+interface foo {}
+
+world a {
+    import foo;
+}
+
+world b {
+    include a with { foo:foo/foo as foo2 }
+}

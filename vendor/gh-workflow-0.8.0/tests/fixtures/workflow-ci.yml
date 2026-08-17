@@ -1,0 +1,483 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize]
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # TODO: cancel in progress is not ok for a release since it can be cancelled in a middle of updates
+  # and we can end up with partial release.
+  # but for pull-requests cancelling previously running jobs could be beneficial
+  # cancel-in-progress: true
+
+jobs:
+  setup_build_matrix:
+    name: Outputs matrix used for cross compilation
+    uses: ./.github/workflows/build_matrix.yml
+
+  check_if_build:
+    name: Check if Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 1000
+      - id: check
+        run: |
+          chmod +x .github/scripts/check_if_build.sh
+          .github/scripts/check_if_build.sh
+    outputs:
+      check_if_build: ${{ steps.check.outputs.check_if_build }}
+
+  test_aws_build:
+    name: Test AWS Lambda Build
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./tailcall-aws-lambda
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install cargo-lambda
+        run: pip install cargo-lambda
+
+      - name: Build
+        run: cargo lambda build
+
+  test_wasm:
+    name: Run Tests (WASM)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./tailcall-wasm
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: wasm32-unknown-unknown
+
+      - name: Install Wasm Pack
+        run: cargo install wasm-bindgen-cli --vers "0.2.92"
+
+      - name: Test WASM
+        run: |
+          cargo install wasm-pack
+          wasm-pack test --node
+
+  test_cf:
+    name: Run Tests (Cloudflare)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./tailcall-cloudflare
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: wasm32-unknown-unknown
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.11.0"
+
+      - name: Package Install
+        run: npm install
+
+      - name: Test CF
+        run: npm test
+
+  test:
+    name: Run Tests on ${{ matrix.build }}
+    runs-on: ${{ matrix.os || 'ubuntu-latest' }}
+    needs: [setup_build_matrix]
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.setup_build_matrix.outputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.11.0"
+      - name: Install Prettier
+        run: npm i -g prettier
+
+      - name: Install Rust Toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install Cross compilation toolchain
+        uses: taiki-e/setup-cross-toolchain-action@v1
+        with:
+          target: ${{ matrix.target }}
+
+      - name: Cache NASM
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: |
+            nasm-2.16.02
+            nasm.zip
+          key: ${{ runner.os }}-nasm-${{ matrix.build }}-v2
+          restore-keys: |
+            ${{ runner.os }}-nasm-${{ matrix.build }}-
+
+      - name: Install dependencies on Windows
+        if: runner.os == 'Windows'
+        run: |
+          if (Test-Path nasm-2.16.02) {
+            echo "Using cached NASM"
+          } else {
+            $nasmUrl = 'https://www.nasm.us/pub/nasm/releasebuilds/2.16.02/win64/nasm-2.16.02-win64.zip'
+            $nasmZip = 'nasm.zip'
+            Invoke-WebRequest -Uri $nasmUrl -OutFile $nasmZip
+            Expand-Archive -Path $nasmZip -DestinationPath '.'
+          }
+          echo "$(Resolve-Path nasm-2.16.02)" >> $env:GITHUB_PATH
+
+      - uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Run Cargo Test
+        if: matrix.test != 'false'
+        # TODO: run llvm-cov only for single build since other builds are not sent to codecov anyway
+        run: cargo llvm-cov --workspace ${{ matrix.features }} --lcov --target ${{ matrix.target }} --output-path lcov.info
+
+      - name: Upload Coverage to Codecov
+        if: matrix.build == 'darwin-arm64'
+        uses: Wandalen/wretry.action@v3
+        with:
+          action: codecov/codecov-action@v4
+          attempt_limit: 3
+          attempt_delay: 10000
+          with: |
+            token: ${{ secrets.CODECOV_TOKEN }}
+            files: lcov.info
+            fail_ci_if_error: true
+
+  check-examples:
+    name: Check Examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Build Project
+        run: cargo build
+
+      - name: Check all examples
+        run: ./examples/lint.sh
+
+  draft_release:
+    name: Draft Release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout Current Branch (Fast)
+        uses: actions/checkout@v5
+
+      - id: create_release
+        uses: release-drafter/release-drafter@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          config-name: release-drafter.yml
+
+      - name: Set Output for Later Jobs
+        id: set_output
+        run: |
+          echo "create_release_name=${{ steps.create_release.outputs.name }}" >> $GITHUB_OUTPUT
+          echo "create_release_id=${{ steps.create_release.outputs.id }}" >> $GITHUB_OUTPUT
+    outputs:
+      create_release_name: ${{ steps.set_output.outputs.create_release_name }}
+      create_release_id: ${{ steps.set_output.outputs.create_release_id }}
+
+  # TODO: move to separate file to separate responsibilities
+  release:
+    name: Release
+    needs:
+      [
+        setup_build_matrix,
+        test,
+        draft_release,
+        check_if_build,
+        test_cf,
+        test_wasm,
+      ]
+    # TODO: put a condition to separate job that other will depend on to remove duplication?
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && (needs.check_if_build.outputs.check_if_build == 'true')
+    runs-on: ${{ matrix.os || 'ubuntu-latest' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.setup_build_matrix.outputs.matrix) }}
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GITHUB_TOKEN: ${{secrets.GITHUBTOKEN}}
+      GA_API_SECRET: ${{secrets.GA_API_SECRET}}
+      GA_MEASUREMENT_ID: ${{secrets.GA_MEASUREMENT_ID}}
+      POSTHOG_API_SECRET: ${{secrets.POSTHOG_API_SECRET}}
+      APP_VERSION: ${{ needs.draft_release.outputs.create_release_name }}
+
+    steps:
+      - name: Checkout Current Branch (Fast)
+        uses: actions/checkout@v5
+
+      - name: Install Rust Toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.target }}
+
+      - name: Build
+        env:
+          APP_VERSION: ${{ needs.draft_release.outputs.create_release_name}}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        uses: ClementTsang/cargo-action@v0.0.6
+        with:
+          use-cross: ${{ matrix.cross }}
+          command: build
+          args: ${{matrix.features}} --release --target ${{ matrix.target }}
+
+      - name: Install Node.js
+        if: (startsWith(github.event.head_commit.message, 'feat') || startsWith(github.event.head_commit.message, 'fix')) && (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.11.0
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        if: (startsWith(github.event.head_commit.message, 'feat') || startsWith(github.event.head_commit.message, 'fix')) && (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        run: |
+          cd npm
+          npm install
+
+      - name: Run generate.js script
+        if: (startsWith(github.event.head_commit.message, 'feat') || startsWith(github.event.head_commit.message, 'fix')) && (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        run: |
+          cd npm
+          npm run gen -- --target ${{matrix.target}} --version ${{ env.APP_VERSION }} --build ${{matrix.build}} --ext ${{ matrix.ext || '' }} --libc ${{ matrix.libc }}
+      - name: Setup .npmrc file to publish to npm
+        run: echo "//registry.npmjs.org/:_authToken=$NODE_AUTH_TOKEN" > ~/.npmrc
+
+      - name: NPM Publish
+        if: (startsWith(github.event.head_commit.message, 'feat') || startsWith(github.event.head_commit.message, 'fix')) && (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        uses: JS-DevTools/npm-publish@main
+        with:
+          token: ${{ secrets.NPM_TOKEN }}
+          package: npm/@tailcallhq/core-${{matrix.build}}
+          access: public
+
+      - name: Rename Binary with Target Name
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          pwd
+          cp target/${{ matrix.target }}/release/tailcall${{ matrix.ext }} target/${{ matrix.target }}/release/tailcall-${{ matrix.target }}${{ matrix.ext }}
+
+      - name: Upload ${{ matrix.target }} Binary
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: xresloader/upload-to-github-release@v1
+        with:
+          release_id: ${{ needs.draft_release.outputs.create_release_id }}
+          file: target/${{ matrix.target }}/release/tailcall-${{ matrix.target }}${{ matrix.ext }}
+          overwrite: true
+  release_lambda:
+    name: Release (AWS Lambda)
+    needs: [test, draft_release, check_if_build, test_cf]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && (needs.check_if_build.outputs.check_if_build == 'true')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GITHUB_TOKEN: ${{secrets.GITHUBTOKEN}}
+      APP_VERSION: ${{ needs.draft_release.outputs.create_release_name }}
+
+    steps:
+      - name: Checkout Current Branch (Fast)
+        uses: actions/checkout@v5
+
+      - name: Install Correct Toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install cargo-lambda
+        run: pip install cargo-lambda
+
+      - name: Build
+        env:
+          APP_VERSION: ${{ needs.draft_release.outputs.create_release_name }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: cargo lambda build -p tailcall-aws-lambda --release --target x86_64-unknown-linux-musl
+
+      - name: Rename Binary with Target Name
+        run: |
+          pwd
+          cp target/lambda/tailcall-aws-lambda/bootstrap target/lambda/tailcall-aws-lambda/tailcall-aws-lambda-bootstrap
+
+      - name: Upload AWS Lambda Bootstrap Binary
+        uses: xresloader/upload-to-github-release@v1
+        with:
+          release_id: ${{ needs.draft_release.outputs.create_release_id }}
+          file: target/lambda/tailcall-aws-lambda/tailcall-aws-lambda-bootstrap
+          overwrite: true
+  semantic_release:
+    name: Semantic Release
+    if: (startsWith(github.event.head_commit.message, 'feat') || startsWith(github.event.head_commit.message, 'fix')) && (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    needs: [draft_release, release, release_lambda]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      APP_VERSION: ${{needs.draft_release.outputs.create_release_name }}
+    steps:
+      - name: Publish Release
+        uses: test-room-7/action-publish-release-drafts@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          tag-name: ${{needs.draft_release.outputs.create_release_name }}
+
+  publish_npm_root:
+    name: Publish NPM main package
+    needs: [draft_release, release]
+    if: (startsWith(github.event.head_commit.message, 'feat') || startsWith(github.event.head_commit.message, 'fix')) && (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Current Branch (Fast)
+        uses: actions/checkout@v5
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.11.0
+          registry-url: https://registry.npmjs.org
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: wasm32-unknown-unknown
+      - name: Setup .npmrc file to publish to npm
+        run: echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
+      - name: Install dependencies
+        run: |
+          cd npm
+          npm install
+      - name: Run generate-root.js script
+        env:
+          APP_VERSION: ${{needs.draft_release.outputs.create_release_name }}
+        run: |
+          cd npm
+          npm run gen-root -- --version ${{ env.APP_VERSION }} --name @tailcallhq/tailcall
+      - name: Setup .npmrc file to publish to npm
+        run: echo "//registry.npmjs.org/:_authToken=$NODE_AUTH_TOKEN" > ~/.npmrc
+      - name: Publish packages
+        uses: JS-DevTools/npm-publish@main
+        with:
+          token: ${{ secrets.NPM_TOKEN }}
+          package: npm/@tailcallhq/tailcall
+          access: public
+
+        env:
+          APP_VERSION: ${{needs.draft_release.outputs.create_release_name }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  build-and-push-image:
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: ${{ github.repository }}/tc-server
+      APP_VERSION: ${{ needs.draft_release.outputs.create_release_name }} # Ensure APP_VERSION is set correctly
+    needs: [draft_release, release]
+    if: (startsWith(github.event.head_commit.message, 'feat') || startsWith(github.event.head_commit.message, 'fix')) && (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    # Sets the permissions granted to the `GITHUB_TOKEN` for the actions in this job.
+    permissions:
+      contents: read
+      packages: write
+      #
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+      # Uses the `docker/login-action` action to log in to the Container registry registry using the account and password that will publish the packages. Once published, the packages are scoped to the account defined here.
+      - name: Log in to the Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUBTOKEN }}
+      # This step uses [docker/metadata-action](https://github.com/docker/metadata-action#about) to extract tags and labels that will be applied to the specified image. The `id` "meta" allows the output of this step to be referenced in a subsequent step. The `images` value provides the base name for the tags and labels.
+      - name: Extract Metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ env.APP_VERSION }}
+            type=raw,value=latest,enable=${{ endsWith(env.APP_VERSION, '-SNAPSHOT') == false }}
+      # This step uses the `docker/build-push-action` action to build the image, based on your repository's `Dockerfile`. If the build succeeds, it pushes the image to GitHub Packages.
+      # It uses the `context` parameter to define the build's context as the set of files located in the specified path. For more information, see "[Usage](https://github.com/docker/build-push-action#usage)" in the README of the `docker/build-push-action` repository.
+      # It uses the `tags` and `labels` parameters to tag and label the image with the output from the "meta" step.
+      - name: Build and Push the Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  homebrew-release:
+    name: Homebrew Release
+    needs: [draft_release, release, semantic_release]
+    if: (startsWith(github.event.head_commit.message, 'feat') || startsWith(github.event.head_commit.message, 'fix')) && (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    permissions:
+      contents: write
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: tailcallhq/homebrew-tailcall
+          ref: main
+          token: ${{ secrets.HOMEBREW_ACCESS }}
+
+      - name: Update Homebrew Formula
+        run: ./update-formula.sh ${{needs.draft_release.outputs.create_release_name }}

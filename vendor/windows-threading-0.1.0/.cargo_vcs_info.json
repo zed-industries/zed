@@ -1,0 +1,6 @@
+{
+  "git": {
+    "sha1": "c65ac17e5c714104dff156578ca54b3c4f92d76c"
+  },
+  "path_in_vcs": "crates/libs/threading"
+}

@@ -1,0 +1,15 @@
+package foo:streams-and-futures;
+
+interface streams-and-futures {
+  type t1 = stream<u8>;
+  type t2 = stream<stream<string>>;
+  type t3 = future;
+  type t4 = future<list<u8>>;
+  type t5 = option<stream<future>>;
+  resource r1;
+  type t6 = stream<r1>;
+  type t7 = future<result<r1>>;
+  type t8 = stream;
+
+  foo: func(x: stream<u32>, y: t6) -> future<result<list<string>, string>>;
+}

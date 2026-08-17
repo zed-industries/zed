@@ -1,0 +1,3 @@
+Compares two equal-sized byte strings in constant time.
+
+Inspired by the Linux kernel's crypto_memneq.

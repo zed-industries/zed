@@ -1,0 +1,48 @@
+[package]
+name = "loom"
+# When releasing to crates.io:
+# - Update version number
+#   - README.md
+#   - src/lib.rs
+# - Update CHANGELOG.md
+# - Create git tag
+version = "0.7.2"
+edition = "2018"
+license = "MIT"
+authors = ["Carl Lerche <me@carllerche.com>"]
+description = "Permutation testing for concurrent code"
+homepage = "https://github.com/tokio-rs/loom"
+repository = "https://github.com/tokio-rs/loom"
+readme = "README.md"
+keywords = ["atomic", "lock-free"]
+categories = ["concurrency", "data-structures"]
+rust-version = "1.65"
+
+[features]
+default = []
+checkpoint = ["serde", "serde_json"]
+futures = ["pin-utils"]
+
+[dependencies]
+cfg-if = "1.0.0"
+scoped-tls = "1.0.0"
+
+# Provides a generator based runtime
+generator = "0.8.1"
+
+# Requires for "checkpoint" feature
+serde = { version = "1.0.92", features = ["derive"], optional = true }
+serde_json = { version = "1.0.33", optional = true }
+
+# Requires for "futures" feature
+pin-utils = { version = "0.1.0", optional = true }
+
+tracing = { version = "0.1.27", default-features = false, features = ["std"] }
+tracing-subscriber = { version = "0.3.8", features = ["env-filter"] }
+
+[dev-dependencies]
+futures-util = "0.3.0"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

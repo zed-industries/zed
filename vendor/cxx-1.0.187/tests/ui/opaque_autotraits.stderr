@@ -1,0 +1,76 @@
+error[E0277]: `*const cxx::void` cannot be sent between threads safely
+  --> tests/ui/opaque_autotraits.rs:13:19
+   |
+13 |     assert_send::<ffi::Opaque>();
+   |                   ^^^^^^^^^^^ `*const cxx::void` cannot be sent between threads safely
+   |
+   = help: within `ffi::Opaque`, the trait `Send` is not implemented for `*const cxx::void`
+   = note: required because it appears within the type `[*const cxx::void; 0]`
+note: required because it appears within the type `cxx::private::Opaque`
+  --> src/opaque.rs
+   |
+   | pub struct Opaque {
+   |            ^^^^^^
+note: required because it appears within the type `ffi::Opaque`
+  --> tests/ui/opaque_autotraits.rs:4:14
+   |
+ 4 |         type Opaque;
+   |              ^^^^^^
+note: required by a bound in `assert_send`
+  --> tests/ui/opaque_autotraits.rs:8:19
+   |
+ 8 | fn assert_send<T: Send>() {}
+   |                   ^^^^ required by this bound in `assert_send`
+
+error[E0277]: `*const cxx::void` cannot be shared between threads safely
+  --> tests/ui/opaque_autotraits.rs:14:19
+   |
+14 |     assert_sync::<ffi::Opaque>();
+   |                   ^^^^^^^^^^^ `*const cxx::void` cannot be shared between threads safely
+   |
+   = help: within `ffi::Opaque`, the trait `Sync` is not implemented for `*const cxx::void`
+   = note: required because it appears within the type `[*const cxx::void; 0]`
+note: required because it appears within the type `cxx::private::Opaque`
+  --> src/opaque.rs
+   |
+   | pub struct Opaque {
+   |            ^^^^^^
+note: required because it appears within the type `ffi::Opaque`
+  --> tests/ui/opaque_autotraits.rs:4:14
+   |
+ 4 |         type Opaque;
+   |              ^^^^^^
+note: required by a bound in `assert_sync`
+  --> tests/ui/opaque_autotraits.rs:9:19
+   |
+ 9 | fn assert_sync<T: Sync>() {}
+   |                   ^^^^ required by this bound in `assert_sync`
+
+error[E0277]: `PhantomPinned` cannot be unpinned
+  --> tests/ui/opaque_autotraits.rs:15:20
+   |
+15 |     assert_unpin::<ffi::Opaque>();
+   |                    ^^^^^^^^^^^ within `ffi::Opaque`, the trait `Unpin` is not implemented for `PhantomPinned`
+   |
+   = note: consider using the `pin!` macro
+           consider using `Box::pin` if you need to access the pinned value outside of the current scope
+note: required because it appears within the type `PhantomData<PhantomPinned>`
+  --> $RUST/core/src/marker.rs
+   |
+   | pub struct PhantomData<T: PointeeSized>;
+   |            ^^^^^^^^^^^
+note: required because it appears within the type `cxx::private::Opaque`
+  --> src/opaque.rs
+   |
+   | pub struct Opaque {
+   |            ^^^^^^
+note: required because it appears within the type `ffi::Opaque`
+  --> tests/ui/opaque_autotraits.rs:4:14
+   |
+ 4 |         type Opaque;
+   |              ^^^^^^
+note: required by a bound in `assert_unpin`
+  --> tests/ui/opaque_autotraits.rs:10:20
+   |
+10 | fn assert_unpin<T: Unpin>() {}
+   |                    ^^^^^ required by this bound in `assert_unpin`

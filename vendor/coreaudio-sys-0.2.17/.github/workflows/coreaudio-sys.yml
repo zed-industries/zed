@@ -1,0 +1,67 @@
+name: coreaudio-sys
+on: [push, pull_request]
+jobs:
+  # Run cargo test with default, no and all features.
+  macos-test:
+    runs-on: macOS-latest
+    strategy:
+      matrix:
+        toolchain: [stable, nightly]
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ matrix.toolchain }}
+    - name: cargo test
+      run: cargo test --verbose
+    - name: cargo test - no features
+      run: cargo test --no-default-features --verbose
+    - name: cargo test - all features
+      run: cargo test --all-features --verbose
+
+  ios-check:
+    runs-on: macOS-14
+    strategy:
+      matrix:
+        toolchain: [stable, nightly]
+        target: [aarch64-apple-ios, x86_64-apple-ios, aarch64-apple-ios-sim]
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ matrix.toolchain }}
+        targets: ${{ matrix.target }}
+
+
+    - name: add ios targets
+      run: rustup target add ${{matrix.target}}
+
+    - name: Build for iOS target ${{matrix.target}}
+      run: cargo build --verbose --target=${{matrix.target}}
+
+  # Build the docs with all features to make sure docs.rs will work.
+  macos-docs:
+    runs-on: macOS-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: stable
+    - name: cargo doc - all features
+      run: cargo doc --all-features --verbose
+
+  # Publish a new version when pushing to master.
+  # Will succeed if the version has been updated, otherwise silently fails.
+  cargo-publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    env:
+      CRATESIO_TOKEN: ${{ secrets.CRATESIO_TOKEN }}
+    runs-on: macOS-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: stable
+    - name: cargo publish
+      continue-on-error: true
+      run: cargo publish --token $CRATESIO_TOKEN

@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xsd:schema
+	xmlns:xsd = "http://www.w3.org/2001/XMLSchema"
+  version = "1.1"
+	elementFormDefault = "qualified"
+	xmlns:dbus="dbus">
+
+ <xsd:element name="node">
+  <xsd:complexType>
+   <xsd:choice minOccurs="0" maxOccurs="unbounded">
+    <xsd:element ref="node"/>
+    <xsd:element ref="interface"/>
+   </xsd:choice>
+	 <xsd:attribute name="name" type="xsd:string" use="optional"/>
+  </xsd:complexType>
+ </xsd:element>
+
+ <xsd:element name="interface">
+	<xsd:complexType>
+	 <xsd:choice minOccurs="0" maxOccurs="unbounded">
+		<xsd:element ref="method"/>
+		<xsd:element ref="signal"/>
+		<xsd:element ref="property"/>
+		<xsd:element ref="annotation"/>
+	 </xsd:choice>
+	 <xsd:attribute name="name" type="xsd:string" use="required"/>
+	</xsd:complexType>
+</xsd:element>
+
+ <xsd:element name="method">
+  <xsd:complexType>
+   <xsd:choice minOccurs="0" maxOccurs="unbounded">
+    <xsd:element ref="arg"/>
+    <xsd:element ref="annotation"/>
+   </xsd:choice>
+	 <xsd:attribute name="name" type="xsd:string" use="required"/>
+	 <!--<xsd:attribute name="name" type="xsd:string" use="required"/>-->
+  </xsd:complexType>
+ </xsd:element>
+
+ <xsd:element name="signal">
+  <xsd:complexType>
+   <xsd:choice minOccurs="0" maxOccurs="unbounded">
+    <xsd:element ref="arg"/>
+    <xsd:element ref="annotation"/>
+   </xsd:choice>
+   <xsd:attribute name="name" type="xsd:string" use="required"/>
+  </xsd:complexType>
+ </xsd:element>
+
+	<xsd:simpleType name="direction">
+	 <xsd:restriction base="xsd:string">
+		<xsd:enumeration value="in"/>
+		<xsd:enumeration value="out"/>
+	 </xsd:restriction>
+	</xsd:simpleType>
+	<xsd:simpleType name="type">
+		<xsd:restriction base="xsd:string">
+			<xsd:pattern value = "[abdeghinoqstuxy(){}]+"/>
+		</xsd:restriction>
+	</xsd:simpleType>
+
+ <xsd:element name="arg">
+  <xsd:complexType>
+   <xsd:attribute name="direction" type="direction" default="in"/>
+	 <xsd:attribute name="name" type="xsd:string" use="optional"/>
+	 <xsd:attribute name="type" type="type"/>
+  </xsd:complexType>
+ </xsd:element>
+
+ <xsd:element name="property">
+  <xsd:complexType>
+   <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+    <xsd:element ref="annotation"/>
+   </xsd:sequence>
+   <xsd:attribute name="access" use="required">
+    <xsd:simpleType>
+     <xsd:restriction base="xsd:string">
+      <xsd:enumeration value="read"/>
+      <xsd:enumeration value="write"/>
+      <xsd:enumeration value="readwrite"/>
+     </xsd:restriction>
+    </xsd:simpleType>
+   </xsd:attribute>
+	 <xsd:attribute name="name" type="xsd:string" use="required"/>
+	 <xsd:attribute name="type" type="xsd:string" use="required"/>
+  </xsd:complexType>
+ </xsd:element>
+
+ <xsd:element name="annotation">
+  <xsd:complexType>
+   <xsd:attribute name="name" type="xsd:string" use="required"/>
+   <xsd:attribute name="value" type="xsd:string" use="required"/>
+  </xsd:complexType>
+ </xsd:element>
+</xsd:schema>

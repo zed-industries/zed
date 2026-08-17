@@ -1,0 +1,37 @@
+[package]
+name = "wast"
+version = "35.0.2"
+authors = ["Alex Crichton <alex@alexcrichton.com>"]
+edition = "2018"
+license = "Apache-2.0 WITH LLVM-exception"
+readme = "README.md"
+repository = "https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wast"
+homepage = "https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wast"
+documentation = "https://docs.rs/wast"
+description = """
+Customizable Rust parsers for the WebAssembly Text formats WAT and WAST
+"""
+
+[dependencies]
+leb128 = "0.2"
+
+[dev-dependencies]
+anyhow = "1.0"
+rayon = "1.0"
+wasmparser = { path = "../wasmparser" }
+wat = { path = "../wat" }
+
+[features]
+default = ['wasm-module']
+
+# Includes default parsing support for `*.wat` and `*.wast` files (wasm
+# modules). This isn't always needed though if you're parsing just an
+# s-expression based format. If you'd like to slim down this dependency to just
+# the lexer, parser framework, and token support, this feature can be disabled.
+#
+# This feature is turned on by default.
+wasm-module = []
+
+[[test]]
+name = "parse-fail"
+harness = false

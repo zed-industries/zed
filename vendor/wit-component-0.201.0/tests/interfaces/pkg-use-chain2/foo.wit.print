@@ -1,0 +1,20 @@
+package foo:foo;
+
+interface other {
+  record name {
+    f: u8,
+  }
+}
+
+interface bar {
+  use other.{name as the-name};
+
+  enum name {
+    a,
+  }
+}
+
+interface foo {
+  use bar.{the-name};
+}
+

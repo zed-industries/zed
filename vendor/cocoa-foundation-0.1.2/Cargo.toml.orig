@@ -1,0 +1,20 @@
+
+[package]
+name = "cocoa-foundation"
+description = "Bindings to Cocoa Foundation for macOS"
+homepage = "https://github.com/servo/core-foundation-rs"
+repository = "https://github.com/servo/core-foundation-rs"
+version = "0.1.2"
+authors = ["The Servo Project Developers"]
+license = "MIT OR Apache-2.0"
+
+[package.metadata.docs.rs]
+default-target = "x86_64-apple-darwin"
+
+[dependencies]
+block = "0.1"
+bitflags = "1.0"
+libc = "0.2"
+core-foundation = { path = "../core-foundation", version = "0.9" }
+core-graphics-types = { path = "../core-graphics-types", version = "0.1" }
+objc = "0.2.3"

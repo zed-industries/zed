@@ -1,0 +1,221 @@
+{
+  "worlds": [
+    {
+      "name": "a",
+      "imports": {
+        "r": {
+          "type": 0
+        },
+        "f": {
+          "function": {
+            "name": "f",
+            "kind": "freestanding",
+            "params": [
+              {
+                "name": "x",
+                "type": 2
+              }
+            ],
+            "result": 3
+          }
+        },
+        "[constructor]r": {
+          "function": {
+            "name": "[constructor]r",
+            "kind": {
+              "constructor": 0
+            },
+            "params": [],
+            "result": 2
+          }
+        },
+        "[method]r.m": {
+          "function": {
+            "name": "[method]r.m",
+            "kind": {
+              "method": 0
+            },
+            "params": [
+              {
+                "name": "self",
+                "type": 1
+              }
+            ]
+          }
+        },
+        "[static]r.sm": {
+          "function": {
+            "name": "[static]r.sm",
+            "kind": {
+              "static": 0
+            },
+            "params": []
+          }
+        }
+      },
+      "exports": {
+        "g": {
+          "function": {
+            "name": "g",
+            "kind": "freestanding",
+            "params": [
+              {
+                "name": "x",
+                "type": 2
+              }
+            ],
+            "result": 3
+          }
+        }
+      },
+      "package": 0
+    },
+    {
+      "name": "b",
+      "imports": {
+        "s": {
+          "type": 4
+        },
+        "f": {
+          "function": {
+            "name": "f",
+            "kind": "freestanding",
+            "params": [
+              {
+                "name": "x",
+                "type": 5
+              }
+            ],
+            "result": 6
+          }
+        },
+        "[constructor]s": {
+          "function": {
+            "name": "[constructor]s",
+            "kind": {
+              "constructor": 4
+            },
+            "params": [],
+            "result": 5
+          }
+        },
+        "[method]s.m": {
+          "function": {
+            "name": "[method]s.m",
+            "kind": {
+              "method": 4
+            },
+            "params": [
+              {
+                "name": "self",
+                "type": 7
+              }
+            ]
+          }
+        },
+        "[static]s.sm": {
+          "function": {
+            "name": "[static]s.sm",
+            "kind": {
+              "static": 4
+            },
+            "params": []
+          }
+        }
+      },
+      "exports": {
+        "g": {
+          "function": {
+            "name": "g",
+            "kind": "freestanding",
+            "params": [
+              {
+                "name": "x",
+                "type": 5
+              }
+            ],
+            "result": 6
+          }
+        }
+      },
+      "package": 0
+    }
+  ],
+  "interfaces": [],
+  "types": [
+    {
+      "name": "r",
+      "kind": "resource",
+      "owner": {
+        "world": 0
+      }
+    },
+    {
+      "name": null,
+      "kind": {
+        "handle": {
+          "borrow": 0
+        }
+      },
+      "owner": null
+    },
+    {
+      "name": null,
+      "kind": {
+        "handle": {
+          "own": 0
+        }
+      },
+      "owner": null
+    },
+    {
+      "name": null,
+      "kind": {
+        "option": 2
+      },
+      "owner": null
+    },
+    {
+      "name": "s",
+      "kind": "resource",
+      "owner": {
+        "world": 1
+      }
+    },
+    {
+      "name": null,
+      "kind": {
+        "handle": {
+          "own": 4
+        }
+      },
+      "owner": null
+    },
+    {
+      "name": null,
+      "kind": {
+        "option": 5
+      },
+      "owner": null
+    },
+    {
+      "name": null,
+      "kind": {
+        "handle": {
+          "borrow": 4
+        }
+      },
+      "owner": null
+    }
+  ],
+  "packages": [
+    {
+      "name": "foo:foo",
+      "interfaces": {},
+      "worlds": {
+        "a": 0,
+        "b": 1
+      }
+    }
+  ]
+}

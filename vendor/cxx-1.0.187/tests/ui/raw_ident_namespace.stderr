@@ -1,0 +1,11 @@
+error: raw identifier `r#box` is not allowed in a quoted namespace; use `box`, or remove quotes
+ --> tests/ui/raw_ident_namespace.rs:7:24
+  |
+7 |     type Id = type_id!("org::r#box::implementation::QuotedRaw");
+  |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: raw identifier `r#box` is not allowed in a quoted namespace; use `box`, or remove quotes
+  --> tests/ui/raw_ident_namespace.rs:38:23
+   |
+38 |         #[namespace = "org::r#box::implementation"]
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^

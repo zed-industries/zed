@@ -1,0 +1,77 @@
+error: this `name` configuration is unused because all of the `some_fn`, `option_fn` setters contain a `name` override
+ --> tests/integration/ui/compile_fail/attr_setters.rs:6:9
+  |
+6 |         name = littlepip,
+  |         ^^^^
+
+error: this `name` configuration is unused because all of the `some_fn`, `option_fn` setters contain a `name` override
+  --> tests/integration/ui/compile_fail/attr_setters.rs:16:9
+   |
+16 |         name = littlepip,
+   |         ^^^^
+
+error: this `vis` configuration is unused because all of the `some_fn`, `option_fn` setters contain a `vis` override
+  --> tests/integration/ui/compile_fail/attr_setters.rs:25:23
+   |
+25 |     #[builder(setters(vis = "pub(crate)", some_fn(vis = ""), option_fn(vis = ""),))]
+   |                       ^^^
+
+error: this `doc` configuration is unused because all of the `some_fn`, `option_fn` setters contain a `doc` override
+  --> tests/integration/ui/compile_fail/attr_setters.rs:32:9
+   |
+32 |         doc {
+   |         ^^^
+
+error: `some_fn` setter function applies only to members with `#[builder(default)]` or members of `Option<T>` type (if #[builder(required)] is not set)
+  --> tests/integration/ui/compile_fail/attr_setters.rs:47:23
+   |
+47 |     #[builder(setters(some_fn = foo))]
+   |                       ^^^^^^^
+
+error: `option_fn` setter function applies only to members with `#[builder(default)]` or members of `Option<T>` type (if #[builder(required)] is not set)
+  --> tests/integration/ui/compile_fail/attr_setters.rs:53:23
+   |
+53 |     #[builder(setters(option_fn = bar))]
+   |                       ^^^^^^^^^
+
+error: `some_fn` setter function applies only to members with `#[builder(default)]` or members of `Option<T>` type (if #[builder(required)] is not set)
+  --> tests/integration/ui/compile_fail/attr_setters.rs:59:33
+   |
+59 |     #[builder(required, setters(some_fn = foo))]
+   |                                 ^^^^^^^
+
+error: `option_fn` setter function applies only to members with `#[builder(default)]` or members of `Option<T>` type (if #[builder(required)] is not set)
+  --> tests/integration/ui/compile_fail/attr_setters.rs:65:33
+   |
+65 |     #[builder(required, setters(option_fn = bar))]
+   |                                 ^^^^^^^^^
+
+error: expected parameters in parentheses
+  --> tests/integration/ui/compile_fail/attr_setters.rs:71:22
+   |
+71 |     #[builder(setters())]
+   |                      ^^
+
+error: repeated `doc {...}` attribute is not allowed
+  --> tests/integration/ui/compile_fail/attr_setters.rs:81:9
+   |
+81 |         doc {
+   |         ^^^
+
+error: repeated `doc(...)` attribute is not allowed
+  --> tests/integration/ui/compile_fail/attr_setters.rs:95:9
+   |
+95 |         doc(default(skip)),
+   |         ^^^
+
+error: wrong delimiter, expected doc(...) or doc {...}
+   --> tests/integration/ui/compile_fail/attr_setters.rs:102:23
+    |
+102 |     #[builder(setters(doc["Doc 2"]))]
+    |                       ^^^
+
+error: `#[builder(setters(doc(default(...)))]` may only be specified when #[builder(default)] is also specified
+   --> tests/integration/ui/compile_fail/attr_setters.rs:108:27
+    |
+108 |     #[builder(setters(doc(default(skip))))]
+    |                           ^^^^^^^

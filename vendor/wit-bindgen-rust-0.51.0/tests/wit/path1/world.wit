@@ -1,0 +1,3 @@
+package paths:path1;
+
+interface test {}

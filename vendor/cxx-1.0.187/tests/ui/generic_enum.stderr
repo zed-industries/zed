@@ -1,0 +1,17 @@
+error: enum with generic parameters is not supported
+ --> tests/ui/generic_enum.rs:3:5
+  |
+3 |     enum A<T> {
+  |     ^^^^^^^^^
+
+error: enum with generic parameters is not supported
+ --> tests/ui/generic_enum.rs:7:5
+  |
+7 |     enum B<T> where T: Copy {
+  |     ^^^^^^^^^
+
+error: enum with where-clause is not supported
+  --> tests/ui/generic_enum.rs:11:12
+   |
+11 |     enum C where void: Copy {
+   |            ^^^^^^^^^^^^^^^^

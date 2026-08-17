@@ -1,0 +1,20 @@
+[package]
+name = "float_next_after"
+version = "1.0.0"
+authors = ["Bronson Brown-deVost <bronsonbdevost@gmail.com>"]
+description = "A trait for native rust f64/f32 nextafter"
+edition = "2018"
+license = "MIT"
+readme = "README.md"
+homepage = "https://gitlab.com/bronsonbdevost/next_afterf"
+repository = "https://gitlab.com/bronsonbdevost/next_afterf"
+keywords = ["float", "f64", "f32", "nextafter", "increment"]
+categories = ["mathematics", "algorithms"]
+
+[[bench]]
+name = "bench"
+harness = false
+
+[dev-dependencies]
+criterion = { version = "0.4.0", features = ["html_reports"] }
+fastrand = "1.8.0"

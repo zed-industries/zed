@@ -1,0 +1,9 @@
+package foo:bar;
+
+world module {
+  resource a {
+    constructor();
+
+    other-new: static func() -> a;
+  }
+}

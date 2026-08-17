@@ -1,0 +1,23 @@
+package baz:name {
+  interface i3 {
+    type a = u32;
+  }
+
+  world w3 {
+    import imp3: interface {
+        use i3.{a};
+    }
+  }
+}
+
+package qux:name {
+  interface i4 {
+    type b = u32;
+  }
+
+  world w4 {
+    import imp4: interface {
+        use i4.{b};
+    }
+  }
+}

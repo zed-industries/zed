@@ -1,0 +1,5 @@
+error: Ranges are only supported as num_enum alternate values if the `complex-expressions` feature of the crate `num_enum` is enabled
+ --> tests/try_build/compile_fail/features/!complex-expressions/alternate_exprs_with_range.rs:5:5
+  |
+5 |     #[num_enum(alternatives = [2..=255])]
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

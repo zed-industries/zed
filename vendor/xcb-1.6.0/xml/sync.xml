@@ -1,0 +1,309 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Copyright (C) 2004 Mikko Torni and Josh Triplett.
+All Rights Reserved.  See the file COPYING in this directory
+for licensing information.
+-->
+<xcb header="sync" extension-xname="SYNC" extension-name="Sync" major-version="3" minor-version="1">
+    <import>xproto</import>
+
+    <xidtype name="ALARM" />
+
+    <enum name="ALARMSTATE">
+        <item name="Active">
+            <value>0</value>
+        </item>
+        <item name="Inactive">
+            <value>1</value>
+        </item>
+        <item name="Destroyed">
+            <value>2</value>
+        </item>
+    </enum>
+
+    <xidtype name="COUNTER" />
+
+    <xidtype name="FENCE" />
+
+    <enum name="TESTTYPE">
+        <item name="PositiveTransition">
+            <value>0</value>
+        </item>
+        <item name="NegativeTransition">
+            <value>1</value>
+        </item>
+        <item name="PositiveComparison">
+            <value>2</value>
+        </item>
+        <item name="NegativeComparison">
+            <value>3</value>
+        </item>
+    </enum>
+
+    <enum name="VALUETYPE">
+        <item name="Absolute">
+            <value>0</value>
+        </item>
+        <item name="Relative">
+            <value>1</value>
+        </item>
+    </enum>
+
+    <enum name="CA">
+        <item name="Counter">
+            <bit>0</bit>
+        </item>
+        <item name="ValueType">
+            <bit>1</bit>
+        </item>
+        <item name="Value">
+            <bit>2</bit>
+        </item>
+        <item name="TestType">
+            <bit>3</bit>
+        </item>
+        <item name="Delta">
+            <bit>4</bit>
+        </item>
+        <item name="Events">
+            <bit>5</bit>
+        </item>
+    </enum>
+
+    <struct name="INT64">
+        <field type="INT32" name="hi" />
+        <field type="CARD32" name="lo" />
+    </struct>
+
+    <struct name="SYSTEMCOUNTER">
+        <field type="COUNTER" name="counter" />
+        <field type="sync:INT64" name="resolution" />
+        <field type="CARD16" name="name_len" />
+        <list type="char" name="name">
+            <fieldref>name_len</fieldref>
+        </list>
+        <pad align="4" />
+    </struct>
+
+    <struct name="TRIGGER">
+        <field type="COUNTER" name="counter" />
+        <field type="CARD32" name="wait_type" enum="VALUETYPE" />
+        <field type="sync:INT64" name="wait_value" />
+        <field type="CARD32" name="test_type" enum="TESTTYPE" />
+    </struct>
+
+    <struct name="WAITCONDITION">
+        <field type="TRIGGER" name="trigger" />
+        <field type="sync:INT64" name="event_threshold" />
+    </struct>
+
+    <error name="Counter" number="0">
+        <field type="CARD32" name="bad_counter" />
+        <field type="CARD16" name="minor_opcode" />
+        <field type="CARD8" name="major_opcode" />
+    </error>
+
+    <error name="Alarm" number="1">
+        <field type="CARD32" name="bad_alarm" />
+        <field type="CARD16" name="minor_opcode" />
+        <field type="CARD8" name="major_opcode" />
+    </error>
+
+    <request name="Initialize" opcode="0">
+        <field type="CARD8" name="desired_major_version" />
+        <field type="CARD8" name="desired_minor_version" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD8" name="major_version" />
+            <field type="CARD8" name="minor_version" />
+            <pad bytes="22" />
+        </reply>
+    </request>
+
+    <request name="ListSystemCounters" opcode="1">
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="counters_len" />
+            <pad bytes="20" />
+            <list type="SYSTEMCOUNTER" name="counters">
+                <fieldref>counters_len</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="CreateCounter" opcode="2">
+        <field type="COUNTER" name="id" />
+        <field type="sync:INT64" name="initial_value" />
+    </request>
+
+    <request name="DestroyCounter" opcode="6">
+        <field type="COUNTER" name="counter" />
+    </request>
+
+    <request name="QueryCounter" opcode="5">
+        <field type="COUNTER" name="counter" />
+        <reply>
+            <pad bytes="1" />
+            <field type="sync:INT64" name="counter_value" />
+        </reply>
+    </request>
+
+    <request name="Await" opcode="7">
+        <list type="WAITCONDITION" name="wait_list" />
+    </request>
+
+    <request name="ChangeCounter" opcode="4">
+        <field type="COUNTER" name="counter" />
+        <field type="sync:INT64" name="amount" />
+    </request>
+
+    <request name="SetCounter" opcode="3">
+        <field type="COUNTER" name="counter" />
+        <field type="sync:INT64" name="value" />
+    </request>
+
+    <request name="CreateAlarm" opcode="8">
+        <field type="ALARM" name="id" />
+        <field type="CARD32" name="value_mask" mask="CA" />
+        <switch name="value_list">
+            <fieldref>value_mask</fieldref>
+            <bitcase>
+                <enumref ref="CA">Counter</enumref>
+                <field type="COUNTER" name="counter" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CA">ValueType</enumref>
+                <field type="CARD32" name="valueType" enum="VALUETYPE" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CA">Value</enumref>
+                <field type="sync:INT64" name="value" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CA">TestType</enumref>
+                <field type="CARD32" name="testType" enum="TESTTYPE" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CA">Delta</enumref>
+                <field type="sync:INT64" name="delta" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CA">Events</enumref>
+                <field type="CARD32" name="events" />
+            </bitcase>
+        </switch>
+    </request>
+
+    <request name="ChangeAlarm" opcode="9">
+        <field type="ALARM" name="id" />
+        <field type="CARD32" name="value_mask" mask="CA" />
+        <switch name="value_list">
+            <fieldref>value_mask</fieldref>
+            <bitcase>
+                <enumref ref="CA">Counter</enumref>
+                <field type="COUNTER" name="counter" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CA">ValueType</enumref>
+                <field type="CARD32" name="valueType" enum="VALUETYPE" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CA">Value</enumref>
+                <field type="sync:INT64" name="value" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CA">TestType</enumref>
+                <field type="CARD32" name="testType" enum="TESTTYPE" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CA">Delta</enumref>
+                <field type="sync:INT64" name="delta" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="CA">Events</enumref>
+                <field type="CARD32" name="events" />
+            </bitcase>
+        </switch>
+    </request>
+
+    <request name="DestroyAlarm" opcode="11">
+        <field type="ALARM" name="alarm" />
+    </request>
+
+    <request name="QueryAlarm" opcode="10">
+        <field type="ALARM" name="alarm" />
+        <reply>
+            <pad bytes="1" />
+            <field type="TRIGGER" name="trigger" />
+            <field type="sync:INT64" name="delta" />
+            <field type="BOOL" name="events" />
+            <field type="CARD8" name="state" enum="ALARMSTATE" />
+            <pad bytes="2" />
+        </reply>
+    </request>
+
+    <request name="SetPriority" opcode="12">
+        <field type="CARD32" name="id" />
+        <field type="INT32" name="priority" />
+    </request>
+
+    <request name="GetPriority" opcode="13">
+        <field type="CARD32" name="id" />
+        <reply>
+            <pad bytes="1" />
+            <field type="INT32" name="priority" />
+        </reply>
+    </request>
+
+    <request name="CreateFence" opcode="14">
+        <field type="DRAWABLE" name="drawable" />
+        <field type="FENCE" name="fence" />
+        <field type="BOOL" name="initially_triggered" />
+    </request>
+
+    <request name="TriggerFence" opcode="15">
+        <field type="FENCE" name="fence" />
+    </request>
+
+    <request name="ResetFence" opcode="16">
+        <field type="FENCE" name="fence" />
+    </request>
+
+    <request name="DestroyFence" opcode="17">
+        <field type="FENCE" name="fence" />
+    </request>
+
+    <request name="QueryFence" opcode="18">
+        <field type="FENCE" name="fence" />
+        <reply>
+            <pad bytes="1" />
+            <field type="BOOL" name="triggered" />
+            <pad bytes="23" />
+        </reply>
+    </request>
+
+    <request name="AwaitFence" opcode="19">
+        <list type="FENCE" name="fence_list" />
+    </request>
+
+    <event name="CounterNotify" number="0">
+        <field type="CARD8" name="kind" />
+        <field type="COUNTER" name="counter" />
+        <field type="sync:INT64" name="wait_value" />
+        <field type="sync:INT64" name="counter_value" />
+        <field type="TIMESTAMP" name="timestamp" />
+        <field type="CARD16" name="count" />
+        <field type="BOOL" name="destroyed" />
+        <pad bytes="1" />
+    </event>
+
+    <event name="AlarmNotify" number="1">
+        <field type="CARD8" name="kind" />
+        <field type="ALARM" name="alarm" />
+        <field type="sync:INT64" name="counter_value" />
+        <field type="sync:INT64" name="alarm_value" />
+        <field type="TIMESTAMP" name="timestamp" />
+        <field type="CARD8" name="state" enum="ALARMSTATE" />
+        <pad bytes="3" />
+    </event>
+</xcb>

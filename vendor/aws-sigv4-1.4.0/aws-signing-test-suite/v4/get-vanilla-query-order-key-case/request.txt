@@ -1,0 +1,2 @@
+GET /?Param2=value2&Param1=value1 HTTP/1.1
+Host:example.amazonaws.com

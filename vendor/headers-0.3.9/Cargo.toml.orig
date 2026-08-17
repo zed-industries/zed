@@ -1,0 +1,30 @@
+[package]
+name = "headers"
+version = "0.3.9" # don't forget to update html_root_url
+description = "typed HTTP headers"
+license = "MIT"
+readme = "README.md"
+homepage = "https://hyper.rs"
+repository = "https://github.com/hyperium/headers"
+authors = ["Sean McArthur <sean@seanmonstar.com>"]
+keywords = ["http", "headers", "hyper", "hyperium"]
+categories = ["web-programming"]
+rust-version = "1.56"
+
+[workspace]
+members = [
+    "./",
+    "headers-core",
+]
+
+[dependencies]
+http = "0.2.0"
+headers-core = { version = "0.2", path = "./headers-core" }
+base64 = "0.21.3"
+bytes = "1"
+mime = "0.3.14"
+sha1 = "0.10"
+httpdate = "1"
+
+[features]
+nightly = []

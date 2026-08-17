@@ -1,0 +1,6 @@
+[export]
+prefix = "Style"
+renaming_overrides_prefixing = true
+
+[export.rename]
+"B" = "B" # B should remain unprefixed.

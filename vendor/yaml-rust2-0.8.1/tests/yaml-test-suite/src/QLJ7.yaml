@@ -1,0 +1,22 @@
+---
+- name: Tag shorthand used in documents but only defined in the first
+  from: IRC
+  tags: error directive tag
+  fail: true
+  yaml: |
+    %TAG !prefix! tag:example.com,2011:
+    --- !prefix!A
+    a: b
+    --- !prefix!B
+    c: d
+    --- !prefix!C
+    e: f
+  tree: |
+    +STR
+     +DOC ---
+      +MAP <tag:example.com,2011:A>
+       =VAL :a
+       =VAL :b
+      -MAP
+     -DOC
+     +DOC ---

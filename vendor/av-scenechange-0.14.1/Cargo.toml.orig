@@ -1,0 +1,72 @@
+[package]
+name = "av-scenechange"
+version = "0.14.1"
+authors = ["Josh Holmer <jholmer.in@gmail.com>"]
+edition = "2021"
+rust-version = "1.74.1"
+description = "Estimates frames in a video where a scenecut would be ideal"
+license = "MIT"
+repository = "https://github.com/rust-av/av-scenechange"
+build = "build.rs"
+
+[dependencies]
+aligned = "0.4.2"
+anyhow = "1.0.56"
+arg_enum_proc_macro = "0.3.4"
+arrayvec = "0.7.6"
+clap = { version = "4.0.22", optional = true, features = ["derive"] }
+console = { version = "0.15", optional = true }
+fern = { version = "0.7", optional = true }
+ffmpeg-the-third = { version = "3.0.0", optional = true, default-features = false, features = [
+    "codec",
+    "format",
+] }
+libc = { version = "0.2.172", optional = true }
+log = { version = "0.4.14" }
+num-rational = { version = "0.4.2", default-features = false }
+num-traits = "0.2.19"
+pastey = "0.1.0"
+rayon = "1.10.0"
+serde = { version = "1.0.123", optional = true, features = ["derive"] }
+serde_json = { version = "1.0.62", optional = true }
+thiserror = "2.0.12"
+tracing = { version = "0.1.40", optional = true }
+tracing-chrome = { version = "0.7.1", optional = true }
+tracing-subscriber = { version = "0.3.18", optional = true }
+v_frame = "0.3.8"
+vapoursynth = { version = "0.4.0", features = [
+    "vsscript-functions",
+    "vapoursynth-functions",
+    "vapoursynth-api-32",
+    "vsscript-api-31",
+], optional = true }
+y4m = "0.8.0"
+
+
+[build-dependencies]
+cc = { version = "1.2.23", optional = true, features = ["parallel"] }
+nasm-rs = { version = "0.3", optional = true, features = ["parallel"] }
+
+[features]
+default = ["binary", "asm"]
+binary = ["clap", "serialize"]
+serialize = ["serde", "serde_json"]
+devel = ["console", "fern"]
+tracing = ["tracing-subscriber", "tracing-chrome", "dep:tracing"]
+ffmpeg = ["ffmpeg-the-third"]
+asm = ["nasm-rs", "cc", "libc"]
+libc = ["dep:libc"]
+
+[[bin]]
+name = "av-scenechange"
+path = "src/main.rs"
+required-features = ["binary"]
+
+[lints.clippy]
+inline_always = "warn"
+missing_inline_in_public_items = "warn"
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+# These custom cfgs are expected, so tell rustc not to output warnings for them
+check-cfg = ['cfg(asm_x86_64)', 'cfg(asm_neon)']

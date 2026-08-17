@@ -1,0 +1,63 @@
+error: optional sqlx feature `time` required for type DATE of column #1 ("now")
+ --> $DIR/chrono.rs:2:13
+  |
+2 |     let _ = sqlx::query!("select now()::date");
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in a macro (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: optional sqlx feature `time` required for type TIME of column #1 ("now")
+ --> $DIR/chrono.rs:4:13
+  |
+4 |     let _ = sqlx::query!("select now()::time");
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in a macro (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: optional sqlx feature `time` required for type TIMESTAMP of column #1 ("now")
+ --> $DIR/chrono.rs:6:13
+  |
+6 |     let _ = sqlx::query!("select now()::timestamp");
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in a macro (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: optional sqlx feature `time` required for type TIMESTAMPTZ of column #1 ("now")
+ --> $DIR/chrono.rs:8:13
+  |
+8 |     let _ = sqlx::query!("select now()::timestamptz");
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in a macro (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: optional sqlx feature `time` required for type DATE of param #1
+  --> $DIR/chrono.rs:10:13
+   |
+10 |     let _ = sqlx::query!("select $1::date", ());
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in a macro (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: optional sqlx feature `time` required for type TIME of param #1
+  --> $DIR/chrono.rs:12:13
+   |
+12 |     let _ = sqlx::query!("select $1::time", ());
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in a macro (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: optional sqlx feature `time` required for type TIMESTAMP of param #1
+  --> $DIR/chrono.rs:14:13
+   |
+14 |     let _ = sqlx::query!("select $1::timestamp", ());
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in a macro (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: optional sqlx feature `time` required for type TIMESTAMPTZ of param #1
+  --> $DIR/chrono.rs:16:13
+   |
+16 |     let _ = sqlx::query!("select $1::timestamptz", ());
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in a macro (in Nightly builds, run with -Z macro-backtrace for more info)

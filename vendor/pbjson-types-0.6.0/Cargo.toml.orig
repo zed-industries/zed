@@ -1,0 +1,25 @@
+[package]
+name = "pbjson-types"
+version = "0.6.0"
+authors = ["Raphael Taylor-Davies <r.taylordavies@googlemail.com>"]
+description = "Protobuf well known types with serde serialization support"
+edition = "2021"
+license = "MIT"
+keywords = ["protobuf", "json", "serde"]
+categories = ["encoding"]
+repository = "https://github.com/influxdata/pbjson"
+exclude = ["protos/*"]
+
+[dependencies] # In alphabetical order
+bytes = "1.0"
+chrono = { version = "0.4", default-features = false, features = ["alloc"] }
+pbjson = { path = "../pbjson", version = "0.6" }
+prost = "0.12"
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1.0"
+
+[build-dependencies] # In alphabetical order
+prost-build = "0.12"
+pbjson-build = { path = "../pbjson-build", version = "0.6" }

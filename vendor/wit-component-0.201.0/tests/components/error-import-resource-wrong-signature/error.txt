@@ -1,0 +1,1 @@
+type mismatch for function `[resource-drop]a`: expected `[I32] -> []` but found `[I32] -> [I32]`

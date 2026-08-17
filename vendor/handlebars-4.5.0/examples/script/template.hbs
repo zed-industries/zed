@@ -1,0 +1,10 @@
+Bundesliga Match Day
+{{#each this as |match|}}
+  {{#each match as |team|}}
+    {{team.name}} - {{score team.goals}}
+    {{#each team.goals as |scorer|}}
+      > {{scorer}}
+    {{/each}}
+  {{/each}}
+  ---
+{{/each}}

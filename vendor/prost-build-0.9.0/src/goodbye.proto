@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+import "types.proto";
+
+package helloworld;
+
+service Farewell {
+  rpc Goodbye (Message) returns (Response) {}
+}

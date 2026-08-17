@@ -1,0 +1,26 @@
+
+[package]
+name = "cocoa-foundation"
+description = "Bindings to Cocoa Foundation for macOS"
+homepage = "https://github.com/servo/core-foundation-rs"
+repository = "https://github.com/servo/core-foundation-rs"
+version = "0.2.0"
+authors = ["The Servo Project Developers"]
+license = "MIT OR Apache-2.0"
+edition = "2018"
+
+[package.metadata.docs.rs]
+default-target = "x86_64-apple-darwin"
+
+[dependencies]
+block = "0.1"
+bitflags = "2"
+libc = "0.2"
+core-foundation = { default-features = false, path = "../core-foundation", version = "0.10" }
+core-graphics-types = { default-features = false, path = "../core-graphics-types", version = "0.2" }
+objc = "0.2.3"
+
+[features]
+default = ["link"]
+# Disable to manually link. Enabled by default.
+link = ["core-foundation/link", "core-graphics-types/link"]

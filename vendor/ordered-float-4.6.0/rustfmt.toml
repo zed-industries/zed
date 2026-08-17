@@ -1,0 +1,3 @@
+# These two unstable options might improve the layout of the code:
+#fn_single_line = true
+#where_single_line = true

@@ -1,0 +1,8 @@
+Name: Test Data
+Description: Fake data to test pkg-config.
+Version: 4.5.6
+
+prefix=/usr
+datarootdir=${prefix}/share
+datadir=${datarootdir}
+testdata=${datadir}/testdata/test.dat

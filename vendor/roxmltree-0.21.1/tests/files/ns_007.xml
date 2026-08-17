@@ -1,0 +1,2 @@
+<e a:attr='a_ns' b:attr='b_ns' attr='no_ns' xmlns:b='http://www.ietf.org'
+    xmlns:a='http://www.w3.org' xmlns='http://www.uvic.ca'/>

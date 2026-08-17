@@ -1,0 +1,78 @@
+{
+  "worlds": [],
+  "interfaces": [
+    {
+      "name": "resources1",
+      "types": {
+        "r1": 0
+      },
+      "functions": {
+        "t1": {
+          "name": "t1",
+          "kind": "freestanding",
+          "params": [
+            {
+              "name": "a",
+              "type": 2
+            }
+          ],
+          "results": []
+        },
+        "[method]r1.f1": {
+          "name": "[method]r1.f1",
+          "kind": {
+            "method": 0
+          },
+          "params": [
+            {
+              "name": "self",
+              "type": 1
+            }
+          ],
+          "results": [
+            {
+              "type": 2
+            }
+          ]
+        }
+      },
+      "package": 0
+    }
+  ],
+  "types": [
+    {
+      "name": "r1",
+      "kind": "resource",
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": null,
+      "kind": {
+        "handle": {
+          "borrow": 0
+        }
+      },
+      "owner": null
+    },
+    {
+      "name": null,
+      "kind": {
+        "handle": {
+          "own": 0
+        }
+      },
+      "owner": null
+    }
+  ],
+  "packages": [
+    {
+      "name": "foo:resources1",
+      "interfaces": {
+        "resources1": 0
+      },
+      "worlds": {}
+    }
+  ]
+}

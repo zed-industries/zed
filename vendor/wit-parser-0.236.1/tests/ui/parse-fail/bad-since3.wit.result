@@ -1,0 +1,5 @@
+expected `version`, found `feature`
+     --> tests/ui/parse-fail/bad-since3.wit:4:8
+      |
+    4 | @since(feature = foo, version = 1.0.0)
+      |        ^------

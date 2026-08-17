@@ -1,0 +1,28 @@
+---
+- name: Spec Example 7.2. Empty Content
+  from: http://www.yaml.org/spec/1.2/spec.html#id2786720
+  tags: spec flow scalar tag
+  yaml: |
+    {
+      foo : !!str,
+      !!str : bar,
+    }
+  tree: |
+    +STR
+     +DOC
+      +MAP {}
+       =VAL :foo
+       =VAL <tag:yaml.org,2002:str> :
+       =VAL <tag:yaml.org,2002:str> :
+       =VAL :bar
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "foo": "",
+      "": "bar"
+    }
+  dump: |
+    foo: !!str
+    !!str : bar

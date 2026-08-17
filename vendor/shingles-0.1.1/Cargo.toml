@@ -1,0 +1,16 @@
+[package]
+name = "shingles"
+version = "0.1.1"
+authors = ["dimack <dimack@gmail.com>"]
+license = "MIT"
+
+repository = "https://github.com/dimack/shingles.rs"
+documentation = "https://dimack.github.io/shingles.rs/0.1/shingles/"
+
+description = "Shingles implementation in rust"
+keywords = ["shingles", "ngrams", "fuzzy"]
+
+# exclude files/folders, starting with dot
+exclude = [".*"]
+
+[dependencies]

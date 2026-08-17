@@ -1,0 +1,2 @@
+include_guard = "INCLUDE_GUARD_H"
+no_includes = true

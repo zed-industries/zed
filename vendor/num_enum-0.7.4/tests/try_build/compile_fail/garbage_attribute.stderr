@@ -1,0 +1,5 @@
+error: Invalid attribute: expected one of: `default`, `catch_all`, `alternatives`
+ --> $DIR/garbage_attribute.rs:5:5
+  |
+5 |     #[num_enum(garbage)]
+  |     ^^^^^^^^^^^^^^^^^^^^

@@ -1,0 +1,12 @@
+[package]
+name = "range-alloc"
+version = "0.1.4"
+description = "Generic range allocator"
+homepage = "https://github.com/gfx-rs/range-alloc"
+repository = "https://github.com/gfx-rs/range-alloc"
+keywords = ["allocator"]
+license = "MIT OR Apache-2.0"
+authors = ["the gfx-rs Developers"]
+documentation = "https://docs.rs/range-alloc"
+categories = ["memory-management"]
+edition = "2018"

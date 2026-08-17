@@ -1,0 +1,28 @@
+[package]
+name = "indenter"
+version = "0.3.4"
+rust-version = "1.39"
+authors = ["Jane Lusby <jlusby@yaah.dev>"]
+edition = "2018"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/yaahc/indenter"
+homepage = "https://github.com/yaahc/indenter"
+documentation = "https://docs.rs/indenter"
+keywords = ["display", "fmt", "Formatter", "error"]
+description = """
+A formatter wrapper that indents the text, designed for error display impls
+"""
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+default = []
+std = []
+
+[dependencies]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+

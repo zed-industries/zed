@@ -1,0 +1,10 @@
+[package]
+name = "winapi-i686-pc-windows-gnu"
+version = "0.4.0"
+authors = ["Peter Atashian <retep998@gmail.com>"]
+license = "MIT/Apache-2.0"
+description = "Import libraries for the i686-pc-windows-gnu target. Please don't use this crate directly, depend on winapi instead."
+repository = "https://github.com/retep998/winapi-rs"
+keywords = ["windows"]
+include = ["src/*", "lib/*", "Cargo.toml", "build.rs"]
+build = "build.rs"

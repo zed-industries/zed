@@ -1,0 +1,28 @@
+[package]
+name = "io-surface"
+description = "Bindings to IO Surface for macOS"
+version = "0.16.1"
+
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[package.metadata.docs.rs]
+default-target = "x86_64-apple-darwin"
+
+[lints]
+workspace = true
+
+[dependencies]
+core-foundation.workspace = true
+core-foundation-sys.workspace = true
+
+cgl = "0.3"
+leaky-cow = "0.1.1"
+
+[features]
+default = ["link"]
+# Disable to manually link. Enabled by default.
+link = ["core-foundation/link", "core-foundation-sys/link"]

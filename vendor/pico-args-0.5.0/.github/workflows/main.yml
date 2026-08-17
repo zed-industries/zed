@@ -1,0 +1,39 @@
+name: Rust
+
+on: [push, pull_request]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-18.04
+    strategy:
+      matrix:
+        rust:
+          - 1.32.0
+          - stable
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+
+    - name: Install toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: ${{ matrix.rust }}
+        override: true
+
+    - name: Test with default features
+      run: cargo test
+
+    - name: Test without default features
+      run: cargo test --no-default-features
+
+    - name: Test with short-space-opt
+      run: cargo test --no-default-features --features short-space-opt
+
+    - name: Test with combined-flags
+      run: cargo test --no-default-features --features combined-flags
+
+    - name: Test with all features
+      run: cargo test --all-features

@@ -1,0 +1,18 @@
+[package]
+name = "vswhom"
+description = "FFI to Jon Blow's VS discovery script"
+repository = "https://github.com/nabijaczleweli/vswhom.rs"
+documentation = "https://rawcdn.githack.com/nabijaczleweli/vswhom-sys.rs/doc/vswhom_sys/index.html"
+readme = "README.md"
+keywords = ["visual-studio", "FFI"]
+categories = ["external-ffi-bindings"]
+license = "MIT"
+# Remember to also update in appveyor.yml
+version = "0.1.0"
+authors = ["nabijaczleweli <nabijaczleweli@gmail.com>"]
+
+[dependencies]
+vswhom-sys = "0.1"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+libc = "0.2"

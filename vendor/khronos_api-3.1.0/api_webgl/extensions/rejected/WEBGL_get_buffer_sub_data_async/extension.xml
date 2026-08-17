@@ -1,0 +1,141 @@
+<?xml version="1.0"?>
+
+<rejected href="rejected/WEBGL_get_buffer_sub_data_async/">
+  <name>WEBGL_get_buffer_sub_data_async</name>
+  <contact>
+    <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL working group</a> (public_webgl 'at' khronos.org)
+  </contact>
+  <contributors>
+    <contributor>Kai Ninomiya, Google Inc.</contributor>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+  <number>34</number>
+  <depends>
+    <api version="2.0"/>
+  </depends>
+  <overview>
+    <p>
+      This extension allows asynchronous buffer readback in WebGL 2.0.
+    </p>
+    <features>
+      <feature>
+        This extension exposes an asynchronous buffer readback entry point for
+        non-blocking readbacks from WebGL buffers. It is equivalent to
+        <code>getBufferSubData</code> but returns a <code>Promise</code>
+        instead of an immediate readback result.
+      </feature>
+    </features>
+  </overview>
+
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface WEBGL_get_buffer_sub_data_async {
+  // Asynchronous version of getBufferSubData which fulfills the returned promise when the data becomes available.
+  Promise&lt;ArrayBuffer&gt; getBufferSubDataAsync(GLenum target, GLintptr srcByteOffset, ArrayBufferView dstBuffer,
+                                                   optional GLuint dstOffset = 0, optional GLuint length = 0); // May throw DOMException
+};
+  </idl>
+
+  <newfun>
+    <function name="getBufferSubDataAsync" type="Promise&lt;ArrayBuffer&gt;">
+      <param name="target" type="GLenum"/>
+      <param name="srcByteOffset" type="GLintptr"/>
+      <param name="dstBuffer" type="ArrayBufferView"/>
+      <param name="dstOffset" type="optional GLuint"/>
+      <param name="length" type="optional GLuint"/>
+      Reads back data asynchronously from the bound WebGLBuffer into <code>dstBuffer</code>.
+      <br/><br/>
+      Let <code>buf</code> be the buffer bound to <code>target</code> at the time
+      <code>getBufferSubDataAsync</code> is called.
+      If <code>length</code> is 0, let <code>copyLength</code> be
+      <code>dstBuffer.length - dstOffset</code>; otherwise, let
+      <code>copyLength</code> be <code>length</code>.
+      <br/><br/>
+      If <code>copyLength</code> is greater than zero,
+      copy <code>copyLength</code> typed elements (each of size <code>dstBuffer.BYTES_PER_ELEMENT</code>)
+      from <code>buf</code> into <code>dstBuffer</code>,
+      reading <code>buf</code> starting at byte index <code>srcByteOffset</code> and
+      writing into <code>dstBuffer</code> starting at element index <code>dstOffset</code>.
+      If <code>copyLength</code> is 0, no data is written to <code>dstBuffer</code>, but
+      this does not cause a GL error to be generated.
+      <ul>
+        <li>If no WebGLBuffer is bound to <code>target</code>,
+            an <code>INVALID_OPERATION</code> error is generated.
+        </li>
+        <li>If <code>target</code> is <code>TRANSFORM_FEEDBACK_BUFFER</code>,
+            and any transform feedback object is currently active,
+            an <code>INVALID_OPERATION</code> error is generated.
+        </li>
+        <li>If <code>dstOffset</code> is greater than <code>dstBuffer.length</code>,
+            an <code>INVALID_VALUE</code> error is generated.
+        </li>
+        <li>If <code>dstOffset + copyLength</code> is greater than <code>dstBuffer.length</code>,
+            an <code>INVALID_VALUE</code> error is generated.
+        </li>
+        <li>If <code>srcByteOffset</code> is less than zero,
+            an <code>INVALID_VALUE</code> error is generated.
+        </li>
+        <li>If <code>srcByteOffset + copyLength*dstBuffer.BYTES_PER_ELEMENT</code>
+            is larger than the length of <code>buf</code>,
+            an <code>INVALID_OPERATION</code> is generated.
+        </li>
+      </ul>
+      When invoked, <code>getBufferSubDataAsync</code> must run these steps:
+      <ul>
+        <li>Let <code>promise</code> be a Promise to be returned.
+        </li>
+        <li>Check for the errors defined above. If there are any errors, generate the GL error
+          synchronously and
+          <a href="https://www.w3.org/2001/tag/doc/promises-guide/#reject-promise">reject</a>
+          <code>promise</code> with an <code>InvalidStateError</code>.
+        </li>
+        <li>Insert a readback of <code>buf</code> into the GL command stream, using the range
+          defined above.
+        </li>
+        <li>Return <code>promise</code>, but continue running these steps in parallel.
+        </li>
+        <li>Upon completion of the readback, queue a task performing the following steps:
+          <ul>
+            <li>If the context has been lost, or if <code>dstBuffer</code> has been neutered,
+              <a href="https://www.w3.org/2001/tag/doc/promises-guide/#reject-promise">reject</a>
+              <code>promise</code> with an <code>InvalidStateError</code>. In this case, no GL
+              error is generated.
+            </li>
+            <li>Write the readback result into <code>dstBuffer</code>, using the range defined
+              above.
+            </li>
+            <li><a href="https://www.w3.org/2001/tag/doc/promises-guide/#resolve-promise">Resolve</a>
+              <code>promise</code> with <code>dstBuffer</code>.
+            </li>
+          </ul>
+          The task source for this task is the <a href="#WEBGLCONTEXTEVENT">WebGL task source</a>.
+        </li>
+      </ul>
+      If the returned Promise is rejected, no data is written to <code>dstBuffer</code>.
+
+      <div class="note">
+        Even if <code>getBufferSubDataAsync</code> is called multiple times in a row with the same
+        <code>dstBuffer</code>, <code>then</code> callbacks added synchronously will never see
+        results of subsequent <code>getBufferSubDataAsync</code> calls.
+      </div>
+
+      <div class="note rationale">
+        Compared to the synchronous version of <code>getBufferSubData</code>, this version may
+        impose less overhead on applications. Intended use cases include reading pixels into a
+        pixel buffer object and examining that data on the CPU. It does not force the graphics
+        pipeline to be stalled as <code>getBufferSubData</code> does.
+      </div>
+    </function>
+  </newfun>
+
+  <history>
+    <revision date="2016/12/13">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2018/05/04">
+      <change>Set status to rejected following the working group's decision to
+        allow optimizations of the existing getBufferSubData API instead of
+        exposing a new one.</change>
+    </revision>
+  </history>
+</rejected>

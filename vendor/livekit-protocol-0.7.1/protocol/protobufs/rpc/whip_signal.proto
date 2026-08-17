@@ -1,0 +1,106 @@
+syntax = "proto3";
+
+package rpc;
+
+option go_package = "github.com/livekit/protocol/rpc";
+
+import "google/protobuf/empty.proto";
+import "options.proto";
+import "livekit_internal.proto";
+import "livekit_rtc.proto";
+
+service WHIP {
+  rpc Create(WHIPCreateRequest) returns (WHIPCreateResponse) {
+    option (psrpc.options) = {
+      topics: true
+      queue: true
+      topic_params: {
+        group: "common"
+        names: ["topic"]
+        typed: true
+      };
+    };
+  }
+}
+
+message WHIPCreateRequest {
+  message TrackList {
+    repeated string track_names = 1;
+  }
+
+  livekit.StartSession start_session = 1;
+  string offer_sdp = 2;
+  map<string, TrackList> subscribed_participant_tracks = 3;
+  bool from_ingress = 4;
+}
+
+message WHIPCreateResponse {
+  string answer_sdp = 1;
+  string participant_id = 2;
+  repeated livekit.ICEServer ice_servers = 3;
+  string ice_session_id = 4;
+}
+
+// ----------------------------------
+
+service WHIPParticipant {
+  rpc ICETrickle(WHIPParticipantICETrickleRequest) returns (google.protobuf.Empty) {
+    option (psrpc.options) = {
+      topics: true
+      topic_params: {
+        group: "common"
+        names: ["topic"]
+        typed: true
+      };
+    };
+  }
+
+  rpc ICERestart(WHIPParticipantICERestartRequest) returns (WHIPParticipantICERestartResponse) {
+    option (psrpc.options) = {
+      topics: true
+      topic_params: {
+        group: "common"
+        names: ["topic"]
+        typed: true
+      };
+    };
+  }
+
+  rpc DeleteSession(WHIPParticipantDeleteSessionRequest) returns (google.protobuf.Empty) {
+    option (psrpc.options) = {
+      topics: true
+      topic_params: {
+        group: "common"
+        names: ["topic"]
+        typed: true
+      };
+    };
+  }
+}
+
+message WHIPParticipantICETrickleRequest {
+  string room = 1;
+  string participant_identity = 2;
+  string participant_id = 3;
+  string ice_session_id = 4;
+  string sdp_fragment = 5;
+}
+
+message WHIPParticipantICERestartRequest {
+  string room = 1;
+  string participant_identity = 2;
+  string participant_id = 3;
+  string sdp_fragment = 4;
+}
+
+message WHIPParticipantICERestartResponse {
+  string ice_session_id = 1;
+  string sdp_fragment = 2;
+}
+
+message WHIPParticipantDeleteSessionRequest {
+  string room = 1;
+  string participant_identity = 2;
+  string participant_id = 3;
+  bool from_sweeper = 4;
+}

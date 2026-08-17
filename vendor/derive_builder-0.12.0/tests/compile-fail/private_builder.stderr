@@ -1,0 +1,21 @@
+error[E0603]: struct `LoremBuilder` is private
+  --> tests/compile-fail/private_builder.rs:17:18
+   |
+17 |     let x = foo::LoremBuilder::default()
+   |                  ^^^^^^^^^^^^ private struct
+   |
+note: the struct `LoremBuilder` is defined here
+  --> tests/compile-fail/private_builder.rs:7:41
+   |
+7  |     #[derive(Debug, PartialEq, Default, Builder, Clone)]
+   |                                         ^^^^^^^
+   = note: this error originates in the derive macro `Builder` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0624]: associated function `build` is private
+  --> tests/compile-fail/private_builder.rs:19:10
+   |
+7  |     #[derive(Debug, PartialEq, Default, Builder, Clone)]
+   |                                         ------- private associated function defined here
+...
+19 |         .build()
+   |          ^^^^^ private associated function

@@ -1,0 +1,13 @@
+package wasmtime:test;
+
+interface types {
+  @unstable(feature = inactive)
+  use wasi:dep2/stable@0.2.3.{unstable-resource};
+}
+
+package wasi:dep2@0.2.3 {
+  interface stable {
+    @unstable(feature = inactive)
+    resource unstable-resource;
+  }
+}

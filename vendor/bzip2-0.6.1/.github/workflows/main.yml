@@ -1,0 +1,104 @@
+name: CI
+on: [push, pull_request]
+
+jobs:
+  test:
+    name: Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        build: [stable, beta, nightly, msrv, macos, win32, win64, win32-gnu, win64-gnu]
+        include:
+          - build: stable
+            os: ubuntu-latest
+            rust: stable
+          - build: beta
+            os: ubuntu-latest
+            rust: beta
+          - build: nightly
+            os: ubuntu-latest
+            rust: nightly
+          - build: msrv
+            os: ubuntu-latest
+            rust: nightly
+          - build: wasm32
+            os: ubuntu-latest
+            rust: stable
+          - build: macos
+            os: macos-latest
+            rust: stable
+          - build: win32
+            os: windows-latest
+            rust: stable-i686-msvc
+          - build: win64
+            os: windows-latest
+            rust: stable-x86_64-msvc
+          - build: win32-gnu
+            os: windows-latest
+            rust: stable-i686-gnu
+          - build: win64-gnu
+            os: windows-latest
+            rust: stable-x86_64-gnu
+    steps:
+    - uses: actions/checkout@master
+    - name: Install Rust (rustup)
+      run: rustup update ${{ matrix.rust }} --no-self-update && rustup default ${{ matrix.rust }}
+      shell: bash
+      if: matrix.build != 'msrv'
+    - name: Install wasmtime
+      run: |
+        curl https://wasmtime.dev/install.sh -sSf | bash
+        /home/runner/.wasmtime/bin/wasmtime --version
+      if: matrix.build == 'wasm32'
+    - name: Configure Toolchain (msrv)
+      run: |
+        # extract the MSRV from the Cargo.toml's `rust-version`
+        MSRV=$(awk -F'"' '/rust-version/ {print $2}' Cargo.toml)
+        TOOLCHAIN="${MSRV}-x86_64-unknown-linux-gnu"
+        rustup update $TOOLCHAIN --no-self-update && rustup default $TOOLCHAIN
+      shell: bash
+      if: matrix.build == 'msrv'
+    - name: Install target (wasm32)
+      run: |
+        rustup target add wasm32-wasip2
+      shell: bash
+      if: matrix.build == 'wasm32'
+    - name: Run cargo doc, deny warnings (libbzip2-rs-sys)
+      env:
+        RUSTDOCFLAGS: "-D warnings"
+      run: |
+        cargo doc -p bzip2 --no-deps
+    - name: Run cargo doc, deny warnings (bzip2-sys)
+      env:
+          RUSTDOCFLAGS: "-Dwarnings"
+      run: |
+        cargo doc -p bzip2-sys --no-deps
+        cargo doc -p bzip2 --no-deps --no-default-features --features bzip2-sys
+    - name: Configure wasm32 env vars
+      run: |
+        echo "CARGO_TARGET_WASM32_WASIP2_RUNNER=/home/runner/.wasmtime/bin/wasmtime" >> $GITHUB_ENV
+        echo "CARGO_BUILD_TARGET=wasm32-wasip2" >> $GITHUB_ENV
+      if: matrix.build == 'wasm32'
+    - name: Run cargo test (libbzip2-rs-sys)
+      run: cargo test
+    - name: Run cargo test (bzip2-sys)
+      run: cargo test --no-default-features --features bzip2-sys
+      if: matrix.build != 'wasm32'
+
+  rustfmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    - name: Install Rust
+      run: rustup update stable && rustup default stable && rustup component add rustfmt
+    - run: cargo fmt -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    - name: Install Rust
+      run: rustup update stable && rustup default stable && rustup component add clippy
+    - run: cargo clippy -- -D warnings

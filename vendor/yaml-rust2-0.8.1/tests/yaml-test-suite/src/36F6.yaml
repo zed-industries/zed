@@ -1,0 +1,28 @@
+---
+- name: Multiline plain scalar with empty line
+  from: '@perlpunk'
+  tags: mapping scalar
+  yaml: |
+    ---
+    plain: a
+     b
+
+     c
+  tree: |
+    +STR
+     +DOC ---
+      +MAP
+       =VAL :plain
+       =VAL :a b\nc
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "plain": "a b\nc"
+    }
+  dump: |
+    ---
+    plain: 'a b
+
+      c'

@@ -1,0 +1,51 @@
+name: ci
+
+on: [pull_request, push]
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_INCREMENTAL: 0
+  RUSTFLAGS: "-Cdebuginfo=0 --deny=warnings"
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    strategy:
+      matrix:
+        channel: [1.82, stable, nightly]
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Setup rust toolchain
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ matrix.channel }}
+
+    - name: Rust Version Info
+      run: rustc --version && cargo --version
+
+    - name: Cache cargo registry
+      uses: actions/cache@v5
+      with:
+        path: ~/.cargo/registry
+        key: ${{ runner.os }}-${{ matrix.channel }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Cache cargo index
+      uses: actions/cache@v5
+      with:
+        path: ~/.cargo/git
+        key: ${{ runner.os }}-${{ matrix.channel }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Cache cargo build
+      uses: actions/cache@v5
+      with:
+        path: target
+        key: ${{ runner.os }}-${{ matrix.channel }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: cargo check
+      run: cargo --locked check --workspace --all-targets --all-features
+
+    - name: Run all tests
+      run: cargo --locked test --workspace --all-features

@@ -1,0 +1,104 @@
+---
+- name: Various combinations of tags and anchors
+  from: '@perlpunk'
+  tags: anchor mapping 1.3-err tag
+  yaml: |
+    ---
+    &a1
+    !!str
+    scalar1
+    ---
+    !!str
+    &a2
+    scalar2
+    ---
+    &a3
+    !!str scalar3
+    ---
+    &a4 !!map
+    &a5 !!str key5: value4
+    ---
+    a6: 1
+    &anchor6 b6: 2
+    ---
+    !!map
+    &a8 !!str key8: value7
+    ---
+    !!map
+    !!str &a10 key10: value9
+    ---
+    !!str &a11
+    value11
+  tree: |
+    +STR
+     +DOC ---
+      =VAL &a1 <tag:yaml.org,2002:str> :scalar1
+     -DOC
+     +DOC ---
+      =VAL &a2 <tag:yaml.org,2002:str> :scalar2
+     -DOC
+     +DOC ---
+      =VAL &a3 <tag:yaml.org,2002:str> :scalar3
+     -DOC
+     +DOC ---
+      +MAP &a4 <tag:yaml.org,2002:map>
+       =VAL &a5 <tag:yaml.org,2002:str> :key5
+       =VAL :value4
+      -MAP
+     -DOC
+     +DOC ---
+      +MAP
+       =VAL :a6
+       =VAL :1
+       =VAL &anchor6 :b6
+       =VAL :2
+      -MAP
+     -DOC
+     +DOC ---
+      +MAP <tag:yaml.org,2002:map>
+       =VAL &a8 <tag:yaml.org,2002:str> :key8
+       =VAL :value7
+      -MAP
+     -DOC
+     +DOC ---
+      +MAP <tag:yaml.org,2002:map>
+       =VAL &a10 <tag:yaml.org,2002:str> :key10
+       =VAL :value9
+      -MAP
+     -DOC
+     +DOC ---
+      =VAL &a11 <tag:yaml.org,2002:str> :value11
+     -DOC
+    -STR
+  json: |
+    "scalar1"
+    "scalar2"
+    "scalar3"
+    {
+      "key5": "value4"
+    }
+    {
+      "a6": 1,
+      "b6": 2
+    }
+    {
+      "key8": "value7"
+    }
+    {
+      "key10": "value9"
+    }
+    "value11"
+  dump: |
+    --- &a1 !!str scalar1
+    --- &a2 !!str scalar2
+    --- &a3 !!str scalar3
+    --- &a4 !!map
+    &a5 !!str key5: value4
+    ---
+    a6: 1
+    &anchor6 b6: 2
+    --- !!map
+    &a8 !!str key8: value7
+    --- !!map
+    &a10 !!str key10: value9
+    --- &a11 !!str value11

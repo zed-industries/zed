@@ -1,0 +1,8 @@
+error[E0119]: conflicting implementations of trait `UniquePtrTarget` for type `here::C`
+  --> tests/ui/unique_ptr_twice.rs:16:5
+   |
+ 7 |     impl UniquePtr<C> {}
+   |     ---------------- first implementation here
+...
+16 |     impl UniquePtr<C> {}
+   |     ^^^^^^^^^^^^^^^^ conflicting implementation for `here::C`

@@ -1,0 +1,5 @@
+interface or world `missing` does not exist
+     --> tests/ui/parse-fail/nested-packages-with-error.wit:11:13
+      |
+   11 |         use missing.{a};
+      |             ^------

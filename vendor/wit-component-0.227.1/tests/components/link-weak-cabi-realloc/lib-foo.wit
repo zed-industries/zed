@@ -1,0 +1,9 @@
+package test:test;
+
+interface test {
+   foo: func(x: string);
+}
+
+world lib-foo {
+    export test;
+}

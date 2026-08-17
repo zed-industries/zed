@@ -1,0 +1,5 @@
+invalid character in string '\u{1f}'
+     --> tests/parse-fail/string8.wat:1:2
+      |
+    1 | ""
+      |  ^

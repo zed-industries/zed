@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="server_decoration_palette">
+  <copyright><![CDATA[
+    SPDX-FileCopyrightText: 2017 David Edmundson
+
+    SPDX-License-Identifier: LGPL-2.1-or-later
+  ]]></copyright>
+  <interface name="org_kde_kwin_server_decoration_palette_manager" version="1">
+      <description summary="server side decoration palette manager interface">
+          This interface allows a client to alter the palette of a server side decoration.
+      </description>
+      <request name="create">
+          <arg name="id" type="new_id" interface="org_kde_kwin_server_decoration_palette"/>
+          <arg name="surface" type="object" interface="wl_surface"/>
+      </request>
+  </interface>
+  <interface name="org_kde_kwin_server_decoration_palette" version="1">
+      <description summary="server side decoration palette interface">
+          This interface allows a client to alter the palette of a server side decoration.
+      </description>
+      <request name="set_palette">
+          <description summary="Set a on the server side window decoration">
+            Color scheme that should be applied to the window decoration.
+            Absolute file path, or name of palette in the user's config directory.
+            The server may choose not to follow the requested style.
+          </description>
+          <arg name="palette" type="string"  summary="Absolute file path, or name of palette in the user's config directory"/>
+      </request>
+      <request name="release" type="destructor">
+        <description summary="release the palette object"/>
+      </request>
+  </interface>
+</protocol>

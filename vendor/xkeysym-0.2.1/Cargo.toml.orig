@@ -1,0 +1,23 @@
+[package]
+name = "xkeysym"
+version = "0.2.1"
+edition = "2018"
+authors = ["John Nunley <jtnunley01@gmail.com>"]
+description = "A library for working with X11 keysyms"
+repository = "https://github.com/notgull/xkeysym"
+license = "MIT OR Apache-2.0 OR Zlib"
+keywords = ["x11", "keysym", "keysyms"]
+rust-version = "1.58.1"
+
+[dev-dependencies]
+bytemuck = "1.12.3"
+x11rb = "0.12.0"
+
+[workspace]
+members = [
+    "keysym-generator",
+]
+
+[dependencies]
+bytemuck = { version = "1.12.3", default-features = false, features = ["derive"], optional = true }
+serde = { version = "1.0.160", default-features = false, features = ["derive"], optional = true }

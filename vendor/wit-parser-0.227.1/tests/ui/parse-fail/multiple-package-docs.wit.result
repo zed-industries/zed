@@ -1,0 +1,5 @@
+failed to resolve directory while parsing WIT for path [tests/ui/parse-fail/multiple-package-docs]: failed to parse package: tests/ui/parse-fail/multiple-package-docs: failed to start resolving path: tests/ui/parse-fail/multiple-package-docs/b.wit: found doc comments on multiple 'package' items
+     --> tests/ui/parse-fail/multiple-package-docs/b.wit:1:1
+      |
+    1 | /// Multiple package docs, B
+      | ^---------------------------

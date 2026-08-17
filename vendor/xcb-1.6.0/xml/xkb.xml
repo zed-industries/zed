@@ -1,0 +1,3170 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Copyright (C) 2009 Open Text Corporation.  All Rights Reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Except as contained in this notice, the names of the authors or their
+institutions shall not be used in advertising or otherwise to promote the
+sale, use or other dealings in this Software without prior written
+authorization from the authors.
+-->
+<xcb header="xkb" extension-xname="XKEYBOARD" extension-name="xkb" major-version="1" minor-version="0">
+
+    <import>xproto</import>
+
+    <!-- Common Types -->
+    <enum name="Const">
+        <item name="MaxLegalKeyCode">
+            <value>255</value>
+        </item>
+        <item name="PerKeyBitArraySize">
+            <value>32</value>
+        </item>
+        <item name="KeyNameLength">
+            <value>4</value>
+        </item>
+    </enum>
+
+    <enum name="EventType">
+        <item name="NewKeyboardNotify">
+            <bit>0</bit>
+        </item>
+        <item name="MapNotify">
+            <bit>1</bit>
+        </item>
+        <item name="StateNotify">
+            <bit>2</bit>
+        </item>
+        <item name="ControlsNotify">
+            <bit>3</bit>
+        </item>
+        <item name="IndicatorStateNotify">
+            <bit>4</bit>
+        </item>
+        <item name="IndicatorMapNotify">
+            <bit>5</bit>
+        </item>
+        <item name="NamesNotify">
+            <bit>6</bit>
+        </item>
+        <item name="CompatMapNotify">
+            <bit>7</bit>
+        </item>
+        <item name="BellNotify">
+            <bit>8</bit>
+        </item>
+        <item name="ActionMessage">
+            <bit>9</bit>
+        </item>
+        <item name="AccessXNotify">
+            <bit>10</bit>
+        </item>
+        <item name="ExtensionDeviceNotify">
+            <bit>11</bit>
+        </item>
+    </enum>
+
+    <enum name="NKNDetail">
+        <item name="Keycodes">
+            <bit>0</bit>
+        </item>
+        <item name="Geometry">
+            <bit>1</bit>
+        </item>
+        <item name="DeviceID">
+            <bit>2</bit>
+        </item>
+    </enum>
+
+    <enum name="AXNDetail">
+        <item name="SKPress">
+            <bit>0</bit>
+        </item>
+        <item name="SKAccept">
+            <bit>1</bit>
+        </item>
+        <item name="SKReject">
+            <bit>2</bit>
+        </item>
+        <item name="SKRelease">
+            <bit>3</bit>
+        </item>
+        <item name="BKAccept">
+            <bit>4</bit>
+        </item>
+        <item name="BKReject">
+            <bit>5</bit>
+        </item>
+        <item name="AXKWarning">
+            <bit>6</bit>
+        </item>
+    </enum>
+
+    <enum name="MapPart">
+        <item name="KeyTypes">
+            <bit>0</bit>
+        </item>
+        <item name="KeySyms">
+            <bit>1</bit>
+        </item>
+        <item name="ModifierMap">
+            <bit>2</bit>
+        </item>
+        <item name="ExplicitComponents">
+            <bit>3</bit>
+        </item>
+        <item name="KeyActions">
+            <bit>4</bit>
+        </item>
+        <item name="KeyBehaviors">
+            <bit>5</bit>
+        </item>
+        <item name="VirtualMods">
+            <bit>6</bit>
+        </item>
+        <item name="VirtualModMap">
+            <bit>7</bit>
+        </item>
+    </enum>
+
+    <enum name="SetMapFlags">
+        <item name="ResizeTypes">
+            <bit>0</bit>
+        </item>
+        <item name="RecomputeActions">
+            <bit>1</bit>
+        </item>
+    </enum>
+
+    <enum name="StatePart">
+        <item name="ModifierState">
+            <bit>0</bit>
+        </item>
+        <item name="ModifierBase">
+            <bit>1</bit>
+        </item>
+        <item name="ModifierLatch">
+            <bit>2</bit>
+        </item>
+        <item name="ModifierLock">
+            <bit>3</bit>
+        </item>
+        <item name="GroupState">
+            <bit>4</bit>
+        </item>
+        <item name="GroupBase">
+            <bit>5</bit>
+        </item>
+        <item name="GroupLatch">
+            <bit>6</bit>
+        </item>
+        <item name="GroupLock">
+            <bit>7</bit>
+        </item>
+        <item name="CompatState">
+            <bit>8</bit>
+        </item>
+        <item name="GrabMods">
+            <bit>9</bit>
+        </item>
+        <item name="CompatGrabMods">
+            <bit>10</bit>
+        </item>
+        <item name="LookupMods">
+            <bit>11</bit>
+        </item>
+        <item name="CompatLookupMods">
+            <bit>12</bit>
+        </item>
+        <item name="PointerButtons">
+            <bit>13</bit>
+        </item>
+    </enum>
+
+    <enum name="BoolCtrl">
+        <item name="RepeatKeys">
+            <bit>0</bit>
+        </item>
+        <item name="SlowKeys">
+            <bit>1</bit>
+        </item>
+        <item name="BounceKeys">
+            <bit>2</bit>
+        </item>
+        <item name="StickyKeys">
+            <bit>3</bit>
+        </item>
+        <item name="MouseKeys">
+            <bit>4</bit>
+        </item>
+        <item name="MouseKeysAccel">
+            <bit>5</bit>
+        </item>
+        <item name="AccessXKeys">
+            <bit>6</bit>
+        </item>
+        <item name="AccessXTimeoutMask">
+            <bit>7</bit>
+        </item>
+        <item name="AccessXFeedbackMask">
+            <bit>8</bit>
+        </item>
+        <item name="AudibleBellMask">
+            <bit>9</bit>
+        </item>
+        <item name="Overlay1Mask">
+            <bit>10</bit>
+        </item>
+        <item name="Overlay2Mask">
+            <bit>11</bit>
+        </item>
+        <item name="IgnoreGroupLockMask">
+            <bit>12</bit>
+        </item>
+    </enum>
+
+    <!-- XXX: one zero less than XKB specification says,
+              uses the same values as libX11 -->
+    <enum name="Control">
+        <item name="GroupsWrap">
+            <bit>27</bit>
+        </item>
+        <item name="InternalMods">
+            <bit>28</bit>
+        </item>
+        <item name="IgnoreLockMods">
+            <bit>29</bit>
+        </item>
+        <item name="PerKeyRepeat">
+            <bit>30</bit>
+        </item>
+        <item name="ControlsEnabled">
+            <bit>31</bit>
+        </item>
+    </enum>
+
+    <enum name="AXOption">
+        <item name="SKPressFB">
+            <bit>0</bit>
+        </item>
+        <item name="SKAcceptFB">
+            <bit>1</bit>
+        </item>
+        <item name="FeatureFB">
+            <bit>2</bit>
+        </item>
+        <item name="SlowWarnFB">
+            <bit>3</bit>
+        </item>
+        <item name="IndicatorFB">
+            <bit>4</bit>
+        </item>
+        <item name="StickyKeysFB">
+            <bit>5</bit>
+        </item>
+        <item name="TwoKeys">
+            <bit>6</bit>
+        </item>
+        <item name="LatchToLock">
+            <bit>7</bit>
+        </item>
+        <item name="SKReleaseFB">
+            <bit>8</bit>
+        </item>
+        <item name="SKRejectFB">
+            <bit>9</bit>
+        </item>
+        <item name="BKRejectFB">
+            <bit>10</bit>
+        </item>
+        <item name="DumbBell">
+            <bit>11</bit>
+        </item>
+    </enum>
+
+    <typedef oldname="CARD16" newname="DeviceSpec" />
+
+    <enum name="LedClassResult">
+        <item name="KbdFeedbackClass">
+            <value>0</value>
+        </item>
+        <item name="LedFeedbackClass">
+            <value>4</value>
+        </item>
+    </enum>
+
+    <enum name="LedClass">
+        <item name="KbdFeedbackClass">
+            <value>0</value>
+        </item>
+        <item name="LedFeedbackClass">
+            <value>4</value>
+        </item>
+        <item name="DfltXIClass">
+            <value>768</value>
+        </item> <!--0x300-->
+        <item name="AllXIClasses">
+            <value>1280</value>
+        </item> <!--0x500-->
+    </enum>
+    <typedef oldname="CARD16" newname="LedClassSpec" />
+
+    <enum name="BellClassResult">
+        <item name="KbdFeedbackClass">
+            <value>0</value>
+        </item>
+        <item name="BellFeedbackClass">
+            <value>5</value>
+        </item>
+    </enum>
+
+    <enum name="BellClass">
+        <item name="KbdFeedbackClass">
+            <value>0</value>
+        </item>
+        <item name="BellFeedbackClass">
+            <value>5</value>
+        </item>
+        <item name="DfltXIClass">
+            <value>768</value>
+        </item> <!--0x300-->
+    </enum>
+    <typedef oldname="CARD16" newname="BellClassSpec" />
+
+    <enum name="ID">
+        <item name="UseCoreKbd">
+            <value>256</value>
+        </item> <!-- 0x100 -->
+        <item name="UseCorePtr">
+            <value>512</value>
+        </item> <!-- 0x200 -->
+        <item name="DfltXIClass">
+            <value>768</value>
+        </item> <!-- 0x300 -->
+        <item name="DfltXIId">
+            <value>1024</value>
+        </item> <!-- 0x400 -->
+        <item name="AllXIClass">
+            <value>1280</value>
+        </item> <!-- 0x500 -->
+        <item name="AllXIId">
+            <value>1536</value>
+        </item> <!-- 0x600 -->
+        <item name="XINone">
+            <value>65280</value>
+        </item> <!--0xff00-->
+    </enum>
+    <typedef oldname="CARD16" newname="IDSpec" />
+
+    <enum name="Group">
+        <item name="1">
+            <value>0</value>
+        </item>
+        <item name="2">
+            <value>1</value>
+        </item>
+        <item name="3">
+            <value>2</value>
+        </item>
+        <item name="4">
+            <value>3</value>
+        </item>
+    </enum>
+
+    <enum name="Groups">
+        <item name="Any">
+            <value>254</value>
+        </item>
+        <item name="All">
+            <value>255</value>
+        </item>
+    </enum>
+
+    <enum name="SetOfGroup">
+        <item name="Group1">
+            <bit>0</bit>
+        </item>
+        <item name="Group2">
+            <bit>1</bit>
+        </item>
+        <item name="Group3">
+            <bit>2</bit>
+        </item>
+        <item name="Group4">
+            <bit>3</bit>
+        </item>
+    </enum>
+
+    <enum name="SetOfGroups">
+        <item name="Any">
+            <bit>7</bit>
+        </item>
+    </enum>
+
+    <enum name="GroupsWrap">
+        <item name="WrapIntoRange">
+            <value>0</value>
+        </item>
+        <item name="ClampIntoRange">
+            <bit>6</bit>
+        </item>
+        <item name="RedirectIntoRange">
+            <bit>7</bit>
+        </item>
+    </enum>
+
+    <enum name="VModsHigh">
+        <item name="15">
+            <bit>7</bit>
+        </item>
+        <item name="14">
+            <bit>6</bit>
+        </item>
+        <item name="13">
+            <bit>5</bit>
+        </item>
+        <item name="12">
+            <bit>4</bit>
+        </item>
+        <item name="11">
+            <bit>3</bit>
+        </item>
+        <item name="10">
+            <bit>2</bit>
+        </item>
+        <item name="9">
+            <bit>1</bit>
+        </item>
+        <item name="8">
+            <bit>0</bit>
+        </item>
+    </enum>
+
+    <enum name="VModsLow">
+        <item name="7">
+            <bit>7</bit>
+        </item>
+        <item name="6">
+            <bit>6</bit>
+        </item>
+        <item name="5">
+            <bit>5</bit>
+        </item>
+        <item name="4">
+            <bit>4</bit>
+        </item>
+        <item name="3">
+            <bit>3</bit>
+        </item>
+        <item name="2">
+            <bit>2</bit>
+        </item>
+        <item name="1">
+            <bit>1</bit>
+        </item>
+        <item name="0">
+            <bit>0</bit>
+        </item>
+    </enum>
+
+    <enum name="VMod">
+        <item name="15">
+            <bit>15</bit>
+        </item>
+        <item name="14">
+            <bit>14</bit>
+        </item>
+        <item name="13">
+            <bit>13</bit>
+        </item>
+        <item name="12">
+            <bit>12</bit>
+        </item>
+        <item name="11">
+            <bit>11</bit>
+        </item>
+        <item name="10">
+            <bit>10</bit>
+        </item>
+        <item name="9">
+            <bit>9</bit>
+        </item>
+        <item name="8">
+            <bit>8</bit>
+        </item>
+        <item name="7">
+            <bit>7</bit>
+        </item>
+        <item name="6">
+            <bit>6</bit>
+        </item>
+        <item name="5">
+            <bit>5</bit>
+        </item>
+        <item name="4">
+            <bit>4</bit>
+        </item>
+        <item name="3">
+            <bit>3</bit>
+        </item>
+        <item name="2">
+            <bit>2</bit>
+        </item>
+        <item name="1">
+            <bit>1</bit>
+        </item>
+        <item name="0">
+            <bit>0</bit>
+        </item>
+    </enum>
+
+    <enum name="Explicit">
+        <item name="VModMap">
+            <bit>7</bit>
+        </item>
+        <item name="Behavior">
+            <bit>6</bit>
+        </item>
+        <item name="AutoRepeat">
+            <bit>5</bit>
+        </item>
+        <item name="Interpret">
+            <bit>4</bit>
+        </item>
+        <item name="KeyType4">
+            <bit>3</bit>
+        </item>
+        <item name="KeyType3">
+            <bit>2</bit>
+        </item>
+        <item name="KeyType2">
+            <bit>1</bit>
+        </item>
+        <item name="KeyType1">
+            <bit>0</bit>
+        </item>
+    </enum>
+
+    <enum name="SymInterpretMatch">
+        <item name="NoneOf">
+            <value>0</value>
+        </item>
+        <item name="AnyOfOrNone">
+            <value>1</value>
+        </item>
+        <item name="AnyOf">
+            <value>2</value>
+        </item>
+        <item name="AllOf">
+            <value>3</value>
+        </item>
+        <item name="Exactly">
+            <value>4</value>
+        </item>
+    </enum>
+
+    <enum name="SymInterpMatch">
+        <item name="LevelOneOnly">
+            <bit>7</bit>
+        </item>
+        <item name="OpMask">
+            <value>127</value>
+        </item> <!--0x7f-->
+    </enum>
+
+    <enum name="IMFlag">
+        <item name="NoExplicit">
+            <bit>7</bit>
+        </item>
+        <item name="NoAutomatic">
+            <bit>6</bit>
+        </item>
+        <item name="LEDDrivesKB">
+            <bit>5</bit>
+        </item>
+    </enum>
+
+    <enum name="IMModsWhich">
+        <item name="UseCompat">
+            <bit>4</bit>
+        </item>
+        <item name="UseEffective">
+            <bit>3</bit>
+        </item>
+        <item name="UseLocked">
+            <bit>2</bit>
+        </item>
+        <item name="UseLatched">
+            <bit>1</bit>
+        </item>
+        <item name="UseBase">
+            <bit>0</bit>
+        </item>
+    </enum>
+
+    <enum name="IMGroupsWhich">
+        <item name="UseCompat">
+            <bit>4</bit>
+        </item>
+        <item name="UseEffective">
+            <bit>3</bit>
+        </item>
+        <item name="UseLocked">
+            <bit>2</bit>
+        </item>
+        <item name="UseLatched">
+            <bit>1</bit>
+        </item>
+        <item name="UseBase">
+            <bit>0</bit>
+        </item>
+    </enum>
+
+    <struct name="IndicatorMap">
+        <field name="flags" type="CARD8" enum="IMFlag" />
+        <field name="whichGroups" type="CARD8" enum="IMGroupsWhich" />
+        <field name="groups" type="CARD8" enum="SetOfGroup" />
+        <field name="whichMods" type="CARD8" enum="IMModsWhich" />
+        <field name="mods" type="CARD8" mask="ModMask" />
+        <field name="realMods" type="CARD8" mask="ModMask" />
+        <field name="vmods" type="CARD16" mask="VMod" />
+        <field name="ctrls" type="CARD32" mask="BoolCtrl" />
+    </struct>
+
+    <enum name="CMDetail">
+        <item name="SymInterp">
+            <bit>0</bit>
+        </item>
+        <item name="GroupCompat">
+            <bit>1</bit>
+        </item>
+    </enum>
+
+    <enum name="NameDetail">
+        <item name="Keycodes">
+            <bit>0</bit>
+        </item>
+        <item name="Geometry">
+            <bit>1</bit>
+        </item>
+        <item name="Symbols">
+            <bit>2</bit>
+        </item>
+        <item name="PhysSymbols">
+            <bit>3</bit>
+        </item>
+        <item name="Types">
+            <bit>4</bit>
+        </item>
+        <item name="Compat">
+            <bit>5</bit>
+        </item>
+        <item name="KeyTypeNames">
+            <bit>6</bit>
+        </item>
+        <item name="KTLevelNames">
+            <bit>7</bit>
+        </item>
+        <item name="IndicatorNames">
+            <bit>8</bit>
+        </item>
+        <item name="KeyNames">
+            <bit>9</bit>
+        </item>
+        <item name="KeyAliases">
+            <bit>10</bit>
+        </item>
+        <item name="VirtualModNames">
+            <bit>11</bit>
+        </item>
+        <item name="GroupNames">
+            <bit>12</bit>
+        </item>
+        <item name="RGNames">
+            <bit>13</bit>
+        </item>
+    </enum>
+
+    <enum name="GBNDetail">
+        <item name="Types">
+            <bit>0</bit>
+        </item>
+        <item name="CompatMap">
+            <bit>1</bit>
+        </item>
+        <item name="ClientSymbols">
+            <bit>2</bit>
+        </item>
+        <item name="ServerSymbols">
+            <bit>3</bit>
+        </item>
+        <item name="IndicatorMaps">
+            <bit>4</bit>
+        </item>
+        <item name="KeyNames">
+            <bit>5</bit>
+        </item>
+        <item name="Geometry">
+            <bit>6</bit>
+        </item>
+        <item name="OtherNames">
+            <bit>7</bit>
+        </item>
+    </enum>
+
+    <enum name="XIFeature">
+        <item name="Keyboards">
+            <bit>0</bit>
+        </item>
+        <item name="ButtonActions">
+            <bit>1</bit>
+        </item>
+        <item name="IndicatorNames">
+            <bit>2</bit>
+        </item>
+        <item name="IndicatorMaps">
+            <bit>3</bit>
+        </item>
+        <item name="IndicatorState">
+            <bit>4</bit>
+        </item>
+    </enum>
+
+    <enum name="PerClientFlag">
+        <item name="DetectableAutoRepeat">
+            <bit>0</bit>
+        </item>
+        <item name="GrabsUseXKBState">
+            <bit>1</bit>
+        </item>
+        <item name="AutoResetControls">
+            <bit>2</bit>
+        </item>
+        <item name="LookupStateWhenGrabbed">
+            <bit>3</bit>
+        </item>
+        <item name="SendEventUsesXKBState">
+            <bit>4</bit>
+        </item>
+    </enum>
+
+    <struct name="ModDef">
+        <field name="mask" type="CARD8" mask="ModMask" />
+        <field name="realMods" type="CARD8" mask="ModMask" />
+        <field name="vmods" type="CARD16" mask="VMod" />
+    </struct>
+
+    <struct name="KeyName">
+        <list name="name" type="char">
+            <value>4</value>
+        </list>
+    </struct>
+
+    <struct name="KeyAlias">
+        <list name="real" type="char">
+            <value>4</value>
+        </list>
+        <list name="alias" type="char">
+            <value>4</value>
+        </list>
+    </struct>
+
+    <struct name="CountedString16">
+        <field name="length" type="CARD16" />
+        <list name="string" type="char">
+            <fieldref>length</fieldref>
+        </list>
+        <list type="void" name="alignment_pad">
+            <op op="-">
+                <op op="&amp;">
+                    <op op="+">
+                        <fieldref>length</fieldref>
+                        <value>5</value>
+                    </op>
+                    <unop op="~">
+                        <value>3</value>
+                    </unop>
+                </op>
+                <op op="+">
+                    <fieldref>length</fieldref>
+                    <value>2</value>
+                </op>
+            </op>
+        </list>
+    </struct>
+
+    <struct name="KTMapEntry">
+        <field name="active" type="BOOL" />
+        <field name="mods_mask" type="CARD8" mask="ModMask" />
+        <field name="level" type="CARD8" />
+        <field name="mods_mods" type="CARD8" mask="ModMask" />
+        <field name="mods_vmods" type="CARD16" mask="VMod" />
+        <pad bytes="2" />
+    </struct>
+
+    <struct name="KeyType">
+        <field name="mods_mask" type="CARD8" mask="ModMask" />
+        <field name="mods_mods" type="CARD8" mask="ModMask" />
+        <field name="mods_vmods" type="CARD16" mask="VMod" />
+        <field name="numLevels" type="CARD8" />
+        <field name="nMapEntries" type="CARD8" />
+        <field name="hasPreserve" type="BOOL" />
+        <pad bytes="1" />
+        <list name="map" type="KTMapEntry">
+            <fieldref>nMapEntries</fieldref>
+        </list>
+        <list name="preserve" type="ModDef">
+            <op op="*">
+                <fieldref>hasPreserve</fieldref>
+                <fieldref>nMapEntries</fieldref>
+            </op>
+        </list>
+    </struct>
+
+    <struct name="KeySymMap">
+        <list name="kt_index" type="CARD8">
+            <value>4</value>
+        </list>
+        <field name="groupInfo" type="CARD8" />
+        <field name="width" type="CARD8" />
+        <field name="nSyms" type="CARD16" />
+        <list name="syms" type="KEYSYM">
+            <fieldref>nSyms</fieldref>
+        </list>
+    </struct>
+
+    <!-- Key Behaviors -->
+
+    <struct name="CommonBehavior">
+        <field name="type" type="CARD8" />
+        <field name="data" type="CARD8" />
+    </struct>
+
+    <struct name="DefaultBehavior">
+        <field name="type" type="CARD8" />
+        <pad bytes="1" />
+    </struct>
+
+    <typedef oldname="DefaultBehavior" newname="LockBehavior" />
+
+    <struct name="RadioGroupBehavior">
+        <field name="type" type="CARD8" />
+        <field name="group" type="CARD8" />
+    </struct>
+
+    <struct name="OverlayBehavior">
+        <field name="type" type="CARD8" />
+        <field name="key" type="KEYCODE" />
+    </struct>
+
+    <typedef oldname="LockBehavior" newname="PermamentLockBehavior" />
+    <typedef oldname="RadioGroupBehavior" newname="PermamentRadioGroupBehavior" />
+    <typedef oldname="OverlayBehavior" newname="PermamentOverlayBehavior" />
+
+    <union name="Behavior">
+        <field name="common" type="CommonBehavior" />
+        <field name="default" type="DefaultBehavior" />
+        <field name="lock" type="LockBehavior" />
+        <field name="radioGroup" type="RadioGroupBehavior" />
+        <field name="overlay1" type="OverlayBehavior" />
+        <field name="overlay2" type="OverlayBehavior" />
+        <field name="permamentLock" type="PermamentLockBehavior" />
+        <field name="permamentRadioGroup" type="PermamentRadioGroupBehavior" />
+        <field name="permamentOverlay1" type="PermamentOverlayBehavior" />
+        <field name="permamentOverlay2" type="PermamentOverlayBehavior" />
+        <field name="type" type="CARD8" />
+    </union>
+
+    <enum name="BehaviorType">
+        <item name="Default">
+            <value>0</value>
+        </item> <!--0x00-->
+        <item name="Lock">
+            <value>1</value>
+        </item> <!--0x01-->
+        <item name="RadioGroup">
+            <value>2</value>
+        </item> <!--0x02-->
+        <item name="Overlay1">
+            <value>3</value>
+        </item> <!--0x03-->
+        <item name="Overlay2">
+            <value>4</value>
+        </item> <!--0x04-->
+        <item name="PermamentLock">
+            <value>129</value>
+        </item> <!--0x81-->
+        <item name="PermamentRadioGroup">
+            <value>130</value>
+        </item> <!--0x82-->
+        <item name="PermamentOverlay1">
+            <value>131</value>
+        </item> <!--0x83-->
+        <item name="PermamentOverlay2">
+            <value>132</value>
+        </item> <!--0x84-->
+    </enum>
+
+    <struct name="SetBehavior">
+        <field name="keycode" type="KEYCODE" />
+        <field name="behavior" type="Behavior" />
+        <pad bytes="1" />
+    </struct>
+
+    <struct name="SetExplicit">
+        <field name="keycode" type="KEYCODE" />
+        <field name="explicit" type="CARD8" mask="Explicit" />
+    </struct>
+
+    <struct name="KeyModMap">
+        <field name="keycode" type="KEYCODE" />
+        <field name="mods" type="CARD8" mask="ModMask" />
+    </struct>
+
+    <struct name="KeyVModMap">
+        <field name="keycode" type="KEYCODE" />
+        <pad bytes="1" />
+        <field name="vmods" type="CARD16" mask="VMod" />
+    </struct>
+
+    <struct name="KTSetMapEntry">
+        <field name="level" type="CARD8" />
+        <field name="realMods" type="CARD8" mask="ModMask" />
+        <field name="virtualMods" type="CARD16" mask="VMod" />
+    </struct>
+
+    <struct name="SetKeyType">
+        <field name="mask" type="CARD8" mask="ModMask" />
+        <field name="realMods" type="CARD8" mask="ModMask" />
+        <field name="virtualMods" type="CARD16" mask="VMod" />
+        <field name="numLevels" type="CARD8" />
+        <field name="nMapEntries" type="CARD8" />
+        <field name="preserve" type="BOOL" />
+        <pad bytes="1" />
+        <list name="entries" type="KTSetMapEntry">
+            <fieldref>nMapEntries</fieldref>
+        </list>
+        <list name="preserve_entries" type="KTSetMapEntry">
+            <op op="*">
+                <fieldref>preserve</fieldref>
+                <fieldref>nMapEntries</fieldref>
+            </op>
+        </list>
+    </struct>
+
+    <typedef oldname="char" newname="STRING8" />
+
+    <!-- XXX: Property is broken
+    <struct name="Property">
+        <field name="nameLength" type="CARD16" />
+        <list name="name" type="STRING8">
+            <fieldref>nameLength</fieldref>
+        </list>
+        <field name="valueLength" type="CARD16" />
+        <list name="value" type="STRING8">
+            <fieldref>valueLength</fieldref>
+        </list>
+    </struct>
+    -->
+    <!-- XXX: This would be the correct Property structure as per spec.,
+          but it's broken atm. too. Add it anyway here, so we don't
+          loose that information.
+    <struct name="Property">
+        <field name="name" type="CountedString16" />
+        <field name="value" type="CountedString16" />
+    </struct>
+    -->
+
+    <struct name="Outline">
+        <field name="nPoints" type="CARD8" />
+        <field name="cornerRadius" type="CARD8" />
+        <pad bytes="2" />
+        <list name="points" type="POINT">
+            <fieldref>nPoints</fieldref>
+        </list>
+    </struct>
+
+    <struct name="Shape">
+        <field name="name" type="ATOM" />
+        <field name="nOutlines" type="CARD8" />
+        <field name="primaryNdx" type="CARD8" />
+        <field name="approxNdx" type="CARD8" />
+        <pad bytes="1" />
+        <list name="outlines" type="Outline">
+            <fieldref>nOutlines</fieldref>
+        </list>
+    </struct>
+
+    <struct name="Key">
+        <list name="name" type="STRING8">
+            <value>4</value>
+        </list>
+        <field name="gap" type="INT16" />
+        <field name="shapeNdx" type="CARD8" />
+        <field name="colorNdx" type="CARD8" />
+    </struct>
+
+    <struct name="OverlayKey">
+        <list name="over" type="STRING8">
+            <value>4</value>
+        </list>
+        <list name="under" type="STRING8">
+            <value>4</value>
+        </list>
+    </struct>
+
+    <struct name="OverlayRow">
+        <field name="rowUnder" type="CARD8" />
+        <field name="nKeys" type="CARD8" />
+        <pad bytes="2" />
+        <list name="keys" type="OverlayKey">
+            <fieldref>nKeys</fieldref>
+        </list>
+    </struct>
+
+    <struct name="Overlay">
+        <field name="name" type="ATOM" />
+        <field name="nRows" type="CARD8" />
+        <pad bytes="3" />
+        <list name="rows" type="OverlayRow">
+            <fieldref>nRows</fieldref>
+        </list>
+    </struct>
+
+    <struct name="Row">
+        <field name="top" type="INT16" />
+        <field name="left" type="INT16" />
+        <field name="nKeys" type="CARD8" />
+        <field name="vertical" type="BOOL" />
+        <pad bytes="2" />
+        <list name="keys" type="Key">
+            <fieldref>nKeys</fieldref>
+        </list>
+    </struct>
+
+    <enum name="DoodadType">
+        <item name="Outline">
+            <value>1</value>
+        </item>
+        <item name="Solid">
+            <value>2</value>
+        </item>
+        <item name="Text">
+            <value>3</value>
+        </item>
+        <item name="Indicator">
+            <value>4</value>
+        </item>
+        <item name="Logo">
+            <value>5</value>
+        </item>
+    </enum>
+
+    <!-- XXX: doodads are broken
+    <struct name="CommonDoodad">
+        <field name="name" type="ATOM" />
+        <field name="type" type="CARD8" enum="DoodadType" />
+        <field name="priority" type="CARD8" />
+        <field name="top" type="INT16" />
+        <field name="left" type="INT16" />
+        <field name="angle" type="INT16" />
+        <pad bytes="8" />
+    </struct>
+
+    <struct name="ShapeDoodad">
+        <field name="name" type="ATOM" />
+        <field name="type" type="CARD8" enum="DoodadType" />
+        <field name="priority" type="CARD8" />
+        <field name="top" type="INT16" />
+        <field name="left" type="INT16" />
+        <field name="angle" type="INT16" />
+        <field name="colorNdx" type="CARD8" />
+        <field name="shapeNdx" type="CARD8" />
+        <pad bytes="6" />
+    </struct>
+
+    <struct name="TextDoodad">
+        <field name="name" type="ATOM" />
+        <field name="type" type="CARD8" enum="DoodadType" />
+        <field name="priority" type="CARD8" />
+        <field name="top" type="INT16" />
+        <field name="left" type="INT16" />
+        <field name="angle" type="INT16" />
+        <field name="width" type="CARD16" />
+        <field name="height" type="CARD16" />
+        <field name="colorNdx" type="CARD8" />
+        <pad bytes="3" />
+        <field name="text" type="CountedString16" />
+        <field name="font" type="CountedString16" />
+    </struct>
+
+    <struct name="IndicatorDoodad">
+        <field name="name" type="ATOM" />
+        <field name="type" type="CARD8" enum="DoodadType" />
+        <field name="priority" type="CARD8" />
+        <field name="top" type="INT16" />
+        <field name="left" type="INT16" />
+        <field name="angle" type="INT16" />
+        <field name="shapeNdx" type="CARD8" />
+        <field name="onColorNdx" type="CARD8" />
+        <field name="offColorNdx" type="CARD8" />
+        <pad bytes="5" />
+    </struct>
+
+    <struct name="LogoDoodad">
+        <field name="name" type="ATOM" />
+        <field name="type" type="CARD8" enum="DoodadType" />
+        <field name="priority" type="CARD8" />
+        <field name="top" type="INT16" />
+        <field name="left" type="INT16" />
+        <field name="angle" type="INT16" />
+        <field name="colorNdx" type="CARD8" />
+        <field name="shapeNdx" type="CARD8" />
+        <pad bytes="6" />
+        <field name="logoName" type="CountedString16" />
+    </struct>
+
+    <union name="Doodad">
+        <field name="common" type="CommonDoodad" />
+        <field name="shape" type="ShapeDoodad" />
+        <field name="text" type="TextDoodad" />
+        <field name="indicator" type="IndicatorDoodad" />
+        <field name="logo" type="LogoDoodad" />
+    </union>
+
+    <struct name="Section">
+        <field name="name" type="ATOM" />
+        <field name="top" type="INT16" />
+        <field name="left" type="INT16" />
+        <field name="width" type="CARD16" />
+        <field name="height" type="CARD16" />
+        <field name="angle" type="INT16" />
+        <field name="priority" type="CARD8" />
+        <field name="nRows" type="CARD8" />
+        <field name="nDoodads" type="CARD8" />
+        <field name="nOverlays" type="CARD8" />
+        <pad bytes="2" />
+        <list name="rows" type="Row">
+            <fieldref>nRows</fieldref>
+        </list>
+        <list name="doodads" type="Doodad">
+            <fieldref>nDoodads</fieldref>
+        </list>
+        <list name="overlays" type="Overlay">
+            <fieldref>nOverlays</fieldref>
+        </list>
+    </struct>
+    -->
+
+    <struct name="Listing">
+        <field name="flags" type="CARD16" />
+        <field name="length" type="CARD16" />
+        <list name="string" type="STRING8">
+            <fieldref>length</fieldref>
+        </list>
+        <pad align="2" />
+    </struct>
+
+    <struct name="DeviceLedInfo">
+        <field name="ledClass" type="LedClassSpec" enum="LedClass" />
+        <field name="ledID" type="IDSpec" altenum="ID" />
+        <field name="namesPresent" type="CARD32" />
+        <field name="mapsPresent" type="CARD32" />
+        <field name="physIndicators" type="CARD32" />
+        <field name="state" type="CARD32" />
+        <list name="names" type="ATOM">
+            <popcount>
+                <fieldref>namesPresent</fieldref>
+            </popcount>
+        </list>
+        <list name="maps" type="IndicatorMap">
+            <popcount>
+                <fieldref>mapsPresent</fieldref>
+            </popcount>
+        </list>
+    </struct>
+
+    <!-- Errors -->
+
+    <enum name="Error">
+        <item name="BadDevice">
+            <value>255</value>
+        </item> <!--0xff-->
+        <item name="BadClass">
+            <value>254</value>
+        </item> <!--0xfe-->
+        <item name="BadId">
+            <value>253</value>
+        </item> <!--0xfd-->
+    </enum>
+
+    <error name="Keyboard" number="0">
+        <field name="value" type="CARD32" />
+        <field name="minorOpcode" type="CARD16" />
+        <field name="majorOpcode" type="CARD8" />
+        <pad bytes="21" />
+    </error>
+
+    <!-- Key Actions -->
+
+    <enum name="SA">
+        <item name="ClearLocks">
+            <bit>0</bit>
+        </item>
+        <item name="LatchToLock">
+            <bit>1</bit>
+        </item>
+        <item name="UseModMapMods">
+            <bit>2</bit>
+        </item>
+        <item name="GroupAbsolute">
+            <bit>2</bit>
+        </item>
+    </enum>
+
+    <enum name="SAType">
+        <item name="NoAction">
+            <value>0</value>
+        </item>
+        <item name="SetMods">
+            <value>1</value>
+        </item>
+        <item name="LatchMods">
+            <value>2</value>
+        </item>
+        <item name="LockMods">
+            <value>3</value>
+        </item>
+        <item name="SetGroup">
+            <value>4</value>
+        </item>
+        <item name="LatchGroup">
+            <value>5</value>
+        </item>
+        <item name="LockGroup">
+            <value>6</value>
+        </item>
+        <item name="MovePtr">
+            <value>7</value>
+        </item>
+        <item name="PtrBtn">
+            <value>8</value>
+        </item>
+        <item name="LockPtrBtn">
+            <value>9</value>
+        </item>
+        <item name="SetPtrDflt">
+            <value>10</value>
+        </item>
+        <item name="ISOLock">
+            <value>11</value>
+        </item>
+        <item name="Terminate">
+            <value>12</value>
+        </item>
+        <item name="SwitchScreen">
+            <value>13</value>
+        </item>
+        <item name="SetControls">
+            <value>14</value>
+        </item>
+        <item name="LockControls">
+            <value>15</value>
+        </item>
+        <item name="Message">
+            <value>16</value>
+        </item>
+        <item name="RedirectKey">
+            <value>17</value>
+        </item>
+        <item name="DeviceBtn">
+            <value>18</value>
+        </item>
+        <item name="LockDeviceBtn">
+            <value>19</value>
+        </item>
+        <item name="DeviceValuator">
+            <value>20</value>
+        </item>
+    </enum>
+
+    <struct name="SANoAction">
+        <field name="type" type="CARD8" enum="SAType" />
+        <pad bytes="7" />
+    </struct>
+
+    <struct name="SASetMods">
+        <field name="type" type="CARD8" enum="SAType" />
+        <field name="flags" type="CARD8" mask="SA" />
+        <field name="mask" type="CARD8" mask="ModMask" />
+        <field name="realMods" type="CARD8" mask="ModMask" />
+        <field name="vmodsHigh" type="CARD8" mask="VModsHigh" />
+        <field name="vmodsLow" type="CARD8" mask="VModsLow" />
+        <pad bytes="2" />
+    </struct>
+
+    <typedef oldname="SASetMods" newname="SALatchMods" />
+
+    <typedef oldname="SASetMods" newname="SALockMods" />
+
+    <struct name="SASetGroup">
+        <field name="type" type="CARD8" enum="SAType" />
+        <field name="flags" type="CARD8" mask="SA" />
+        <field name="group" type="INT8" />
+        <pad bytes="5" />
+    </struct>
+
+    <typedef oldname="SASetGroup" newname="SALatchGroup" />
+
+    <typedef oldname="SASetGroup" newname="SALockGroup" />
+
+    <enum name="SAMovePtrFlag">
+        <item name="NoAcceleration">
+            <bit>0</bit>
+        </item>
+        <item name="MoveAbsoluteX">
+            <bit>1</bit>
+        </item>
+        <item name="MoveAbsoluteY">
+            <bit>2</bit>
+        </item>
+    </enum>
+
+    <struct name="SAMovePtr">
+        <field name="type" type="CARD8" enum="SAType" />
+        <field name="flags" type="CARD8" mask="SAMovePtrFlag" />
+        <field name="xHigh" type="INT8" />
+        <field name="xLow" type="CARD8" />
+        <field name="yHigh" type="INT8" />
+        <field name="yLow" type="CARD8" />
+        <pad bytes="2" />
+    </struct>
+
+    <struct name="SAPtrBtn">
+        <field name="type" type="CARD8" enum="SAType" />
+        <field name="flags" type="CARD8" />
+        <field name="count" type="CARD8" />
+        <field name="button" type="CARD8" />
+        <pad bytes="4" />
+    </struct>
+
+    <struct name="SALockPtrBtn">
+        <field name="type" type="CARD8" enum="SAType" />
+        <field name="flags" type="CARD8" />
+        <pad bytes="1" />
+        <field name="button" type="CARD8" />
+        <pad bytes="4" />
+    </struct>
+
+    <enum name="SASetPtrDfltFlag">
+        <!-- The spec says 0x02 but Xlib uses 0x04. -->
+        <item name="DfltBtnAbsolute">
+            <bit>2</bit>
+        </item>
+        <item name="AffectDfltButton">
+            <bit>0</bit>
+        </item>
+    </enum>
+
+    <struct name="SASetPtrDflt">
+        <field name="type" type="CARD8" enum="SAType" />
+        <field name="flags" type="CARD8" mask="SASetPtrDfltFlag" />
+        <field name="affect" type="CARD8" mask="SASetPtrDfltFlag" />
+        <field name="value" type="INT8" />
+        <pad bytes="4" />
+    </struct>
+
+    <enum name="SAIsoLockFlag">
+        <item name="NoLock">
+            <bit>0</bit>
+        </item>
+        <item name="NoUnlock">
+            <bit>1</bit>
+        </item>
+        <item name="UseModMapMods">
+            <bit>2</bit>
+        </item>
+        <item name="GroupAbsolute">
+            <bit>2</bit>
+        </item>
+        <item name="ISODfltIsGroup">
+            <bit>3</bit>
+        </item>
+    </enum>
+
+    <enum name="SAIsoLockNoAffect">
+        <item name="Ctrls">
+            <bit>3</bit>
+        </item>
+        <item name="Ptr">
+            <bit>4</bit>
+        </item>
+        <item name="Group">
+            <bit>5</bit>
+        </item>
+        <item name="Mods">
+            <bit>6</bit>
+        </item>
+    </enum>
+
+    <struct name="SAIsoLock">
+        <field name="type" type="CARD8" enum="SAType" />
+        <field name="flags" type="CARD8" mask="SAIsoLockFlag" />
+        <field name="mask" type="CARD8" mask="ModMask" />
+        <field name="realMods" type="CARD8" mask="ModMask" />
+        <field name="group" type="INT8" />
+        <field name="affect" type="CARD8" mask="SAIsoLockNoAffect" />
+        <field name="vmodsHigh" type="CARD8" mask="VModsHigh" />
+        <field name="vmodsLow" type="CARD8" mask="VModsLow" />
+    </struct>
+
+    <struct name="SATerminate">
+        <field name="type" type="CARD8" enum="SAType" />
+        <pad bytes="7" />
+    </struct>
+
+    <enum name="SwitchScreenFlag">
+        <item name="Application">
+            <bit>0</bit>
+        </item>
+        <item name="Absolute">
+            <bit>2</bit>
+        </item>
+    </enum>
+
+    <struct name="SASwitchScreen">
+        <field name="type" type="CARD8" enum="SAType" />
+        <field name="flags" type="CARD8" />
+        <field name="newScreen" type="INT8" />
+        <pad bytes="5" />
+    </struct>
+
+    <enum name="BoolCtrlsHigh">
+        <item name="AccessXFeedback">
+            <bit>0</bit>
+        </item>
+        <item name="AudibleBell">
+            <bit>1</bit>
+        </item>
+        <item name="Overlay1">
+            <bit>2</bit>
+        </item>
+        <item name="Overlay2">
+            <bit>3</bit>
+        </item>
+        <item name="IgnoreGroupLock">
+            <bit>4</bit>
+        </item>
+    </enum>
+
+    <enum name="BoolCtrlsLow">
+        <item name="RepeatKeys">
+            <bit>0</bit>
+        </item>
+        <item name="SlowKeys">
+            <bit>1</bit>
+        </item>
+        <item name="BounceKeys">
+            <bit>2</bit>
+        </item>
+        <item name="StickyKeys">
+            <bit>3</bit>
+        </item>
+        <item name="MouseKeys">
+            <bit>4</bit>
+        </item>
+        <item name="MouseKeysAccel">
+            <bit>5</bit>
+        </item>
+        <item name="AccessXKeys">
+            <bit>6</bit>
+        </item>
+        <item name="AccessXTimeout">
+            <bit>7</bit>
+        </item>
+    </enum>
+
+    <struct name="SASetControls">
+        <field name="type" type="CARD8" enum="SAType" />
+        <pad bytes="3" />
+        <field name="boolCtrlsHigh" type="CARD8" mask="BoolCtrlsHigh" />
+        <field name="boolCtrlsLow" type="CARD8" mask="BoolCtrlsLow" />
+        <pad bytes="2" />
+    </struct>
+
+    <typedef oldname="SASetControls" newname="SALockControls" />
+
+    <enum name="ActionMessageFlag">
+        <item name="OnPress">
+            <bit>0</bit>
+        </item>
+        <item name="OnRelease">
+            <bit>1</bit>
+        </item>
+        <item name="GenKeyEvent">
+            <bit>2</bit>
+        </item>
+    </enum>
+
+    <struct name="SAActionMessage">
+        <field name="type" type="CARD8" enum="SAType" />
+        <field name="flags" type="CARD8" mask="ActionMessageFlag" />
+        <list name="message" type="CARD8">
+            <value>6</value>
+        </list>
+    </struct>
+
+    <struct name="SARedirectKey">
+        <field name="type" type="CARD8" enum="SAType" />
+        <field name="newkey" type="KEYCODE" />
+        <field name="mask" type="CARD8" mask="ModMask" />
+        <field name="realModifiers" type="CARD8" mask="ModMask" />
+        <field name="vmodsMaskHigh" type="CARD8" mask="VModsHigh" />
+        <field name="vmodsMaskLow" type="CARD8" mask="VModsLow" />
+        <field name="vmodsHigh" type="CARD8" mask="VModsHigh" />
+        <field name="vmodsLow" type="CARD8" mask="VModsLow" />
+    </struct>
+
+    <struct name="SADeviceBtn">
+        <field name="type" type="CARD8" enum="SAType" />
+        <field name="flags" type="CARD8" />
+        <field name="count" type="CARD8" />
+        <field name="button" type="CARD8" />
+        <field name="device" type="CARD8" />
+        <pad bytes="3" />
+    </struct>
+
+    <enum name="LockDeviceFlags">
+        <item name="NoLock">
+            <bit>0</bit>
+        </item>
+        <item name="NoUnlock">
+            <bit>1</bit>
+        </item>
+    </enum>
+
+    <struct name="SALockDeviceBtn">
+        <field name="type" type="CARD8" enum="SAType" />
+        <field name="flags" type="CARD8" mask="LockDeviceFlags" />
+        <pad bytes="1" />
+        <field name="button" type="CARD8" />
+        <field name="device" type="CARD8" />
+        <pad bytes="3" />
+    </struct>
+
+    <enum name="SAValWhat">
+        <item name="IgnoreVal">
+            <value>0</value>
+        </item>
+        <item name="SetValMin">
+            <value>1</value>
+        </item>
+        <item name="SetValCenter">
+            <value>2</value>
+        </item>
+        <item name="SetValMax">
+            <value>3</value>
+        </item>
+        <item name="SetValRelative">
+            <value>4</value>
+        </item>
+        <item name="SetValAbsolute">
+            <value>5</value>
+        </item>
+    </enum>
+
+    <struct name="SADeviceValuator">
+        <field name="type" type="CARD8" enum="SAType" />
+        <field name="device" type="CARD8" />
+        <field name="val1what" type="CARD8" enum="SAValWhat" />
+        <field name="val1index" type="CARD8" />
+        <field name="val1value" type="CARD8" />
+        <field name="val2what" type="CARD8" enum="SAValWhat" />
+        <field name="val2index" type="CARD8" />
+        <field name="val2value" type="CARD8" />
+    </struct>
+
+    <struct name="SIAction">
+        <field name="type" type="CARD8" enum="SAType" />
+        <list name="data" type="CARD8">
+            <value>7</value>
+        </list>
+    </struct>
+
+    <struct name="SymInterpret">
+        <field name="sym" type="KEYSYM" />
+        <field name="mods" type="CARD8" mask="ModMask" />
+        <!-- "match" may also have XkbSI_LevelOneOnly (0x80) or'd into it -->
+        <field name="match" type="CARD8" altenum="SymInterpretMatch" />
+        <field name="virtualMod" type="CARD8" mask="VModsLow" />
+        <field name="flags" type="CARD8" />
+        <field name="action" type="SIAction" />
+    </struct>
+
+    <union name="Action">
+        <field name="no_action" type="SANoAction" />
+        <field name="set_mods" type="SASetMods" />
+        <field name="latch_mods" type="SALatchMods" />
+        <field name="lock_mods" type="SALockMods" />
+        <field name="set_group" type="SASetGroup" />
+        <field name="latch_group" type="SALatchGroup" />
+        <field name="lock_group" type="SALockGroup" />
+        <field name="move_ptr" type="SAMovePtr" />
+        <field name="ptr_btn" type="SAPtrBtn" />
+        <field name="lock_ptr_btn" type="SALockPtrBtn" />
+        <field name="set_ptr_dflt" type="SASetPtrDflt" />
+        <field name="iso_lock" type="SAIsoLock" />
+        <field name="terminate" type="SATerminate" />
+        <field name="switch_screen" type="SASwitchScreen" />
+        <field name="set_controls" type="SASetControls" />
+        <field name="lock_controls" type="SALockControls" />
+        <field name="message" type="SAActionMessage" />
+        <field name="redirect_key" type="SARedirectKey" />
+        <field name="device_btn" type="SADeviceBtn" />
+        <field name="lock_device_btn" type="SALockDeviceBtn" />
+        <field name="device_valuator" type="SADeviceValuator" />
+        <field name="type" type="CARD8" enum="SAType" />
+    </union>
+
+    <!-- Requests -->
+
+    <request name="UseExtension" opcode="0">
+        <field name="wantedMajor" type="CARD16" />
+        <field name="wantedMinor" type="CARD16" />
+        <reply>
+            <field name="supported" type="BOOL" />
+            <field name="serverMajor" type="CARD16" />
+            <field name="serverMinor" type="CARD16" />
+            <pad bytes="20" />
+        </reply>
+    </request>
+
+    <request name="SelectEvents" opcode="1">
+        <field name="deviceSpec" type="DeviceSpec" />
+        <field name="affectWhich" type="CARD16" mask="EventType" />
+        <field name="clear" type="CARD16" mask="EventType" />
+        <field name="selectAll" type="CARD16" mask="EventType" />
+        <field name="affectMap" type="CARD16" mask="MapPart" />
+        <field name="map" type="CARD16" mask="MapPart" />
+        <switch name="details">
+            <op op="&amp;">
+                <fieldref>affectWhich</fieldref>
+                <op op="&amp;">
+                    <unop op="~">
+                        <fieldref>clear</fieldref>
+                    </unop>
+                    <unop op="~">
+                        <fieldref>selectAll</fieldref>
+                    </unop>
+                </op>
+            </op>
+            <bitcase>
+                <enumref ref="EventType">NewKeyboardNotify</enumref>
+                <field name="affectNewKeyboard" type="CARD16" mask="NKNDetail" />
+                <field name="newKeyboardDetails" type="CARD16" mask="NKNDetail" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="EventType">StateNotify</enumref>
+                <field name="affectState" type="CARD16" mask="StatePart" />
+                <field name="stateDetails" type="CARD16" mask="StatePart" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="EventType">ControlsNotify</enumref>
+                <field name="affectCtrls" type="CARD32" mask="Control" />
+                <field name="ctrlDetails" type="CARD32" mask="Control" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="EventType">IndicatorStateNotify</enumref>
+                <field name="affectIndicatorState" type="CARD32" />
+                <field name="indicatorStateDetails" type="CARD32" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="EventType">IndicatorMapNotify</enumref>
+                <field name="affectIndicatorMap" type="CARD32" />
+                <field name="indicatorMapDetails" type="CARD32" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="EventType">NamesNotify</enumref>
+                <field name="affectNames" type="CARD16" mask="NameDetail" />
+                <field name="namesDetails" type="CARD16" mask="NameDetail" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="EventType">CompatMapNotify</enumref>
+                <field name="affectCompat" type="CARD8" mask="CMDetail" />
+                <field name="compatDetails" type="CARD8" mask="CMDetail" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="EventType">BellNotify</enumref>
+                <field name="affectBell" type="CARD8" />
+                <field name="bellDetails" type="CARD8" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="EventType">ActionMessage</enumref>
+                <field name="affectMsgDetails" type="CARD8" />
+                <field name="msgDetails" type="CARD8" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="EventType">AccessXNotify</enumref>
+                <field name="affectAccessX" type="CARD16" mask="AXNDetail" />
+                <field name="accessXDetails" type="CARD16" mask="AXNDetail" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="EventType">ExtensionDeviceNotify</enumref>
+                <field name="affectExtDev" type="CARD16" mask="XIFeature" />
+                <field name="extdevDetails" type="CARD16" mask="XIFeature" />
+            </bitcase>
+        </switch>
+    </request>
+
+    <request name="Bell" opcode="3">
+        <field name="deviceSpec" type="DeviceSpec" />
+        <field name="bellClass" type="BellClassSpec" />
+        <field name="bellID" type="IDSpec" />
+        <field name="percent" type="INT8" />
+        <field name="forceSound" type="BOOL" />
+        <field name="eventOnly" type="BOOL" />
+        <pad bytes="1" />
+        <field name="pitch" type="INT16" />
+        <field name="duration" type="INT16" />
+        <pad bytes="2" />
+        <field name="name" type="ATOM" />
+        <field name="window" type="WINDOW" />
+    </request>
+
+    <request name="GetState" opcode="4">
+        <field name="deviceSpec" type="DeviceSpec" />
+        <pad bytes="2" />
+        <reply>
+            <field name="deviceID" type="CARD8" />
+            <field name="mods" type="CARD8" mask="ModMask" />
+            <field name="baseMods" type="CARD8" mask="ModMask" />
+            <field name="latchedMods" type="CARD8" mask="ModMask" />
+            <field name="lockedMods" type="CARD8" mask="ModMask" />
+            <field name="group" type="CARD8" enum="Group" />
+            <field name="lockedGroup" type="CARD8" enum="Group" />
+            <field name="baseGroup" type="INT16" />
+            <field name="latchedGroup" type="INT16" />
+            <field name="compatState" type="CARD8" mask="ModMask" />
+            <field name="grabMods" type="CARD8" mask="ModMask" />
+            <field name="compatGrabMods" type="CARD8" mask="ModMask" />
+            <field name="lookupMods" type="CARD8" mask="ModMask" />
+            <field name="compatLookupMods" type="CARD8" mask="ModMask" />
+            <pad bytes="1" />
+            <field name="ptrBtnState" type="CARD16" mask="KeyButMask" />
+            <pad bytes="6" />
+        </reply>
+    </request>
+
+    <request name="LatchLockState" opcode="5">
+        <field name="deviceSpec" type="DeviceSpec" />
+        <field name="affectModLocks" type="CARD8" mask="ModMask" />
+        <field name="modLocks" type="CARD8" mask="ModMask" />
+        <field name="lockGroup" type="BOOL" />
+        <field name="groupLock" type="CARD8" enum="Group" />
+        <field name="affectModLatches" type="CARD8" mask="ModMask" />
+        <pad bytes="1" /> <!-- This pad is a workaround to prevent an API break,
+                               which the following field (correct fix) would cause.
+        <field name="modLatches" type="CARD8" mask="ModMask" />
+        -->
+        <pad bytes="1" />
+        <field name="latchGroup" type="BOOL" />
+        <field name="groupLatch" type="CARD16" />
+    </request>
+
+    <request name="GetControls" opcode="6">
+        <field name="deviceSpec" type="DeviceSpec" />
+        <pad bytes="2" />
+        <reply>
+            <field name="deviceID" type="CARD8" />
+            <field name="mouseKeysDfltBtn" type="CARD8" />
+            <field name="numGroups" type="CARD8" />
+            <field name="groupsWrap" type="CARD8" />
+            <field name="internalModsMask" type="CARD8" mask="ModMask" />
+            <field name="ignoreLockModsMask" type="CARD8" mask="ModMask" />
+            <field name="internalModsRealMods" type="CARD8" mask="ModMask" />
+            <field name="ignoreLockModsRealMods" type="CARD8" mask="ModMask" />
+            <pad bytes="1" />
+            <field name="internalModsVmods" type="CARD16" mask="VMod" />
+            <field name="ignoreLockModsVmods" type="CARD16" mask="VMod" />
+            <field name="repeatDelay" type="CARD16" />
+            <field name="repeatInterval" type="CARD16" />
+            <field name="slowKeysDelay" type="CARD16" />
+            <field name="debounceDelay" type="CARD16" />
+            <field name="mouseKeysDelay" type="CARD16" />
+            <field name="mouseKeysInterval" type="CARD16" />
+            <field name="mouseKeysTimeToMax" type="CARD16" />
+            <field name="mouseKeysMaxSpeed" type="CARD16" />
+            <field name="mouseKeysCurve" type="INT16" />
+            <field name="accessXOption" type="CARD16" mask="AXOption" />
+            <field name="accessXTimeout" type="CARD16" />
+            <field name="accessXTimeoutOptionsMask" type="CARD16" mask="AXOption" />
+            <field name="accessXTimeoutOptionsValues" type="CARD16" mask="AXOption" />
+            <pad bytes="2" />
+            <field name="accessXTimeoutMask" type="CARD32" mask="BoolCtrl" />
+            <field name="accessXTimeoutValues" type="CARD32" mask="BoolCtrl" />
+            <field name="enabledControls" type="CARD32" mask="BoolCtrl" />
+            <list name="perKeyRepeat" type="CARD8">
+                <value>32</value>
+            </list>
+        </reply>
+    </request>
+
+    <request name="SetControls" opcode="7">
+        <field name="deviceSpec" type="DeviceSpec" />
+        <field name="affectInternalRealMods" type="CARD8" mask="ModMask" />
+        <field name="internalRealMods" type="CARD8" mask="ModMask" />
+        <field name="affectIgnoreLockRealMods" type="CARD8" mask="ModMask" />
+        <field name="ignoreLockRealMods" type="CARD8" mask="ModMask" />
+        <field name="affectInternalVirtualMods" type="CARD16" mask="VMod" />
+        <field name="internalVirtualMods" type="CARD16" mask="VMod" />
+        <field name="affectIgnoreLockVirtualMods" type="CARD16" mask="VMod" />
+        <field name="ignoreLockVirtualMods" type="CARD16" mask="VMod" />
+        <field name="mouseKeysDfltBtn" type="CARD8" />
+        <field name="groupsWrap" type="CARD8" />
+        <field name="accessXOptions" type="CARD16" mask="AXOption" />
+        <pad bytes="2" />
+        <field name="affectEnabledControls" type="CARD32" mask="BoolCtrl" />
+        <field name="enabledControls" type="CARD32" mask="BoolCtrl" />
+        <field name="changeControls" type="CARD32" mask="Control" />
+        <field name="repeatDelay" type="CARD16" />
+        <field name="repeatInterval" type="CARD16" />
+        <field name="slowKeysDelay" type="CARD16" />
+        <field name="debounceDelay" type="CARD16" />
+        <field name="mouseKeysDelay" type="CARD16" />
+        <field name="mouseKeysInterval" type="CARD16" />
+        <field name="mouseKeysTimeToMax" type="CARD16" />
+        <field name="mouseKeysMaxSpeed" type="CARD16" />
+        <field name="mouseKeysCurve" type="INT16" />
+        <field name="accessXTimeout" type="CARD16" />
+        <field name="accessXTimeoutMask" type="CARD32" mask="BoolCtrl" />
+        <field name="accessXTimeoutValues" type="CARD32" mask="BoolCtrl" />
+        <field name="accessXTimeoutOptionsMask" type="CARD16" mask="AXOption" />
+        <field name="accessXTimeoutOptionsValues" type="CARD16" mask="AXOption" />
+        <list name="perKeyRepeat" type="CARD8">
+            <value>32</value>
+        </list>
+    </request>
+
+    <request name="GetMap" opcode="8">
+        <field name="deviceSpec" type="DeviceSpec" />
+        <field name="full" type="CARD16" mask="MapPart" />
+        <field name="partial" type="CARD16" mask="MapPart" />
+        <field name="firstType" type="CARD8" />
+        <field name="nTypes" type="CARD8" />
+        <field name="firstKeySym" type="KEYCODE" />
+        <field name="nKeySyms" type="CARD8" />
+        <field name="firstKeyAction" type="KEYCODE" />
+        <field name="nKeyActions" type="CARD8" />
+        <field name="firstKeyBehavior" type="KEYCODE" />
+        <field name="nKeyBehaviors" type="CARD8" />
+        <field name="virtualMods" type="CARD16" mask="VMod" />
+        <field name="firstKeyExplicit" type="KEYCODE" />
+        <field name="nKeyExplicit" type="CARD8" />
+        <field name="firstModMapKey" type="KEYCODE" />
+        <field name="nModMapKeys" type="CARD8" />
+        <field name="firstVModMapKey" type="KEYCODE" />
+        <field name="nVModMapKeys" type="CARD8" />
+        <pad bytes="2" />
+        <reply>
+            <field name="deviceID" type="CARD8" />
+            <pad bytes="2" />
+            <field name="minKeyCode" type="KEYCODE" />
+            <field name="maxKeyCode" type="KEYCODE" />
+            <field name="present" type="CARD16" mask="MapPart" />
+            <field name="firstType" type="CARD8" />
+            <field name="nTypes" type="CARD8" />
+            <field name="totalTypes" type="CARD8" />
+            <field name="firstKeySym" type="KEYCODE" />
+            <field name="totalSyms" type="CARD16" />
+            <field name="nKeySyms" type="CARD8" />
+            <field name="firstKeyAction" type="KEYCODE" />
+            <field name="totalActions" type="CARD16" />
+            <field name="nKeyActions" type="CARD8" />
+            <field name="firstKeyBehavior" type="KEYCODE" />
+            <field name="nKeyBehaviors" type="CARD8" />
+            <field name="totalKeyBehaviors" type="CARD8" />
+            <field name="firstKeyExplicit" type="KEYCODE" />
+            <field name="nKeyExplicit" type="CARD8" />
+            <field name="totalKeyExplicit" type="CARD8" />
+            <field name="firstModMapKey" type="KEYCODE" />
+            <field name="nModMapKeys" type="CARD8" />
+            <field name="totalModMapKeys" type="CARD8" />
+            <field name="firstVModMapKey" type="KEYCODE" />
+            <field name="nVModMapKeys" type="CARD8" />
+            <field name="totalVModMapKeys" type="CARD8" />
+            <pad bytes="1" />
+            <field name="virtualMods" type="CARD16" mask="VMod" />
+            <switch name="map">
+                <fieldref>present</fieldref>
+                <bitcase>
+                    <enumref ref="MapPart">KeyTypes</enumref>
+                    <list name="types_rtrn" type="KeyType">
+                        <fieldref>nTypes</fieldref>
+                    </list>
+                </bitcase>
+                <bitcase>
+                    <enumref ref="MapPart">KeySyms</enumref>
+                    <list name="syms_rtrn" type="KeySymMap">
+                        <fieldref>nKeySyms</fieldref>
+                    </list>
+                </bitcase>
+                <bitcase>
+                    <enumref ref="MapPart">KeyActions</enumref>
+                    <list name="acts_rtrn_count" type="CARD8">
+                        <fieldref>nKeyActions</fieldref>
+                    </list>
+                    <pad align="4" serialize="true" />
+                    <list name="acts_rtrn_acts" type="Action">
+                        <fieldref>totalActions</fieldref>
+                    </list>
+                </bitcase>
+                <bitcase>
+                    <enumref ref="MapPart">KeyBehaviors</enumref>
+                    <list name="behaviors_rtrn" type="SetBehavior">
+                        <fieldref>totalKeyBehaviors</fieldref>
+                    </list>
+                </bitcase>
+                <bitcase>
+                    <enumref ref="MapPart">VirtualMods</enumref>
+                    <list name="vmods_rtrn" type="CARD8" mask="ModMask">
+                        <popcount>
+                            <fieldref>virtualMods</fieldref>
+                        </popcount>
+                    </list>
+                    <pad align="4" serialize="true" />
+                </bitcase>
+                <bitcase>
+                    <enumref ref="MapPart">ExplicitComponents</enumref>
+                    <list name="explicit_rtrn" type="SetExplicit">
+                        <fieldref>totalKeyExplicit</fieldref>
+                    </list>
+                    <pad align="4" serialize="true" />
+                </bitcase>
+                <bitcase>
+                    <enumref ref="MapPart">ModifierMap</enumref>
+                    <list name="modmap_rtrn" type="KeyModMap">
+                        <fieldref>totalModMapKeys</fieldref>
+                    </list>
+                    <pad align="4" serialize="true" />
+                </bitcase>
+                <bitcase>
+                    <enumref ref="MapPart">VirtualModMap</enumref>
+                    <list name="vmodmap_rtrn" type="KeyVModMap">
+                        <fieldref>totalVModMapKeys</fieldref>
+                    </list>
+                </bitcase>
+            </switch>
+        </reply>
+    </request>
+
+    <request name="SetMap" opcode="9">
+        <field name="deviceSpec" type="DeviceSpec" />
+        <field name="present" type="CARD16" mask="MapPart" />
+        <field name="flags" type="CARD16" mask="SetMapFlags" />
+        <field name="minKeyCode" type="KEYCODE" />
+        <field name="maxKeyCode" type="KEYCODE" />
+        <field name="firstType" type="CARD8" />
+        <field name="nTypes" type="CARD8" />
+        <field name="firstKeySym" type="KEYCODE" />
+        <field name="nKeySyms" type="CARD8" />
+        <field name="totalSyms" type="CARD16" />
+        <field name="firstKeyAction" type="KEYCODE" />
+        <field name="nKeyActions" type="CARD8" />
+        <field name="totalActions" type="CARD16" />
+        <field name="firstKeyBehavior" type="KEYCODE" />
+        <field name="nKeyBehaviors" type="CARD8" />
+        <field name="totalKeyBehaviors" type="CARD8" />
+        <field name="firstKeyExplicit" type="KEYCODE" />
+        <field name="nKeyExplicit" type="CARD8" />
+        <field name="totalKeyExplicit" type="CARD8" />
+        <field name="firstModMapKey" type="KEYCODE" />
+        <field name="nModMapKeys" type="CARD8" />
+        <field name="totalModMapKeys" type="CARD8" />
+        <field name="firstVModMapKey" type="KEYCODE" />
+        <field name="nVModMapKeys" type="CARD8" />
+        <field name="totalVModMapKeys" type="CARD8" />
+        <field name="virtualMods" type="CARD16" mask="VMod" />
+        <switch name="values">
+            <fieldref>present</fieldref>
+            <bitcase>
+                <enumref ref="MapPart">KeyTypes</enumref>
+                <list name="types" type="SetKeyType">
+                    <fieldref>nTypes</fieldref>
+                </list>
+            </bitcase>
+            <bitcase>
+                <enumref ref="MapPart">KeySyms</enumref>
+                <list name="syms" type="KeySymMap">
+                    <fieldref>nKeySyms</fieldref>
+                </list>
+            </bitcase>
+            <bitcase>
+                <enumref ref="MapPart">KeyActions</enumref>
+                <list name="actionsCount" type="CARD8">
+                    <fieldref>nKeyActions</fieldref>
+                </list>
+                <pad align="4" />
+                <list name="actions" type="Action">
+                    <fieldref>totalActions</fieldref>
+                </list>
+            </bitcase>
+            <bitcase>
+                <enumref ref="MapPart">KeyBehaviors</enumref>
+                <list name="behaviors" type="SetBehavior">
+                    <fieldref>totalKeyBehaviors</fieldref>
+                </list>
+            </bitcase>
+            <bitcase>
+                <enumref ref="MapPart">VirtualMods</enumref>
+                <list name="vmods" type="CARD8">
+                    <popcount>
+                        <fieldref>virtualMods</fieldref>
+                    </popcount>
+                </list>
+                <pad align="4" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="MapPart">ExplicitComponents</enumref>
+                <list name="explicit" type="SetExplicit">
+                    <fieldref>totalKeyExplicit</fieldref>
+                </list>
+            </bitcase>
+            <bitcase>
+                <enumref ref="MapPart">ModifierMap</enumref>
+                <list name="modmap" type="KeyModMap">
+                    <fieldref>totalModMapKeys</fieldref>
+                </list>
+            </bitcase>
+            <bitcase>
+                <enumref ref="MapPart">VirtualModMap</enumref>
+                <list name="vmodmap" type="KeyVModMap">
+                    <fieldref>totalVModMapKeys</fieldref>
+                </list>
+            </bitcase>
+        </switch>
+    </request>
+
+    <request name="GetCompatMap" opcode="10">
+        <field name="deviceSpec" type="DeviceSpec" />
+        <field name="groups" type="CARD8" mask="SetOfGroup" />
+        <field name="getAllSI" type="BOOL" />
+        <field name="firstSI" type="CARD16" />
+        <field name="nSI" type="CARD16" />
+        <reply>
+            <field name="deviceID" type="CARD8" />
+            <field name="groupsRtrn" type="CARD8" mask="SetOfGroup" />
+            <pad bytes="1" />
+            <field name="firstSIRtrn" type="CARD16" />
+            <field name="nSIRtrn" type="CARD16" />
+            <field name="nTotalSI" type="CARD16" />
+            <pad bytes="16" />
+            <list name="si_rtrn" type="SymInterpret">
+                <fieldref>nSIRtrn</fieldref>
+            </list>
+            <list name="group_rtrn" type="ModDef">
+                <popcount>
+                    <fieldref>groupsRtrn</fieldref>
+                </popcount>
+            </list>
+        </reply>
+    </request>
+
+    <request name="SetCompatMap" opcode="11">
+        <field name="deviceSpec" type="DeviceSpec" />
+        <pad bytes="1" />
+        <field name="recomputeActions" type="BOOL" />
+        <field name="truncateSI" type="BOOL" />
+        <field name="groups" type="CARD8" mask="SetOfGroup" />
+        <field name="firstSI" type="CARD16" />
+        <field name="nSI" type="CARD16" />
+        <pad bytes="2" />
+        <list name="si" type="SymInterpret">
+            <fieldref>nSI</fieldref>
+        </list>
+        <list name="groupMaps" type="ModDef">
+            <popcount>
+                <fieldref>groups</fieldref>
+            </popcount>
+        </list>
+    </request>
+
+    <request name="GetIndicatorState" opcode="12">
+        <field name="deviceSpec" type="DeviceSpec" />
+        <pad bytes="2" />
+        <reply>
+            <field name="deviceID" type="CARD8" />
+            <field name="state" type="CARD32" />
+            <pad bytes="20" />
+        </reply>
+    </request>
+
+    <request name="GetIndicatorMap" opcode="13">
+        <field name="deviceSpec" type="DeviceSpec" />
+        <pad bytes="2" />
+        <field name="which" type="CARD32" />
+        <reply>
+            <field name="deviceID" type="CARD8" />
+            <field name="which" type="CARD32" />
+            <field name="realIndicators" type="CARD32" />
+            <field name="nIndicators" type="CARD8" />
+            <pad bytes="15" />
+            <list name="maps" type="IndicatorMap">
+                <popcount>
+                    <fieldref>which</fieldref>
+                </popcount>
+            </list>
+        </reply>
+    </request>
+
+    <request name="SetIndicatorMap" opcode="14">
+        <field name="deviceSpec" type="DeviceSpec" />
+        <pad bytes="2" />
+        <field name="which" type="CARD32" />
+        <list name="maps" type="IndicatorMap">
+            <popcount>
+                <fieldref>which</fieldref>
+            </popcount>
+        </list>
+    </request>
+
+    <request name="GetNamedIndicator" opcode="15">
+        <field name="deviceSpec" type="DeviceSpec" />
+        <field name="ledClass" type="LedClassSpec" enum="LedClass" />
+        <field name="ledID" type="IDSpec" altenum="ID" />
+        <pad bytes="2" />
+        <field name="indicator" type="ATOM" />
+        <reply>
+            <field name="deviceID" type="CARD8" />
+            <field name="indicator" type="ATOM" />
+            <field name="found" type="BOOL" />
+            <field name="on" type="BOOL" />
+            <field name="realIndicator" type="BOOL" />
+            <field name="ndx" type="CARD8" />
+            <field name="map_flags" type="CARD8" mask="IMFlag" />
+            <field name="map_whichGroups" type="CARD8" mask="IMGroupsWhich" />
+            <field name="map_groups" type="CARD8" mask="SetOfGroups" />
+            <field name="map_whichMods" type="CARD8" mask="IMModsWhich" />
+            <field name="map_mods" type="CARD8" mask="ModMask" />
+            <field name="map_realMods" type="CARD8" mask="ModMask" />
+            <field name="map_vmod" type="CARD16" mask="VMod" />
+            <field name="map_ctrls" type="CARD32" mask="BoolCtrl" />
+            <field name="supported" type="BOOL" />
+            <pad bytes="3" />
+        </reply>
+    </request>
+
+    <request name="SetNamedIndicator" opcode="16">
+        <field name="deviceSpec" type="DeviceSpec" />
+        <field name="ledClass" type="LedClassSpec" enum="LedClass" />
+        <field name="ledID" type="IDSpec" altenum="ID" />
+        <pad bytes="2" />
+        <field name="indicator" type="ATOM" />
+        <field name="setState" type="BOOL" />
+        <field name="on" type="BOOL" />
+        <field name="setMap" type="BOOL" />
+        <field name="createMap" type="BOOL" />
+        <pad bytes="1" />
+        <field name="map_flags" type="CARD8" mask="IMFlag" />
+        <field name="map_whichGroups" type="CARD8" mask="IMGroupsWhich" />
+        <field name="map_groups" type="CARD8" mask="SetOfGroups" />
+        <field name="map_whichMods" type="CARD8" mask="IMModsWhich" />
+        <field name="map_realMods" type="CARD8" mask="ModMask" />
+        <field name="map_vmods" type="CARD16" mask="VMod" />
+        <field name="map_ctrls" type="CARD32" mask="BoolCtrl" />
+    </request>
+
+    <request name="GetNames" opcode="17">
+        <field name="deviceSpec" type="DeviceSpec" />
+        <pad bytes="2" />
+        <field name="which" type="CARD32" mask="NameDetail" />
+        <reply>
+            <field name="deviceID" type="CARD8" />
+            <field name="which" type="CARD32" mask="NameDetail" />
+            <field name="minKeyCode" type="KEYCODE" />
+            <field name="maxKeyCode" type="KEYCODE" />
+            <field name="nTypes" type="CARD8" />
+            <field name="groupNames" type="CARD8" mask="SetOfGroup" />
+            <field name="virtualMods" type="CARD16" mask="VMod" />
+            <field name="firstKey" type="KEYCODE" />
+            <field name="nKeys" type="CARD8" />
+            <field name="indicators" type="CARD32" />
+            <field name="nRadioGroups" type="CARD8" />
+            <field name="nKeyAliases" type="CARD8" />
+            <field name="nKTLevels" type="CARD16" />
+            <pad bytes="4" />
+            <switch name="valueList">
+                <fieldref>which</fieldref>
+                <bitcase>
+                    <enumref ref="NameDetail">Keycodes</enumref>
+                    <field name="keycodesName" type="ATOM" />
+                </bitcase>
+                <bitcase>
+                    <enumref ref="NameDetail">Geometry</enumref>
+                    <field name="geometryName" type="ATOM" />
+                </bitcase>
+                <bitcase>
+                    <enumref ref="NameDetail">Symbols</enumref>
+                    <field name="symbolsName" type="ATOM" />
+                </bitcase>
+                <bitcase>
+                    <enumref ref="NameDetail">PhysSymbols</enumref>
+                    <field name="physSymbolsName" type="ATOM" />
+                </bitcase>
+                <bitcase>
+                    <enumref ref="NameDetail">Types</enumref>
+                    <field name="typesName" type="ATOM" />
+                </bitcase>
+                <bitcase>
+                    <enumref ref="NameDetail">Compat</enumref>
+                    <field name="compatName" type="ATOM" />
+                </bitcase>
+                <bitcase>
+                    <enumref ref="NameDetail">KeyTypeNames</enumref>
+                    <list name="typeNames" type="ATOM">
+                        <fieldref>nTypes</fieldref>
+                    </list>
+                </bitcase>
+                <bitcase>
+                    <enumref ref="NameDetail">KTLevelNames</enumref>
+                    <list name="nLevelsPerType" type="CARD8">
+                        <!-- Xlib uses NTypes here -
+                           the spec says nKTLevels is correct, but
+                           it does not work in reality
+                           <fieldref>nKTLevels</fieldref> -->
+                        <fieldref>nTypes</fieldref>
+                    </list>
+                    <pad align="4" serialize="true" />
+                    <list name="ktLevelNames" type="ATOM">
+                        <sumof ref="nLevelsPerType" />
+                    </list>
+                </bitcase>
+                <bitcase>
+                    <enumref ref="NameDetail">IndicatorNames</enumref>
+                    <list name="indicatorNames" type="ATOM">
+                        <popcount>
+                            <fieldref>indicators</fieldref>
+                        </popcount>
+                    </list>
+                </bitcase>
+                <bitcase>
+                    <enumref ref="NameDetail">VirtualModNames</enumref>
+                    <list name="virtualModNames" type="ATOM">
+                        <popcount>
+                            <fieldref>virtualMods</fieldref>
+                        </popcount>
+                    </list>
+                </bitcase>
+                <bitcase>
+                    <enumref ref="NameDetail">GroupNames</enumref>
+                    <list name="groups" type="ATOM">
+                        <popcount>
+                            <fieldref>groupNames</fieldref>
+                        </popcount>
+                    </list>
+                </bitcase>
+                <bitcase>
+                    <enumref ref="NameDetail">KeyNames</enumref>
+                    <list name="keyNames" type="KeyName">
+                        <fieldref>nKeys</fieldref>
+                    </list>
+                </bitcase>
+                <bitcase>
+                    <enumref ref="NameDetail">KeyAliases</enumref>
+                    <list name="keyAliases" type="KeyAlias">
+                        <fieldref>nKeyAliases</fieldref>
+                    </list>
+                </bitcase>
+                <bitcase>
+                    <enumref ref="NameDetail">RGNames</enumref>
+                    <list name="radioGroupNames" type="ATOM">
+                        <fieldref>nRadioGroups</fieldref>
+                    </list>
+                </bitcase>
+            </switch>
+        </reply>
+    </request>
+
+    <request name="SetNames" opcode="18">
+        <field name="deviceSpec" type="DeviceSpec" />
+        <field name="virtualMods" type="CARD16" mask="VMod" />
+        <field name="which" type="CARD32" mask="NameDetail" />
+        <field name="firstType" type="CARD8" />
+        <field name="nTypes" type="CARD8" />
+        <field name="firstKTLevelt" type="CARD8" />
+        <field name="nKTLevels" type="CARD8" />
+        <field name="indicators" type="CARD32" />
+        <field name="groupNames" type="CARD8" mask="SetOfGroup" />
+        <field name="nRadioGroups" type="CARD8" />
+        <field name="firstKey" type="KEYCODE" />
+        <field name="nKeys" type="CARD8" />
+        <field name="nKeyAliases" type="CARD8" />
+        <pad bytes="1" />
+        <field name="totalKTLevelNames" type="CARD16" />
+        <switch name="values">
+            <fieldref>which</fieldref>
+            <bitcase>
+                <enumref ref="NameDetail">Keycodes</enumref>
+                <field name="keycodesName" type="ATOM" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="NameDetail">Geometry</enumref>
+                <field name="geometryName" type="ATOM" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="NameDetail">Symbols</enumref>
+                <field name="symbolsName" type="ATOM" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="NameDetail">PhysSymbols</enumref>
+                <field name="physSymbolsName" type="ATOM" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="NameDetail">Types</enumref>
+                <field name="typesName" type="ATOM" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="NameDetail">Compat</enumref>
+                <field name="compatName" type="ATOM" />
+            </bitcase>
+            <bitcase>
+                <enumref ref="NameDetail">KeyTypeNames</enumref>
+                <list name="typeNames" type="ATOM">
+                    <fieldref>nTypes</fieldref>
+                </list>
+            </bitcase>
+            <bitcase>
+                <enumref ref="NameDetail">KTLevelNames</enumref>
+                <list name="nLevelsPerType" type="CARD8">
+                    <fieldref>nTypes</fieldref>
+                </list>
+                <pad align="4" />
+                <list name="ktLevelNames" type="ATOM">
+                    <sumof ref="nLevelsPerType" />
+                </list>
+            </bitcase>
+            <bitcase>
+                <enumref ref="NameDetail">IndicatorNames</enumref>
+                <list name="indicatorNames" type="ATOM">
+                    <popcount>
+                        <fieldref>indicators</fieldref>
+                    </popcount>
+                </list>
+            </bitcase>
+            <bitcase>
+                <enumref ref="NameDetail">VirtualModNames</enumref>
+                <list name="virtualModNames" type="ATOM">
+                    <popcount>
+                        <fieldref>virtualMods</fieldref>
+                    </popcount>
+                </list>
+            </bitcase>
+            <bitcase>
+                <enumref ref="NameDetail">GroupNames</enumref>
+                <list name="groups" type="ATOM">
+                    <popcount>
+                        <fieldref>groupNames</fieldref>
+                    </popcount>
+                </list>
+            </bitcase>
+            <bitcase>
+                <enumref ref="NameDetail">KeyNames</enumref>
+                <list name="keyNames" type="KeyName">
+                    <fieldref>nKeys</fieldref>
+                </list>
+            </bitcase>
+            <bitcase>
+                <enumref ref="NameDetail">KeyAliases</enumref>
+                <list name="keyAliases" type="KeyAlias">
+                    <fieldref>nKeyAliases</fieldref>
+                </list>
+            </bitcase>
+            <bitcase>
+                <enumref ref="NameDetail">RGNames</enumref>
+                <list name="radioGroupNames" type="ATOM">
+                    <fieldref>nRadioGroups</fieldref>
+                </list>
+            </bitcase>
+        </switch>
+    </request>
+
+    <!-- XXX: Property and doodads are broken, which renders GetGeometry useless
+    <request name="GetGeometry" opcode="19">
+        <field name="deviceSpec" type="DeviceSpec" />
+        <pad bytes="2" />
+        <field name="name" type="ATOM" />
+        <reply>
+            <field name="deviceID" type="CARD8" />
+            <field name="name" type="ATOM" />
+            <field name="found" type="BOOL" />
+            <pad bytes="1" />
+            <field name="widthMM" type="CARD16" />
+            <field name="heightMM" type="CARD16" />
+            <field name="nProperties" type="CARD16" />
+            <field name="nColors" type="CARD16" />
+            <field name="nShapes" type="CARD16" />
+            <field name="nSections" type="CARD16" />
+            <field name="nDoodads" type="CARD16" />
+            <field name="nKeyAliases" type="CARD16" />
+            <field name="baseColorNdx" type="CARD8" />
+            <field name="labelColorNdx" type="CARD8" />
+            <field name="labelFont" type="CountedString16" />
+            <list name="properties" type="Property">
+                <fieldref>nProperties</fieldref>
+            </list>
+            <list name="colors" type="CountedString16">
+                <fieldref>nColors</fieldref>
+            </list>
+            <list name="shapes" type="Shape">
+                <fieldref>nShapes</fieldref>
+            </list>
+            <list name="sections" type="Section">
+                <fieldref>nSections</fieldref>
+            </list>
+            <list name="doodads" type="Doodad">
+                <fieldref>nDoodads</fieldref>
+            </list>
+            <list name="keyAliases" type="KeyAlias">
+                <fieldref>nKeyAliases</fieldref>
+            </list>
+        </reply>
+    </request>
+    -->
+
+    <!-- XXX: Property and doodads are broken, which renders SetGeometry useless
+    <request name="SetGeometry" opcode="20">
+        <field name="deviceSpec" type="DeviceSpec" />
+        <field name="nShapes" type="CARD8" />
+        <field name="nSections" type="CARD8" />
+        <field name="name" type="ATOM" />
+        <field name="widthMM" type="CARD16" />
+        <field name="heightMM" type="CARD16" />
+        <field name="nProperties" type="CARD16" />
+        <field name="nColors" type="CARD16" />
+        <field name="nDoodads" type="CARD16" />
+        <field name="nKeyAliases" type="CARD16" />
+        <field name="baseColorNdx" type="CARD8" />
+        <field name="labelColorNdx" type="CARD8" />
+        <pad bytes="2" />
+        <field name="labelFont" type="CountedString16" />
+        <list name="properties" type="Property">
+            <fieldref>nProperties</fieldref>
+        </list>
+        <list name="colors" type="CountedString16">
+            <fieldref>nColors</fieldref>
+        </list>
+        <list name="shapes" type="Shape">
+            <fieldref>nShapes</fieldref>
+        </list>
+        <list name="sections" type="Section">
+            <fieldref>nSections</fieldref>
+        </list>
+        <list name="doodads" type="Doodad">
+            <fieldref>nDoodads</fieldref>
+        </list>
+        <list name="keyAliases" type="KeyAlias">
+            <fieldref>nKeyAliases</fieldref>
+        </list>
+    </request>
+    -->
+
+    <request name="PerClientFlags" opcode="21">
+        <field name="deviceSpec" type="DeviceSpec" />
+        <pad bytes="2" />
+        <field name="change" type="CARD32" mask="PerClientFlag" />
+        <field name="value" type="CARD32" mask="PerClientFlag" />
+        <field name="ctrlsToChange" type="CARD32" mask="BoolCtrl" />
+        <field name="autoCtrls" type="CARD32" mask="BoolCtrl" />
+        <field name="autoCtrlsValues" type="CARD32" mask="BoolCtrl" />
+        <reply>
+            <field name="deviceID" type="CARD8" />
+            <field name="supported" type="CARD32" mask="PerClientFlag" />
+            <field name="value" type="CARD32" mask="PerClientFlag" />
+            <field name="autoCtrls" type="CARD32" mask="BoolCtrl" />
+            <field name="autoCtrlsValues" type="CARD32" mask="BoolCtrl" />
+            <pad bytes="8" />
+        </reply>
+    </request>
+
+    <request name="ListComponents" opcode="22">
+        <field name="deviceSpec" type="DeviceSpec" />
+        <field name="maxNames" type="CARD16" />
+        <!-- XXX: Intermixed fixed size fields and lists are broken
+        <field name="keymapsSpecLen" type="CARD8" />
+        <list name="keymapsSpec" type="STRING8">
+            <fieldref>keymapsSpecLen</fieldref>
+        </list>
+        <field name="keycodesSpecLen" type="CARD8" />
+        <list name="keycodesSpec" type="STRING8">
+            <fieldref>keycodesSpecLen</fieldref>
+        </list>
+        <field name="typesSpecLen" type="CARD8" />
+        <list name="typesSpec" type="STRING8">
+            <fieldref>typesSpecLen</fieldref>
+        </list>
+        <field name="compatMapSpecLen" type="CARD8" />
+        <list name="compatMapSpec" type="STRING8">
+            <fieldref>compatMapSpecLen</fieldref>
+        </list>
+        <field name="symbolsSpecLen" type="CARD8" />
+        <list name="symbolsSpec" type="STRING8">
+            <fieldref>symbolsSpecLen</fieldref>
+        </list>
+        <field name="geometrySpecLen" type="CARD8" />
+        <list name="geometrySpec" type="STRING8">
+            <fieldref>geometrySpecLen</fieldref>
+        </list>
+        -->
+        <reply>
+            <field name="deviceID" type="CARD8" />
+            <field name="nKeymaps" type="CARD16" />
+            <field name="nKeycodes" type="CARD16" />
+            <field name="nTypes" type="CARD16" />
+            <field name="nCompatMaps" type="CARD16" />
+            <field name="nSymbols" type="CARD16" />
+            <field name="nGeometries" type="CARD16" />
+            <field name="extra" type="CARD16" />
+            <pad bytes="10" />
+            <list name="keymaps" type="Listing">
+                <fieldref>nKeymaps</fieldref>
+            </list>
+            <list name="keycodes" type="Listing">
+                <fieldref>nKeycodes</fieldref>
+            </list>
+            <list name="types" type="Listing">
+                <fieldref>nTypes</fieldref>
+            </list>
+            <list name="compatMaps" type="Listing">
+                <fieldref>nCompatMaps</fieldref>
+            </list>
+            <list name="symbols" type="Listing">
+                <fieldref>nSymbols</fieldref>
+            </list>
+            <list name="geometries" type="Listing">
+                <fieldref>nGeometries</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetKbdByName" opcode="23">
+        <field name="deviceSpec" type="DeviceSpec" />
+        <field name="need" type="CARD16" mask="GBNDetail" />
+        <field name="want" type="CARD16" mask="GBNDetail" />
+        <field name="load" type="BOOL" />
+        <pad bytes="1" />
+        <!-- XXX: Intermixed fixed size fields and lists are broken
+        <field name="keymapsSpecLen" type="CARD8" />
+        <list name="keymapsSpec" type="STRING8">
+            <fieldref>keymapsSpecLen</fieldref>
+        </list>
+        <field name="keycodesSpecLen" type="CARD8" />
+        <list name="keycodesSpec" type="STRING8">
+            <fieldref>keycodesSpecLen</fieldref>
+        </list>
+        <field name="typesSpecLen" type="CARD8" />
+        <list name="typesSpec" type="STRING8">
+            <fieldref>typesSpecLen</fieldref>
+        </list>
+        <field name="compatMapSpecLen" type="CARD8" />
+        <list name="compatMapSpec" type="STRING8">
+            <fieldref>compatMapSpecLen</fieldref>
+        </list>
+        <field name="symbolsSpecLen" type="CARD8" />
+        <list name="symbolsSpec" type="STRING8">
+            <fieldref>symbolsSpecLen</fieldref>
+        </list>
+        <field name="geometrySpecLen" type="CARD8" />
+        <list name="geometrySpec" type="STRING8">
+            <fieldref>geometrySpecLen</fieldref>
+        </list>
+        -->
+        <reply>
+            <field name="deviceID" type="CARD8" />
+            <field name="minKeyCode" type="KEYCODE" />
+            <field name="maxKeyCode" type="KEYCODE" />
+            <field name="loaded" type="BOOL" />
+            <field name="newKeyboard" type="BOOL" />
+            <field name="found" type="CARD16" mask="GBNDetail" />
+            <field name="reported" type="CARD16" mask="GBNDetail" />
+            <pad bytes="16" />
+            <switch name="replies">
+                <fieldref>reported</fieldref>
+                <bitcase name="types">
+                    <enumref ref="GBNDetail">Types</enumref>
+                    <enumref ref="GBNDetail">ClientSymbols</enumref>
+                    <enumref ref="GBNDetail">ServerSymbols</enumref>
+                    <!-- from the spec, this has to be a GetMap reply -->
+                    <field name="getmap_type" type="CARD8" />
+                    <!-- done 'emulating' GetMap reply header-->
+                    <field name="typeDeviceID" type="CARD8" />
+                    <!-- from the spec, this has to be a GetMap reply -->
+                    <field name="getmap_sequence" type="CARD16" />
+                    <field name="getmap_length" type="CARD32" />
+                    <!-- done 'emulating' GetMap reply header-->
+                    <pad bytes="2" />
+                    <field name="typeMinKeyCode" type="KEYCODE" />
+                    <field name="typeMaxKeyCode" type="KEYCODE" />
+                    <field name="present" type="CARD16" mask="MapPart" />
+                    <field name="firstType" type="CARD8" />
+                    <field name="nTypes" type="CARD8" />
+                    <field name="totalTypes" type="CARD8" />
+                    <field name="firstKeySym" type="KEYCODE" />
+                    <field name="totalSyms" type="CARD16" />
+                    <field name="nKeySyms" type="CARD8" />
+                    <field name="firstKeyAction" type="KEYCODE" />
+                    <field name="totalActions" type="CARD16" />
+                    <field name="nKeyActions" type="CARD8" />
+                    <field name="firstKeyBehavior" type="KEYCODE" />
+                    <field name="nKeyBehaviors" type="CARD8" />
+                    <field name="totalKeyBehaviors" type="CARD8" />
+                    <field name="firstKeyExplicit" type="KEYCODE" />
+                    <field name="nKeyExplicit" type="CARD8" />
+                    <field name="totalKeyExplicit" type="CARD8" />
+                    <field name="firstModMapKey" type="KEYCODE" />
+                    <field name="nModMapKeys" type="CARD8" />
+                    <field name="totalModMapKeys" type="CARD8" />
+                    <field name="firstVModMapKey" type="KEYCODE" />
+                    <field name="nVModMapKeys" type="CARD8" />
+                    <field name="totalVModMapKeys" type="CARD8" />
+                    <pad bytes="1" />
+                    <field name="virtualMods" type="CARD16" mask="VMod" />
+                    <switch name="map">
+                        <fieldref>present</fieldref>
+                        <bitcase>
+                            <enumref ref="MapPart">KeyTypes</enumref>
+                            <list name="types_rtrn" type="KeyType">
+                                <fieldref>nTypes</fieldref>
+                            </list>
+                        </bitcase>
+                        <bitcase>
+                            <enumref ref="MapPart">KeySyms</enumref>
+                            <list name="syms_rtrn" type="KeySymMap">
+                                <fieldref>nKeySyms</fieldref>
+                            </list>
+                        </bitcase>
+                        <bitcase>
+                            <enumref ref="MapPart">KeyActions</enumref>
+                            <list name="acts_rtrn_count" type="CARD8">
+                                <fieldref>nKeyActions</fieldref>
+                            </list>
+                            <pad align="4" />
+                            <list name="acts_rtrn_acts" type="Action">
+                                <fieldref>totalActions</fieldref>
+                            </list>
+                        </bitcase>
+                        <bitcase>
+                            <enumref ref="MapPart">KeyBehaviors</enumref>
+                            <list name="behaviors_rtrn" type="SetBehavior">
+                                <fieldref>totalKeyBehaviors</fieldref>
+                            </list>
+                        </bitcase>
+                        <bitcase>
+                            <enumref ref="MapPart">VirtualMods</enumref>
+                            <list name="vmods_rtrn" type="CARD8" mask="ModMask">
+                                <popcount>
+                                    <fieldref>virtualMods</fieldref>
+                                </popcount>
+                            </list>
+                            <pad align="4" />
+                        </bitcase>
+                        <bitcase>
+                            <enumref ref="MapPart">ExplicitComponents</enumref>
+                            <list name="explicit_rtrn" type="SetExplicit">
+                                <fieldref>totalKeyExplicit</fieldref>
+                            </list>
+                            <pad align="4" />
+                        </bitcase>
+                        <bitcase>
+                            <enumref ref="MapPart">ModifierMap</enumref>
+                            <list name="modmap_rtrn" type="KeyModMap">
+                                <fieldref>totalModMapKeys</fieldref>
+                            </list>
+                            <pad align="4" />
+                        </bitcase>
+                        <bitcase>
+                            <enumref ref="MapPart">VirtualModMap</enumref>
+                            <list name="vmodmap_rtrn" type="KeyVModMap">
+                                <fieldref>totalVModMapKeys</fieldref>
+                            </list>
+                        </bitcase>
+                    </switch>
+                </bitcase>
+                <bitcase name="compat_map">
+                    <enumref ref="GBNDetail">CompatMap</enumref>
+                    <!-- from the spec, this has to include a reply header -->
+                    <field name="compatmap_type" type="CARD8" />
+                    <field name="compatDeviceID" type="CARD8" />
+                    <field name="compatmap_sequence" type="CARD16" />
+                    <field name="compatmap_length" type="CARD32" />
+                    <!-- done 'emulating' reply header -->
+                    <field name="groupsRtrn" type="CARD8" mask="SetOfGroup" />
+                    <pad bytes="1" />
+                    <field name="firstSIRtrn" type="CARD16" />
+                    <field name="nSIRtrn" type="CARD16" />
+                    <field name="nTotalSI" type="CARD16" />
+                    <pad bytes="16" />
+                    <list name="si_rtrn" type="SymInterpret">
+                        <fieldref>nSIRtrn</fieldref>
+                    </list>
+                    <list name="group_rtrn" type="ModDef">
+                        <popcount>
+                            <fieldref>groupsRtrn</fieldref>
+                        </popcount>
+                    </list>
+                </bitcase>
+                <bitcase name="indicator_maps">
+                    <enumref ref="GBNDetail">IndicatorMaps</enumref>
+                    <!-- from the spec, this has to include a reply header -->
+                    <field name="indicatormap_type" type="CARD8" />
+                    <field name="indicatorDeviceID" type="CARD8" />
+                    <field name="indicatormap_sequence" type="CARD16" />
+                    <field name="indicatormap_length" type="CARD32" />
+                    <!-- done 'emulating' reply header -->
+                    <field name="which" type="CARD32" />
+                    <field name="realIndicators" type="CARD32" />
+                    <field name="nIndicators" type="CARD8" />
+                    <pad bytes="15" />
+                    <list name="maps" type="IndicatorMap">
+                        <fieldref>nIndicators</fieldref>
+                    </list>
+                </bitcase>
+                <bitcase name="key_names">
+                    <enumref ref="GBNDetail">KeyNames</enumref>
+                    <enumref ref="GBNDetail">OtherNames</enumref>
+                    <!-- from the spec, this has to include a reply header -->
+                    <field name="keyname_type" type="CARD8" />
+                    <field name="keyDeviceID" type="CARD8" />
+                    <field name="keyname_sequence" type="CARD16" />
+                    <field name="keyname_length" type="CARD32" />
+                    <!-- done 'emulating' reply header -->
+                    <field name="which" type="CARD32" mask="NameDetail" />
+                    <field name="keyMinKeyCode" type="KEYCODE" />
+                    <field name="keyMaxKeyCode" type="KEYCODE" />
+                    <field name="nTypes" type="CARD8" />
+                    <field name="groupNames" type="CARD8" mask="SetOfGroup" />
+                    <field name="virtualMods" type="CARD16" mask="VMod" />
+                    <field name="firstKey" type="KEYCODE" />
+                    <field name="nKeys" type="CARD8" />
+                    <field name="indicators" type="CARD32" />
+                    <field name="nRadioGroups" type="CARD8" />
+                    <field name="nKeyAliases" type="CARD8" />
+                    <field name="nKTLevels" type="CARD16" />
+                    <pad bytes="4" />
+                    <switch name="valueList">
+                        <fieldref>which</fieldref>
+                        <bitcase>
+                            <enumref ref="NameDetail">Keycodes</enumref>
+                            <field name="keycodesName" type="ATOM" />
+                        </bitcase>
+                        <bitcase>
+                            <enumref ref="NameDetail">Geometry</enumref>
+                            <field name="geometryName" type="ATOM" />
+                        </bitcase>
+                        <bitcase>
+                            <enumref ref="NameDetail">Symbols</enumref>
+                            <field name="symbolsName" type="ATOM" />
+                        </bitcase>
+                        <bitcase>
+                            <enumref ref="NameDetail">PhysSymbols</enumref>
+                            <field name="physSymbolsName" type="ATOM" />
+                        </bitcase>
+                        <bitcase>
+                            <enumref ref="NameDetail">Types</enumref>
+                            <field name="typesName" type="ATOM" />
+                        </bitcase>
+                        <bitcase>
+                            <enumref ref="NameDetail">Compat</enumref>
+                            <field name="compatName" type="ATOM" />
+                        </bitcase>
+                        <bitcase>
+                            <enumref ref="NameDetail">KeyTypeNames</enumref>
+                            <list name="typeNames" type="ATOM">
+                                <fieldref>nTypes</fieldref>
+                            </list>
+                        </bitcase>
+                        <bitcase>
+                            <enumref ref="NameDetail">KTLevelNames</enumref>
+                            <list name="nLevelsPerType" type="CARD8">
+                                <fieldref>nTypes</fieldref>
+                            </list>
+                            <pad align="4" />
+                            <list name="ktLevelNames" type="ATOM">
+                                <sumof ref="nLevelsPerType" />
+                            </list>
+                        </bitcase>
+                        <bitcase>
+                            <enumref ref="NameDetail">IndicatorNames</enumref>
+                            <list name="indicatorNames" type="ATOM">
+                                <popcount>
+                                    <fieldref>indicators</fieldref>
+                                </popcount>
+                            </list>
+                        </bitcase>
+                        <bitcase>
+                            <enumref ref="NameDetail">VirtualModNames</enumref>
+                            <list name="virtualModNames" type="ATOM">
+                                <popcount>
+                                    <fieldref>virtualMods</fieldref>
+                                </popcount>
+                            </list>
+                        </bitcase>
+                        <bitcase>
+                            <enumref ref="NameDetail">GroupNames</enumref>
+                            <list name="groups" type="ATOM">
+                                <popcount>
+                                    <fieldref>groupNames</fieldref>
+                                </popcount>
+                            </list>
+                        </bitcase>
+                        <bitcase>
+                            <enumref ref="NameDetail">KeyNames</enumref>
+                            <list name="keyNames" type="KeyName">
+                                <fieldref>nKeys</fieldref>
+                            </list>
+                        </bitcase>
+                        <bitcase>
+                            <enumref ref="NameDetail">KeyAliases</enumref>
+                            <list name="keyAliases" type="KeyAlias">
+                                <fieldref>nKeyAliases</fieldref>
+                            </list>
+                        </bitcase>
+                        <bitcase>
+                            <enumref ref="NameDetail">RGNames</enumref>
+                            <list name="radioGroupNames" type="ATOM">
+                                <fieldref>nRadioGroups</fieldref>
+                            </list>
+                        </bitcase>
+                    </switch>
+                </bitcase>
+                <bitcase name="geometry">
+                    <enumref ref="GBNDetail">Geometry</enumref>
+                    <!-- from the spec, this has to include a reply header -->
+                    <field name="geometry_type" type="CARD8" />
+                    <field name="geometryDeviceID" type="CARD8" />
+                    <field name="geometry_sequence" type="CARD16" />
+                    <field name="geometry_length" type="CARD32" />
+                    <!-- done 'emulating' reply header -->
+                    <field name="name" type="ATOM" />
+                    <field name="geometryFound" type="BOOL" />
+                    <pad bytes="1" />
+                    <field name="widthMM" type="CARD16" />
+                    <field name="heightMM" type="CARD16" />
+                    <field name="nProperties" type="CARD16" />
+                    <field name="nColors" type="CARD16" />
+                    <field name="nShapes" type="CARD16" />
+                    <field name="nSections" type="CARD16" />
+                    <field name="nDoodads" type="CARD16" />
+                    <field name="nKeyAliases" type="CARD16" />
+                    <field name="baseColorNdx" type="CARD8" />
+                    <field name="labelColorNdx" type="CARD8" />
+                    <field name="labelFont" type="CountedString16" />
+                    <!-- XXX: Property is broken
+                    <list name="properties" type="Property">
+                        <fieldref>nProperties</fieldref>
+                    </list>
+                    <list name="colors" type="CountedString16">
+                        <fieldref>nColors</fieldref>
+                    </list>
+                    <list name="shapes" type="Shape">
+                        <fieldref>nShapes</fieldref>
+                    </list>
+                    -->
+                    <!-- XXX: doodads are broken
+                    <list name="sections" type="Section">
+                        <fieldref>nSections</fieldref>
+                    </list>
+                    <list name="doodads" type="Doodad">
+                        <fieldref>nDoodads</fieldref>
+                    </list>
+                    <list name="keyAliases" type="KeyAlias">
+                        <fieldref>nKeyAliases</fieldref>
+                    </list>
+                    -->
+                </bitcase>
+            </switch>
+        </reply>
+    </request>
+
+    <request name="GetDeviceInfo" opcode="24">
+        <field name="deviceSpec" type="DeviceSpec" />
+        <field name="wanted" type="CARD16" mask="XIFeature" />
+        <field name="allButtons" type="BOOL" />
+        <field name="firstButton" type="CARD8" />
+        <field name="nButtons" type="CARD8" />
+        <pad bytes="1" />
+        <field name="ledClass" type="LedClassSpec" enum="LedClass" />
+        <field name="ledID" type="IDSpec" altenum="ID" />
+        <reply>
+            <field name="deviceID" type="CARD8" />
+            <field name="present" type="CARD16" mask="XIFeature" />
+            <field name="supported" type="CARD16" mask="XIFeature" />
+            <field name="unsupported" type="CARD16" mask="XIFeature" />
+            <field name="nDeviceLedFBs" type="CARD16" />
+            <field name="firstBtnWanted" type="CARD8" />
+            <field name="nBtnsWanted" type="CARD8" />
+            <field name="firstBtnRtrn" type="CARD8" />
+            <field name="nBtnsRtrn" type="CARD8" />
+            <field name="totalBtns" type="CARD8" />
+            <field name="hasOwnState" type="BOOL" />
+            <field name="dfltKbdFB" type="CARD16" altenum="ID" />
+            <field name="dfltLedFB" type="CARD16" altenum="ID" />
+            <pad bytes="2" />
+            <field name="devType" type="ATOM" />
+            <field name="nameLen" type="CARD16" />
+            <list name="name" type="STRING8">
+                <fieldref>nameLen</fieldref>
+            </list>
+            <pad align="4" />
+            <list name="btnActions" type="Action">
+                <fieldref>nBtnsRtrn</fieldref>
+            </list>
+            <list name="leds" type="DeviceLedInfo">
+                <fieldref>nDeviceLedFBs</fieldref>
+            </list>
+        </reply>
+    </request>
+
+
+    <request name="SetDeviceInfo" opcode="25">
+        <field name="deviceSpec" type="DeviceSpec" />
+        <field name="firstBtn" type="CARD8" />
+        <field name="nBtns" type="CARD8" />
+        <field name="change" type="CARD16" mask="XIFeature" />
+        <field name="nDeviceLedFBs" type="CARD16" />
+        <list name="btnActions" type="Action">
+            <fieldref>nBtns</fieldref>
+        </list>
+        <list name="leds" type="DeviceLedInfo">
+            <fieldref>nDeviceLedFBs</fieldref>
+        </list>
+    </request>
+
+    <request name="SetDebuggingFlags" opcode="101">
+        <field name="msgLength" type="CARD16" />
+        <pad bytes="2" />
+        <field name="affectFlags" type="CARD32" />
+        <field name="flags" type="CARD32" />
+        <field name="affectCtrls" type="CARD32" />
+        <field name="ctrls" type="CARD32" />
+        <list name="message" type="STRING8">
+            <fieldref>msgLength</fieldref>
+        </list>
+        <reply>
+            <pad bytes="1" />
+            <field name="currentFlags" type="CARD32" />
+            <field name="currentCtrls" type="CARD32" />
+            <field name="supportedFlags" type="CARD32" />
+            <field name="supportedCtrls" type="CARD32" />
+            <pad bytes="8" />
+        </reply>
+    </request>
+
+    <!-- Events -->
+
+    <event name="NewKeyboardNotify" number="0">
+        <field name="xkbType" type="CARD8" />
+        <field name="time" type="TIMESTAMP" />
+        <field name="deviceID" type="CARD8" />
+        <field name="oldDeviceID" type="CARD8" />
+        <field name="minKeyCode" type="KEYCODE" />
+        <field name="maxKeyCode" type="KEYCODE" />
+        <field name="oldMinKeyCode" type="KEYCODE" />
+        <field name="oldMaxKeyCode" type="KEYCODE" />
+        <field name="requestMajor" type="CARD8" />
+        <field name="requestMinor" type="CARD8" />
+        <field name="changed" type="CARD16" mask="NKNDetail" />
+        <pad bytes="14" />
+    </event>
+
+    <event name="MapNotify" number="1">
+        <field name="xkbType" type="CARD8" />
+        <field name="time" type="TIMESTAMP" />
+        <field name="deviceID" type="CARD8" />
+        <field name="ptrBtnActions" type="CARD8" />
+        <field name="changed" type="CARD16" mask="MapPart" />
+        <field name="minKeyCode" type="KEYCODE" />
+        <field name="maxKeyCode" type="KEYCODE" />
+        <field name="firstType" type="CARD8" />
+        <field name="nTypes" type="CARD8" />
+        <field name="firstKeySym" type="KEYCODE" />
+        <field name="nKeySyms" type="CARD8" />
+        <field name="firstKeyAct" type="KEYCODE" />
+        <field name="nKeyActs" type="CARD8" />
+        <field name="firstKeyBehavior" type="KEYCODE" />
+        <field name="nKeyBehavior" type="CARD8" />
+        <field name="firstKeyExplicit" type="KEYCODE" />
+        <field name="nKeyExplicit" type="CARD8" />
+        <field name="firstModMapKey" type="KEYCODE" />
+        <field name="nModMapKeys" type="CARD8" />
+        <field name="firstVModMapKey" type="KEYCODE" />
+        <field name="nVModMapKeys" type="CARD8" />
+        <field name="virtualMods" type="CARD16" mask="VMod" />
+        <pad bytes="2" />
+    </event>
+
+    <event name="StateNotify" number="2">
+        <field name="xkbType" type="CARD8" />
+        <field name="time" type="TIMESTAMP" />
+        <field name="deviceID" type="CARD8" />
+        <field name="mods" type="CARD8" mask="ModMask" />
+        <field name="baseMods" type="CARD8" mask="ModMask" />
+        <field name="latchedMods" type="CARD8" mask="ModMask" />
+        <field name="lockedMods" type="CARD8" mask="ModMask" />
+        <field name="group" type="CARD8" enum="Group" />
+        <field name="baseGroup" type="INT16" />
+        <field name="latchedGroup" type="INT16" />
+        <field name="lockedGroup" type="CARD8" enum="Group" />
+        <field name="compatState" type="CARD8" mask="ModMask" />
+        <field name="grabMods" type="CARD8" mask="ModMask" />
+        <field name="compatGrabMods" type="CARD8" mask="ModMask" />
+        <field name="lookupMods" type="CARD8" mask="ModMask" />
+        <field name="compatLoockupMods" type="CARD8" mask="ModMask" />
+        <field name="ptrBtnState" type="CARD16" mask="KeyButMask" />
+        <field name="changed" type="CARD16" mask="StatePart" />
+        <field name="keycode" type="KEYCODE" />
+        <field name="eventType" type="CARD8" />
+        <field name="requestMajor" type="CARD8" />
+        <field name="requestMinor" type="CARD8" />
+    </event>
+
+    <event name="ControlsNotify" number="3">
+        <field name="xkbType" type="CARD8" />
+        <field name="time" type="TIMESTAMP" />
+        <field name="deviceID" type="CARD8" />
+        <field name="numGroups" type="CARD8" />
+        <pad bytes="2" />
+        <field name="changedControls" type="CARD32" mask="Control" />
+        <field name="enabledControls" type="CARD32" mask="BoolCtrl" />
+        <field name="enabledControlChanges" type="CARD32" mask="BoolCtrl" />
+        <field name="keycode" type="KEYCODE" />
+        <field name="eventType" type="CARD8" />
+        <field name="requestMajor" type="CARD8" />
+        <field name="requestMinor" type="CARD8" />
+        <pad bytes="4" />
+    </event>
+
+    <event name="IndicatorStateNotify" number="4">
+        <field name="xkbType" type="CARD8" />
+        <field name="time" type="TIMESTAMP" />
+        <field name="deviceID" type="CARD8" />
+        <pad bytes="3" />
+        <field name="state" type="CARD32" />
+        <field name="stateChanged" type="CARD32" />
+        <pad bytes="12" />
+    </event>
+
+    <event name="IndicatorMapNotify" number="5">
+        <field name="xkbType" type="CARD8" />
+        <field name="time" type="TIMESTAMP" />
+        <field name="deviceID" type="CARD8" />
+        <pad bytes="3" />
+        <field name="state" type="CARD32" />
+        <field name="mapChanged" type="CARD32" />
+        <pad bytes="12" />
+    </event>
+
+    <event name="NamesNotify" number="6">
+        <field name="xkbType" type="CARD8" />
+        <field name="time" type="TIMESTAMP" />
+        <field name="deviceID" type="CARD8" />
+        <pad bytes="1" />
+        <field name="changed" type="CARD16" mask="NameDetail" />
+        <field name="firstType" type="CARD8" />
+        <field name="nTypes" type="CARD8" />
+        <field name="firstLevelName" type="CARD8" />
+        <field name="nLevelNames" type="CARD8" />
+        <pad bytes="1" />
+        <field name="nRadioGroups" type="CARD8" />
+        <field name="nKeyAliases" type="CARD8" />
+        <field name="changedGroupNames" type="CARD8" mask="SetOfGroup" />
+        <field name="changedVirtualMods" type="CARD16" mask="VMod" />
+        <field name="firstKey" type="KEYCODE" />
+        <field name="nKeys" type="CARD8" />
+        <field name="changedIndicators" type="CARD32" />
+        <pad bytes="4" />
+    </event>
+
+    <event name="CompatMapNotify" number="7">
+        <field name="xkbType" type="CARD8" />
+        <field name="time" type="TIMESTAMP" />
+        <field name="deviceID" type="CARD8" />
+        <field name="changedGroups" type="CARD8" mask="SetOfGroup" />
+        <field name="firstSI" type="CARD16" />
+        <field name="nSI" type="CARD16" />
+        <field name="nTotalSI" type="CARD16" />
+        <pad bytes="16" />
+    </event>
+
+    <event name="BellNotify" number="8">
+        <field name="xkbType" type="CARD8" />
+        <field name="time" type="TIMESTAMP" />
+        <field name="deviceID" type="CARD8" />
+        <field name="bellClass" type="CARD8" enum="BellClassResult" />
+        <field name="bellID" type="CARD8" />
+        <field name="percent" type="CARD8" />
+        <field name="pitch" type="CARD16" />
+        <field name="duration" type="CARD16" />
+        <field name="name" type="ATOM" />
+        <field name="window" type="WINDOW" />
+        <field name="eventOnly" type="BOOL" />
+        <pad bytes="7" />
+    </event>
+
+    <event name="ActionMessage" number="9">
+        <field name="xkbType" type="CARD8" />
+        <field name="time" type="TIMESTAMP" />
+        <field name="deviceID" type="CARD8" />
+        <field name="keycode" type="KEYCODE" />
+        <field name="press" type="BOOL" />
+        <field name="keyEventFollows" type="BOOL" />
+        <field name="mods" type="CARD8" mask="ModMask" />
+        <field name="group" type="CARD8" enum="Group" />
+        <list name="message" type="STRING8">
+            <value>8</value>
+        </list>
+        <pad bytes="10" />
+    </event>
+
+    <event name="AccessXNotify" number="10">
+        <field name="xkbType" type="CARD8" />
+        <field name="time" type="TIMESTAMP" />
+        <field name="deviceID" type="CARD8" />
+        <field name="keycode" type="KEYCODE" />
+        <field name="detailt" type="CARD16" mask="AXNDetail" />
+        <field name="slowKeysDelay" type="CARD16" />
+        <field name="debounceDelay" type="CARD16" />
+        <pad bytes="16" />
+    </event>
+
+    <event name="ExtensionDeviceNotify" number="11">
+        <field name="xkbType" type="CARD8" />
+        <field name="time" type="TIMESTAMP" />
+        <field name="deviceID" type="CARD8" />
+        <pad bytes="1" />
+        <field name="reason" type="CARD16" mask="XIFeature" />
+        <field name="ledClass" type="CARD16" enum="LedClassResult" />
+        <field name="ledID" type="CARD16" />
+        <field name="ledsDefined" type="CARD32" />
+        <field name="ledState" type="CARD32" />
+        <field name="firstButton" type="CARD8" />
+        <field name="nButtons" type="CARD8" />
+        <field name="supported" type="CARD16" mask="XIFeature" />
+        <field name="unsupported" type="CARD16" mask="XIFeature" />
+        <pad bytes="2" />
+    </event>
+</xcb>

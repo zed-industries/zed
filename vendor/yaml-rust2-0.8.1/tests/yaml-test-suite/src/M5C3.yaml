@@ -1,0 +1,32 @@
+---
+- name: Spec Example 8.21. Block Scalar Nodes
+  from: http://www.yaml.org/spec/1.2/spec.html#id2799693
+  tags: indent spec literal folded tag local-tag 1.3-err
+  yaml: |
+    literal: |2
+      value
+    folded:
+       !foo
+      >1
+     value
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :literal
+       =VAL |value\n
+       =VAL :folded
+       =VAL <!foo> >value\n
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "literal": "value\n",
+      "folded": "value\n"
+    }
+  dump: |
+    literal: |
+      value
+    folded: !foo >
+      value

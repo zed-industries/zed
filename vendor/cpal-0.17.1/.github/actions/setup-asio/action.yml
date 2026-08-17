@@ -1,0 +1,14 @@
+name: Setup ASIO SDK
+description: Downloads and sets up the ASIO SDK for Windows builds
+
+runs:
+  using: composite
+  steps:
+    - name: Download and setup ASIO SDK
+      shell: pwsh
+      run: |
+        curl -L -o asio.zip https://www.steinberg.net/asiosdk
+        7z x -oasio asio.zip
+        move asio\*\* asio\
+        choco install asio4all
+        choco install llvm

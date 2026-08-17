@@ -1,0 +1,69 @@
+How to build the FreeType library on VMS
+----------------------------------------
+
+It is actually  very straightforward to install  the FreeType library.
+Just execute `vms_make.com  from` the toplevel directory  to build the
+library.  This procedure currently accepts the following options:
+
+* `DEBUG`
+  Build the library with debug information and without optimization.
+
+* `lopts=<value>`
+  Options to pass to the link command, e.g., `lopts=/traceback`.
+
+* `ccopt=<value>`
+  Options to pass to the C compiler, e.g., `ccopt=/float=ieee`.
+
+In case you did download the demos, place them in a separate directory
+sharing the same top level as the directory of FreeType and follow the
+same  instructions as  above  for  the demos  from  there.  The  build
+process relies  on this  to figure  out the  location of  the FreeType
+include files.
+
+
+To rebuild  the  sources it is necessary to  have MMS/MMK installed on
+the system.
+
+The library is available in the directory
+
+  [.LIB]
+
+To compile applications using FreeType  you have to define the logical
+`FREETYPE` pointing to the directory
+
+  [.INCLUDE.FREETYPE]
+
+i.e., if the directory in which  this `INSTALL.VMS` file is located is
+`$disk:[freetype.docs]`, then define the logical with
+
+  define freetype $disk:[freetype.include.freetype]
+
+See  http://nchrem.tnw.tudelft.nl/openvms/software2.html#Freetype  for
+the packages FreeType depends on.
+
+The latest versions were tested using
+  - VSI C V7.4-002 and DECWindows V1.7-F on OpenVMS Alpha V8.4-2L1
+  - VSI C V7.4-001 and DECWindows V1.7-E on OpenVMS IA64 V8.4-2L3
+
+
+Any problems can be reported to
+
+  Jouk Jansen <joukj@hrem.nano.tudelft.nl> or
+
+Orginal version of the build procedures was created by
+
+  Martin P.J. Zinser <zinser@zinser.no-ip.info>
+
+------------------------------------------------------------------------
+
+Copyright (C) 2000-2023 by
+David Turner, Robert Wilhelm, and Werner Lemberg.
+
+This  file  is  part  of the  FreeType  project, and may  only be  used,
+modified,  and  distributed  under  the  terms of  the FreeType  project
+license, LICENSE.TXT.   By continuing to use, modify, or distribute this
+file you  indicate that  you have  read the  license and understand  and
+accept it fully.
+
+
+--- end of INSTALL.VMS ---

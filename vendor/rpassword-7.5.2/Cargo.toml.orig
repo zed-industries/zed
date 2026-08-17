@@ -1,0 +1,26 @@
+[package]
+name = "rpassword"
+version = "7.5.2"
+authors = ["Conrad Kleinespel <conradk@conradk.com>"]
+description = "Read passwords in console applications."
+license = "Apache-2.0"
+homepage = "https://github.com/conradkleinespel/rpassword"
+repository = "https://github.com/conradkleinespel/rpassword"
+documentation = "https://docs.rs/rpassword/"
+readme = "README.md"
+keywords = ["read", "password", "security", "pass", "getpass"]
+edition = "2024"
+rust-version = "1.85"
+exclude = ["rpassword.png"]
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_IO", "Win32_Storage_FileSystem", "Win32_Security", "Win32_System_SystemServices"] }
+
+[dependencies]
+rtoolbox = "0.0"
+
+[dev-dependencies]
+tempfile = "3"

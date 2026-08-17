@@ -1,0 +1,49 @@
+:root {
+    --sidebar-width: 310px;
+}
+
+.badges img {
+    margin: 0 7px 7px 0;
+}
+
+.badges {
+    margin: 16px 0 120px;
+}
+
+.boring {
+    opacity: 0.5;
+}
+
+.no-js code:not(.focuscomment) .boring {
+    display: none;
+}
+
+.js code:not(.hide-boring) .ellipsis {
+    display: none;
+}
+
+.focuscomment .hljs-comment {
+    font-weight: bold;
+    color: black;
+}
+
+.focuscomment .boring {
+    opacity: 0.5;
+}
+
+nav.sidebar li.part-title i.fa-github {
+    font-size: 20px;
+    padding-right: 5px;
+    padding-top: 12px;
+    position: relative;
+    top: 1px;
+}
+
+.sidebar .sidebar-scrollbox {
+    padding: 10px 0 10px 10px;
+}
+
+pre > .buttons {
+    visibility: visible;
+    opacity: 0.3;
+}

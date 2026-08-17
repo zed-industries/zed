@@ -1,0 +1,5 @@
+error: must be `unsafe fn f` in order to expose explicit lifetimes to C++
+ --> tests/ui/lifetime_extern_rust.rs:5:9
+  |
+5 |         fn f<'a>(&'a self, arg: &str) -> &'a str;
+  |         ^^^^^^^^

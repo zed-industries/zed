@@ -1,0 +1,1937 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="API Reference Documentation for FreeType-2.13.2">
+      
+      
+      
+        <meta name="author" content="FreeType Contributors">
+      
+      
+      <link rel="icon" href="images/favico.ico">
+      <meta name="generator" content="mkdocs-1.4.3, mkdocs-material-7.1.9">
+    
+    
+      
+        <title>Character Mapping - FreeType-2.13.2 API Reference</title>
+      
+    
+    
+      <link rel="stylesheet" href="assets/stylesheets/main.ca7ac06f.min.css">
+      
+        
+        <link rel="stylesheet" href="assets/stylesheets/palette.f1a3b89f.min.css">
+        
+          
+          
+          <meta name="theme-color" content="#4cae4f">
+        
+      
+    
+    
+    
+      
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Noto+Serif:300,400,400i,700%7CRoboto+Mono&display=fallback">
+        <style>:root{--md-text-font-family:"Noto Serif";--md-code-font-family:"Roboto Mono"}</style>
+      
+    
+    
+    
+      <link rel="stylesheet" href="stylesheets/extra.css">
+    
+    
+      
+
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <script>function __prefix(e){return new URL(".",location).pathname+"."+e}function __get(e,t=localStorage){return JSON.parse(t.getItem(__prefix(e)))}</script>
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#character-mapping" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-header__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            FreeType-2.13.2 API Reference
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Character Mapping
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+      </label>
+      
+<div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" data-md-state="active" required>
+      <label class="md-search__icon md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+      </label>
+      <button type="reset" class="md-search__icon md-icon" aria-label="Clear" tabindex="-1">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
+      </button>
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+  </nav>
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-nav__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    FreeType-2.13.2 API Reference
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="index.html" class="md-nav__link">
+        TOC
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-index.html" class="md-nav__link">
+        Index
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_3" type="checkbox" id="__nav_3" >
+      
+      <label class="md-nav__link" for="__nav_3">
+        General Remarks
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="General Remarks" data-md-level="1">
+        <label class="md-nav__title" for="__nav_3">
+          <span class="md-nav__icon md-icon"></span>
+          General Remarks
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-preamble.html" class="md-nav__link">
+        Preamble
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_inclusion.html" class="md-nav__link">
+        FreeType's header inclusion scheme
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-user_allocation.html" class="md-nav__link">
+        User allocation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+    
+  
+  
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_4" type="checkbox" id="__nav_4" checked>
+      
+      <label class="md-nav__link" for="__nav_4">
+        Core API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Core API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_4">
+          <span class="md-nav__icon md-icon"></span>
+          Core API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-basic_types.html" class="md-nav__link">
+        Basic Data Types
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-library_setup.html" class="md-nav__link">
+        Library Setup
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-face_creation.html" class="md-nav__link">
+        Face Creation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_testing_macros.html" class="md-nav__link">
+        Font Testing Macros
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizing_and_scaling.html" class="md-nav__link">
+        Sizing and Scaling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_retrieval.html" class="md-nav__link">
+        Glyph Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+    
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" data-md-toggle="toc" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          Character Mapping
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="ft2-character_mapping.html" class="md-nav__link md-nav__link--active">
+        Character Mapping
+      </a>
+      
+        
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_charmap" class="md-nav__link">
+    FT_CharMap
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_charmaprec" class="md-nav__link">
+    FT_CharMapRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_encoding" class="md-nav__link">
+    FT_Encoding
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_enc_tag" class="md-nav__link">
+    FT_ENC_TAG
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_select_charmap" class="md-nav__link">
+    FT_Select_Charmap
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_set_charmap" class="md-nav__link">
+    FT_Set_Charmap
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_charmap_index" class="md-nav__link">
+    FT_Get_Charmap_Index
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_char_index" class="md-nav__link">
+    FT_Get_Char_Index
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_first_char" class="md-nav__link">
+    FT_Get_First_Char
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_next_char" class="md-nav__link">
+    FT_Get_Next_Char
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_load_char" class="md-nav__link">
+    FT_Load_Char
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-information_retrieval.html" class="md-nav__link">
+        Information Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-other_api_data.html" class="md-nav__link">
+        Other API Data
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_5" type="checkbox" id="__nav_5" >
+      
+      <label class="md-nav__link" for="__nav_5">
+        Extended API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Extended API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_5">
+          <span class="md-nav__icon md-icon"></span>
+          Extended API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_variants.html" class="md-nav__link">
+        Unicode Variation Sequences
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-color_management.html" class="md-nav__link">
+        Glyph Color Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-layer_management.html" class="md-nav__link">
+        Glyph Layer Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_management.html" class="md-nav__link">
+        Glyph Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-mac_specific.html" class="md-nav__link">
+        Mac Specific Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizes_management.html" class="md-nav__link">
+        Size Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_file_macros.html" class="md-nav__link">
+        Header File Macros
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_6" type="checkbox" id="__nav_6" >
+      
+      <label class="md-nav__link" for="__nav_6">
+        Format-Specific API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Format-Specific API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_6">
+          <span class="md-nav__icon md-icon"></span>
+          Format-Specific API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-multiple_masters.html" class="md-nav__link">
+        Multiple Masters
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_tables.html" class="md-nav__link">
+        TrueType Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-type1_tables.html" class="md-nav__link">
+        Type 1 Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sfnt_names.html" class="md-nav__link">
+        SFNT Names
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bdf_fonts.html" class="md-nav__link">
+        BDF and PCF Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cid_fonts.html" class="md-nav__link">
+        CID Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pfr_fonts.html" class="md-nav__link">
+        PFR Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-winfnt_fonts.html" class="md-nav__link">
+        Window FNT Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-svg_fonts.html" class="md-nav__link">
+        OpenType SVG Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_formats.html" class="md-nav__link">
+        Font Formats
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gasp_table.html" class="md-nav__link">
+        Gasp Table
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_7" type="checkbox" id="__nav_7" >
+      
+      <label class="md-nav__link" for="__nav_7">
+        Controlling FreeType Modules
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Controlling FreeType Modules" data-md-level="1">
+        <label class="md-nav__title" for="__nav_7">
+          <span class="md-nav__icon md-icon"></span>
+          Controlling FreeType Modules
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-auto_hinter.html" class="md-nav__link">
+        The auto-hinter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cff_driver.html" class="md-nav__link">
+        The CFF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-t1_cid_driver.html" class="md-nav__link">
+        The Type 1 and CID drivers
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-tt_driver.html" class="md-nav__link">
+        The TrueType driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pcf_driver.html" class="md-nav__link">
+        The PCF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_svg_driver.html" class="md-nav__link">
+        The SVG driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-properties.html" class="md-nav__link">
+        Driver properties
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-parameter_tags.html" class="md-nav__link">
+        Parameter Tags
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lcd_rendering.html" class="md-nav__link">
+        Subpixel Rendering
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_8" type="checkbox" id="__nav_8" >
+      
+      <label class="md-nav__link" for="__nav_8">
+        Cache Sub-System
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Cache Sub-System" data-md-level="1">
+        <label class="md-nav__title" for="__nav_8">
+          <span class="md-nav__icon md-icon"></span>
+          Cache Sub-System
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cache_subsystem.html" class="md-nav__link">
+        Cache Sub-System
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_9" type="checkbox" id="__nav_9" >
+      
+      <label class="md-nav__link" for="__nav_9">
+        Support API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Support API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_9">
+          <span class="md-nav__icon md-icon"></span>
+          Support API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-computations.html" class="md-nav__link">
+        Computations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-list_processing.html" class="md-nav__link">
+        List Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-outline_processing.html" class="md-nav__link">
+        Outline Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-quick_advance.html" class="md-nav__link">
+        Quick retrieval of advance values
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bitmap_handling.html" class="md-nav__link">
+        Bitmap Handling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-raster.html" class="md-nav__link">
+        Scanline Converter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_stroker.html" class="md-nav__link">
+        Glyph Stroker
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-system_interface.html" class="md-nav__link">
+        System Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-module_management.html" class="md-nav__link">
+        Module Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gzip.html" class="md-nav__link">
+        GZIP Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lzw.html" class="md-nav__link">
+        LZW Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bzip2.html" class="md-nav__link">
+        BZIP2 Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-debugging_apis.html" class="md-nav__link">
+        External Debugging APIs
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_10" type="checkbox" id="__nav_10" >
+      
+      <label class="md-nav__link" for="__nav_10">
+        Error Codes
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Error Codes" data-md-level="1">
+        <label class="md-nav__title" for="__nav_10">
+          <span class="md-nav__icon md-icon"></span>
+          Error Codes
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_enumerations.html" class="md-nav__link">
+        Error Enumerations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_code_values.html" class="md-nav__link">
+        Error Code Values
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_11" type="checkbox" id="__nav_11" >
+      
+      <label class="md-nav__link" for="__nav_11">
+        Miscellaneous
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Miscellaneous" data-md-level="1">
+        <label class="md-nav__title" for="__nav_11">
+          <span class="md-nav__icon md-icon"></span>
+          Miscellaneous
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gx_validation.html" class="md-nav__link">
+        TrueTypeGX/AAT Validation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-incremental.html" class="md-nav__link">
+        Incremental Loading
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_engine.html" class="md-nav__link">
+        The TrueType Engine
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_validation.html" class="md-nav__link">
+        OpenType Validation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_charmap" class="md-nav__link">
+    FT_CharMap
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_charmaprec" class="md-nav__link">
+    FT_CharMapRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_encoding" class="md-nav__link">
+    FT_Encoding
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_enc_tag" class="md-nav__link">
+    FT_ENC_TAG
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_select_charmap" class="md-nav__link">
+    FT_Select_Charmap
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_set_charmap" class="md-nav__link">
+    FT_Set_Charmap
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_charmap_index" class="md-nav__link">
+    FT_Get_Charmap_Index
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_char_index" class="md-nav__link">
+    FT_Get_Char_Index
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_first_char" class="md-nav__link">
+    FT_Get_First_Char
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_next_char" class="md-nav__link">
+    FT_Get_Next_Char
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_load_char" class="md-nav__link">
+    FT_Load_Char
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          <div class="md-content" data-md-component="content">
+            <article class="md-content__inner md-typeset">
+              
+                
+                
+                <p><a href="https://www.freetype.org">FreeType</a> &raquo; <a href="../">Docs</a> &raquo; <a href="index.html#core-api">Core API</a> &raquo; Character Mapping</p>
+<hr />
+<h1 id="character-mapping">Character Mapping<a class="headerlink" href="#character-mapping" title="Permanent link">&para;</a></h1>
+<h2 id="synopsis">Synopsis<a class="headerlink" href="#synopsis" title="Permanent link">&para;</a></h2>
+<p>This section holds functions and structures that are related to mapping character input codes to glyph indices.</p>
+<p>Note that for many scripts the simplistic approach used by FreeType of mapping a single character to a single glyph is not valid or possible! In general, a higher-level library like HarfBuzz or ICU should be used for handling text strings.</p>
+<h2 id="ft_charmap">FT_CharMap<a class="headerlink" href="#ft_charmap" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span> FT_CharMapRec_*  <b>FT_CharMap</b>;
+</code></pre></div>
+
+<p>A handle to a character map (usually abbreviated to &lsquo;charmap&rsquo;). A charmap is used to translate character codes in a given encoding into glyph indexes for its parent's face. Some font formats may provide several charmaps per font.</p>
+<p>Each face object owns zero or more charmaps, but only one of them can be &lsquo;active&rsquo;, providing the data used by <code><a href="ft2-character_mapping.html#ft_get_char_index">FT_Get_Char_Index</a></code> or <code><a href="ft2-character_mapping.html#ft_load_char">FT_Load_Char</a></code>.</p>
+<p>The list of available charmaps in a face is available through the <code>face-&gt;num_charmaps</code> and <code>face-&gt;charmaps</code> fields of <code><a href="ft2-face_creation.html#ft_facerec">FT_FaceRec</a></code>.</p>
+<p>The currently active charmap is available as <code>face-&gt;charmap</code>. You should call <code><a href="ft2-character_mapping.html#ft_set_charmap">FT_Set_Charmap</a></code> to change it.</p>
+<h4>note</h4>
+
+<p>When a new face is created (either through <code><a href="ft2-face_creation.html#ft_new_face">FT_New_Face</a></code> or <code><a href="ft2-face_creation.html#ft_open_face">FT_Open_Face</a></code>), the library looks for a Unicode charmap within the list and automatically activates it. If there is no Unicode charmap, FreeType doesn't set an &lsquo;active&rsquo; charmap.</p>
+<h4>also</h4>
+
+<p>See <code><a href="ft2-character_mapping.html#ft_charmaprec">FT_CharMapRec</a></code> for the publicly accessible fields of a given character map.</p>
+<hr>
+
+<h2 id="ft_charmaprec">FT_CharMapRec<a class="headerlink" href="#ft_charmaprec" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_CharMapRec_
+  {
+    <a href="ft2-face_creation.html#ft_face">FT_Face</a>      face;
+    <a href="ft2-character_mapping.html#ft_encoding">FT_Encoding</a>  encoding;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>    platform_id;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>    encoding_id;
+
+  } <b>FT_CharMapRec</b>;
+</code></pre></div>
+
+<p>The base charmap structure.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the parent face object.</p>
+</td></tr>
+<tr><td class="val" id="encoding">encoding</td><td class="desc">
+<p>An <code><a href="ft2-character_mapping.html#ft_encoding">FT_Encoding</a></code> tag identifying the charmap. Use this with <code><a href="ft2-character_mapping.html#ft_select_charmap">FT_Select_Charmap</a></code>.</p>
+</td></tr>
+<tr><td class="val" id="platform_id">platform_id</td><td class="desc">
+<p>An ID number describing the platform for the following encoding ID. This comes directly from the TrueType specification and gets emulated for other formats.</p>
+</td></tr>
+<tr><td class="val" id="encoding_id">encoding_id</td><td class="desc">
+<p>A platform-specific encoding number. This also comes from the TrueType specification and gets emulated similarly.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_encoding">FT_Encoding<a class="headerlink" href="#ft_encoding" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">enum</span>  FT_Encoding_
+  {
+    <a href="ft2-character_mapping.html#ft_enc_tag">FT_ENC_TAG</a>( <a href="ft2-character_mapping.html#ft_encoding_none">FT_ENCODING_NONE</a>, 0, 0, 0, 0 ),
+
+    <a href="ft2-character_mapping.html#ft_enc_tag">FT_ENC_TAG</a>( <a href="ft2-character_mapping.html#ft_encoding_ms_symbol">FT_ENCODING_MS_SYMBOL</a>, 's', 'y', 'm', 'b' ),
+    <a href="ft2-character_mapping.html#ft_enc_tag">FT_ENC_TAG</a>( <a href="ft2-character_mapping.html#ft_encoding_unicode">FT_ENCODING_UNICODE</a>,   'u', 'n', 'i', 'c' ),
+
+    <a href="ft2-character_mapping.html#ft_enc_tag">FT_ENC_TAG</a>( <a href="ft2-character_mapping.html#ft_encoding_sjis">FT_ENCODING_SJIS</a>,    's', 'j', 'i', 's' ),
+    <a href="ft2-character_mapping.html#ft_enc_tag">FT_ENC_TAG</a>( <a href="ft2-character_mapping.html#ft_encoding_prc">FT_ENCODING_PRC</a>,     'g', 'b', ' ', ' ' ),
+    <a href="ft2-character_mapping.html#ft_enc_tag">FT_ENC_TAG</a>( <a href="ft2-character_mapping.html#ft_encoding_big5">FT_ENCODING_BIG5</a>,    'b', 'i', 'g', '5' ),
+    <a href="ft2-character_mapping.html#ft_enc_tag">FT_ENC_TAG</a>( <a href="ft2-character_mapping.html#ft_encoding_wansung">FT_ENCODING_WANSUNG</a>, 'w', 'a', 'n', 's' ),
+    <a href="ft2-character_mapping.html#ft_enc_tag">FT_ENC_TAG</a>( <a href="ft2-character_mapping.html#ft_encoding_johab">FT_ENCODING_JOHAB</a>,   'j', 'o', 'h', 'a' ),
+
+    /* for backward compatibility */
+    FT_ENCODING_GB2312     = <a href="ft2-character_mapping.html#ft_encoding_prc">FT_ENCODING_PRC</a>,
+    <a href="ft2-character_mapping.html#ft_encoding_ms_sjis">FT_ENCODING_MS_SJIS</a>    = <a href="ft2-character_mapping.html#ft_encoding_sjis">FT_ENCODING_SJIS</a>,
+    <a href="ft2-character_mapping.html#ft_encoding_ms_gb2312">FT_ENCODING_MS_GB2312</a>  = <a href="ft2-character_mapping.html#ft_encoding_prc">FT_ENCODING_PRC</a>,
+    <a href="ft2-character_mapping.html#ft_encoding_ms_big5">FT_ENCODING_MS_BIG5</a>    = <a href="ft2-character_mapping.html#ft_encoding_big5">FT_ENCODING_BIG5</a>,
+    <a href="ft2-character_mapping.html#ft_encoding_ms_wansung">FT_ENCODING_MS_WANSUNG</a> = <a href="ft2-character_mapping.html#ft_encoding_wansung">FT_ENCODING_WANSUNG</a>,
+    <a href="ft2-character_mapping.html#ft_encoding_ms_johab">FT_ENCODING_MS_JOHAB</a>   = <a href="ft2-character_mapping.html#ft_encoding_johab">FT_ENCODING_JOHAB</a>,
+
+    <a href="ft2-character_mapping.html#ft_enc_tag">FT_ENC_TAG</a>( <a href="ft2-character_mapping.html#ft_encoding_adobe_standard">FT_ENCODING_ADOBE_STANDARD</a>, 'A', 'D', 'O', 'B' ),
+    <a href="ft2-character_mapping.html#ft_enc_tag">FT_ENC_TAG</a>( <a href="ft2-character_mapping.html#ft_encoding_adobe_expert">FT_ENCODING_ADOBE_EXPERT</a>,   'A', 'D', 'B', 'E' ),
+    <a href="ft2-character_mapping.html#ft_enc_tag">FT_ENC_TAG</a>( <a href="ft2-character_mapping.html#ft_encoding_adobe_custom">FT_ENCODING_ADOBE_CUSTOM</a>,   'A', 'D', 'B', 'C' ),
+    <a href="ft2-character_mapping.html#ft_enc_tag">FT_ENC_TAG</a>( <a href="ft2-character_mapping.html#ft_encoding_adobe_latin_1">FT_ENCODING_ADOBE_LATIN_1</a>,  'l', 'a', 't', '1' ),
+
+    <a href="ft2-character_mapping.html#ft_enc_tag">FT_ENC_TAG</a>( <a href="ft2-character_mapping.html#ft_encoding_old_latin_2">FT_ENCODING_OLD_LATIN_2</a>, 'l', 'a', 't', '2' ),
+
+    <a href="ft2-character_mapping.html#ft_enc_tag">FT_ENC_TAG</a>( <a href="ft2-character_mapping.html#ft_encoding_apple_roman">FT_ENCODING_APPLE_ROMAN</a>, 'a', 'r', 'm', 'n' )
+
+  } <b>FT_Encoding</b>;
+
+
+  /* these constants are deprecated; use the corresponding `<b>FT_Encoding</b>` */
+  /* values instead                                                      */
+#<span class="keyword">define</span> ft_encoding_none            <a href="ft2-character_mapping.html#ft_encoding_none">FT_ENCODING_NONE</a>
+#<span class="keyword">define</span> ft_encoding_unicode         <a href="ft2-character_mapping.html#ft_encoding_unicode">FT_ENCODING_UNICODE</a>
+#<span class="keyword">define</span> ft_encoding_symbol          <a href="ft2-character_mapping.html#ft_encoding_ms_symbol">FT_ENCODING_MS_SYMBOL</a>
+#<span class="keyword">define</span> ft_encoding_latin_1         <a href="ft2-character_mapping.html#ft_encoding_adobe_latin_1">FT_ENCODING_ADOBE_LATIN_1</a>
+#<span class="keyword">define</span> ft_encoding_latin_2         <a href="ft2-character_mapping.html#ft_encoding_old_latin_2">FT_ENCODING_OLD_LATIN_2</a>
+#<span class="keyword">define</span> ft_encoding_sjis            <a href="ft2-character_mapping.html#ft_encoding_sjis">FT_ENCODING_SJIS</a>
+#<span class="keyword">define</span> ft_encoding_gb2312          <a href="ft2-character_mapping.html#ft_encoding_prc">FT_ENCODING_PRC</a>
+#<span class="keyword">define</span> ft_encoding_big5            <a href="ft2-character_mapping.html#ft_encoding_big5">FT_ENCODING_BIG5</a>
+#<span class="keyword">define</span> ft_encoding_wansung         <a href="ft2-character_mapping.html#ft_encoding_wansung">FT_ENCODING_WANSUNG</a>
+#<span class="keyword">define</span> ft_encoding_johab           <a href="ft2-character_mapping.html#ft_encoding_johab">FT_ENCODING_JOHAB</a>
+
+#<span class="keyword">define</span> ft_encoding_adobe_standard  <a href="ft2-character_mapping.html#ft_encoding_adobe_standard">FT_ENCODING_ADOBE_STANDARD</a>
+#<span class="keyword">define</span> ft_encoding_adobe_expert    <a href="ft2-character_mapping.html#ft_encoding_adobe_expert">FT_ENCODING_ADOBE_EXPERT</a>
+#<span class="keyword">define</span> ft_encoding_adobe_custom    <a href="ft2-character_mapping.html#ft_encoding_adobe_custom">FT_ENCODING_ADOBE_CUSTOM</a>
+#<span class="keyword">define</span> ft_encoding_apple_roman     <a href="ft2-character_mapping.html#ft_encoding_apple_roman">FT_ENCODING_APPLE_ROMAN</a>
+</code></pre></div>
+
+<p>An enumeration to specify character sets supported by charmaps. Used in the <code><a href="ft2-character_mapping.html#ft_select_charmap">FT_Select_Charmap</a></code> API function.</p>
+<h4>note</h4>
+
+<p>Despite the name, this enumeration lists specific character repertoires (i.e., charsets), and not text encoding methods (e.g., UTF-8, UTF-16, etc.).</p>
+<p>Other encodings might be defined in the future.</p>
+<h4>values</h4>
+<table class="fields long">
+<tr><td class="val" id="ft_encoding_none">FT_ENCODING_NONE</td><td class="desc">
+<p>The encoding value&nbsp;0 is reserved for all formats except BDF, PCF, and Windows FNT; see below for more information.</p>
+</td></tr>
+<tr><td class="val" id="ft_encoding_unicode">FT_ENCODING_UNICODE</td><td class="desc">
+<p>The Unicode character set. This value covers all versions of the Unicode repertoire, including ASCII and Latin-1. Most fonts include a Unicode charmap, but not all of them.</p>
+<p>For example, if you want to access Unicode value U+1F028 (and the font contains it), use value 0x1F028 as the input value for <code><a href="ft2-character_mapping.html#ft_get_char_index">FT_Get_Char_Index</a></code>.</p>
+</td></tr>
+<tr><td class="val" id="ft_encoding_ms_symbol">FT_ENCODING_MS_SYMBOL</td><td class="desc">
+<p>Microsoft Symbol encoding, used to encode mathematical symbols and wingdings. For more information, see &lsquo;<a href="https://www.microsoft.com/typography/otspec/recom.htm#non-standard-symbol-fonts">https://www.microsoft.com/typography/otspec/recom.htm#non-standard-symbol-fonts</a>&rsquo;, &lsquo;<a href="http://www.kostis.net/charsets/symbol.htm">http://www.kostis.net/charsets/symbol.htm</a>&rsquo;, and &lsquo;<a href="http://www.kostis.net/charsets/wingding.htm">http://www.kostis.net/charsets/wingding.htm</a>&rsquo;.</p>
+<p>This encoding uses character codes from the PUA (Private Unicode Area) in the range U+F020-U+F0FF.</p>
+</td></tr>
+<tr><td class="val" id="ft_encoding_sjis">FT_ENCODING_SJIS</td><td class="desc">
+<p>Shift JIS encoding for Japanese. More info at &lsquo;<a href="https://en.wikipedia.org/wiki/Shift_JIS">https://en.wikipedia.org/wiki/Shift_JIS</a>&rsquo;. See note on multi-byte encodings below.</p>
+</td></tr>
+<tr><td class="val" id="ft_encoding_prc">FT_ENCODING_PRC</td><td class="desc">
+<p>Corresponds to encoding systems mainly for Simplified Chinese as used in People's Republic of China (PRC). The encoding layout is based on GB&nbsp;2312 and its supersets GBK and GB&nbsp;18030.</p>
+</td></tr>
+<tr><td class="val" id="ft_encoding_big5">FT_ENCODING_BIG5</td><td class="desc">
+<p>Corresponds to an encoding system for Traditional Chinese as used in Taiwan and Hong Kong.</p>
+</td></tr>
+<tr><td class="val" id="ft_encoding_wansung">FT_ENCODING_WANSUNG</td><td class="desc">
+<p>Corresponds to the Korean encoding system known as Extended Wansung (MS Windows code page 949). For more information see &lsquo;<a href="https://www.unicode.org/Public/MAPPINGS/VENDORS/MICSFT/WindowsBestFit/bestfit949.txt">https://www.unicode.org/Public/MAPPINGS/VENDORS/MICSFT/WindowsBestFit/bestfit949.txt</a>&rsquo;.</p>
+</td></tr>
+<tr><td class="val" id="ft_encoding_johab">FT_ENCODING_JOHAB</td><td class="desc">
+<p>The Korean standard character set (KS&nbsp;C 5601-1992), which corresponds to MS Windows code page 1361. This character set includes all possible Hangul character combinations.</p>
+</td></tr>
+<tr><td class="val" id="ft_encoding_adobe_latin_1">FT_ENCODING_ADOBE_LATIN_1</td><td class="desc">
+<p>Corresponds to a Latin-1 encoding as defined in a Type&nbsp;1 PostScript font. It is limited to 256 character codes.</p>
+</td></tr>
+<tr><td class="val" id="ft_encoding_adobe_standard">FT_ENCODING_ADOBE_STANDARD</td><td class="desc">
+<p>Adobe Standard encoding, as found in Type&nbsp;1, CFF, and OpenType/CFF fonts. It is limited to 256 character codes.</p>
+</td></tr>
+<tr><td class="val" id="ft_encoding_adobe_expert">FT_ENCODING_ADOBE_EXPERT</td><td class="desc">
+<p>Adobe Expert encoding, as found in Type&nbsp;1, CFF, and OpenType/CFF fonts. It is limited to 256 character codes.</p>
+</td></tr>
+<tr><td class="val" id="ft_encoding_adobe_custom">FT_ENCODING_ADOBE_CUSTOM</td><td class="desc">
+<p>Corresponds to a custom encoding, as found in Type&nbsp;1, CFF, and OpenType/CFF fonts. It is limited to 256 character codes.</p>
+</td></tr>
+<tr><td class="val" id="ft_encoding_apple_roman">FT_ENCODING_APPLE_ROMAN</td><td class="desc">
+<p>Apple roman encoding. Many TrueType and OpenType fonts contain a charmap for this 8-bit encoding, since older versions of Mac OS are able to use it.</p>
+</td></tr>
+<tr><td class="val" id="ft_encoding_old_latin_2">FT_ENCODING_OLD_LATIN_2</td><td class="desc">
+<p>This value is deprecated and was neither used nor reported by FreeType. Don't use or test for it.</p>
+</td></tr>
+<tr><td class="val" id="ft_encoding_ms_sjis">FT_ENCODING_MS_SJIS</td><td class="desc">
+<p>Same as FT_ENCODING_SJIS. Deprecated.</p>
+</td></tr>
+<tr><td class="val" id="ft_encoding_ms_gb2312">FT_ENCODING_MS_GB2312</td><td class="desc">
+<p>Same as FT_ENCODING_PRC. Deprecated.</p>
+</td></tr>
+<tr><td class="val" id="ft_encoding_ms_big5">FT_ENCODING_MS_BIG5</td><td class="desc">
+<p>Same as FT_ENCODING_BIG5. Deprecated.</p>
+</td></tr>
+<tr><td class="val" id="ft_encoding_ms_wansung">FT_ENCODING_MS_WANSUNG</td><td class="desc">
+<p>Same as FT_ENCODING_WANSUNG. Deprecated.</p>
+</td></tr>
+<tr><td class="val" id="ft_encoding_ms_johab">FT_ENCODING_MS_JOHAB</td><td class="desc">
+<p>Same as FT_ENCODING_JOHAB. Deprecated.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>When loading a font, FreeType makes a Unicode charmap active if possible (either if the font provides such a charmap, or if FreeType can synthesize one from PostScript glyph name dictionaries; in either case, the charmap is tagged with <code>FT_ENCODING_UNICODE</code>). If such a charmap is synthesized, it is placed at the first position of the charmap array.</p>
+<p>All other encodings are considered legacy and tagged only if explicitly defined in the font file. Otherwise, <code>FT_ENCODING_NONE</code> is used.</p>
+<p><code>FT_ENCODING_NONE</code> is set by the BDF and PCF drivers if the charmap is neither Unicode nor ISO-8859-1 (otherwise it is set to <code>FT_ENCODING_UNICODE</code>). Use <code><a href="ft2-bdf_fonts.html#ft_get_bdf_charset_id">FT_Get_BDF_Charset_ID</a></code> to find out which encoding is really present. If, for example, the <code>cs_registry</code> field is &lsquo;KOI8&rsquo; and the <code>cs_encoding</code> field is &lsquo;R&rsquo;, the font is encoded in KOI8-R.</p>
+<p><code>FT_ENCODING_NONE</code> is always set (with a single exception) by the winfonts driver. Use <code><a href="ft2-winfnt_fonts.html#ft_get_winfnt_header">FT_Get_WinFNT_Header</a></code> and examine the <code>charset</code> field of the <code><a href="ft2-winfnt_fonts.html#ft_winfnt_headerrec">FT_WinFNT_HeaderRec</a></code> structure to find out which encoding is really present. For example, <code><a href="ft2-winfnt_fonts.html#ft_winfnt_id_xxx">FT_WinFNT_ID_CP1251</a></code> (204) means Windows code page 1251 (for Russian).</p>
+<p><code>FT_ENCODING_NONE</code> is set if <code>platform_id</code> is <code><a href="ft2-truetype_tables.html#tt_platform_xxx">TT_PLATFORM_MACINTOSH</a></code> and <code>encoding_id</code> is not <code>TT_MAC_ID_ROMAN</code> (otherwise it is set to <code>FT_ENCODING_APPLE_ROMAN</code>).</p>
+<p>If <code>platform_id</code> is <code><a href="ft2-truetype_tables.html#tt_platform_xxx">TT_PLATFORM_MACINTOSH</a></code>, use the function <code><a href="ft2-truetype_tables.html#ft_get_cmap_language_id">FT_Get_CMap_Language_ID</a></code> to query the Mac language ID that may be needed to be able to distinguish Apple encoding variants. See</p>
+<p><a href="https://www.unicode.org/Public/MAPPINGS/VENDORS/APPLE/Readme.txt">https://www.unicode.org/Public/MAPPINGS/VENDORS/APPLE/Readme.txt</a></p>
+<p>to get an idea how to do that. Basically, if the language ID is&nbsp;0, don't use it, otherwise subtract 1 from the language ID. Then examine <code>encoding_id</code>. If, for example, <code>encoding_id</code> is <code>TT_MAC_ID_ROMAN</code> and the language ID (minus&nbsp;1) is <code>TT_MAC_LANGID_GREEK</code>, it is the Greek encoding, not Roman. <code>TT_MAC_ID_ARABIC</code> with <code>TT_MAC_LANGID_FARSI</code> means the Farsi variant of the Arabic encoding.</p>
+<hr>
+
+<h2 id="ft_enc_tag">FT_ENC_TAG<a class="headerlink" href="#ft_enc_tag" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>#<span class="keyword">ifndef</span> <b>FT_ENC_TAG</b>
+
+#<span class="keyword">define</span> <b>FT_ENC_TAG</b>( value, a, b, c, d )                             \
+          value = ( ( FT_STATIC_BYTE_CAST( <a href="ft2-basic_types.html#ft_uint32">FT_UInt32</a>, a ) &lt;&lt; 24 ) | \
+                    ( FT_STATIC_BYTE_CAST( <a href="ft2-basic_types.html#ft_uint32">FT_UInt32</a>, b ) &lt;&lt; 16 ) | \
+                    ( FT_STATIC_BYTE_CAST( <a href="ft2-basic_types.html#ft_uint32">FT_UInt32</a>, c ) &lt;&lt;  8 ) | \
+                      FT_STATIC_BYTE_CAST( <a href="ft2-basic_types.html#ft_uint32">FT_UInt32</a>, d )         )
+
+#<span class="keyword">endif</span> /* <b>FT_ENC_TAG</b> */
+</code></pre></div>
+
+<p>This macro converts four-letter tags into an unsigned long. It is used to define &lsquo;encoding&rsquo; identifiers (see <code><a href="ft2-character_mapping.html#ft_encoding">FT_Encoding</a></code>).</p>
+<h4>note</h4>
+
+<p>Since many 16-bit compilers don't like 32-bit enumerations, you should redefine this macro in case of problems to something like this:
+<div class="highlight"><pre><span></span><code>  #define FT_ENC_TAG( value, a, b, c, d )  value
+</code></pre></div></p>
+<p>to get a simple enumeration without assigning special numbers.</p>
+<hr>
+
+<h2 id="ft_select_charmap">FT_Select_Charmap<a class="headerlink" href="#ft_select_charmap" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Select_Charmap</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>      face,
+                     <a href="ft2-character_mapping.html#ft_encoding">FT_Encoding</a>  encoding );
+</code></pre></div>
+
+<p>Select a given charmap by its encoding tag (as listed in <code>freetype.h</code>).</p>
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the source face object.</p>
+</td></tr>
+</table>
+
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="encoding">encoding</td><td class="desc">
+<p>A handle to the selected encoding.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>This function returns an error if no charmap in the face corresponds to the encoding queried here.</p>
+<p>Because many fonts contain more than a single cmap for Unicode encoding, this function has some special code to select the one that covers Unicode best (&lsquo;best&rsquo; in the sense that a UCS-4 cmap is preferred to a UCS-2 cmap). It is thus preferable to <code><a href="ft2-character_mapping.html#ft_set_charmap">FT_Set_Charmap</a></code> in this case.</p>
+<hr>
+
+<h2 id="ft_set_charmap">FT_Set_Charmap<a class="headerlink" href="#ft_set_charmap" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Set_Charmap</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>     face,
+                  <a href="ft2-character_mapping.html#ft_charmap">FT_CharMap</a>  charmap );
+</code></pre></div>
+
+<p>Select a given charmap for character code to glyph index mapping.</p>
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the source face object.</p>
+</td></tr>
+</table>
+
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="charmap">charmap</td><td class="desc">
+<p>A handle to the selected charmap.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>This function returns an error if the charmap is not part of the face (i.e., if it is not listed in the <code>face-&gt;charmaps</code> table).</p>
+<p>It also fails if an OpenType type&nbsp;14 charmap is selected (which doesn't map character codes to glyph indices at all).</p>
+<hr>
+
+<h2 id="ft_get_charmap_index">FT_Get_Charmap_Index<a class="headerlink" href="#ft_get_charmap_index" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_int">FT_Int</a> )
+  <b>FT_Get_Charmap_Index</b>( <a href="ft2-character_mapping.html#ft_charmap">FT_CharMap</a>  charmap );
+</code></pre></div>
+
+<p>Retrieve index of a given charmap.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="charmap">charmap</td><td class="desc">
+<p>A handle to a charmap.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>The index into the array of character maps within the face to which <code>charmap</code> belongs. If an error occurs, -1 is returned.</p>
+<hr>
+
+<h2 id="ft_get_char_index">FT_Get_Char_Index<a class="headerlink" href="#ft_get_char_index" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_uint">FT_UInt</a> )
+  <b>FT_Get_Char_Index</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>   face,
+                     <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>  charcode );
+</code></pre></div>
+
+<p>Return the glyph index of a given character code. This function uses the currently selected charmap to do the mapping.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the source face object.</p>
+</td></tr>
+<tr><td class="val" id="charcode">charcode</td><td class="desc">
+<p>The character code.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>The glyph index. 0&nbsp;means &lsquo;undefined character code&rsquo;.</p>
+<h4>note</h4>
+
+<p>If you use FreeType to manipulate the contents of font files directly, be aware that the glyph index returned by this function doesn't always correspond to the internal indices used within the file. This is done to ensure that value&nbsp;0 always corresponds to the &lsquo;missing glyph&rsquo;. If the first glyph is not named &lsquo;.notdef&rsquo;, then for Type&nbsp;1 and Type&nbsp;42 fonts, &lsquo;.notdef&rsquo; will be moved into the glyph ID&nbsp;0 position, and whatever was there will be moved to the position &lsquo;.notdef&rsquo; had. For Type&nbsp;1 fonts, if there is no &lsquo;.notdef&rsquo; glyph at all, then one will be created at index&nbsp;0 and whatever was there will be moved to the last index &ndash; Type&nbsp;42 fonts are considered invalid under this condition.</p>
+<hr>
+
+<h2 id="ft_get_first_char">FT_Get_First_Char<a class="headerlink" href="#ft_get_first_char" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a> )
+  <b>FT_Get_First_Char</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>   face,
+                     <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>  *agindex );
+</code></pre></div>
+
+<p>Return the first character code in the current charmap of a given face, together with its corresponding glyph index.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the source face object.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="agindex">agindex</td><td class="desc">
+<p>Glyph index of first character code. 0&nbsp;if charmap is empty.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>The charmap's first character code.</p>
+<h4>note</h4>
+
+<p>You should use this function together with <code><a href="ft2-character_mapping.html#ft_get_next_char">FT_Get_Next_Char</a></code> to parse all character codes available in a given charmap. The code should look like this:
+<div class="highlight"><pre><span></span><code>  FT_ULong  charcode;
+  FT_UInt   gindex;
+
+
+  charcode = FT_Get_First_Char( face, &amp;gindex );
+  while ( gindex != 0 )
+  {
+    ... do something with (charcode,gindex) pair ...
+
+    charcode = FT_Get_Next_Char( face, charcode, &amp;gindex );
+  }
+</code></pre></div></p>
+<p>Be aware that character codes can have values up to 0xFFFFFFFF; this might happen for non-Unicode or malformed cmaps. However, even with regular Unicode encoding, so-called &lsquo;last resort fonts&rsquo; (using SFNT cmap format 13, see function <code><a href="ft2-truetype_tables.html#ft_get_cmap_format">FT_Get_CMap_Format</a></code>) normally have entries for all Unicode characters up to 0x1FFFFF, which can cause <em>a lot</em> of iterations.</p>
+<p>Note that <code>*agindex</code> is set to&nbsp;0 if the charmap is empty. The result itself can be&nbsp;0 in two cases: if the charmap is empty or if the value&nbsp;0 is the first valid character code.</p>
+<hr>
+
+<h2 id="ft_get_next_char">FT_Get_Next_Char<a class="headerlink" href="#ft_get_next_char" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a> )
+  <b>FT_Get_Next_Char</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>    face,
+                    <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>   char_code,
+                    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>   *agindex );
+</code></pre></div>
+
+<p>Return the next character code in the current charmap of a given face following the value <code>char_code</code>, as well as the corresponding glyph index.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the source face object.</p>
+</td></tr>
+<tr><td class="val" id="char_code">char_code</td><td class="desc">
+<p>The starting character code.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="agindex">agindex</td><td class="desc">
+<p>Glyph index of next character code. 0&nbsp;if charmap is empty.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>The charmap's next character code.</p>
+<h4>note</h4>
+
+<p>You should use this function with <code><a href="ft2-character_mapping.html#ft_get_first_char">FT_Get_First_Char</a></code> to walk over all character codes available in a given charmap. See the note for that function for a simple code example.</p>
+<p>Note that <code>*agindex</code> is set to&nbsp;0 when there are no more codes in the charmap.</p>
+<hr>
+
+<h2 id="ft_load_char">FT_Load_Char<a class="headerlink" href="#ft_load_char" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Load_Char</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>   face,
+                <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>  char_code,
+                <a href="ft2-basic_types.html#ft_int32">FT_Int32</a>  load_flags );
+</code></pre></div>
+
+<p>Load a glyph into the glyph slot of a face object, accessed by its character code.</p>
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to a target face object where the glyph is loaded.</p>
+</td></tr>
+</table>
+
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="char_code">char_code</td><td class="desc">
+<p>The glyph's character code, according to the current charmap used in the face.</p>
+</td></tr>
+<tr><td class="val" id="load_flags">load_flags</td><td class="desc">
+<p>A flag indicating what to load for this glyph. The <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_XXX</a></code> constants can be used to control the glyph loading process (e.g., whether the outline should be scaled, whether to load bitmaps or not, whether to hint the outline, etc).</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>This function simply calls <code><a href="ft2-character_mapping.html#ft_get_char_index">FT_Get_Char_Index</a></code> and <code><a href="ft2-glyph_retrieval.html#ft_load_glyph">FT_Load_Glyph</a></code>.</p>
+<p>Many fonts contain glyphs that can't be loaded by this function since its glyph indices are not listed in any of the font's charmaps.</p>
+<p>If no active cmap is set up (i.e., <code>face-&gt;charmap</code> is zero), the call to <code><a href="ft2-character_mapping.html#ft_get_char_index">FT_Get_Char_Index</a></code> is omitted, and the function behaves identically to <code><a href="ft2-glyph_retrieval.html#ft_load_glyph">FT_Load_Glyph</a></code>.</p>
+<hr>
+                
+              
+              
+                
+
+
+              
+            </article>
+          </div>
+        </div>
+        
+      </main>
+      
+        
+<footer class="md-footer">
+  
+    <nav class="md-footer__inner md-grid" aria-label="Footer">
+      
+        
+        <a href="ft2-glyph_retrieval.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: Glyph Retrieval" rel="prev">
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+          </div>
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              Glyph Retrieval
+            </div>
+          </div>
+        </a>
+      
+      
+        
+        <a href="ft2-information_retrieval.html" class="md-footer__link md-footer__link--next" aria-label="Next: Information Retrieval" rel="next">
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              Information Retrieval
+            </div>
+          </div>
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11H4z"/></svg>
+          </div>
+        </a>
+      
+    </nav>
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-footer-copyright">
+        
+          <div class="md-footer-copyright__highlight">
+            Copyright 2023 <a href = "https://www.freetype.org/license.html">The FreeType Project</a>.
+          </div>
+        
+        Made with
+        <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+          Material for MkDocs
+        </a>
+        
+      </div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    <script id="__config" type="application/json">{"base": ".", "features": [], "search": "assets/javascripts/workers/search.477d984a.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.config.lang": "en", "search.config.pipeline": "trimmer, stopWordFilter", "search.config.separator": "[\\s\\-]+", "search.placeholder": "Search", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version.title": "Select version"}, "version": null}</script>
+    
+    
+      <script src="assets/javascripts/bundle.82b56eb2.min.js"></script>
+      
+        <script src="javascripts/extra.js"></script>
+      
+    
+  </body>
+</html>

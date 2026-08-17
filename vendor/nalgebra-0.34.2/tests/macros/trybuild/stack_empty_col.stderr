@@ -1,0 +1,7 @@
+error: Block column 0 cannot consist entirely of implicit zero blocks.
+ --> tests/macros/trybuild/stack_empty_col.rs:5:5
+  |
+5 |     stack![0, m];
+  |     ^^^^^^^^^^^^
+  |
+  = note: this error originates in the macro `stack` (in Nightly builds, run with -Z macro-backtrace for more info)

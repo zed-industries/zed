@@ -1,0 +1,5 @@
+invalid hex digit 'x'
+     --> tests/parse-fail/string9.wat:1:5
+      |
+    1 | "\u{x}"
+      |     ^

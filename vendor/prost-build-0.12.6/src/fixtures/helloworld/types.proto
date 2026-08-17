@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package helloworld;
+
+message Message {
+  string say = 1;
+}
+
+message Response {
+  string say = 1;
+}
+
+enum ServingStatus {
+  UNKNOWN = 0;
+  SERVING = 1;
+  NOT_SERVING = 2;
+}

@@ -1,0 +1,5 @@
+param `foo` is defined more than once
+     --> tests/ui/parse-fail/duplicate-function-params.wit:6:23
+      |
+    6 |   foo: func(foo: u32, foo: u64);
+      |                       ^--

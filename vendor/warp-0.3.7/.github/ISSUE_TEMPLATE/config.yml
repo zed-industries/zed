@@ -1,0 +1,6 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question
+    url: https://discord.gg/RFsPjyt
+    about: 'Please post your question on the #warp discord channel. You may
+           also be able to find help at https://users.rust-lang.org/.'

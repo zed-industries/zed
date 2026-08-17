@@ -1,0 +1,29 @@
+[package]
+name = "slotmap"
+version = "1.0.7"  # Remember to grep and update version everywhere.
+edition = "2018"
+authors = ["Orson Peters <orsonpeters@gmail.com>"]
+description = "Slotmap data structure"
+license = "Zlib"
+repository = "https://github.com/orlp/slotmap"
+readme = "README.md"
+keywords = ["slotmap", "storage", "allocator", "arena", "reference"]
+categories = ["data-structures", "memory-management", "caching"]
+
+[features]
+default = ["std"]
+unstable = []
+std = []
+
+[dependencies]
+serde = { version = "1.0", optional = true, default-features = false, features = ["derive", "alloc"] }
+
+[dev-dependencies]
+fxhash = "0.2.1"
+serde = "1.0"
+serde_derive = "1.0"
+serde_json = "1.0"
+quickcheck = "0.9"
+
+[build-dependencies]
+version_check = "0.9"

@@ -1,0 +1,64 @@
+[options]
+work_mode = "sys"
+library = "Gio"
+version = "2.0"
+min_cfg_version = "2.56"
+single_version_file = "."
+girs_directories = ["../../gir-files"]
+
+external_libraries = [
+    "GLib",
+    "GObject",
+]
+
+ignore = [
+    "Gio.ThreadedResolverClass"
+]
+
+[[object]]
+name = "Gio.*"
+status = "generate"
+    [[object.function]]
+    name = "unix_mount_entries_changed_since"
+    version = "2.84"
+
+[[object]]
+name = "Gio.Credentials"
+status = "generate"
+    [[object.function]]
+    pattern = "[gs]et_unix.*"
+    cfg_condition = "unix"
+
+[[object]]
+name = "Gio.SocketFamily"
+status = "manual"
+
+[[object]]
+name = "Gio.SocketMsgFlags"
+status = "manual"
+
+[[object]]
+name = "Gio.Win32InputStream"
+status = "manual"
+cfg_condition = "windows"
+
+[[object]]
+name = "Gio.Win32OutputStream"
+status = "manual"
+cfg_condition = "windows"
+
+[[object]]
+name = "Gio.SubprocessLauncher"
+status = "generate"
+    [[object.function]]
+    pattern = "take_.*"
+    cfg_condition = "unix"
+    [[object.function]]
+    pattern = "set_std.*file_path"
+    cfg_condition = "unix"
+    [[object.function]]
+    name = "set_child_setup"
+    cfg_condition = "unix"
+    [[object.function]]
+    name = "close"
+    cfg_condition = "unix"

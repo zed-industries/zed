@@ -1,0 +1,14 @@
+---
+- name: Anchor and alias as mapping key
+  from: '@perlpunk'
+  tags: error anchor alias mapping
+  fail: true
+  yaml: |
+    key1: &alias value1
+    &b *alias : value2
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :key1
+       =VAL &alias :value1

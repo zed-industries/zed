@@ -1,0 +1,8 @@
+[target.armv5te-unknown-linux-musleabi]
+rustflags = ["--cfg", "armv5te", "--cfg", "rustver"]
+
+[target.mips-unknown-linux-musl]
+rustflags = ["--cfg", "mips", "--cfg", "rustver"]
+
+[target.mipsel-unknown-linux-musl]
+rustflags = ["--cfg", "mips", "--cfg", "rustver"]

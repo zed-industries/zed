@@ -1,0 +1,15 @@
+language: rust
+rust:
+  - 1.34.0
+  - nightly
+  - beta
+  - stable
+sudo: false
+env:
+    matrix:
+        - FEATURES=""
+        - FEATURES="std"
+        - FEATURES="serde"
+        - FEATURES="std,serde"
+script:
+    - cargo test -v --no-default-features --features "$FEATURES"

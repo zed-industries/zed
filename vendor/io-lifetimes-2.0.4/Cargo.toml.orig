@@ -1,0 +1,60 @@
+[package]
+name = "io-lifetimes"
+version = "2.0.4"
+description = "A low-level I/O ownership and borrowing library"
+authors = ["Dan Gohman <dev@sunfishcode.online>"]
+license = "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
+keywords = ["api", "io"]
+categories = ["os", "rust-patterns"]
+edition = "2021"
+repository = "https://github.com/sunfishcode/io-lifetimes"
+include = ["src", "build.rs", "Cargo.toml", "COPYRIGHT", "LICENSE*", "/*.md"]
+rust-version = "1.63"
+
+[dependencies]
+# io-lifetimes only depends on libc/windows-sys for the ability to close
+# and duplicate fds/handles/sockets. The following are just optional
+# dependencies to add foreign-type impls for the traits.
+
+[target.'cfg(not(target_os = "wasi"))'.dependencies]
+# Optionally depend on os_pipe to implement traits for its types for now.
+os_pipe = { version = "1.0.0", features = ["io_safety"], optional = true }
+
+# Optionally depend on async-std just to provide impls for its types.
+async-std = { version = "1.13.0", optional = true, features = ["io_safety"] }
+# Optionally depend on tokio to implement traits for its types.
+tokio = { version = "1.6.0", features = ["io-std", "fs", "net", "process"], optional = true }
+# Optionally depend on socket2 to implement traits for its types.
+socket2 = { version = "0.5.0", optional = true }
+# Optionally depend on mio to implement traits for its types.
+mio = { version = "0.8.0", features = ["net", "os-ext"], optional = true }
+
+[target.'cfg(target_os = "hermit")'.dependencies]
+hermit-abi = { version = ">=0.3, <=0.4", optional = true }
+
+[target.'cfg(not(windows))'.dependencies]
+libc = { version = "0.2.96", optional = true }
+
+[target.'cfg(windows)'.dependencies.windows-sys]
+version = ">=0.52, <=0.59"
+optional = true
+features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_Networking_WinSock",
+    "Win32_Security",
+    "Win32_System_IO",
+]
+
+[package.metadata.docs.rs]
+features = ["close"]
+
+[features]
+default = []
+close = ["libc", "hermit-abi", "windows-sys"]
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = [
+    'cfg(wasi_ext)',
+]

@@ -1,0 +1,9 @@
+Document:
+  - Element:
+      tag_name: e@http://www.w3.org
+      attributes:
+        a: "b2"
+        a@http://www.w3.org: "b1"
+      namespaces:
+        None: http://www.w3.org
+        n1: http://www.w3.org

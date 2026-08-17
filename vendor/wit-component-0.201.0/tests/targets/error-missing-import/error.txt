@@ -1,0 +1,5 @@
+failed to validate encoded bytes
+
+Caused by:
+    type mismatch for import `foobar`
+    missing import named `test:foo/foo` (at offset 0x175)

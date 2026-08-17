@@ -1,0 +1,29 @@
+(type T (enum))
+(type U (enum))
+(type V (enum))
+
+(convert T U t_to_u)
+(convert U V u_to_v)
+
+(decl t_to_u (T) U)
+(decl u_to_v (U) V)
+(decl t_to_v (T) V)
+(decl v_to_t (V) T)
+
+(extern constructor t_to_u t_to_u)
+(extern extractor u_to_v u_to_v)
+(extern constructor t_to_v t_to_v_ctor)
+(extern extractor t_to_v t_to_v_etor)
+(extern extractor v_to_t v_to_u_etor)
+
+;; We should fail to find a converter here. Given only the types, we
+;; might expect u_to_v to be implicitly inserted in the RHS, but
+;; u_to_v has only an extractor, not a constructor, associated.
+(decl Test1 (U) V)
+(rule (Test1 u) u)
+
+;; We should fail to find a converter here. Given only the types, we
+;; might expect t_to_u to be implicitly inserted in the LHS, but t_to_u
+;; has only a constructor, not an extractor, associated.
+(decl Test2 (U) V)
+(rule (Test2 (v_to_t v)) v)

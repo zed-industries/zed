@@ -1,0 +1,7 @@
+---
+source: codespan-reporting/tests/term.rs
+expression: TEST_DATA.emit_no_color(&config)
+---
+FizzBuzz.fun:8:12: error[E0308]: `case` clauses have incompatible types
+FizzBuzz.fun:16:16: error[E0308]: `case` clauses have incompatible types
+

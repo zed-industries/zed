@@ -1,0 +1,7 @@
+error: merge::Merge can only be derived for structs
+ --> $DIR/derive-enum.rs:6:10
+  |
+6 | #[derive(Merge)]
+  |          ^^^^^
+  |
+  = note: this error originates in a derive macro (in Nightly builds, run with -Z macro-backtrace for more info)

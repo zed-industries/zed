@@ -1,0 +1,19 @@
+---
+- name: Invalid scalar at the end of mapping
+  from: '@perlpunk'
+  tags: error mapping sequence
+  fail: true
+  yaml: |
+    key:
+     - item1
+     - item2
+    invalid
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :key
+       +SEQ
+        =VAL :item1
+        =VAL :item2
+       -SEQ

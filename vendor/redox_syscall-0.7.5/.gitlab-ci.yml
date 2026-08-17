@@ -1,0 +1,16 @@
+image: "redoxos/redoxer"
+
+stages:
+    - build
+
+cache:
+    paths:
+        - target/
+
+build:linux:
+    stage: build
+    script: cargo +nightly build --verbose
+
+build:redox:
+    stage: build
+    script: redoxer build --verbose

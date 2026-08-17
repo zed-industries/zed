@@ -1,0 +1,7 @@
+package foo:versions;
+
+interface foo {
+  use a:a/foo@1.0.0.{t};
+  use a:a/foo@2.0.0.{t as t2};
+}
+

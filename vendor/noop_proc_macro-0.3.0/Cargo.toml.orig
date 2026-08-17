@@ -1,0 +1,15 @@
+[package]
+name = "noop_proc_macro"
+version = "0.3.0"
+authors = ["Luca Barbato <lu_zero@gentoo.org>"]
+edition = "2018"
+description = "No-op proc_macro, literally does nothing"
+repository = "https://github.com/lu-zero/noop_proc_macro"
+readme = "README.md"
+keywords = ["proc_macro", "noop"]
+license = "MIT"
+
+[lib]
+proc-macro = true
+test = false
+

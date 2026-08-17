@@ -1,0 +1,198 @@
+[package]
+name = "wgpu-core"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "Core implementation logic of wgpu, the cross-platform, safe, pure-rust graphics API"
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+license.workspace = true
+
+# Override the workspace's `rust-version` key. `wgpu-core` and its dependencies
+# have a less strict MSRV, to allow firefox more leeway in updating their Rust toolchain.
+#
+# See the repo README for more information on MSRV policy.
+rust-version = "1.87"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "wasm32-unknown-unknown",
+]
+
+[package.metadata.cargo-machete]
+# Cargo machete can't check build.rs dependencies. See https://github.com/bnjbvr/cargo-machete/issues/100
+ignored = ["cfg_aliases"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(wgpu_validate_locks)'] }
+
+[lib]
+
+[features]
+#! See documentation for the `wgpu` crate for more in-depth information on these features.
+
+# TODO(https://github.com/gfx-rs/wgpu/issues/6826): "std" is a default feature for
+# compatibility with prior behavior only, and should be removed once we know how
+# wgpu-core’s dependents want to handle no_std.
+default = ["std"]
+
+#! ### Logging Configuration
+# --------------------------------------------------------------------
+
+## Log all API entry points at info instead of trace level.
+## Also, promotes certain debug log calls to info.
+api_log_info = []
+
+## Log resource lifecycle management at info instead of trace level.
+resource_log_info = []
+
+#! ### Runtime Checks
+# --------------------------------------------------------------------
+
+## Apply run-time checks, even in release builds. These are in addition
+## to the validation carried out at public APIs in all builds.
+strict_asserts = ["wgpu-types/strict_asserts"]
+
+#! ### Debugging
+# --------------------------------------------------------------------
+
+## Enable lock order observation.
+observe_locks = ["std", "dep:ron", "serde/serde_derive"]
+
+#! ### Serialization
+# --------------------------------------------------------------------
+
+## Enables serialization via `serde` on common wgpu types.
+serde = [
+    "dep:serde",
+    "wgpu-types/serde",
+    "arrayvec/serde",
+    "hashbrown/serde",
+    "smallvec/serde",
+    "macro_rules_attribute",
+]
+
+## Enable API tracing.
+trace = ["serde", "std", "dep:ron", "naga/serialize", "wgpu-types/trace"]
+
+## Enable API replaying
+replay = ["serde", "naga/deserialize"]
+
+#! ### Shading Language Support
+# --------------------------------------------------------------------
+
+## Enable `ShaderModuleSource::Wgsl`
+wgsl = ["naga/wgsl-in"]
+
+## Enable `ShaderModuleSource::Glsl`
+glsl = ["naga/glsl-in"]
+
+## Enable `ShaderModuleSource::SpirV`
+spirv = ["naga/spv-in"]
+
+#! ### Other
+# --------------------------------------------------------------------
+
+## Internally count resources and events for debugging purposes. If the counters
+## feature is disabled, the counting infrastructure is removed from the build and
+## the exposed counters always return 0.
+counters = ["wgpu-types/counters"]
+
+## Implement `Send` and `Sync` on Wasm, but only if atomics are not enabled.
+fragile-send-sync-non-atomic-wasm = [
+    "wgpu-hal/fragile-send-sync-non-atomic-wasm",
+]
+
+## Enable certain items to be `Send` and `Sync` when they would not otherwise be.
+## Also enables backtraces in some error cases when also under cfg(debug_assertions).
+std = []
+
+#! ### External libraries
+# --------------------------------------------------------------------
+#! The following features facilitate integration with third-party supporting libraries.
+
+## Enable using the `mach-dxcompiler-rs` crate to compile DX12 shaders.
+static-dxc = ["wgpu-hal/static-dxc"]
+
+## Enable portable atomics on platforms that do not support 64bit atomics.
+portable-atomic = ["dep:portable-atomic", "wgpu-hal/portable-atomic"]
+
+#! ### Target Conditional Features
+# --------------------------------------------------------------------
+# Look to wgpu-hal's Cargo.toml for explaination how these features and the wgpu-core
+# platform crates collude to provide platform-specific behavior.
+
+## DX12 backend
+dx12 = ["wgpu-core-deps-windows-linux-android/dx12"]
+## Metal backend
+metal = ["wgpu-core-deps-apple/metal"]
+## Vulkan backend, only available on Windows, Linux, Android
+vulkan = ["wgpu-core-deps-windows-linux-android/vulkan"]
+## OpenGL backend, only available on Windows, Linux, Android, and Emscripten
+gles = [
+    "wgpu-core-deps-windows-linux-android/gles",
+    "wgpu-core-deps-emscripten/gles",
+]
+
+## WebGL backend, only available on Emscripten
+webgl = ["wgpu-core-deps-wasm/webgl", "wgpu-types/web"]
+## OpenGL backend, on macOS only
+angle = ["wgpu-core-deps-apple/angle"]
+## Vulkan portability backend, only available on macOS
+vulkan-portability = ["wgpu-core-deps-apple/vulkan-portability"]
+## Renderdoc integration, only available on Windows, Linux, and Android
+renderdoc = ["wgpu-core-deps-windows-linux-android/renderdoc"]
+
+## Enable the `noop` backend.
+# TODO(https://github.com/gfx-rs/wgpu/issues/7120): there should be a hal feature
+noop = []
+
+# The target limitation here isn't needed, but prevents more than one of these
+# platform crates from being included in the build at a time, preventing users
+# from getting confused by seeing them in the list of crates.
+[target.'cfg(target_vendor = "apple")'.dependencies]
+wgpu-core-deps-apple = { workspace = true, optional = true }
+[target.'cfg(target_os = "emscripten")'.dependencies]
+wgpu-core-deps-emscripten = { workspace = true, optional = true }
+[target.'cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))'.dependencies]
+wgpu-core-deps-wasm = { workspace = true, optional = true }
+[target.'cfg(any(windows, target_os = "linux", target_os = "android", target_os = "freebsd"))'.dependencies]
+wgpu-core-deps-windows-linux-android = { workspace = true, optional = true }
+
+[dependencies]
+naga.workspace = true
+wgpu-naga-bridge.workspace = true
+wgpu-hal.workspace = true
+wgpu-types.workspace = true
+
+arrayvec.workspace = true
+bit-vec.workspace = true
+bit-set.workspace = true
+bitflags.workspace = true
+bytemuck.workspace = true
+document-features.workspace = true
+hashbrown.workspace = true
+indexmap.workspace = true
+log.workspace = true
+macro_rules_attribute = { workspace = true, optional = true }
+once_cell = { workspace = true, features = ["std"] }
+parking_lot.workspace = true
+profiling = { workspace = true, default-features = false }
+raw-window-handle.workspace = true
+ron = { workspace = true, optional = true }
+rustc-hash.workspace = true
+serde = { workspace = true, features = ["default", "derive"], optional = true }
+smallvec.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(not(target_has_atomic = "64"))'.dependencies]
+portable-atomic = { workspace = true, optional = true }
+
+[build-dependencies]
+cfg_aliases.workspace = true

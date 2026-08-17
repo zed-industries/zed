@@ -1,0 +1,75 @@
+[package]
+name = "mdbook"
+version = "0.4.40"
+authors = [
+    "Mathieu David <mathieudavid@mathieudavid.org>",
+    "Michael-F-Bryan <michaelfbryan@gmail.com>",
+    "Matt Ickstadt <mattico8@gmail.com>"
+]
+documentation = "https://rust-lang.github.io/mdBook/index.html"
+edition = "2021"
+exclude = ["/guide/*"]
+keywords = ["book", "gitbook", "rustbook", "markdown"]
+license = "MPL-2.0"
+readme = "README.md"
+repository = "https://github.com/rust-lang/mdBook"
+description = "Creates a book from markdown files"
+rust-version = "1.74"
+
+[dependencies]
+anyhow = "1.0.71"
+chrono = { version = "0.4.24", default-features = false, features = ["clock"] }
+clap = { version = "4.3.12", features = ["cargo", "wrap_help"] }
+clap_complete = "4.3.2"
+once_cell = "1.17.1"
+env_logger = "0.11.1"
+handlebars = "5.0"
+log = "0.4.17"
+memchr = "2.5.0"
+opener = "0.7.0"
+pulldown-cmark = { version = "0.10.0", default-features = false, features = ["html"] } # Do not update, part of the public api.
+regex = "1.8.1"
+serde = { version = "1.0.163", features = ["derive"] }
+serde_json = "1.0.96"
+shlex = "1.3.0"
+tempfile = "3.4.0"
+toml = "0.5.11" # Do not update, see https://github.com/rust-lang/mdBook/issues/2037
+topological-sort = "0.2.2"
+
+# Watch feature
+notify = { version = "6.1.1", optional = true }
+notify-debouncer-mini = { version = "0.4.1", optional = true }
+ignore = { version = "0.4.20", optional = true }
+pathdiff = { version = "0.2.1", optional = true }
+walkdir = { version = "2.3.3", optional = true }
+
+# Serve feature
+futures-util = { version = "0.3.28", optional = true }
+tokio = { version = "1.28.1", features = ["macros", "rt-multi-thread"], optional = true }
+warp = { version = "0.3.6", default-features = false, features = ["websocket"], optional = true }
+
+# Search feature
+elasticlunr-rs = { version = "3.0.2", optional = true }
+ammonia = { version = "4.0.0", optional = true }
+
+[dev-dependencies]
+assert_cmd = "2.0.11"
+predicates = "3.0.3"
+select = "0.6.0"
+semver = "1.0.17"
+pretty_assertions = "1.3.0"
+walkdir = "2.3.3"
+
+[features]
+default = ["watch", "serve", "search"]
+watch = ["dep:notify", "dep:notify-debouncer-mini", "dep:ignore", "dep:pathdiff", "dep:walkdir"]
+serve = ["dep:futures-util", "dep:tokio", "dep:warp"]
+search = ["dep:elasticlunr-rs", "dep:ammonia"]
+
+[[bin]]
+doc = false
+name = "mdbook"
+
+[[example]]
+name = "nop-preprocessor"
+test = true

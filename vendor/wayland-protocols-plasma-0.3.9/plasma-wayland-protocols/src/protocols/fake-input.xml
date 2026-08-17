@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="fake_input">
+  <copyright><![CDATA[
+    SPDX-FileCopyrightText: 2015 Martin Gräßlin
+
+    SPDX-License-Identifier: LGPL-2.1-or-later
+  ]]></copyright>
+  <interface name="org_kde_kwin_fake_input" version="5">
+      <description summary="Fake input manager">
+        This interface allows other processes to provide fake input events.
+        Purpose is on the one hand side to provide testing facilities like XTest on X11.
+        But also to support use case like kdeconnect's mouse pad interface.
+
+        A compositor should not trust the input received from this interface.
+        Clients should not expect that the compositor honors the requests from this
+        interface.
+
+        Warning! The protocol described in this file is a desktop environment
+        implementation detail. Regular clients must not use this protocol.
+        Backward incompatible changes may be added without bumping the major
+        version of the extension.
+      </description>
+      <request name="authenticate">
+          <description summary="Information why the client wants to use the interface">
+              A client should use this request to tell the compositor why it wants to
+              use this interface. The compositor might use the information to decide
+              whether it wants to grant the request. The data might also be passed to
+              the user to decide whether the application should get granted access to
+              this very privileged interface.
+          </description>
+          <arg name="application" type="string" summary="user visible name of the application"/>
+          <arg name="reason" type="string" summary="reason why the application wants to use this interface"/>
+      </request>
+      <request name="pointer_motion">
+          <arg name="delta_x" type="fixed"/>
+          <arg name="delta_y" type="fixed"/>
+      </request>
+      <request name="button">
+        <arg name="button" type="uint"/>
+        <arg name="state" type="uint"/>
+      </request>
+      <request name="axis">
+        <arg name="axis" type="uint"/>
+        <arg name="value" type="fixed"/>
+      </request>
+      <request name="touch_down" since="2">
+         <description summary="touch down event">
+             A client should use this request to send touch down event at specific
+             coordinates.
+         </description>
+         <arg name="id" type="uint" summary="unique id for touch down event"/>
+         <arg name="x" type="fixed" summary="x coordinate for touch down event"/>
+         <arg name="y" type="fixed" summary="y coordinate for touch down event"/>
+      </request>
+      <request name="touch_motion" since="2">
+          <description summary="touch motion event">
+              A client should use this request to send touch motion to specific position.
+          </description>
+          <arg name="id" type="uint" summary="unique id for touch motion event"/>
+          <arg name="x" type="fixed" summary="x coordinate for touch motion event"/>
+          <arg name="y" type="fixed" summary="y coordinate for touch motion event"/>
+      </request>
+      <request name="touch_up" since="2">
+          <description summary="touch up event">
+              A client should use this request to send touch up event.
+          </description>
+          <arg name="id" type="uint" summary="unique id for touch up event"/>
+      </request>
+      <request name="touch_cancel" since="2">
+          <description summary="touch cancel event">
+              A client should use this request to cancel the current
+              touch event.
+          </description>
+      </request>
+      <request name="touch_frame" since="2">
+          <description summary="touch frame event">
+              A client should use this request to send touch frame event.
+          </description>
+      </request>
+      <request name="pointer_motion_absolute" since="3">
+          <arg name="x" type="fixed"/>
+          <arg name="y" type="fixed"/>
+      </request>
+      <request name="keyboard_key" since="4">
+        <arg name="button" type="uint"/>
+        <arg name="state" type="uint"/>
+      </request>
+
+      <!-- Version 5 additions -->
+
+      <request name="destroy" type="destructor" since="5">
+        <description summary="Destroy the fake input device"/>
+      </request>
+  </interface>
+</protocol>

@@ -1,0 +1,38 @@
+---
+- name: Spec Example 8.17. Explicit Block Mapping Entries
+  from: http://www.yaml.org/spec/1.2/spec.html#id2798425
+  tags: explicit-key spec mapping comment literal sequence
+  yaml: |
+    ? explicit key # Empty value
+    ? |
+      block key
+    : - one # Explicit compact
+      - two # block value
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :explicit key
+       =VAL :
+       =VAL |block key\n
+       +SEQ
+        =VAL :one
+        =VAL :two
+       -SEQ
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "explicit key": null,
+      "block key\n": [
+        "one",
+        "two"
+      ]
+    }
+  dump: |
+    explicit key:
+    ? |
+      block key
+    : - one
+      - two

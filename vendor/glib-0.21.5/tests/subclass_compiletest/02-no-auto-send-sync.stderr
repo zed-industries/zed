@@ -1,0 +1,26 @@
+error[E0277]: `RefCell<std::string::String>` cannot be shared between threads safely
+  --> tests/subclass_compiletest/02-no-auto-send-sync.rs:33:11
+   |
+33 |     check(&obj);
+   |     ----- ^^^^ `RefCell<std::string::String>` cannot be shared between threads safely
+   |     |
+   |     required by a bound introduced by this call
+   |
+   = help: within `imp::TestObject`, the trait `Sync` is not implemented for `RefCell<std::string::String>`
+   = note: if you want to do aliasing and mutation between multiple threads, use `std::sync::RwLock` instead
+note: required because it appears within the type `imp::TestObject`
+  --> tests/subclass_compiletest/02-no-auto-send-sync.rs:6:16
+   |
+ 6 |     pub struct TestObject {
+   |                ^^^^^^^^^^
+   = note: required for `TypedObjectRef<imp::TestObject, ()>` to implement `Send`
+note: required because it appears within the type `TestObject`
+  --> tests/subclass_compiletest/02-no-auto-send-sync.rs:20:16
+   |
+20 |     pub struct TestObject(ObjectSubclass<imp::TestObject>);
+   |                ^^^^^^^^^^
+note: required by a bound in `main::check`
+  --> tests/subclass_compiletest/02-no-auto-send-sync.rs:30:17
+   |
+30 |     fn check<T: Send>(_obj: &T) {}
+   |                 ^^^^ required by this bound in `check`

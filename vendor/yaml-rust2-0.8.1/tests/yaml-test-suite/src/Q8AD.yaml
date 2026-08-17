@@ -1,0 +1,23 @@
+---
+- name: Spec Example 7.5. Double Quoted Line Breaks [1.3]
+  from: NP9H, modified for YAML 1.3
+  tags: double spec scalar whitespace 1.3-mod
+  yaml: |
+    ---
+    "folded␣
+    to a space,
+    ␣
+    to a line feed, or »\
+     \ »non-content"
+  tree: |
+    +STR
+     +DOC ---
+      =VAL "folded to a space,\nto a line feed, or \t \tnon-content
+     -DOC
+    -STR
+  json: |
+    "folded to a space,\nto a line feed, or \t \tnon-content"
+  dump: |
+    "folded to a space,\nto a line feed, or \t \tnon-content"
+  emit: |
+    --- "folded to a space,\nto a line feed, or \t \tnon-content"

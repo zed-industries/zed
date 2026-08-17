@@ -1,0 +1,28 @@
+# Copyright © SixtyFPS GmbH <info@sixtyfps.io>
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+[package]
+name = "document-features"
+version = "0.2.12"
+authors = ["Slint Developers <info@slint.dev>"]
+edition = "2018"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/slint-ui/document-features"
+homepage = "https://slint.rs"
+description = "Extract documentation for the feature flags from comments in Cargo.toml"
+categories = ["development-tools"]
+keywords = ["documentation", "features", "rustdoc", "macro"]
+rust-version = "1.56"
+
+[lib]
+proc-macro = true
+path = "lib.rs"
+
+[features]
+default = []
+
+## Internal feature used only for the tests, don't enable
+self-test = []
+
+[dependencies]
+litrs = "1.0.0"

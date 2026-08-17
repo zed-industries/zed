@@ -1,0 +1,24 @@
+---
+- name: Spec Example 8.9. Folded Scalar [1.3]
+  from: G992, modified for YAML 1.3
+  tags: spec folded scalar 1.3-mod
+  yaml: |
+    --- >
+     folded
+     text
+    ↵
+    ↵
+  tree: |
+    +STR
+     +DOC ---
+      =VAL >folded text\n
+     -DOC
+    -STR
+  json: |
+    "folded text\n"
+  dump: |
+    >
+      folded text
+  emit: |
+    --- >
+      folded text

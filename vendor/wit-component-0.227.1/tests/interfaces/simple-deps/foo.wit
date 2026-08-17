@@ -1,0 +1,4 @@
+package foo:foo;
+interface foo {
+  use foo:some-dep/types.{some-type};
+}

@@ -1,0 +1,89 @@
+;; For various ops lift a splat outside of the op to try to open up
+;; optimization opportunities with scalars.
+
+;; NB: for int-to-float conversion op this simplification is also
+;; required for the x64 backend because it doesn't fully implement int-to-float
+;; conversions for 64x2 vectors, for more information see #6562
+(rule (simplify (fcvt_from_uint float_vector_ty (splat _ x)))
+      (splat float_vector_ty (fcvt_from_uint (lane_type float_vector_ty) x)))
+(rule (simplify (fcvt_from_sint float_vector_ty (splat _ x)))
+      (splat float_vector_ty (fcvt_from_sint (lane_type float_vector_ty) x)))
+
+;; Scalar bitwise ops are usually not implemented in the backends for floats, so
+;; disable this transform.
+
+(rule (simplify (band ty (splat ty x) (splat ty y)))
+      (if (ty_vector_not_float ty))
+      (splat ty (band (lane_type ty) x y)))
+
+(rule (simplify (bor ty (splat ty x) (splat ty y)))
+      (if (ty_vector_not_float ty))
+      (splat ty (bor (lane_type ty) x y)))
+
+(rule (simplify (bxor ty (splat ty x) (splat ty y)))
+      (if (ty_vector_not_float ty))
+      (splat ty (bxor (lane_type ty) x y)))
+
+(rule (simplify (bnot ty (splat ty x)))
+      (if (ty_vector_not_float ty))
+      (splat ty (bnot (lane_type ty) x)))
+
+(rule (simplify (iadd ty (splat ty x) (splat ty y)))
+      (splat ty (iadd (lane_type ty) x y)))
+
+(rule (simplify (isub ty (splat ty x) (splat ty y)))
+      (splat ty (isub (lane_type ty) x y)))
+
+(rule (simplify (imul ty (splat ty x) (splat ty y)))
+      (splat ty (imul (lane_type ty) x y)))
+
+(rule (simplify (smulhi ty (splat ty x) (splat ty y)))
+      (splat ty (smulhi (lane_type ty) x y)))
+
+(rule (simplify (umulhi ty (splat ty x) (splat ty y)))
+      (splat ty (umulhi (lane_type ty) x y)))
+
+(rule (simplify (ineg ty (splat ty x)))
+      (splat ty (ineg (lane_type ty) x)))
+
+(rule (simplify (iabs ty (splat ty x)))
+      (splat ty (iabs (lane_type ty) x)))
+
+(rule (simplify (popcnt ty (splat ty x)))
+      (splat ty (popcnt (lane_type ty) x)))
+
+(rule (simplify (smin ty (splat ty x) (splat ty y)))
+      (splat ty (smin (lane_type ty) x y)))
+
+(rule (simplify (umin ty (splat ty x) (splat ty y)))
+      (splat ty (umin (lane_type ty) x y)))
+
+(rule (simplify (smax ty (splat ty x) (splat ty y)))
+      (splat ty (smax (lane_type ty) x y)))
+
+(rule (simplify (umax ty (splat ty x) (splat ty y)))
+      (splat ty (umax (lane_type ty) x y)))
+
+;; The second operand of shift and rotate ops is
+;; scalar so splat opt applies only to the first
+(rule (simplify (rotl ty (splat ty x) y))
+      (splat ty (rotl (lane_type ty) x y)))
+
+(rule (simplify (rotr ty (splat ty x) y))
+      (splat ty (rotr (lane_type ty) x y)))
+
+(rule (simplify (ishl ty (splat ty x) y))
+      (splat ty (ishl (lane_type ty) x y)))
+
+(rule (simplify (ushr ty (splat ty x) y))
+      (splat ty (ushr (lane_type ty) x y)))
+
+(rule (simplify (sshr ty (splat ty x) y))
+      (splat ty (sshr (lane_type ty) x y)))
+
+;; {u,s}widen_{low,high}+splat is the same as splat+{u,s}extend
+(rule (simplify (swiden_high wide (splat _ x))) (splat wide (sextend (lane_type wide) x)))
+(rule (simplify (swiden_low wide (splat _ x))) (splat wide (sextend (lane_type wide) x)))
+
+(rule (simplify (uwiden_high wide (splat _ x))) (splat wide (uextend (lane_type wide) x)))
+(rule (simplify (uwiden_low wide (splat _ x))) (splat wide (uextend (lane_type wide) x)))

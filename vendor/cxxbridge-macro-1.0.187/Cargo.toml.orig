@@ -1,0 +1,37 @@
+[package]
+name = "cxxbridge-macro"
+version = "1.0.187"
+authors = ["David Tolnay <dtolnay@gmail.com>"]
+categories = ["development-tools::ffi"]
+description = "Implementation detail of the `cxx` crate."
+edition = "2021"
+exclude = ["build.rs", "README.md"]
+homepage = "https://cxx.rs"
+keywords = ["ffi"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/dtolnay/cxx"
+rust-version = "1.87"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+indexmap = "2.9.0"
+proc-macro2 = "1.0.74"
+quote = "1.0.35"
+syn = { version = "2.0.46", features = ["full"] }
+
+[dev-dependencies]
+cxx = { version = "1.0", path = ".." }
+prettyplease = "0.2.35"
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+rustdoc-args = [
+    "--generate-link-to-definition",
+    "--generate-macro-expansion",
+    "--extern-html-root-url=core=https://doc.rust-lang.org",
+    "--extern-html-root-url=alloc=https://doc.rust-lang.org",
+    "--extern-html-root-url=std=https://doc.rust-lang.org",
+    "--extern-html-root-url=proc_macro=https://doc.rust-lang.org",
+]

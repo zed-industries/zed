@@ -1,0 +1,5 @@
+error: expected u16, found i64
+ --> tests/ui/enum_inconsistent.rs:5:9
+  |
+5 |         B = 2i64,
+  |         ^^^^^^^^

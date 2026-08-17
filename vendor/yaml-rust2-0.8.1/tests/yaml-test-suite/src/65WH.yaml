@@ -1,0 +1,18 @@
+---
+- name: Single Entry Block Sequence
+  from: https://github.com/ingydotnet/yaml-pegex-pm/blob/master/test/sequence.tml
+  tags: sequence
+  yaml: |
+    - foo
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       =VAL :foo
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      "foo"
+    ]

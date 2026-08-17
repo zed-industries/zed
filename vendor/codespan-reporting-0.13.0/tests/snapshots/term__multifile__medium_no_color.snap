@@ -1,0 +1,12 @@
+---
+source: codespan-reporting/tests/term.rs
+expression: TEST_DATA.emit_no_color(&config)
+---
+Data/Nat.fun:7:13: error: unknown builtin: `NATRAL`
+ = there is a builtin with a similar name: `NATURAL`
+Data/Nat.fun:17:16: warning: unused parameter pattern: `n₂`
+ = consider using a wildcard pattern: `_`
+Test.fun:4:11: error[E0001]: unexpected type in application of `_+_`
+ = expected type `Nat`
+      found type `String`
+

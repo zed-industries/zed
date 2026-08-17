@@ -1,0 +1,41 @@
+[dependencies]
+dispatch = { version = "0.2.0", optional = true }
+
+[dev-dependencies]
+static_assertions = "1.1.0"
+
+[package.metadata.docs.rs]
+features = ["dispatch", "all"]
+
+[[example]]
+name = "basic_usage"
+required-features = [
+    "NSArray",
+    "NSDictionary",
+    "NSEnumerator",
+    "NSRange",
+    "NSObject",
+]
+
+[[example]]
+name = "speech_synthesis"
+required-features = [
+    "NSString",
+    "NSObject",
+]
+
+[features]
+# Deprecated; this is the default on Apple platforms, and not applicable on other platforms.
+apple = []
+
+# Runtime selection. See `objc-sys` for details.
+gnustep-1-7 = ["objc2/gnustep-1-7", "block2?/gnustep-1-7"]
+gnustep-1-8 = ["gnustep-1-7", "objc2/gnustep-1-8", "block2?/gnustep-1-8"]
+gnustep-1-9 = ["gnustep-1-8", "objc2/gnustep-1-9", "block2?/gnustep-1-9"]
+gnustep-2-0 = ["gnustep-1-9", "objc2/gnustep-2-0", "block2?/gnustep-2-0"]
+gnustep-2-1 = ["gnustep-2-0", "objc2/gnustep-2-1", "block2?/gnustep-2-1"]
+
+# Make the `ns_string!` macro create the string statically
+unstable-static-nsstring = []
+
+dispatch = ["dep:dispatch"]

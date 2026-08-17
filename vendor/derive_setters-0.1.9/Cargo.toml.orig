@@ -1,0 +1,30 @@
+[package]
+name = "derive_setters"
+version = "0.1.9"
+authors = ["Alissa Rao <aura@aura.moe>"]
+edition = "2021"
+rust-version = "1.68.0"
+
+description = "Rust macro to automatically generates setter methods for a struct's fields."
+repository = "https://github.com/Lymia/derive_setters"
+readme = "README.md"
+
+license = "MIT/Apache-2.0"
+
+[lib]
+proc-macro = true
+
+[features]
+nightly = ["proc-macro2/nightly"]
+
+# NOT PUBLIC API
+__NOT_PUBLIC__nightly_testing = ["trybuild"]
+
+[dependencies]
+darling = "0.21"
+syn = "2"
+quote = "1"
+proc-macro2 = "1"
+
+# This should be a dev-dependency, but dev-dependencies can't be optional. :(
+trybuild = { version = "1.0", optional = true }

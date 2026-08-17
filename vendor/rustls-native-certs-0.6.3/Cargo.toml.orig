@@ -1,0 +1,32 @@
+[package]
+name = "rustls-native-certs"
+version = "0.6.3"
+edition = "2021"
+rust-version = "1.60"
+license = "Apache-2.0 OR ISC OR MIT"
+readme = "README.md"
+description = "rustls-native-certs allows rustls to use the platform native certificate store"
+homepage = "https://github.com/ctz/rustls-native-certs"
+repository = "https://github.com/ctz/rustls-native-certs"
+categories = ["network-programming", "cryptography"]
+
+[dependencies]
+rustls-pemfile = "1"
+
+[dev-dependencies]
+ring = "0.16.5"
+rustls = "0.21.0"
+rustls-webpki = "0.100"
+serial_test = "2"
+untrusted = "0.7.0" # stick to the version ring depends on for now
+webpki-roots = "0.23"
+x509-parser = "0.15"
+
+[target.'cfg(windows)'.dependencies]
+schannel = "0.1.15"
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+openssl-probe = "0.1.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "2.0.0"

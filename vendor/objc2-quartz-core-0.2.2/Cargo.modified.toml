@@ -1,0 +1,11 @@
+[package]
+description = "Bindings to the QuartzCore/CoreAnimation framework"
+
+[features]
+# No-op, deprecated
+apple = []
+gnustep-1-7 = []
+gnustep-1-8 = []
+gnustep-1-9 = []
+gnustep-2-0 = []
+gnustep-2-1 = []

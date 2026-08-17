@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Copyright (C) 2004 Josh Triplett.  All Rights Reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Except as contained in this notice, the names of the authors or their
+institutions shall not be used in advertising or otherwise to promote the
+sale, use or other dealings in this Software without prior written
+authorization from the authors.
+-->
+<!-- This file describes version 1 of XEVIE. -->
+<xcb header="xevie" extension-xname="XEVIE" extension-name="Xevie" major-version="1" minor-version="0">
+    <request name="QueryVersion" opcode="0">
+        <field type="CARD16" name="client_major_version" />
+        <field type="CARD16" name="client_minor_version" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD16" name="server_major_version" />
+            <field type="CARD16" name="server_minor_version" />
+            <pad bytes="20" />
+        </reply>
+    </request>
+
+    <request name="Start" opcode="1">
+        <field type="CARD32" name="screen" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="24" />
+        </reply>
+    </request>
+
+    <request name="End" opcode="2">
+        <field type="CARD32" name="cmap" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="24" />
+        </reply>
+    </request>
+
+    <enum name="Datatype">
+        <item name="Unmodified">
+            <value>0</value>
+        </item>
+        <item name="Modified">
+            <value>1</value>
+        </item>
+    </enum>
+
+    <!-- The Send request needs to send an arbitrary Event; this type is used
+       to reserve the necessary structure size. -->
+    <struct name="Event">
+        <pad bytes="32" />
+    </struct>
+
+    <request name="Send" opcode="3">
+        <field type="Event" name="event" />
+        <field type="CARD32" name="data_type" /> <!-- Datatype -->
+        <pad bytes="64" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="24" />
+        </reply>
+    </request>
+
+    <request name="SelectInput" opcode="4">
+        <field type="CARD32" name="event_mask" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="24" />
+        </reply>
+    </request>
+</xcb>

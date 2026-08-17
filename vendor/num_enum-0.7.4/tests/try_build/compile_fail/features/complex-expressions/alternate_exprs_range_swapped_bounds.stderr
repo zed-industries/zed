@@ -1,0 +1,5 @@
+error: When using ranges for alternate values, upper bound must not be less than lower bound
+ --> tests/try_build/compile_fail/features/complex-expressions/alternate_exprs_range_swapped_bounds.rs:5:32
+  |
+5 |     #[num_enum(alternatives = [255..=2])]
+  |                                ^^^^^^^

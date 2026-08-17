@@ -1,0 +1,52 @@
+---
+- name: Anchors on Empty Scalars
+  from: NimYAML tests
+  tags: anchor explicit-key
+  yaml: |
+    - &a
+    - a
+    -
+      &a : a
+      b: &b
+    -
+      &c : &a
+    -
+      ? &d
+    -
+      ? &e
+      : &a
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       =VAL &a :
+       =VAL :a
+       +MAP
+        =VAL &a :
+        =VAL :a
+        =VAL :b
+        =VAL &b :
+       -MAP
+       +MAP
+        =VAL &c :
+        =VAL &a :
+       -MAP
+       +MAP
+        =VAL &d :
+        =VAL :
+       -MAP
+       +MAP
+        =VAL &e :
+        =VAL &a :
+       -MAP
+      -SEQ
+     -DOC
+    -STR
+  dump: |
+    - &a
+    - a
+    - &a : a
+      b: &b
+    - &c : &a
+    - &d :
+    - &e : &a

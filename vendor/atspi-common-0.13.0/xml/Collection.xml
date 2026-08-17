@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<node>
+  <interface name="org.a11y.atspi.Collection">
+
+    <method name="GetMatches">
+      <arg direction="in" name="rule" type="(aiia{ss}iaiiasib)"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiMatchRule"/>
+      <arg direction="in" name="sortby" type="u"/>
+      <arg direction="in" name="count" type="i"/>
+      <arg direction="in" name="traverse" type="b"/>
+      <arg direction="out" type="a(so)"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QSpiReferenceSet"/>
+    </method>
+
+    <method name="GetMatchesTo">
+      <arg direction="in" name="current_object" type="o"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiObjectReference"/>
+      <arg direction="in" name="rule" type="(aiia{ss}iaiiasib)"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In1" value="QSpiMatchRule"/>
+      <arg direction="in" name="sortby" type="u"/>
+      <arg direction="in" name="tree" type="u"/>
+      <arg direction="in" name="limit_scope" type="b"/>
+      <arg direction="in" name="count" type="i"/>
+      <arg direction="in" name="traverse" type="b"/>
+      <arg direction="out" type="a(so)"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QSpiReferenceSet"/>
+    </method>
+
+    <method name="GetMatchesFrom">
+      <arg direction="in" name="current_object" type="o"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiObjectReference"/>
+      <arg direction="in" name="rule" type="(aiia{ss}iaiiasib)"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In1" value="QSpiMatchRule"/>
+      <arg direction="in" name="sortby" type="u"/>
+      <arg direction="in" name="tree" type="u"/>
+      <arg direction="in" name="count" type="i"/>
+      <arg direction="in" name="traverse" type="b"/>
+      <arg direction="out" type="a(so)"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QSpiReferenceSet"/>
+    </method>
+
+    <method name="GetActiveDescendant">
+      <arg direction="out" type="(so)"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QSpiReferenceSet"/>
+    </method>
+
+  </interface>
+</node>

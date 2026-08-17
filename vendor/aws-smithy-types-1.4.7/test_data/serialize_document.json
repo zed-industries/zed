@@ -1,0 +1,43 @@
+{
+    "null": null,
+    "true": true,
+    "pos_int": 1,
+    "false": false,
+    "map": {
+        "array": [
+            {
+                "pos_int": 1,
+                "float": 0.30000000000000004,
+                "neg_int": -1,
+                "hello": "world",
+                "false": false,
+                "true": true
+            },
+            "hello-world",
+            true,
+            false
+        ],
+        "pos_int": 1,
+        "float": 0.30000000000000004,
+        "neg_int": -1,
+        "hello": "world",
+        "false": false,
+        "true": true
+    },
+    "float": 0.30000000000000004,
+    "neg_int": -1,
+    "hello": "world",
+    "array": [
+        {
+            "pos_int": 1,
+            "float": 0.30000000000000004,
+            "neg_int": -1,
+            "hello": "world",
+            "false": false,
+            "true": true
+        },
+        "hello-world",
+        true,
+        false
+    ]
+}

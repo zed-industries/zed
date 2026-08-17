@@ -1,0 +1,22 @@
+(type T (primitive T))
+(type U (primitive U))
+(type V (primitive V))
+
+(convert T U t_to_u)
+
+(type Result (enum (T (u U) (v V))))
+
+;; Use the implicit converter before the underlying constructor is
+;; declared (below). Also use one of the conversions before it is
+;; declared (below).
+(decl entry (T) Result)
+(rule (entry t)
+      (Result.T t t))
+
+(convert T V t_to_v)
+
+(decl t_to_u (T) U)
+(extern constructor t_to_u t_to_u)
+
+(decl t_to_v (T) V)
+(rule (t_to_v _) 0)

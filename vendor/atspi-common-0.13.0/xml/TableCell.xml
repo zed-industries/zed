@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<node>
+  <interface name="org.a11y.atspi.TableCell">
+
+    <property access="read" name="ColumnSpan" type="i" />
+
+    <property access="read" name="Position" type="(ii)">
+      <annotation name="org.qtproject.QtDBus.QtTypeName" value="QPoint"/>
+    </property>
+
+    <property access="read" name="RowSpan" type="i" />
+
+    <property access="read" name="Table" type="(so)" >
+      <annotation name="org.qtproject.QtDBus.QtTypeName" value="QSpiObjectReference"/>
+    </property>
+
+    <method name="GetRowColumnSpan">
+      <arg direction="out" type="b" />
+      <arg direction="out" name="row" type="i" />
+      <arg direction="out" name="col" type="i" />
+      <arg direction="out" name="row_extents" type="i" />
+      <arg direction="out" name="col_extents" type="i" />
+    </method>
+
+    <!--
+        GetColumnHeaderCells:
+
+        Returns a list of the table cell's column header cells.
+    -->
+    <method name="GetColumnHeaderCells">
+      <arg direction="out" type="a(so)"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QSpiObjectReferenceArray"/>
+    </method>
+
+    <!--
+        GetRowHeaderCells:
+
+        Returns a list of the table cell's row header cells.
+    -->
+    <method name="GetRowHeaderCells">
+      <arg direction="out" type="a(so)"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QSpiObjectReferenceArray"/>
+    </method>
+  </interface>
+</node>

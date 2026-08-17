@@ -1,0 +1,30 @@
+---
+- name: Spec Example 2.18. Multi-line Flow Scalars
+  from: http://www.yaml.org/spec/1.2/spec.html#id2761268
+  tags: spec scalar
+  yaml: |
+    plain:
+      This unquoted scalar
+      spans many lines.
+
+    quoted: "So does this
+      quoted scalar.\n"
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :plain
+       =VAL :This unquoted scalar spans many lines.
+       =VAL :quoted
+       =VAL "So does this quoted scalar.\n
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "plain": "This unquoted scalar spans many lines.",
+      "quoted": "So does this quoted scalar.\n"
+    }
+  dump: |
+    plain: This unquoted scalar spans many lines.
+    quoted: "So does this quoted scalar.\n"

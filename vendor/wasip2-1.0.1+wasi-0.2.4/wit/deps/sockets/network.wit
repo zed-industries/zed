@@ -1,0 +1,169 @@
+@since(version = 0.2.0)
+interface network {
+    @unstable(feature = network-error-code)
+    use wasi:io/error@0.2.4.{error};
+
+    /// An opaque resource that represents access to (a subset of) the network.
+    /// This enables context-based security for networking.
+    /// There is no need for this to map 1:1 to a physical network interface.
+    @since(version = 0.2.0)
+    resource network;
+
+    /// Error codes.
+    ///
+    /// In theory, every API can return any error code.
+    /// In practice, API's typically only return the errors documented per API
+    /// combined with a couple of errors that are always possible:
+    /// - `unknown`
+    /// - `access-denied`
+    /// - `not-supported`
+    /// - `out-of-memory`
+    /// - `concurrency-conflict`
+    ///
+    /// See each individual API for what the POSIX equivalents are. They sometimes differ per API.
+    @since(version = 0.2.0)
+    enum error-code {
+        /// Unknown error
+        unknown,
+
+        /// Access denied.
+        ///
+        /// POSIX equivalent: EACCES, EPERM
+        access-denied,
+
+        /// The operation is not supported.
+        ///
+        /// POSIX equivalent: EOPNOTSUPP
+        not-supported,
+
+        /// One of the arguments is invalid.
+        ///
+        /// POSIX equivalent: EINVAL
+        invalid-argument,
+
+        /// Not enough memory to complete the operation.
+        ///
+        /// POSIX equivalent: ENOMEM, ENOBUFS, EAI_MEMORY
+        out-of-memory,
+
+        /// The operation timed out before it could finish completely.
+        timeout,
+
+        /// This operation is incompatible with another asynchronous operation that is already in progress.
+        ///
+        /// POSIX equivalent: EALREADY
+        concurrency-conflict,
+
+        /// Trying to finish an asynchronous operation that:
+        /// - has not been started yet, or:
+        /// - was already finished by a previous `finish-*` call.
+        ///
+        /// Note: this is scheduled to be removed when `future`s are natively supported.
+        not-in-progress,
+
+        /// The operation has been aborted because it could not be completed immediately.
+        ///
+        /// Note: this is scheduled to be removed when `future`s are natively supported.
+        would-block,
+
+
+        /// The operation is not valid in the socket's current state.
+        invalid-state,
+
+        /// A new socket resource could not be created because of a system limit.
+        new-socket-limit,
+
+        /// A bind operation failed because the provided address is not an address that the `network` can bind to.
+        address-not-bindable,
+
+        /// A bind operation failed because the provided address is already in use or because there are no ephemeral ports available.
+        address-in-use,
+
+        /// The remote address is not reachable
+        remote-unreachable,
+
+
+        /// The TCP connection was forcefully rejected
+        connection-refused,
+
+        /// The TCP connection was reset.
+        connection-reset,
+
+        /// A TCP connection was aborted.
+        connection-aborted,
+
+
+        /// The size of a datagram sent to a UDP socket exceeded the maximum
+        /// supported size.
+        datagram-too-large,
+
+
+        /// Name does not exist or has no suitable associated IP addresses.
+        name-unresolvable,
+
+        /// A temporary failure in name resolution occurred.
+        temporary-resolver-failure,
+
+        /// A permanent failure in name resolution occurred.
+        permanent-resolver-failure,
+    }
+
+    /// Attempts to extract a network-related `error-code` from the stream
+    /// `error` provided.
+    ///
+    /// Stream operations which return `stream-error::last-operation-failed`
+    /// have a payload with more information about the operation that failed.
+    /// This payload can be passed through to this function to see if there's
+    /// network-related information about the error to return.
+    ///
+    /// Note that this function is fallible because not all stream-related
+    /// errors are network-related errors.
+    @unstable(feature = network-error-code)
+    network-error-code: func(err: borrow<error>) -> option<error-code>;
+
+    @since(version = 0.2.0)
+    enum ip-address-family {
+        /// Similar to `AF_INET` in POSIX.
+        ipv4,
+
+        /// Similar to `AF_INET6` in POSIX.
+        ipv6,
+    }
+
+    @since(version = 0.2.0)
+    type ipv4-address = tuple<u8, u8, u8, u8>;
+    @since(version = 0.2.0)
+    type ipv6-address = tuple<u16, u16, u16, u16, u16, u16, u16, u16>;
+
+    @since(version = 0.2.0)
+    variant ip-address {
+        ipv4(ipv4-address),
+        ipv6(ipv6-address),
+    }
+
+    @since(version = 0.2.0)
+    record ipv4-socket-address {
+        /// sin_port
+        port: u16,
+        /// sin_addr
+        address: ipv4-address,
+    }
+
+    @since(version = 0.2.0)
+    record ipv6-socket-address {
+        /// sin6_port
+        port: u16,
+        /// sin6_flowinfo
+        flow-info: u32,
+        /// sin6_addr
+        address: ipv6-address,
+        /// sin6_scope_id
+        scope-id: u32,
+    }
+
+    @since(version = 0.2.0)
+    variant ip-socket-address {
+        ipv4(ipv4-socket-address),
+        ipv6(ipv6-socket-address),
+    }
+}

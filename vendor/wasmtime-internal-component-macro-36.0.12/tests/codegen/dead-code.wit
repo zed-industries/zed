@@ -1,0 +1,27 @@
+package a:b;
+
+world imports {
+  import interface-with-live-type;
+  import interface-with-dead-type;
+}
+
+interface interface-with-live-type {
+  record live-type {
+    a: u32,
+  }
+  f: func() -> live-type;
+}
+
+
+interface interface-with-dead-type {
+  use interface-with-live-type.{live-type};
+
+  record dead-type {
+    a: u32,
+  }
+
+  variant v {
+    a(live-type),
+    b(dead-type),
+  }
+}

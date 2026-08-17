@@ -1,0 +1,21 @@
+[package]
+name = "wasmtime-internal-c-api-macros"
+version.workspace = true
+authors = ["The Wasmtime Project Developers"]
+license = "Apache-2.0 WITH LLVM-exception"
+edition.workspace = true
+rust-version.workspace = true
+description = "INTERNAL: Support macros for `wasmtime-c-api`"
+repository = "https://github.com/bytecodealliance/wasmtime"
+
+[lints]
+workspace = true
+
+[lib]
+proc-macro = true
+test = false
+doctest = false
+
+[dependencies]
+quote = { workspace = true }
+proc-macro2 = { workspace = true }

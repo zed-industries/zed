@@ -1,0 +1,33 @@
+[package]
+name = "uuid-simd"
+version = "0.8.0"
+edition = "2021"
+description = "SIMD-accelerated UUID operations"
+license = "MIT"
+repository = "https://github.com/Nugine/simd"
+keywords = ["uuid", "guid", "simd"]
+categories = ["no-std", "parser-implementations"]
+readme = "README.md"
+rust-version = "1.63"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = ["std", "detect", "uuid"]
+alloc = ["vsimd/alloc"]
+std = ["alloc", "vsimd/std"]
+detect = ["vsimd/detect"]
+unstable = ["vsimd/unstable", "hex-simd/unstable"]
+
+[dependencies]
+outref = "0.5.0"
+vsimd = { path = "../vsimd", version = "0.8.0" }
+uuid = { version = "1.2.2", optional = true }
+
+[dev-dependencies]
+hex-simd = { path = "../hex-simd", version = "0.8.0" }
+
+[target.'cfg(target_arch="wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3.33"

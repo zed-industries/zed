@@ -1,0 +1,393 @@
+This folder contains
+
+  * Makefile skeletons for Apple MPW (Macintosh's Programmer's Workshop)
+
+  * Python script to generate MPW makefile from skeleton
+
+  * Metrowerks CodeWarrior 9.0 project file in XML format
+
+------------------------------------------------------------
+
+1. What is this
+---------------
+
+Files in this directory are designed to build FreeType
+running on classic MacOS. To build FreeType running on
+Mac OS X, build as the system is UNIX.
+
+However, Mac OS X is most useful to manipulate files in
+vanilla FreeType to fit classic MacOS.
+
+The information about MacOS specific API is written in
+appendix of this document.
+
+2. Requirement
+--------------
+
+You can use MPW: a free-charged developer environment
+by Apple, or CodeWarrior: a commercial developer
+environment by Metrowerks. GCC for MPW and Symantec
+"Think C" are not tested at present.
+
+
+  2-1. Apple MPW
+  --------------
+
+  Following C compilers are tested:
+
+      m68k target:	Apple SC  8.9.0d3e1
+      ppc  target:	Apple MrC 5.0.0d3c1
+
+  The final MPW-GM (official release on 1999/Dec) is too
+  old and cannot compile FreeType, because bundled C
+  compilers cannot search header files in sub directories.
+  Updating by the final MPW-PR (pre-release on 2001/Feb)
+  is required.
+
+  Required files are downloadable from:
+
+      http://macintoshgarden.org/apps/macintosh-programmers-workshop
+
+  Also you can find documents how to update by MPW-PR.
+
+  Python is required to restore MPW makefiles from the
+  skeletons. Python bundled to Mac OS X is enough. For
+  classic MacOS, MacPython is available:
+
+      https://homepages.cwi.nl/~jack/macpython/
+
+  MPW requires all files are typed by resource fork.
+  ResEdit bundled to MPW is enough. In Mac OS X,
+  /Developer/Tools/SetFile of DevTool is useful to
+  manipulate from commandline.
+
+  2-2. Metrowerks CodeWarrior
+  ---------------------------
+
+  XML project file is generated and tested by
+  CodeWarrior 9.0.  Older versions are not tested
+  at all. At present, static library for ppc target
+  is available in the project file.
+
+
+3. How to build
+---------------
+
+  3-1. Apple MPW
+  --------------
+  Detailed building procedure by Apple MPW is
+  described in following.
+
+    3-1-1. Generate MPW makefiles from the skeletons
+    ------------------------------------------------
+
+    Here are 4 skeletons for following targets are
+    included.
+
+    - FreeType.m68k_far.make.txt
+      Ancient 32bit binary executable format for
+      m68k MacOS: System 6, with 32bit addressing
+      mode (far-pointer-model) So-called "Toolbox"
+      API is used.
+
+    - FreeType.m68k_cfm.make.txt
+      CFM binary executable format for m68k MacOS:
+      System 7. So-called "Toolbox" API is used.
+
+    - FreeType.ppc_classic.make.txt
+      CFM binary executable format for ppc MacOS:
+      System 7, MacOS 8, MacOS 9. So-called "Toolbox"
+      API is used.
+
+    - FreeType.ppc_carbon.make.txt
+      CFM binary executable format for ppc MacOS:
+      MacOS 9. Carbon API is used.
+
+    At present, static library is only supported,
+    although targets except of m68k_far are capable
+    to use shared library.
+
+    MPW makefile syntax uses 8bit characters. To keep
+    from violating them during version control, here
+    we store skeletons in pure ASCII format. You must
+    generate MPW makefile by Python script ascii2mpw.py.
+
+    In Mac OS X terminal, you can convert as:
+
+	python builds/mac/ascii2mpw.py \
+		< builds/mac/FreeType.m68k_far.make.txt \
+		> FreeType.m68k_far.make
+
+    The skeletons are designed to use in the top
+    directory where there are builds, include, src etc.
+    You must name the generated MPW makefile by removing
+    ".txt" from source skeleton name.
+
+    3-1-2. Add resource forks to related files
+    ------------------------------------------
+
+    MPW's Make and C compilers cannot recognize files
+    without resource fork. You have to add resource
+    fork to the files that MPW uses. In Mac OS X
+    terminal of the system, you can do as:
+
+	find . -name '*.[ch]' -exec \
+		/Developer/Tools/SetFile -a l -c "MPS " -t TEXT \{\} \;
+
+	find . -name '*.make' -exec \
+		/Developer/Tools/SetFile -a l -c "MPS " -t TEXT \{\} \;
+
+
+    3-1-3. Open MPW shell and build
+    -------------------------------
+
+    Open MPW shell and go to the top directory that
+    FreeType sources are extracted (MPW makefile must
+    be located in there), from "Set Directory" in
+    "Directory" menu.
+
+    Choose "Build" from "Build" menu, and type the
+    name of project by removing ".make" from MPW
+    makefile, as: FreeType.m68k_far
+
+    If building is successfully finished, you can find
+    built library in objs/ directory.
+
+
+  3-2. Metrowerks CodeWarrior
+  ---------------------------
+
+  Detailed building procedure by Metrowerks
+  CodeWarrior (CW) 9.0 is described in following.
+
+    3-2-1. Import XML project file
+    ------------------------------
+
+    CW XML project file is not ready for double-
+    click. Start CodeWarrior IDE, and choose
+    "Import project" in "File" menu. Choose XML
+    project file: builds/mac/ftlib.prj.xml.
+    In next, you will be asked where to save CW
+    native project file: you must choose
+    "builds/mac/ftlib.prj". The project file is
+    designed with relative path from there. After
+    CW native project file is generated, it is
+    automatically loaded, small project window
+    titled "ftlib.prj" is displayed.
+
+    3-2-2. Building
+    ---------------
+    Choose "Make" from "Project" menu. If building
+    is successfully finished, you can find built
+    library at objs/FreeTypeLib.
+
+4. TODO
+-------
+
+  4-1. All modules should be included
+  -----------------------------------
+
+  At present, MPW makefiles and CW project file are
+  just updated versions of these by Leonard. Some
+  modules are added after the last maintenance, they
+  are not included.
+
+  4-2. Working test with ftdemos
+  ------------------------------
+
+  At present, MPW makefiles and CW project file can
+  build FreeType for classic MacOS. But their working
+  behaviours are not tested at all. Building ftdemos
+  for classic MacOS and working test is required.
+
+
+APPENDIX I
+----------
+
+  A-1. Framework dependencies
+  ---------------------------
+
+  src/base/ftmac.c adds two Mac-specific features to
+  FreeType. These features are based on MacOS libraries.
+
+  * accessing resource-fork font
+  The fonts for classic MacOS store their graphical data
+  in resource forks which cannot be accessed via ANSI C
+  functions. FreeType2 provides functions to handle such
+  resource fork fonts, they are based on File Manager
+  framework of MacOS. In addition, HFS and HFS+ file
+  system driver of Linux is supported. Following
+  functions are for this purpose.
+
+    FT_New_Face_From_Resource()
+    FT_New_Face_From_FSSpec()
+    FT_New_Face_From_FSRef()
+
+  * resolving font name to font file
+  The font menu of MacOS application prefers font name
+  written in FOND resource than sfnt resource. FreeType2
+  provides functions to find font file by name in MacOS
+  application, they are based on QuickDraw Font Manager
+  and Apple Type Service framework of MacOS.
+
+    FT_GetFile_From_Mac_Name()
+    FT_GetFile_From_Mac_ATS_Name()
+
+  Working functions for each MacOS are summarized as
+  following.
+
+  upto MacOS 6:
+    not tested (you have to obtain MPW 2.x)
+
+  MacOS 7.x, 8.x, 9.x (without CarbonLib):
+    FT_GetFile_From_Mac_Name()
+    FT_New_Face_From_Resource()
+    FT_New_Face_From_FSSpec()
+
+  MacOS 9.x (with CarbonLib):
+    FT_GetFile_From_Mac_Name()
+    FT_New_Face_From_Resource()
+    FT_New_Face_From_FSSpec()
+    FT_New_Face_From_FSRef()
+
+  Mac OS X upto 10.4.x:
+    FT_GetFile_From_Mac_Name()     deprecated
+    FT_New_Face_From_FSSpec()      deprecated
+    FT_GetFile_From_Mac_ATS_Name() deprecated?
+    FT_New_Face_From_FSRef()
+
+  A-2. Deprecated Functions
+  -------------------------
+
+    A-2-1. FileManager
+    ------------------
+
+    For convenience to write MacOS application, ftmac.c
+    provides functions to specify a file by FSSpec and FSRef,
+    because the file identification pathname had ever been
+    unrecommended method in MacOS programming.
+
+    Toward to MacOS X 10.4 & 5, Carbon functions using FSSpec
+    datatype is noticed as deprecated, and recommended to
+    migrate to FSRef datatype. The big differences of FSRef
+    against FSSpec are explained in Apple TechNotes 2078.
+
+    https://developer.apple.com/library/archive/technotes/tn2078/
+
+    - filename length: the max length of file
+    name of FSRef is 255 chars (it is limit of HFS+),
+    that of FSSpec is 31 chars (it is limit of HFS).
+
+    - filename encoding: FSSpec is localized by
+    legacy encoding for each language system,
+    FSRef is Unicode enabled.
+
+    A-2-2. FontManager
+    ------------------
+
+    Following functions receive QuickDraw fontname:
+
+      FT_GetFile_From_Mac_Name()
+
+    QuickDraw is deprecated and replaced by Quartz
+    since Mac OS X 10.4. They are still kept for
+    backward compatibility. By undefinition of
+    HAVE_QUICKDRAW in building, you can change these
+    functions to return FT_Err_Unimplemented always.
+
+    Replacement functions are added for migration.
+
+      FT_GetFile_From_Mac_ATS_Name()
+
+    They are usable on Mac OS X only. On older systems,
+    these functions return FT_Err_Unimplemented always.
+
+    The detailed incompatibilities and possibility
+    of FontManager emulation without QuickDraw is
+    explained in
+
+      http://gyvern.ipc.hiroshima-u.ac.jp/~mpsuzuki/ats_benchmark.html
+
+  A-3. Framework Availabilities
+  -----------------------------
+
+  The framework of MacOS are often revised, especially
+  when new format of binary executable is introduced.
+  Following table is the minimum version of frameworks
+  to use functions used in FreeType2. The table is
+  extracted from MPW header files for assembly language.
+
+  *** NOTE ***
+  The conditional definition of available data type
+  in MPW compiler is insufficient. You can compile
+  program using FSRef data type for older systems
+  (MacOS 7, 8) that don't know FSRef data type.
+
+
+                                      +-------------------+-----------------------------+
+           CPU                        |      mc680x0      |           PowerPC           |
+                                      +---------+---------+---------+---------+---------+
+  Binary Executable Format            | Classic | 68K-CFM | CFM     | CFM     | Mach-O  |
+                                      +---------+---------+---------+---------+---------+
+       Framework API                  | Toolbox | Toolbox | Toolbox | Carbon  | Carbon  |
+                                      +---------+---------+---------+---------+---------+
+
+                                      +---------+---------+---------+---------+---------+
+                                      |    ?(*) |Interface|Interface|CarbonLib|Mac OS X |
+                                      |         |Lib      |Lib      |         |         |
+* Files.h                             +---------+---------+---------+---------+---------+
+PBGetFCBInfoSync()                    |    o    | 7.1-    | 7.1-    | 1.0-    |    o    |
+FSMakeFSSpec()                        |    o    | 7.1-    | 7.1-    | 1.0-    |    o    |
+FSGetForkCBInfo()                     |    o    |   (**)  | 9.0-    | 1.0-    |    o    |
+FSpMakeFSRef()                        |    o    |   (**)  | 9.0-    | 1.0-    |    o    |
+FSGetCatalogInfo()                    |    o    |   (**)  | 9.0-    | 1.0-    |   -10.3 |
+FSPathMakeRef()                       |    x    |    x    |    x    | 1.1-    |   -10.3 |
+                                      +---------+---------+---------+---------+---------+
+
+                                      +---------+---------+---------+---------+---------+
+                                      |    ?(*) |Font     |Font     |CarbonLib|Mac OS X |
+                                      |         |Manager  |Manager  |         |         |
+* Fonts.h                             +---------+---------+---------+---------+---------+
+FMCreateFontFamilyIterator()          |    x    |    x    | 9.0-    | 1.0-    |   -10.3 |
+FMDisposeFontFamilyIterator()         |    x    |    x    | 9.0-    | 1.0-    |   -10.3 |
+FMGetNextFontFamily()                 |    x    |    x    | 9.0-    | 1.0-    |   -10.3 |
+FMGetFontFamilyName()                 |    x    |    x    | 9.0-    | 1.0-    |   -10.3 |
+FMCreateFontFamilyInstanceIterator()  |    x    |    x    | 9.0-    | 1.0-    |   -10.3 |
+FMDisposeFontFamilyInstanceIterator() |    x    |    x    | 9.0-    | 1.0-    |   -10.3 |
+FMGetNextFontFamilyInstance()         |    x    |    x    | 9.0-    | 1.0-    |   -10.3 |
+                                      +---------+---------+---------+---------+---------+
+
+                                      +---------+---------+---------+---------+---------+
+                                      |    -    |    -    |    -    |CarbonLib|Mac OS X |
+* ATSFont.h (***)                     +---------+---------+---------+---------+---------+
+ATSFontFindFromName()                 |    x    |    x    |    x    |    x    |    o    |
+ATSFontGetFileSpecification()         |    x    |    x    |    x    |    x    |    o    |
+                                      +---------+---------+---------+---------+---------+
+
+    (*)
+    In the "Classic": the original binary executable
+    format, these framework functions are directly
+    transformed to MacOS system call. Therefore, the
+    exact availability should be checked by running
+    system.
+
+    (**)
+    InterfaceLib is bundled to MacOS and its version
+    is usually equal to MacOS. There's no separate
+    update for InterfaceLib. It is supposed that
+    there's no InterfaceLib 9.x for m68k platforms.
+    In fact, these functions are FSRef dependent.
+
+    (***)
+    ATSUI framework is available on ATSUnicode 8.5 on
+    ppc Toolbox CFM, CarbonLib 1.0 too. But its base:
+    ATS font manager is not published in these versions.
+
+------------------------------------------------------------
+Last update: 2013-Nov-03.
+
+Currently maintained by
+	suzuki toshiya, <mpsuzuki@hiroshima-u.ac.jp>
+Originally prepared by
+	Leonard Rosenthol, <leonardr@lazerware.com>
+	Just van Rossum, <just@letterror.com>

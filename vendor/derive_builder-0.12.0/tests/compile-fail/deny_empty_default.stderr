@@ -1,0 +1,5 @@
+error: Unknown literal value ``
+ --> $DIR/deny_empty_default.rs:8:25
+  |
+8 |     #[builder(default = "")]
+  |                         ^^

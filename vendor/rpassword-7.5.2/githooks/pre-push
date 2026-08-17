@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+set -xeuo pipefail
+
+input="$(cat)"
+
+if [ -n "$GIT_GLOBAL_HOOKS_PATH" -a -x "$GIT_GLOBAL_HOOKS_PATH/pre-push" ]; then
+  echo -n "$input" | $GIT_GLOBAL_HOOKS_PATH/pre-push
+fi

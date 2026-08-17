@@ -1,0 +1,17 @@
+---
+- name: Plain scalar with backslashes
+  from: '@perlpunk'
+  tags: scalar
+  yaml: |
+    ---
+    plain\value\with\backslashes
+  tree: |
+    +STR
+     +DOC ---
+      =VAL :plain\\value\\with\\backslashes
+     -DOC
+    -STR
+  json: |
+    "plain\\value\\with\\backslashes"
+  dump: |
+    --- plain\value\with\backslashes

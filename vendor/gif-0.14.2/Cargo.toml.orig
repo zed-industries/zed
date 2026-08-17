@@ -1,0 +1,57 @@
+[package]
+name = "gif"
+license = "MIT OR Apache-2.0"
+version = "0.14.2"
+description = "GIF de- and encoder"
+authors = ["The image-rs Developers"]
+readme = "README.md"
+homepage = "https://github.com/image-rs/image-gif"
+repository = "https://github.com/image-rs/image-gif"
+documentation = "https://docs.rs/gif"
+edition = "2021"
+include = ["src/**", "LICENSE-*", "README.md", "benches/*.rs"]
+rust-version = "1.62"
+
+[lib]
+bench = false
+
+[dependencies]
+weezl = "0.1.10"
+color_quant = { version = "1.1", optional = true }
+
+[dev-dependencies]
+glob = "0.3"
+criterion = "0.7.0"
+png = "0.18.0"
+rayon = "1.10.0" # for parallel reencoding example
+
+[features]
+default = ["raii_no_panic", "std", "color_quant"]
+# The `Encoder` finishes writing in `Drop`, and if the write fails, it either ignores the error (`raii_no_panic`) or panics.
+# Use `Encoder::into_inner` to avoid the issue entirely
+raii_no_panic = []
+color_quant = ["dep:color_quant"]
+# Reservation for a feature turning off std
+std = []
+
+[[bench]]
+name = "decode"
+harness = false
+required-features = ["std"]
+
+[[bench]]
+name = "rgb_frame"
+harness = false
+required-features = ["std", "color_quant"]
+
+[[example]]
+name = "check"
+required-features = ["std"]
+
+[[example]]
+name = "explode"
+required-features = ["std"]
+
+[[example]]
+name = "parallel"
+required-features = ["std"]

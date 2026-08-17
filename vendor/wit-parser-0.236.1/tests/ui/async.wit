@@ -1,0 +1,24 @@
+package test:%async;
+
+interface x {
+  x: async func(x: u32) -> u64;
+  y: func();
+
+  resource z {
+    constructor();
+
+    x: async func();
+    y: func();
+
+    static-x: static async func();
+    static-y: static func();
+  }
+}
+
+world y {
+  import x: async func();
+  import y: func();
+
+  export x: async func();
+  export y: func();
+}

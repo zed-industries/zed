@@ -1,0 +1,5 @@
+package test:test;
+
+world lib-foo {
+    export run: func();
+}

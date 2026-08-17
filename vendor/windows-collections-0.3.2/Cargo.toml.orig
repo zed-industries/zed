@@ -1,0 +1,27 @@
+[package]
+name = "windows-collections"
+version = "0.3.2"
+edition = "2021"
+rust-version = "1.82"
+license = "MIT OR Apache-2.0"
+description = "Windows collection types"
+repository = "https://github.com/microsoft/windows-rs"
+categories = ["os::windows-apis"]
+readme = "readme.md"
+
+[dependencies]
+windows-core = { workspace = true }
+
+[dev-dependencies]
+windows-strings = { workspace = true }
+
+[features]
+default = ["std"]
+std = ["windows-core/std"]
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+default-target = "x86_64-pc-windows-msvc"
+targets = []

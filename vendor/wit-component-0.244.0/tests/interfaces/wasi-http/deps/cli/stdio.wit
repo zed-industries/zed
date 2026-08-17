@@ -1,0 +1,17 @@
+interface stdin {
+  use wasi:io/streams@0.2.0-rc-2023-11-10.{input-stream};
+
+  get-stdin: func() -> input-stream;
+}
+
+interface stdout {
+  use wasi:io/streams@0.2.0-rc-2023-11-10.{output-stream};
+
+  get-stdout: func() -> output-stream;
+}
+
+interface stderr {
+  use wasi:io/streams@0.2.0-rc-2023-11-10.{output-stream};
+
+  get-stderr: func() -> output-stream;
+}

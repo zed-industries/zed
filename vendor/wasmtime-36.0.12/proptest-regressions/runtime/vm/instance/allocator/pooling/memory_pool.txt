@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 696808084287d5d58b85c60c4720227ab4dd83ada7be6841a67162023aaf4914 # shrinks to c = SlabConstraints { max_memory_bytes: 0, num_memory_slots: 1, num_pkeys_available: 0, guard_bytes: 9223372036854775808 }
+cc cf9f6c36659f7f56ed8ea646e8c699cbf46708cef6911cdd376418ad69ea1388 # shrinks to c = SlabConstraints { max_memory_bytes: 14161452635954640438, num_memory_slots: 0, num_pkeys_available: 0, guard_bytes: 4285291437754911178 }
+cc 58f42405c4fbfb4b464950f372995d4d08a77d6884335e38c2e68d590cacf7d8 # shrinks to c = SlabConstraints { expected_slot_bytes: 0, max_memory_bytes: 8483846582232735745, num_slots: 0, num_pkeys_available: 0, guard_bytes: 0, guard_before_slots: false }

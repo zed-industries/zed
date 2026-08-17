@@ -1,0 +1,93 @@
+{
+  "events": [
+    {
+      "connection_id": 0,
+      "action": {
+        "Request": {
+          "request": {
+            "uri": "https://gdc-organoid-pancreatic-phs001611-2-open.s3.us-east-1.amazonaws.com/?list-type=2&max-keys=3",
+            "headers": {
+              "amz-sdk-request": [
+                "attempt=1; max=3"
+              ],
+              "x-amz-user-agent": [
+                "aws-sdk-rust/0.123.test api/test-service/0.123 os/windows/XPSP3 lang/rust/1.50.0"
+              ],
+              "user-agent": [
+                "aws-sdk-rust/0.123.test os/windows/XPSP3 lang/rust/1.50.0"
+              ]
+            },
+            "method": "GET"
+          }
+        }
+      }
+    },
+    {
+      "connection_id": 0,
+      "action": {
+        "Eof": {
+          "ok": true,
+          "direction": "Request"
+        }
+      }
+    },
+    {
+      "connection_id": 0,
+      "action": {
+        "Response": {
+          "response": {
+            "Ok": {
+              "status": 200,
+              "version": "HTTP/1.1",
+              "headers": {
+                "x-amz-id-2": [
+                  "InRlbSiDTNSjIiYuGbkpnrz0TIgFVsDu8bnzVwF2UvZiOuiwhvdA3oltBT1ILZqNyFzSIkShTKk="
+                ],
+                "x-amz-request-id": [
+                  "H8T96AN5TTDT3SSQ"
+                ],
+                "server": [
+                  "AmazonS3"
+                ],
+                "x-amz-bucket-region": [
+                  "us-east-1"
+                ],
+                "date": [
+                  "Mon, 07 Aug 2023 20:44:41 GMT"
+                ],
+                "content-type": [
+                  "application/xml"
+                ],
+                "transfer-encoding": [
+                  "chunked"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "connection_id": 0,
+      "action": {
+        "Data": {
+          "data": {
+            "Utf8": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>gdc-organoid-pancreatic-phs001611-2-open</Name><Prefix></Prefix><NextContinuationToken>1SL9nYFaimMAwnR9dJnF4M5NMfm3Em6/ClPUVLEH3GOSw5yjeI+wCBLj3THB8DuJSUFhKNy5cGK5QBb/SvE+MKMZurarr0ZhOhQae2SQ8B4QQPkqQHKp9MeJXsYe4UH8/okpqJUZNS2AQt7gXrz7mFdIJXPuSckj02e06tvxZAOkHu7ER4xTJ+odI774K2xB+pcD3H0pqTUt+TebzB83BzA==</NextContinuationToken><KeyCount>3</KeyCount><MaxKeys>3</MaxKeys><IsTruncated>true</IsTruncated><Contents><Key>0431cddc-a418-4a79-a34d-6c041394e8e4/a6ddcc84-8e4d-4c68-885c-2d51168eec97.FPKM-UQ.txt.gz</Key><LastModified>2020-01-27T20:56:51.000Z</LastModified><ETag>&quot;446fc665f99183cd0540d7656a79d3ed&quot;</ETag><Size>386910</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>04a0a508-459a-4758-ac40-c3e8cb966683/30520ecd-c6bd-4039-9b1a-d3f999235598.FPKM-UQ.txt.gz</Key><LastModified>2020-01-27T20:56:50.000Z</LastModified><ETag>&quot;a2c6997aa0c6a9fd697af3e0517d96be&quot;</ETag><Size>388349</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>0541851c-ac0c-496e-93d2-3c03921fa6bd/c92f3dc4-24ea-457b-b90a-d6d599b14a73.rna_seq.star_gene_counts.tsv.gz</Key><LastModified>2020-01-27T20:56:51.000Z</LastModified><ETag>&quot;f2c4e159c9b2f4233c4c0c27f4c25472&quot;</ETag><Size>396626</Size><StorageClass>STANDARD</StorageClass></Contents></ListBucketResult>"
+          },
+          "direction": "Response"
+        }
+      }
+    },
+    {
+      "connection_id": 0,
+      "action": {
+        "Eof": {
+          "ok": true,
+          "direction": "Response"
+        }
+      }
+    }
+  ],
+  "docs": "traffic recording of optional auth (no Authorization header is included)",
+  "version": "V0"
+}

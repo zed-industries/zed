@@ -1,0 +1,2437 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="API Reference Documentation for FreeType-2.13.2">
+      
+      
+      
+        <meta name="author" content="FreeType Contributors">
+      
+      
+      <link rel="icon" href="images/favico.ico">
+      <meta name="generator" content="mkdocs-1.4.3, mkdocs-material-7.1.9">
+    
+    
+      
+        <title>Header File Macros - FreeType-2.13.2 API Reference</title>
+      
+    
+    
+      <link rel="stylesheet" href="assets/stylesheets/main.ca7ac06f.min.css">
+      
+        
+        <link rel="stylesheet" href="assets/stylesheets/palette.f1a3b89f.min.css">
+        
+          
+          
+          <meta name="theme-color" content="#4cae4f">
+        
+      
+    
+    
+    
+      
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Noto+Serif:300,400,400i,700%7CRoboto+Mono&display=fallback">
+        <style>:root{--md-text-font-family:"Noto Serif";--md-code-font-family:"Roboto Mono"}</style>
+      
+    
+    
+    
+      <link rel="stylesheet" href="stylesheets/extra.css">
+    
+    
+      
+
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <script>function __prefix(e){return new URL(".",location).pathname+"."+e}function __get(e,t=localStorage){return JSON.parse(t.getItem(__prefix(e)))}</script>
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#header-file-macros" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-header__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            FreeType-2.13.2 API Reference
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Header File Macros
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+      </label>
+      
+<div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" data-md-state="active" required>
+      <label class="md-search__icon md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+      </label>
+      <button type="reset" class="md-search__icon md-icon" aria-label="Clear" tabindex="-1">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
+      </button>
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+  </nav>
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-nav__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    FreeType-2.13.2 API Reference
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="index.html" class="md-nav__link">
+        TOC
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-index.html" class="md-nav__link">
+        Index
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_3" type="checkbox" id="__nav_3" >
+      
+      <label class="md-nav__link" for="__nav_3">
+        General Remarks
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="General Remarks" data-md-level="1">
+        <label class="md-nav__title" for="__nav_3">
+          <span class="md-nav__icon md-icon"></span>
+          General Remarks
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-preamble.html" class="md-nav__link">
+        Preamble
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_inclusion.html" class="md-nav__link">
+        FreeType's header inclusion scheme
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-user_allocation.html" class="md-nav__link">
+        User allocation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_4" type="checkbox" id="__nav_4" >
+      
+      <label class="md-nav__link" for="__nav_4">
+        Core API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Core API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_4">
+          <span class="md-nav__icon md-icon"></span>
+          Core API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-basic_types.html" class="md-nav__link">
+        Basic Data Types
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-library_setup.html" class="md-nav__link">
+        Library Setup
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-face_creation.html" class="md-nav__link">
+        Face Creation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_testing_macros.html" class="md-nav__link">
+        Font Testing Macros
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizing_and_scaling.html" class="md-nav__link">
+        Sizing and Scaling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_retrieval.html" class="md-nav__link">
+        Glyph Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-character_mapping.html" class="md-nav__link">
+        Character Mapping
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-information_retrieval.html" class="md-nav__link">
+        Information Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-other_api_data.html" class="md-nav__link">
+        Other API Data
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+    
+  
+  
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_5" type="checkbox" id="__nav_5" checked>
+      
+      <label class="md-nav__link" for="__nav_5">
+        Extended API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Extended API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_5">
+          <span class="md-nav__icon md-icon"></span>
+          Extended API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_variants.html" class="md-nav__link">
+        Unicode Variation Sequences
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-color_management.html" class="md-nav__link">
+        Glyph Color Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-layer_management.html" class="md-nav__link">
+        Glyph Layer Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_management.html" class="md-nav__link">
+        Glyph Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-mac_specific.html" class="md-nav__link">
+        Mac Specific Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizes_management.html" class="md-nav__link">
+        Size Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+    
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" data-md-toggle="toc" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          Header File Macros
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="ft2-header_file_macros.html" class="md-nav__link md-nav__link--active">
+        Header File Macros
+      </a>
+      
+        
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_config_config_h" class="md-nav__link">
+    FT_CONFIG_CONFIG_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_config_standard_library_h" class="md-nav__link">
+    FT_CONFIG_STANDARD_LIBRARY_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_config_options_h" class="md-nav__link">
+    FT_CONFIG_OPTIONS_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_config_modules_h" class="md-nav__link">
+    FT_CONFIG_MODULES_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_freetype_h" class="md-nav__link">
+    FT_FREETYPE_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_errors_h" class="md-nav__link">
+    FT_ERRORS_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_module_errors_h" class="md-nav__link">
+    FT_MODULE_ERRORS_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_system_h" class="md-nav__link">
+    FT_SYSTEM_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_image_h" class="md-nav__link">
+    FT_IMAGE_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_types_h" class="md-nav__link">
+    FT_TYPES_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_list_h" class="md-nav__link">
+    FT_LIST_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_outline_h" class="md-nav__link">
+    FT_OUTLINE_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_sizes_h" class="md-nav__link">
+    FT_SIZES_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_module_h" class="md-nav__link">
+    FT_MODULE_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_render_h" class="md-nav__link">
+    FT_RENDER_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_driver_h" class="md-nav__link">
+    FT_DRIVER_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_autohinter_h" class="md-nav__link">
+    FT_AUTOHINTER_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_cff_driver_h" class="md-nav__link">
+    FT_CFF_DRIVER_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_truetype_driver_h" class="md-nav__link">
+    FT_TRUETYPE_DRIVER_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_pcf_driver_h" class="md-nav__link">
+    FT_PCF_DRIVER_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_type1_tables_h" class="md-nav__link">
+    FT_TYPE1_TABLES_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_truetype_ids_h" class="md-nav__link">
+    FT_TRUETYPE_IDS_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_truetype_tables_h" class="md-nav__link">
+    FT_TRUETYPE_TABLES_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_truetype_tags_h" class="md-nav__link">
+    FT_TRUETYPE_TAGS_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_bdf_h" class="md-nav__link">
+    FT_BDF_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_cid_h" class="md-nav__link">
+    FT_CID_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_gzip_h" class="md-nav__link">
+    FT_GZIP_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_lzw_h" class="md-nav__link">
+    FT_LZW_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_bzip2_h" class="md-nav__link">
+    FT_BZIP2_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_winfonts_h" class="md-nav__link">
+    FT_WINFONTS_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_glyph_h" class="md-nav__link">
+    FT_GLYPH_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_bitmap_h" class="md-nav__link">
+    FT_BITMAP_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_bbox_h" class="md-nav__link">
+    FT_BBOX_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_cache_h" class="md-nav__link">
+    FT_CACHE_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_mac_h" class="md-nav__link">
+    FT_MAC_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_multiple_masters_h" class="md-nav__link">
+    FT_MULTIPLE_MASTERS_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_sfnt_names_h" class="md-nav__link">
+    FT_SFNT_NAMES_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_opentype_validate_h" class="md-nav__link">
+    FT_OPENTYPE_VALIDATE_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_gx_validate_h" class="md-nav__link">
+    FT_GX_VALIDATE_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_pfr_h" class="md-nav__link">
+    FT_PFR_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_h" class="md-nav__link">
+    FT_STROKER_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_synthesis_h" class="md-nav__link">
+    FT_SYNTHESIS_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_font_formats_h" class="md-nav__link">
+    FT_FONT_FORMATS_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_trigonometry_h" class="md-nav__link">
+    FT_TRIGONOMETRY_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_lcd_filter_h" class="md-nav__link">
+    FT_LCD_FILTER_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_incremental_h" class="md-nav__link">
+    FT_INCREMENTAL_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_gasp_h" class="md-nav__link">
+    FT_GASP_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_advances_h" class="md-nav__link">
+    FT_ADVANCES_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_color_h" class="md-nav__link">
+    FT_COLOR_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_otsvg_h" class="md-nav__link">
+    FT_OTSVG_H
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_6" type="checkbox" id="__nav_6" >
+      
+      <label class="md-nav__link" for="__nav_6">
+        Format-Specific API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Format-Specific API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_6">
+          <span class="md-nav__icon md-icon"></span>
+          Format-Specific API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-multiple_masters.html" class="md-nav__link">
+        Multiple Masters
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_tables.html" class="md-nav__link">
+        TrueType Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-type1_tables.html" class="md-nav__link">
+        Type 1 Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sfnt_names.html" class="md-nav__link">
+        SFNT Names
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bdf_fonts.html" class="md-nav__link">
+        BDF and PCF Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cid_fonts.html" class="md-nav__link">
+        CID Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pfr_fonts.html" class="md-nav__link">
+        PFR Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-winfnt_fonts.html" class="md-nav__link">
+        Window FNT Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-svg_fonts.html" class="md-nav__link">
+        OpenType SVG Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_formats.html" class="md-nav__link">
+        Font Formats
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gasp_table.html" class="md-nav__link">
+        Gasp Table
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_7" type="checkbox" id="__nav_7" >
+      
+      <label class="md-nav__link" for="__nav_7">
+        Controlling FreeType Modules
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Controlling FreeType Modules" data-md-level="1">
+        <label class="md-nav__title" for="__nav_7">
+          <span class="md-nav__icon md-icon"></span>
+          Controlling FreeType Modules
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-auto_hinter.html" class="md-nav__link">
+        The auto-hinter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cff_driver.html" class="md-nav__link">
+        The CFF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-t1_cid_driver.html" class="md-nav__link">
+        The Type 1 and CID drivers
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-tt_driver.html" class="md-nav__link">
+        The TrueType driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pcf_driver.html" class="md-nav__link">
+        The PCF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_svg_driver.html" class="md-nav__link">
+        The SVG driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-properties.html" class="md-nav__link">
+        Driver properties
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-parameter_tags.html" class="md-nav__link">
+        Parameter Tags
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lcd_rendering.html" class="md-nav__link">
+        Subpixel Rendering
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_8" type="checkbox" id="__nav_8" >
+      
+      <label class="md-nav__link" for="__nav_8">
+        Cache Sub-System
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Cache Sub-System" data-md-level="1">
+        <label class="md-nav__title" for="__nav_8">
+          <span class="md-nav__icon md-icon"></span>
+          Cache Sub-System
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cache_subsystem.html" class="md-nav__link">
+        Cache Sub-System
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_9" type="checkbox" id="__nav_9" >
+      
+      <label class="md-nav__link" for="__nav_9">
+        Support API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Support API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_9">
+          <span class="md-nav__icon md-icon"></span>
+          Support API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-computations.html" class="md-nav__link">
+        Computations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-list_processing.html" class="md-nav__link">
+        List Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-outline_processing.html" class="md-nav__link">
+        Outline Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-quick_advance.html" class="md-nav__link">
+        Quick retrieval of advance values
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bitmap_handling.html" class="md-nav__link">
+        Bitmap Handling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-raster.html" class="md-nav__link">
+        Scanline Converter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_stroker.html" class="md-nav__link">
+        Glyph Stroker
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-system_interface.html" class="md-nav__link">
+        System Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-module_management.html" class="md-nav__link">
+        Module Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gzip.html" class="md-nav__link">
+        GZIP Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lzw.html" class="md-nav__link">
+        LZW Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bzip2.html" class="md-nav__link">
+        BZIP2 Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-debugging_apis.html" class="md-nav__link">
+        External Debugging APIs
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_10" type="checkbox" id="__nav_10" >
+      
+      <label class="md-nav__link" for="__nav_10">
+        Error Codes
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Error Codes" data-md-level="1">
+        <label class="md-nav__title" for="__nav_10">
+          <span class="md-nav__icon md-icon"></span>
+          Error Codes
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_enumerations.html" class="md-nav__link">
+        Error Enumerations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_code_values.html" class="md-nav__link">
+        Error Code Values
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_11" type="checkbox" id="__nav_11" >
+      
+      <label class="md-nav__link" for="__nav_11">
+        Miscellaneous
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Miscellaneous" data-md-level="1">
+        <label class="md-nav__title" for="__nav_11">
+          <span class="md-nav__icon md-icon"></span>
+          Miscellaneous
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gx_validation.html" class="md-nav__link">
+        TrueTypeGX/AAT Validation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-incremental.html" class="md-nav__link">
+        Incremental Loading
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_engine.html" class="md-nav__link">
+        The TrueType Engine
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_validation.html" class="md-nav__link">
+        OpenType Validation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_config_config_h" class="md-nav__link">
+    FT_CONFIG_CONFIG_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_config_standard_library_h" class="md-nav__link">
+    FT_CONFIG_STANDARD_LIBRARY_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_config_options_h" class="md-nav__link">
+    FT_CONFIG_OPTIONS_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_config_modules_h" class="md-nav__link">
+    FT_CONFIG_MODULES_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_freetype_h" class="md-nav__link">
+    FT_FREETYPE_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_errors_h" class="md-nav__link">
+    FT_ERRORS_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_module_errors_h" class="md-nav__link">
+    FT_MODULE_ERRORS_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_system_h" class="md-nav__link">
+    FT_SYSTEM_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_image_h" class="md-nav__link">
+    FT_IMAGE_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_types_h" class="md-nav__link">
+    FT_TYPES_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_list_h" class="md-nav__link">
+    FT_LIST_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_outline_h" class="md-nav__link">
+    FT_OUTLINE_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_sizes_h" class="md-nav__link">
+    FT_SIZES_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_module_h" class="md-nav__link">
+    FT_MODULE_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_render_h" class="md-nav__link">
+    FT_RENDER_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_driver_h" class="md-nav__link">
+    FT_DRIVER_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_autohinter_h" class="md-nav__link">
+    FT_AUTOHINTER_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_cff_driver_h" class="md-nav__link">
+    FT_CFF_DRIVER_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_truetype_driver_h" class="md-nav__link">
+    FT_TRUETYPE_DRIVER_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_pcf_driver_h" class="md-nav__link">
+    FT_PCF_DRIVER_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_type1_tables_h" class="md-nav__link">
+    FT_TYPE1_TABLES_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_truetype_ids_h" class="md-nav__link">
+    FT_TRUETYPE_IDS_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_truetype_tables_h" class="md-nav__link">
+    FT_TRUETYPE_TABLES_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_truetype_tags_h" class="md-nav__link">
+    FT_TRUETYPE_TAGS_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_bdf_h" class="md-nav__link">
+    FT_BDF_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_cid_h" class="md-nav__link">
+    FT_CID_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_gzip_h" class="md-nav__link">
+    FT_GZIP_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_lzw_h" class="md-nav__link">
+    FT_LZW_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_bzip2_h" class="md-nav__link">
+    FT_BZIP2_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_winfonts_h" class="md-nav__link">
+    FT_WINFONTS_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_glyph_h" class="md-nav__link">
+    FT_GLYPH_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_bitmap_h" class="md-nav__link">
+    FT_BITMAP_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_bbox_h" class="md-nav__link">
+    FT_BBOX_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_cache_h" class="md-nav__link">
+    FT_CACHE_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_mac_h" class="md-nav__link">
+    FT_MAC_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_multiple_masters_h" class="md-nav__link">
+    FT_MULTIPLE_MASTERS_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_sfnt_names_h" class="md-nav__link">
+    FT_SFNT_NAMES_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_opentype_validate_h" class="md-nav__link">
+    FT_OPENTYPE_VALIDATE_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_gx_validate_h" class="md-nav__link">
+    FT_GX_VALIDATE_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_pfr_h" class="md-nav__link">
+    FT_PFR_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_stroker_h" class="md-nav__link">
+    FT_STROKER_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_synthesis_h" class="md-nav__link">
+    FT_SYNTHESIS_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_font_formats_h" class="md-nav__link">
+    FT_FONT_FORMATS_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_trigonometry_h" class="md-nav__link">
+    FT_TRIGONOMETRY_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_lcd_filter_h" class="md-nav__link">
+    FT_LCD_FILTER_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_incremental_h" class="md-nav__link">
+    FT_INCREMENTAL_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_gasp_h" class="md-nav__link">
+    FT_GASP_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_advances_h" class="md-nav__link">
+    FT_ADVANCES_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_color_h" class="md-nav__link">
+    FT_COLOR_H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_otsvg_h" class="md-nav__link">
+    FT_OTSVG_H
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          <div class="md-content" data-md-component="content">
+            <article class="md-content__inner md-typeset">
+              
+                
+                
+                <p><a href="https://www.freetype.org">FreeType</a> &raquo; <a href="../">Docs</a> &raquo; <a href="index.html#extended-api">Extended API</a> &raquo; Header File Macros</p>
+<hr />
+<h1 id="header-file-macros">Header File Macros<a class="headerlink" href="#header-file-macros" title="Permanent link">&para;</a></h1>
+<h2 id="synopsis">Synopsis<a class="headerlink" href="#synopsis" title="Permanent link">&para;</a></h2>
+<p>In addition to the normal scheme of including header files like
+<div class="highlight"><pre><span></span><code>  #include &lt;freetype/freetype.h&gt;
+  #include &lt;freetype/ftmm.h&gt;
+  #include &lt;freetype/ftglyph.h&gt;
+</code></pre></div></p>
+<p>it is possible to used named macros instead. They can be used directly in <code>#include</code> statements as in
+<div class="highlight"><pre><span></span><code>  #include FT_FREETYPE_H
+  #include FT_MULTIPLE_MASTERS_H
+  #include FT_GLYPH_H
+</code></pre></div></p>
+<p>These macros were introduced to overcome the infamous 8.3&nbsp;naming rule required by DOS (and <code>FT_MULTIPLE_MASTERS_H</code> is a lot more meaningful than <code>ftmm.h</code>).</p>
+<h2 id="ft_config_config_h">FT_CONFIG_CONFIG_H<a class="headerlink" href="#ft_config_config_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">ifndef</span> <b>FT_CONFIG_CONFIG_H</b>
+#<span class="keyword">define</span> <b>FT_CONFIG_CONFIG_H</b>  &lt;freetype/config/ftconfig.h&gt;
+#<span class="keyword">endif</span>
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing FreeType&nbsp;2 configuration data.</p>
+<hr>
+
+<h2 id="ft_config_standard_library_h">FT_CONFIG_STANDARD_LIBRARY_H<a class="headerlink" href="#ft_config_standard_library_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">ifndef</span> <b>FT_CONFIG_STANDARD_LIBRARY_H</b>
+#<span class="keyword">define</span> <b>FT_CONFIG_STANDARD_LIBRARY_H</b>  &lt;freetype/config/ftstdlib.h&gt;
+#<span class="keyword">endif</span>
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing FreeType&nbsp;2 interface to the standard C library functions.</p>
+<hr>
+
+<h2 id="ft_config_options_h">FT_CONFIG_OPTIONS_H<a class="headerlink" href="#ft_config_options_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">ifndef</span> <b>FT_CONFIG_OPTIONS_H</b>
+#<span class="keyword">define</span> <b>FT_CONFIG_OPTIONS_H</b>  &lt;freetype/config/ftoption.h&gt;
+#<span class="keyword">endif</span>
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing FreeType&nbsp;2 project-specific configuration options.</p>
+<hr>
+
+<h2 id="ft_config_modules_h">FT_CONFIG_MODULES_H<a class="headerlink" href="#ft_config_modules_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">ifndef</span> <b>FT_CONFIG_MODULES_H</b>
+#<span class="keyword">define</span> <b>FT_CONFIG_MODULES_H</b>  &lt;freetype/config/ftmodule.h&gt;
+#<span class="keyword">endif</span>
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the list of FreeType&nbsp;2 modules that are statically linked to new library instances in <code><a href="ft2-library_setup.html#ft_init_freetype">FT_Init_FreeType</a></code>.</p>
+<hr>
+
+<h2 id="ft_freetype_h">FT_FREETYPE_H<a class="headerlink" href="#ft_freetype_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_FREETYPE_H</b>  &lt;freetype/freetype.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the base FreeType&nbsp;2 API.</p>
+<hr>
+
+<h2 id="ft_errors_h">FT_ERRORS_H<a class="headerlink" href="#ft_errors_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_ERRORS_H</b>  &lt;freetype/fterrors.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the list of FreeType&nbsp;2 error codes (and messages).</p>
+<p>It is included by <code><a href="ft2-header_file_macros.html#ft_freetype_h">FT_FREETYPE_H</a></code>.</p>
+<hr>
+
+<h2 id="ft_module_errors_h">FT_MODULE_ERRORS_H<a class="headerlink" href="#ft_module_errors_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_MODULE_ERRORS_H</b>  &lt;freetype/ftmoderr.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the list of FreeType&nbsp;2 module error offsets (and messages).</p>
+<hr>
+
+<h2 id="ft_system_h">FT_SYSTEM_H<a class="headerlink" href="#ft_system_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_SYSTEM_H</b>  &lt;freetype/ftsystem.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the FreeType&nbsp;2 interface to low-level operations (i.e., memory management and stream i/o).</p>
+<p>It is included by <code><a href="ft2-header_file_macros.html#ft_freetype_h">FT_FREETYPE_H</a></code>.</p>
+<hr>
+
+<h2 id="ft_image_h">FT_IMAGE_H<a class="headerlink" href="#ft_image_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_IMAGE_H</b>  &lt;freetype/ftimage.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing type definitions related to glyph images (i.e., bitmaps, outlines, scan-converter parameters).</p>
+<p>It is included by <code><a href="ft2-header_file_macros.html#ft_freetype_h">FT_FREETYPE_H</a></code>.</p>
+<hr>
+
+<h2 id="ft_types_h">FT_TYPES_H<a class="headerlink" href="#ft_types_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_TYPES_H</b>  &lt;freetype/fttypes.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the basic data types defined by FreeType&nbsp;2.</p>
+<p>It is included by <code><a href="ft2-header_file_macros.html#ft_freetype_h">FT_FREETYPE_H</a></code>.</p>
+<hr>
+
+<h2 id="ft_list_h">FT_LIST_H<a class="headerlink" href="#ft_list_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_LIST_H</b>  &lt;freetype/ftlist.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the list management API of FreeType&nbsp;2.</p>
+<p>(Most applications will never need to include this file.)</p>
+<hr>
+
+<h2 id="ft_outline_h">FT_OUTLINE_H<a class="headerlink" href="#ft_outline_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_OUTLINE_H</b>  &lt;freetype/ftoutln.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the scalable outline management API of FreeType&nbsp;2.</p>
+<hr>
+
+<h2 id="ft_sizes_h">FT_SIZES_H<a class="headerlink" href="#ft_sizes_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_SIZES_H</b>  &lt;freetype/ftsizes.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the API which manages multiple <code><a href="ft2-sizing_and_scaling.html#ft_size">FT_Size</a></code> objects per face.</p>
+<hr>
+
+<h2 id="ft_module_h">FT_MODULE_H<a class="headerlink" href="#ft_module_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_MODULE_H</b>  &lt;freetype/ftmodapi.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the module management API of FreeType&nbsp;2.</p>
+<hr>
+
+<h2 id="ft_render_h">FT_RENDER_H<a class="headerlink" href="#ft_render_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_RENDER_H</b>  &lt;freetype/ftrender.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the renderer module management API of FreeType&nbsp;2.</p>
+<hr>
+
+<h2 id="ft_driver_h">FT_DRIVER_H<a class="headerlink" href="#ft_driver_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_DRIVER_H</b>  &lt;freetype/ftdriver.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing structures and macros related to the driver modules.</p>
+<hr>
+
+<h2 id="ft_autohinter_h">FT_AUTOHINTER_H<a class="headerlink" href="#ft_autohinter_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_AUTOHINTER_H</b>  <a href="ft2-header_file_macros.html#ft_driver_h">FT_DRIVER_H</a>
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing structures and macros related to the auto-hinting module.</p>
+<p>Deprecated since version&nbsp;2.9; use <code><a href="ft2-header_file_macros.html#ft_driver_h">FT_DRIVER_H</a></code> instead.</p>
+<hr>
+
+<h2 id="ft_cff_driver_h">FT_CFF_DRIVER_H<a class="headerlink" href="#ft_cff_driver_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_CFF_DRIVER_H</b>  <a href="ft2-header_file_macros.html#ft_driver_h">FT_DRIVER_H</a>
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing structures and macros related to the CFF driver module.</p>
+<p>Deprecated since version&nbsp;2.9; use <code><a href="ft2-header_file_macros.html#ft_driver_h">FT_DRIVER_H</a></code> instead.</p>
+<hr>
+
+<h2 id="ft_truetype_driver_h">FT_TRUETYPE_DRIVER_H<a class="headerlink" href="#ft_truetype_driver_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_TRUETYPE_DRIVER_H</b>  <a href="ft2-header_file_macros.html#ft_driver_h">FT_DRIVER_H</a>
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing structures and macros related to the TrueType driver module.</p>
+<p>Deprecated since version&nbsp;2.9; use <code><a href="ft2-header_file_macros.html#ft_driver_h">FT_DRIVER_H</a></code> instead.</p>
+<hr>
+
+<h2 id="ft_pcf_driver_h">FT_PCF_DRIVER_H<a class="headerlink" href="#ft_pcf_driver_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_PCF_DRIVER_H</b>  <a href="ft2-header_file_macros.html#ft_driver_h">FT_DRIVER_H</a>
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing structures and macros related to the PCF driver module.</p>
+<p>Deprecated since version&nbsp;2.9; use <code><a href="ft2-header_file_macros.html#ft_driver_h">FT_DRIVER_H</a></code> instead.</p>
+<hr>
+
+<h2 id="ft_type1_tables_h">FT_TYPE1_TABLES_H<a class="headerlink" href="#ft_type1_tables_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_TYPE1_TABLES_H</b>  &lt;freetype/t1tables.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the types and API specific to the Type&nbsp;1 format.</p>
+<hr>
+
+<h2 id="ft_truetype_ids_h">FT_TRUETYPE_IDS_H<a class="headerlink" href="#ft_truetype_ids_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_TRUETYPE_IDS_H</b>  &lt;freetype/ttnameid.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the enumeration values which identify name strings, languages, encodings, etc. This file really contains a <em>large</em> set of constant macro definitions, taken from the TrueType and OpenType specifications.</p>
+<hr>
+
+<h2 id="ft_truetype_tables_h">FT_TRUETYPE_TABLES_H<a class="headerlink" href="#ft_truetype_tables_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_TRUETYPE_TABLES_H</b>  &lt;freetype/tttables.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the types and API specific to the TrueType (as well as OpenType) format.</p>
+<hr>
+
+<h2 id="ft_truetype_tags_h">FT_TRUETYPE_TAGS_H<a class="headerlink" href="#ft_truetype_tags_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_TRUETYPE_TAGS_H</b>  &lt;freetype/tttags.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the definitions of TrueType four-byte &lsquo;tags&rsquo; which identify blocks in SFNT-based font formats (i.e., TrueType and OpenType).</p>
+<hr>
+
+<h2 id="ft_bdf_h">FT_BDF_H<a class="headerlink" href="#ft_bdf_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_BDF_H</b>  &lt;freetype/ftbdf.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the definitions of an API which accesses BDF-specific strings from a face.</p>
+<hr>
+
+<h2 id="ft_cid_h">FT_CID_H<a class="headerlink" href="#ft_cid_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_CID_H</b>  &lt;freetype/ftcid.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the definitions of an API which access CID font information from a face.</p>
+<hr>
+
+<h2 id="ft_gzip_h">FT_GZIP_H<a class="headerlink" href="#ft_gzip_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_GZIP_H</b>  &lt;freetype/ftgzip.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the definitions of an API which supports gzip-compressed files.</p>
+<hr>
+
+<h2 id="ft_lzw_h">FT_LZW_H<a class="headerlink" href="#ft_lzw_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_LZW_H</b>  &lt;freetype/ftlzw.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the definitions of an API which supports LZW-compressed files.</p>
+<hr>
+
+<h2 id="ft_bzip2_h">FT_BZIP2_H<a class="headerlink" href="#ft_bzip2_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_BZIP2_H</b>  &lt;freetype/ftbzip2.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the definitions of an API which supports bzip2-compressed files.</p>
+<hr>
+
+<h2 id="ft_winfonts_h">FT_WINFONTS_H<a class="headerlink" href="#ft_winfonts_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_WINFONTS_H</b>   &lt;freetype/ftwinfnt.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the definitions of an API which supports Windows FNT files.</p>
+<hr>
+
+<h2 id="ft_glyph_h">FT_GLYPH_H<a class="headerlink" href="#ft_glyph_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_GLYPH_H</b>  &lt;freetype/ftglyph.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the API of the optional glyph management component.</p>
+<hr>
+
+<h2 id="ft_bitmap_h">FT_BITMAP_H<a class="headerlink" href="#ft_bitmap_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_BITMAP_H</b>  &lt;freetype/ftbitmap.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the API of the optional bitmap conversion component.</p>
+<hr>
+
+<h2 id="ft_bbox_h">FT_BBOX_H<a class="headerlink" href="#ft_bbox_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_BBOX_H</b>  &lt;freetype/ftbbox.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the API of the optional exact bounding box computation routines.</p>
+<hr>
+
+<h2 id="ft_cache_h">FT_CACHE_H<a class="headerlink" href="#ft_cache_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_CACHE_H</b>  &lt;freetype/ftcache.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the API of the optional FreeType&nbsp;2 cache sub-system.</p>
+<hr>
+
+<h2 id="ft_mac_h">FT_MAC_H<a class="headerlink" href="#ft_mac_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_MAC_H</b>  &lt;freetype/ftmac.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the Macintosh-specific FreeType&nbsp;2 API. The latter is used to access fonts embedded in resource forks.</p>
+<p>This header file must be explicitly included by client applications compiled on the Mac (note that the base API still works though).</p>
+<hr>
+
+<h2 id="ft_multiple_masters_h">FT_MULTIPLE_MASTERS_H<a class="headerlink" href="#ft_multiple_masters_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_MULTIPLE_MASTERS_H</b>  &lt;freetype/ftmm.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the optional multiple-masters management API of FreeType&nbsp;2.</p>
+<hr>
+
+<h2 id="ft_sfnt_names_h">FT_SFNT_NAMES_H<a class="headerlink" href="#ft_sfnt_names_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_SFNT_NAMES_H</b>  &lt;freetype/ftsnames.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the optional FreeType&nbsp;2 API which accesses embedded &lsquo;name&rsquo; strings in SFNT-based font formats (i.e., TrueType and OpenType).</p>
+<hr>
+
+<h2 id="ft_opentype_validate_h">FT_OPENTYPE_VALIDATE_H<a class="headerlink" href="#ft_opentype_validate_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_OPENTYPE_VALIDATE_H</b>  &lt;freetype/ftotval.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the optional FreeType&nbsp;2 API which validates OpenType tables (&lsquo;BASE&rsquo;, &lsquo;GDEF&rsquo;, &lsquo;GPOS&rsquo;, &lsquo;GSUB&rsquo;, &lsquo;JSTF&rsquo;).</p>
+<hr>
+
+<h2 id="ft_gx_validate_h">FT_GX_VALIDATE_H<a class="headerlink" href="#ft_gx_validate_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_GX_VALIDATE_H</b>  &lt;freetype/ftgxval.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the optional FreeType&nbsp;2 API which validates TrueTypeGX/AAT tables (&lsquo;feat&rsquo;, &lsquo;mort&rsquo;, &lsquo;morx&rsquo;, &lsquo;bsln&rsquo;, &lsquo;just&rsquo;, &lsquo;kern&rsquo;, &lsquo;opbd&rsquo;, &lsquo;trak&rsquo;, &lsquo;prop&rsquo;).</p>
+<hr>
+
+<h2 id="ft_pfr_h">FT_PFR_H<a class="headerlink" href="#ft_pfr_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_PFR_H</b>  &lt;freetype/ftpfr.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the FreeType&nbsp;2 API which accesses PFR-specific data.</p>
+<hr>
+
+<h2 id="ft_stroker_h">FT_STROKER_H<a class="headerlink" href="#ft_stroker_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_STROKER_H</b>  &lt;freetype/ftstroke.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the FreeType&nbsp;2 API which provides functions to stroke outline paths.</p>
+<hr>
+
+<h2 id="ft_synthesis_h">FT_SYNTHESIS_H<a class="headerlink" href="#ft_synthesis_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_SYNTHESIS_H</b>  &lt;freetype/ftsynth.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the FreeType&nbsp;2 API which performs artificial obliquing and emboldening.</p>
+<hr>
+
+<h2 id="ft_font_formats_h">FT_FONT_FORMATS_H<a class="headerlink" href="#ft_font_formats_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_FONT_FORMATS_H</b>  &lt;freetype/ftfntfmt.h&gt;
+
+  /* deprecated */
+#<span class="keyword">define</span> FT_XFREE86_H  <b>FT_FONT_FORMATS_H</b>
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the FreeType&nbsp;2 API which provides functions specific to font formats.</p>
+<hr>
+
+<h2 id="ft_trigonometry_h">FT_TRIGONOMETRY_H<a class="headerlink" href="#ft_trigonometry_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_TRIGONOMETRY_H</b>  &lt;freetype/fttrigon.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the FreeType&nbsp;2 API which performs trigonometric computations (e.g., cosines and arc tangents).</p>
+<hr>
+
+<h2 id="ft_lcd_filter_h">FT_LCD_FILTER_H<a class="headerlink" href="#ft_lcd_filter_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_LCD_FILTER_H</b>  &lt;freetype/ftlcdfil.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the FreeType&nbsp;2 API which performs color filtering for subpixel rendering.</p>
+<hr>
+
+<h2 id="ft_incremental_h">FT_INCREMENTAL_H<a class="headerlink" href="#ft_incremental_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_INCREMENTAL_H</b>  &lt;freetype/ftincrem.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the FreeType&nbsp;2 API which performs incremental glyph loading.</p>
+<hr>
+
+<h2 id="ft_gasp_h">FT_GASP_H<a class="headerlink" href="#ft_gasp_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_GASP_H</b>  &lt;freetype/ftgasp.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the FreeType&nbsp;2 API which returns entries from the TrueType GASP table.</p>
+<hr>
+
+<h2 id="ft_advances_h">FT_ADVANCES_H<a class="headerlink" href="#ft_advances_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_ADVANCES_H</b>  &lt;freetype/ftadvanc.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the FreeType&nbsp;2 API which returns individual and ranged glyph advances.</p>
+<hr>
+
+<h2 id="ft_color_h">FT_COLOR_H<a class="headerlink" href="#ft_color_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_COLOR_H</b>  &lt;freetype/ftcolor.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the FreeType&nbsp;2 API which handles the OpenType &lsquo;CPAL&rsquo; table.</p>
+<hr>
+
+<h2 id="ft_otsvg_h">FT_OTSVG_H<a class="headerlink" href="#ft_otsvg_h" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_OTSVG_H</b>  &lt;freetype/otsvg.h&gt;
+</code></pre></div>
+
+<p>A macro used in <code>#include</code> statements to name the file containing the FreeType&nbsp;2 API which handles the OpenType &lsquo;SVG&nbsp;&rsquo; glyphs.</p>
+<hr>
+                
+              
+              
+                
+
+
+              
+            </article>
+          </div>
+        </div>
+        
+      </main>
+      
+        
+<footer class="md-footer">
+  
+    <nav class="md-footer__inner md-grid" aria-label="Footer">
+      
+        
+        <a href="ft2-sizes_management.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: Size Management" rel="prev">
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+          </div>
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              Size Management
+            </div>
+          </div>
+        </a>
+      
+      
+        
+        <a href="ft2-multiple_masters.html" class="md-footer__link md-footer__link--next" aria-label="Next: Multiple Masters" rel="next">
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              Multiple Masters
+            </div>
+          </div>
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11H4z"/></svg>
+          </div>
+        </a>
+      
+    </nav>
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-footer-copyright">
+        
+          <div class="md-footer-copyright__highlight">
+            Copyright 2023 <a href = "https://www.freetype.org/license.html">The FreeType Project</a>.
+          </div>
+        
+        Made with
+        <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+          Material for MkDocs
+        </a>
+        
+      </div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    <script id="__config" type="application/json">{"base": ".", "features": [], "search": "assets/javascripts/workers/search.477d984a.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.config.lang": "en", "search.config.pipeline": "trimmer, stopWordFilter", "search.config.separator": "[\\s\\-]+", "search.placeholder": "Search", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version.title": "Select version"}, "version": null}</script>
+    
+    
+      <script src="assets/javascripts/bundle.82b56eb2.min.js"></script>
+      
+        <script src="javascripts/extra.js"></script>
+      
+    
+  </body>
+</html>

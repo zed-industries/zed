@@ -1,0 +1,32 @@
+[package]
+name = "witx"
+version = "0.9.1"
+description = "Parse and validate witx file format"
+homepage = "https://github.com/WebAssembly/WASI"
+repository = "https://github.com/WebAssembly/WASI"
+license = "Apache-2.0"
+categories = ["wasm"]
+keywords = ["webassembly", "wasm"]
+authors = ["Pat Hickey <phickey@fastly.com>", "Alex Crichton <alex@alexcrichton.com>"]
+edition = "2018"
+
+[lib]
+crate-type=["rlib"]
+
+[dependencies]
+anyhow = "1"
+log = "0.4"
+thiserror = "1.0"
+wast = { version = "35.0.2", default-features = false }
+
+[dev-dependencies]
+rayon = "1.0"
+
+[[test]]
+name = "witxt"
+harness = false
+
+[workspace]
+members = [
+  "cli",
+]

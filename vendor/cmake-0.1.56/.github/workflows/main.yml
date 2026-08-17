@@ -1,0 +1,176 @@
+name: CI
+on: [push, pull_request]
+
+env:
+  RUSTDOCFLAGS: -D warnings
+  RUSTFLAGS: -D warnings
+
+jobs:
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: |
+          rustup update beta --no-self-update
+          rustup default beta
+          rustup component add clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-features --all-targets -- -D warnings
+
+  test:
+    name: Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        rust: ["1.70", stable, beta, nightly]
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Rust
+      run: |
+        rustup update ${{ matrix.rust }} --no-self-update
+        rustup default ${{ matrix.rust }}
+    - uses: Swatinem/rust-cache@v2
+    - run: cargo test
+    - name: Integration test
+      run: cargo test --manifest-path test-crate/Cargo.toml
+
+  cross_compile_test:
+    name: Test Cross Compile - ${{ matrix.platform.target }}
+    needs: [ test ]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          # Testable
+          - target: aarch64-unknown-linux-gnu
+            test: true
+          - target: arm-unknown-linux-gnueabihf
+            test: true
+          - target: powerpc-unknown-linux-gnu
+            test: true
+          - target: s390x-unknown-linux-gnu
+            test: true
+          - target: x86_64-unknown-linux-musl
+            test: true
+          - target: aarch64-unknown-linux-musl
+            test: true
+          # Build only
+          - target: x86_64-pc-solaris
+            test: false
+          - target: x86_64-pc-windows-gnu
+            test: false
+          # FIXME: build fails, see <https://github.com/rust-lang/cmake-rs/issues/211>
+          # - target: x86_64-unknown-freebsd
+          #   test: false
+          - target: x86_64-unknown-netbsd
+            test: false
+          - target: x86_64-unknown-illumos
+            test: false
+    steps:
+    - uses: actions/checkout@master
+    - name: Install Rust
+      run: |
+        rustup update stable --no-self-update
+        rustup default stable
+        rustup target add ${{ matrix.platform.target }}
+    - uses: taiki-e/install-action@v2
+      with:
+        tool: cross
+    - uses: Swatinem/rust-cache@v2
+    - name: cross test
+      run: cross test -vv --target ${{ matrix.platform.target }}
+      working-directory: test-crate
+      if: ${{ matrix.platform.test }}
+    - name: cross build
+      run: cross build -vv --target ${{ matrix.platform.target }}
+      working-directory: test-crate
+      if: ${{ !matrix.platform.test }}
+
+  ios_cross_compile_test:
+    name: Test Cross Compile - ${{ matrix.platform.target }}
+    needs: [ test ]
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - target: aarch64-apple-ios
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Rust
+      run: |
+        rustup update stable --no-self-update
+        rustup default stable
+        rustup target add ${{ matrix.platform.target }}
+    - uses: Swatinem/rust-cache@v2
+    - name: build
+      run: cargo build -vv --target ${{ matrix.platform.target }}
+      working-directory: test-crate
+      env:
+        # If this isn't specified the default is iOS 7, for which zlib-ng will not compile due to the lack of thread-local storage.
+        IPHONEOS_DEPLOYMENT_TARGET: 16
+
+  rustfmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    - name: Install Rust
+      run: |
+        rustup update stable --no-self-update
+        rustup default stable
+        rustup component add rustfmt
+    - run: cargo fmt --all -- --check
+
+  doc:
+    name: docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          rustup update nightly --no-self-update
+          rustup default nightly
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo doc
+
+  msrv:
+    name: MSRV check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      RUSTFLAGS: # No need to check warnings on old MSRV, unset `-Dwarnings`
+    steps:
+    - uses: actions/checkout@master
+    - name: Install Rust
+      run: |
+        msrv="$(
+          cargo metadata --format-version=1 |
+          jq -r '.packages[] | select(.name == "cmake") | .rust_version'
+        )"
+        echo "MSRV: $msrv"
+        rustup update "$msrv" --no-self-update && rustup default "$msrv"
+    - uses: Swatinem/rust-cache@v2
+    - run: cargo check
+
+  success:
+    needs:
+      - clippy
+      - test
+      - cross_compile_test
+      - ios_cross_compile_test
+      - rustfmt
+      - doc
+      - msrv
+    runs-on: ubuntu-latest
+    # GitHub branch protection is exceedingly silly and treats "jobs skipped because a dependency
+    # failed" as success. So we have to do some contortions to ensure the job fails if any of its
+    # dependencies fails.
+    if: always() # make sure this is never "skipped"
+    steps:
+      # Manually check the status of all dependencies. `if: failure()` does not work.
+      - name: check if any dependency failed
+        run: jq --exit-status 'all(.result == "success")' <<< '${{ toJson(needs) }}'

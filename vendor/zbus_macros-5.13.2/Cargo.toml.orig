@@ -1,0 +1,45 @@
+[package]
+name = "zbus_macros"
+# Keep version in sync with zbus crate
+version = "5.13.2"
+authors = [
+    "Marc-André Lureau <marcandre.lureau@redhat.com>",
+    "Zeeshan Ali Khan <zeeshanak@gnome.org>",
+]
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+description = "proc-macros for zbus"
+repository = { workspace = true }
+keywords = ["D-Bus", "DBus", "IPC"]
+license = { workspace = true }
+categories = ["data-structures", "encoding", "parsing"]
+readme = "README.md"
+
+[features]
+default = []
+# Enable blocking API.
+blocking-api = []
+gvariant = ["zvariant/gvariant", "zvariant_utils/gvariant"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2.workspace = true
+syn = { workspace = true, features = ["extra-traits", "fold", "full"] }
+quote.workspace = true
+proc-macro-crate.workspace = true
+
+zvariant = { path = "../zvariant", version = "5.9.2" }
+zbus_names = { path = "../zbus_names", version = "4.3.1" }
+zvariant_utils = { path = "../zvariant_utils", version = "3.3.0" }
+
+[dev-dependencies]
+zbus.workspace = true
+serde.workspace = true
+async-io.workspace = true
+futures-util.workspace = true
+
+[lints]
+workspace = true

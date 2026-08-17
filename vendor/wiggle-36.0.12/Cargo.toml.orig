@@ -1,0 +1,73 @@
+[package]
+name = "wiggle"
+version.workspace = true
+authors = ["Pat Hickey <phickey@fastly.com>", "Jakub Konka <kubkonk@jakubkonka.com>", "Alex Crichton <alex@alexcrichton.com>"]
+edition.workspace = true
+rust-version.workspace = true
+license = "Apache-2.0 WITH LLVM-exception"
+description = "Runtime components of wiggle code generator"
+categories = ["wasm"]
+keywords = ["webassembly", "wasm"]
+repository = "https://github.com/bytecodealliance/wasmtime"
+include = ["src/**/*", "README.md", "LICENSE"]
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+witx = { version = "0.9.1", optional = true }
+wiggle-macro = { workspace = true }
+tracing = { workspace = true }
+bitflags = { workspace = true }
+async-trait = { workspace = true }
+wasmtime = { workspace = true, optional = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+wiggle-test = { path = "test-helpers" }
+proptest = "1.0.0"
+tokio = { version = "1", features = ["rt-multi-thread","time", "macros"] }
+wasmtime = { workspace = true }
+
+[[test]]
+name = "atoms_async"
+path = "tests/atoms_async.rs"
+required-features = ["wasmtime_async"]
+
+[[test]]
+name = "wasmtime_async"
+path = "tests/wasmtime_async.rs"
+required-features = ["wasmtime_async", "wasmtime/wat"]
+
+[[test]]
+name = "wasmtime_sync"
+path = "tests/wasmtime_sync.rs"
+required-features = ["wasmtime/wat"]
+
+[[test]]
+name = "wasmtime_integration"
+path = "tests/wasmtime_integration.rs"
+required-features = ["wasmtime/wat"]
+
+
+[features]
+# The wiggle proc-macro emits some code (inside `pub mod metadata`) guarded
+# by the `wiggle_metadata` feature flag. We use this feature flag so that
+# users of wiggle are not forced to take a direct dependency on the `witx`
+# crate unless they want it.
+wiggle_metadata = ['witx', "wiggle-macro/wiggle_metadata"]
+
+# The `tracing` crate can use the `log` ecosystem of backends with this
+# non-default feature. We don't need to provide this by default, but its
+# useful for users that don't want to use `tracing-subscriber` to get
+# the logs out of wiggle-generated libraries.
+tracing_log = [ "tracing/log" ]
+
+# This feature enables integration with wasmtime.
+wasmtime = ["dep:wasmtime"]
+
+# Support for async in the wasmtime crates.
+wasmtime_async = [ "wasmtime/async" ]
+
+default = ["wiggle_metadata", "wasmtime", "wasmtime_async" ]

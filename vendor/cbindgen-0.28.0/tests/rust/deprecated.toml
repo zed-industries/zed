@@ -1,0 +1,24 @@
+header = """
+#define DEPRECATED_FUNC __attribute__((deprecated))
+#define DEPRECATED_STRUCT __attribute__((deprecated))
+#define DEPRECATED_ENUM __attribute__((deprecated))
+#define DEPRECATED_ENUM_VARIANT __attribute__((deprecated))
+#define DEPRECATED_FUNC_WITH_NOTE(...) __attribute__((deprecated(__VA_ARGS__)))
+#define DEPRECATED_STRUCT_WITH_NOTE(...) __attribute__((deprecated(__VA_ARGS__)))
+#define DEPRECATED_ENUM_WITH_NOTE(...) __attribute__((deprecated(__VA_ARGS__)))
+#define DEPRECATED_ENUM_VARIANT_WITH_NOTE(...) __attribute__((deprecated(__VA_ARGS__)))
+"""
+
+[fn]
+deprecated = "DEPRECATED_FUNC"
+deprecated_with_note = "DEPRECATED_FUNC_WITH_NOTE({})"
+
+[struct]
+deprecated = "DEPRECATED_STRUCT"
+deprecated_with_note = "DEPRECATED_STRUCT_WITH_NOTE({})"
+
+[enum]
+deprecated = "DEPRECATED_ENUM"
+deprecated_with_note = "DEPRECATED_ENUM_WITH_NOTE({})"
+deprecated_variant = "DEPRECATED_ENUM_VARIANT"
+deprecated_variant_with_note =  "DEPRECATED_ENUM_VARIANT_WITH_NOTE({})"

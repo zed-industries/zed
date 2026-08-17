@@ -1,0 +1,5 @@
+inline function type doesn't match type reference
+     --> tests/parse-fail/inline1.wat:4:24
+      |
+    4 |   (call_indirect (type $sig) (result i32) (i32.const 0)))
+      |                        ^

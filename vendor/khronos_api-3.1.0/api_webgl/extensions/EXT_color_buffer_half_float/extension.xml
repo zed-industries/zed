@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<extension href="EXT_color_buffer_half_float/">
+  <name>EXT_color_buffer_half_float</name>
+
+  <contact> <a href="https://www.khronos.org/webgl/public-mailing-list">WebGL
+  working group</a> (public_webgl 'at' khronos.org) </contact>
+
+  <contributors>
+    <contributor>Mark Callow, HI Corporation</contributor>
+
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+
+  <number>14</number>
+
+  <depends>
+    <api version="1.0"/>
+
+    <ext name="OES_texture_half_float" require="true"/>
+
+    <subsumed version="2.0" by="EXT_color_buffer_float" />
+  </depends>
+
+  <overview>
+    <mirrors href="http://www.khronos.org/registry/gles/extensions/EXT/EXT_color_buffer_half_float.txt"
+             name="EXT_color_buffer_half_float">
+      <addendum>
+        <p>All references to <code>R16F</code> and <code>RG16F</code> types
+        are ignored.</p>
+      </addendum>
+      <addendum>
+	<p>WebGL implementations supporting this extension are required to
+	support rendering to <code>RGBA16F</code> format.</p>
+      </addendum>
+    </mirrors>
+
+    <features>
+      <feature>
+        <p>The 16-bit floating-point types <code>RGB16F</code> and
+        <code>RGBA16F</code> become available as color-renderable formats.
+        Renderbuffers can be created in these formats. These and textures
+        created with <code>type = HALF_FLOAT_OES</code>, which will have one
+        of these internal formats, can be attached to framebuffer object color
+        attachments for rendering. Implementations supporting this extension are
+	required to support rendering to <code>RGBA16F</code> format.
+	Applications must check framebuffer completeness to determine if
+	<code>RGB16F</code> is supported.</p>
+      </feature>
+
+      <feature>
+        <p><span style="color: red">NOTE:</span> fragment shaders outputs
+        gl_FragColor and gl_FragData[0] will only be clamped and converted
+        when the color buffer is fixed-point and <code>blendColor()</code> and
+        <code>clearColor()</code> will no longer clamp their parameter values
+        on input. Clamping will be applied as necessary at draw time according
+        to the type of color buffer in use.</p>
+      </feature>
+
+      <feature>
+        <p>The format and type combination <code>RGBA</code> and
+        <code>FLOAT</code> becomes valid for reading from a floating-point
+        rendering buffer. Note: <code>RGBA</code> and
+        <code>UNSIGNED_BYTE</code> cannot be used for reading from a
+        floating-point rendering buffer.</p>
+      </feature>
+
+      <feature>
+        <p>The component types of framebuffer object attachments can be
+        queried.</p>
+      </feature>
+    </features>
+  </overview>
+
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface EXT_color_buffer_half_float {
+  const GLenum RGBA16F_EXT = 0x881A;
+  const GLenum RGB16F_EXT = 0x881B;
+  const GLenum FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE_EXT = 0x8211;
+  const GLenum UNSIGNED_NORMALIZED_EXT = 0x8C17;
+}; // interface EXT_color_buffer_half_float
+  </idl>
+
+  <additions>
+    <p>In section 5.13.12 <cite>Reading back pixels</cite>, change the allowed
+    format and types table to:</p>
+
+    <dl class="methods">
+      <dd>
+        <table>
+          <tbody>
+            <tr>
+              <th>frame buffer type</th>
+              <th>
+                <code>format</code>
+              </th>
+              <th>
+                <code>type</code>
+              </th>
+            </tr>
+
+            <tr>
+              <td>normalized fixed-point</td>
+              <td>RGBA</td>
+              <td>UNSIGNED_BYTE</td>
+            </tr>
+
+            <tr>
+              <td>floating-point</td>
+              <td>RGBA</td>
+              <td>FLOAT</td>
+            </tr>
+          </tbody>
+        </table>
+      </dd>
+    </dl>
+
+    <p>Change the paragraph beginning "If <code>pixels</code> is null ..."
+    to</p><blockquote>If frame buffer type is not that indicated in the table for
+    the <code>format</code> and <code>type</code> combination, an
+    INVALID_OPERATON error is generated. If pixels is null
+    ...</blockquote>
+  </additions>
+
+  <history>
+    <revision date="2012/11/08">
+      <change>Initial revision.</change>
+    </revision>
+
+    <revision date="2012/11/13">
+      <change>"Add reading-pixels-as-FLOAT feature to the Overview and related
+      changes to WebGL section 5.13.12.</change>
+    </revision>
+
+    <revision date="2012/11/26">
+      <change>Move to draft.</change>
+    </revision>
+
+    <revision date="2014/07/15">
+      <change>Removed webgl module. Added NoInterfaceObject extended attribute.</change>
+    </revision>
+
+    <revision date="2014/11/24">
+      <change>Move to community approved.</change>
+    </revision>
+
+    <revision date="2016/05/05">
+      <change>Subsumed in WebGL 2.0 by EXT_color_buffer_float.</change>
+    </revision>
+
+    <revision date="2017/09/14">
+      <change>Require RGBA16F to be color-renderable and RGB16F to be optionally color-renderable.</change>
+    </revision>
+  </history>
+</extension>

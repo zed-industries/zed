@@ -1,0 +1,49 @@
+[package]
+name          = "khronos-egl"
+version       = "6.0.0"
+authors       = ["Timothée Haudebourg <author@haudebourg.net>", "Sean Kerr <sean@metatomic.io>"]
+license       = "MIT/Apache-2.0"
+description   = "Rust bindings for EGL"
+repository    = "https://github.com/timothee-haudebourg/khronos-egl"
+documentation = "https://docs.rs/khronos-egl"
+readme        = "README.md"
+keywords      = ["egl", "gl", "khronos", "opengl"]
+build         = "build.rs"
+edition       = "2021"
+
+[features]
+default = ["1_5"]
+static = ["pkg-config"]
+no-pkg-config = []
+dynamic = ["libloading"]
+"1_5" = ["1_4"]
+"1_4" = ["1_3"]
+"1_3" = ["1_2"]
+"1_2" = ["1_1"]
+"1_1" = ["1_0"]
+"1_0" = []
+
+[dependencies]
+libc = "^0.2"
+libloading = { version = "^0.8", optional = true }
+
+[build-dependencies]
+pkg-config = { version = "^0.3", optional = true }
+
+[dev-dependencies]
+gl = "^0.14"
+wayland-client = { version = "^0.28" }
+wayland-protocols = { version = "^0.28", features = [ "client" ] }
+wayland-egl = { version = "^0.28" }
+
+[[example]]
+name = "wayland-static"
+required-features = ["static"]
+
+[[example]]
+name = "wayland-dynamic"
+required-features = ["dynamic"]
+
+[[example]]
+name = "load-minimal"
+required-features = ["dynamic", "1_4"]

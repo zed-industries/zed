@@ -1,0 +1,7 @@
+// parse-fail
+
+interface foo {
+  type b = list<u32, u32>
+
+  type y = u32
+}

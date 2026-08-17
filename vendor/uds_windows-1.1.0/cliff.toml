@@ -1,0 +1,25 @@
+[git]
+conventional_commits = true
+filter_unconventional = false
+commit_parsers = [
+    { message = "^feat", group = "Features" },
+    { message = "^fix", group = "Bug Fixes" },
+    { message = "^doc", group = "Documentation" },
+    { message = "^perf", group = "Performance" },
+    { message = "^refactor", group = "Refactor" },
+    { message = "^style", group = "Styling" },
+    { message = "^test", group = "Testing" },
+    { message = "^chore\\(release\\): prepare for", skip = true },
+    { message = "^chore\\(deps\\)", skip = true },
+    { message = "^chore\\(pr\\)", skip = true },
+    { message = "^chore\\(pull\\)", skip = true },
+    { message = "^ci", skip = true },
+    { message = "^chore", group = "Miscellaneous Tasks" },
+    { body = ".*security", group = "Security" },
+    { message = "^revert", group = "Revert" },
+    { message = "^\\(cargo-release\\)", skip = true },
+    { message = "^Initial commit", skip = true },
+    { message = "^Cargo format", skip = true },
+    { message = "^Merge ", skip = true },
+    { message = ".*", group = "Other", default_scope = "other" },
+]

@@ -1,0 +1,27 @@
+[package]
+name = "bytemuck_derive"
+description = "derive proc-macros for `bytemuck`"
+version = "1.10.2"
+authors = ["Lokathor <zefria@gmail.com>"]
+repository = "https://github.com/Lokathor/bytemuck"
+readme = "README.md"
+keywords = ["transmute", "bytes", "casting"]
+categories = ["encoding", "no-std"]
+edition = "2018"
+license = "Zlib OR Apache-2.0 OR MIT"
+rust-version = "1.61"
+#note(lokathor): do not publish with this set
+#resolver = "3"
+
+[lib]
+name = "bytemuck_derive"
+proc-macro = true
+
+[dependencies]
+# syn seems to have broken backwards compatibility in this version https://github.com/dtolnay/syn/issues/1194
+syn = "2.0.1"
+quote = "1"
+proc-macro2 = "1.0.60"
+
+[dev-dependencies]
+bytemuck = { path = "../", features = ["derive"] }

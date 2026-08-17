@@ -1,0 +1,26 @@
+[package]
+name = "safe_arch"
+description = "Crate that exposes `core::arch` safely via `#[cfg()]`."
+repository = "https://github.com/Lokathor/safe_arch"
+version = "0.7.4"
+authors = ["Lokathor <zefria@gmail.com>"]
+edition = "2018"
+license = "Zlib OR Apache-2.0 OR MIT"
+categories = ["api-bindings", "hardware-support", "no-std"]
+keywords = ["intrinsics", "simd"]
+
+[dependencies]
+# If enabled, gives bytemuck trait impls for our types
+bytemuck = {version = "1.2", optional = true}
+
+[features]
+default = []
+
+[profile.test]
+opt-level = 3
+
+[package.metadata.docs.rs]
+# This makes docs.rs build with all features enabled and
+# also it will indicate what fn needs what cpu feature.
+rustdoc-args = ["-C", "target-cpu=native"]
+all-features = true

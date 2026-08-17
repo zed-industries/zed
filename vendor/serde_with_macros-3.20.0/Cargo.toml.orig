@@ -1,0 +1,89 @@
+lints.workspace = true
+
+[package]
+authors = ["Jonas Bushart"]
+name = "serde_with_macros"
+
+categories = ["encoding"]
+description = "proc-macro library for serde_with"
+documentation = "https://docs.rs/serde_with_macros/"
+keywords = ["serde", "utilities", "serialization", "deserialization"]
+
+edition.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+include = [
+    "src/**/*",
+    "tests/**/*",
+    # These tests are a bit more volatile as future compiler upgrade might break them
+    "!tests/compile-fail/**",
+    "LICENSE-*",
+    "README.md",
+    "CHANGELOG.md",
+]
+
+[lib]
+proc-macro = true
+
+[badges]
+maintenance = { status = "actively-developed" }
+
+[features]
+schemars_0_8 = []
+schemars_0_9 = []
+schemars_1 = []
+
+[dependencies]
+darling = "0.23.0"
+proc-macro2 = "1.0.1"
+quote = "1.0.0"
+
+[dependencies.syn]
+features = [
+    "extra-traits",
+    "full",
+    "parsing",
+]
+version = "2.0.0"
+
+[dev-dependencies]
+expect-test = "1.5.1"
+glob = "0.3.3"
+pretty_assertions = "1.4.0"
+regex = { version = "1.12.1", default-features = false, features = ["std"] }
+rustversion = "1.0.22"
+serde = { version = "1.0.152", features = ["derive"] }
+serde_json = "1.0.25"
+trybuild = "1.0.111"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    # Enable doc_cfg showing the required features.
+    "--cfg=docsrs",
+    "-Zunstable-options",
+    # Generate links to definition in rustdoc source code pages
+    # https://github.com/rust-lang/rust/pull/84176
+    "--generate-link-to-definition",
+    # Generate buttons to show macro expansions in the rustdoc output.
+    # https://github.com/rust-lang/rust/pull/137229
+    "--generate-macro-expansion",
+    # Link to the stable documentation for core/alloc/std/proc_macro even though docs.rs uses nightly.
+    # https://github.com/rust-lang/docs.rs/issues/506#issuecomment-2670501688
+    "--extern-html-root-url=core=https://doc.rust-lang.org",
+    "--extern-html-root-url=alloc=https://doc.rust-lang.org",
+    "--extern-html-root-url=std=https://doc.rust-lang.org",
+    "--extern-html-root-url=proc_macro=https://doc.rust-lang.org",
+]
+
+[package.metadata.release]
+pre-release-replacements = [
+    { file = "CHANGELOG.md", search = "\\[Unreleased\\]", replace = "[Unreleased]\n\n## [{{version}}] - {{date}}" },
+    { file = "src/lib.rs", search = "https://docs\\.rs/serde_with/[\\d.]+/", replace = "https://docs.rs/serde_with/{{version}}/" },
+    { file = "src/lib.rs", search = "https://docs\\.rs/serde_with_macros/[\\d.]+/", replace = "https://docs.rs/serde_with_macros/{{version}}/" },
+]
+tag = false

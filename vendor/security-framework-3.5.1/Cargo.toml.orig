@@ -1,0 +1,72 @@
+[package]
+name = "security-framework"
+version = "3.5.1"
+authors = [
+    "Steven Fackler <sfackler@gmail.com>",
+    "Kornel <kornel@geekhood.net>",
+]
+license = "MIT OR Apache-2.0"
+description = "Security.framework bindings for macOS and iOS"
+repository = "https://github.com/kornelski/rust-security-framework"
+documentation = "https://docs.rs/security_framework"
+homepage = "https://lib.rs/crates/security_framework"
+categories = ["os::macos-apis", "cryptography", "api-bindings"]
+readme = "README.md"
+keywords = ["iOS", "TLS", "SSL", "crypto", "keychain"]
+exclude = ["test/*"]
+edition = "2021"
+rust-version = "1.71"
+
+[dependencies]
+security-framework-sys = { version = "2.15", default-features = false, path = "../security-framework-sys" }
+bitflags = "2.6"
+core-foundation = "0.10"
+core-foundation-sys = "0.8.6"
+libc = "0.2.139"
+log = { version = "0.4.20", optional = true }
+
+[dev-dependencies]
+hex = "0.4.3"
+env_logger = "0.11"
+x509-parser = "0.16"
+time = "0.3.23"
+tempfile = "3.12.0"
+
+[features]
+default = ["OSX_10_12"]
+alpn = []
+session-tickets = []
+job-bless = []
+# Enables `GenerateKeyOptions::set_synchronizable`. Warning: not backwards-compatible!
+sync-keychain = ["OSX_10_13"]
+
+OSX_10_12 = ["security-framework-sys/OSX_10_12"]
+OSX_10_13 = [
+    "OSX_10_12",
+    "security-framework-sys/OSX_10_13",
+    "alpn",
+    "session-tickets",
+]
+OSX_10_14 = ["OSX_10_13", "security-framework-sys/OSX_10_14"]
+OSX_10_15 = ["OSX_10_14", "security-framework-sys/OSX_10_15"]
+
+nightly = [] # not used, doesn't do anything, only for back compat
+
+[lints]
+workspace = true
+
+[[example]]
+name = "client"
+
+[[example]]
+name = "find_internet_password"
+
+[[example]]
+name = "set_internet_password"
+
+[package.metadata.docs.rs]
+targets = ["x86_64-apple-darwin", "aarch64-apple-ios"]
+features = ["OSX_10_15"]
+
+[badges]
+maintenance = { status = "looking-for-maintainer" }

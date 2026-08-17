@@ -1,0 +1,142 @@
+[package]
+name = "heed"
+version = "0.21.0"
+authors = ["Kerollmops <renault.cle@gmail.com>"]
+description = "A fully typed LMDB (mdb.master) wrapper with minimum overhead"
+license = "MIT"
+repository = "https://github.com/Kerollmops/heed"
+keywords = ["lmdb", "database", "storage", "typed"]
+categories = ["database", "data-structures"]
+readme = "../README.md"
+edition = "2021"
+
+[dependencies]
+bitflags = { version = "2.6.0", features = ["serde"] }
+byteorder = { version = "1.5.0", default-features = false }
+heed-traits = { version = "0.20.0", path = "../heed-traits" }
+heed-types = { version = "0.21.0", default-features = false, path = "../heed-types" }
+libc = "0.2.167"
+lmdb-master-sys = { version = "0.2.4", path = "../lmdb-master-sys" }
+once_cell = "1.20.2"
+page_size = "0.6.0"
+serde = { version = "1.0.215", features = ["derive"], optional = true }
+synchronoise = "1.0.1"
+
+[dev-dependencies]
+serde = { version = "1.0.215", features = ["derive"] }
+tempfile = "3.14.0"
+
+[target.'cfg(windows)'.dependencies]
+url = "2.5.4"
+
+[features]
+# The `serde` feature makes some types serializable,
+# like the `EnvOpenOptions` struct.
+default = ["serde", "serde-bincode", "serde-json"]
+serde = ["bitflags/serde", "dep:serde"]
+
+# The #MDB_NOTLS flag is automatically set on Env opening,
+# RoTxn and RoCursors implements the Send trait. This allows the
+# user to move RoTxns and RoCursors between threads as read transactions
+# will no more use thread local storage and will tie reader locktable
+# slots to #MDB_txn objects instead of to threads.
+#
+# According to the LMDB documentation, when this feature is not enabled:
+# A thread can only use one transaction at a time, plus any child
+# transactions. Each transaction belongs to one thread. [...]
+# The #MDB_NOTLS flag changes this for read-only transactions.
+#
+# And a #MDB_BAD_RSLOT error will be thrown when multiple read
+# transactions exists on the same thread
+read-txn-no-tls = []
+
+# Enable the serde en/decoders for bincode, serde_json, or rmp_serde
+serde-bincode = ["heed-types/serde-bincode"]
+serde-json = ["heed-types/serde-json"]
+serde-rmp = ["heed-types/serde-rmp"]
+
+# serde_json features
+preserve_order = ["heed-types/preserve_order"]
+arbitrary_precision = ["heed-types/arbitrary_precision"]
+raw_value = ["heed-types/raw_value"]
+unbounded_depth = ["heed-types/unbounded_depth"]
+
+# Whether to tell LMDB to use POSIX semaphores during compilation
+# (instead of the default, which are System V semaphores).
+# POSIX semaphores are required for Apple's App Sandbox on iOS & macOS,
+# and are possibly faster and more appropriate for single-process use.
+# There are tradeoffs for both POSIX and SysV semaphores; which you
+# should look into before enabling this feature. Also, see here:
+# <https://github.com/LMDB/lmdb/blob/3947014aed7ffe39a79991fa7fb5b234da47ad1a/libraries/liblmdb/lmdb.h#L46-L69>
+posix-sem = ["lmdb-master-sys/posix-sem"]
+
+# These features configure the MDB_IDL_LOGN macro, which determines
+# the size of the free and dirty page lists (and thus the amount of memory
+# allocated when opening an LMDB environment in read-write mode).
+#
+# Each feature defines MDB_IDL_LOGN as the value in the name of the feature.
+# That means these features are mutually exclusive, and you must not specify
+# more than one at the same time (or the crate will fail to compile).
+#
+# For more information on the motivation for these features (and their effect),
+# see https://github.com/mozilla/lmdb/pull/2.
+mdb_idl_logn_8 = ["lmdb-master-sys/mdb_idl_logn_8"]
+mdb_idl_logn_9 = ["lmdb-master-sys/mdb_idl_logn_9"]
+mdb_idl_logn_10 = ["lmdb-master-sys/mdb_idl_logn_10"]
+mdb_idl_logn_11 = ["lmdb-master-sys/mdb_idl_logn_11"]
+mdb_idl_logn_12 = ["lmdb-master-sys/mdb_idl_logn_12"]
+mdb_idl_logn_13 = ["lmdb-master-sys/mdb_idl_logn_13"]
+mdb_idl_logn_14 = ["lmdb-master-sys/mdb_idl_logn_14"]
+mdb_idl_logn_15 = ["lmdb-master-sys/mdb_idl_logn_15"]
+mdb_idl_logn_16 = ["lmdb-master-sys/mdb_idl_logn_16"]
+
+# Setting this enables you to use keys longer than 511 bytes. The exact limit
+# is computed by LMDB at compile time. You can find the exact value by calling
+# Env::max_key_size(). This value varies by architecture.
+#
+# Example max key sizes:
+#   - Apple M1 (ARM64): 8126 bytes
+#   - Apple Intel (AMD64): 1982 bytes
+#   - Linux Intel (AMD64): 1982 bytes
+#
+# Setting this also enables you to use values larger than 511 bytes when using
+# a Database with the DatabaseFlags::DUP_SORT flag.
+#
+# This builds LMDB with the -DMDB_MAXKEYSIZE=0 option.
+#
+# Note: If you are moving database files between architectures then your longest
+# stored key must fit within the smallest limit of all architectures used. For
+# example, if you are moving databases between Apple M1 and Apple Intel
+# computers then you need to keep your keys within the smaller 1982 byte limit.
+longer-keys = ["lmdb-master-sys/longer-keys"]
+
+# Examples are located outside the standard heed/examples directory to prevent
+# conflicts between heed3 and heed examples when working on both crates.
+[[example]]
+name = "all-types"
+path = "../examples/all-types.rs"
+
+[[example]]
+name = "clear-database"
+path = "../examples/clear-database.rs"
+
+[[example]]
+name = "cursor-append"
+path = "../examples/cursor-append.rs"
+
+[[example]]
+name = "custom-comparator"
+path = "../examples/custom-comparator.rs"
+
+[[example]]
+name = "multi-env"
+path = "../examples/multi-env.rs"
+
+[[example]]
+name = "nested"
+path = "../examples/nested.rs"
+
+[[example]]
+name = "rmp-serde"
+path = "../examples/rmp-serde.rs"
+required-features = ["serde-rmp"]

@@ -1,0 +1,17 @@
+package foo:foo;
+
+interface foo {
+  type foo = u8;
+
+  record bar {
+      x: foo
+  }
+
+  a: func(b: bar);
+}
+
+world module {
+  import foo;
+
+  export a: func(b: u8);
+}

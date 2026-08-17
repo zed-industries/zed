@@ -1,0 +1,77 @@
+---
+- name: Various empty or newline only quoted strings
+  from: '@perlpunk'
+  tags: double scalar single whitespace
+  yaml: |
+    ---
+    a: '
+      '
+    b: '␣␣
+      '
+    c: "
+      "
+    d: "␣␣
+      "
+    e: '
+
+      '
+    f: "
+
+      "
+    g: '
+
+
+      '
+    h: "
+
+
+      "
+  tree: |
+    +STR
+     +DOC ---
+      +MAP
+       =VAL :a
+       =VAL '␣
+       =VAL :b
+       =VAL '␣
+       =VAL :c
+       =VAL "␣
+       =VAL :d
+       =VAL "␣
+       =VAL :e
+       =VAL '\n
+       =VAL :f
+       =VAL "\n
+       =VAL :g
+       =VAL '\n\n
+       =VAL :h
+       =VAL "\n\n
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "a": " ",
+      "b": " ",
+      "c": " ",
+      "d": " ",
+      "e": "\n",
+      "f": "\n",
+      "g": "\n\n",
+      "h": "\n\n"
+    }
+  emit: |
+    ---
+    a: ' '
+    b: ' '
+    c: " "
+    d: " "
+    e: '
+
+      '
+    f: "\n"
+    g: '
+
+
+      '
+    h: "\n\n"

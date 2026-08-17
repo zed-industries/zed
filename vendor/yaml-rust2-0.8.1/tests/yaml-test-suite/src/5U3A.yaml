@@ -1,0 +1,13 @@
+---
+- name: Sequence on same Line as Mapping Key
+  from: '@perlpunk'
+  tags: error sequence mapping
+  fail: true
+  yaml: |
+    key: - a
+         - b
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :key

@@ -1,0 +1,30 @@
+[package]
+name = "wasmprinter"
+version.workspace = true
+authors = ["Alex Crichton <alex@alexcrichton.com>"]
+edition.workspace = true
+license.workspace = true
+readme = "README.md"
+repository = "https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wasmprinter"
+homepage = "https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wasmprinter"
+documentation = "https://docs.rs/wasmprinter"
+description = """
+Rust converter from the WebAssembly binary format to the text format.
+"""
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+termcolor = { workspace = true }
+wasmparser = { workspace = true, features = ['std', 'simd'] }
+
+[dev-dependencies]
+wat = { path = "../wat" }
+
+[features]
+default = ['component-model', 'validate']
+component-model = ['wasmparser/component-model']
+validate = ['wasmparser/validate', 'wasmparser/features']

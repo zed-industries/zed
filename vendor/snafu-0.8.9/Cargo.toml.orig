@@ -1,0 +1,81 @@
+[package]
+name = "snafu"
+version = "0.8.9"
+authors = ["Jake Goulding <jake.goulding@gmail.com>"]
+edition = "2018"
+rust-version = "1.56"
+
+readme = "README.md"
+description = "An ergonomic error handling library"
+documentation = "https://docs.rs/snafu"
+repository = "https://github.com/shepmaster/snafu"
+
+license = "MIT OR Apache-2.0"
+
+keywords = ["error", "ergonomic", "library", "no_std"]
+categories = ["rust-patterns", "no-std"]
+
+exclude = [
+  "/.cirrus.yml",
+  "/.gitignore",
+  "/rust-toolchain",
+]
+
+[package.metadata.docs.rs]
+# We don't use `all-features` for a few reasons:
+# - `backtraces-impl-backtrace-crate` replaces the default stdlib implementation
+# - `unstable-*` features might break with little warning
+# - `internal-dev-dependencies` is internal
+features = ["futures", "guide"]
+
+[features]
+default = ["std", "rust_1_65"]
+
+# Implement the `std::error::Error` trait.
+std = ["alloc"]
+
+# Support `Box<dyn Error>` and `String` (for `Whatever`, `CleanedErrorText`)
+alloc = []
+
+# Implement the `core::error::Error` trait.
+unstable-core-error = []
+
+# Add support for `Termination` for `Report`
+rust_1_61 = ["snafu-derive/rust_1_61"]
+
+# `Backtrace` was stabilized
+rust_1_65 = ["rust_1_61"]
+
+# `core::error` was stabilized
+rust_1_81 = ["rust_1_65"]
+
+# The backtrace type becomes `backtrace::Backtrace`
+backtraces-impl-backtrace-crate = ["backtrace"]
+
+# The std::error::Error provider API will be implemented.
+unstable-provider-api = ["snafu-derive/unstable-provider-api"]
+
+# Add support for `FromResidual` for `Report`
+unstable-try-trait = []
+
+# The standard library's implementation of futures
+futures = ["futures-core-crate", "pin-project"]
+
+# Include the built-in user guide documentation
+guide = []
+
+# No public user should make use of this feature
+# https://github.com/rust-lang/cargo/issues/1596
+"internal-dev-dependencies" = ["futures-crate"]
+
+[workspace]
+# The compatibility tests each set feature flags for the library and
+# cannot be in the same crate graph.
+exclude = ["compatibility-tests"]
+
+[dependencies]
+snafu-derive = { path = "snafu-derive", version = "0.8.9" }
+backtrace = { version = "0.3.0", optional = true }
+futures-crate = { package = "futures", version = "0.3.11", optional = true, default-features = false }
+futures-core-crate = { package = "futures-core", version = "0.3.0", optional = true, default-features = false }
+pin-project = { version = "1.0.2", optional = true, default-features = false }

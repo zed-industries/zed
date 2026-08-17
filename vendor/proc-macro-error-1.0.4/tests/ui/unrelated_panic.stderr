@@ -1,0 +1,7 @@
+error: proc macro panicked
+ --> $DIR/unrelated_panic.rs:4:1
+  |
+4 | unrelated_panic!();
+  | ^^^^^^^^^^^^^^^^^^^
+  |
+  = help: message: unrelated panic test

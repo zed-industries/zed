@@ -1,0 +1,31 @@
+[package]
+name = "rmp"
+version = "0.8.14"
+authors = ["Evgeny Safronov <division494@gmail.com>"]
+license = "MIT"
+description = "Pure Rust MessagePack serialization implementation"
+repository = "https://github.com/3Hren/msgpack-rust"
+documentation = "https://docs.rs/rmp"
+readme = "README.md"
+keywords = ["msgpack", "MessagePack"]
+categories = ["encoding"]
+edition = "2021"
+
+[dependencies]
+byteorder = { version = "1.4.2", default-features = false }
+num-traits = { version = "0.2.14", default-features = false }
+# This is macro_only ;)
+paste = "1.0"
+
+[features]
+default = ["std"]
+std = ["byteorder/std", "num-traits/std"]
+
+[dev-dependencies]
+quickcheck = "1.0.2"
+
+[package.metadata.release]
+tag-prefix = "{{crate_name}}/"
+
+[badges]
+maintenance = { status = "looking-for-maintainer" }

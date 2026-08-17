@@ -1,0 +1,33 @@
+[package]
+name = "ndk-sys"
+version = "0.6.0+11769913"
+authors = ["The Rust Windowing contributors"]
+edition = "2021"
+description = "FFI bindings for the Android NDK"
+license = "MIT OR Apache-2.0"
+keywords = ["android", "ndk"]
+readme = "../README.md"
+documentation = "https://docs.rs/ndk-sys"
+homepage = "https://github.com/rust-mobile/ndk"
+repository = "https://github.com/rust-mobile/ndk"
+rust-version = "1.60"
+
+[dependencies]
+jni-sys = "0.3.0"
+
+[features]
+test = []
+audio = []
+bitmap = []
+media = []
+nativewindow = []
+sync = []
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--cfg", "docsrs"]
+targets = [
+    "aarch64-linux-android",
+    "armv7-linux-androideabi",
+    "i686-linux-android",
+    "x86_64-linux-android",
+]

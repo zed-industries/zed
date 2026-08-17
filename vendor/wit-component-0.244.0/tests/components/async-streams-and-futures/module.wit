@@ -1,0 +1,12 @@
+package foo:foo;
+
+interface bar {
+  foo: func(x: future<future<u32>>, y: u32) -> stream<string>;
+}
+
+world module {
+  import bar;
+  import foo: func(x: future<future<u32>>, y: u32) -> stream<string>;
+  export bar;
+  export foo: func(x: future<future<u32>>, y: u32) -> stream<string>;
+}

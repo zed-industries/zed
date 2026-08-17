@@ -1,0 +1,124 @@
+[package]
+authors.workspace = true
+categories.workspace = true
+description = "XDG portals wrapper in Rust using zbus"
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+name = "ashpd"
+repository.workspace = true
+version.workspace = true
+rust-version.workspace = true
+
+[features]
+async-io = ["zbus/async-io", "futures-util/io"]
+default = ["tokio"]
+
+frontend = [
+    "account", "background", "camera", "clipboard",
+    "dynamic_launcher", "email", "file_chooser", "game_mode",
+    "global_shortcuts", "inhibit", "input_capture", "location",
+    "memory_monitor", "network_monitor", "notification", "open_uri",
+    "power_profile_monitor", "print", "proxy_resolver",
+    "realtime", "remote_desktop", "screencast", "screenshot",
+    "secret", "settings", "trash", "usb", "wallpaper",
+    "flatpak", "documents",
+]
+backend = ["dep:async-trait"]
+
+account = []
+background = []
+camera = []
+clipboard = []
+dynamic_launcher = ["dep:serde_repr"]
+email = []
+file_chooser = ["dep:serde_repr"]
+game_mode = ["dep:serde_repr"]
+global_shortcuts = []
+inhibit = ["dep:serde_repr"]
+input_capture = ["dep:serde_repr"]
+location = ["dep:serde_repr"]
+memory_monitor = []
+network_monitor = ["dep:serde_repr"]
+notification = []
+open_uri = []
+power_profile_monitor = []
+print = []
+proxy_resolver = []
+realtime = []
+remote_desktop = ["dep:serde_repr"]
+screencast = ["dep:serde_repr"]
+screenshot = []
+secret = []
+settings = []
+trash = ["dep:serde_repr"]
+usb = []
+wallpaper = []
+flatpak = ["dep:serde_repr"]
+documents = ["dep:serde_repr"]
+
+gtk4 = ["gtk4_x11", "gtk4_wayland"]
+gtk4_wayland = ["gdk4wayland", "glib", "dep:gtk4", "dep:futures-channel"]
+gtk4_x11 = ["gdk4x11", "glib", "dep:gtk4", "dep:futures-channel"]
+raw_handle = ["raw-window-handle"]
+tokio = ["zbus/tokio", "dep:tokio"]
+glib = ["dep:glib"]
+wayland = ["wayland-client", "wayland-protocols", "wayland-backend", "dep:futures-channel"]
+pipewire = ["dep:pipewire", "dep:futures-channel"]
+
+[dependencies]
+async-trait = { version = "0.1", optional = true }
+enumflags2 = "0.7"
+getrandom = "0.4"
+futures-channel = { version = "0.3", optional = true }
+futures-util = "0.3"
+gdk4wayland = { package = "gdk4-wayland", version = "0.11", optional = true }
+gdk4x11 = { package = "gdk4-x11", version = "0.11", optional = true, features = [ "xlib" ] }
+glib = { version = "0.22", optional = true }
+gtk4 = { version = "0.11", optional = true }
+pipewire = { version = "0.9", optional = true }
+raw-window-handle = { version = "0.6", optional = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_repr = { version = "0.1", optional = true }
+tokio = { version = "1.43", optional = true, default-features = false }
+tracing = { version = "0.1", optional = true }
+wayland-backend = { version = "0.3", optional = true, features = [
+    "client_system",
+] }
+wayland-client = { version = "0.31", optional = true }
+wayland-protocols = { version = "0.32", optional = true, features = [
+    "unstable",
+    "client",
+    "staging",
+] }
+zbus = { version = "5.13", default-features = false }
+
+[dev-dependencies]
+serde_json = "1.0"
+reis = { version = "0.6", features = ["tokio"] }
+pipewire = "0.9.0"
+tokio = { version = "1.41", features = [ "rt-multi-thread", "macros" ] }
+gst = { package = "gstreamer", version = "0.25" }
+quick-xml = "0.39"
+
+[package.metadata.docs.rs]
+features = ["backend", "gtk4", "raw_handle",
+    "account","background","camera","clipboard","dynamic_launcher","email","file_chooser",
+    "game_mode","global_shortcuts","inhibit","input_capture","location","memory_monitor",
+    "network_monitor","notification","open_uri","power_profile_monitor","print",
+    "proxy_resolver","realtime","remote_desktop","screencast","screenshot","secret",
+    "settings","trash","usb","wallpaper","flatpak","documents"
+]
+rustdoc-args = ["--generate-link-to-definition"]
+
+[[example]]
+name = "screen_cast_gstreamer"
+required-features = ["screencast"]
+
+[[example]]
+name = "screen_cast_pw"
+required-features = ["screencast", "pipewire"]
+
+[[example]]
+name = "input_capture"
+required-features = ["input_capture"]

@@ -1,0 +1,14 @@
+// parse-fail
+package foo:foo;
+
+interface foo {
+  use bar.{y};
+
+  type x = u32;
+}
+
+interface bar {
+  use foo.{x};
+
+  type y = u32;
+}

@@ -1,0 +1,10 @@
+[package]
+name = "leak"
+version = "0.1.2"
+authors = ["Cody P Schafer <dev@codyps.com>"]
+license = "Apache-2.0 OR MIT"
+description = "Safely leak data from owned data structures"
+keywords = [ "leak", "rfc1233", "own" ]
+documentation = "http://codyps.com/docs/leak/x86_64-unknown-linux-gnu/stable/leak/trait.Leak.html"
+repository = "https://github.com/jmesmon/leak.git"
+include = [ "Cargo.toml", "src/*.rs" ]

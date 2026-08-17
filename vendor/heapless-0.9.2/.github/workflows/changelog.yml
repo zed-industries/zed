@@ -1,0 +1,28 @@
+# Check that the changelog is updated for all changes.
+#
+# This is only run for PRs.
+
+on:
+  pull_request:
+    # opened, reopened, synchronize are the default types for pull_request.
+    # labeled, unlabeled ensure this check is also run if a label is added or removed.
+    types: [opened, reopened, labeled, unlabeled, synchronize]
+
+name: Changelog
+
+jobs:
+  changelog:
+    name: Changelog
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Check that changelog updated
+        uses: dangoslen/changelog-enforcer@v3
+        with:
+          changeLogPath: CHANGELOG.md
+          skipLabels: 'needs-changelog, skip-changelog'
+          missingUpdateErrorMessage: 'Please add a changelog entry in the CHANGELOG.md file.'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

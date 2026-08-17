@@ -1,0 +1,17 @@
+error: `num_enum` only supports unit variants (with no associated data), but `Number::NonZero` was not a unit variant.
+ --> $DIR/variants_with_fields.rs:7:5
+  |
+7 |     NonZero(u8),
+  |     ^^^^^^^^^^^
+
+error: `num_enum` only supports unit variants (with no associated data), but `Colour::Red` was not a unit variant.
+  --> $DIR/variants_with_fields.rs:13:5
+   |
+13 |     Red { intensity: u8 },
+   |     ^^^^^^^^^^^^^^^^^^^^^
+
+error: `num_enum` only supports unit variants (with no associated data), but `Meaningless::Beep` was not a unit variant.
+  --> $DIR/variants_with_fields.rs:19:5
+   |
+19 |     Beep(),
+   |     ^^^^^^

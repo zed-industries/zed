@@ -1,0 +1,18 @@
+---
+- name: Spec Example 6.20. Tag Handles
+  from: http://www.yaml.org/spec/1.2/spec.html#id2783195
+  tags: spec directive tag unknown-tag
+  yaml: |
+    %TAG !e! tag:example.com,2000:app/
+    ---
+    !e!foo "bar"
+  tree: |
+    +STR
+     +DOC ---
+      =VAL <tag:example.com,2000:app/foo> "bar
+     -DOC
+    -STR
+  json: |
+    "bar"
+  dump: |
+    --- !<tag:example.com,2000:app/foo> "bar"

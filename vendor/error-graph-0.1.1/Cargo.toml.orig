@@ -1,0 +1,21 @@
+[package]
+name = "error-graph"
+version = "0.1.1"
+authors = ["Chris Martin <marti4d@live.ca>"]
+edition = "2021"
+description = "Allows non-fatal errors in a tree of subfunctions to easily be collected by a caller"
+readme = "README.md"
+repository = "https://github.com/marti4d/error-graph"
+license = "MIT"
+keywords = ["error", "error-handling"]
+categories = ["rust-patterns"]
+
+[features]
+serde = ["dep:serde"]
+
+[dependencies]
+serde = { version = "1", optional = true }
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

@@ -1,0 +1,4 @@
+include = [".taplo.toml", "Cargo.toml"]
+
+[formatting]
+indent_string = "    "

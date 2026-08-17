@@ -1,0 +1,2 @@
+# Specify the minimum supported Rust version
+msrv = "1.70"

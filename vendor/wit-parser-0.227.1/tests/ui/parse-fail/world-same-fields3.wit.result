@@ -1,0 +1,5 @@
+export `foo` conflicts with prior export of same name
+     --> tests/ui/parse-fail/world-same-fields3.wit:7:10
+      |
+    7 |   export foo: interface {}
+      |          ^--

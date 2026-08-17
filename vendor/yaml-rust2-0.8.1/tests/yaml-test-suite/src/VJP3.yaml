@@ -1,0 +1,49 @@
+---
+- name: Flow collections over many lines
+  from: '@ingydotnet'
+  tags: flow indent
+  fail: true
+  yaml: |
+    k: {
+    k
+    :
+    v
+    }
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :k
+       +MAP {}
+
+- yaml: |
+    k: {
+     k
+     :
+     v
+     }
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :k
+       +MAP {}
+        =VAL :k
+        =VAL :v
+       -MAP
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "k" : {
+        "k" : "v"
+      }
+    }
+  dump: |
+    ---
+    k:
+      k: v
+  emit: |
+    k:
+      k: v

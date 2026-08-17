@@ -1,0 +1,9 @@
+package foo:bar;
+
+world module {
+  import foo: interface {
+    resource a {
+      constructor() -> result<a, u32>;
+    }
+  }
+}

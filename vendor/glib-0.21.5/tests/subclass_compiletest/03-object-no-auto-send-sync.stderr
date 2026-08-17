@@ -1,0 +1,41 @@
+error[E0277]: `*mut c_void` cannot be sent between threads safely
+ --> tests/subclass_compiletest/03-object-no-auto-send-sync.rs:5:11
+  |
+   5 |     check(&obj);
+     |     ----- ^^^^ `*mut c_void` cannot be sent between threads safely
+     |     |
+     |     required by a bound introduced by this call
+     |
+     = help: the trait `Send` is not implemented for `*mut c_void`
+     = note: required for `TypedObjectRef<*mut c_void, ()>` to implement `Send`
+note: required because it appears within the type `Object`
+    --> src/object.rs
+     |
+     |     pub Object, *mut std::os::raw::c_void, (), gobject_ffi::GObject, @ffi_class gobject_ffi::GObjectClass, @type_ gobject_ffi::g_object_g...
+     |         ^^^^^^
+note: required by a bound in `main::check`
+    --> tests/subclass_compiletest/03-object-no-auto-send-sync.rs:2:17
+     |
+   2 |     fn check<T: Send + Sync>(_obj: &T) {}
+     |                 ^^^^ required by this bound in `check`
+
+error[E0277]: `*mut c_void` cannot be shared between threads safely
+ --> tests/subclass_compiletest/03-object-no-auto-send-sync.rs:5:11
+  |
+   5 |     check(&obj);
+     |     ----- ^^^^ `*mut c_void` cannot be shared between threads safely
+     |     |
+     |     required by a bound introduced by this call
+     |
+     = help: the trait `Sync` is not implemented for `*mut c_void`
+     = note: required for `TypedObjectRef<*mut c_void, ()>` to implement `Send`
+note: required because it appears within the type `Object`
+    --> src/object.rs
+     |
+     |     pub Object, *mut std::os::raw::c_void, (), gobject_ffi::GObject, @ffi_class gobject_ffi::GObjectClass, @type_ gobject_ffi::g_object_g...
+     |         ^^^^^^
+note: required by a bound in `main::check`
+    --> tests/subclass_compiletest/03-object-no-auto-send-sync.rs:2:17
+     |
+   2 |     fn check<T: Send + Sync>(_obj: &T) {}
+     |                 ^^^^ required by this bound in `check`

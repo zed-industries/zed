@@ -1,0 +1,113 @@
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+      - version-0.4
+
+name: tests
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+          - stable
+          - 1.64.0 # MSRV
+          - nightly
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions-rs/toolchain@v1
+        name: Setup rust toolchain
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+          override: true
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        name: Load dependencies from cache
+
+      - uses: actions-rs/cargo@v1
+        name: Build with stable features
+        with:
+          command: build
+          args: --features stable
+
+      - uses: actions-rs/cargo@v1
+        if: ${{ matrix.rust == 'nightly' }}
+        name: Build with unstable features
+        with:
+          command: build
+          args: --all-features
+
+      - uses: actions-rs/cargo@v1
+        name: Build with minimal features
+        with:
+          command: build
+          args: --no-default-features
+
+      - uses: actions-rs/cargo@v1
+        name: Test with stable features
+        with:
+          command: test
+          args: --features stable
+
+      - uses: actions-rs/cargo@v1
+        name: Test with minimal features
+        with:
+          command: test
+          args: --no-default-features
+
+      - uses: actions-rs/cargo@v1
+        name: Check for non-standard formatting
+        if: ${{ matrix.rust == 'stable' }}
+        with:
+          command: fmt
+          args: --all -- --check
+
+      - uses: actions-rs/cargo@v1
+        name: Check for clippy hints
+        if: ${{ matrix.rust == 'stable' }}
+        with:
+          command: clippy
+          args: -- -D warnings
+
+      - name: Test run targeting WASI
+        run: |
+          curl https://wasmtime.dev/install.sh -sSf | bash
+          source ~/.bashrc
+          export PATH=$HOME/.wasmtime/bin/:$PATH
+          cargo install cargo-wasi
+          cargo wasi bench --no-default-features -- --test
+
+  nextest-compat:
+    name: Check compatibility with nextest
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+          - stable
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+          override: true
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v1
+
+      - uses: taiki-e/install-action@nextest
+
+      - run: ci/nextest-compat.sh

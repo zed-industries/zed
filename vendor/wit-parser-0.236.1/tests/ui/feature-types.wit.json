@@ -1,0 +1,66 @@
+{
+  "worlds": [],
+  "interfaces": [
+    {
+      "name": "foo",
+      "types": {
+        "bar": 0
+      },
+      "functions": {
+        "my-stable": {
+          "name": "my-stable",
+          "kind": "freestanding",
+          "params": [
+            {
+              "name": "p",
+              "type": 0
+            }
+          ],
+          "result": 1
+        }
+      },
+      "package": 0
+    }
+  ],
+  "types": [
+    {
+      "name": "bar",
+      "kind": {
+        "variant": {
+          "cases": [
+            {
+              "name": "x",
+              "type": null
+            },
+            {
+              "name": "y",
+              "type": null
+            }
+          ]
+        }
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": null,
+      "kind": {
+        "result": {
+          "ok": null,
+          "err": 0
+        }
+      },
+      "owner": null
+    }
+  ],
+  "packages": [
+    {
+      "name": "a:b",
+      "interfaces": {
+        "foo": 0
+      },
+      "worlds": {}
+    }
+  ]
+}

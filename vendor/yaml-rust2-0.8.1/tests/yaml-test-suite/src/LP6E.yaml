@@ -1,0 +1,55 @@
+---
+- name: Whitespace After Scalars in Flow
+  from: NimYAML tests
+  tags: flow scalar whitespace
+  yaml: |
+    - [a, b , c ]
+    - { "a"  : b
+       , c : 'd' ,
+       e   : "f"
+      }
+    - [      ]
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       +SEQ []
+        =VAL :a
+        =VAL :b
+        =VAL :c
+       -SEQ
+       +MAP {}
+        =VAL "a
+        =VAL :b
+        =VAL :c
+        =VAL 'd
+        =VAL :e
+        =VAL "f
+       -MAP
+       +SEQ []
+       -SEQ
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      [
+        "a",
+        "b",
+        "c"
+      ],
+      {
+        "a": "b",
+        "c": "d",
+        "e": "f"
+      },
+      []
+    ]
+  dump: |
+    - - a
+      - b
+      - c
+    - "a": b
+      c: 'd'
+      e: "f"
+    - []

@@ -1,0 +1,1132 @@
+{
+  "version": 1,
+  "template_root": "templates",
+  "templates": {
+    "affine.rs.tera": {
+      "properties": {
+        "dim": null,
+        "is_align": false,
+        "is_coresimd": false,
+        "is_neon": false,
+        "is_scalar": false,
+        "is_sse2": false,
+        "is_wasm32": false,
+        "scalar_t": null
+      },
+      "outputs": {
+        "src/f32/affine2.rs": {
+          "properties": {
+            "dim": 2,
+            "is_scalar": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/affine3a.rs": {
+          "properties": {
+            "dim": 3,
+            "is_align": true,
+            "is_scalar": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f64/daffine2.rs": {
+          "properties": {
+            "dim": 2,
+            "is_scalar": true,
+            "scalar_t": "f64"
+          }
+        },
+        "src/f64/daffine3.rs": {
+          "properties": {
+            "dim": 3,
+            "is_scalar": true,
+            "scalar_t": "f64"
+          }
+        }
+      }
+    },
+    "float.rs.tera": {
+      "properties": {
+        "scalar_t": null
+      },
+      "outputs": {
+        "src/f32/float.rs": {
+          "properties": {
+            "scalar_t": "f32"
+          }
+        },
+        "src/f64/float.rs": {
+          "properties": {
+            "scalar_t": "f64"
+          }
+        }
+      }
+    },
+    "mat.rs.tera": {
+      "properties": {
+        "dim": null,
+        "is_align": false,
+        "is_coresimd": false,
+        "is_neon": false,
+        "is_scalar": false,
+        "is_sse2": false,
+        "is_wasm32": false,
+        "scalar_t": null
+      },
+      "outputs": {
+        "src/f32/coresimd/mat2.rs": {
+          "properties": {
+            "dim": 2,
+            "is_coresimd": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/coresimd/mat3a.rs": {
+          "properties": {
+            "dim": 3,
+            "is_align": true,
+            "is_coresimd": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/coresimd/mat4.rs": {
+          "properties": {
+            "dim": 4,
+            "is_coresimd": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/mat3.rs": {
+          "properties": {
+            "dim": 3,
+            "is_scalar": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/neon/mat2.rs": {
+          "properties": {
+            "dim": 2,
+            "is_neon": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/neon/mat3a.rs": {
+          "properties": {
+            "dim": 3,
+            "is_align": true,
+            "is_neon": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/neon/mat4.rs": {
+          "properties": {
+            "dim": 4,
+            "is_neon": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/scalar/mat2.rs": {
+          "properties": {
+            "dim": 2,
+            "is_scalar": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/scalar/mat3a.rs": {
+          "properties": {
+            "dim": 3,
+            "is_align": true,
+            "is_scalar": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/scalar/mat4.rs": {
+          "properties": {
+            "dim": 4,
+            "is_scalar": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/sse2/mat2.rs": {
+          "properties": {
+            "dim": 2,
+            "is_sse2": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/sse2/mat3a.rs": {
+          "properties": {
+            "dim": 3,
+            "is_align": true,
+            "is_sse2": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/sse2/mat4.rs": {
+          "properties": {
+            "dim": 4,
+            "is_sse2": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/wasm32/mat2.rs": {
+          "properties": {
+            "dim": 2,
+            "is_wasm32": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/wasm32/mat3a.rs": {
+          "properties": {
+            "dim": 3,
+            "is_align": true,
+            "is_wasm32": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/wasm32/mat4.rs": {
+          "properties": {
+            "dim": 4,
+            "is_wasm32": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f64/dmat2.rs": {
+          "properties": {
+            "dim": 2,
+            "is_scalar": true,
+            "scalar_t": "f64"
+          }
+        },
+        "src/f64/dmat3.rs": {
+          "properties": {
+            "dim": 3,
+            "is_scalar": true,
+            "scalar_t": "f64"
+          }
+        },
+        "src/f64/dmat4.rs": {
+          "properties": {
+            "dim": 4,
+            "is_scalar": true,
+            "scalar_t": "f64"
+          }
+        }
+      }
+    },
+    "quat.rs.tera": {
+      "properties": {
+        "is_coresimd": false,
+        "is_neon": false,
+        "is_scalar": false,
+        "is_sse2": false,
+        "is_wasm32": false,
+        "scalar_t": null
+      },
+      "outputs": {
+        "src/f32/coresimd/quat.rs": {
+          "properties": {
+            "is_coresimd": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/neon/quat.rs": {
+          "properties": {
+            "is_neon": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/scalar/quat.rs": {
+          "properties": {
+            "is_scalar": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/sse2/quat.rs": {
+          "properties": {
+            "is_sse2": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/wasm32/quat.rs": {
+          "properties": {
+            "is_wasm32": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f64/dquat.rs": {
+          "properties": {
+            "is_scalar": true,
+            "scalar_t": "f64"
+          }
+        }
+      }
+    },
+    "swizzle_impl.rs.tera": {
+      "properties": {
+        "dim": null,
+        "is_coresimd": false,
+        "is_neon": false,
+        "is_scalar": false,
+        "is_sse2": false,
+        "is_wasm32": false,
+        "self_t": null,
+        "vec2_t": null,
+        "vec3_t": null,
+        "vec4_t": null
+      },
+      "outputs": {
+        "src/swizzles/coresimd/vec3a_impl.rs": {
+          "properties": {
+            "dim": 3,
+            "is_coresimd": true,
+            "self_t": "Vec3A",
+            "vec2_t": "Vec2",
+            "vec3_t": "Vec3A",
+            "vec4_t": "Vec4"
+          }
+        },
+        "src/swizzles/coresimd/vec4_impl.rs": {
+          "properties": {
+            "dim": 4,
+            "is_coresimd": true,
+            "self_t": "Vec4",
+            "vec2_t": "Vec2",
+            "vec3_t": "Vec3",
+            "vec4_t": "Vec4"
+          }
+        },
+        "src/swizzles/dvec2_impl.rs": {
+          "properties": {
+            "dim": 2,
+            "is_scalar": true,
+            "self_t": "DVec2",
+            "vec2_t": "DVec2",
+            "vec3_t": "DVec3",
+            "vec4_t": "DVec4"
+          }
+        },
+        "src/swizzles/dvec3_impl.rs": {
+          "properties": {
+            "dim": 3,
+            "is_scalar": true,
+            "self_t": "DVec3",
+            "vec2_t": "DVec2",
+            "vec3_t": "DVec3",
+            "vec4_t": "DVec4"
+          }
+        },
+        "src/swizzles/dvec4_impl.rs": {
+          "properties": {
+            "dim": 4,
+            "is_scalar": true,
+            "self_t": "DVec4",
+            "vec2_t": "DVec2",
+            "vec3_t": "DVec3",
+            "vec4_t": "DVec4"
+          }
+        },
+        "src/swizzles/i16vec2_impl.rs": {
+          "properties": {
+            "dim": 2,
+            "is_scalar": true,
+            "self_t": "I16Vec2",
+            "vec2_t": "I16Vec2",
+            "vec3_t": "I16Vec3",
+            "vec4_t": "I16Vec4"
+          }
+        },
+        "src/swizzles/i16vec3_impl.rs": {
+          "properties": {
+            "dim": 3,
+            "is_scalar": true,
+            "self_t": "I16Vec3",
+            "vec2_t": "I16Vec2",
+            "vec3_t": "I16Vec3",
+            "vec4_t": "I16Vec4"
+          }
+        },
+        "src/swizzles/i16vec4_impl.rs": {
+          "properties": {
+            "dim": 4,
+            "is_scalar": true,
+            "self_t": "I16Vec4",
+            "vec2_t": "I16Vec2",
+            "vec3_t": "I16Vec3",
+            "vec4_t": "I16Vec4"
+          }
+        },
+        "src/swizzles/i64vec2_impl.rs": {
+          "properties": {
+            "dim": 2,
+            "is_scalar": true,
+            "self_t": "I64Vec2",
+            "vec2_t": "I64Vec2",
+            "vec3_t": "I64Vec3",
+            "vec4_t": "I64Vec4"
+          }
+        },
+        "src/swizzles/i64vec3_impl.rs": {
+          "properties": {
+            "dim": 3,
+            "is_scalar": true,
+            "self_t": "I64Vec3",
+            "vec2_t": "I64Vec2",
+            "vec3_t": "I64Vec3",
+            "vec4_t": "I64Vec4"
+          }
+        },
+        "src/swizzles/i64vec4_impl.rs": {
+          "properties": {
+            "dim": 4,
+            "is_scalar": true,
+            "self_t": "I64Vec4",
+            "vec2_t": "I64Vec2",
+            "vec3_t": "I64Vec3",
+            "vec4_t": "I64Vec4"
+          }
+        },
+        "src/swizzles/i8vec2_impl.rs": {
+          "properties": {
+            "dim": 2,
+            "is_scalar": true,
+            "self_t": "I8Vec2",
+            "vec2_t": "I8Vec2",
+            "vec3_t": "I8Vec3",
+            "vec4_t": "I8Vec4"
+          }
+        },
+        "src/swizzles/i8vec3_impl.rs": {
+          "properties": {
+            "dim": 3,
+            "is_scalar": true,
+            "self_t": "I8Vec3",
+            "vec2_t": "I8Vec2",
+            "vec3_t": "I8Vec3",
+            "vec4_t": "I8Vec4"
+          }
+        },
+        "src/swizzles/i8vec4_impl.rs": {
+          "properties": {
+            "dim": 4,
+            "is_scalar": true,
+            "self_t": "I8Vec4",
+            "vec2_t": "I8Vec2",
+            "vec3_t": "I8Vec3",
+            "vec4_t": "I8Vec4"
+          }
+        },
+        "src/swizzles/ivec2_impl.rs": {
+          "properties": {
+            "dim": 2,
+            "is_scalar": true,
+            "self_t": "IVec2",
+            "vec2_t": "IVec2",
+            "vec3_t": "IVec3",
+            "vec4_t": "IVec4"
+          }
+        },
+        "src/swizzles/ivec3_impl.rs": {
+          "properties": {
+            "dim": 3,
+            "is_scalar": true,
+            "self_t": "IVec3",
+            "vec2_t": "IVec2",
+            "vec3_t": "IVec3",
+            "vec4_t": "IVec4"
+          }
+        },
+        "src/swizzles/ivec4_impl.rs": {
+          "properties": {
+            "dim": 4,
+            "is_scalar": true,
+            "self_t": "IVec4",
+            "vec2_t": "IVec2",
+            "vec3_t": "IVec3",
+            "vec4_t": "IVec4"
+          }
+        },
+        "src/swizzles/neon/vec3a_impl.rs": {
+          "properties": {
+            "dim": 3,
+            "is_scalar": true,
+            "self_t": "Vec3A",
+            "vec2_t": "Vec2",
+            "vec3_t": "Vec3A",
+            "vec4_t": "Vec4"
+          }
+        },
+        "src/swizzles/neon/vec4_impl.rs": {
+          "properties": {
+            "dim": 4,
+            "is_scalar": true,
+            "self_t": "Vec4",
+            "vec2_t": "Vec2",
+            "vec3_t": "Vec3",
+            "vec4_t": "Vec4"
+          }
+        },
+        "src/swizzles/scalar/vec3a_impl.rs": {
+          "properties": {
+            "dim": 3,
+            "is_scalar": true,
+            "self_t": "Vec3A",
+            "vec2_t": "Vec2",
+            "vec3_t": "Vec3A",
+            "vec4_t": "Vec4"
+          }
+        },
+        "src/swizzles/scalar/vec4_impl.rs": {
+          "properties": {
+            "dim": 4,
+            "is_scalar": true,
+            "self_t": "Vec4",
+            "vec2_t": "Vec2",
+            "vec3_t": "Vec3",
+            "vec4_t": "Vec4"
+          }
+        },
+        "src/swizzles/sse2/vec3a_impl.rs": {
+          "properties": {
+            "dim": 3,
+            "is_sse2": true,
+            "self_t": "Vec3A",
+            "vec2_t": "Vec2",
+            "vec3_t": "Vec3A",
+            "vec4_t": "Vec4"
+          }
+        },
+        "src/swizzles/sse2/vec4_impl.rs": {
+          "properties": {
+            "dim": 4,
+            "is_sse2": true,
+            "self_t": "Vec4",
+            "vec2_t": "Vec2",
+            "vec3_t": "Vec3",
+            "vec4_t": "Vec4"
+          }
+        },
+        "src/swizzles/u16vec2_impl.rs": {
+          "properties": {
+            "dim": 2,
+            "is_scalar": true,
+            "self_t": "U16Vec2",
+            "vec2_t": "U16Vec2",
+            "vec3_t": "U16Vec3",
+            "vec4_t": "U16Vec4"
+          }
+        },
+        "src/swizzles/u16vec3_impl.rs": {
+          "properties": {
+            "dim": 3,
+            "is_scalar": true,
+            "self_t": "U16Vec3",
+            "vec2_t": "U16Vec2",
+            "vec3_t": "U16Vec3",
+            "vec4_t": "U16Vec4"
+          }
+        },
+        "src/swizzles/u16vec4_impl.rs": {
+          "properties": {
+            "dim": 4,
+            "is_scalar": true,
+            "self_t": "U16Vec4",
+            "vec2_t": "U16Vec2",
+            "vec3_t": "U16Vec3",
+            "vec4_t": "U16Vec4"
+          }
+        },
+        "src/swizzles/u64vec2_impl.rs": {
+          "properties": {
+            "dim": 2,
+            "is_scalar": true,
+            "self_t": "U64Vec2",
+            "vec2_t": "U64Vec2",
+            "vec3_t": "U64Vec3",
+            "vec4_t": "U64Vec4"
+          }
+        },
+        "src/swizzles/u64vec3_impl.rs": {
+          "properties": {
+            "dim": 3,
+            "is_scalar": true,
+            "self_t": "U64Vec3",
+            "vec2_t": "U64Vec2",
+            "vec3_t": "U64Vec3",
+            "vec4_t": "U64Vec4"
+          }
+        },
+        "src/swizzles/u64vec4_impl.rs": {
+          "properties": {
+            "dim": 4,
+            "is_scalar": true,
+            "self_t": "U64Vec4",
+            "vec2_t": "U64Vec2",
+            "vec3_t": "U64Vec3",
+            "vec4_t": "U64Vec4"
+          }
+        },
+        "src/swizzles/u8vec2_impl.rs": {
+          "properties": {
+            "dim": 2,
+            "is_scalar": true,
+            "self_t": "U8Vec2",
+            "vec2_t": "U8Vec2",
+            "vec3_t": "U8Vec3",
+            "vec4_t": "U8Vec4"
+          }
+        },
+        "src/swizzles/u8vec3_impl.rs": {
+          "properties": {
+            "dim": 3,
+            "is_scalar": true,
+            "self_t": "U8Vec3",
+            "vec2_t": "U8Vec2",
+            "vec3_t": "U8Vec3",
+            "vec4_t": "U8Vec4"
+          }
+        },
+        "src/swizzles/u8vec4_impl.rs": {
+          "properties": {
+            "dim": 4,
+            "is_scalar": true,
+            "self_t": "U8Vec4",
+            "vec2_t": "U8Vec2",
+            "vec3_t": "U8Vec3",
+            "vec4_t": "U8Vec4"
+          }
+        },
+        "src/swizzles/uvec2_impl.rs": {
+          "properties": {
+            "dim": 2,
+            "is_scalar": true,
+            "self_t": "UVec2",
+            "vec2_t": "UVec2",
+            "vec3_t": "UVec3",
+            "vec4_t": "UVec4"
+          }
+        },
+        "src/swizzles/uvec3_impl.rs": {
+          "properties": {
+            "dim": 3,
+            "is_scalar": true,
+            "self_t": "UVec3",
+            "vec2_t": "UVec2",
+            "vec3_t": "UVec3",
+            "vec4_t": "UVec4"
+          }
+        },
+        "src/swizzles/uvec4_impl.rs": {
+          "properties": {
+            "dim": 4,
+            "is_scalar": true,
+            "self_t": "UVec4",
+            "vec2_t": "UVec2",
+            "vec3_t": "UVec3",
+            "vec4_t": "UVec4"
+          }
+        },
+        "src/swizzles/usizevec2_impl.rs": {
+          "properties": {
+            "dim": 2,
+            "is_scalar": true,
+            "self_t": "USizeVec2",
+            "vec2_t": "USizeVec2",
+            "vec3_t": "USizeVec3",
+            "vec4_t": "USizeVec4"
+          }
+        },
+        "src/swizzles/usizevec3_impl.rs": {
+          "properties": {
+            "dim": 3,
+            "is_scalar": true,
+            "self_t": "USizeVec3",
+            "vec2_t": "USizeVec2",
+            "vec3_t": "USizeVec3",
+            "vec4_t": "USizeVec4"
+          }
+        },
+        "src/swizzles/usizevec4_impl.rs": {
+          "properties": {
+            "dim": 4,
+            "is_scalar": true,
+            "self_t": "USizeVec4",
+            "vec2_t": "USizeVec2",
+            "vec3_t": "USizeVec3",
+            "vec4_t": "USizeVec4"
+          }
+        },
+        "src/swizzles/vec2_impl.rs": {
+          "properties": {
+            "dim": 2,
+            "is_scalar": true,
+            "self_t": "Vec2",
+            "vec2_t": "Vec2",
+            "vec3_t": "Vec3",
+            "vec4_t": "Vec4"
+          }
+        },
+        "src/swizzles/vec3_impl.rs": {
+          "properties": {
+            "dim": 3,
+            "is_scalar": true,
+            "self_t": "Vec3",
+            "vec2_t": "Vec2",
+            "vec3_t": "Vec3",
+            "vec4_t": "Vec4"
+          }
+        },
+        "src/swizzles/wasm32/vec3a_impl.rs": {
+          "properties": {
+            "dim": 3,
+            "is_wasm32": true,
+            "self_t": "Vec3A",
+            "vec2_t": "Vec2",
+            "vec3_t": "Vec3A",
+            "vec4_t": "Vec4"
+          }
+        },
+        "src/swizzles/wasm32/vec4_impl.rs": {
+          "properties": {
+            "dim": 4,
+            "is_wasm32": true,
+            "self_t": "Vec4",
+            "vec2_t": "Vec2",
+            "vec3_t": "Vec3",
+            "vec4_t": "Vec4"
+          }
+        }
+      }
+    },
+    "swizzle_traits.rs.tera": {
+      "properties": {},
+      "outputs": {
+        "src/swizzles/vec_traits.rs": {
+          "properties": {}
+        }
+      }
+    },
+    "vec.rs.tera": {
+      "properties": {
+        "dim": null,
+        "is_align": false,
+        "is_coresimd": false,
+        "is_neon": false,
+        "is_scalar": false,
+        "is_sse2": false,
+        "is_wasm32": false,
+        "scalar_t": null
+      },
+      "outputs": {
+        "src/f32/coresimd/vec3a.rs": {
+          "properties": {
+            "dim": 3,
+            "is_align": true,
+            "is_coresimd": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/coresimd/vec4.rs": {
+          "properties": {
+            "dim": 4,
+            "is_align": true,
+            "is_coresimd": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/neon/vec3a.rs": {
+          "properties": {
+            "dim": 3,
+            "is_align": true,
+            "is_neon": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/neon/vec4.rs": {
+          "properties": {
+            "dim": 4,
+            "is_align": true,
+            "is_neon": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/scalar/vec3a.rs": {
+          "properties": {
+            "dim": 3,
+            "is_align": true,
+            "is_scalar": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/scalar/vec4.rs": {
+          "properties": {
+            "dim": 4,
+            "is_align": true,
+            "is_scalar": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/sse2/vec3a.rs": {
+          "properties": {
+            "dim": 3,
+            "is_align": true,
+            "is_sse2": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/sse2/vec4.rs": {
+          "properties": {
+            "dim": 4,
+            "is_align": true,
+            "is_sse2": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/vec2.rs": {
+          "properties": {
+            "dim": 2,
+            "is_scalar": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/vec3.rs": {
+          "properties": {
+            "dim": 3,
+            "is_scalar": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/wasm32/vec3a.rs": {
+          "properties": {
+            "dim": 3,
+            "is_align": true,
+            "is_wasm32": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f32/wasm32/vec4.rs": {
+          "properties": {
+            "dim": 4,
+            "is_align": true,
+            "is_wasm32": true,
+            "scalar_t": "f32"
+          }
+        },
+        "src/f64/dvec2.rs": {
+          "properties": {
+            "dim": 2,
+            "is_scalar": true,
+            "scalar_t": "f64"
+          }
+        },
+        "src/f64/dvec3.rs": {
+          "properties": {
+            "dim": 3,
+            "is_scalar": true,
+            "scalar_t": "f64"
+          }
+        },
+        "src/f64/dvec4.rs": {
+          "properties": {
+            "dim": 4,
+            "is_scalar": true,
+            "scalar_t": "f64"
+          }
+        },
+        "src/i16/i16vec2.rs": {
+          "properties": {
+            "dim": 2,
+            "is_scalar": true,
+            "scalar_t": "i16"
+          }
+        },
+        "src/i16/i16vec3.rs": {
+          "properties": {
+            "dim": 3,
+            "is_scalar": true,
+            "scalar_t": "i16"
+          }
+        },
+        "src/i16/i16vec4.rs": {
+          "properties": {
+            "dim": 4,
+            "is_scalar": true,
+            "scalar_t": "i16"
+          }
+        },
+        "src/i32/ivec2.rs": {
+          "properties": {
+            "dim": 2,
+            "is_scalar": true,
+            "scalar_t": "i32"
+          }
+        },
+        "src/i32/ivec3.rs": {
+          "properties": {
+            "dim": 3,
+            "is_scalar": true,
+            "scalar_t": "i32"
+          }
+        },
+        "src/i32/ivec4.rs": {
+          "properties": {
+            "dim": 4,
+            "is_scalar": true,
+            "scalar_t": "i32"
+          }
+        },
+        "src/i64/i64vec2.rs": {
+          "properties": {
+            "dim": 2,
+            "is_scalar": true,
+            "scalar_t": "i64"
+          }
+        },
+        "src/i64/i64vec3.rs": {
+          "properties": {
+            "dim": 3,
+            "is_scalar": true,
+            "scalar_t": "i64"
+          }
+        },
+        "src/i64/i64vec4.rs": {
+          "properties": {
+            "dim": 4,
+            "is_scalar": true,
+            "scalar_t": "i64"
+          }
+        },
+        "src/i8/i8vec2.rs": {
+          "properties": {
+            "dim": 2,
+            "is_scalar": true,
+            "scalar_t": "i8"
+          }
+        },
+        "src/i8/i8vec3.rs": {
+          "properties": {
+            "dim": 3,
+            "is_scalar": true,
+            "scalar_t": "i8"
+          }
+        },
+        "src/i8/i8vec4.rs": {
+          "properties": {
+            "dim": 4,
+            "is_scalar": true,
+            "scalar_t": "i8"
+          }
+        },
+        "src/u16/u16vec2.rs": {
+          "properties": {
+            "dim": 2,
+            "is_scalar": true,
+            "scalar_t": "u16"
+          }
+        },
+        "src/u16/u16vec3.rs": {
+          "properties": {
+            "dim": 3,
+            "is_scalar": true,
+            "scalar_t": "u16"
+          }
+        },
+        "src/u16/u16vec4.rs": {
+          "properties": {
+            "dim": 4,
+            "is_scalar": true,
+            "scalar_t": "u16"
+          }
+        },
+        "src/u32/uvec2.rs": {
+          "properties": {
+            "dim": 2,
+            "is_scalar": true,
+            "scalar_t": "u32"
+          }
+        },
+        "src/u32/uvec3.rs": {
+          "properties": {
+            "dim": 3,
+            "is_scalar": true,
+            "scalar_t": "u32"
+          }
+        },
+        "src/u32/uvec4.rs": {
+          "properties": {
+            "dim": 4,
+            "is_scalar": true,
+            "scalar_t": "u32"
+          }
+        },
+        "src/u64/u64vec2.rs": {
+          "properties": {
+            "dim": 2,
+            "is_scalar": true,
+            "scalar_t": "u64"
+          }
+        },
+        "src/u64/u64vec3.rs": {
+          "properties": {
+            "dim": 3,
+            "is_scalar": true,
+            "scalar_t": "u64"
+          }
+        },
+        "src/u64/u64vec4.rs": {
+          "properties": {
+            "dim": 4,
+            "is_scalar": true,
+            "scalar_t": "u64"
+          }
+        },
+        "src/u8/u8vec2.rs": {
+          "properties": {
+            "dim": 2,
+            "is_scalar": true,
+            "scalar_t": "u8"
+          }
+        },
+        "src/u8/u8vec3.rs": {
+          "properties": {
+            "dim": 3,
+            "is_scalar": true,
+            "scalar_t": "u8"
+          }
+        },
+        "src/u8/u8vec4.rs": {
+          "properties": {
+            "dim": 4,
+            "is_scalar": true,
+            "scalar_t": "u8"
+          }
+        },
+        "src/usize/usizevec2.rs": {
+          "properties": {
+            "dim": 2,
+            "is_scalar": true,
+            "scalar_t": "usize"
+          }
+        },
+        "src/usize/usizevec3.rs": {
+          "properties": {
+            "dim": 3,
+            "is_scalar": true,
+            "scalar_t": "usize"
+          }
+        },
+        "src/usize/usizevec4.rs": {
+          "properties": {
+            "dim": 4,
+            "is_scalar": true,
+            "scalar_t": "usize"
+          }
+        }
+      }
+    },
+    "vec_mask.rs.tera": {
+      "properties": {
+        "dim": null,
+        "is_coresimd": false,
+        "is_neon": false,
+        "is_scalar": false,
+        "is_sse2": false,
+        "is_wasm32": false,
+        "scalar_t": null
+      },
+      "outputs": {
+        "src/bool/bvec2.rs": {
+          "properties": {
+            "dim": 2,
+            "is_scalar": true,
+            "scalar_t": "bool"
+          }
+        },
+        "src/bool/bvec3.rs": {
+          "properties": {
+            "dim": 3,
+            "is_scalar": true,
+            "scalar_t": "bool"
+          }
+        },
+        "src/bool/bvec4.rs": {
+          "properties": {
+            "dim": 4,
+            "is_scalar": true,
+            "scalar_t": "bool"
+          }
+        },
+        "src/bool/coresimd/bvec3a.rs": {
+          "properties": {
+            "dim": 3,
+            "is_coresimd": true,
+            "scalar_t": "u32"
+          }
+        },
+        "src/bool/coresimd/bvec4a.rs": {
+          "properties": {
+            "dim": 4,
+            "is_coresimd": true,
+            "scalar_t": "u32"
+          }
+        },
+        "src/bool/neon/bvec3a.rs": {
+          "properties": {
+            "dim": 3,
+            "is_neon": true,
+            "scalar_t": "u32"
+          }
+        },
+        "src/bool/neon/bvec4a.rs": {
+          "properties": {
+            "dim": 4,
+            "is_neon": true,
+            "scalar_t": "u32"
+          }
+        },
+        "src/bool/scalar/bvec3a.rs": {
+          "properties": {
+            "dim": 3,
+            "is_scalar": true,
+            "scalar_t": "u32"
+          }
+        },
+        "src/bool/scalar/bvec4a.rs": {
+          "properties": {
+            "dim": 4,
+            "is_scalar": true,
+            "scalar_t": "u32"
+          }
+        },
+        "src/bool/sse2/bvec3a.rs": {
+          "properties": {
+            "dim": 3,
+            "is_sse2": true,
+            "scalar_t": "u32"
+          }
+        },
+        "src/bool/sse2/bvec4a.rs": {
+          "properties": {
+            "dim": 4,
+            "is_sse2": true,
+            "scalar_t": "u32"
+          }
+        },
+        "src/bool/wasm32/bvec3a.rs": {
+          "properties": {
+            "dim": 3,
+            "is_wasm32": true,
+            "scalar_t": "u32"
+          }
+        },
+        "src/bool/wasm32/bvec4a.rs": {
+          "properties": {
+            "dim": 4,
+            "is_wasm32": true,
+            "scalar_t": "u32"
+          }
+        }
+      }
+    }
+  }
+}

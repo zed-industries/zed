@@ -1,0 +1,149 @@
+name: Continuous integration
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  # Ensure the crate builds on x86
+  build_x86_64:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust: [stable, nightly]
+        features: ["+avx2", "+avx", "+sse2,+sse4.1", "+sse2"]
+    env:
+      RUSTFLAGS: "-C target-feature=${{matrix.features}} -D warnings"
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        target: x86_64-unknown-linux-gnu
+        toolchain: ${{ matrix.rust }}
+        components: clippy
+    - name: Tests (x86_64)
+      run: |
+        cargo clippy &&
+        cargo test -v --no-default-features --tests --lib &&
+        cargo build --verbose --features "$FEATURES" &&
+        cargo test --verbose --features "$FEATURES" &&
+        cargo test --verbose --release --features "$FEATURES"
+
+  # Ensure the crate builds on x86
+  build_MSRV:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust: [1.56.0]
+        features: ["+avx2", "+sse2"]
+    env:
+      RUSTFLAGS: "-C target-feature=${{matrix.features}}"
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        target: x86_64-unknown-linux-gnu
+        toolchain: ${{ matrix.rust }}
+        components: clippy
+    - name: Tests (x86_64)
+      run: |
+        cargo clippy &&
+        cargo test -v --no-default-features --tests --lib &&
+        cargo build --verbose --features "$FEATURES" &&
+        cargo test --verbose --features "$FEATURES" &&
+        cargo test --verbose --release --features "$FEATURES"
+
+  # Ensure the crate builds on ARM
+  build_aarch64:
+    runs-on: macos-14
+    strategy:
+      matrix:
+        rust: [stable, nightly]
+        features: ["+neon", "-neon"]
+    env:
+      RUSTFLAGS: "-C target-feature=${{matrix.features}} -D warnings"
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        target: aarch64-apple-darwin
+        toolchain: ${{ matrix.rust }}
+        components: clippy
+    - name: Tests (aarch64)
+      run: |
+        cargo clippy &&
+        cargo test -v --no-default-features --tests --lib &&
+        cargo build --verbose --features "$FEATURES" &&
+        cargo test --verbose --features "$FEATURES" &&
+        cargo test --verbose --release --features "$FEATURES"
+
+  # Enforce rustfmt formatting
+  formatting:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Run formatting checks only on stable
+        rust: [stable]
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: ${{ matrix.rust }}
+        components: rustfmt
+    - name: Run Clippy
+      run: |
+        cargo fmt --all --check
+
+  # Ensure the benchmarks compile
+  benchmark_compiles:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Check builds only on stable
+        rust: [stable]
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: ${{ matrix.rust }}
+        components: clippy
+    - name: Run Clippy
+      run: |
+        cd benches
+        cargo bench --bench benches --no-run
+
+  build-wasm:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        features: ["+simd128", "-simd128"]
+    env:
+      RUSTFLAGS: "-C target-feature=${{matrix.features}} -D warnings"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - run: cat .github/Cargo.toml.wasm_ci >> Cargo.toml
+      - run: wasm-pack test --headless --chrome
+      - run: wasm-pack test --headless --firefox
+
+  miri:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Check builds only on nightly
+        rust: [nightly]
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: ${{ matrix.rust }}
+        components: miri
+    - name: Run miri
+      run: cargo miri test

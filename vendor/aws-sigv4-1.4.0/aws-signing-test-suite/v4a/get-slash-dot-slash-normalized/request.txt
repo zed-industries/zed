@@ -1,0 +1,2 @@
+GET /./ HTTP/1.1
+Host:example.amazonaws.com

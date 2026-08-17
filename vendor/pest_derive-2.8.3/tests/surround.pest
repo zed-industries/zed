@@ -1,0 +1,9 @@
+Quote = _{ _QuoteStart ~ QuoteChars ~ _QuoteEnd }
+
+_QuoteStart = _{
+    ( "(" ~ PUSH_LITERAL(")") )
+    | ( "<" ~ PUSH_LITERAL(">") )
+}
+_QuoteEnd = _{ POP }
+
+QuoteChars = { (!PEEK ~ ANY)* }

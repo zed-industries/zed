@@ -1,0 +1,11 @@
+error: structs without any fields are not supported
+ --> tests/ui/empty_struct.rs:5:5
+  |
+5 |     struct Empty {}
+  |     ^^^^^^^^^^^^^^^
+
+error: structs without any fields are not supported
+  --> tests/ui/empty_struct.rs:10:5
+   |
+10 |     struct ConditionallyEmpty {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^

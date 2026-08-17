@@ -1,0 +1,30 @@
+[package]
+name = "tao-core-video-sys"
+version = "0.2.0"
+authors = ["luozijun <luozijun.assistant@gmail.com>", "michael.laifx <cihv2@163.com>"]
+description = "Bindings to CoreVideo.framework for macOS and iOS"
+license = "MIT"
+edition = "2018"
+
+[lib]
+name = "core_video_sys"
+
+[dependencies]
+cfg-if = "1.0"
+libc = "0.2"
+objc = "0.2"
+core-foundation-sys = "0.8"
+
+[dependencies.metal]
+version = "0.23"
+optional = true
+
+[features]
+default = []
+all = [ "display_link", "direct3d", "io_suface", "opengl" ]
+
+display_link = [ "opengl" ]
+direct3d  = [ ]
+io_suface = [ ]
+opengl    = [ ]
+

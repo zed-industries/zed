@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+env:
+  RUSTFLAGS: "-C debuginfo=0 -D warnings"
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  tests:
+    name: Tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+        toolchain: ["1.87"]
+        include:
+          - os: macos-latest
+            MACOS: true
+          - os: windows-latest
+          - os: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install linux build requirements
+        run: sudo apt install --yes --no-install-recommends libasound2-dev pkg-config
+        if: contains(matrix.os, 'ubuntu')
+
+      - name: Install ${{ matrix.toolchain }} toolchain
+        run: rustup toolchain install ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain }}
+
+      - name: Install stable toolchain for clippy
+        run: rustup toolchain install stable
+        if: matrix.os == 'ubuntu-latest'
+
+      - run: cargo +stable clippy --all-features -- -D warnings
+        if: matrix.os == 'ubuntu-latest'
+
+      - run: |
+          rustup component add rustfmt
+          cargo fmt --all -- --check
+        if: matrix.os == 'ubuntu-latest'
+
+      - run: cargo test --all-targets
+      - run: cargo test --all-targets --all-features
+      - run: cargo test --lib --bins --tests --benches --features=experimental
+      # `cargo test` does not check benchmarks and `cargo test --all-targets` excludes
+      # documentation tests. Therefore, we need an additional docs test command here.
+      - run: cargo test --doc
+      # Check minimal build.
+      - run: cargo check --tests --lib --no-default-features
+      # Check alternative decoders.
+      - run: cargo check --tests --lib --no-default-features --features claxon,hound,minimp3,lewton
+      # Test 64-bit sample mode
+      - run: cargo test --all-targets --features 64bit
+      - run: cargo test --doc --features 64bit
+      - run: cargo test --all-targets --all-features --features 64bit
+      # Check examples compile in both modes
+      - run: cargo check --examples
+      - run: cargo check --examples --features 64bit

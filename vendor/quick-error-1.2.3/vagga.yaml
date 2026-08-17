@@ -1,0 +1,36 @@
+commands:
+
+  cargo: !Command
+    description: Run any cargo command
+    container: ubuntu
+    run: [cargo]
+
+  test: !Command
+    description: Run unit tests
+    container: ubuntu
+    run: [cargo, test]
+
+  _bulk: !Command
+    description: Run `bulk` command (for version bookkeeping)
+    container: ubuntu
+    run: [bulk]
+
+containers:
+
+  ubuntu:
+    setup:
+    - !Ubuntu xenial
+    - !Install [ca-certificates, build-essential, vim]
+
+    - !TarInstall
+      url: "https://static.rust-lang.org/dist/rust-1.16.0-x86_64-unknown-linux-gnu.tar.gz"
+      script: "./install.sh --prefix=/usr \
+                --components=rustc,rust-std-x86_64-unknown-linux-gnu,cargo"
+    - &bulk !Tar
+      url: "https://github.com/tailhook/bulk/releases/download/v0.4.9/bulk-v0.4.9.tar.gz"
+      sha256: 23471a9986274bb4b7098c03e2eb7e1204171869b72c45385fcee1c64db2d111
+      path: /
+
+    environ:
+      HOME: /work/target
+      USER: pc

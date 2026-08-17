@@ -1,0 +1,22 @@
+[package]
+name = "zune-inflate"
+version = "0.2.54"
+edition = "2021"
+description = "A heavily optimized deflate decompressor in Pure Rust"
+exclude = ["tests/"]
+homepage = "https://github.com/etemesi254/zune-image/tree/main/zune-inflate"
+keywords = ["compression", "inflate", "deflate"]
+categories = ["compression"]
+license = "MIT OR Apache-2.0 OR Zlib"
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+zlib = ["simd-adler32"]
+gzip = []
+std = ["simd-adler32/std"]
+
+
+default = ["zlib", "gzip", "std"]
+
+[dependencies]
+simd-adler32 = { version = "0.3.4", optional = true, default-features = false }

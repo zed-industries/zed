@@ -1,0 +1,31 @@
+[package]
+name = "wide"
+description = "A crate to help you go wide."
+version = "0.7.33"
+authors = ["Lokathor <zefria@gmail.com>"]
+repository = "https://github.com/Lokathor/wide"
+readme = "README.md"
+keywords = ["simd", "wide", "lokathor"]
+categories = ["data-structures", "hardware-support"]
+edition = "2018"
+license = "Zlib OR Apache-2.0 OR MIT"
+
+# Aarch64 needs 1.59 while others need 1.56
+# When updating, also update CI workflows and the badge in the README.
+rust-version = "1.61"
+
+[features]
+default = ["std"]
+
+# Activate `std` within the crate. Currently this gives a much faster `sqrt`
+# impl when an explicit hardware sqrt isn't available.
+std = []
+serde = ["dep:serde"]
+
+[dependencies]
+safe_arch = { version = "0.7", features = ["bytemuck"] }
+serde = { version = "1", default-features = false, optional = true }
+bytemuck = "1"
+
+[dev-dependencies]
+bincode = { version = "1.3.3" }

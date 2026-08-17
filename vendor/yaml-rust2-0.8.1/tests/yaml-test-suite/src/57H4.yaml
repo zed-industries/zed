@@ -1,0 +1,49 @@
+---
+- name: Spec Example 8.22. Block Collection Nodes
+  from: http://www.yaml.org/spec/1.2/spec.html#id2800008
+  tags: sequence mapping tag
+  yaml: |
+    sequence: !!seq
+    - entry
+    - !!seq
+     - nested
+    mapping: !!map
+     foo: bar
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :sequence
+       +SEQ <tag:yaml.org,2002:seq>
+        =VAL :entry
+        +SEQ <tag:yaml.org,2002:seq>
+         =VAL :nested
+        -SEQ
+       -SEQ
+       =VAL :mapping
+       +MAP <tag:yaml.org,2002:map>
+        =VAL :foo
+        =VAL :bar
+       -MAP
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "sequence": [
+        "entry",
+        [
+          "nested"
+        ]
+      ],
+      "mapping": {
+        "foo": "bar"
+      }
+    }
+  dump: |
+    sequence: !!seq
+    - entry
+    - !!seq
+      - nested
+    mapping: !!map
+      foo: bar

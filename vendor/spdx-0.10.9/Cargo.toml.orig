@@ -1,0 +1,39 @@
+[package]
+name = "spdx"
+version = "0.10.9"
+authors = [
+    "Embark <opensource@embark-studios.com>",
+    "Jake Shadle <jake.shadle@embark-studios.com>",
+]
+description = "Helper crate for SPDX expressions"
+edition = "2024"
+rust-version = "1.85.0"
+homepage = "https://github.com/EmbarkStudios/spdx"
+documentation = "https://docs.rs/spdx"
+readme = "README.md"
+keywords = ["spdx", "license"]
+categories = ["parser-implementations"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/EmbarkStudios/spdx"
+include = [
+    "Cargo.toml",
+    "LICENSE-APACHE",
+    "LICENSE-MIT",
+    "README.md",
+    "src/**/*",
+]
+
+[features]
+# Includes the full canonical text of each license
+text = []
+
+[dependencies]
+# In most cases expressions are quite small so we can avoid heap allocations
+smallvec = "1.15"
+
+[dev-dependencies]
+# Used to print colored diffs in case of test failures
+similar-asserts = "1.7"
+
+[package.metadata.docs.rs]
+all-features = true

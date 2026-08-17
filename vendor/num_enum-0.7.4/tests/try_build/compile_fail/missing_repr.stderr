@@ -1,0 +1,7 @@
+error: Missing `#[repr({Integer})]` attribute
+ --> $DIR/missing_repr.rs:1:10
+  |
+1 | #[derive(num_enum::IntoPrimitive)]
+  |          ^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the derive macro `num_enum::IntoPrimitive` (in Nightly builds, run with -Z macro-backtrace for more info)

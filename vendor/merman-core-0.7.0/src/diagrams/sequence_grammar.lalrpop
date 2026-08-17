@@ -1,0 +1,430 @@
+// Sequence diagram minimal grammar (phase 1).
+
+grammar;
+
+use crate::diagrams::sequence::{
+  Action, Tok, LINETYPE_ALT_ELSE, LINETYPE_ALT_END, LINETYPE_ALT_START, LINETYPE_BREAK_END,
+  LINETYPE_BREAK_START, LINETYPE_CRITICAL_END, LINETYPE_CRITICAL_OPTION, LINETYPE_CRITICAL_START,
+  LINETYPE_CENTRAL_CONNECTION, LINETYPE_CENTRAL_CONNECTION_DUAL,
+  LINETYPE_CENTRAL_CONNECTION_REVERSE, LINETYPE_LOOP_END, LINETYPE_LOOP_START, LINETYPE_OPT_END,
+  LINETYPE_OPT_START, LINETYPE_PAR_AND, LINETYPE_PAR_END, LINETYPE_PAR_OVER_START,
+  LINETYPE_PAR_START, LINETYPE_RECT_END, LINETYPE_RECT_START
+};
+
+extern {
+  type Location = usize;
+  type Error = crate::diagrams::sequence::LexError;
+
+  enum Tok {
+    Newline => Tok::Newline,
+
+    "sequenceDiagram" => Tok::SequenceDiagram,
+    "participant" => Tok::Participant,
+    "actor" => Tok::ActorKw,
+    "create" => Tok::Create,
+    "destroy" => Tok::Destroy,
+    "as" => Tok::As,
+
+    "box" => Tok::Box,
+    "end" => Tok::End,
+
+    "loop" => Tok::Loop,
+    "rect" => Tok::Rect,
+    "opt" => Tok::Opt,
+    "alt" => Tok::Alt,
+    "else" => Tok::Else,
+    "par" => Tok::Par,
+    "par_over" => Tok::ParOver,
+    "and" => Tok::And,
+    "critical" => Tok::Critical,
+    "option" => Tok::Option,
+    "break" => Tok::Break,
+
+    "note" => Tok::Note,
+    "left_of" => Tok::LeftOf,
+    "right_of" => Tok::RightOf,
+    "over" => Tok::Over,
+
+    "links" => Tok::Links,
+    "link" => Tok::Link,
+    "properties" => Tok::Properties,
+    "details" => Tok::Details,
+
+    "autonumber" => Tok::Autonumber,
+    "off" => Tok::Off,
+
+    "activate" => Tok::Activate,
+    "deactivate" => Tok::Deactivate,
+
+    Comma => Tok::Comma,
+    Plus => Tok::Plus,
+    Minus => Tok::Minus,
+    Central => Tok::Central,
+
+    Num => Tok::Num(<f64>),
+    Actor => Tok::Actor(<String>),
+    Text => Tok::Text(<String>),
+    RestOfLine => Tok::RestOfLine(<String>),
+    SignalType => Tok::SignalType(<i32>),
+    Config => Tok::Config(<String>),
+
+    Title => Tok::Title(<String>),
+    CompatTitle => Tok::CompatTitle(<String>),
+    AccTitle => Tok::AccTitle(<String>),
+    AccDescr => Tok::AccDescr(<String>),
+    AccDescrMultiline => Tok::AccDescrMultiline(<String>),
+  }
+}
+
+pub Actions: Vec<Action> = {
+  <_n:Newlines> "sequenceDiagram" <_n2:Newlines> <a:Statements> => a
+};
+
+Statements: Vec<Action> = {
+  => Vec::new(),
+  <s:Statement> <rest:StatementRest> => {
+    let mut v = s;
+    v.extend(rest);
+    v
+  }
+};
+
+StatementRest: Vec<Action> = {
+  <_n:Newlines1> <s:Statement> <rest:StatementRest> => {
+    let mut v = s;
+    v.extend(rest);
+    v
+  },
+  Newlines => Vec::new(),
+};
+
+Newlines: () = {
+  => (),
+  Newline Newlines => (),
+};
+
+Newlines1: () = {
+  Newline Newlines => (),
+};
+
+Statement: Vec<Action> = {
+  <p:ParticipantStatement> => p,
+  <c:CreateStatement> => c,
+  <d:DestroyStatement> => d,
+  <b:BlockStatement> => b,
+  <s:SignalStatement> => s,
+  <n:NoteStatement> => n,
+  <b:BoxStatement> => b,
+  <l:LinksStatement> => l,
+  <l:LinkStatement> => l,
+  <p:PropertiesStatement> => p,
+  <d:DetailsStatement> => d,
+  <t:TitleStatement> => vec![Action::SetTitle(t)],
+  <a:AccTitleStatement> => vec![Action::SetAccTitle(a)],
+  <d:AccDescrStatement> => vec![Action::SetAccDescr(d)],
+  <au:AutonumberStatement> => vec![au],
+  <ac:ActivateStatement> => vec![ac],
+  <de:DeactivateStatement> => vec![de],
+};
+
+Doc: Vec<Action> = {
+  => Vec::new(),
+  Newline <rest:Doc> => rest,
+  <s:Statement> Newline <rest:Doc> => {
+    let mut v = s;
+    v.extend(rest);
+    v
+  },
+};
+
+TitleStatement: String = {
+  <t:Title> => t,
+  <t:CompatTitle> => t,
+};
+
+AccTitleStatement: String = {
+  <t:AccTitle> => t,
+};
+
+AccDescrStatement: String = {
+  <t:AccDescr> => t,
+  <t:AccDescrMultiline> => t,
+};
+
+ActorId: String = {
+  <a:Actor> => a,
+  <n:Num> => n.to_string(),
+};
+
+ParticipantDecl: (String, Option<String>, String, Option<String>) = {
+  "participant" <id:ActorId> "as" <desc:RestOfLine> => (id, Some(desc), "participant".to_string(), None),
+  "participant" <id:ActorId> <cfg:Config> => (id, None, "participant".to_string(), Some(cfg)),
+  "participant" <id:ActorId> => (id, None, "participant".to_string(), None),
+  "actor" <id:ActorId> "as" <desc:RestOfLine> => (id, Some(desc), "actor".to_string(), None),
+  "actor" <id:ActorId> => (id, None, "actor".to_string(), None),
+};
+
+ParticipantStatement: Vec<Action> = {
+  <d:ParticipantDecl> => vec![
+    Action::AddParticipant { id: d.0, description: d.1, draw: d.2, config: d.3 },
+  ],
+};
+
+CreateStatement: Vec<Action> = {
+  "create" <d:ParticipantDecl> => vec![
+    Action::CreateParticipant { id: d.0, description: d.1, draw: d.2, config: d.3 },
+  ],
+};
+
+DestroyStatement: Vec<Action> = {
+  "destroy" <a:ActorId> => vec![Action::DestroyParticipant { id: a }],
+};
+
+BlockStatement: Vec<Action> = {
+  <l:LoopBlock> => l,
+  <o:OptBlock> => o,
+  <a:AltBlock> => a,
+  <p:ParBlock> => p,
+  <p:ParOverBlock> => p,
+  <c:CriticalBlock> => c,
+  <b:BreakBlock> => b,
+  <r:RectBlock> => r,
+};
+
+LoopBlock: Vec<Action> = {
+  "loop" <h:RestOfLine> <body:Doc> "end" => {
+    let mut v = vec![Action::ControlSignal { signal_type: LINETYPE_LOOP_START, text: Some(h) }];
+    v.extend(body);
+    v.push(Action::ControlSignal { signal_type: LINETYPE_LOOP_END, text: None });
+    v
+  }
+};
+
+OptBlock: Vec<Action> = {
+  "opt" <h:RestOfLine> <body:Doc> "end" => {
+    let mut v = vec![Action::ControlSignal { signal_type: LINETYPE_OPT_START, text: Some(h) }];
+    v.extend(body);
+    v.push(Action::ControlSignal { signal_type: LINETYPE_OPT_END, text: None });
+    v
+  }
+};
+
+RectBlock: Vec<Action> = {
+  "rect" <h:RestOfLine> <body:Doc> "end" => {
+    let mut v = vec![Action::ControlSignal { signal_type: LINETYPE_RECT_START, text: Some(h) }];
+    v.extend(body);
+    v.push(Action::ControlSignal { signal_type: LINETYPE_RECT_END, text: None });
+    v
+  }
+};
+
+AltBlock: Vec<Action> = {
+  "alt" <h:RestOfLine> <body:Doc> <else_branches:AltElseBranch*> "end" => {
+    let mut v = vec![Action::ControlSignal { signal_type: LINETYPE_ALT_START, text: Some(h) }];
+    v.extend(body);
+    for (label, doc) in else_branches {
+      v.push(Action::ControlSignal { signal_type: LINETYPE_ALT_ELSE, text: Some(label) });
+      v.extend(doc);
+    }
+    v.push(Action::ControlSignal { signal_type: LINETYPE_ALT_END, text: None });
+    v
+  }
+};
+
+AltElseBranch: (String, Vec<Action>) = {
+  "else" <h:RestOfLine> <body:Doc> => (h, body),
+};
+
+ParBlock: Vec<Action> = {
+  "par" <h:RestOfLine> <body:Doc> <branches:ParAndBranch*> "end" => {
+    let mut v = vec![Action::ControlSignal { signal_type: LINETYPE_PAR_START, text: Some(h) }];
+    v.extend(body);
+    for (label, doc) in branches {
+      v.push(Action::ControlSignal { signal_type: LINETYPE_PAR_AND, text: Some(label) });
+      v.extend(doc);
+    }
+    v.push(Action::ControlSignal { signal_type: LINETYPE_PAR_END, text: None });
+    v
+  }
+};
+
+ParOverBlock: Vec<Action> = {
+  "par_over" <h:RestOfLine> <body:Doc> "end" => {
+    let mut v = vec![Action::ControlSignal { signal_type: LINETYPE_PAR_OVER_START, text: Some(h) }];
+    v.extend(body);
+    v.push(Action::ControlSignal { signal_type: LINETYPE_PAR_END, text: None });
+    v
+  }
+};
+
+ParAndBranch: (String, Vec<Action>) = {
+  "and" <h:RestOfLine> <body:Doc> => (h, body),
+};
+
+CriticalBlock: Vec<Action> = {
+  "critical" <h:RestOfLine> <body:Doc> <branches:CriticalOptionBranch*> "end" => {
+    let mut v = vec![Action::ControlSignal { signal_type: LINETYPE_CRITICAL_START, text: Some(h) }];
+    v.extend(body);
+    for (label, doc) in branches {
+      v.push(Action::ControlSignal { signal_type: LINETYPE_CRITICAL_OPTION, text: Some(label) });
+      v.extend(doc);
+    }
+    v.push(Action::ControlSignal { signal_type: LINETYPE_CRITICAL_END, text: None });
+    v
+  }
+};
+
+CriticalOptionBranch: (String, Vec<Action>) = {
+  "option" <h:RestOfLine> <body:Doc> => (h, body),
+};
+
+BreakBlock: Vec<Action> = {
+  "break" <h:RestOfLine> <body:Doc> "end" => {
+    let mut v = vec![Action::ControlSignal { signal_type: LINETYPE_BREAK_START, text: Some(h) }];
+    v.extend(body);
+    v.push(Action::ControlSignal { signal_type: LINETYPE_BREAK_END, text: None });
+    v
+  }
+};
+
+BoxStatement: Vec<Action> = {
+  "box" <h:RestOfLine> <_n:Newlines1> <inner:BoxBody> "end" => {
+    let mut v = vec![Action::BoxStart { header: h }];
+    v.extend(inner);
+    v.push(Action::BoxEnd);
+    v
+  },
+};
+
+BoxBody: Vec<Action> = {
+  => Vec::new(),
+  <p:ParticipantStatement> <_n:Newlines1> <rest:BoxBody> => {
+    let mut v = p;
+    v.extend(rest);
+    v
+  },
+};
+
+LinksStatement: Vec<Action> = {
+  "links" <a:ActorId> <t:Text> => vec![
+    Action::EnsureParticipant { id: a.clone() },
+    Action::AddLinks { actor: a, text: t },
+  ],
+};
+
+LinkStatement: Vec<Action> = {
+  "link" <a:ActorId> <t:Text> => vec![
+    Action::EnsureParticipant { id: a.clone() },
+    Action::AddLink { actor: a, text: t },
+  ],
+};
+
+PropertiesStatement: Vec<Action> = {
+  "properties" <a:ActorId> <t:Text> => vec![
+    Action::EnsureParticipant { id: a.clone() },
+    Action::AddProperties { actor: a, text: t },
+  ],
+};
+
+DetailsStatement: Vec<Action> = {
+  "details" <a:ActorId> <t:Text> => vec![
+    Action::EnsureParticipant { id: a.clone() },
+    Action::AddDetails { actor: a, text: t },
+  ],
+};
+
+SignalStatement: Vec<Action> = {
+  <from:ActorId> <ty:SignalType> Plus <to:ActorId> <text:Text> => vec![
+    Action::EnsureParticipant { id: from.clone() },
+    Action::EnsureParticipant { id: to.clone() },
+    Action::AddMessage { from: from.clone(), to: to.clone(), signal_type: ty, text, activate: true, central_connection: 0 },
+    Action::ActiveStart { actor: to },
+  ],
+  <from:ActorId> <ty:SignalType> Minus <to:ActorId> <text:Text> => vec![
+    Action::EnsureParticipant { id: from.clone() },
+    Action::EnsureParticipant { id: to.clone() },
+    Action::AddMessage { from: from.clone(), to: to.clone(), signal_type: ty, text, activate: false, central_connection: 0 },
+    Action::ActiveEnd { actor: from },
+  ],
+  <from:ActorId> <ty:SignalType> Central <to:ActorId> <text:Text> => vec![
+    Action::EnsureParticipant { id: from.clone() },
+    Action::EnsureParticipant { id: to.clone() },
+    Action::AddMessage {
+      from: from.clone(),
+      to: to.clone(),
+      signal_type: ty,
+      text,
+      activate: true,
+      central_connection: LINETYPE_CENTRAL_CONNECTION,
+    },
+    Action::CentralConnection { actor: to },
+  ],
+  <from:ActorId> Central <ty:SignalType> <to:ActorId> <text:Text> => vec![
+    Action::EnsureParticipant { id: from.clone() },
+    Action::EnsureParticipant { id: to.clone() },
+    Action::AddMessage {
+      from: from.clone(),
+      to: to.clone(),
+      signal_type: ty,
+      text,
+      activate: false,
+      central_connection: LINETYPE_CENTRAL_CONNECTION_REVERSE,
+    },
+    Action::CentralConnectionReverse { actor: from },
+  ],
+  <from:ActorId> Central <ty:SignalType> Central <to:ActorId> <text:Text> => vec![
+    Action::EnsureParticipant { id: from.clone() },
+    Action::EnsureParticipant { id: to.clone() },
+    Action::AddMessage {
+      from: from.clone(),
+      to: to.clone(),
+      signal_type: ty,
+      text,
+      activate: true,
+      central_connection: LINETYPE_CENTRAL_CONNECTION_DUAL,
+    },
+    Action::CentralConnection { actor: to },
+    Action::CentralConnectionReverse { actor: from },
+  ],
+  <from:ActorId> <ty:SignalType> <to:ActorId> <text:Text> => vec![
+    Action::EnsureParticipant { id: from.clone() },
+    Action::EnsureParticipant { id: to.clone() },
+    Action::AddMessage { from, to, signal_type: ty, text, activate: false, central_connection: 0 },
+  ],
+};
+
+NoteStatement: Vec<Action> = {
+  "note" <p:Placement> <a:ActorId> <t:Text> => vec![
+    Action::EnsureParticipant { id: a.clone() },
+    Action::AddNote { actors: vec![a], placement: p, text: t },
+  ],
+  "note" "over" <a:ActorId> Comma <b:ActorId> <t:Text> => vec![
+    Action::EnsureParticipant { id: a.clone() },
+    Action::EnsureParticipant { id: b.clone() },
+    Action::AddNote { actors: vec![a, b], placement: 2, text: t },
+  ],
+  "note" "over" <a:ActorId> <t:Text> => vec![
+    Action::EnsureParticipant { id: a.clone() },
+    Action::AddNote { actors: vec![a.clone(), a], placement: 2, text: t },
+  ],
+};
+
+Placement: i32 = {
+  "left_of" => 0,
+  "right_of" => 1,
+};
+
+AutonumberStatement: Action = {
+  "autonumber" <a:Num> <b:Num> => Action::Autonumber { start: Some(a), step: Some(b), visible: true },
+  "autonumber" <a:Num> => Action::Autonumber { start: Some(a), step: Some(1.0), visible: true },
+  "autonumber" "off" => Action::Autonumber { start: None, step: None, visible: false },
+  "autonumber" => Action::Autonumber { start: None, step: None, visible: true },
+};
+
+ActivateStatement: Action = {
+  "activate" <a:ActorId> => Action::ActiveStart { actor: a },
+};
+
+DeactivateStatement: Action = {
+  "deactivate" <a:ActorId> => Action::ActiveEnd { actor: a },
+};

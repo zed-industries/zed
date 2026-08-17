@@ -1,0 +1,95 @@
+;; Chained `uextend` and `sextend`.
+(rule (simplify (uextend ty (uextend _intermediate_ty x)))
+      (uextend ty x))
+(rule (simplify (sextend ty (sextend _intermediate_ty x)))
+      (sextend ty x))
+
+;; Once something has be `uextend`ed, further `sextend`ing is the same as `uextend`
+(rule (simplify (sextend ty (uextend _intermediate_ty x)))
+      (uextend ty x))
+
+;; `icmp` is zero or one, so sign-extending is the same as zero-extending
+(rule (simplify (sextend ty x@(icmp _ _ _ _)))
+      (uextend ty x))
+
+;; Masking out any of the top bits of the result of `uextend` is a no-op. (This
+;; is like a cheap version of known-bits analysis.)
+(rule (simplify (band wide x @ (uextend _ (value_type narrow)) (iconst_u _ mask)))
+      ; Check that `narrow_mask` has a subset of the bits that `mask` does.
+      (if-let true (let ((narrow_mask u64 (ty_mask narrow))) (u64_eq narrow_mask (u64_and mask narrow_mask))))
+      x)
+
+;; Masking out the sign-extended bits of an `sextend` turns it into a `uextend`.
+(rule (simplify (band wide (sextend _ x @ (value_type narrow)) (iconst_u _ mask)))
+      (if-let true (u64_eq mask (ty_mask narrow)))
+      (uextend wide x))
+
+;; 32-bit integers zero-extended to 64-bit integers are never negative
+(rule (simplify
+       (slt ty
+             (uextend $I64 x @ (value_type $I32))
+             (iconst_u _ 0)))
+      (subsume (iconst_u ty 0)))
+(rule (simplify
+       (sge ty
+             (uextend $I64 x @ (value_type $I32))
+             (iconst_u _ 0)))
+      (subsume (iconst_u ty 1)))
+
+;; Sign-extending can't change whether a number is zero nor how it signed-compares to zero
+(rule (simplify (eq _ (sextend _ x@(value_type ty)) (iconst_s _ 0)))
+      (eq ty x (iconst_s ty 0)))
+(rule (simplify (ne _ (sextend _ x@(value_type ty)) (iconst_s _ 0)))
+      (ne ty x (iconst_s ty 0)))
+(rule (simplify (icmp _ cc (sextend _ x@(value_type ty)) (iconst_s _ 0)))
+      (if (signed_cond_code cc))
+      (icmp ty cc x (iconst_s ty 0)))
+
+;; A reduction-of-an-extend back to the same original type is the same as not
+;; actually doing the extend in the first place.
+(rule (simplify (ireduce ty (sextend _ x @ (value_type ty)))) (subsume x))
+(rule (simplify (ireduce ty (uextend _ x @ (value_type ty)))) (subsume x))
+
+;; A reduction-of-an-extend that's not just to the original type is either:
+;; a reduction of the original if the final type is smaller, or
+(rule (simplify (ireduce (ty_int ty_final) (sextend _ inner@(value_type ty_initial))))
+      (if-let true (u64_lt (ty_bits_u64 ty_final) (ty_bits_u64 ty_initial)))
+      (ireduce ty_final inner))
+(rule (simplify (ireduce (ty_int ty_final) (uextend _ inner@(value_type ty_initial))))
+      (if-let true (u64_lt (ty_bits_u64 ty_final) (ty_bits_u64 ty_initial)))
+      (ireduce ty_final inner))
+;; an extension of the original if the final type is larger.
+(rule (simplify (ireduce (ty_int ty_final) (sextend _ inner@(value_type ty_initial))))
+      (if-let true (u64_lt (ty_bits_u64 ty_initial) (ty_bits_u64 ty_final)))
+      (sextend ty_final inner))
+(rule (simplify (ireduce (ty_int ty_final) (uextend _ inner@(value_type ty_initial))))
+      (if-let true (u64_lt (ty_bits_u64 ty_initial) (ty_bits_u64 ty_final)))
+      (uextend ty_final inner))
+
+;; `band`, `bor`, and `bxor` can't affect any bits that aren't set in the one of
+;; the inputs, so they can be pushed down inside `uextend`s
+(rule (simplify (band bigty (uextend _ x@(value_type smallty)) (uextend _ y@(value_type smallty))))
+      (uextend bigty (band smallty x y)))
+(rule (simplify (bor bigty (uextend _ x@(value_type smallty)) (uextend _ y@(value_type smallty))))
+      (uextend bigty (bor smallty x y)))
+(rule (simplify (bxor bigty (uextend _ x@(value_type smallty)) (uextend _ y@(value_type smallty))))
+      (uextend bigty (bxor smallty x y)))
+
+;; Replace `(small)(x OP y)` with `(small)x OP (small)y` in cases where that's
+;; legal.
+;; Matches values where the high bits of the input don't affect lower bits of
+;; the output, and thus the inputs can be reduced before the operation rather
+;; than doing the wide operation then reducing afterwards.
+(rule (simplify (ireduce ty (ineg _ x))) (ineg ty (ireduce ty x)))
+(rule (simplify (ireduce ty (bnot _ x))) (bnot ty (ireduce ty x)))
+
+(rule (simplify (ireduce ty (iadd _ x y))) (iadd ty (ireduce ty x) (ireduce ty y)))
+(rule (simplify (ireduce ty (isub _ x y))) (isub ty (ireduce ty x) (ireduce ty y)))
+(rule (simplify (ireduce ty (imul _ x y))) (imul ty (ireduce ty x) (ireduce ty y)))
+(rule (simplify (ireduce ty (bor  _ x y))) (bor  ty (ireduce ty x) (ireduce ty y)))
+(rule (simplify (ireduce ty (bxor _ x y))) (bxor ty (ireduce ty x) (ireduce ty y)))
+(rule (simplify (ireduce ty (band _ x y))) (band ty (ireduce ty x) (ireduce ty y)))
+
+;; Try to transform an `iconcat` into an i128 into either an sextend or uextend
+(rule (simplify (iconcat $I128 x (iconst_u _ 0))) (uextend $I128 x))
+(rule (simplify (iconcat $I128 x (sshr _ x (iconst_u _ 63)))) (sextend $I128 x))

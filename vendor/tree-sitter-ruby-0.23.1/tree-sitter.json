@@ -1,0 +1,46 @@
+{
+  "grammars": [
+    {
+      "name": "ruby",
+      "camelcase": "Ruby",
+      "scope": "source.ruby",
+      "path": ".",
+      "file-types": [
+        "rb"
+      ],
+      "highlights": "queries/highlights.scm",
+      "tags": "queries/tags.scm",
+      "injection-regex": "ruby"
+    }
+  ],
+  "metadata": {
+    "version": "0.23.1",
+    "license": "MIT",
+    "description": "Ruby grammar for tree-sitter",
+    "authors": [
+      {
+        "name": "Rob Rix",
+        "email": "rob.rix@github.com"
+      },
+      {
+        "name": "Max Brunsfeld",
+        "email": "maxbrunsfeld@gmail.com"
+      },
+      {
+        "name": "Amaan Qureshi",
+        "email": "amaanq12@gmail.com"
+      }
+    ],
+    "links": {
+      "repository": "https://github.com/tree-sitter/tree-sitter-ruby"
+    }
+  },
+  "bindings": {
+    "c": true,
+    "go": true,
+    "node": true,
+    "python": true,
+    "rust": true,
+    "swift": true
+  }
+}

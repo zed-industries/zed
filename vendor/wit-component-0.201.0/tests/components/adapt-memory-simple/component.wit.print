@@ -1,0 +1,7 @@
+package root:component;
+
+world root {
+  import new: interface {
+    log: func(s: string);
+  }
+}

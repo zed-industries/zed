@@ -1,0 +1,5 @@
+unexpected end-of-file
+     --> tests/parse-fail/string4.wat:2:14
+      |
+    2 |   (import "\0
+      |              ^

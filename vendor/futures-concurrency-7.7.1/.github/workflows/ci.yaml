@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - staging
+      - trying
+
+env:
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  build_and_test:
+    name: Build and test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+        rust: [stable]
+
+    steps:
+    - uses: actions/checkout@master
+
+    - name: Install ${{ matrix.rust }}
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: ${{ matrix.rust }}
+        override: true
+
+    - name: check
+      uses: actions-rs/cargo@v1
+      with:
+        command: check
+        args: --all --bins --examples
+
+    - name: check no-std
+      uses: actions-rs/cargo@v1
+      with:
+        command: check
+        args: --all --no-default-features
+
+    - name: check alloc
+      uses: actions-rs/cargo@v1
+      with:
+        command: check
+        args: --all --no-default-features --features alloc
+
+    - name: tests
+      uses: actions-rs/cargo@v1
+      with:
+        command: test
+        args: --all
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: taiki-e/install-action@cargo-hack
+    - run: cargo hack check --rust-version --workspace --lib --ignore-private
+
+  miri:
+    name: "Build and test (miri, nightly)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install Miri
+        run: |
+          rustup toolchain install nightly --component miri
+          rustup override set nightly
+          cargo miri setup
+      - name: Test with Miri
+        run: cargo miri test
+
+  check_clippy_fmt_and_docs:
+    name: Checking clippy, fmt and docs
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    - uses: actions-rs/toolchain@v1
+      with:
+        toolchain: nightly
+        components: rustfmt, clippy
+        override: true
+
+    - name: clippy
+      run: cargo clippy -- -Dwarnings
+
+    - name: fmt
+      run: cargo fmt --all -- --check
+
+    - name: Docs
+      run: cargo doc
+
+  semver-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Check semver
+        uses: obi1kenobi/cargo-semver-checks-action@v2

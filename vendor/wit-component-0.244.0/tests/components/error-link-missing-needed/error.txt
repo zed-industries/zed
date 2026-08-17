@@ -1,0 +1,2 @@
+missing libraries:
+	foo needs bar

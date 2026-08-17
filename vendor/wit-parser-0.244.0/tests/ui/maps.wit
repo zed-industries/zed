@@ -1,0 +1,34 @@
+package foo:maps;
+
+interface maps {
+  // Basic maps
+  type string-to-u32 = map<string, u32>;
+  type u32-to-string = map<u32, string>;
+  
+  // Nested maps
+  type nested-map = map<string, map<string, u32>>;
+  
+  // Maps with complex types
+  record person {
+    name: string,
+    age: u32,
+  }
+  type person-map = map<string, person>;
+  
+  // Maps with tuples, lists, options
+  type complex-map = map<string, option<list<u32>>>;
+  
+  // Functions using maps
+  get-value: func(m: map<string, u32>, key: string) -> option<u32>;
+  set-value: func(m: map<string, u32>, key: string, value: u32) -> map<string, u32>;
+  merge-maps: func(a: map<string, u32>, b: map<string, u32>) -> map<string, u32>;
+  
+  // Map with various key types
+  type int-key-map = map<u32, string>;
+  type char-key-map = map<char, string>;
+}
+
+world maps-world {
+  import maps;
+  export maps;
+}

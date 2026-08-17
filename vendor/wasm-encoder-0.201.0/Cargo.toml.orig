@@ -1,0 +1,28 @@
+[package]
+name = "wasm-encoder"
+version.workspace = true
+authors = ["Nick Fitzgerald <fitzgen@gmail.com>"]
+edition.workspace = true
+license = "Apache-2.0 WITH LLVM-exception"
+readme = "README.md"
+repository = "https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wasm-encoder"
+homepage = "https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wasm-encoder"
+documentation = "https://docs.rs/wasm-encoder"
+description = """
+A low-level WebAssembly encoder.
+"""
+
+[lints]
+workspace = true
+
+[dependencies]
+leb128 = { workspace = true }
+
+# Enable this dependency to get a bunch of `From<wasmparser::Foo> for
+# wasm_encoder::Foo` impls.
+wasmparser = { optional = true, workspace = true }
+
+[dev-dependencies]
+anyhow = { workspace = true }
+tempfile = "3.2.0"
+wasmparser = { path = "../wasmparser" }

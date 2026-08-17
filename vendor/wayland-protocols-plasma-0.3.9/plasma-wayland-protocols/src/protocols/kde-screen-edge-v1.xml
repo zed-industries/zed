@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="kde_screen_edge_v1">
+  <copyright>
+    SPDX-FileCopyrightText: 2023 Vlad Zahorodnii
+
+    SPDX-License-Identifier: MIT-CMU
+  </copyright>
+
+  <interface name="kde_screen_edge_manager_v1" version="1">
+    <description summary="screen edge manager">
+      This interface allows clients to associate actions with screen edges. For
+      example, showing a surface by moving the pointer to a screen edge.
+
+      Potential ways to trigger the screen edge are subject to compositor
+      policies. As an example, the compositor may consider the screen edge to be
+      triggered if the pointer hits its associated screen border. Other ways may
+      include using touchscreen or touchpad gestures.
+
+      Warning! The protocol described in this file is a desktop environment
+      implementation detail. Regular clients must not use this protocol.
+      Backward incompatible changes may be added without bumping the major
+      version of the extension.
+    </description>
+
+    <enum name="error">
+      <entry name="invalid_border" value="0"
+             summary="the specified border value is invalid"/>
+      <entry name="invalid_role" value="1"
+             summary="the surface has invalid role"/>
+      <entry name="already_constructed" value="2"
+             summary="the surface already has a screen edge"/>
+    </enum>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the screen edge manager">
+        Destroy the screen edge manager. This doesn't destroy objects created
+        with this manager.
+      </description>
+    </request>
+
+    <enum name="border">
+      <description summary="screen border">
+        These values describe possible screen borders.
+      </description>
+      <entry name="top" value="1" summary="top screen edge"/>
+      <entry name="bottom" value="2" summary="bottom screen edge"/>
+      <entry name="left" value="3" summary="left screen edge"/>
+      <entry name="right" value="4" summary="right screen edge"/>
+    </enum>
+
+    <request name="get_auto_hide_screen_edge">
+      <description summary="create an auto hide edge">
+        Create a new auto hide screen edge object associated with the specified
+        surface and the border.
+
+        Creating a kde_auto_hide_screen_edge_v1 object does not change the
+        visibility of the surface. The kde_auto_hide_screen_edge_v1.activate
+        request must be issued in order to hide the surface.
+
+        The "border" argument must be a valid enum entry, otherwise the
+        invalid_border protocol error is raised.
+
+        The invalid_role protocol error will be raised if the specified surface
+        does not have layer_surface role.
+      </description>
+      <arg name="id" type="new_id" interface="kde_auto_hide_screen_edge_v1"
+           summary="the new screen edge"/>
+      <arg name="border" type="uint" enum="border"
+           summary="the associated screen border"/>
+      <arg name="surface" type="object" interface="wl_surface"
+           summary="the surface"/>
+    </request>
+  </interface>
+
+  <interface name="kde_auto_hide_screen_edge_v1" version="1">
+    <description summary="auto hide screen edge">
+      The auto hide screen edge object allows to hide the surface and make it
+      visible by triggering the screen edge. The screen edge is inactive and
+      the surface is visible by default.
+
+      This interface can be used to implement user interface elements such as
+      auto-hide panels or docks.
+
+      kde_auto_hide_screen_edge_v1.activate activates the screen edge and makes
+      the surface hidden. The surface can be made visible by triggering the
+      screen edge or calling kde_auto_hide_screen_edge_v1.deactivate.
+
+      If the screen edge has been triggered, it won't be re-activated again.
+      Another kde_auto_hide_screen_edge_v1.activate request must be made by the
+      client to activate the screen edge.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the auto hide screen edge object">
+        Destroy the auto hide screen edge object. If the screen edge is active,
+        it will be deactivated and the surface will be made visible.
+      </description>
+    </request>
+
+    <request name="deactivate">
+      <description summary="deactivate the screen edge">
+        Deactivate the screen edge. The surface will be made visible.
+      </description>
+    </request>
+
+    <request name="activate">
+      <description summary="activate the screen edge">
+        Activate the screen edge. The surface will be hidden until the screen
+        edge is triggered.
+      </description>
+    </request>
+  </interface>
+</protocol>

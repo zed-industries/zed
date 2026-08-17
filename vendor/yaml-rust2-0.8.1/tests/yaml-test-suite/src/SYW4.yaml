@@ -1,0 +1,31 @@
+---
+- name: Spec Example 2.2. Mapping Scalars to Scalars
+  from: http://www.yaml.org/spec/1.2/spec.html#id2759963
+  tags: spec scalar comment
+  yaml: |
+    hr:  65    # Home runs
+    avg: 0.278 # Batting average
+    rbi: 147   # Runs Batted In
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :hr
+       =VAL :65
+       =VAL :avg
+       =VAL :0.278
+       =VAL :rbi
+       =VAL :147
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "hr": 65,
+      "avg": 0.278,
+      "rbi": 147
+    }
+  dump: |
+    hr: 65
+    avg: 0.278
+    rbi: 147

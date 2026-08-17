@@ -1,0 +1,24 @@
+[package]
+name = "wgpu-core-deps-emscripten"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "Feature unification helper crate for the Emscripten platform"
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme = "README.md"
+
+# Override the workspace's `rust-version` key. Firefox uses `cargo vendor` to
+# copy the crates it actually uses out of the workspace, so it's meaningful for
+# them to have less restrictive MSRVs individually than the workspace as a
+# whole, if their code permits. See `../README.md` for details.
+rust-version = "1.76"
+
+[features]
+gles = ["wgpu-hal/gles"]
+
+# Depend on wgpu-hal conditionally, so that the above features only apply to wgpu-hal on this set of platforms.
+[target.'cfg(target_os = "emscripten")'.dependencies]
+wgpu-hal.workspace = true

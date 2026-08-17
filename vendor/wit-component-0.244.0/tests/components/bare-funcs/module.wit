@@ -1,0 +1,7 @@
+package foo:foo;
+world module {
+  import foo: func();
+  import bar: func() -> string;
+  export baz: func();
+  export foo2: func(x: string) -> option<list<u8>>;
+}

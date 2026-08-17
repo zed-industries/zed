@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2020 Robin Krahl <robin.krahl@ireas.org>
+# SPDX-License-Identifier: CC0-1.0
+
+[package]
+name = "merge_derive"
+version = "0.1.0"
+authors = ["Robin Krahl <robin.krahl@ireas.org>"]
+edition = "2018"
+description = "Derive macro for the merge::Merge trait"
+repository = "https://git.sr.ht/~ireas/merge-rs/tree/master/merge_derive"
+keywords = ["merge", "macros", "derive"]
+categories = ["rust-patterns"]
+readme = "README.md"
+license = "Apache-2.0 OR MIT"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1.0"
+proc-macro-error = "1.0"
+quote = "1.0"
+syn = "1.0"

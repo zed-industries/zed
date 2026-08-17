@@ -1,0 +1,75 @@
+[package]
+name = "wgpu-types"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "Common types and utilities for wgpu, the cross-platform, safe, pure-rust graphics API"
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+license.workspace = true
+
+# Override the workspace's `rust-version` key. `wgpu-core` and its dependencies
+# have a less strict MSRV, to allow firefox more leeway in updating their Rust toolchain.
+#
+# See the repo README for more information on MSRV policy.
+rust-version = "1.87"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "wasm32-unknown-unknown",
+]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(web_sys_unstable_apis)'] }
+
+[lints.clippy]
+std_instead_of_core = "warn"
+std_instead_of_alloc = "warn"
+alloc_instead_of_core = "warn"
+
+[lib]
+
+[features]
+default = ["std"]
+std = ["js-sys?/std", "web-sys?/std"]
+strict_asserts = []
+fragile-send-sync-non-atomic-wasm = []
+serde = ["dep:serde", "bitflags/serde"]
+# Enables some internal instrumentation for debugging purposes.
+counters = []
+# Enables variants of `Trace` other than `Trace::Off`
+trace = ["std"]
+# Enable web-specific dependencies for wasm.
+web = ["dep:js-sys", "dep:web-sys"]
+
+[dependencies]
+bitflags.workspace = true
+bytemuck = { workspace = true, features = ["derive"] }
+log.workspace = true
+raw-window-handle.workspace = true
+serde = { workspace = true, default-features = false, features = [
+    "alloc",
+    "derive",
+], optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = { workspace = true, optional = true, default-features = false }
+web-sys = { workspace = true, optional = true, default-features = false, features = [
+    "ImageBitmap",
+    "ImageData",
+    "HtmlImageElement",
+    "HtmlVideoElement",
+    "HtmlCanvasElement",
+    "OffscreenCanvas",
+    "VideoFrame",
+] }
+
+[dev-dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true

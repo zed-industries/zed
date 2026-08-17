@@ -1,0 +1,27 @@
+environment:
+  matrix:
+  - TARGET: 1.30.0-x86_64-pc-windows-msvc
+  - TARGET: 1.30.0-i686-pc-windows-msvc
+  - TARGET: 1.30.0-x86_64-pc-windows-gnu
+  - TARGET: 1.30.0-i686-pc-windows-gnu
+  - TARGET: nightly-x86_64-pc-windows-msvc
+  - TARGET: nightly-i686-pc-windows-msvc
+install:
+  - ps: Start-FileDownload "https://static.rust-lang.org/dist/rust-${env:TARGET}.exe" -FileName "rust.exe"
+  - ps: .\rust.exe /VERYSILENT /NORESTART /DIR="C:\rust" | Out-Null
+  - ps: $env:PATH="$env:PATH;C:\rust\bin"
+  - rustc -vV
+  - cargo -vV
+build: off
+
+test_script:
+- cargo test
+- cargo test --no-default-features
+
+for:
+- matrix:
+    only:
+      - TARGET: nightly-x86_64-pc-windows-msvc
+      - TARGET: nightly-i686-pc-windows-msvc
+  test_script:
+    - cargo bench

@@ -1,0 +1,102 @@
+{
+    "events": [
+        {
+            "connection_id": 0,
+            "action": {
+                "Request": {
+                    "request": {
+                        "uri": "https://dontcare.s3.us-east-1.amazonaws.com/dontcare.json",
+                        "headers": {
+                            "user-agent": [
+                                "aws-sdk-rust/0.123.test os/windows/XPSP3 lang/rust/1.50.0"
+                            ],
+                            "x-amz-user-agent": [
+                                "aws-sdk-rust/0.123.test api/test-service/0.123 os/windows/XPSP3 lang/rust/1.50.0"
+                            ],
+                            "x-amz-date": [
+                                "20090213T233130Z"
+                            ],
+                            "authorization": [
+                                "AWS4-HMAC-SHA256 Credential=ANOTREAL/20090213/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-user-agent, Signature=6d5c92e11af515195eb16138091fee14bfda1213466804a292ba29c164e6cc99"
+                            ],
+                            "x-amz-content-sha256": [
+                                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                            ],
+                            "amz-sdk-request": [
+                                "attempt=1; max=1"
+                            ]
+                        },
+                        "method": "HEAD"
+                    }
+                }
+            }
+        },
+        {
+            "connection_id": 0,
+            "action": {
+                "Eof": {
+                    "ok": true,
+                    "direction": "Request"
+                }
+            }
+        },
+        {
+            "connection_id": 0,
+            "action": {
+                "Response": {
+                    "response": {
+                        "Ok": {
+                            "status": 200,
+                            "headers": {
+                                "x-amz-id-2": [
+                                    "jCslBVSBWRcOPfOdanOAgY1Fx9SxH/BkvhwhhDCcrF5ldlaCXDLy26UmJu1HhT52LKmlGKxit5A="
+                                ],
+                                "x-amz-request-id": [
+                                    "P0MZE86W8DZP20SM"
+                                ],
+                                "date": [
+                                    "Wed, 22 May 2024 15:01:06 GMT"
+                                ],
+                                "last-modified": [
+                                    "Wed, 28 Dec 2022 22:16:55 GMT"
+                                ],
+                                "etag": [
+                                    "\"65a32c4cbf8ee97c54864cf33986b8d8-53\""
+                                ],
+                                "x-amz-server-side-encryption": [
+                                    "AES256"
+                                ],
+                                "x-amz-version-id": [
+                                    "null"
+                                ],
+                                "accept-ranges": [
+                                    "bytes"
+                                ],
+                                "content-type": [
+                                    "application/json"
+                                ],
+                                "server": [
+                                    "AmazonS3"
+                                ],
+                                "content-length": [
+                                    "905831718"
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "connection_id": 0,
+            "action": {
+                "Eof": {
+                    "ok": true,
+                    "direction": "Response"
+                }
+            }
+        }
+    ],
+    "docs": "todo docs",
+    "version": "V0"
+}

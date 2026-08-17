@@ -1,0 +1,644 @@
+#ifndef __TRACYMETAL_HMM__
+#define __TRACYMETAL_HMM__
+
+/* This file implements a Metal API back-end for Tracy (it has only been tested on Apple
+   Silicon devices, but it should also work on Intel-based Macs and older iOS devices).
+   The Metal back-end in Tracy operates differently than other GPU back-ends like Vulkan,
+   Direct3D and OpenGL. Specifically, TracyMetalZone() must be placed around the site where
+   a command encoder is created. This is because not all hardware supports timestamps at
+   command granularity, and can only provide timestamps around an entire command encoder.
+   This accommodates for all tiers of hardware; in the future, variants of TracyMetalZone()
+   will be added to support the habitual command-level granularity of Tracy GPU back-ends.
+   Metal also imposes a few restrictions that make the process of requesting and collecting
+   queries more complicated in Tracy:
+   a) timestamp query buffers are limited to 4096 queries (32KB, where each query is 8 bytes)
+   b) when a timestamp query buffer is created, Metal initializes all timestamps with zeroes,
+      and there's no way to reset them back to zero after timestamps get resolved; the only
+      way to clear the timestamps is by allocating a new timestamp query buffer
+   c) if a command encoder records no commands and its corresponding command buffer ends up
+      committed to the command queue, Metal will "optimize-away" the encoder along with any
+      timestamp queries associated with it (the timestamp will remain as zero and will never
+      get resolved)
+   Because of the limitations above, two timestamp buffers are managed internally. Once one
+   of the buffers fills up with requests, the second buffer can start serving new requests.
+   Once all requests in a buffer get resolved and collected, the entire buffer is discarded
+   and a new one allocated for future requests. (Proper cycling through a ring buffer would
+   require bookkeeping and completion handlers to collect only the known complete queries.)
+   In the current implementation, there is potential for a race condition when the buffer is
+   discarded and reallocated. In practice, the race condition will never materialize so long
+   as TracyMetalCollect() is called frequently to keep the amount of unresolved queries low.
+   Finally, there's a timeout mechanism during timestamp collection to detect "empty" command
+   encoders and ensure progress.
+*/
+
+#ifndef TRACY_ENABLE
+
+#define TracyMetalContext(device) nullptr
+#define TracyMetalDestroy(ctx)
+#define TracyMetalContextName(ctx, name, size)
+
+#define TracyMetalZone(ctx, encoderDesc, name)
+#define TracyMetalZoneC(ctx, encoderDesc, name, color)
+#define TracyMetalNamedZone(ctx, varname, encoderDesc, name, active)
+#define TracyMetalNamedZoneC(ctx, varname, encoderDesc, name, color, active)
+
+#define TracyMetalCollect(ctx)
+
+namespace tracy
+{
+class MetalZoneScope {};
+}
+
+using TracyMetalCtx = void;
+
+#else
+
+#if not __has_feature(objc_arc)
+#error TracyMetal requires ARC to be enabled.
+#endif
+
+#include <atomic>
+#include <cassert>
+#include <cstdlib>
+
+#include "Tracy.hpp"
+#include "../client/TracyProfiler.hpp"
+#include "../client/TracyCallstack.hpp"
+#include "../common/TracyAlign.hpp"
+#include "../common/TracyAlloc.hpp"
+
+// ok to import if in obj-c code
+#import <Metal/Metal.h>
+
+#define TRACY_METAL_VA_ARGS(...) , ##__VA_ARGS__
+
+#define TracyMetalPanic(ret, msg, ...) do { \
+    char buffer [1024]; \
+    snprintf(buffer, sizeof(buffer), "TracyMetal: " msg TRACY_METAL_VA_ARGS(__VA_ARGS__)); \
+    TracyMessageC(buffer, strlen(buffer), tracy::Color::OrangeRed); \
+    fprintf(stderr, "%s\n", buffer); \
+    ret; \
+    } while(false);
+
+#ifndef TRACY_METAL_TIMESTAMP_COLLECT_TIMEOUT
+#define TRACY_METAL_TIMESTAMP_COLLECT_TIMEOUT 0.200f
+#endif//TRACY_METAL_TIMESTAMP_COLLECT_TIMEOUT
+
+#ifndef TRACY_METAL_DEBUG_MASK
+#define TRACY_METAL_DEBUG_MASK (0)
+#endif//TRACY_METAL_DEBUG_MASK
+
+#if TRACY_METAL_DEBUG_MASK
+    #define TracyMetalDebugMasked(mask, ...) if constexpr (mask & TRACY_METAL_DEBUG_MASK) { __VA_ARGS__; }
+#else
+    #define TracyMetalDebugMasked(mask, ...)
+#endif
+
+#if TRACY_METAL_DEBUG_MASK & (1 << 1)
+    #define TracyMetalDebug_0b00010(...) __VA_ARGS__;
+#else
+    #define TracyMetalDebug_0b00010(...)
+#endif
+
+#if TRACY_METAL_DEBUG_MASK & (1 << 4)
+    #define TracyMetalDebug_0b10000(...) __VA_ARGS__;
+#else
+    #define TracyMetalDebug_0b10000(...)
+#endif
+
+#ifndef TracyMetalDebugZoneScopeWireTap
+#define TracyMetalDebugZoneScopeWireTap
+#endif//TracyMetalDebugZoneScopeWireTap
+
+namespace tracy
+{
+
+class MetalCtx
+{
+    friend class MetalZoneScope;
+
+    enum { MaxQueries = 4 * 1024 };    // Metal: between 8 and 32768 _BYTES_...
+
+public:
+    static MetalCtx* Create(id<MTLDevice> device)
+    {
+        ZoneScopedNC("tracy::MetalCtx::Create", Color::Red4);
+        auto ctx = static_cast<MetalCtx*>(tracy_malloc(sizeof(MetalCtx)));
+        new (ctx) MetalCtx(device);
+        if (ctx->m_contextId == 255)
+        {
+            TracyMetalPanic({assert(false);} return nullptr, "ERROR: unable to create context.");
+            Destroy(ctx);
+        }
+        return ctx;
+    }
+
+    static void Destroy(MetalCtx* ctx)
+    {
+        ZoneScopedNC("tracy::MetalCtx::Destroy", Color::Red4);
+        ctx->~MetalCtx();
+        tracy_free(ctx);
+    }
+
+    void Name( const char* name, uint16_t len )
+    {
+        auto ptr = (char*)tracy_malloc( len );
+        memcpy( ptr, name, len );
+
+        auto* item = Profiler::QueueSerial();
+        MemWrite( &item->hdr.type, QueueType::GpuContextName );
+        MemWrite( &item->gpuContextNameFat.context, m_contextId );
+        MemWrite( &item->gpuContextNameFat.ptr, (uint64_t)ptr );
+        MemWrite( &item->gpuContextNameFat.size, len );
+        SubmitQueueItem(item);
+    }
+
+    bool Collect()
+    {
+        ZoneScopedNC("tracy::MetalCtx::Collect", Color::Red4);
+
+#ifdef TRACY_ON_DEMAND
+        if (!GetProfiler().IsConnected())
+        {
+            return true;
+        }
+#endif
+
+        // Only one thread is allowed to collect timestamps at any given time
+        // but there's no need to block contending threads
+        if (!m_collectionMutex.try_lock())
+        {
+            return true;
+        }
+
+        std::unique_lock lock (m_collectionMutex, std::adopt_lock);
+
+        uintptr_t begin = m_previousCheckpoint.load();
+        uintptr_t latestCheckpoint = m_queryCounter.load(); // TODO: MTLEvent? MTLFence?;
+        TracyMetalDebugMasked(1<<3, ZoneValue(begin));
+        TracyMetalDebugMasked(1<<3, ZoneValue(latestCheckpoint));
+
+        uint32_t count = RingCount(begin, latestCheckpoint);
+        if (count == 0)   // no pending timestamp queries
+        {
+            //uintptr_t nextCheckpoint = m_queryCounter.load();
+            //if (nextCheckpoint != latestCheckpoint)
+            //{
+            //    // TODO: signal event / fence now?
+            //}
+            return true;
+        }
+
+        // resolve up until the ring buffer boundary and let a subsequenty call
+        // to Collect handle the wrap-around
+        bool reallocateBuffer = false;
+        if (RingIndex(begin) + count >= RingSize())
+        {
+            count = RingSize() - RingIndex(begin);
+            reallocateBuffer = true;
+        }
+        TracyMetalDebugMasked(1<<3, ZoneValue(count));
+        
+        auto buffer_idx = (begin / MaxQueries) % 2;
+        auto counterSampleBuffer = m_counterSampleBuffers[buffer_idx];
+
+        if (count >= RingSize())
+        {
+            TracyMetalPanic(return false, "Collect: FULL! too many pending timestamp queries. [%llu, %llu] (%u)", begin, latestCheckpoint, count);
+        }
+
+        TracyMetalDebugMasked(1<<3, TracyMetalPanic(, "Collect: [%llu, %llu] :: (%u)", begin, latestCheckpoint, count));
+
+        NSRange range = NSMakeRange(RingIndex(begin), count);
+        NSData* data = [counterSampleBuffer resolveCounterRange:range];
+        NSUInteger numResolvedTimestamps = data.length / sizeof(MTLCounterResultTimestamp);
+        MTLCounterResultTimestamp* timestamps = (MTLCounterResultTimestamp *)(data.bytes);
+        if (timestamps == nil)
+        {
+            TracyMetalPanic(return false, "Collect: unable to resolve timestamps.");
+        }
+
+        if (numResolvedTimestamps != count)
+        {
+            TracyMetalPanic(, "Collect: numResolvedTimestamps != count : %u != %u", (uint32_t)numResolvedTimestamps, count);
+        }
+
+        int resolved = 0;
+        for (auto i = 0; i < numResolvedTimestamps; i += 2)
+        {
+            TracyMetalDebug_0b10000( ZoneScopedN("tracy::MetalCtx::Collect::[i]") );
+            MTLTimestamp t_start = timestamps[i+0].timestamp;
+            MTLTimestamp t_end = timestamps[i+1].timestamp;
+            uint32_t k = RingIndex(begin + i);
+            TracyMetalDebugMasked(1<<4, TracyMetalPanic(, "Collect: timestamp[%u] = %llu | timestamp[%u] = %llu | diff = %llu\n", k, t_start, k+1, t_end, (t_end - t_start)));
+            if ((t_start == MTLCounterErrorValue)  || (t_end == MTLCounterErrorValue))
+            {
+                TracyMetalPanic(, "Collect: invalid timestamp (MTLCounterErrorValue) at %u.", k);
+                break;
+            }
+            // Metal will initialize timestamp buffer with zeroes; encountering a zero-value
+            // timestamp means that the timestamp has not been written and resolved yet
+            if ((t_start == 0) || (t_end == 0))
+            {
+                auto checkTime = std::chrono::high_resolution_clock::now();
+                auto requestTime = m_timestampRequestTime[k];
+                auto ms_in_flight = std::chrono::duration<float>(checkTime-requestTime).count()*1000.0f;
+                TracyMetalDebugMasked(1<<4, TracyMetalPanic(, "Collect: invalid timestamp (zero) at %u [%.0fms in flight].", k, ms_in_flight));
+                const float timeout_ms = TRACY_METAL_TIMESTAMP_COLLECT_TIMEOUT * 1000.0f;
+                if (ms_in_flight < timeout_ms)
+                    break;
+                TracyMetalDebug_0b10000( ZoneScopedN("tracy::MetalCtx::Collect::Drop") );
+                TracyMetalPanic(, "Collect: giving up on timestamp at %u [%.0fms in flight].", k, ms_in_flight);
+                t_start = m_mostRecentTimestamp + 5;
+                t_end = t_start + 5;
+            }
+            TracyMetalDebugMasked(1<<2, TracyFreeN((void*)(uintptr_t)(k+0), "TracyMetalGpuZone"));
+            TracyMetalDebugMasked(1<<2, TracyFreeN((void*)(uintptr_t)(k+1), "TracyMetalGpuZone"));
+            {
+            auto* item = Profiler::QueueSerial();
+            MemWrite(&item->hdr.type, QueueType::GpuTime);
+            MemWrite(&item->gpuTime.gpuTime, static_cast<int64_t>(t_start));
+            MemWrite(&item->gpuTime.queryId, static_cast<uint16_t>(k));
+            MemWrite(&item->gpuTime.context, m_contextId);
+            Profiler::QueueSerialFinish();
+            }
+            {
+            auto* item = Profiler::QueueSerial();
+            MemWrite(&item->hdr.type, QueueType::GpuTime);
+            MemWrite(&item->gpuTime.gpuTime, static_cast<int64_t>(t_end));
+            MemWrite(&item->gpuTime.queryId, static_cast<uint16_t>(k+1));
+            MemWrite(&item->gpuTime.context, m_contextId);
+            Profiler::QueueSerialFinish();
+            }
+            m_mostRecentTimestamp = (t_end > m_mostRecentTimestamp) ? t_end : m_mostRecentTimestamp;
+            TracyMetalDebugMasked(1<<1, TracyFreeN((void*)(uintptr_t)k, "TracyMetalTimestampQueryId"));
+            resolved += 2;
+        }
+        TracyMetalDebugMasked(1<<3, ZoneValue(RingCount(begin, m_previousCheckpoint.load())));
+        
+        m_previousCheckpoint += resolved;
+        
+        // Check whether the timestamp buffer has been fully resolved/collected:
+        // WARN: there's technically a race condition here: NextQuery() may reference the
+        // buffer that is being released instead of the new one. In practice, this should
+        // never happen so long as Collect is called frequently enough to prevent pending
+        // timestamp query requests from piling up too quickly.
+        if ((resolved == count) && (m_previousCheckpoint.load() % MaxQueries) == 0)
+        {
+            m_counterSampleBuffers[buffer_idx] = NewTimestampSampleBuffer(m_device, MaxQueries);
+        }
+
+        //RecalibrateClocks();    // to account for drift
+
+        return true;
+    }
+
+private:
+    MetalCtx(id<MTLDevice> device)
+    : m_device(device)
+    {
+        TracyMetalDebugMasked(1<<0, TracyMetalPanic(, "MTLCounterErrorValue = 0x%llx", MTLCounterErrorValue));
+        TracyMetalDebugMasked(1<<0, TracyMetalPanic(, "MTLCounterDontSample = 0x%llx", MTLCounterDontSample));
+        
+        if (m_device == nil)
+        {
+            TracyMetalPanic({assert(false);} return, "device is nil.");
+        }
+        if (![m_device supportsCounterSampling:MTLCounterSamplingPointAtStageBoundary])
+        {
+            TracyMetalPanic({assert(false);} return, "ERROR: timestamp sampling at pipeline stage boundary is not supported.");
+        }
+        if (![m_device supportsCounterSampling:MTLCounterSamplingPointAtDrawBoundary])
+        {
+            TracyMetalDebugMasked(1<<0, fprintf(stderr, "WARNING: timestamp sampling at draw call boundary is not supported.\n"));
+        }
+        if (![m_device supportsCounterSampling:MTLCounterSamplingPointAtBlitBoundary])
+        {
+            TracyMetalDebugMasked(1<<0, fprintf(stderr, "WARNING: timestamp sampling at blit boundary is not supported.\n"));
+        }
+        if (![m_device supportsCounterSampling:MTLCounterSamplingPointAtDispatchBoundary])
+        {
+            TracyMetalDebugMasked(1<<0, fprintf(stderr, "WARNING: timestamp sampling at compute dispatch boundary is not supported.\n"));
+        }
+        if (![m_device supportsCounterSampling:MTLCounterSamplingPointAtTileDispatchBoundary])
+        {
+            TracyMetalDebugMasked(1<<0, fprintf(stderr, "WARNING: timestamp sampling at tile dispatch boundary is not supported.\n"));
+        }
+        
+        m_counterSampleBuffers[0] = NewTimestampSampleBuffer(m_device, MaxQueries);
+        m_counterSampleBuffers[1] = NewTimestampSampleBuffer(m_device, MaxQueries);
+        
+        m_timestampRequestTime.resize(MaxQueries);
+
+        MTLTimestamp cpuTimestamp = 0;
+        MTLTimestamp gpuTimestamp = 0;
+        [m_device sampleTimestamps:&cpuTimestamp gpuTimestamp:&gpuTimestamp];
+        m_mostRecentTimestamp = gpuTimestamp;
+        TracyMetalDebugMasked(1<<0, TracyMetalPanic(, "Calibration: CPU timestamp (Metal): %llu", cpuTimestamp));
+        TracyMetalDebugMasked(1<<0, TracyMetalPanic(, "Calibration: GPU timestamp (Metal): %llu", gpuTimestamp));
+
+        cpuTimestamp = Profiler::GetTime();
+        TracyMetalDebugMasked(1<<0, TracyMetalPanic(, "Calibration: CPU timestamp (Tracy): %llu", cpuTimestamp));
+
+        float period = 1.0f;
+        
+        m_contextId = GetGpuCtxCounter().fetch_add(1);
+        
+        auto* item = Profiler::QueueSerial();
+        MemWrite(&item->hdr.type, QueueType::GpuNewContext);
+        MemWrite(&item->gpuNewContext.cpuTime, int64_t(cpuTimestamp));
+        MemWrite(&item->gpuNewContext.gpuTime, int64_t(gpuTimestamp));
+        MemWrite(&item->gpuNewContext.thread, uint32_t(0)); // TODO: why not GetThreadHandle()?
+        MemWrite(&item->gpuNewContext.period, period);
+        MemWrite(&item->gpuNewContext.context, m_contextId);
+        //MemWrite(&item->gpuNewContext.flags, GpuContextCalibration);
+        MemWrite(&item->gpuNewContext.flags, GpuContextFlags(0));
+        MemWrite(&item->gpuNewContext.type, GpuContextType::Metal);
+        SubmitQueueItem(item);
+    }
+
+    ~MetalCtx()
+    {
+        // collect the last remnants of Metal GPU activity...
+        // TODO: add a timeout to this loop?
+        while (m_previousCheckpoint.load() != m_queryCounter.load())
+            Collect();
+    }
+
+    tracy_force_inline void SubmitQueueItem(QueueItem* item)
+    {
+#ifdef TRACY_ON_DEMAND
+        GetProfiler().DeferItem(*item);
+#endif
+        Profiler::QueueSerialFinish();
+    }
+
+    tracy_force_inline uint32_t RingIndex(uintptr_t index)
+    {
+        index %= MaxQueries;
+        return static_cast<uint32_t>(index);
+    }
+
+    tracy_force_inline uint32_t RingCount(uintptr_t begin, uintptr_t end)
+    {
+        // wrap-around safe: all unsigned
+        uintptr_t count = end - begin;
+        return static_cast<uint32_t>(count);
+    }
+
+    tracy_force_inline uint32_t RingSize() const
+    {
+        return MaxQueries;
+    }
+
+    struct Query { id<MTLCounterSampleBuffer> buffer; uint32_t idx; };
+
+    tracy_force_inline Query NextQuery()
+    {
+        TracyMetalDebug_0b00010( ZoneScopedNC("Tracy::MetalCtx::NextQuery", tracy::Color::LightCoral) );
+        auto id = m_queryCounter.fetch_add(2);
+        TracyMetalDebug_0b00010( ZoneValue(id) );
+        auto count = RingCount(m_previousCheckpoint, id);
+        if (count >= MaxQueries)
+        {
+            // TODO: return a proper (hidden) "sentinel" query
+            Query sentinel = Query{ m_counterSampleBuffers[1], MaxQueries-2 };
+            TracyMetalPanic(
+                return sentinel,
+                "NextQueryId: FULL! too many pending timestamp queries. Consider calling TracyMetalCollect() more frequently. [%llu, %llu] (%u)",
+                m_previousCheckpoint.load(), id, count
+            );
+        }
+        uint32_t buffer_idx = (id / MaxQueries) % 2;
+        TracyMetalDebug_0b00010( ZoneValue(buffer_idx) );
+        auto buffer = m_counterSampleBuffers[buffer_idx];
+        if (buffer == nil)
+            TracyMetalPanic(, "NextQueryId: sample buffer is nil! (id=%llu)", id);
+        uint32_t idx = RingIndex(id);
+        TracyMetalDebug_0b00010( ZoneValue(idx) );
+        TracyMetalDebug_0b00010( TracyAllocN((void*)(uintptr_t)idx, 2, "TracyMetalTimestampQueryId") );
+        m_timestampRequestTime[idx] = std::chrono::high_resolution_clock::now();
+        return Query{ buffer, idx };
+    }
+
+    tracy_force_inline uint8_t GetContextId() const
+    {
+        return m_contextId;
+    }
+    
+    static id<MTLCounterSampleBuffer> NewTimestampSampleBuffer(id<MTLDevice> device, size_t count)
+    {
+        ZoneScopedN("tracy::MetalCtx::NewTimestampSampleBuffer");
+
+        id<MTLCounterSet> timestampCounterSet = nil;
+        for (id<MTLCounterSet> counterSet in device.counterSets)
+        {
+            if ([counterSet.name isEqualToString:MTLCommonCounterSetTimestamp])
+            {
+                timestampCounterSet = counterSet;
+                break;
+            }
+        }
+        if (timestampCounterSet == nil)
+        {
+            TracyMetalPanic({assert(false);} return nil, "ERROR: timestamp counters are not supported on the platform.");
+        }
+
+        MTLCounterSampleBufferDescriptor* sampleDescriptor = [[MTLCounterSampleBufferDescriptor alloc] init];
+        sampleDescriptor.counterSet = timestampCounterSet;
+        sampleDescriptor.sampleCount = MaxQueries;
+        sampleDescriptor.storageMode = MTLStorageModeShared;
+        sampleDescriptor.label = @"TracyMetalTimestampPool";
+
+        NSError* error = nil;
+        id<MTLCounterSampleBuffer> counterSampleBuffer = [device newCounterSampleBufferWithDescriptor:sampleDescriptor error:&error];
+        if (error != nil)
+        {
+            //NSLog(@"%@ | %@", error.localizedDescription, error.localizedFailureReason);
+            TracyMetalPanic({assert(false);} return nil,
+                "ERROR: unable to create sample buffer for timestamp counters : %s | %s",
+                [error.localizedDescription cString], [error.localizedFailureReason cString]);
+        }
+        
+        return counterSampleBuffer;
+    }
+
+    uint8_t m_contextId = 255;
+
+    id<MTLDevice> m_device = nil;
+    id<MTLCounterSampleBuffer> m_counterSampleBuffers [2] = {};
+
+    using atomic_counter = std::atomic<uintptr_t>;
+    static_assert(atomic_counter::is_always_lock_free);
+    atomic_counter m_queryCounter = 0;
+
+    atomic_counter m_previousCheckpoint = 0;
+    MTLTimestamp m_mostRecentTimestamp = 0;
+    
+    std::vector<std::chrono::high_resolution_clock::time_point> m_timestampRequestTime;
+    
+    std::mutex m_collectionMutex;
+};
+
+class MetalZoneScope
+{
+public:
+    tracy_force_inline MetalZoneScope( MetalCtx* ctx, MTLComputePassDescriptor* desc, const SourceLocationData* srcloc, bool is_active )
+#ifdef TRACY_ON_DEMAND
+        : m_active( is_active && GetProfiler().IsConnected() )
+#else
+        : m_active( is_active )
+#endif
+    {
+        if ( !m_active ) return;
+        if (desc == nil) TracyMetalPanic({assert(false);} return, "compute pass descriptor is nil.");
+        m_ctx = ctx;
+
+        auto& query = m_query = ctx->NextQuery();
+
+        desc.sampleBufferAttachments[0].sampleBuffer = query.buffer;
+        desc.sampleBufferAttachments[0].startOfEncoderSampleIndex = query.idx+0;
+        desc.sampleBufferAttachments[0].endOfEncoderSampleIndex   = query.idx+1;
+
+        SubmitZoneBeginGpu(ctx, query.idx + 0, srcloc);
+    }
+
+    tracy_force_inline MetalZoneScope( MetalCtx* ctx, MTLBlitPassDescriptor* desc, const SourceLocationData* srcloc, bool is_active )
+#ifdef TRACY_ON_DEMAND
+        : m_active( is_active && GetProfiler().IsConnected() )
+#else
+        : m_active( is_active )
+#endif
+    {
+        if ( !m_active ) return;
+        if (desc == nil) TracyMetalPanic({assert(false); }return, "blit pass descriptor is nil.");
+        m_ctx = ctx;
+
+        auto& query = m_query = ctx->NextQuery();
+
+        desc.sampleBufferAttachments[0].sampleBuffer = query.buffer;
+        desc.sampleBufferAttachments[0].startOfEncoderSampleIndex = query.idx+0;
+        desc.sampleBufferAttachments[0].endOfEncoderSampleIndex = query.idx+1;
+
+        SubmitZoneBeginGpu(ctx, query.idx + 0, srcloc);
+    }
+
+    tracy_force_inline MetalZoneScope( MetalCtx* ctx, MTLRenderPassDescriptor* desc, const SourceLocationData* srcloc, bool is_active )
+#ifdef TRACY_ON_DEMAND
+        : m_active( is_active && GetProfiler().IsConnected() )
+#else
+        : m_active( is_active )
+#endif
+    {
+        if ( !m_active ) return;
+        if (desc == nil) TracyMetalPanic({assert(false);} return, "render pass descriptor is nil.");
+        m_ctx = ctx;
+
+        auto& query = m_query = ctx->NextQuery();
+
+        desc.sampleBufferAttachments[0].sampleBuffer = query.buffer;
+        desc.sampleBufferAttachments[0].startOfVertexSampleIndex = query.idx+0;
+        desc.sampleBufferAttachments[0].endOfVertexSampleIndex = MTLCounterDontSample;
+        desc.sampleBufferAttachments[0].startOfFragmentSampleIndex = MTLCounterDontSample;
+        desc.sampleBufferAttachments[0].endOfFragmentSampleIndex = query.idx+1;
+
+        SubmitZoneBeginGpu(ctx, query.idx + 0, srcloc);
+    }
+
+    /* TODO: implement this constructor interfarce for "command-level" profiling, if the device supports it
+    tracy_force_inline MetalZoneScope( MetalCtx* ctx, id<MTLComputeCommandEncoder> cmdEncoder, const SourceLocationData* srcloc, bool is_active )
+#ifdef TRACY_ON_DEMAND
+        : m_active( is_active && GetProfiler().IsConnected() )
+#else
+        : m_active( is_active )
+#endif
+    {
+        if( !m_active ) return;
+        m_ctx = ctx;
+        m_cmdEncoder = cmdEncoder;
+
+        auto& query = m_query = ctx->NextQueryId();
+
+        [m_cmdEncoder sampleCountersInBuffer:m_ctx->m_counterSampleBuffer atSampleIndex:query.idx withBarrier:YES];
+
+        SubmitZoneBeginGpu(ctx, query.idx, srcloc);
+    }
+    */
+
+    tracy_force_inline ~MetalZoneScope()
+    {
+        if( !m_active ) return;
+
+        SubmitZoneEndGpu(m_ctx, m_query.idx + 1);
+    }
+    
+    TracyMetalDebugZoneScopeWireTap;
+
+private:
+    const bool m_active;
+
+    MetalCtx* m_ctx;
+
+    /* TODO: declare it for "command-level" profiling
+    id<MTLComputeCommandEncoder> m_cmdEncoder;
+    */
+    
+    static void SubmitZoneBeginGpu(MetalCtx* ctx, uint32_t queryId, const SourceLocationData* srcloc)
+    {
+        auto* item = Profiler::QueueSerial();
+        MemWrite( &item->hdr.type, QueueType::GpuZoneBeginSerial );
+        MemWrite( &item->gpuZoneBegin.cpuTime, Profiler::GetTime() );
+        MemWrite( &item->gpuZoneBegin.srcloc, (uint64_t)srcloc );
+        MemWrite( &item->gpuZoneBegin.thread, GetThreadHandle() );
+        MemWrite( &item->gpuZoneBegin.queryId, uint16_t( queryId ) );
+        MemWrite( &item->gpuZoneBegin.context, ctx->GetContextId() );
+        Profiler::QueueSerialFinish();
+        
+        TracyMetalDebugMasked(1<<2, TracyAllocN((void*)(uintptr_t)queryId, 1, "TracyMetalGpuZone"));
+    }
+    
+    static void SubmitZoneEndGpu(MetalCtx* ctx, uint32_t queryId)
+    {
+        auto* item = Profiler::QueueSerial();
+        MemWrite( &item->hdr.type, QueueType::GpuZoneEndSerial );
+        MemWrite( &item->gpuZoneEnd.cpuTime, Profiler::GetTime() );
+        MemWrite( &item->gpuZoneEnd.thread, GetThreadHandle() );
+        MemWrite( &item->gpuZoneEnd.queryId, uint16_t( queryId ) );
+        MemWrite( &item->gpuZoneEnd.context, ctx->GetContextId() );
+        Profiler::QueueSerialFinish();
+        
+        TracyMetalDebugMasked(1<<2, TracyAllocN((void*)(uintptr_t)queryId, 1, "TracyMetalGpuZone"));
+    }
+
+    MetalCtx::Query m_query = {};
+};
+
+}
+
+using TracyMetalCtx = tracy::MetalCtx;
+
+#define TracyMetalContext(device) tracy::MetalCtx::Create(device)
+#define TracyMetalDestroy(ctx) tracy::MetalCtx::Destroy(ctx)
+#define TracyMetalContextName(ctx, name, size) ctx->Name(name, size)
+
+#define TracyMetalZone( ctx, encoderDesc, name ) TracyMetalNamedZone( ctx, ___tracy_gpu_zone, encoderDesc, name, true )
+#define TracyMetalZoneC( ctx, encoderDesc, name, color ) TracyMetalNamedZoneC( ctx, ___tracy_gpu_zone, encoderDesc, name, color, true )
+#define TracyMetalNamedZone( ctx, varname, encoderDesc, name, active ) static constexpr tracy::SourceLocationData TracyConcat(__tracy_gpu_source_location,TracyLine) { name, TracyFunction,  TracyFile, (uint32_t)TracyLine, 0 }; tracy::MetalZoneScope varname( ctx, encoderDesc, &TracyConcat(__tracy_gpu_source_location,TracyLine), active );
+#define TracyMetalNamedZoneC( ctx, varname, encoderDesc, name, color, active ) static constexpr tracy::SourceLocationData TracyConcat(__tracy_gpu_source_location,TracyLine) { name, TracyFunction, TracyFile, (uint32_t)TracyLine, color }; tracy::MetalZoneScope varname( ctx, encoderDesc, &TracyConcat(__tracy_gpu_source_location,TracyLine), active );
+
+#define TracyMetalCollect( ctx ) ctx->Collect();
+
+
+
+#undef TracyMetalDebug_ZoneScopeWireTap
+#undef TracyMetalDebug_0b00010
+#undef TracyMetalDebug_0b10000
+#undef TracyMetalDebugMasked
+#undef TRACY_METAL_DEBUG_MASK
+#undef TRACY_METAL_TIMESTAMP_COLLECT_TIMEOUT
+#undef TracyMetalPanic
+#undef TRACY_METAL_VA_ARGS
+
+#endif
+
+#endif//__TRACYMETAL_HMM__

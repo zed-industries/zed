@@ -1,0 +1,30 @@
+#!/bin/bash
+#
+# Update Cargo.lock.minimal.
+#
+# Run manually as needed.  The Cargo.lock.minimal is used by
+# the minimal-versions test in .gitlab-ci.yml.
+#
+# Any arguments are passed through to "cargo update".
+
+set -euo pipefail
+
+# CARGO=nailing-cargo maint/update-minimal-versions
+
+# The -Z minimal-versions feature is only available in nightly
+# But we need an *old* nightly because we want to generate a Cargo.lock
+# that works with Rust 1.31.  This one is roughy contemporaneous.
+: ${MINIMAL_NIGHTLY_RUST_VERSION=+nightly-2018-12-19}
+
+trap '
+	rc=$?
+	mv Cargo.lock.example.aside Cargo.lock.example
+	exit $rc
+' 0
+
+mv Cargo.lock.example Cargo.lock.example.aside # for nailing-cargo
+cp Cargo.lock.minimal Cargo.lock
+
+${CARGO-cargo} $MINIMAL_NIGHTLY_RUST_VERSION update -Z minimal-versions "$@"
+
+mv Cargo.lock Cargo.lock.minimal

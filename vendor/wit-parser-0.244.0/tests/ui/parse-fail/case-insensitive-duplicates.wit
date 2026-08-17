@@ -1,0 +1,9 @@
+// parse-fail
+
+package poc:demo;
+
+world example {
+  import get-data: func() -> string;
+  export get-user: func() -> string;
+  export GET-USER: func() -> string;
+}

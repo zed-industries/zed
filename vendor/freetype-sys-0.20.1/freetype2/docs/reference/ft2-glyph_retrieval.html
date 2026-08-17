@@ -1,0 +1,2238 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="API Reference Documentation for FreeType-2.13.2">
+      
+      
+      
+        <meta name="author" content="FreeType Contributors">
+      
+      
+      <link rel="icon" href="images/favico.ico">
+      <meta name="generator" content="mkdocs-1.4.3, mkdocs-material-7.1.9">
+    
+    
+      
+        <title>Glyph Retrieval - FreeType-2.13.2 API Reference</title>
+      
+    
+    
+      <link rel="stylesheet" href="assets/stylesheets/main.ca7ac06f.min.css">
+      
+        
+        <link rel="stylesheet" href="assets/stylesheets/palette.f1a3b89f.min.css">
+        
+          
+          
+          <meta name="theme-color" content="#4cae4f">
+        
+      
+    
+    
+    
+      
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Noto+Serif:300,400,400i,700%7CRoboto+Mono&display=fallback">
+        <style>:root{--md-text-font-family:"Noto Serif";--md-code-font-family:"Roboto Mono"}</style>
+      
+    
+    
+    
+      <link rel="stylesheet" href="stylesheets/extra.css">
+    
+    
+      
+
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <script>function __prefix(e){return new URL(".",location).pathname+"."+e}function __get(e,t=localStorage){return JSON.parse(t.getItem(__prefix(e)))}</script>
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#glyph-retrieval" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-header__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            FreeType-2.13.2 API Reference
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Glyph Retrieval
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+      </label>
+      
+<div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" data-md-state="active" required>
+      <label class="md-search__icon md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+      </label>
+      <button type="reset" class="md-search__icon md-icon" aria-label="Clear" tabindex="-1">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
+      </button>
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+  </nav>
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-nav__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    FreeType-2.13.2 API Reference
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="index.html" class="md-nav__link">
+        TOC
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-index.html" class="md-nav__link">
+        Index
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_3" type="checkbox" id="__nav_3" >
+      
+      <label class="md-nav__link" for="__nav_3">
+        General Remarks
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="General Remarks" data-md-level="1">
+        <label class="md-nav__title" for="__nav_3">
+          <span class="md-nav__icon md-icon"></span>
+          General Remarks
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-preamble.html" class="md-nav__link">
+        Preamble
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_inclusion.html" class="md-nav__link">
+        FreeType's header inclusion scheme
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-user_allocation.html" class="md-nav__link">
+        User allocation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+    
+  
+  
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_4" type="checkbox" id="__nav_4" checked>
+      
+      <label class="md-nav__link" for="__nav_4">
+        Core API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Core API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_4">
+          <span class="md-nav__icon md-icon"></span>
+          Core API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-basic_types.html" class="md-nav__link">
+        Basic Data Types
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-library_setup.html" class="md-nav__link">
+        Library Setup
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-face_creation.html" class="md-nav__link">
+        Face Creation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_testing_macros.html" class="md-nav__link">
+        Font Testing Macros
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizing_and_scaling.html" class="md-nav__link">
+        Sizing and Scaling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+    
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" data-md-toggle="toc" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          Glyph Retrieval
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="ft2-glyph_retrieval.html" class="md-nav__link md-nav__link--active">
+        Glyph Retrieval
+      </a>
+      
+        
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_glyphslot" class="md-nav__link">
+    FT_GlyphSlot
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_glyphslotrec" class="md-nav__link">
+    FT_GlyphSlotRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_glyph_metrics" class="md-nav__link">
+    FT_Glyph_Metrics
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_load_glyph" class="md-nav__link">
+    FT_Load_Glyph
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_load_xxx" class="md-nav__link">
+    FT_LOAD_XXX
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_load_target_mode" class="md-nav__link">
+    FT_LOAD_TARGET_MODE
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_load_target_xxx" class="md-nav__link">
+    FT_LOAD_TARGET_XXX
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_render_glyph" class="md-nav__link">
+    FT_Render_Glyph
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_render_mode" class="md-nav__link">
+    FT_Render_Mode
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_kerning" class="md-nav__link">
+    FT_Get_Kerning
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_kerning_mode" class="md-nav__link">
+    FT_Kerning_Mode
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_track_kerning" class="md-nav__link">
+    FT_Get_Track_Kerning
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-character_mapping.html" class="md-nav__link">
+        Character Mapping
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-information_retrieval.html" class="md-nav__link">
+        Information Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-other_api_data.html" class="md-nav__link">
+        Other API Data
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_5" type="checkbox" id="__nav_5" >
+      
+      <label class="md-nav__link" for="__nav_5">
+        Extended API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Extended API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_5">
+          <span class="md-nav__icon md-icon"></span>
+          Extended API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_variants.html" class="md-nav__link">
+        Unicode Variation Sequences
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-color_management.html" class="md-nav__link">
+        Glyph Color Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-layer_management.html" class="md-nav__link">
+        Glyph Layer Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_management.html" class="md-nav__link">
+        Glyph Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-mac_specific.html" class="md-nav__link">
+        Mac Specific Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizes_management.html" class="md-nav__link">
+        Size Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_file_macros.html" class="md-nav__link">
+        Header File Macros
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_6" type="checkbox" id="__nav_6" >
+      
+      <label class="md-nav__link" for="__nav_6">
+        Format-Specific API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Format-Specific API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_6">
+          <span class="md-nav__icon md-icon"></span>
+          Format-Specific API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-multiple_masters.html" class="md-nav__link">
+        Multiple Masters
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_tables.html" class="md-nav__link">
+        TrueType Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-type1_tables.html" class="md-nav__link">
+        Type 1 Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sfnt_names.html" class="md-nav__link">
+        SFNT Names
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bdf_fonts.html" class="md-nav__link">
+        BDF and PCF Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cid_fonts.html" class="md-nav__link">
+        CID Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pfr_fonts.html" class="md-nav__link">
+        PFR Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-winfnt_fonts.html" class="md-nav__link">
+        Window FNT Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-svg_fonts.html" class="md-nav__link">
+        OpenType SVG Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_formats.html" class="md-nav__link">
+        Font Formats
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gasp_table.html" class="md-nav__link">
+        Gasp Table
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_7" type="checkbox" id="__nav_7" >
+      
+      <label class="md-nav__link" for="__nav_7">
+        Controlling FreeType Modules
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Controlling FreeType Modules" data-md-level="1">
+        <label class="md-nav__title" for="__nav_7">
+          <span class="md-nav__icon md-icon"></span>
+          Controlling FreeType Modules
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-auto_hinter.html" class="md-nav__link">
+        The auto-hinter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cff_driver.html" class="md-nav__link">
+        The CFF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-t1_cid_driver.html" class="md-nav__link">
+        The Type 1 and CID drivers
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-tt_driver.html" class="md-nav__link">
+        The TrueType driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pcf_driver.html" class="md-nav__link">
+        The PCF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_svg_driver.html" class="md-nav__link">
+        The SVG driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-properties.html" class="md-nav__link">
+        Driver properties
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-parameter_tags.html" class="md-nav__link">
+        Parameter Tags
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lcd_rendering.html" class="md-nav__link">
+        Subpixel Rendering
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_8" type="checkbox" id="__nav_8" >
+      
+      <label class="md-nav__link" for="__nav_8">
+        Cache Sub-System
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Cache Sub-System" data-md-level="1">
+        <label class="md-nav__title" for="__nav_8">
+          <span class="md-nav__icon md-icon"></span>
+          Cache Sub-System
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cache_subsystem.html" class="md-nav__link">
+        Cache Sub-System
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_9" type="checkbox" id="__nav_9" >
+      
+      <label class="md-nav__link" for="__nav_9">
+        Support API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Support API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_9">
+          <span class="md-nav__icon md-icon"></span>
+          Support API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-computations.html" class="md-nav__link">
+        Computations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-list_processing.html" class="md-nav__link">
+        List Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-outline_processing.html" class="md-nav__link">
+        Outline Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-quick_advance.html" class="md-nav__link">
+        Quick retrieval of advance values
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bitmap_handling.html" class="md-nav__link">
+        Bitmap Handling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-raster.html" class="md-nav__link">
+        Scanline Converter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_stroker.html" class="md-nav__link">
+        Glyph Stroker
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-system_interface.html" class="md-nav__link">
+        System Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-module_management.html" class="md-nav__link">
+        Module Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gzip.html" class="md-nav__link">
+        GZIP Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lzw.html" class="md-nav__link">
+        LZW Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bzip2.html" class="md-nav__link">
+        BZIP2 Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-debugging_apis.html" class="md-nav__link">
+        External Debugging APIs
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_10" type="checkbox" id="__nav_10" >
+      
+      <label class="md-nav__link" for="__nav_10">
+        Error Codes
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Error Codes" data-md-level="1">
+        <label class="md-nav__title" for="__nav_10">
+          <span class="md-nav__icon md-icon"></span>
+          Error Codes
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_enumerations.html" class="md-nav__link">
+        Error Enumerations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_code_values.html" class="md-nav__link">
+        Error Code Values
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_11" type="checkbox" id="__nav_11" >
+      
+      <label class="md-nav__link" for="__nav_11">
+        Miscellaneous
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Miscellaneous" data-md-level="1">
+        <label class="md-nav__title" for="__nav_11">
+          <span class="md-nav__icon md-icon"></span>
+          Miscellaneous
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gx_validation.html" class="md-nav__link">
+        TrueTypeGX/AAT Validation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-incremental.html" class="md-nav__link">
+        Incremental Loading
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_engine.html" class="md-nav__link">
+        The TrueType Engine
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_validation.html" class="md-nav__link">
+        OpenType Validation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_glyphslot" class="md-nav__link">
+    FT_GlyphSlot
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_glyphslotrec" class="md-nav__link">
+    FT_GlyphSlotRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_glyph_metrics" class="md-nav__link">
+    FT_Glyph_Metrics
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_load_glyph" class="md-nav__link">
+    FT_Load_Glyph
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_load_xxx" class="md-nav__link">
+    FT_LOAD_XXX
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_load_target_mode" class="md-nav__link">
+    FT_LOAD_TARGET_MODE
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_load_target_xxx" class="md-nav__link">
+    FT_LOAD_TARGET_XXX
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_render_glyph" class="md-nav__link">
+    FT_Render_Glyph
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_render_mode" class="md-nav__link">
+    FT_Render_Mode
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_kerning" class="md-nav__link">
+    FT_Get_Kerning
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_kerning_mode" class="md-nav__link">
+    FT_Kerning_Mode
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_track_kerning" class="md-nav__link">
+    FT_Get_Track_Kerning
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          <div class="md-content" data-md-component="content">
+            <article class="md-content__inner md-typeset">
+              
+                
+                
+                <p><a href="https://www.freetype.org">FreeType</a> &raquo; <a href="../">Docs</a> &raquo; <a href="index.html#core-api">Core API</a> &raquo; Glyph Retrieval</p>
+<hr />
+<h1 id="glyph-retrieval">Glyph Retrieval<a class="headerlink" href="#glyph-retrieval" title="Permanent link">&para;</a></h1>
+<h2 id="synopsis">Synopsis<a class="headerlink" href="#synopsis" title="Permanent link">&para;</a></h2>
+<p>The functions and structures collected in this section operate on single glyphs, of which <code><a href="ft2-glyph_retrieval.html#ft_load_glyph">FT_Load_Glyph</a></code> is most important.</p>
+<h2 id="ft_glyphslot">FT_GlyphSlot<a class="headerlink" href="#ft_glyphslot" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span> FT_GlyphSlotRec_*  <b>FT_GlyphSlot</b>;
+</code></pre></div>
+
+<p>A handle to a given &lsquo;glyph slot&rsquo;. A slot is a container that can hold any of the glyphs contained in its parent face.</p>
+<p>In other words, each time you call <code><a href="ft2-glyph_retrieval.html#ft_load_glyph">FT_Load_Glyph</a></code> or <code><a href="ft2-character_mapping.html#ft_load_char">FT_Load_Char</a></code>, the slot's content is erased by the new glyph data, i.e., the glyph's metrics, its image (bitmap or outline), and other control information.</p>
+<h4>also</h4>
+
+<p>See <code><a href="ft2-glyph_retrieval.html#ft_glyphslotrec">FT_GlyphSlotRec</a></code> for the publicly accessible glyph fields.</p>
+<hr>
+
+<h2 id="ft_glyphslotrec">FT_GlyphSlotRec<a class="headerlink" href="#ft_glyphslotrec" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_GlyphSlotRec_
+  {
+    <a href="ft2-library_setup.html#ft_library">FT_Library</a>        library;
+    <a href="ft2-face_creation.html#ft_face">FT_Face</a>           face;
+    <a href="ft2-glyph_retrieval.html#ft_glyphslot">FT_GlyphSlot</a>      next;
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>           glyph_index; /* new in 2.10; was reserved previously */
+    <a href="ft2-basic_types.html#ft_generic">FT_Generic</a>        generic;
+
+    <a href="ft2-glyph_retrieval.html#ft_glyph_metrics">FT_Glyph_Metrics</a>  metrics;
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>          linearHoriAdvance;
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>          linearVertAdvance;
+    <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>         advance;
+
+    <a href="ft2-basic_types.html#ft_glyph_format">FT_Glyph_Format</a>   format;
+
+    <a href="ft2-basic_types.html#ft_bitmap">FT_Bitmap</a>         bitmap;
+    <a href="ft2-basic_types.html#ft_int">FT_Int</a>            bitmap_left;
+    <a href="ft2-basic_types.html#ft_int">FT_Int</a>            bitmap_top;
+
+    <a href="ft2-outline_processing.html#ft_outline">FT_Outline</a>        outline;
+
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>           num_subglyphs;
+    <a href="ft2-other_api_data.html#ft_subglyph">FT_SubGlyph</a>       subglyphs;
+
+    <span class="keyword">void</span>*             control_data;
+    <span class="keyword">long</span>              control_len;
+
+    <a href="ft2-basic_types.html#ft_pos">FT_Pos</a>            lsb_delta;
+    <a href="ft2-basic_types.html#ft_pos">FT_Pos</a>            rsb_delta;
+
+    <span class="keyword">void</span>*             other;
+
+    <a href="ft2-other_api_data.html#ft_slot_internal">FT_Slot_Internal</a>  internal;
+
+  } <b>FT_GlyphSlotRec</b>;
+</code></pre></div>
+
+<p>FreeType root glyph slot class structure. A glyph slot is a container where individual glyphs can be loaded, be they in outline or bitmap format.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="library">library</td><td class="desc">
+<p>A handle to the FreeType library instance this slot belongs to.</p>
+</td></tr>
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the parent face object.</p>
+</td></tr>
+<tr><td class="val" id="next">next</td><td class="desc">
+<p>In some cases (like some font tools), several glyph slots per face object can be a good thing. As this is rare, the glyph slots are listed through a direct, single-linked list using its <code>next</code> field.</p>
+</td></tr>
+<tr><td class="val" id="glyph_index">glyph_index</td><td class="desc">
+<p>[Since 2.10] The glyph index passed as an argument to <code><a href="ft2-glyph_retrieval.html#ft_load_glyph">FT_Load_Glyph</a></code> while initializing the glyph slot.</p>
+</td></tr>
+<tr><td class="val" id="generic">generic</td><td class="desc">
+<p>A typeless pointer unused by the FreeType library or any of its drivers. It can be used by client applications to link their own data to each glyph slot object.</p>
+</td></tr>
+<tr><td class="val" id="metrics">metrics</td><td class="desc">
+<p>The metrics of the last loaded glyph in the slot. The returned values depend on the last load flags (see the <code><a href="ft2-glyph_retrieval.html#ft_load_glyph">FT_Load_Glyph</a></code> API function) and can be expressed either in 26.6 fractional pixels or font units.</p>
+<p>Note that even when the glyph image is transformed, the metrics are not.</p>
+</td></tr>
+<tr><td class="val" id="linearhoriadvance">linearHoriAdvance</td><td class="desc">
+<p>The advance width of the unhinted glyph. Its value is expressed in 16.16 fractional pixels, unless <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_LINEAR_DESIGN</a></code> is set when loading the glyph. This field can be important to perform correct WYSIWYG layout. Only relevant for scalable glyphs.</p>
+</td></tr>
+<tr><td class="val" id="linearvertadvance">linearVertAdvance</td><td class="desc">
+<p>The advance height of the unhinted glyph. Its value is expressed in 16.16 fractional pixels, unless <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_LINEAR_DESIGN</a></code> is set when loading the glyph. This field can be important to perform correct WYSIWYG layout. Only relevant for scalable glyphs.</p>
+</td></tr>
+<tr><td class="val" id="advance">advance</td><td class="desc">
+<p>This shorthand is, depending on <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_IGNORE_TRANSFORM</a></code>, the transformed (hinted) advance width for the glyph, in 26.6 fractional pixel format. As specified with <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_VERTICAL_LAYOUT</a></code>, it uses either the <code>horiAdvance</code> or the <code>vertAdvance</code> value of <code>metrics</code> field.</p>
+</td></tr>
+<tr><td class="val" id="format">format</td><td class="desc">
+<p>This field indicates the format of the image contained in the glyph slot. Typically <code><a href="ft2-basic_types.html#ft_glyph_format">FT_GLYPH_FORMAT_BITMAP</a></code>, <code><a href="ft2-basic_types.html#ft_glyph_format">FT_GLYPH_FORMAT_OUTLINE</a></code>, or <code><a href="ft2-basic_types.html#ft_glyph_format">FT_GLYPH_FORMAT_COMPOSITE</a></code>, but other values are possible.</p>
+</td></tr>
+<tr><td class="val" id="bitmap">bitmap</td><td class="desc">
+<p>This field is used as a bitmap descriptor. Note that the address and content of the bitmap buffer can change between calls of <code><a href="ft2-glyph_retrieval.html#ft_load_glyph">FT_Load_Glyph</a></code> and a few other functions.</p>
+</td></tr>
+<tr><td class="val" id="bitmap_left">bitmap_left</td><td class="desc">
+<p>The bitmap's left bearing expressed in integer pixels.</p>
+</td></tr>
+<tr><td class="val" id="bitmap_top">bitmap_top</td><td class="desc">
+<p>The bitmap's top bearing expressed in integer pixels. This is the distance from the baseline to the top-most glyph scanline, upwards y&nbsp;coordinates being <strong>positive</strong>.</p>
+</td></tr>
+<tr><td class="val" id="outline">outline</td><td class="desc">
+<p>The outline descriptor for the current glyph image if its format is <code><a href="ft2-basic_types.html#ft_glyph_format">FT_GLYPH_FORMAT_OUTLINE</a></code>. Once a glyph is loaded, <code>outline</code> can be transformed, distorted, emboldened, etc. However, it must not be freed.</p>
+<p>[Since 2.10.1] If <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_NO_SCALE</a></code> is set, outline coordinates of OpenType variation fonts for a selected instance are internally handled as 26.6 fractional font units but returned as (rounded) integers, as expected. To get unrounded font units, don't use <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_NO_SCALE</a></code> but load the glyph with <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_NO_HINTING</a></code> and scale it, using the font's <code>units_per_EM</code> value as the ppem.</p>
+</td></tr>
+<tr><td class="val" id="num_subglyphs">num_subglyphs</td><td class="desc">
+<p>The number of subglyphs in a composite glyph. This field is only valid for the composite glyph format that should normally only be loaded with the <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_NO_RECURSE</a></code> flag.</p>
+</td></tr>
+<tr><td class="val" id="subglyphs">subglyphs</td><td class="desc">
+<p>An array of subglyph descriptors for composite glyphs. There are <code>num_subglyphs</code> elements in there. Currently internal to FreeType.</p>
+</td></tr>
+<tr><td class="val" id="control_data">control_data</td><td class="desc">
+<p>Certain font drivers can also return the control data for a given glyph image (e.g. TrueType bytecode, Type&nbsp;1 charstrings, etc.). This field is a pointer to such data; it is currently internal to FreeType.</p>
+</td></tr>
+<tr><td class="val" id="control_len">control_len</td><td class="desc">
+<p>This is the length in bytes of the control data. Currently internal to FreeType.</p>
+</td></tr>
+<tr><td class="val" id="other">other</td><td class="desc">
+<p>Reserved.</p>
+</td></tr>
+<tr><td class="val" id="lsb_delta">lsb_delta</td><td class="desc">
+<p>The difference between hinted and unhinted left side bearing while auto-hinting is active. Zero otherwise.</p>
+</td></tr>
+<tr><td class="val" id="rsb_delta">rsb_delta</td><td class="desc">
+<p>The difference between hinted and unhinted right side bearing while auto-hinting is active. Zero otherwise.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>If <code><a href="ft2-glyph_retrieval.html#ft_load_glyph">FT_Load_Glyph</a></code> is called with default flags (see <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_DEFAULT</a></code>) the glyph image is loaded in the glyph slot in its native format (e.g., an outline glyph for TrueType and Type&nbsp;1 formats). [Since 2.9] The prospective bitmap metrics are calculated according to <code><a href="ft2-glyph_retrieval.html#ft_load_target_xxx">FT_LOAD_TARGET_XXX</a></code> and other flags even for the outline glyph, even if <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_RENDER</a></code> is not set.</p>
+<p>This image can later be converted into a bitmap by calling <code><a href="ft2-glyph_retrieval.html#ft_render_glyph">FT_Render_Glyph</a></code>. This function searches the current renderer for the native image's format, then invokes it.</p>
+<p>The renderer is in charge of transforming the native image through the slot's face transformation fields, then converting it into a bitmap that is returned in <code>slot-&gt;bitmap</code>.</p>
+<p>Note that <code>slot-&gt;bitmap_left</code> and <code>slot-&gt;bitmap_top</code> are also used to specify the position of the bitmap relative to the current pen position (e.g., coordinates (0,0) on the baseline). Of course, <code>slot-&gt;format</code> is also changed to <code><a href="ft2-basic_types.html#ft_glyph_format">FT_GLYPH_FORMAT_BITMAP</a></code>.</p>
+<p>Here is a small pseudo code fragment that shows how to use <code>lsb_delta</code> and <code>rsb_delta</code> to do fractional positioning of glyphs:
+<div class="highlight"><pre><span></span><code>  FT_GlyphSlot  slot     = face-&gt;glyph;
+  FT_Pos        origin_x = 0;
+
+
+  for all glyphs do
+    &lt;load glyph with `FT_Load_Glyph&#39;&gt;
+
+    FT_Outline_Translate( slot-&gt;outline, origin_x &amp; 63, 0 );
+
+    &lt;save glyph image, or render glyph, or ...&gt;
+
+    &lt;compute kern between current and next glyph
+     and add it to `origin_x&#39;&gt;
+
+    origin_x += slot-&gt;advance.x;
+    origin_x += slot-&gt;lsb_delta - slot-&gt;rsb_delta;
+  endfor
+</code></pre></div></p>
+<p>Here is another small pseudo code fragment that shows how to use <code>lsb_delta</code> and <code>rsb_delta</code> to improve integer positioning of glyphs:
+<div class="highlight"><pre><span></span><code>  FT_GlyphSlot  slot           = face-&gt;glyph;
+  FT_Pos        origin_x       = 0;
+  FT_Pos        prev_rsb_delta = 0;
+
+
+  for all glyphs do
+    &lt;compute kern between current and previous glyph
+     and add it to `origin_x&#39;&gt;
+
+    &lt;load glyph with `FT_Load_Glyph&#39;&gt;
+
+    if ( prev_rsb_delta - slot-&gt;lsb_delta &gt;  32 )
+      origin_x -= 64;
+    else if ( prev_rsb_delta - slot-&gt;lsb_delta &lt; -31 )
+      origin_x += 64;
+
+    prev_rsb_delta = slot-&gt;rsb_delta;
+
+    &lt;save glyph image, or render glyph, or ...&gt;
+
+    origin_x += slot-&gt;advance.x;
+  endfor
+</code></pre></div></p>
+<p>If you use strong auto-hinting, you <strong>must</strong> apply these delta values! Otherwise you will experience far too large inter-glyph spacing at small rendering sizes in most cases. Note that it doesn't harm to use the above code for other hinting modes also, since the delta values are zero then.</p>
+<hr>
+
+<h2 id="ft_glyph_metrics">FT_Glyph_Metrics<a class="headerlink" href="#ft_glyph_metrics" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_Glyph_Metrics_
+  {
+    <a href="ft2-basic_types.html#ft_pos">FT_Pos</a>  width;
+    <a href="ft2-basic_types.html#ft_pos">FT_Pos</a>  height;
+
+    <a href="ft2-basic_types.html#ft_pos">FT_Pos</a>  horiBearingX;
+    <a href="ft2-basic_types.html#ft_pos">FT_Pos</a>  horiBearingY;
+    <a href="ft2-basic_types.html#ft_pos">FT_Pos</a>  horiAdvance;
+
+    <a href="ft2-basic_types.html#ft_pos">FT_Pos</a>  vertBearingX;
+    <a href="ft2-basic_types.html#ft_pos">FT_Pos</a>  vertBearingY;
+    <a href="ft2-basic_types.html#ft_pos">FT_Pos</a>  vertAdvance;
+
+  } <b>FT_Glyph_Metrics</b>;
+</code></pre></div>
+
+<p>A structure to model the metrics of a single glyph. The values are expressed in 26.6 fractional pixel format; if the flag <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_NO_SCALE</a></code> has been used while loading the glyph, values are expressed in font units instead.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="width">width</td><td class="desc">
+<p>The glyph's width.</p>
+</td></tr>
+<tr><td class="val" id="height">height</td><td class="desc">
+<p>The glyph's height.</p>
+</td></tr>
+<tr><td class="val" id="horibearingx">horiBearingX</td><td class="desc">
+<p>Left side bearing for horizontal layout.</p>
+</td></tr>
+<tr><td class="val" id="horibearingy">horiBearingY</td><td class="desc">
+<p>Top side bearing for horizontal layout.</p>
+</td></tr>
+<tr><td class="val" id="horiadvance">horiAdvance</td><td class="desc">
+<p>Advance width for horizontal layout.</p>
+</td></tr>
+<tr><td class="val" id="vertbearingx">vertBearingX</td><td class="desc">
+<p>Left side bearing for vertical layout.</p>
+</td></tr>
+<tr><td class="val" id="vertbearingy">vertBearingY</td><td class="desc">
+<p>Top side bearing for vertical layout. Larger positive values mean further below the vertical glyph origin.</p>
+</td></tr>
+<tr><td class="val" id="vertadvance">vertAdvance</td><td class="desc">
+<p>Advance height for vertical layout. Positive values mean the glyph has a positive advance downward.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>If not disabled with <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_NO_HINTING</a></code>, the values represent dimensions of the hinted glyph (in case hinting is applicable).</p>
+<p>Stroking a glyph with an outside border does not increase <code>horiAdvance</code> or <code>vertAdvance</code>; you have to manually adjust these values to account for the added width and height.</p>
+<p>FreeType doesn't use the &lsquo;VORG&rsquo; table data for CFF fonts because it doesn't have an interface to quickly retrieve the glyph height. The y&nbsp;coordinate of the vertical origin can be simply computed as <code>vertBearingY + height</code> after loading a glyph.</p>
+<hr>
+
+<h2 id="ft_load_glyph">FT_Load_Glyph<a class="headerlink" href="#ft_load_glyph" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Load_Glyph</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>   face,
+                 <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>   glyph_index,
+                 <a href="ft2-basic_types.html#ft_int32">FT_Int32</a>  load_flags );
+</code></pre></div>
+
+<p>Load a glyph into the glyph slot of a face object.</p>
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the target face object where the glyph is loaded.</p>
+</td></tr>
+</table>
+
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="glyph_index">glyph_index</td><td class="desc">
+<p>The index of the glyph in the font file. For CID-keyed fonts (either in PS or in CFF format) this argument specifies the CID value.</p>
+</td></tr>
+<tr><td class="val" id="load_flags">load_flags</td><td class="desc">
+<p>A flag indicating what to load for this glyph. The <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_XXX</a></code> flags can be used to control the glyph loading process (e.g., whether the outline should be scaled, whether to load bitmaps or not, whether to hint the outline, etc).</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>For proper scaling and hinting, the active <code><a href="ft2-sizing_and_scaling.html#ft_size">FT_Size</a></code> object owned by the face has to be meaningfully initialized by calling <code><a href="ft2-sizing_and_scaling.html#ft_set_char_size">FT_Set_Char_Size</a></code> before this function, for example. The loaded glyph may be transformed. See <code><a href="ft2-sizing_and_scaling.html#ft_set_transform">FT_Set_Transform</a></code> for the details.</p>
+<p>For subsetted CID-keyed fonts, <code>FT_Err_Invalid_Argument</code> is returned for invalid CID values (that is, for CID values that don't have a corresponding glyph in the font). See the discussion of the <code><a href="ft2-face_creation.html#ft_face_flag_xxx">FT_FACE_FLAG_CID_KEYED</a></code> flag for more details.</p>
+<p>If you receive <code>FT_Err_Glyph_Too_Big</code>, try getting the glyph outline at EM size, then scale it manually and fill it as a graphics operation.</p>
+<hr>
+
+<h2 id="ft_load_xxx">FT_LOAD_XXX<a class="headerlink" href="#ft_load_xxx" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <a href="ft2-glyph_retrieval.html#ft_load_default">FT_LOAD_DEFAULT</a>                      0x0
+#<span class="keyword">define</span> <a href="ft2-glyph_retrieval.html#ft_load_no_scale">FT_LOAD_NO_SCALE</a>                     ( 1L &lt;&lt; 0  )
+#<span class="keyword">define</span> <a href="ft2-glyph_retrieval.html#ft_load_no_hinting">FT_LOAD_NO_HINTING</a>                   ( 1L &lt;&lt; 1  )
+#<span class="keyword">define</span> <a href="ft2-glyph_retrieval.html#ft_load_render">FT_LOAD_RENDER</a>                       ( 1L &lt;&lt; 2  )
+#<span class="keyword">define</span> <a href="ft2-glyph_retrieval.html#ft_load_no_bitmap">FT_LOAD_NO_BITMAP</a>                    ( 1L &lt;&lt; 3  )
+#<span class="keyword">define</span> <a href="ft2-glyph_retrieval.html#ft_load_vertical_layout">FT_LOAD_VERTICAL_LAYOUT</a>              ( 1L &lt;&lt; 4  )
+#<span class="keyword">define</span> <a href="ft2-glyph_retrieval.html#ft_load_force_autohint">FT_LOAD_FORCE_AUTOHINT</a>               ( 1L &lt;&lt; 5  )
+#<span class="keyword">define</span> <a href="ft2-glyph_retrieval.html#ft_load_crop_bitmap">FT_LOAD_CROP_BITMAP</a>                  ( 1L &lt;&lt; 6  )
+#<span class="keyword">define</span> <a href="ft2-glyph_retrieval.html#ft_load_pedantic">FT_LOAD_PEDANTIC</a>                     ( 1L &lt;&lt; 7  )
+#<span class="keyword">define</span> <a href="ft2-glyph_retrieval.html#ft_load_ignore_global_advance_width">FT_LOAD_IGNORE_GLOBAL_ADVANCE_WIDTH</a>  ( 1L &lt;&lt; 9  )
+#<span class="keyword">define</span> <a href="ft2-glyph_retrieval.html#ft_load_no_recurse">FT_LOAD_NO_RECURSE</a>                   ( 1L &lt;&lt; 10 )
+#<span class="keyword">define</span> <a href="ft2-glyph_retrieval.html#ft_load_ignore_transform">FT_LOAD_IGNORE_TRANSFORM</a>             ( 1L &lt;&lt; 11 )
+#<span class="keyword">define</span> <a href="ft2-glyph_retrieval.html#ft_load_monochrome">FT_LOAD_MONOCHROME</a>                   ( 1L &lt;&lt; 12 )
+#<span class="keyword">define</span> <a href="ft2-glyph_retrieval.html#ft_load_linear_design">FT_LOAD_LINEAR_DESIGN</a>                ( 1L &lt;&lt; 13 )
+#<span class="keyword">define</span> <a href="ft2-glyph_retrieval.html#ft_load_sbits_only">FT_LOAD_SBITS_ONLY</a>                   ( 1L &lt;&lt; 14 )
+#<span class="keyword">define</span> <a href="ft2-glyph_retrieval.html#ft_load_no_autohint">FT_LOAD_NO_AUTOHINT</a>                  ( 1L &lt;&lt; 15 )
+  /* Bits 16-19 are used by `FT_LOAD_TARGET_` */
+#<span class="keyword">define</span> <a href="ft2-glyph_retrieval.html#ft_load_color">FT_LOAD_COLOR</a>                        ( 1L &lt;&lt; 20 )
+#<span class="keyword">define</span> <a href="ft2-glyph_retrieval.html#ft_load_compute_metrics">FT_LOAD_COMPUTE_METRICS</a>              ( 1L &lt;&lt; 21 )
+#<span class="keyword">define</span> <a href="ft2-glyph_retrieval.html#ft_load_bitmap_metrics_only">FT_LOAD_BITMAP_METRICS_ONLY</a>          ( 1L &lt;&lt; 22 )
+#<span class="keyword">define</span> <a href="ft2-glyph_retrieval.html#ft_load_no_svg">FT_LOAD_NO_SVG</a>                       ( 1L &lt;&lt; 24 )
+</code></pre></div>
+
+<p>A list of bit field constants for <code><a href="ft2-glyph_retrieval.html#ft_load_glyph">FT_Load_Glyph</a></code> to indicate what kind of operations to perform during glyph loading.</p>
+<h4>values</h4>
+<table class="fields long">
+<tr><td class="val" id="ft_load_default">FT_LOAD_DEFAULT</td><td class="desc">
+<p>Corresponding to&nbsp;0, this value is used as the default glyph load operation. In this case, the following happens:</p>
+<ol>
+<li><p>FreeType looks for a bitmap for the glyph corresponding to the face's current size. If one is found, the function returns. The bitmap data can be accessed from the glyph slot (see note below).</p>
+</li>
+<li><p>If no embedded bitmap is searched for or found, FreeType looks for a scalable outline. If one is found, it is loaded from the font file, scaled to device pixels, then &lsquo;hinted&rsquo; to the pixel grid in order to optimize it. The outline data can be accessed from the glyph slot (see note below).</p>
+</li>
+</ol>
+<p>Note that by default the glyph loader doesn't render outlines into bitmaps. The following flags are used to modify this default behaviour to more specific and useful cases.</p>
+</td></tr>
+<tr><td class="val" id="ft_load_no_scale">FT_LOAD_NO_SCALE</td><td class="desc">
+<p>Don't scale the loaded outline glyph but keep it in font units. This flag is also assumed if <code><a href="ft2-sizing_and_scaling.html#ft_size">FT_Size</a></code> owned by the face was not properly initialized.</p>
+<p>This flag implies <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_NO_HINTING</a></code> and <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_NO_BITMAP</a></code>, and unsets <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_RENDER</a></code>.</p>
+<p>If the font is &lsquo;tricky&rsquo; (see <code><a href="ft2-face_creation.html#ft_face_flag_xxx">FT_FACE_FLAG_TRICKY</a></code> for more), using <code>FT_LOAD_NO_SCALE</code> usually yields meaningless outlines because the subglyphs must be scaled and positioned with hinting instructions. This can be solved by loading the font without <code>FT_LOAD_NO_SCALE</code> and setting the character size to <code>font-&gt;units_per_EM</code>.</p>
+</td></tr>
+<tr><td class="val" id="ft_load_no_hinting">FT_LOAD_NO_HINTING</td><td class="desc">
+<p>Disable hinting. This generally generates &lsquo;blurrier&rsquo; bitmap glyphs when the glyphs are rendered in any of the anti-aliased modes. See also the note below.</p>
+<p>This flag is implied by <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_NO_SCALE</a></code>.</p>
+</td></tr>
+<tr><td class="val" id="ft_load_render">FT_LOAD_RENDER</td><td class="desc">
+<p>Call <code><a href="ft2-glyph_retrieval.html#ft_render_glyph">FT_Render_Glyph</a></code> after the glyph is loaded. By default, the glyph is rendered in <code><a href="ft2-glyph_retrieval.html#ft_render_mode">FT_RENDER_MODE_NORMAL</a></code> mode. This can be overridden by <code><a href="ft2-glyph_retrieval.html#ft_load_target_xxx">FT_LOAD_TARGET_XXX</a></code> or <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_MONOCHROME</a></code>.</p>
+<p>This flag is unset by <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_NO_SCALE</a></code>.</p>
+</td></tr>
+<tr><td class="val" id="ft_load_no_bitmap">FT_LOAD_NO_BITMAP</td><td class="desc">
+<p>Ignore bitmap strikes when loading. Bitmap-only fonts ignore this flag.</p>
+<p><code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_NO_SCALE</a></code> always sets this flag.</p>
+</td></tr>
+<tr><td class="val" id="ft_load_sbits_only">FT_LOAD_SBITS_ONLY</td><td class="desc">
+<p>[Since 2.12] This is the opposite of <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_NO_BITMAP</a></code>, more or less: <code><a href="ft2-glyph_retrieval.html#ft_load_glyph">FT_Load_Glyph</a></code> returns <code>FT_Err_Invalid_Argument</code> if the face contains a bitmap strike for the given size (or the strike selected by <code><a href="ft2-sizing_and_scaling.html#ft_select_size">FT_Select_Size</a></code>) but there is no glyph in the strike.</p>
+<p>Note that this load flag was part of FreeType since version 2.0.6 but previously tagged as internal.</p>
+</td></tr>
+<tr><td class="val" id="ft_load_vertical_layout">FT_LOAD_VERTICAL_LAYOUT</td><td class="desc">
+<p>Load the glyph for vertical text layout. In particular, the <code>advance</code> value in the <code><a href="ft2-glyph_retrieval.html#ft_glyphslotrec">FT_GlyphSlotRec</a></code> structure is set to the <code>vertAdvance</code> value of the <code>metrics</code> field.</p>
+<p>In case <code><a href="ft2-font_testing_macros.html#ft_has_vertical">FT_HAS_VERTICAL</a></code> doesn't return true, you shouldn't use this flag currently. Reason is that in this case vertical metrics get synthesized, and those values are not always consistent across various font formats.</p>
+</td></tr>
+<tr><td class="val" id="ft_load_force_autohint">FT_LOAD_FORCE_AUTOHINT</td><td class="desc">
+<p>Prefer the auto-hinter over the font's native hinter. See also the note below.</p>
+</td></tr>
+<tr><td class="val" id="ft_load_pedantic">FT_LOAD_PEDANTIC</td><td class="desc">
+<p>Make the font driver perform pedantic verifications during glyph loading and hinting. This is mostly used to detect broken glyphs in fonts. By default, FreeType tries to handle broken fonts also.</p>
+<p>In particular, errors from the TrueType bytecode engine are not passed to the application if this flag is not set; this might result in partially hinted or distorted glyphs in case a glyph's bytecode is buggy.</p>
+</td></tr>
+<tr><td class="val" id="ft_load_no_recurse">FT_LOAD_NO_RECURSE</td><td class="desc">
+<p>Don't load composite glyphs recursively. Instead, the font driver fills the <code>num_subglyph</code> and <code>subglyphs</code> values of the glyph slot; it also sets <code>glyph-&gt;format</code> to <code><a href="ft2-basic_types.html#ft_glyph_format">FT_GLYPH_FORMAT_COMPOSITE</a></code>. The description of subglyphs can then be accessed with <code><a href="ft2-information_retrieval.html#ft_get_subglyph_info">FT_Get_SubGlyph_Info</a></code>.</p>
+<p>Don't use this flag for retrieving metrics information since some font drivers only return rudimentary data.</p>
+<p>This flag implies <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_NO_SCALE</a></code> and <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_IGNORE_TRANSFORM</a></code>.</p>
+</td></tr>
+<tr><td class="val" id="ft_load_ignore_transform">FT_LOAD_IGNORE_TRANSFORM</td><td class="desc">
+<p>Ignore the transform matrix set by <code><a href="ft2-sizing_and_scaling.html#ft_set_transform">FT_Set_Transform</a></code>.</p>
+</td></tr>
+<tr><td class="val" id="ft_load_monochrome">FT_LOAD_MONOCHROME</td><td class="desc">
+<p>This flag is used with <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_RENDER</a></code> to indicate that you want to render an outline glyph to a 1-bit monochrome bitmap glyph, with 8&nbsp;pixels packed into each byte of the bitmap data.</p>
+<p>Note that this has no effect on the hinting algorithm used. You should rather use <code><a href="ft2-glyph_retrieval.html#ft_load_target_xxx">FT_LOAD_TARGET_MONO</a></code> so that the monochrome-optimized hinting algorithm is used.</p>
+</td></tr>
+<tr><td class="val" id="ft_load_linear_design">FT_LOAD_LINEAR_DESIGN</td><td class="desc">
+<p>Keep <code>linearHoriAdvance</code> and <code>linearVertAdvance</code> fields of <code><a href="ft2-glyph_retrieval.html#ft_glyphslotrec">FT_GlyphSlotRec</a></code> in font units. See <code><a href="ft2-glyph_retrieval.html#ft_glyphslotrec">FT_GlyphSlotRec</a></code> for details.</p>
+</td></tr>
+<tr><td class="val" id="ft_load_no_autohint">FT_LOAD_NO_AUTOHINT</td><td class="desc">
+<p>Disable the auto-hinter. See also the note below.</p>
+</td></tr>
+<tr><td class="val" id="ft_load_color">FT_LOAD_COLOR</td><td class="desc">
+<p>Load colored glyphs. FreeType searches in the following order; there are slight differences depending on the font format.</p>
+<p>[Since 2.5] Load embedded color bitmap images (provided <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_NO_BITMAP</a></code> is not set). The resulting color bitmaps, if available, have the <code><a href="ft2-basic_types.html#ft_pixel_mode">FT_PIXEL_MODE_BGRA</a></code> format, with pre-multiplied color channels. If the flag is not set and color bitmaps are found, they are converted to 256-level gray bitmaps, using the <code><a href="ft2-basic_types.html#ft_pixel_mode">FT_PIXEL_MODE_GRAY</a></code> format.</p>
+<p>[Since 2.12] If the glyph index maps to an entry in the face's &lsquo;SVG&nbsp;&rsquo; table, load the associated SVG document from this table and set the <code>format</code> field of <code><a href="ft2-glyph_retrieval.html#ft_glyphslotrec">FT_GlyphSlotRec</a></code> to <code><a href="ft2-basic_types.html#ft_glyph_format">FT_GLYPH_FORMAT_SVG</a></code> ([since 2.13.1] provided <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_NO_SVG</a></code> is not set). Note that FreeType itself can't render SVG documents; however, the library provides hooks to seamlessly integrate an external renderer. See sections &lsquo;<a href="ft2-ot_svg_driver.html#ot_svg_driver">The SVG driver</a>&rsquo; and &lsquo;<a href="ft2-svg_fonts.html#svg_fonts">OpenType SVG Fonts</a>&rsquo; for more.</p>
+<p>[Since 2.10, experimental] If the glyph index maps to an entry in the face's &lsquo;COLR&rsquo; table with a &lsquo;CPAL&rsquo; palette table (as defined in the OpenType specification), make <code><a href="ft2-glyph_retrieval.html#ft_render_glyph">FT_Render_Glyph</a></code> provide a default blending of the color glyph layers associated with the glyph index, using the same bitmap format as embedded color bitmap images. This is mainly for convenience and works only for glyphs in &lsquo;COLR&rsquo; v0 tables (or glyphs in &lsquo;COLR&rsquo; v1 tables that exclusively use v0 features). For full control of color layers use <code><a href="ft2-layer_management.html#ft_get_color_glyph_layer">FT_Get_Color_Glyph_Layer</a></code> and FreeType's color functions like <code><a href="ft2-color_management.html#ft_palette_select">FT_Palette_Select</a></code> instead of setting <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_COLOR</a></code> for rendering so that the client application can handle blending by itself.</p>
+</td></tr>
+<tr><td class="val" id="ft_load_no_svg">FT_LOAD_NO_SVG</td><td class="desc">
+<p>[Since 2.13.1] Ignore SVG glyph data when loading.</p>
+</td></tr>
+<tr><td class="val" id="ft_load_compute_metrics">FT_LOAD_COMPUTE_METRICS</td><td class="desc">
+<p>[Since 2.6.1] Compute glyph metrics from the glyph data, without the use of bundled metrics tables (for example, the &lsquo;hdmx&rsquo; table in TrueType fonts). This flag is mainly used by font validating or font editing applications, which need to ignore, verify, or edit those tables.</p>
+<p>Currently, this flag is only implemented for TrueType fonts.</p>
+</td></tr>
+<tr><td class="val" id="ft_load_bitmap_metrics_only">FT_LOAD_BITMAP_METRICS_ONLY</td><td class="desc">
+<p>[Since 2.7.1] Request loading of the metrics and bitmap image information of a (possibly embedded) bitmap glyph without allocating or copying the bitmap image data itself. No effect if the target glyph is not a bitmap image.</p>
+<p>This flag unsets <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_RENDER</a></code>.</p>
+</td></tr>
+<tr><td class="val" id="ft_load_crop_bitmap">FT_LOAD_CROP_BITMAP</td><td class="desc">
+<p>Ignored. Deprecated.</p>
+</td></tr>
+<tr><td class="val" id="ft_load_ignore_global_advance_width">FT_LOAD_IGNORE_GLOBAL_ADVANCE_WIDTH</td><td class="desc">
+<p>Ignored. Deprecated.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>By default, hinting is enabled and the font's native hinter (see <code><a href="ft2-face_creation.html#ft_face_flag_xxx">FT_FACE_FLAG_HINTER</a></code>) is preferred over the auto-hinter. You can disable hinting by setting <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_NO_HINTING</a></code> or change the precedence by setting <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_FORCE_AUTOHINT</a></code>. You can also set <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_NO_AUTOHINT</a></code> in case you don't want the auto-hinter to be used at all.</p>
+<p>See the description of <code><a href="ft2-face_creation.html#ft_face_flag_xxx">FT_FACE_FLAG_TRICKY</a></code> for a special exception (affecting only a handful of Asian fonts).</p>
+<p>Besides deciding which hinter to use, you can also decide which hinting algorithm to use. See <code><a href="ft2-glyph_retrieval.html#ft_load_target_xxx">FT_LOAD_TARGET_XXX</a></code> for details.</p>
+<p>Note that the auto-hinter needs a valid Unicode cmap (either a native one or synthesized by FreeType) for producing correct results. If a font provides an incorrect mapping (for example, assigning the character code U+005A, LATIN CAPITAL LETTER&nbsp;Z, to a glyph depicting a mathematical integral sign), the auto-hinter might produce useless results.</p>
+<hr>
+
+<h2 id="ft_load_target_mode">FT_LOAD_TARGET_MODE<a class="headerlink" href="#ft_load_target_mode" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_LOAD_TARGET_MODE</b>( x )                               \
+          FT_STATIC_CAST( <a href="ft2-glyph_retrieval.html#ft_render_mode">FT_Render_Mode</a>, ( (x) &gt;&gt; 16 ) &amp; 15 )
+</code></pre></div>
+
+<p>Return the <code><a href="ft2-glyph_retrieval.html#ft_render_mode">FT_Render_Mode</a></code> corresponding to a given <code><a href="ft2-glyph_retrieval.html#ft_load_target_xxx">FT_LOAD_TARGET_XXX</a></code> value.</p>
+<hr>
+
+<h2 id="ft_load_target_xxx">FT_LOAD_TARGET_XXX<a class="headerlink" href="#ft_load_target_xxx" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> FT_LOAD_TARGET_( x )   ( FT_STATIC_CAST( <a href="ft2-basic_types.html#ft_int32">FT_Int32</a>, (x) &amp; 15 ) &lt;&lt; 16 )
+
+#<span class="keyword">define</span> <a href="ft2-glyph_retrieval.html#ft_load_target_normal">FT_LOAD_TARGET_NORMAL</a>  FT_LOAD_TARGET_( <a href="ft2-glyph_retrieval.html#ft_render_mode_normal">FT_RENDER_MODE_NORMAL</a> )
+#<span class="keyword">define</span> <a href="ft2-glyph_retrieval.html#ft_load_target_light">FT_LOAD_TARGET_LIGHT</a>   FT_LOAD_TARGET_( <a href="ft2-glyph_retrieval.html#ft_render_mode_light">FT_RENDER_MODE_LIGHT</a>  )
+#<span class="keyword">define</span> <a href="ft2-glyph_retrieval.html#ft_load_target_mono">FT_LOAD_TARGET_MONO</a>    FT_LOAD_TARGET_( <a href="ft2-glyph_retrieval.html#ft_render_mode_mono">FT_RENDER_MODE_MONO</a>   )
+#<span class="keyword">define</span> <a href="ft2-glyph_retrieval.html#ft_load_target_lcd">FT_LOAD_TARGET_LCD</a>     FT_LOAD_TARGET_( <a href="ft2-glyph_retrieval.html#ft_render_mode_lcd">FT_RENDER_MODE_LCD</a>    )
+#<span class="keyword">define</span> <a href="ft2-glyph_retrieval.html#ft_load_target_lcd_v">FT_LOAD_TARGET_LCD_V</a>   FT_LOAD_TARGET_( <a href="ft2-glyph_retrieval.html#ft_render_mode_lcd_v">FT_RENDER_MODE_LCD_V</a>  )
+</code></pre></div>
+
+<p>A list of values to select a specific hinting algorithm for the hinter. You should OR one of these values to your <code>load_flags</code> when calling <code><a href="ft2-glyph_retrieval.html#ft_load_glyph">FT_Load_Glyph</a></code>.</p>
+<p>Note that a font's native hinters may ignore the hinting algorithm you have specified (e.g., the TrueType bytecode interpreter). You can set <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_FORCE_AUTOHINT</a></code> to ensure that the auto-hinter is used.</p>
+<h4>values</h4>
+<table class="fields">
+<tr><td class="val" id="ft_load_target_normal">FT_LOAD_TARGET_NORMAL</td><td class="desc">
+<p>The default hinting algorithm, optimized for standard gray-level rendering. For monochrome output, use <code><a href="ft2-glyph_retrieval.html#ft_load_target_xxx">FT_LOAD_TARGET_MONO</a></code> instead.</p>
+</td></tr>
+<tr><td class="val" id="ft_load_target_light">FT_LOAD_TARGET_LIGHT</td><td class="desc">
+<p>A lighter hinting algorithm for gray-level modes. Many generated glyphs are fuzzier but better resemble their original shape. This is achieved by snapping glyphs to the pixel grid only vertically (Y-axis), as is done by FreeType's new CFF engine or Microsoft's ClearType font renderer. This preserves inter-glyph spacing in horizontal text. The snapping is done either by the native font driver, if the driver itself and the font support it, or by the auto-hinter.</p>
+<p>Advance widths are rounded to integer values; however, using the <code>lsb_delta</code> and <code>rsb_delta</code> fields of <code><a href="ft2-glyph_retrieval.html#ft_glyphslotrec">FT_GlyphSlotRec</a></code>, it is possible to get fractional advance widths for subpixel positioning (which is recommended to use).</p>
+<p>If configuration option <code>AF_CONFIG_OPTION_TT_SIZE_METRICS</code> is active, TrueType-like metrics are used to make this mode behave similarly as in unpatched FreeType versions between 2.4.6 and 2.7.1 (inclusive).</p>
+</td></tr>
+<tr><td class="val" id="ft_load_target_mono">FT_LOAD_TARGET_MONO</td><td class="desc">
+<p>Strong hinting algorithm that should only be used for monochrome output. The result is probably unpleasant if the glyph is rendered in non-monochrome modes.</p>
+<p>Note that for outline fonts only the TrueType font driver has proper monochrome hinting support, provided the TTFs contain hints for B/W rendering (which most fonts no longer provide). If these conditions are not met it is very likely that you get ugly results at smaller sizes.</p>
+</td></tr>
+<tr><td class="val" id="ft_load_target_lcd">FT_LOAD_TARGET_LCD</td><td class="desc">
+<p>A variant of <code><a href="ft2-glyph_retrieval.html#ft_load_target_xxx">FT_LOAD_TARGET_LIGHT</a></code> optimized for horizontally decimated LCD displays.</p>
+</td></tr>
+<tr><td class="val" id="ft_load_target_lcd_v">FT_LOAD_TARGET_LCD_V</td><td class="desc">
+<p>A variant of <code><a href="ft2-glyph_retrieval.html#ft_load_target_xxx">FT_LOAD_TARGET_NORMAL</a></code> optimized for vertically decimated LCD displays.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>You should use only <em>one</em> of the <code>FT_LOAD_TARGET_XXX</code> values in your <code>load_flags</code>. They can't be ORed.</p>
+<p>If <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_RENDER</a></code> is also set, the glyph is rendered in the corresponding mode (i.e., the mode that matches the used algorithm best). An exception is <code>FT_LOAD_TARGET_MONO</code> since it implies <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_MONOCHROME</a></code>.</p>
+<p>You can use a hinting algorithm that doesn't correspond to the same rendering mode. As an example, it is possible to use the &lsquo;light&rsquo; hinting algorithm and have the results rendered in horizontal LCD pixel mode, with code like
+<div class="highlight"><pre><span></span><code>  FT_Load_Glyph( face, glyph_index,
+                 load_flags | FT_LOAD_TARGET_LIGHT );
+
+  FT_Render_Glyph( face-&gt;glyph, FT_RENDER_MODE_LCD );
+</code></pre></div></p>
+<p>In general, you should stick with one rendering mode. For example, switching between <code><a href="ft2-glyph_retrieval.html#ft_load_target_xxx">FT_LOAD_TARGET_NORMAL</a></code> and <code><a href="ft2-glyph_retrieval.html#ft_load_target_xxx">FT_LOAD_TARGET_MONO</a></code> enforces a lot of recomputation for TrueType fonts, which is slow. Another reason is caching: Selecting a different mode usually causes changes in both the outlines and the rasterized bitmaps; it is thus necessary to empty the cache after a mode switch to avoid false hits.</p>
+<hr>
+
+<h2 id="ft_render_glyph">FT_Render_Glyph<a class="headerlink" href="#ft_render_glyph" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Render_Glyph</b>( <a href="ft2-glyph_retrieval.html#ft_glyphslot">FT_GlyphSlot</a>    slot,
+                   <a href="ft2-glyph_retrieval.html#ft_render_mode">FT_Render_Mode</a>  render_mode );
+</code></pre></div>
+
+<p>Convert a given glyph image to a bitmap. It does so by inspecting the glyph image format, finding the relevant renderer, and invoking it.</p>
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="slot">slot</td><td class="desc">
+<p>A handle to the glyph slot containing the image to convert.</p>
+</td></tr>
+</table>
+
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="render_mode">render_mode</td><td class="desc">
+<p>The render mode used to render the glyph image into a bitmap. See <code><a href="ft2-glyph_retrieval.html#ft_render_mode">FT_Render_Mode</a></code> for a list of possible values.</p>
+<p>If <code><a href="ft2-glyph_retrieval.html#ft_render_mode">FT_RENDER_MODE_NORMAL</a></code> is used, a previous call of <code><a href="ft2-glyph_retrieval.html#ft_load_glyph">FT_Load_Glyph</a></code> with flag <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_COLOR</a></code> makes <code>FT_Render_Glyph</code> provide a default blending of colored glyph layers associated with the current glyph slot (provided the font contains such layers) instead of rendering the glyph slot's outline. This is an experimental feature; see <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_COLOR</a></code> for more information.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>When FreeType outputs a bitmap of a glyph, it really outputs an alpha coverage map. If a pixel is completely covered by a filled-in outline, the bitmap contains 0xFF at that pixel, meaning that 0xFF/0xFF fraction of that pixel is covered, meaning the pixel is 100% black (or 0% bright). If a pixel is only 50% covered (value 0x80), the pixel is made 50% black (50% bright or a middle shade of grey). 0% covered means 0% black (100% bright or white).</p>
+<p>On high-DPI screens like on smartphones and tablets, the pixels are so small that their chance of being completely covered and therefore completely black are fairly good. On the low-DPI screens, however, the situation is different. The pixels are too large for most of the details of a glyph and shades of gray are the norm rather than the exception.</p>
+<p>This is relevant because all our screens have a second problem: they are not linear. 1&nbsp;+&nbsp;1 is not&nbsp;2. Twice the value does not result in twice the brightness. When a pixel is only 50% covered, the coverage map says 50% black, and this translates to a pixel value of 128 when you use 8&nbsp;bits per channel (0-255). However, this does not translate to 50% brightness for that pixel on our sRGB and gamma&nbsp;2.2 screens. Due to their non-linearity, they dwell longer in the darks and only a pixel value of about 186 results in 50% brightness &ndash; 128 ends up too dark on both bright and dark backgrounds. The net result is that dark text looks burnt-out, pixely and blotchy on bright background, bright text too frail on dark backgrounds, and colored text on colored background (for example, red on green) seems to have dark halos or &lsquo;dirt&rsquo; around it. The situation is especially ugly for diagonal stems like in &lsquo;w&rsquo; glyph shapes where the quality of FreeType's anti-aliasing depends on the correct display of grays. On high-DPI screens where smaller, fully black pixels reign supreme, this doesn't matter, but on our low-DPI screens with all the gray shades, it does. 0% and 100% brightness are the same things in linear and non-linear space, just all the shades in-between aren't.</p>
+<p>The blending function for placing text over a background is
+<div class="highlight"><pre><span></span><code>  dst = alpha * src + (1 - alpha) * dst    ,
+</code></pre></div></p>
+<p>which is known as the OVER operator.</p>
+<p>To correctly composite an anti-aliased pixel of a glyph onto a surface,</p>
+<ol>
+<li>
+<p>take the foreground and background colors (e.g., in sRGB space) and apply gamma to get them in a linear space,</p>
+</li>
+<li>
+<p>use OVER to blend the two linear colors using the glyph pixel as the alpha value (remember, the glyph bitmap is an alpha coverage bitmap), and</p>
+</li>
+<li>
+<p>apply inverse gamma to the blended pixel and write it back to the image.</p>
+</li>
+</ol>
+<p>Internal testing at Adobe found that a target inverse gamma of&nbsp;1.8 for step&nbsp;3 gives good results across a wide range of displays with an sRGB gamma curve or a similar one.</p>
+<p>This process can cost performance. There is an approximation that does not need to know about the background color; see <a href="https://bel.fi/alankila/lcd/">https://bel.fi/alankila/lcd/</a> and <a href="https://bel.fi/alankila/lcd/alpcor.html">https://bel.fi/alankila/lcd/alpcor.html</a> for details.</p>
+<p><strong>ATTENTION</strong>: Linear blending is even more important when dealing with subpixel-rendered glyphs to prevent color-fringing! A subpixel-rendered glyph must first be filtered with a filter that gives equal weight to the three color primaries and does not exceed a sum of 0x100, see section &lsquo;<a href="ft2-lcd_rendering.html#lcd_rendering">Subpixel Rendering</a>&rsquo;. Then the only difference to gray linear blending is that subpixel-rendered linear blending is done 3&nbsp;times per pixel: red foreground subpixel to red background subpixel and so on for green and blue.</p>
+<hr>
+
+<h2 id="ft_render_mode">FT_Render_Mode<a class="headerlink" href="#ft_render_mode" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">enum</span>  FT_Render_Mode_
+  {
+    <a href="ft2-glyph_retrieval.html#ft_render_mode_normal">FT_RENDER_MODE_NORMAL</a> = 0,
+    <a href="ft2-glyph_retrieval.html#ft_render_mode_light">FT_RENDER_MODE_LIGHT</a>,
+    <a href="ft2-glyph_retrieval.html#ft_render_mode_mono">FT_RENDER_MODE_MONO</a>,
+    <a href="ft2-glyph_retrieval.html#ft_render_mode_lcd">FT_RENDER_MODE_LCD</a>,
+    <a href="ft2-glyph_retrieval.html#ft_render_mode_lcd_v">FT_RENDER_MODE_LCD_V</a>,
+    <a href="ft2-glyph_retrieval.html#ft_render_mode_sdf">FT_RENDER_MODE_SDF</a>,
+
+    FT_RENDER_MODE_MAX
+
+  } <b>FT_Render_Mode</b>;
+
+
+  /* these constants are deprecated; use the corresponding */
+  /* `<b>FT_Render_Mode</b>` values instead                       */
+#<span class="keyword">define</span> ft_render_mode_normal  <a href="ft2-glyph_retrieval.html#ft_render_mode_normal">FT_RENDER_MODE_NORMAL</a>
+#<span class="keyword">define</span> ft_render_mode_mono    <a href="ft2-glyph_retrieval.html#ft_render_mode_mono">FT_RENDER_MODE_MONO</a>
+</code></pre></div>
+
+<p>Render modes supported by FreeType&nbsp;2. Each mode corresponds to a specific type of scanline conversion performed on the outline.</p>
+<p>For bitmap fonts and embedded bitmaps the <code>bitmap-&gt;pixel_mode</code> field in the <code><a href="ft2-glyph_retrieval.html#ft_glyphslotrec">FT_GlyphSlotRec</a></code> structure gives the format of the returned bitmap.</p>
+<p>All modes except <code><a href="ft2-glyph_retrieval.html#ft_render_mode">FT_RENDER_MODE_MONO</a></code> use 256 levels of opacity, indicating pixel coverage. Use linear alpha blending and gamma correction to correctly render non-monochrome glyph bitmaps onto a surface; see <code><a href="ft2-glyph_retrieval.html#ft_render_glyph">FT_Render_Glyph</a></code>.</p>
+<p>The <code><a href="ft2-glyph_retrieval.html#ft_render_mode">FT_RENDER_MODE_SDF</a></code> is a special render mode that uses up to 256 distance values, indicating the signed distance from the grid position to the nearest outline.</p>
+<h4>values</h4>
+<table class="fields">
+<tr><td class="val" id="ft_render_mode_normal">FT_RENDER_MODE_NORMAL</td><td class="desc">
+<p>Default render mode; it corresponds to 8-bit anti-aliased bitmaps.</p>
+</td></tr>
+<tr><td class="val" id="ft_render_mode_light">FT_RENDER_MODE_LIGHT</td><td class="desc">
+<p>This is equivalent to <code><a href="ft2-glyph_retrieval.html#ft_render_mode">FT_RENDER_MODE_NORMAL</a></code>. It is only defined as a separate value because render modes are also used indirectly to define hinting algorithm selectors. See <code><a href="ft2-glyph_retrieval.html#ft_load_target_xxx">FT_LOAD_TARGET_XXX</a></code> for details.</p>
+</td></tr>
+<tr><td class="val" id="ft_render_mode_mono">FT_RENDER_MODE_MONO</td><td class="desc">
+<p>This mode corresponds to 1-bit bitmaps (with 2&nbsp;levels of opacity).</p>
+</td></tr>
+<tr><td class="val" id="ft_render_mode_lcd">FT_RENDER_MODE_LCD</td><td class="desc">
+<p>This mode corresponds to horizontal RGB and BGR subpixel displays like LCD screens. It produces 8-bit bitmaps that are 3&nbsp;times the width of the original glyph outline in pixels, and which use the <code><a href="ft2-basic_types.html#ft_pixel_mode">FT_PIXEL_MODE_LCD</a></code> mode.</p>
+</td></tr>
+<tr><td class="val" id="ft_render_mode_lcd_v">FT_RENDER_MODE_LCD_V</td><td class="desc">
+<p>This mode corresponds to vertical RGB and BGR subpixel displays (like PDA screens, rotated LCD displays, etc.). It produces 8-bit bitmaps that are 3&nbsp;times the height of the original glyph outline in pixels and use the <code><a href="ft2-basic_types.html#ft_pixel_mode">FT_PIXEL_MODE_LCD_V</a></code> mode.</p>
+</td></tr>
+<tr><td class="val" id="ft_render_mode_sdf">FT_RENDER_MODE_SDF</td><td class="desc">
+<p>This mode corresponds to 8-bit, single-channel signed distance field (SDF) bitmaps. Each pixel in the SDF grid is the value from the pixel's position to the nearest glyph's outline. The distances are calculated from the center of the pixel and are positive if they are filled by the outline (i.e., inside the outline) and negative otherwise. Check the note below on how to convert the output values to usable data.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>The selected render mode only affects vector glyphs of a font. Embedded bitmaps often have a different pixel mode like <code><a href="ft2-basic_types.html#ft_pixel_mode">FT_PIXEL_MODE_MONO</a></code>. You can use <code><a href="ft2-bitmap_handling.html#ft_bitmap_convert">FT_Bitmap_Convert</a></code> to transform them into 8-bit pixmaps.</p>
+<p>For <code><a href="ft2-glyph_retrieval.html#ft_render_mode">FT_RENDER_MODE_SDF</a></code> the output bitmap buffer contains normalized distances that are packed into unsigned 8-bit values. To get pixel values in floating point representation use the following pseudo-C code for the conversion.
+<div class="highlight"><pre><span></span><code>// Load glyph and render using FT_RENDER_MODE_SDF,
+// then use the output buffer as follows.
+
+...
+FT_Byte  buffer = glyph-&gt;bitmap-&gt;buffer;
+
+
+for pixel in buffer
+{
+  // `sd` is the signed distance and `spread` is the current spread;
+  // the default spread is 2 and can be changed.
+
+  float  sd = (float)pixel - 128.0f;
+
+
+  // Convert to pixel values.
+  sd = ( sd / 128.0f ) * spread;
+
+  // Store `sd` in a buffer or use as required.
+}
+</code></pre></div></p>
+<p>FreeType has two rasterizers for generating SDF, namely:</p>
+<ol>
+<li>
+<p><code>sdf</code> for generating SDF directly from glyph's outline, and</p>
+</li>
+<li>
+<p><code>bsdf</code> for generating SDF from rasterized bitmaps.</p>
+</li>
+</ol>
+<p>Depending on the glyph type (i.e., outline or bitmap), one of the two rasterizers is chosen at runtime and used for generating SDFs. To force the use of <code>bsdf</code> you should render the glyph with any of the FreeType's other rendering modes (e.g., <code>FT_RENDER_MODE_NORMAL</code>) and then re-render with <code>FT_RENDER_MODE_SDF</code>.</p>
+<p>There are some issues with stability and possible failures of the SDF renderers (specifically <code>sdf</code>).</p>
+<ol>
+<li>
+<p>The <code>sdf</code> rasterizer is sensitive to really small features (e.g., sharp turns that are less than 1&nbsp;pixel) and imperfections in the glyph's outline, causing artifacts in the final output.</p>
+</li>
+<li>
+<p>The <code>sdf</code> rasterizer has limited support for handling intersecting contours and <em>cannot</em> handle self-intersecting contours whatsoever. Self-intersection happens when a single connected contour intersects itself at some point; having these in your font definitely poses a problem to the rasterizer and cause artifacts, too.</p>
+</li>
+<li>
+<p>Generating SDF for really small glyphs may result in undesirable output; the pixel grid (which stores distance information) becomes too coarse.</p>
+</li>
+<li>
+<p>Since the output buffer is normalized, precision at smaller spreads is greater than precision at larger spread values because the output range of [0..255] gets mapped to a smaller SDF range. A spread of&nbsp;2 should be sufficient in most cases.</p>
+</li>
+</ol>
+<p>Points (1) and (2) can be avoided by using the <code>bsdf</code> rasterizer, which is more stable than the <code>sdf</code> rasterizer in general.</p>
+<hr>
+
+<h2 id="ft_get_kerning">FT_Get_Kerning<a class="headerlink" href="#ft_get_kerning" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Get_Kerning</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>     face,
+                  <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>     left_glyph,
+                  <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>     right_glyph,
+                  <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>     kern_mode,
+                  <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>  *akerning );
+</code></pre></div>
+
+<p>Return the kerning vector between two glyphs of the same face.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to a source face object.</p>
+</td></tr>
+<tr><td class="val" id="left_glyph">left_glyph</td><td class="desc">
+<p>The index of the left glyph in the kern pair.</p>
+</td></tr>
+<tr><td class="val" id="right_glyph">right_glyph</td><td class="desc">
+<p>The index of the right glyph in the kern pair.</p>
+</td></tr>
+<tr><td class="val" id="kern_mode">kern_mode</td><td class="desc">
+<p>See <code><a href="ft2-glyph_retrieval.html#ft_kerning_mode">FT_Kerning_Mode</a></code> for more information. Determines the scale and dimension of the returned kerning vector.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="akerning">akerning</td><td class="desc">
+<p>The kerning vector. This is either in font units, fractional pixels (26.6 format), or pixels for scalable formats, and in pixels for fixed-sizes formats.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>Only horizontal layouts (left-to-right &amp; right-to-left) are supported by this method. Other layouts, or more sophisticated kernings, are out of the scope of this API function &ndash; they can be implemented through format-specific interfaces.</p>
+<p>Kerning for OpenType fonts implemented in a &lsquo;GPOS&rsquo; table is not supported; use <code><a href="ft2-font_testing_macros.html#ft_has_kerning">FT_HAS_KERNING</a></code> to find out whether a font has data that can be extracted with <code>FT_Get_Kerning</code>.</p>
+<hr>
+
+<h2 id="ft_kerning_mode">FT_Kerning_Mode<a class="headerlink" href="#ft_kerning_mode" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">enum</span>  FT_Kerning_Mode_
+  {
+    <a href="ft2-glyph_retrieval.html#ft_kerning_default">FT_KERNING_DEFAULT</a> = 0,
+    <a href="ft2-glyph_retrieval.html#ft_kerning_unfitted">FT_KERNING_UNFITTED</a>,
+    <a href="ft2-glyph_retrieval.html#ft_kerning_unscaled">FT_KERNING_UNSCALED</a>
+
+  } <b>FT_Kerning_Mode</b>;
+
+
+  /* these constants are deprecated; use the corresponding */
+  /* `<b>FT_Kerning_Mode</b>` values instead                      */
+#<span class="keyword">define</span> ft_kerning_default   <a href="ft2-glyph_retrieval.html#ft_kerning_default">FT_KERNING_DEFAULT</a>
+#<span class="keyword">define</span> ft_kerning_unfitted  <a href="ft2-glyph_retrieval.html#ft_kerning_unfitted">FT_KERNING_UNFITTED</a>
+#<span class="keyword">define</span> ft_kerning_unscaled  <a href="ft2-glyph_retrieval.html#ft_kerning_unscaled">FT_KERNING_UNSCALED</a>
+</code></pre></div>
+
+<p>An enumeration to specify the format of kerning values returned by <code><a href="ft2-glyph_retrieval.html#ft_get_kerning">FT_Get_Kerning</a></code>.</p>
+<h4>values</h4>
+<table class="fields">
+<tr><td class="val" id="ft_kerning_default">FT_KERNING_DEFAULT</td><td class="desc">
+<p>Return grid-fitted kerning distances in 26.6 fractional pixels.</p>
+</td></tr>
+<tr><td class="val" id="ft_kerning_unfitted">FT_KERNING_UNFITTED</td><td class="desc">
+<p>Return un-grid-fitted kerning distances in 26.6 fractional pixels.</p>
+</td></tr>
+<tr><td class="val" id="ft_kerning_unscaled">FT_KERNING_UNSCALED</td><td class="desc">
+<p>Return the kerning vector in original font units.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p><code>FT_KERNING_DEFAULT</code> returns full pixel values; it also makes FreeType heuristically scale down kerning distances at small ppem values so that they don't become too big.</p>
+<p>Both <code>FT_KERNING_DEFAULT</code> and <code>FT_KERNING_UNFITTED</code> use the current horizontal scaling factor (as set e.g. with <code><a href="ft2-sizing_and_scaling.html#ft_set_char_size">FT_Set_Char_Size</a></code>) to convert font units to pixels.</p>
+<hr>
+
+<h2 id="ft_get_track_kerning">FT_Get_Track_Kerning<a class="headerlink" href="#ft_get_track_kerning" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_FREETYPE_H (freetype/freetype.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Get_Track_Kerning</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>    face,
+                        <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>   point_size,
+                        <a href="ft2-basic_types.html#ft_int">FT_Int</a>     degree,
+                        <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>*  akerning );
+</code></pre></div>
+
+<p>Return the track kerning for a given face object at a given size.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to a source face object.</p>
+</td></tr>
+<tr><td class="val" id="point_size">point_size</td><td class="desc">
+<p>The point size in 16.16 fractional points.</p>
+</td></tr>
+<tr><td class="val" id="degree">degree</td><td class="desc">
+<p>The degree of tightness. Increasingly negative values represent tighter track kerning, while increasingly positive values represent looser track kerning. Value zero means no track kerning.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="akerning">akerning</td><td class="desc">
+<p>The kerning in 16.16 fractional points, to be uniformly applied between all glyphs.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>Currently, only the Type&nbsp;1 font driver supports track kerning, using data from AFM files (if attached with <code><a href="ft2-face_creation.html#ft_attach_file">FT_Attach_File</a></code> or <code><a href="ft2-face_creation.html#ft_attach_stream">FT_Attach_Stream</a></code>).</p>
+<p>Only very few AFM files come with track kerning data; please refer to Adobe's AFM specification for more details.</p>
+<hr>
+                
+              
+              
+                
+
+
+              
+            </article>
+          </div>
+        </div>
+        
+      </main>
+      
+        
+<footer class="md-footer">
+  
+    <nav class="md-footer__inner md-grid" aria-label="Footer">
+      
+        
+        <a href="ft2-sizing_and_scaling.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: Sizing and Scaling" rel="prev">
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+          </div>
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              Sizing and Scaling
+            </div>
+          </div>
+        </a>
+      
+      
+        
+        <a href="ft2-character_mapping.html" class="md-footer__link md-footer__link--next" aria-label="Next: Character Mapping" rel="next">
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              Character Mapping
+            </div>
+          </div>
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11H4z"/></svg>
+          </div>
+        </a>
+      
+    </nav>
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-footer-copyright">
+        
+          <div class="md-footer-copyright__highlight">
+            Copyright 2023 <a href = "https://www.freetype.org/license.html">The FreeType Project</a>.
+          </div>
+        
+        Made with
+        <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+          Material for MkDocs
+        </a>
+        
+      </div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    <script id="__config" type="application/json">{"base": ".", "features": [], "search": "assets/javascripts/workers/search.477d984a.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.config.lang": "en", "search.config.pipeline": "trimmer, stopWordFilter", "search.config.separator": "[\\s\\-]+", "search.placeholder": "Search", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version.title": "Select version"}, "version": null}</script>
+    
+    
+      <script src="assets/javascripts/bundle.82b56eb2.min.js"></script>
+      
+        <script src="javascripts/extra.js"></script>
+      
+    
+  </body>
+</html>

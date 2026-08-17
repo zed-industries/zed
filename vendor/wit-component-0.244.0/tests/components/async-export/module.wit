@@ -1,0 +1,30 @@
+package foo:foo;
+
+interface bar {
+  record big {
+    a1: big2,
+    a2: big2,
+    a3: big2,
+    a4: big2,
+  }
+  record big2 {
+    a1: big3,
+    a2: big3,
+    a3: big3,
+    a4: big3,
+  }
+  record big3 {
+    a1: u8,
+    a2: u8,
+    a3: u8,
+    a4: u8,
+  }
+  foo: func(s: string) -> string;
+  get-string: func() -> string;
+  get-big: func() -> big;
+}
+
+world module {
+  export bar;
+  export foo: func(s: string) -> string;
+}

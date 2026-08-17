@@ -1,0 +1,19 @@
+==> 2024-05-08 12:20:05 <==
+# cmd: /Users/donjayamanne/.pyenv/versions/miniconda3-latest/bin/conda create -n myenv python=3.10
+# conda version: 24.3.0
++defaults/noarch::tzdata-2024a-h04d1e81_0
++defaults/osx-arm64::bzip2-1.0.8-h80987f9_6
++defaults/osx-arm64::ca-certificates-2024.3.11-hca03da5_0
++defaults/osx-arm64::libffi-3.4.4-hca03da5_1
++defaults/osx-arm64::ncurses-6.4-h313beb8_0
++defaults/osx-arm64::openssl-3.0.13-h1a28f6b_1
++defaults/osx-arm64::pip-24.0-py310hca03da5_0
++defaults/osx-arm64::python-3.10.14-hb885b13_1
++defaults/osx-arm64::readline-8.2-h1a28f6b_0
++defaults/osx-arm64::setuptools-69.5.1-py310hca03da5_0
++defaults/osx-arm64::sqlite-3.45.3-h80987f9_0
++defaults/osx-arm64::tk-8.6.14-h6ba3021_0
++defaults/osx-arm64::wheel-0.43.0-py310hca03da5_0
++defaults/osx-arm64::xz-5.4.6-h80987f9_1
++defaults/osx-arm64::zlib-1.2.13-h18a0788_1
+# update specs: ['python=3.10']

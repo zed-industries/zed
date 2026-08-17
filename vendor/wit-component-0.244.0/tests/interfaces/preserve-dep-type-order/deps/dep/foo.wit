@@ -1,0 +1,11 @@
+package foo:dep;
+
+interface foo {
+  enum a {
+    b
+  }
+
+  record ty {
+    f: u8,
+  }
+}

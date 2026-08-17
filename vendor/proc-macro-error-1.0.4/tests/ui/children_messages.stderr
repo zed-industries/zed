@@ -1,0 +1,23 @@
+error: main macro message
+ --> $DIR/children_messages.rs:4:20
+  |
+4 | children_messages!(one, two, three, four);
+  |                    ^^^
+
+error: child message
+ --> $DIR/children_messages.rs:4:25
+  |
+4 | children_messages!(one, two, three, four);
+  |                         ^^^
+
+error: main syn::Error
+ --> $DIR/children_messages.rs:4:30
+  |
+4 | children_messages!(one, two, three, four);
+  |                              ^^^^^
+
+error: child syn::Error
+ --> $DIR/children_messages.rs:4:37
+  |
+4 | children_messages!(one, two, three, four);
+  |                                     ^^^^

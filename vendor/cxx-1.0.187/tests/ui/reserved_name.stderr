@@ -1,0 +1,17 @@
+error: reserved name
+ --> tests/ui/reserved_name.rs:3:12
+  |
+3 |     struct UniquePtr {
+  |            ^^^^^^^^^
+
+error: reserved name
+ --> tests/ui/reserved_name.rs:8:14
+  |
+8 |         type Box;
+  |              ^^^
+
+error: reserved name
+  --> tests/ui/reserved_name.rs:12:14
+   |
+12 |         type String;
+   |              ^^^^^^

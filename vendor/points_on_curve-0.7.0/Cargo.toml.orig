@@ -1,0 +1,22 @@
+[package]
+name = "points_on_curve"
+version = "0.7.0"
+edition = "2021"
+authors = ["orhanbalci@gmail.com <orhanbalci@gmail.com>"]
+description = "Points on Bezier Curves"
+repository = "https://github.com/orhanbalci/rough-rs.git"
+homepage = "https://github.com/orhanbalci"
+keywords = ["graphics", "bezier"]
+categories = ["graphics"]
+license = "MIT"
+readme = "README.md"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+euclid = "0.22"
+num-traits = "0.2"
+
+[dev-dependencies]
+piet-common = {version = "0.6", features = ["png"]}
+piet = "0.6"

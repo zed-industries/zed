@@ -1,0 +1,65 @@
+// These will use `windows-sys` style bindings.
+
+--out src/imp/bindings.rs
+--config flatten sys minimal no-bindgen-comment
+
+--filter
+    Windows.Win32.Foundation.CloseHandle
+    Windows.Win32.Foundation.FreeLibrary
+    Windows.Win32.Foundation.SysAllocStringLen
+    Windows.Win32.Foundation.SysFreeString
+    Windows.Win32.Foundation.SysStringLen
+    Windows.Win32.System.Com.CoIncrementMTAUsage
+    Windows.Win32.System.Com.CoTaskMemAlloc
+    Windows.Win32.System.Com.CoTaskMemFree
+    Windows.Win32.System.Com.StructuredStorage.PROPVARIANT
+    Windows.Win32.System.Com.StructuredStorage.PropVariantClear
+    Windows.Win32.System.Com.StructuredStorage.PropVariantCompareEx
+    Windows.Win32.System.Com.StructuredStorage.PropVariantCopy
+    Windows.Win32.System.Com.StructuredStorage.PropVariantToBoolean
+    Windows.Win32.System.Com.StructuredStorage.PropVariantToBSTR
+    Windows.Win32.System.Com.StructuredStorage.PropVariantToDouble
+    Windows.Win32.System.Com.StructuredStorage.PropVariantToInt16
+    Windows.Win32.System.Com.StructuredStorage.PropVariantToInt32
+    Windows.Win32.System.Com.StructuredStorage.PropVariantToInt64
+    Windows.Win32.System.Com.StructuredStorage.PropVariantToUInt16
+    Windows.Win32.System.Com.StructuredStorage.PropVariantToUInt32
+    Windows.Win32.System.Com.StructuredStorage.PropVariantToUInt64
+    Windows.Win32.System.Com.StructuredStorage.PropVariantToVariant
+    Windows.Win32.System.Com.StructuredStorage.VariantToPropVariant
+    Windows.Win32.System.Diagnostics.Debug.EncodePointer
+    Windows.Win32.System.LibraryLoader.GetProcAddress
+    Windows.Win32.System.LibraryLoader.LOAD_LIBRARY_SEARCH_DEFAULT_DIRS
+    Windows.Win32.System.LibraryLoader.LoadLibraryExA
+    Windows.Win32.System.Memory.GetProcessHeap
+    Windows.Win32.System.Memory.HeapAlloc
+    Windows.Win32.System.Memory.HeapFree
+    Windows.Win32.System.Threading.CreateEventW
+    Windows.Win32.System.Threading.SetEvent
+    Windows.Win32.System.Threading.WaitForSingleObject
+    Windows.Win32.System.Variant.VARIANT
+    Windows.Win32.System.Variant.VariantClear
+    Windows.Win32.System.Variant.VariantCopy
+    Windows.Win32.System.Variant.VariantToBoolean
+    Windows.Win32.System.Variant.VariantToDouble
+    Windows.Win32.System.Variant.VariantToInt16
+    Windows.Win32.System.Variant.VariantToInt32
+    Windows.Win32.System.Variant.VariantToInt64
+    Windows.Win32.System.Variant.VariantToUInt16
+    Windows.Win32.System.Variant.VariantToUInt32
+    Windows.Win32.System.Variant.VariantToUInt64
+    Windows.Win32.System.Variant.VT_BOOL
+    Windows.Win32.System.Variant.VT_BSTR
+    Windows.Win32.System.Variant.VT_EMPTY
+    Windows.Win32.System.Variant.VT_I1
+    Windows.Win32.System.Variant.VT_I2
+    Windows.Win32.System.Variant.VT_I4
+    Windows.Win32.System.Variant.VT_I8
+    Windows.Win32.System.Variant.VT_R4
+    Windows.Win32.System.Variant.VT_R8
+    Windows.Win32.System.Variant.VT_UI1
+    Windows.Win32.System.Variant.VT_UI2
+    Windows.Win32.System.Variant.VT_UI4
+    Windows.Win32.System.Variant.VT_UI8
+    Windows.Win32.System.Variant.VT_UNKNOWN
+    Windows.Win32.System.WinRT.RoGetActivationFactory

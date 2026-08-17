@@ -1,0 +1,21 @@
+{
+  "worlds": [],
+  "interfaces": [
+    {
+      "name": "x",
+      "types": {},
+      "functions": {},
+      "package": 0
+    }
+  ],
+  "types": [],
+  "packages": [
+    {
+      "name": "a:b",
+      "interfaces": {
+        "x": 0
+      },
+      "worlds": {}
+    }
+  ]
+}

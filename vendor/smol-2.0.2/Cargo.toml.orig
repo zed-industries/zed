@@ -1,0 +1,60 @@
+[package]
+name = "smol"
+# When publishing a new version:
+# - Update CHANGELOG.md
+# - Create "v2.x.y" git tag
+version = "2.0.2"
+authors = ["Stjepan Glavina <stjepang@gmail.com>"]
+edition = "2018"
+rust-version = "1.63"
+description = "A small and fast async runtime"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/smol-rs/smol"
+keywords = ["async", "await", "future", "io", "networking"]
+categories = ["asynchronous", "concurrency", "network-programming"]
+exclude = ["/.*"]
+
+[dependencies]
+async-channel = "2.0.0"
+async-executor = "1.5.0"
+async-fs = "2.0.0"
+async-io = "2.1.0"
+async-lock = "3.0.0"
+async-net = "2.0.0"
+blocking = "1.3.0"
+futures-lite = "2.0.0"
+
+[target.'cfg(not(target_os = "espidf"))'.dependencies]
+async-process = "2.0.0"
+
+[dev-dependencies]
+anyhow = "1"
+async-dup = "1"
+async-h1 = "2"
+async-native-tls = "0.5"
+async-tungstenite = { version = "0.27", features = ["async-native-tls"] }
+ctrlc = "3"
+doc-comment = "0.3"
+futures = "0.3"
+http = "1.1"
+http-body-util = "0.1.0"
+http-types = "2"
+hyper = { version = "1.0", default-features = false, features = ["client", "http1", "server"] }
+macro_rules_attribute = "0.2.0"
+native-tls = "0.2"
+scraper = "0.20"
+signal-hook = "0.3"
+smol-hyper = "0.1.0"
+smol-macros = "0.1.0"
+surf = { version = "2", default-features = false, features = ["h1-client"] }
+tempfile = "3"
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread"] }
+url = "2"
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+inotify = { version = "0.11", default-features = false }
+rustix = "0.38"
+timerfd = "1"
+
+[target.'cfg(windows)'.dev-dependencies]
+uds_windows = "1"

@@ -1,0 +1,25 @@
+package root:component;
+
+world root {
+  import ns:pkg/i@0.2.1;
+  import j: interface {
+    resource r {
+      constructor(s: string);
+      m: func() -> string;
+    }
+
+    frob: func(in: r) -> r;
+  }
+  import f: func() -> string;
+
+  export g: func() -> string;
+  export ns:pkg/i@0.2.1;
+  export j: interface {
+    resource r {
+      constructor(s: string);
+      m: func() -> string;
+    }
+
+    frob: func(in: r) -> r;
+  }
+}

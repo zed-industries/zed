@@ -1,0 +1,5 @@
+type `foo` used in a handle must be a resource
+     --> tests/ui/parse-fail/bad-resource13.wit:5:16
+      |
+    5 |   type t = own<foo>;
+      |                ^--

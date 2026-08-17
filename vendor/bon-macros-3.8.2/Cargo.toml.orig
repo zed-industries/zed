@@ -1,0 +1,78 @@
+[package]
+name    = "bon-macros"
+version = "3.8.2"
+
+description = """
+This is a proc-macro crate that is supposed to be a private implementation
+detail of the `bon` crate
+"""
+
+edition    = "2021"
+homepage   = "https://bon-rs.com/"
+license    = "MIT OR Apache-2.0"
+repository = "https://github.com/elastio/bon"
+
+# This MSRV was chosen because Rust supports mixing generic type and const
+# parameters only starting with this version. We require this feature for the
+# cases when the builder is generated for a function or struct that uses const
+# generics. The generated builder **always** appends a generic type parameter
+# for the type state at the end of the Builder generics list. So for functions
+# or structs that use const generics the generated builder will have a generic
+# type parameter after the const generic parameter, which is only supported
+# starting from Rust 1.59.0.
+rust-version = "1.59.0"
+
+[package.metadata.docs.rs]
+all-features = true
+
+# Generate clickable links in the source code view in the docs
+rustdoc-args = ["--generate-link-to-definition"]
+
+# We don't need the docs to be built for every first-tier target.
+# This crate is not platform-specific.
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lints]
+workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+# Darling `0.23` updated MSRV to `1.88+` without other code changes.
+# Therefore, it should be compatible with `0.22` as well.
+#
+# Version `0.20` is the version of `darling` available in Debian packages:
+# https://salsa.debian.org/rust-team/debcargo-conf. We keep support for it.
+darling = ">=0.20.0, <0.24.0"
+
+# This dependency is used by `darling` itself, so we use it as well for case
+# conversions to share the same dependency.
+ident_case = "1"
+
+# This version still supports our MSRV and it is where this bug was fixed:
+# https://github.com/dtolnay/proc-macro2/issues/470
+proc-macro2 = "1.0.88"
+
+quote = "1"
+
+# This is the highest version that supports our MSRV
+syn = { version = "2.0.56", features = ["full", "visit-mut", "visit"] }
+
+prettyplease = "0.2"
+rustversion  = "1.0.18"
+
+[features]
+default = []
+
+alloc = []
+std   = []
+
+# See the docs on this feature in the `bon`'s crate `Cargo.toml`
+experimental-overwritable = []
+
+# See the docs on this feature in the `bon`'s crate `Cargo.toml`
+implied-bounds = []
+
+[dev-dependencies]
+expect-test = "1.4.1"

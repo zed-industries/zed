@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ratified href="OES_texture_half_float_linear/">
+  <name>OES_texture_half_float_linear</name>
+
+  <contact> <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL
+  working group</a> (public_webgl 'at' khronos.org) </contact>
+
+  <contributors>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+
+  <number>21</number>
+
+  <depends>
+    <api version="1.0"/>
+    <removed version="2.0" />
+  </depends>
+
+  <overview>
+    <mirrors href="http://www.khronos.org/registry/gles/extensions/OES/OES_texture_float_linear.txt"
+             name="OES_texture_half_float_linear">
+    </mirrors>
+
+    <features>
+      Expands upon the OES_texture_half_float extension by allowing support for
+      LINEAR magnification filter and LINEAR, NEAREST_MIPMAP_LINEAR,
+      LINEAR_MIPMAP_NEAREST and LINEAR_MIPMAP_NEAREST minification filters.
+    </features>
+  </overview>
+
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface OES_texture_half_float_linear { };</idl>
+
+  <history>
+    <revision date="2013/02/20">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2013/03/11">
+      <change>Moved to draft status after discussion on public_webgl.</change>
+    </revision>
+    <revision date="2013/08/06">
+      <change>Moved to community approved.</change>
+    </revision>
+    <revision date="2014/07/15">
+      <change>Added NoInterfaceObject extended attribute.</change>
+    </revision>
+    <revision date="2014/08/08">
+      <change>Ratified by Khronos Board of Promoters.</change>
+    </revision>
+  </history>
+</ratified>

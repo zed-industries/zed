@@ -1,0 +1,4 @@
+package a:b;
+
+@deprecated()
+interface foo {}

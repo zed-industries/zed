@@ -1,0 +1,24 @@
+language = "C"
+header = """
+#include <stdint.h>
+
+#if 0
+''' '
+#endif
+
+typedef uint64_t Option_Foo;
+
+#if 0
+' '''
+#endif
+
+#if 0
+from libc.stdint cimport uint64_t
+ctypedef uint64_t Option_Foo
+#endif
+"""
+
+[export]
+exclude = [
+  "Option_Foo",
+]

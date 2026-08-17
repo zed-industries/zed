@@ -1,0 +1,5 @@
+error: type alias in extern "Rust" block is not supported
+ --> tests/ui/type_alias_rust.rs:5:9
+  |
+5 |         type Alias = crate::Type;
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -1,0 +1,24 @@
+[package]
+name = "unicode-properties"
+version = "0.1.3"
+authors = ["Charles Lew <crlf0710@gmail.com>", "Manish Goregaokar <manishsmail@gmail.com>"]
+edition = "2021"
+homepage = "https://github.com/unicode-rs/unicode-properties"
+repository = "https://github.com/unicode-rs/unicode-properties"
+documentation = "https://docs.rs/unicode-properties"
+license = "MIT/Apache-2.0"
+keywords = ["text", "unicode"]
+categories = ["no-std::no-alloc"]
+readme = "README.md"
+description = """
+Query character Unicode properties according to
+UAX #44 and UTR #51.
+"""
+exclude = [ "target/*", "Cargo.lock" ]
+
+[features]
+general-category = []
+emoji = []
+default = ["general-category", "emoji"]
+
+[dependencies]

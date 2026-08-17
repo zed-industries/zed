@@ -1,0 +1,5 @@
+error: Unexpected type `bool`
+ --> tests/integration/ui/compile_fail/attr_into.rs:4:40
+  |
+4 | fn invalid_into_false(#[builder(into = false)] _x: u32) {}
+  |                                        ^^^^^

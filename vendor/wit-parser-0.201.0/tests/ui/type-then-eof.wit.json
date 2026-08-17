@@ -1,0 +1,32 @@
+{
+  "worlds": [],
+  "interfaces": [
+    {
+      "name": "foo",
+      "types": {},
+      "functions": {
+        "foo": {
+          "name": "foo",
+          "kind": "freestanding",
+          "params": [],
+          "results": [
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "package": 0
+    }
+  ],
+  "types": [],
+  "packages": [
+    {
+      "name": "foo:foo",
+      "interfaces": {
+        "foo": 0
+      },
+      "worlds": {}
+    }
+  ]
+}

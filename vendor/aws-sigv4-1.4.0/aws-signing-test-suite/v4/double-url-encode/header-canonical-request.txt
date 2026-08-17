@@ -1,0 +1,8 @@
+POST
+/2015-03-31/functions/arn%253Aaws%253Alambda%253Aus-west-2%253A892717189312%253Afunction%253Amy-rusty-fun/invocations
+
+host:lambda.us-east-2.amazonaws.com
+x-amz-date:20210511T154045Z
+
+host;x-amz-date
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855

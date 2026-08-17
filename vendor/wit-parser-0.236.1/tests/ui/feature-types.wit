@@ -1,0 +1,13 @@
+package a:b;
+
+interface foo {
+  variant bar {
+    x,
+    y
+  }
+
+  @unstable(feature = my-feature)
+  my-unstable: func(p: bar) -> result<_, bar>;
+
+  my-stable: func(p: bar) -> result<_, bar>;
+}

@@ -1,0 +1,8 @@
+[target.aarch64-linux-android]
+image = "ghcr.io/cross-rs/aarch64-linux-android:edge"
+
+[target.x86_64-linux-android]
+image = "ghcr.io/cross-rs/x86_64-linux-android:edge"
+
+[target.powerpc64le-unkown-linux-gnu]
+image = "ghcr.io/cross-rs/powerpc64le-unknown-linux-gnu:edge"

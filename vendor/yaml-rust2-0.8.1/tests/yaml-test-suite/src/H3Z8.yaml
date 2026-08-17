@@ -1,0 +1,23 @@
+---
+- name: Literal unicode
+  from: '@perlpunk'
+  tags: scalar
+  yaml: |
+    ---
+    wanted: love ♥ and peace ☮
+  tree: |
+    +STR
+     +DOC ---
+      +MAP
+       =VAL :wanted
+       =VAL :love ♥ and peace ☮
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "wanted": "love ♥ and peace ☮"
+    }
+  dump: |
+    ---
+    wanted: "love \u2665 and peace \u262E"

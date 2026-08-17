@@ -1,0 +1,6 @@
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+runner = "wine64"
+
+[target.wasm32-unknown-emscripten]
+runner = "node --experimental-wasm-modules --input-type=module -e 'import(require(\"url\").pathToFileURL(process.argv[1]))' --"

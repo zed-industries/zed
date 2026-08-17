@@ -1,0 +1,33 @@
+---
+- name: Literal Block Scalar
+  from: NimYAML tests
+  tags: literal scalar whitespace
+  yaml: |
+    a: |
+     ab
+    ␣
+     cd
+     ef
+    ␣
+
+    ...
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :a
+       =VAL |ab\n\ncd\nef\n
+      -MAP
+     -DOC ...
+    -STR
+  json: |
+    {
+      "a": "ab\n\ncd\nef\n"
+    }
+  dump: |
+    a: |
+      ab
+
+      cd
+      ef
+    ...

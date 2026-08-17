@@ -1,0 +1,22 @@
+--- src/buildtools/third_party/libunwind/BUILD.gn	2023-07-10 10:19:16
++++ src/buildtools/third_party/libunwind/BUILD.gn	2023-07-10 10:19:23
+@@ -21,7 +21,7 @@ config("libunwind_config") {
+ 
+ # TODO(crbug.com/40273848): Move this build file to third_party/libc++/BUILD.gn once submodule migration is done
+ source_set("libunwind") {
+-  visibility = [ "//buildtools/third_party/libc++abi" ]
++  visibility = [ "//buildtools/third_party/libc++abi", "//build/config:common_deps" ]
+   if (is_android) {
+     visibility += [ "//services/tracing/public/cpp" ]
+   }
+--- src/build/config/BUILD.gn	2023-07-10 10:23:49
++++ src/build/config/BUILD.gn	2023-07-10 10:23:54
+@@ -296,6 +296,8 @@ group("common_deps") {
+ 
+   if (use_custom_libcxx) {
+     public_deps += [ "//buildtools/third_party/libc++" ]
++  } else {
++    public_deps += [ "//buildtools/third_party/libunwind" ]
+   }
+ 
+   if (use_llvm_libatomic) {

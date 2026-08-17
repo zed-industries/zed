@@ -1,0 +1,33 @@
+---
+- name: Spec Example 5.12. Tabs and Spaces
+  from: http://www.yaml.org/spec/1.2/spec.html#id2775350
+  tags: spec whitespace upto-1.2
+  yaml: |
+    # Tabs and spaces
+    quoted: "Quoted ———»"
+    block:—»|
+      void main() {
+      —»printf("Hello, world!\n");
+      }
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :quoted
+       =VAL "Quoted \t
+       =VAL :block
+       =VAL |void main() {\n\tprintf("Hello, world!\\n");\n}\n
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "quoted": "Quoted \t",
+      "block": "void main() {\n\tprintf(\"Hello, world!\\n\");\n}\n"
+    }
+  dump: |
+    quoted: "Quoted \t"
+    block: |
+      void main() {
+      —»printf("Hello, world!\n");
+      }

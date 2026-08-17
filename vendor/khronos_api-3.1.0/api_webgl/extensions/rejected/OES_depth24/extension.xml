@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rejected href="rejected/OES_depth24/">
+  <name>OES_depth24</name>
+
+  <contact> <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL
+  working group</a> (public_webgl 'at' khronos.org) </contact>
+
+  <contributors>
+    <contributor>Florian Boesch (pyalot 'at' gmail.com)</contributor>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+
+  <number>NN</number>
+
+  <depends>
+    <api version="1.0"/>
+    <core version="2.0" />
+  </depends>
+
+  <overview>
+    <mirrors href="https://www.khronos.org/registry/gles/extensions/OES/OES_depth24.txt"
+             name="OES_depth24">
+    </mirrors>
+
+    <features>
+      <feature>
+        Allows 24-bit depth components as a valid render buffer storage format.
+      </feature>
+    </features>
+  </overview>
+
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface OES_depth24 {
+  const GLenum DEPTH_COMPONENT24_OES = 0x81A6;
+};
+  </idl>
+
+  <samplecode xml:space="preserve">
+    <pre>
+        var extension = gl.getExtension('OES_depth24');
+        if(extension !=== null){
+            var depth = gl.createRenderbuffer();
+            gl.bindRenderbuffer(gl.RENDERBUFFER, depth);
+            gl.renderbufferStorage(gl.RENDERBUFFER, extension.DEPTH_COMPONENT24_OES, 128, 128);
+            gl.bindRenderbuffer(gl.RENDERBUFFER, null);
+
+            var fbo = gl.createFramebuffer();
+            gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+            gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depth);
+            
+            var fboStatus = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+            console.assert(fboStatus == gl.FRAMEBUFFER_COMPLETE, 'Framebuffer is not complete');
+
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            console.assert(gl.getError() == gl.NO_ERROR, 'A GL error occured');
+        }
+    </pre>
+  </samplecode>
+
+  <history>
+    <revision date="2015/01/26">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2015/02/05">
+      <change>Moved to rejected because WEBGL_depth_texture can be used as a workaround for 24-bit depth for FBOs.</change>
+    </revision>
+  </history>
+</rejected>

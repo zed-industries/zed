@@ -1,0 +1,14 @@
+---
+source: brush-parser/src/word.rs
+expression: "test_parse(r\"$'hi\\nthere\\t'\")?"
+---
+ParseTestResults(
+  input: "$\'hi\\nthere\\t\'",
+  result: [
+    WordPieceWithSource(
+      piece: AnsiCQuotedText("hi\\nthere\\t"),
+      start_index: 0,
+      end_index: 14,
+    ),
+  ],
+)

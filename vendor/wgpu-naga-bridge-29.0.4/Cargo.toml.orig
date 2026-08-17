@@ -1,0 +1,17 @@
+[package]
+name = "wgpu-naga-bridge"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "Conversions between naga and wgpu-types. Part of the wgpu project"
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+license.workspace = true
+
+# Match the MSRV of naga and wgpu-types so this crate is usable everywhere they are.
+rust-version = "1.87"
+
+[dependencies]
+naga = { workspace = true }
+wgpu-types = { workspace = true }

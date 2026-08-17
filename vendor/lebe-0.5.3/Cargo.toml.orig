@@ -1,0 +1,43 @@
+[package]
+name = "lebe"
+version = "0.5.3"
+authors = ["johannesvollmer <contact@johannesvollmer.com>"]
+edition = "2018"
+
+description = "Tiny, dead simple, high performance endianness conversions with a generic API"
+repository = "https://github.com/johannesvollmer/lebe"
+documentation = "https://docs.rs/crate/lebe/"
+readme = "README.md"
+license = "BSD-3-Clause"
+keywords = ["endianness", "binary", "io", "byteorder", "endian"]
+categories = ["encoding", "filesystem", "algorithms"]
+rust-version = "1.78.0"
+
+[lib]
+path = "src/lib.rs"
+test = true
+doctest = true
+bench = true
+doc = true
+plugin = false
+proc-macro = false
+
+
+[badges]
+maintenance = { status = "actively-developed" }
+
+[features]
+# simd = []
+
+[dev-dependencies]
+bencher = "0.1.5"
+byteorder = "1.4.3"
+
+[[bench]]
+name = "benches"
+harness = false
+
+[profile.bench]
+lto = true
+debug = true
+

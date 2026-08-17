@@ -1,0 +1,22 @@
+---
+- name: Spec Example 6.13. Reserved Directives [1.3]
+  from: 6LVF, modified for YAML 1.3
+  tags: spec directive header double 1.3-mod
+  yaml: |
+    %FOO  bar baz # Should be ignored
+                  # with a warning.
+    ---
+    "foo"
+  tree: |
+    +STR
+     +DOC ---
+      =VAL "foo
+     -DOC
+    -STR
+  json: |
+    "foo"
+  dump: |
+    ---
+    "foo"
+  emit: |
+    --- "foo"

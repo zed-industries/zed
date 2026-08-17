@@ -1,0 +1,27 @@
+---
+- name: Spec Example 7.19. Single Pair Flow Mappings
+  from: http://www.yaml.org/spec/1.2/spec.html#id2792291
+  tags: spec flow mapping
+  yaml: |
+    [
+    foo: bar
+    ]
+  tree: |
+    +STR
+     +DOC
+      +SEQ []
+       +MAP {}
+        =VAL :foo
+        =VAL :bar
+       -MAP
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      {
+        "foo": "bar"
+      }
+    ]
+  dump: |
+    - foo: bar

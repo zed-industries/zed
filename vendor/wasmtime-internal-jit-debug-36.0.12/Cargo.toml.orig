@@ -1,0 +1,31 @@
+[package]
+name = "wasmtime-internal-jit-debug"
+version.workspace = true
+authors.workspace = true
+description = "INTERNAL: JIT debug interfaces support for Wasmtime"
+license = "Apache-2.0 WITH LLVM-exception"
+categories = ["development-tools::debugging"]
+keywords = ["gdb", "jit"]
+repository = "https://github.com/bytecodealliance/wasmtime"
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[build-dependencies]
+cc = { workspace = true }
+wasmtime-versioned-export-macros = { workspace = true }
+
+[dependencies]
+object = { workspace = true, optional = true }
+wasmtime-versioned-export-macros = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { workspace = true, features = ["mm", "time"], optional = true }
+
+[features]
+std = []
+gdb_jit_int = []
+perf_jitdump = ["rustix", "object", "std"]

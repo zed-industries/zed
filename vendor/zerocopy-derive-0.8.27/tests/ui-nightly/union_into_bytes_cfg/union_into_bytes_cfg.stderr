@@ -1,0 +1,22 @@
+error: requires --cfg zerocopy_derive_union_into_bytes;
+       please let us know you use this feature: https://github.com/google/zerocopy/discussions/1802
+  --> tests/ui-nightly/union_into_bytes_cfg/union_into_bytes_cfg.rs:20:10
+   |
+20 | #[derive(IntoBytes)]
+   |          ^^^^^^^^^
+   |
+   = note: this error originates in the derive macro `IntoBytes` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unexpected `cfg` condition name: `zerocopy_derive_union_into_bytes`
+  --> tests/ui-nightly/union_into_bytes_cfg/union_into_bytes_cfg.rs:20:10
+   |
+20 | #[derive(IntoBytes)]
+   |          ^^^^^^^^^
+   |
+   = help: expected names are: `docsrs`, `feature`, and `test` and 31 more
+   = note: using a cfg inside a derive macro will use the cfgs from the destination crate and not the ones from the defining crate
+   = help: try referring to `IntoBytes` crate for guidance on how handle this unexpected cfg
+   = help: the derive macro `IntoBytes` may come from an old version of the `zerocopy_derive` crate, try updating your dependency with `cargo update -p zerocopy_derive`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+   = note: `#[warn(unexpected_cfgs)]` on by default
+   = note: this warning originates in the derive macro `IntoBytes` (in Nightly builds, run with -Z macro-backtrace for more info)

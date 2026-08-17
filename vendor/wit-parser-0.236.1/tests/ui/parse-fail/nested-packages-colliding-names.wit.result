@@ -1,0 +1,3 @@
+package foo:name is defined in two different locations:
+* tests/ui/parse-fail/nested-packages-colliding-names.wit:5:9
+* tests/ui/parse-fail/nested-packages-colliding-names.wit:3:9

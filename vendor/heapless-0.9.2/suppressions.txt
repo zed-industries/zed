@@ -1,0 +1,10 @@
+race:std::panic::catch_unwind
+race:std::thread::scope
+
+# std::thread::spawn false positive; seen on Ubuntu 20.04 but not on Arch Linux (2022-04-29)
+race:drop_in_place*JoinHandle
+race:alloc::sync::Arc<*>::drop_slow
+race:__call_tls_dtors
+
+# false positives in memcpy (?)
+race:*memcpy*

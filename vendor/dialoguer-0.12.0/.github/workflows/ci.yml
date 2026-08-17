@@ -1,0 +1,92 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+jobs:
+  test:
+    name: Tests
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            rust: stable
+          - os: ubuntu-latest
+            rust: stable
+          - os: windows-latest
+            rust: stable
+          - os: ubuntu-latest
+            rust: 1.66.0
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Install rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+      - name: Checkout
+        uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+      - name: Test
+        run: cargo test --all-features
+
+  lint:
+    name: Linting (fmt + clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Lint check
+        run: cargo lint
+      - name: Format check
+        run: cargo format-check
+
+  docs:
+    name: Check for documentation errors
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo doc --all-features --no-deps --document-private-items
+        env:
+          RUSTDOCFLAGS: -Dwarnings
+
+  semver:
+    name: Check semver compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Check semver
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+
+  check-external-types:
+    name: Validate external types appearing in public API
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Install rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2025-08-06
+          # ^ sync with https://github.com/awslabs/cargo-check-external-types/blob/main/rust-toolchain.toml
+      - run: cargo install --locked cargo-check-external-types
+      - name: run cargo-check-external-types
+        run: cargo check-external-types --all-features
+
+  audit:
+    name: Audit dependencies
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: EmbarkStudios/cargo-deny-action@v2

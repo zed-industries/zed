@@ -1,0 +1,14 @@
+package foo:foo;
+
+world module {
+  import foo: interface {
+    a: func() -> string;
+  }
+
+  export bar: interface {
+    a: func();
+    b: func() -> string;
+  }
+
+  export a: func(x: string) -> tuple<string, u32, string>;
+}

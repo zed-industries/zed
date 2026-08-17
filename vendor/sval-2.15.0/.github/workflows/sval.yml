@@ -1,0 +1,90 @@
+name: sval
+
+on: [push, pull_request]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab
+
+      - name: Install Rust toolchain
+        run: rustup default nightly
+
+      - name: Install cargo-hack
+        run: cargo install cargo-hack
+
+      - name: Powerset
+        run: cargo hack test --feature-powerset
+
+      - name: Minimal Versions
+        run: cargo hack test --feature-powerset -Z minimal-versions
+
+      - name: All
+        run: cargo test --all
+
+  embedded:
+    name: Build (embedded)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab
+
+      - name: Install Rust toolchain
+        run: |
+          rustup default nightly
+          rustup target add thumbv6m-none-eabi
+
+      - name: Install cargo-hack
+        run: cargo install cargo-hack
+
+      - name: Powerset
+        run: cargo hack check --each-feature --exclude-features std,alloc -Z avoid-dev-deps --target thumbv6m-none-eabi
+
+  msrv:
+    name: Build (MSRV)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain add 1.61.0 --profile minimal
+          rustup default 1.61.0
+
+      - name: Check
+        run: cargo check --all-features
+
+  miri:
+    name: Test (Miri)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab
+
+      - name: Install Miri
+        run: |
+          rustup toolchain install nightly --component miri
+          cargo +nightly miri setup
+
+      - name: Default features
+        run: cargo +nightly miri test --lib
+
+      - name: No features
+        run: cargo +nightly miri test --lib --no-default-features
+
+      - name: All features
+        run: cargo +nightly miri test --all-features --lib

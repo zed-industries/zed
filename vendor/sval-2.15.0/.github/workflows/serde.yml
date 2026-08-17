@@ -1,0 +1,67 @@
+name: serde
+
+on: [push, pull_request]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab
+
+      - name: Install Rust toolchain
+        run: rustup default nightly
+
+      - name: Install cargo-hack
+        run: cargo install cargo-hack
+
+      - name: Powerset
+        working-directory: ./serde
+        run: cargo hack test --feature-powerset
+
+      - name: Minimal Versions
+        working-directory: ./serde
+        run: cargo hack test --feature-powerset -Z minimal-versions
+
+      - name: Powerset (Tests)
+        working-directory: ./serde/test
+        run: cargo hack test --feature-powerset
+
+  msrv:
+    name: Build (MSRV)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain add 1.61.0 --profile minimal
+          rustup default 1.61.0
+
+      - name: Check
+        working-directory: ./serde
+        run: cargo check --all-features
+
+  embedded:
+    name: Build (embedded)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab
+
+      - name: Install Rust toolchain
+        run: |
+          rustup default nightly
+          rustup target add thumbv6m-none-eabi
+
+      - name: Install cargo-hack
+        run: cargo install cargo-hack
+
+      - name: Powerset
+        working-directory: ./serde
+        run: cargo hack check --each-feature --exclude-features std,alloc -Z avoid-dev-deps --target thumbv6m-none-eabi

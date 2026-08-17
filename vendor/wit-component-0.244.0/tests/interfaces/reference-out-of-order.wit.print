@@ -1,0 +1,31 @@
+package foo:foo;
+
+interface foo {
+  record r {
+    s: string,
+  }
+
+  variant v {
+    s(string),
+  }
+
+  record r-no-string {
+    s: u32,
+  }
+
+  variant v-no-string {
+    s(u32),
+  }
+
+  a: func(x: r);
+
+  b: func(x: v);
+
+  c: func(x: r-no-string);
+
+  d: func(x: v-no-string);
+}
+
+world foo-world {
+  import foo;
+}

@@ -1,0 +1,6 @@
+// We actually don't use this; it's just to let bindgen! find the corresponding world in wit/deps.
+package wasmtime:wasi;
+
+world bindings {
+  include wasi:cli/imports@0.2.6;
+}

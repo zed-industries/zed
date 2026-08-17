@@ -1,0 +1,69 @@
+#!/bin/sh
+#
+# Run commands with property-tests enabled for bigdecimal crate
+#
+# Tests are defined in src/lib.tests.property-test.rs
+#
+
+SED=$(command -v gsed || command -v sed)
+if [ -z "$SED" ]; then
+    echo "This program requires sed"
+    exit 1
+fi
+
+usage() {
+    echo "Usage: $0 [enable|disable|test|run <cmd>]"
+    echo ""
+    echo "   enable: Enable property tests by removing comments in Cargo.toml & build.rs"
+    echo "  disable: Restore property-tests comments in Cargo.toml & build.rs"
+    echo "     test: Runs 'cargo test' between enabling & disabling property tests"
+    echo "run <cmd>: Run user supplied command <cmd> between enabling & disabling property tests"
+}
+
+enable_property_tests() {
+  # enable property-test dependencies in Cargo
+  ${SED} -i.bak -e 's|# PROPERTY-TESTS: ||' Cargo.toml
+
+  # add the property-test configuration in build.rs
+  ${SED} -i.bak -e 's|// ::PROPERTY-TESTS:: ||' build.rs
+}
+
+
+restore_disabled_property_tests() {
+  # Restore Cargo.toml with backup
+  mv Cargo.toml.bak Cargo.toml
+  mv build.rs.bak build.rs
+  touch build.rs
+}
+
+
+DEFAULT_CMD=help
+CMD=${1:-$DEFAULT_CMD}
+shift
+
+case "${CMD}" in
+  run)
+    enable_property_tests
+    # Run commands
+    "$@"
+    restore_disabled_property_tests
+    ;;
+
+  test)
+    enable_property_tests
+    cargo test "$@"
+    restore_disabled_property_tests
+    ;;
+
+  enable)
+    enable_property_tests
+    ;;
+
+  disable)
+    restore_disabled_property_tests
+    ;;
+
+  *)
+    usage
+    ;;
+esac

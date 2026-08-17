@@ -1,0 +1,30 @@
+---
+- name: Document start on last line
+  from: '@perlpunk'
+  tags: header
+  yaml: |
+    ---
+    a: b
+    ---
+  tree: |
+    +STR
+     +DOC ---
+      +MAP
+       =VAL :a
+       =VAL :b
+      -MAP
+     -DOC
+     +DOC ---
+      =VAL :
+     -DOC
+    -STR
+  json: |
+    {
+      "a": "b"
+    }
+    null
+  dump: |
+    ---
+    a: b
+    ---
+    ...

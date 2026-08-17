@@ -1,0 +1,89 @@
+name: Rust
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs: 
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Build
+      run: cargo build --verbose
+    - name: Run tests
+      run: cargo test --verbose
+    - name: Run tests for serde feature
+      run: cargo test --features serde --verbose
+      
+  miri:
+    name: "Miri"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Miri
+        run: |
+          rustup toolchain install nightly --component miri
+          rustup override set nightly
+          cargo miri setup
+      - name: Test with Miri
+        run: MIRIFLAGS=-Zmiri-strict-provenance cargo miri test
+      - name: Run tests for serde feature
+        run: MIRIFLAGS=-Zmiri-strict-provenance cargo miri test --features serde
+  
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          components: rustfmt
+          override: true
+      - uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
+          
+          
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+            toolchain: stable
+            profile: minimal
+            components: clippy
+            override: true
+      - uses: actions-rs/clippy-check@v1
+        env:
+          PWD: ${{ env.GITHUB_WORKSPACE }}
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          args: --workspace --tests --examples
+          
+          
+  docs:
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -Dwarnings
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          components: rust-docs
+          override: true
+      - uses: swatinem/rust-cache@v1
+      - uses: actions-rs/cargo@v1
+        with:
+          command: doc
+          args: --workspace --no-deps

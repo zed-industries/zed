@@ -1,0 +1,14 @@
+package foo:root;
+package foo:name {}
+
+package bar:name {
+  interface unused {
+    type a = u32;
+  }
+
+  world w {
+    import imp: interface {
+        use missing.{a};
+    }
+  }
+}

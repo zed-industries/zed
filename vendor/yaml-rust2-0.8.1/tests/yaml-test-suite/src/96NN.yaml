@@ -1,0 +1,25 @@
+---
+- name: Leading tab content in literals
+  from: '@ingydotnet'
+  tags: indent literal whitespace
+  yaml: |
+    foo: |-
+     ——»bar
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :foo
+       =VAL |\tbar
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {"foo":"\tbar"}
+  dump: |
+    foo: |-
+      ——»bar
+
+- yaml: |
+    foo: |-
+     ——»bar∎

@@ -1,0 +1,26 @@
+[package]
+description = "Derive and attribute macros for `documented`"
+edition.workspace = true
+license.workspace = true
+name = "documented-macros"
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+convert_case.workspace = true
+itertools = { workspace = true, optional = true }
+optfield = { workspace = true, optional = true }
+proc-macro2.workspace = true
+quote.workspace = true
+strum = { workspace = true, optional = true }
+syn.workspace = true
+
+[dev-dependencies]
+documented.workspace = true
+
+[features]
+customise = ["dep:itertools", "dep:optfield", "dep:strum"]

@@ -1,0 +1,13 @@
+package foo:foo;
+
+interface shared-items {
+  type a = u32;
+}
+
+world foo {
+  import shared-items: interface {}
+  export a-name: interface {
+    use shared-items.{a};
+  }
+}
+

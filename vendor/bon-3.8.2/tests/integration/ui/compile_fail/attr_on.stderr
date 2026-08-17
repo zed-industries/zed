@@ -1,0 +1,73 @@
+error: this `#[builder(into)]` attribute is redundant, because `into` is already implied for this member via the `#[builder(on(...))]` at the top of the function
+ --> tests/integration/ui/compile_fail/attr_on.rs:4:31
+  |
+4 | fn unnecessary_into(#[builder(into)] _x: String) {}
+  |                               ^^^^
+
+error: this syntax is not supported in type patterns yet. If you have a use case for this, please open an issue at https://github.com/elastio/bon/issues.
+ --> tests/integration/ui/compile_fail/attr_on.rs:6:15
+  |
+6 | #[builder(on(&dyn std::fmt::Debug, into))]
+  |               ^^^
+
+error: nested attributes are not allowed in the type pattern of #[builder(on(type_pattern, ...))]
+ --> tests/integration/ui/compile_fail/attr_on.rs:9:17
+  |
+9 | #[builder(on(fn(#[attr] a: u32), into))]
+  |                 ^
+
+error: this empty `on` attribute is unexpected; remove it or pass parameters in parentheses: `on(...)`
+  --> tests/integration/ui/compile_fail/attr_on.rs:12:11
+   |
+12 | #[builder(on)]
+   |           ^^
+
+error: expected parameters in parentheses
+  --> tests/integration/ui/compile_fail/attr_on.rs:15:13
+   |
+15 | #[builder(on())]
+   |             ^^
+
+error: expected `,`
+  --> tests/integration/ui/compile_fail/attr_on.rs:18:1
+   |
+18 | #[builder(on(_))]
+   | ^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the attribute macro `builder` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: expected at least one parameter after the comma in `on(type_pattern, ...)`
+  --> tests/integration/ui/compile_fail/attr_on.rs:21:15
+   |
+21 | #[builder(on(_,))]
+   |               ^
+
+error: this `on(...)` clause is out of order; all `on(...)` clauses must be consecutive; there shouldn't be any other parameters between them
+  --> tests/integration/ui/compile_fail/attr_on.rs:27:5
+   |
+27 |     on(String, into),
+   |     ^^
+
+error: this `on(...)` clause is out of order; all `on(...)` clauses must be consecutive; there shouldn't be any other parameters between them
+  --> tests/integration/ui/compile_fail/attr_on.rs:35:5
+   |
+35 |     on(String, into),
+   |     ^^
+
+error: this `on(...)` clause is out of order; all `on(...)` clauses must be consecutive; there shouldn't be any other parameters between them
+  --> tests/integration/ui/compile_fail/attr_on.rs:43:5
+   |
+43 |     on(String, into),
+   |     ^^
+
+error: `required` can only be specified in the first `on(...)` clause; this restriction may be lifted in the future
+  --> tests/integration/ui/compile_fail/attr_on.rs:48:30
+   |
+48 | #[builder(on(_, into), on(_, required))]
+   |                              ^^^^^^^^
+
+error: `required` can only be used with the wildcard type pattern i.e. `on(_, required)`; this restriction may be lifted in the future
+  --> tests/integration/ui/compile_fail/attr_on.rs:51:14
+   |
+51 | #[builder(on(u8, required))]
+   |              ^^

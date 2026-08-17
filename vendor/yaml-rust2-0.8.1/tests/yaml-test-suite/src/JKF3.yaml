@@ -1,0 +1,13 @@
+---
+- name: Multiline unidented double quoted block key
+  from: '@ingydotnet'
+  tags: indent
+  fail: true
+  yaml: |
+    - - "bar
+    bar": x
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       +SEQ

@@ -1,0 +1,828 @@
+// Copyright 2023 LiveKit, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package livekit;
+
+import "google/protobuf/timestamp.proto";
+import "livekit_metrics.proto";
+import "logger/options.proto";
+
+option csharp_namespace = "LiveKit.Proto";
+option go_package = "github.com/livekit/protocol/livekit";
+option ruby_package = "LiveKit::Proto";
+
+message Pagination {
+  string after_id = 1; // list entities which IDs are greater
+  int32 limit = 2;
+}
+
+message TokenPagination {
+  string token = 1;
+}
+
+// ListUpdate is used for updated APIs where 'repeated string' field is modified.
+message ListUpdate {
+  repeated string set = 1; // set the field to a new list
+  repeated string add = 2; // append items to a list, avoiding duplicates
+  repeated string remove = 3; // delete items from a list
+  bool clear = 4; // sets the list to an empty list
+}
+
+message Room {
+  string sid = 1;
+  string name = 2;
+  uint32 empty_timeout = 3;
+  uint32 departure_timeout = 14;
+  uint32 max_participants = 4;
+  int64 creation_time = 5;
+  int64 creation_time_ms = 15;
+  string turn_password = 6;
+  repeated Codec enabled_codecs = 7;
+  string metadata = 8 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  uint32 num_participants = 9;
+  uint32 num_publishers = 11;
+  bool active_recording = 10;
+  TimedVersion version = 13;
+
+  // NEXT-ID: 16
+}
+
+message Codec {
+  string mime = 1;
+  string fmtp_line = 2;
+}
+
+enum AudioCodec {
+  DEFAULT_AC = 0;
+  OPUS = 1;
+  AAC = 2;
+  AC_MP3 = 3;
+}
+
+enum VideoCodec {
+  DEFAULT_VC = 0;
+  H264_BASELINE = 1;
+  H264_MAIN = 2;
+  H264_HIGH = 3;
+  VP8 = 4;
+}
+
+enum ImageCodec {
+  IC_DEFAULT = 0;
+  IC_JPEG = 1;
+}
+
+// Policy for publisher to handle subscribers that are unable to support the primary codec of a track
+enum BackupCodecPolicy {
+  // default behavior, the track prefer to regress to backup codec and all subscribers will receive the backup codec,
+  // the sfu will try to regress codec if possible but not assured.
+  PREFER_REGRESSION = 0;
+  // encoding/send the primary and backup codec simultaneously
+  SIMULCAST = 1;
+  // force the track to regress to backup codec, this option can be used in video conference or the publisher has limited bandwidth/encoding power
+  REGRESSION = 2;
+}
+
+message PlayoutDelay {
+  bool enabled = 1;
+  uint32 min = 2;
+  uint32 max = 3;
+}
+
+message ParticipantPermission {
+  // allow participant to subscribe to other tracks in the room
+  bool can_subscribe = 1;
+  // allow participant to publish new tracks to room
+  bool can_publish = 2;
+  // allow participant to publish data
+  bool can_publish_data = 3;
+  // sources that are allowed to be published
+  repeated TrackSource can_publish_sources = 9;
+  // indicates that it's hidden to others
+  bool hidden = 7;
+  // indicates it's a recorder instance
+  // deprecated: use ParticipantInfo.kind instead
+  bool recorder = 8 [deprecated = true];
+  // indicates that participant can update own metadata and attributes
+  bool can_update_metadata = 10;
+  // indicates that participant is an agent
+  // deprecated: use ParticipantInfo.kind instead
+  bool agent = 11 [deprecated = true];
+  // if a participant can subscribe to metrics
+  bool can_subscribe_metrics = 12;
+  // if a participant can manage an agent session via RemoteSession (control and access state)
+  bool can_manage_agent_session = 13;
+
+  // NEXT_ID: 14
+}
+
+message ParticipantInfo {
+  enum State {
+    // websocket' connected, but not offered yet
+    JOINING = 0;
+    // server received client offer
+    JOINED = 1;
+    // ICE connectivity established
+    ACTIVE = 2;
+    // WS disconnected
+    DISCONNECTED = 3;
+  }
+  enum Kind {
+    // standard participants, e.g. web clients
+    STANDARD = 0;
+    // only ingests streams
+    INGRESS = 1;
+    // only consumes streams
+    EGRESS = 2;
+    // SIP participants
+    SIP = 3;
+    // LiveKit agents
+    AGENT = 4;
+    // Connectors participants
+    CONNECTOR = 7;
+    // Bridge participants
+    BRIDGE = 8;
+    // NEXT_ID: 9
+  }
+  enum KindDetail {
+    CLOUD_AGENT = 0;
+    FORWARDED = 1;
+    CONNECTOR_WHATSAPP = 2;
+    CONNECTOR_TWILIO = 3;
+    BRIDGE_RTSP = 4;
+    // NEXT_ID: 5
+  }
+  string sid = 1;
+  string identity = 2;
+  State state = 3;
+  repeated TrackInfo tracks = 4;
+  string metadata = 5 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  // timestamp when participant joined room, in seconds
+  int64 joined_at = 6;
+  // timestamp when participant joined room, in milliseconds
+  int64 joined_at_ms = 17;
+  string name = 9 [(logger.redact) = true];
+  uint32 version = 10;
+  ParticipantPermission permission = 11;
+  string region = 12;
+  // indicates the participant has an active publisher connection
+  // and can publish to the server
+  bool is_publisher = 13;
+  Kind kind = 14;
+  map<string, string> attributes = 15 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  DisconnectReason disconnect_reason = 16;
+  repeated KindDetail kind_details = 18;
+  repeated DataTrackInfo data_tracks = 19;
+
+  // protocol version used for client feature compatibility
+  int32 client_protocol = 20;
+ 
+  // NEXT_ID: 21
+}
+
+enum TrackType {
+  AUDIO = 0;
+  VIDEO = 1;
+  DATA = 2;
+}
+
+enum TrackSource {
+  UNKNOWN = 0;
+  CAMERA = 1;
+  MICROPHONE = 2;
+  SCREEN_SHARE = 3;
+  SCREEN_SHARE_AUDIO = 4;
+}
+
+message Encryption {
+  enum Type {
+    NONE = 0;
+    GCM = 1;
+    CUSTOM = 2;
+  }
+}
+
+message SimulcastCodecInfo {
+  string mime_type = 1;
+  string mid = 2;
+  string cid = 3;
+  repeated VideoLayer layers = 4;
+  VideoLayer.Mode video_layer_mode = 5;
+  // cid (client side id for track) could be different between
+  // signalling (AddTrackRequest) and SDP offer. This field
+  // will be populated only if it is different to avoid
+  // duplication and keep the representation concise.
+  string sdp_cid = 6;
+}
+
+message TrackInfo {
+  string sid = 1;
+  TrackType type = 2;
+  string name = 3 [(logger.redact) = true];
+  bool muted = 4;
+  // original width of video (unset for audio)
+  // clients may receive a lower resolution version with simulcast
+  uint32 width = 5;
+  // original height of video (unset for audio)
+  uint32 height = 6;
+  // true if track is simulcasted
+  bool simulcast = 7 [deprecated = true]; // see `video_layer_mode` in `codecs`
+  // true if DTX (Discontinuous Transmission) is disabled for audio
+  bool disable_dtx = 8 [deprecated = true]; // deprecated in favor of `audio_features`
+  // source of media
+  TrackSource source = 9;
+  repeated VideoLayer layers = 10 [deprecated = true]; // see `codecs` for layers of individual codec
+  // mime type of codec
+  string mime_type = 11;
+  string mid = 12;
+  repeated SimulcastCodecInfo codecs = 13;
+  bool stereo = 14 [deprecated = true]; // deprecated in favor of `audio_features`
+  // true if RED (Redundant Encoding) is disabled for audio
+  bool disable_red = 15;
+  Encryption.Type encryption = 16;
+  string stream = 17;
+  TimedVersion version = 18;
+  repeated AudioTrackFeature audio_features = 19;
+  BackupCodecPolicy backup_codec_policy = 20;
+}
+
+message DataTrackInfo {
+  // Client-assigned, 16-bit identifier that will be attached to packets sent by the publisher.
+  uint32 pub_handle = 1;
+
+  // Server-assigned track identifier.
+  string sid = 2;
+
+  // Human-readable identifier (e.g., `geoLocation`, `servoPosition.x`, etc.), unique per publisher.
+  string name = 3;
+
+  // Method used for end-to-end encryption (E2EE) on packet payloads.
+  Encryption.Type encryption = 4;
+}
+
+enum DataTrackExtensionID {
+  DTEI_INVALID = 0;
+  DTEI_PARTICIPANT_SID = 1;
+}
+
+message DataTrackExtensionParticipantSid {
+  DataTrackExtensionID id = 1;
+  string participant_sid = 2;
+}
+
+message DataTrackSubscriptionOptions {
+  // Rate in frames per second (FPS) the subscriber wants to receive frames at.
+  // If omitted, the subscriber defaults to the publisher's fps
+  optional uint32 target_fps = 1;
+}
+
+enum VideoQuality {
+  LOW = 0;
+  MEDIUM = 1;
+  HIGH = 2;
+  OFF = 3;
+}
+
+// provide information about available spatial layers
+message VideoLayer {
+  enum Mode {
+    MODE_UNUSED = 0;
+    ONE_SPATIAL_LAYER_PER_STREAM = 1;
+    MULTIPLE_SPATIAL_LAYERS_PER_STREAM = 2;
+    ONE_SPATIAL_LAYER_PER_STREAM_INCOMPLETE_RTCP_SR = 3;
+  }
+
+  // for tracks with a single layer, this should be HIGH
+  VideoQuality quality = 1;
+  uint32 width = 2;
+  uint32 height = 3;
+  // target bitrate in bit per second (bps), server will measure actual
+  uint32 bitrate = 4;
+  uint32 ssrc = 5;
+  int32 spatial_layer = 6;
+  string rid = 7;
+
+  uint32 repair_ssrc = 8;
+}
+
+// new DataPacket API
+message DataPacket {
+  enum Kind {
+    RELIABLE = 0;
+    LOSSY = 1;
+  }
+  Kind kind = 1 [deprecated = true];
+  // participant identity of user that sent the message
+  string participant_identity = 4;
+  // identities of participants who will receive the message (sent to all by default)
+  repeated string destination_identities = 5;
+  oneof value {
+    UserPacket user = 2;
+    ActiveSpeakerUpdate speaker = 3 [deprecated = true];
+    SipDTMF sip_dtmf = 6;
+    Transcription transcription = 7;
+    MetricsBatch metrics = 8;
+    ChatMessage chat_message = 9;
+    RpcRequest rpc_request = 10;
+    RpcAck rpc_ack = 11;
+    RpcResponse rpc_response = 12;
+    DataStream.Header stream_header = 13;
+    DataStream.Chunk stream_chunk = 14;
+    DataStream.Trailer stream_trailer = 15;
+    EncryptedPacket encrypted_packet = 18;
+  }
+  // sequence number of reliable packet
+  uint32 sequence = 16;
+  // sid of the user that sent the message
+  string participant_sid = 17;
+
+  // NEXT_ID: 19
+}
+
+message EncryptedPacket {
+  Encryption.Type encryption_type = 1;
+  bytes iv = 2;
+  uint32 key_index = 3;
+  bytes encrypted_value = 4; // This is an encrypted EncryptedPacketPayload message representation
+}
+
+message EncryptedPacketPayload {
+  oneof value {
+    UserPacket user = 1;
+    ChatMessage chat_message = 3;
+    RpcRequest rpc_request = 4;
+    RpcAck rpc_ack = 5;
+    RpcResponse rpc_response = 6;
+    DataStream.Header stream_header = 7;
+    DataStream.Chunk stream_chunk = 8;
+    DataStream.Trailer stream_trailer = 9;
+
+    // NEXT_ID: 10
+  }
+}
+
+message ActiveSpeakerUpdate {
+  option deprecated = true;
+  repeated SpeakerInfo speakers = 1;
+}
+
+message SpeakerInfo {
+  string sid = 1;
+  // audio level, 0-1.0, 1 is loudest
+  float level = 2;
+  // true if speaker is currently active
+  bool active = 3;
+}
+
+message UserPacket {
+  // participant ID of user that sent the message
+  string participant_sid = 1 [deprecated = true];
+  string participant_identity = 5 [deprecated = true];
+  // user defined payload
+  bytes payload = 2;
+  // the ID of the participants who will receive the message (sent to all by default)
+  repeated string destination_sids = 3 [deprecated = true];
+  // identities of participants who will receive the message (sent to all by default)
+  repeated string destination_identities = 6 [deprecated = true];
+  // topic under which the message was published
+  optional string topic = 4;
+  // Unique ID to identify the message
+  optional string id = 8;
+  // start and end time allow relating the message to specific media time
+  optional uint64 start_time = 9;
+  optional uint64 end_time = 10;
+  // added by SDK to enable de-duping of messages, for INTERNAL USE ONLY
+  bytes nonce = 11;
+
+  // NEXT_ID: 12
+}
+
+message SipDTMF {
+  uint32 code = 3;
+  string digit = 4;
+}
+
+message Transcription {
+  // Participant that got its speech transcribed
+  string transcribed_participant_identity = 2;
+  string track_id = 3;
+  repeated TranscriptionSegment segments = 4;
+
+  // NEXT_ID: 6
+}
+
+message TranscriptionSegment {
+  string id = 1;
+  string text = 2;
+  uint64 start_time = 3;
+  uint64 end_time = 4;
+  bool final = 5;
+  string language = 6;
+}
+
+message ChatMessage {
+  string id = 1; // uuid
+  int64 timestamp = 2;
+  optional int64 edit_timestamp = 3; // populated only if the intent is to edit/update an existing message
+  string message = 4;
+  bool deleted = 5; // true to remove message
+  bool generated = 6; // true if the chat message has been generated by an agent from a participant's audio transcription
+}
+
+message RpcRequest {
+  string id = 1;
+  string method = 2;
+  string payload = 3;
+  uint32 response_timeout_ms = 4;
+  uint32 version = 5;
+}
+
+message RpcAck {
+  string request_id = 1;
+}
+
+message RpcResponse {
+  string request_id = 1;
+  oneof value {
+    string payload = 2;
+    RpcError error = 3;
+  }
+}
+
+message RpcError {
+  uint32 code = 1;
+  string message = 2;
+  string data = 3;
+}
+
+enum ConnectionQuality {
+  POOR = 0;
+  GOOD = 1;
+  EXCELLENT = 2;
+  LOST = 3;
+}
+
+message ParticipantTracks {
+  // participant ID of participant to whom the tracks belong
+  string participant_sid = 1;
+  repeated string track_sids = 2;
+}
+
+// details about the server
+message ServerInfo {
+  enum Edition {
+    Standard = 0;
+    Cloud = 1;
+  }
+  Edition edition = 1;
+  string version = 2;
+  int32 protocol = 3;
+  string region = 4;
+  string node_id = 5;
+  // additional debugging information. sent only if server is in development mode
+  string debug_info = 6;
+  int32 agent_protocol = 7;
+}
+
+// details about the client
+message ClientInfo {
+  enum SDK {
+    UNKNOWN = 0;
+    JS = 1;
+    SWIFT = 2;
+    ANDROID = 3;
+    FLUTTER = 4;
+    GO = 5;
+    UNITY = 6;
+    REACT_NATIVE = 7;
+    RUST = 8;
+    PYTHON = 9;
+    CPP = 10;
+    UNITY_WEB = 11;
+    NODE = 12;
+    UNREAL = 13;
+    ESP32 = 14;
+  }
+
+  SDK sdk = 1;
+  string version = 2;
+  int32 protocol = 3;
+  string os = 4;
+  string os_version = 5;
+  string device_model = 6;
+  string browser = 7;
+  string browser_version = 8;
+  string address = 9;
+  // wifi, wired, cellular, vpn, empty if not known
+  string network = 10;
+  // comma separated list of additional LiveKit SDKs in use of this client, with versions
+  // e.g. "components-js:1.2.3,track-processors-js:1.2.3"
+  string other_sdks = 11;
+  // client protocol version
+  int32 client_protocol = 12;
+}
+
+// server provided client configuration
+message ClientConfiguration {
+  VideoConfiguration video = 1;
+  VideoConfiguration screen = 2;
+
+  ClientConfigSetting resume_connection = 3;
+  DisabledCodecs disabled_codecs = 4;
+  ClientConfigSetting force_relay = 5;
+}
+
+enum ClientConfigSetting {
+  UNSET = 0;
+  DISABLED = 1;
+  ENABLED = 2;
+}
+
+message VideoConfiguration {
+  ClientConfigSetting hardware_encoder = 1;
+}
+
+message DisabledCodecs {
+  // disabled for both publish and subscribe
+  repeated Codec codecs = 1;
+  // only disable for publish
+  repeated Codec publish = 2;
+}
+
+enum DisconnectReason {
+  UNKNOWN_REASON = 0;
+  // the client initiated the disconnect
+  CLIENT_INITIATED = 1;
+  // another participant with the same identity has joined the room
+  DUPLICATE_IDENTITY = 2;
+  // the server instance is shutting down
+  SERVER_SHUTDOWN = 3;
+  // RoomService.RemoveParticipant was called
+  PARTICIPANT_REMOVED = 4;
+  // RoomService.DeleteRoom was called
+  ROOM_DELETED = 5;
+  // the client is attempting to resume a session, but server is not aware of it
+  STATE_MISMATCH = 6;
+  // client was unable to connect fully
+  JOIN_FAILURE = 7;
+  // Cloud-only, the server requested Participant to migrate the connection elsewhere
+  MIGRATION = 8;
+  // the signal websocket was closed unexpectedly
+  SIGNAL_CLOSE = 9;
+  // the room was closed, due to all Standard and Ingress participants having left
+  ROOM_CLOSED = 10;
+  // SIP callee did not respond in time
+  USER_UNAVAILABLE = 11;
+  // SIP callee rejected the call (busy)
+  USER_REJECTED = 12;
+  // SIP protocol failure or unexpected response
+  SIP_TRUNK_FAILURE = 13;
+  // server timed out a participant session
+  CONNECTION_TIMEOUT = 14;
+  // media stream failure or media timeout
+  MEDIA_FAILURE = 15;
+}
+
+message RTPDrift {
+  google.protobuf.Timestamp start_time = 1;
+  google.protobuf.Timestamp end_time = 2;
+  double duration = 3;
+
+  uint64 start_timestamp = 4;
+  uint64 end_timestamp = 5;
+  uint64 rtp_clock_ticks = 6;
+  int64 drift_samples = 7;
+  double drift_ms = 8;
+  double clock_rate = 9;
+}
+
+message RTPStats {
+  google.protobuf.Timestamp start_time = 1;
+  google.protobuf.Timestamp end_time = 2;
+  double duration = 3;
+
+  uint32 packets = 4;
+  double packet_rate = 5;
+
+  uint64 bytes = 6;
+  uint64 header_bytes = 39;
+  double bitrate = 7;
+
+  uint32 packets_lost = 8;
+  double packet_loss_rate = 9;
+  float packet_loss_percentage = 10;
+
+  uint32 packets_duplicate = 11;
+  double packet_duplicate_rate = 12;
+
+  uint64 bytes_duplicate = 13;
+  uint64 header_bytes_duplicate = 40;
+  double bitrate_duplicate = 14;
+
+  uint32 packets_padding = 15;
+  double packet_padding_rate = 16;
+
+  uint64 bytes_padding = 17;
+  uint64 header_bytes_padding = 41;
+  double bitrate_padding = 18;
+
+  uint32 packets_out_of_order = 19;
+
+  uint32 frames = 20;
+  double frame_rate = 21;
+
+  double jitter_current = 22;
+  double jitter_max = 23;
+
+  map<int32, uint32> gap_histogram = 24;
+
+  uint32 nacks = 25;
+  uint32 nack_acks = 37;
+  uint32 nack_misses = 26;
+  uint32 nack_repeated = 38;
+
+  uint32 plis = 27;
+  google.protobuf.Timestamp last_pli = 28;
+
+  uint32 firs = 29;
+  google.protobuf.Timestamp last_fir = 30;
+
+  uint32 rtt_current = 31;
+  uint32 rtt_max = 32;
+
+  uint32 key_frames = 33;
+  google.protobuf.Timestamp last_key_frame = 34;
+
+  uint32 layer_lock_plis = 35;
+  google.protobuf.Timestamp last_layer_lock_pli = 36;
+
+  RTPDrift packet_drift = 44;
+  RTPDrift ntp_report_drift = 45;
+  RTPDrift rebased_report_drift = 46;
+  RTPDrift received_report_drift = 47;
+  // NEXT_ID: 48
+}
+
+message RTCPSenderReportState {
+  uint32 rtp_timestamp = 1;
+  uint64 rtp_timestamp_ext = 2;
+  uint64 ntp_timestamp = 3;
+  int64 at = 4; // time at which this happened
+  int64 at_adjusted = 5;
+  uint32 packets = 6;
+  uint64 octets = 7;
+}
+
+message RTPForwarderState {
+  bool started = 1;
+  int32 reference_layer_spatial = 2;
+  int64 pre_start_time = 3;
+  uint64 ext_first_timestamp = 4;
+  uint64 dummy_start_timestamp_offset = 5;
+  RTPMungerState rtp_munger = 6;
+  oneof codec_munger {
+    VP8MungerState vp8_munger = 7;
+  }
+  repeated RTCPSenderReportState sender_report_state = 8;
+}
+
+message RTPMungerState {
+  uint64 ext_last_sequence_number = 1;
+  uint64 ext_second_last_sequence_number = 2;
+  uint64 ext_last_timestamp = 3;
+  uint64 ext_second_last_timestamp = 4;
+  bool last_marker = 5;
+  bool second_last_marker = 6;
+}
+
+message VP8MungerState {
+  int32 ext_last_picture_id = 1;
+  bool picture_id_used = 2;
+  uint32 last_tl0_pic_idx = 3;
+  bool tl0_pic_idx_used = 4;
+  bool tid_used = 5;
+  uint32 last_key_idx = 6;
+  bool key_idx_used = 7;
+}
+
+message TimedVersion {
+  int64 unix_micro = 1;
+  int32 ticks = 2;
+}
+
+enum ReconnectReason {
+  RR_UNKNOWN = 0;
+  RR_SIGNAL_DISCONNECTED = 1;
+  RR_PUBLISHER_FAILED = 2;
+  RR_SUBSCRIBER_FAILED = 3;
+  RR_SWITCH_CANDIDATE = 4;
+}
+
+enum SubscriptionError {
+  SE_UNKNOWN = 0;
+  SE_CODEC_UNSUPPORTED = 1;
+  SE_TRACK_NOTFOUND = 2;
+}
+
+enum AudioTrackFeature {
+  TF_STEREO = 0;
+  TF_NO_DTX = 1;
+  TF_AUTO_GAIN_CONTROL = 2;
+  TF_ECHO_CANCELLATION = 3;
+  TF_NOISE_SUPPRESSION = 4;
+  TF_ENHANCED_NOISE_CANCELLATION = 5;
+  TF_PRECONNECT_BUFFER = 6; // client will buffer audio once available and send it to the server via bytes stream once connected
+}
+
+message DataStream {
+  // enum for operation types (specific to TextHeader)
+  enum OperationType {
+    CREATE = 0;
+    UPDATE = 1;
+    DELETE = 2;
+    REACTION = 3;
+  }
+
+  // header properties specific to text streams
+  message TextHeader {
+    OperationType operation_type = 1;
+    int32 version = 2; // Optional: Version for updates/edits
+    string reply_to_stream_id = 3; // Optional: Reply to specific message
+    repeated string attached_stream_ids = 4; // file attachments for text streams
+    bool generated = 5; // true if the text has been generated by an agent from a participant's audio transcription
+  }
+
+  // header properties specific to byte or file streams
+  message ByteHeader {
+    string name = 1;
+  }
+
+  // main DataStream.Header that contains a oneof for specific headers
+  message Header {
+    string stream_id = 1; // unique identifier for this data stream
+    int64 timestamp = 2; // using int64 for Unix timestamp
+    string topic = 3;
+    string mime_type = 4;
+    optional uint64 total_length = 5; // only populated for finite streams, if it's a stream of unknown size this stays empty
+    Encryption.Type encryption_type = 7 [deprecated = true]; //  this is set on the DataPacket
+    map<string, string> attributes = 8; // user defined attributes map that can carry additional info
+
+    // oneof to choose between specific header types
+    oneof content_header {
+      TextHeader text_header = 9;
+      ByteHeader byte_header = 10;
+    }
+  }
+
+  message Chunk {
+    string stream_id = 1; // unique identifier for this data stream to map it to the correct header
+    uint64 chunk_index = 2;
+    bytes content = 3; // content as binary (bytes)
+    int32 version = 4; // a version indicating that this chunk_index has been retroactively modified and the original one needs to be replaced
+    optional bytes iv = 5 [deprecated = true]; // this is set on the DataPacket
+  }
+
+  message Trailer {
+    string stream_id = 1; // unique identifier for this data stream
+    string reason = 2; // reason why the stream was closed (could contain "error" / "interrupted" / empty for expected end)
+    map<string, string> attributes = 3; // finalizing updates for the stream, can also include additional insights for errors or endTime for transcription
+  }
+}
+
+message FilterParams {
+  repeated string include_events = 1;
+  repeated string exclude_events = 2;
+}
+
+message WebhookConfig {
+  string url = 1;
+  string signing_key = 2;
+  FilterParams filter_params = 3;
+}
+
+message SubscribedAudioCodec {
+  string codec = 1;
+  bool enabled = 2;
+}

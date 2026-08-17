@@ -1,0 +1,13 @@
+---
+source: codespan-reporting/tests/term.rs
+expression: TEST_DATA.emit_no_color(&config)
+---
+error: a message
+
+warning: a message
+
+note: a message
+
+help: a message
+
+

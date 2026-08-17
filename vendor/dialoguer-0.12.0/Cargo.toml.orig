@@ -1,0 +1,60 @@
+[package]
+name = "dialoguer"
+description = "A command line prompting library."
+version = "0.12.0"
+edition = "2021"
+rust-version = "1.66"
+keywords = ["cli", "menu", "prompt"]
+categories = ["command-line-interface"]
+license = "MIT"
+homepage = "https://github.com/console-rs/dialoguer"
+repository = "https://github.com/console-rs/dialoguer"
+documentation = "https://docs.rs/dialoguer"
+readme = "README.md"
+
+[features]
+default = ["editor", "password"]
+editor = ["tempfile"]
+fuzzy-select = ["fuzzy-matcher"]
+history = []
+password = ["zeroize"]
+completion = []
+
+[dependencies]
+console = "0.16.0"
+tempfile = { version = "3", optional = true }
+zeroize = { version = "1.1.1", optional = true }
+fuzzy-matcher = { version = "0.3.7", optional = true }
+shell-words = "1.1.0"
+
+[[example]]
+name = "password"
+required-features = ["password"]
+
+[[example]]
+name = "editor"
+required-features = ["editor"]
+
+[[example]]
+name = "fuzzy_select"
+required-features = ["fuzzy-select"]
+
+[[example]]
+name = "history"
+required-features = ["history"]
+
+[[example]]
+name = "completion"
+required-features = ["completion"]
+
+[workspace.metadata.workspaces]
+no_individual_tags = true
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--cfg", "docsrs"]
+all-features = true
+
+[package.metadata.cargo_check_external_types]
+allowed_external_types = [
+    "console", "console::*", "fuzzy_matcher::skim::SkimMatcherV2",
+]

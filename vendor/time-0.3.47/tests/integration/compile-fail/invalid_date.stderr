@@ -1,0 +1,143 @@
+error: invalid component: year was 1000000
+ --> tests/integration/compile-fail/invalid_date.rs:4:19
+  |
+4 |     let _ = date!(+1_000_000-01-01);
+  |                   ^^^^^^^^^^
+
+error: years with more than four digits must have an explicit sign
+ --> tests/integration/compile-fail/invalid_date.rs:5:19
+  |
+5 |     let _ = date!(10_000-01-01);
+  |                   ^^^^^^
+
+error: invalid component: week was 60
+ --> tests/integration/compile-fail/invalid_date.rs:6:24
+  |
+6 |     let _ = date!(2021-W 60-1);
+  |                        ^^^^
+
+error: invalid component: week was 60
+ --> tests/integration/compile-fail/invalid_date.rs:7:24
+  |
+7 |     let _ = date!(2021-W60-1);
+  |                        ^^^
+
+error: invalid component: day was 0
+ --> tests/integration/compile-fail/invalid_date.rs:8:29
+  |
+8 |     let _ = date!(2021-W 01-0);
+  |                             ^
+
+error: invalid component: day was 0
+ --> tests/integration/compile-fail/invalid_date.rs:9:28
+  |
+9 |     let _ = date!(2021-W01-0);
+  |                            ^
+
+error: invalid component: day was 8
+  --> tests/integration/compile-fail/invalid_date.rs:10:29
+   |
+10 |     let _ = date!(2021-W 01-8);
+   |                             ^
+
+error: invalid component: day was 8
+  --> tests/integration/compile-fail/invalid_date.rs:11:28
+   |
+11 |     let _ = date!(2021-W01-8);
+   |                            ^
+
+error: invalid component: month was 0
+  --> tests/integration/compile-fail/invalid_date.rs:12:24
+   |
+12 |     let _ = date!(2021-00-01);
+   |                        ^^
+
+error: invalid component: month was 13
+  --> tests/integration/compile-fail/invalid_date.rs:13:24
+   |
+13 |     let _ = date!(2021-13-01);
+   |                        ^^
+
+error: invalid component: day was 0
+  --> tests/integration/compile-fail/invalid_date.rs:14:27
+   |
+14 |     let _ = date!(2021-01-00);
+   |                           ^^
+
+error: invalid component: day was 32
+  --> tests/integration/compile-fail/invalid_date.rs:15:27
+   |
+15 |     let _ = date!(2021-01-32);
+   |                           ^^
+
+error: invalid component: ordinal was 0
+  --> tests/integration/compile-fail/invalid_date.rs:16:24
+   |
+16 |     let _ = date!(2021-000);
+   |                        ^^^
+
+error: invalid component: ordinal was 366
+  --> tests/integration/compile-fail/invalid_date.rs:17:24
+   |
+17 |     let _ = date!(2021-366);
+   |                        ^^^
+
+error: invalid component: year was 0a
+  --> tests/integration/compile-fail/invalid_date.rs:18:19
+   |
+18 |     let _ = date!(0a);
+   |                   ^^
+
+error: unexpected token: :
+  --> tests/integration/compile-fail/invalid_date.rs:19:23
+   |
+19 |     let _ = date!(2021:);
+   |                       ^
+
+error: invalid component: week was 0a
+  --> tests/integration/compile-fail/invalid_date.rs:20:26
+   |
+20 |     let _ = date!(2021-W 0a);
+   |                          ^^
+
+error: invalid component: week was 0a
+  --> tests/integration/compile-fail/invalid_date.rs:21:24
+   |
+21 |     let _ = date!(2021-W0a);
+   |                        ^^^
+
+error: unexpected token: :
+  --> tests/integration/compile-fail/invalid_date.rs:22:28
+   |
+22 |     let _ = date!(2021-W 01:);
+   |                            ^
+
+error: unexpected token: :
+  --> tests/integration/compile-fail/invalid_date.rs:23:27
+   |
+23 |     let _ = date!(2021-W01:);
+   |                           ^
+
+error: invalid component: day was 0a
+  --> tests/integration/compile-fail/invalid_date.rs:24:29
+   |
+24 |     let _ = date!(2021-W 01-0a);
+   |                             ^^
+
+error: invalid component: day was 0a
+  --> tests/integration/compile-fail/invalid_date.rs:25:28
+   |
+25 |     let _ = date!(2021-W01-0a);
+   |                            ^^
+
+error: invalid component: month or ordinal was 0a
+  --> tests/integration/compile-fail/invalid_date.rs:26:24
+   |
+26 |     let _ = date!(2021-0a);
+   |                        ^^
+
+error: invalid component: day was 0a
+  --> tests/integration/compile-fail/invalid_date.rs:27:27
+   |
+27 |     let _ = date!(2021-01-0a);
+   |                           ^^

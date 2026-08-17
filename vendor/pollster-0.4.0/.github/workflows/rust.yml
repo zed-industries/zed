@@ -1,0 +1,45 @@
+name: Rust
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Build
+      run: cargo build --verbose
+    - name: Run tests
+      run: cargo test --verbose
+
+  build-with-macro:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Build
+      run: cargo build --features macro --verbose
+    - name: Run tests
+      run: cargo test --features macro --verbose
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install MSRV
+        uses: dtolnay/rust-toolchain@master
+        with:
+            toolchain: "1.69"
+            components: rustfmt, clippy
+      - name: Check MSRV compatibility
+        run: cargo check --verbose --all-features

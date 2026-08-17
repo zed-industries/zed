@@ -1,0 +1,38 @@
+/**
+ * \file wasmtime/conf.h
+ *
+ * \brief Build-time defines for how the C API was built.
+ */
+
+#ifndef WASMTIME_CONF_H
+#define WASMTIME_CONF_H
+
+// WASMTIME_FEATURE_LIST
+#cmakedefine WASMTIME_FEATURE_PROFILING
+#cmakedefine WASMTIME_FEATURE_WAT
+#cmakedefine WASMTIME_FEATURE_CACHE
+#cmakedefine WASMTIME_FEATURE_PARALLEL_COMPILATION
+#cmakedefine WASMTIME_FEATURE_WASI
+#cmakedefine WASMTIME_FEATURE_LOGGING
+#cmakedefine WASMTIME_FEATURE_DISABLE_LOGGING
+#cmakedefine WASMTIME_FEATURE_COREDUMP
+#cmakedefine WASMTIME_FEATURE_ADDR2LINE
+#cmakedefine WASMTIME_FEATURE_DEMANGLE
+#cmakedefine WASMTIME_FEATURE_THREADS
+#cmakedefine WASMTIME_FEATURE_GC
+#cmakedefine WASMTIME_FEATURE_GC_DRC
+#cmakedefine WASMTIME_FEATURE_GC_NULL
+#cmakedefine WASMTIME_FEATURE_ASYNC
+#cmakedefine WASMTIME_FEATURE_CRANELIFT
+#cmakedefine WASMTIME_FEATURE_WINCH
+#cmakedefine WASMTIME_FEATURE_DEBUG_BUILTINS
+#cmakedefine WASMTIME_FEATURE_POOLING_ALLOCATOR
+#cmakedefine WASMTIME_FEATURE_COMPONENT_MODEL
+// ... if you add a line above this be sure to change the other locations
+// marked WASMTIME_FEATURE_LIST
+
+#if defined(WASMTIME_FEATURE_CRANELIFT) || defined(WASMTIME_FEATURE_WINCH)
+#define WASMTIME_FEATURE_COMPILER
+#endif
+
+#endif // WASMTIME_CONF_H

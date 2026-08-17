@@ -1,0 +1,30 @@
+on: [push, pull_request]
+
+name: Continuous integration
+
+jobs:
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+          - stable
+          - beta
+          - nightly
+          - 1.36.0  # MSRV
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install rust nightly
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-hack
+
+      - run: cargo hack build --feature-powerset --all-targets
+      - run: cargo hack test  --feature-powerset --all-targets

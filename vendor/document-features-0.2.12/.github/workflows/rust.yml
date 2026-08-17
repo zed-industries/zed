@@ -1,0 +1,79 @@
+name: Rust
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+          - stable
+          - 1.56.0
+          - nightly
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+      - name: Run tests
+        run: cargo test --verbose --all-features
+      - name: Run docs
+        run: cargo doc --verbose
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run rustfmt
+        run: cargo fmt --all -- --check
+
+
+  crater:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+      - name: setup patch
+        run: |
+          echo "" >> ~/.cargo/config.toml
+          echo [patch.crates-io] >> ~/.cargo/config.toml
+          echo document-features = { path = \"$GITHUB_WORKSPACE\" } >> ~/.cargo/config.toml
+      - name: create project and generate docs
+        run: |
+          cd ~
+          cargo new crater
+          cd crater
+          cargo add quick-xml -F document-features
+          cargo add serde_with -F guide
+          cargo add serial_test -F docsrs
+          cargo add wgpu-core
+          cargo add wgpu
+          cargo add gix -F document-features
+          cargo add kstring -F document-features
+          cargo add ratatui -F document-features
+          cargo add re_types
+          cargo add slint -F document-features
+          cargo add egui-winit -F document-features
+          cargo add ehttp
+          cargo add snapbox -F document-features
+          cargo add fast-image-resize
+          cargo add rhai -F document-features
+          cargo add embassy-executor
+          cargo add embassy-time
+
+          cargo doc
+          grep -r ">No documented features in Cargo.toml<" target/doc || exit 0
+          false

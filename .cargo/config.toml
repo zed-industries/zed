@@ -22,3 +22,170 @@ rustflags = ["-C", "link-arg=-fuse-ld=lld"]
 
 [env]
 MACOSX_DEPLOYMENT_TARGET = "10.15.7"
+
+# Offline builds: use the vendored dependencies in vendor/ instead of the network.
+# Populated via: cargo vendor --versioned-dirs vendor
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/KillTheMule/nvim-rs?rev=764dd270c642f77f10f3e19d05cc178a6cbe69f3"]
+git = "https://github.com/KillTheMule/nvim-rs"
+rev = "764dd270c642f77f10f3e19d05cc178a6cbe69f3"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/RustAudio/rodio?rev=e50e726ddd0292f6ef9de0dda6b90af4ed1fb66a"]
+git = "https://github.com/RustAudio/rodio"
+rev = "e50e726ddd0292f6ef9de0dda6b90af4ed1fb66a"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/camdencheek/tree-sitter-go-mod?rev=2e886870578eeba1927a2dc4bd2e2b3f598c5f9a"]
+git = "https://github.com/camdencheek/tree-sitter-go-mod"
+rev = "2e886870578eeba1927a2dc4bd2e2b3f598c5f9a"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/microsoft/python-environment-tools.git?rev=bb8e04607b96a3865d6aa4bb2a5a5a82ce05b5f0"]
+git = "https://github.com/microsoft/python-environment-tools.git"
+rev = "bb8e04607b96a3865d6aa4bb2a5a5a82ce05b5f0"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/proptest-rs/proptest?rev=3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b"]
+git = "https://github.com/proptest-rs/proptest"
+rev = "3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/smol-rs/async-task.git?rev=b4486cd71e4e94fbda54ce6302444de14f4d190e"]
+git = "https://github.com/smol-rs/async-task.git"
+rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/tree-sitter/tree-sitter-cpp?rev=5cb9b693cfd7bfacab1d9ff4acac1a4150700609"]
+git = "https://github.com/tree-sitter/tree-sitter-cpp"
+rev = "5cb9b693cfd7bfacab1d9ff4acac1a4150700609"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/alacritty?rev=4c129667ce56611becdc82de6e28218c80e2e88f"]
+git = "https://github.com/zed-industries/alacritty"
+rev = "4c129667ce56611becdc82de6e28218c80e2e88f"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/async-pipe-rs?rev=82d00a04211cf4e1236029aa03e6b6ce2a74c553"]
+git = "https://github.com/zed-industries/async-pipe-rs"
+rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/async-process.git?rev=0b6d6713570af61806e1e5cb40e0f757cb93fd9d"]
+git = "https://github.com/zed-industries/async-process.git"
+rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/calloop"]
+git = "https://github.com/zed-industries/calloop"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/dap-types?rev=1b461b310481d01e02b2603c16d7144b926339f8"]
+git = "https://github.com/zed-industries/dap-types"
+rev = "1b461b310481d01e02b2603c16d7144b926339f8"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/font-kit?rev=94b0f28166665e8fd2f53ff6d268a14955c82269"]
+git = "https://github.com/zed-industries/font-kit"
+rev = "94b0f28166665e8fd2f53ff6d268a14955c82269"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/gh-workflow?rev=37f3c0575d379c218a9c455ee67585184e40d43f"]
+git = "https://github.com/zed-industries/gh-workflow"
+rev = "37f3c0575d379c218a9c455ee67585184e40d43f"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/livekit-rust-sdks?rev=d0e27be0cdad89eadab3e36207cda0a2b6e359ee"]
+git = "https://github.com/zed-industries/livekit-rust-sdks"
+rev = "d0e27be0cdad89eadab3e36207cda0a2b6e359ee"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/lsp-types?rev=f4dfa89a21ca35cd929b70354b1583fabae325f8"]
+git = "https://github.com/zed-industries/lsp-types"
+rev = "f4dfa89a21ca35cd929b70354b1583fabae325f8"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/merman?tag=v0.7.0-with-patches"]
+git = "https://github.com/zed-industries/merman"
+tag = "v0.7.0-with-patches"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/notify?rev=0890bbb8ca40a4b5d1f67031698dd7918b37d991"]
+git = "https://github.com/zed-industries/notify"
+rev = "0890bbb8ca40a4b5d1f67031698dd7918b37d991"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/reqwest.git?rev=c15662463bda39148ba154100dd44d3fba5873a4"]
+git = "https://github.com/zed-industries/reqwest.git"
+rev = "c15662463bda39148ba154100dd44d3fba5873a4"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/scap?rev=4afea48c3b002197176fb19cd0f9b180dd36eaac"]
+git = "https://github.com/zed-industries/scap"
+rev = "4afea48c3b002197176fb19cd0f9b180dd36eaac"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/trash-rs?rev=41c6c800d884a89351f3b8856d12894cccee261d"]
+git = "https://github.com/zed-industries/trash-rs"
+rev = "41c6c800d884a89351f3b8856d12894cccee261d"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/tree-sitter-git-commit?rev=88309716a69dd13ab83443721ba6e0b491d37ee9"]
+git = "https://github.com/zed-industries/tree-sitter-git-commit"
+rev = "88309716a69dd13ab83443721ba6e0b491d37ee9"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/tree-sitter-go-work?rev=acb0617bf7f4fda02c6217676cc64acb89536dc7"]
+git = "https://github.com/zed-industries/tree-sitter-go-work"
+rev = "acb0617bf7f4fda02c6217676cc64acb89536dc7"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/tree-sitter-heex?rev=1dd45142fbb05562e35b2040c6129c9bca346592"]
+git = "https://github.com/zed-industries/tree-sitter-heex"
+rev = "1dd45142fbb05562e35b2040c6129c9bca346592"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/tree-sitter-markdown?rev=b596e737286780d7bfa9fcddceaeeb754574b352"]
+git = "https://github.com/zed-industries/tree-sitter-markdown"
+rev = "b596e737286780d7bfa9fcddceaeeb754574b352"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/tree-sitter-typescript?rev=e2c53597d6a5d9cf7bbe8dccde576fe1e46c5899"]
+git = "https://github.com/zed-industries/tree-sitter-typescript"
+rev = "e2c53597d6a5d9cf7bbe8dccde576fe1e46c5899"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/tree-sitter-yaml?rev=baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a"]
+git = "https://github.com/zed-industries/tree-sitter-yaml"
+rev = "baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/wasm_thread?rev=0cf96c7708dfb97ccf3da50347e25edcf75d6937"]
+git = "https://github.com/zed-industries/wasm_thread"
+rev = "0cf96c7708dfb97ccf3da50347e25edcf75d6937"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/windows-capture.git?rev=f0d6c1b6691db75461b732f6d5ff56eed002eeb9"]
+git = "https://github.com/zed-industries/windows-capture.git"
+rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/wprcontrol?rev=cd811f7"]
+git = "https://github.com/zed-industries/wprcontrol"
+rev = "cd811f7"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/xim-rs.git?rev=16f35a2c881b815a2b6cdfd6687988e84f8447d8"]
+git = "https://github.com/zed-industries/xim-rs.git"
+rev = "16f35a2c881b815a2b6cdfd6687988e84f8447d8"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/zed-industries/yawc?rev=71a452f551cac178367eaac5d7418a09afa1f3a2"]
+git = "https://github.com/zed-industries/yawc"
+rev = "71a452f551cac178367eaac5d7418a09afa1f3a2"
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"

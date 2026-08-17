@@ -1,0 +1,28 @@
+[package]
+name = "cargo_metadata"
+version = "0.19.2"
+authors = ["Oliver Schneider <git-spam-no-reply9815368754983@oli-obk.de>"]
+repository = "https://github.com/oli-obk/cargo_metadata"
+description = "structured access to the output of `cargo metadata`"
+license = "MIT"
+readme = "README.md"
+edition = "2021"
+rust-version = "1.78.0"
+
+[dependencies]
+camino = { version = "1.0.7", features = ["serde1"] }
+cargo-platform = "0.1.2"
+derive_builder = { version = "0.20", optional = true }
+semver = { version = "1.0.7", features = ["serde"] }
+serde = { version = "1.0.136", features = ["derive"] }
+serde_json = { version = "1.0.118", features = ["unbounded_depth"] }
+thiserror = "2.0.3"
+
+[features]
+default = []
+builder = ["derive_builder"]
+unstable = []
+
+[package.metadata.cargo_metadata_test]
+some_field = true
+other_field = "foo"

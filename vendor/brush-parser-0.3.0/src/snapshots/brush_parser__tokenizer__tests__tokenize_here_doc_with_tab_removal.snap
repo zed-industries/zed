@@ -1,0 +1,81 @@
+---
+source: brush-parser/src/tokenizer.rs
+expression: "test_tokenizer(r\"cat <<-HERE\n\tSOMETHING\n\tHERE\n\")?"
+---
+TokenizerResult(
+  input: "cat <<-HERE\n\tSOMETHING\n\tHERE\n",
+  result: [
+    W("cat", Loc(
+      start: Pos(
+        idx: 0,
+        line: 1,
+        col: 1,
+      ),
+      end: Pos(
+        idx: 3,
+        line: 1,
+        col: 4,
+      ),
+    )),
+    Op("<<-", Loc(
+      start: Pos(
+        idx: 4,
+        line: 1,
+        col: 5,
+      ),
+      end: Pos(
+        idx: 7,
+        line: 1,
+        col: 8,
+      ),
+    )),
+    W("HERE", Loc(
+      start: Pos(
+        idx: 7,
+        line: 1,
+        col: 8,
+      ),
+      end: Pos(
+        idx: 11,
+        line: 1,
+        col: 12,
+      ),
+    )),
+    W("SOMETHING\n", Loc(
+      start: Pos(
+        idx: 12,
+        line: 2,
+        col: 1,
+      ),
+      end: Pos(
+        idx: 29,
+        line: 4,
+        col: 1,
+      ),
+    )),
+    W("HERE", Loc(
+      start: Pos(
+        idx: 29,
+        line: 4,
+        col: 1,
+      ),
+      end: Pos(
+        idx: 29,
+        line: 4,
+        col: 1,
+      ),
+    )),
+    Op("\n", Loc(
+      start: Pos(
+        idx: 11,
+        line: 1,
+        col: 12,
+      ),
+      end: Pos(
+        idx: 12,
+        line: 2,
+        col: 1,
+      ),
+    )),
+  ],
+)

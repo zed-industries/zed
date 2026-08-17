@@ -1,0 +1,31 @@
+package foo:multi-file;
+
+interface foo {
+  type x = u32;
+}
+
+use foo as foo2;
+
+interface something-else {
+  type y = u64;
+}
+
+use depend-on-me as a-different-name;
+
+interface bar {
+  use foo.{x};
+  use foo.{x as x2};
+  use foo2.{x as x3};
+  use a-different-name.{x as x4};
+  use something-else.{y};
+  use something-else.{y as y2};
+  use irrelevant-name.{a-name};
+}
+
+world the-world {
+  import a-different-name;
+
+  use a-different-name.{x};
+
+  import foo: func() -> x;
+}

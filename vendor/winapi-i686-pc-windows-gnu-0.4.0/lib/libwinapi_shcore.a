@@ -1,0 +1,8 @@
+INPUT(
+libwinapi_shcore-api-ms-win-shcore-stream-winrt-l1-1-0.a
+libwinapi_shcore-api-ms-win-shcore-scaling-l1-1-1.a
+libwinapi_shcore-api-ms-win-shcore-scaling-l1-1-2.a
+libwinapi_shcore-api-ms-win-core-featurestaging-l1-1-1.a
+libwinapi_shcore-api-ms-win-core-featurestaging-l1-1-0.a
+libwinapi_shcore-api-ms-win-shcore-scaling-l1-1-0.a
+)

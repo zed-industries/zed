@@ -1,0 +1,63 @@
+# Tracy profiler clients in Rust
+
+This project contains Rust crates for producing [Tracy profiler](https://github.com/wolfpld/tracy)
+traces. Tracy features nanosecond precision, ability to profile remotely and a full-featured
+graphical interface for finding hot spots in profiled programs.
+
+While Tracy's support for Rust is not first-class, it is still a very potent tool. If you have an
+application instrumented with the `tracing` crate, Tracy can be used with your program in minutes
+via the `tracing-tracy` crate. It can work well as both a profiling and, to a lesser extent,
+an observability tool.
+
+## Important note
+
+Depending on the configuration Tracy may broadcast discovery packets to the local network and
+expose the data it collects in the background to that same network. Traces collected by Tracy
+may include source and assembly code as well.
+
+As thus, you may want make sure to only enable the `tracing-tracy`, `tracy-client` and
+`tracy-client-sys` crates conditionally, via the `enable` feature flag provided by the crates.
+
+## Version support table
+
+This project, unlike Tracy itself, follows semantic versioning. We will publish a breaking version
+bump for `tracy-client-sys` whenever there is a potentially breaking protocol change, even if the
+`Tracy` project itself does not. An older version of `Tracy` being unable to communicate with the
+client of a more recent version is an example of such a breaking change.
+
+`tracy-client`, `tracing-tracy` and other crates also follow semantic versioning, but do not
+consider protocol breaks a breaking change for their purposes. For that reason each future version
+of `tracy-client` may be able to support depending on a large number of incompatible
+`tracy-client-sys` versions. Users are expected to select the version of `Tracy` profiler they
+target and use precise version bounds in `Cargo.toml` or `Cargo.lock` to specify the version of
+`tracy-client-sys` that they want to use.
+
+The following table lists the version correspondence between the libraries.
+
+| Tracy | tracy-client-sys | tracy-client | tracing-tracy |
+| ----- | ---------------- | ------------ | ------------- |
+| 0.7.1 | 0.9.0            | 0.8.0        | 0.2.0         |
+| 0.7.3 | 0.10.0           | 0.9.0        | 0.3.0         |
+| 0.7.4 | 0.11.0           | 0.10.0       | 0.4.0         |
+| 0.7.5 | 0.12.0           | 0.11.0       | 0.5.0         |
+| 0.7.6 | 0.13.0, 0.14.0   | 0.12.*       | 0.6.*         |
+| v0.7.7 | 0.15.0          | 0.12.*       | 0.6.*         |
+| v0.7.8 | 0.16.0          | 0.12.*       | 0.6.*         |
+| v0.7.8 | 0.16.0          | 0.12.*       | 0.7.*         |
+| v0.7.8 | 0.16.0          | 0.12.*       | 0.8.*         |
+| v0.8.1 | 0.17.*          | 0.13.*       | 0.9.*         |
+| v0.8.1 | 0.17.*          | 0.14.*       | 0.10.*        |
+| v0.8.2 | 0.18.0          | 0.14.*       | 0.10.*        |
+| v0.9   | 0.19.0          | 0.14.2       | 0.10.0        |
+| v0.9   | 0.19.0          | 0.15.0       | 0.10.1        |
+| v0.9.1 | 0.21.0          | 0.15.2       | 0.10.2        |
+| v0.9.1 | 0.21.0          | 0.16.0       | 0.10.3        |
+| v0.10  | 0.22.0          | 0.16.4       | 0.10.4        |
+| v0.10  | 0.22.0          | 0.17.0       | 0.11.0        |
+| v0.11.0 | 0.23.0         | 0.17.1       | 0.11.1        |
+| v0.11.1 | 0.24.0          | 0.17.3       | 0.11.2        |
+| v0.11.1 | 0.24.3          | 0.18.0       | 0.11.4        |
+| v0.12.0 | 0.25.0          | 0.18.1       | 0.11.4        |
+| v0.12.2 | 0.26.0          | 0.18.2       | 0.11.4        |
+| v0.13.0 | 0.27.0          | 0.18.3       | 0.11.4        |
+<!-- AUTO-UPDATE -->

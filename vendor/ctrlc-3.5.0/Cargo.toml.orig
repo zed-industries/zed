@@ -1,0 +1,46 @@
+[package]
+name = "ctrlc"
+version = "3.5.0"
+authors = ["Antti Keränen <detegr@gmail.com>"]
+description = "Easy Ctrl-C handler for Rust projects"
+documentation = "https://detegr.github.io/doc/ctrlc"
+homepage = "https://github.com/Detegr/rust-ctrlc"
+keywords = ["ctrlc", "signal", "SIGINT"]
+categories = ["os"]
+license = "MIT/Apache-2.0"
+repository = "https://github.com/Detegr/rust-ctrlc.git"
+exclude = ["/.travis.yml", "/appveyor.yml"]
+edition = "2021"
+readme = "README.md"
+rust-version = "1.69.0"
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.30", default-features = false, features = ["signal"]}
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+dispatch = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_Security", "Win32_System_Console"] }
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_Foundation", "Win32_System_IO", "Win32_System_Console"] }
+
+[features]
+termination = []
+
+[[test]]
+harness = false
+name = "main"
+path = "tests/main/mod.rs"
+
+[[test]]
+harness = false
+name = "issue_97"
+path = "tests/main/issue_97.rs"
+
+[dev-dependencies]
+signal-hook = "0.3"
+
+[badges]
+maintenance = { status = "passively-maintained" }

@@ -1,0 +1,5 @@
+unstable_features = true
+imports_layout = "HorizontalVertical"
+imports_granularity = "Crate"
+group_imports = "StdExternalCrate"
+format_strings = true

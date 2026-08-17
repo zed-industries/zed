@@ -1,0 +1,16 @@
+Document:
+  - Element:
+      tag_name: root@http://www.w3.org
+      namespaces:
+        None: http://www.w3.org
+        test: http://www.w3.org
+      children:
+        - Text: "\n    "
+        - Element:
+            tag_name: item@http://www.w3.org
+            namespaces:
+              None: http://www.w3.org
+              test: http://www.w3.org
+            children:
+              - Text: "\n    "
+        - Text: "\n"

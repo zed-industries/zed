@@ -1,0 +1,38 @@
+[undeadleech@archhq alacritty]$ ls -lah
+total 240K
+drwxr-xr-x 17 undeadleech undeadleech  620 Nov 15 21:10 .
+drwxrwxrwt 12 root        root         300 Nov 15 21:08 ..
+-rw-r--r--  1 undeadleech undeadleech   10 Nov 15 20:33 .agignore
+drwxr-xr-x  3 undeadleech undeadleech  100 Nov 15 20:33 alacritty
+-rw-r--r--  1 undeadleech undeadleech   41 Nov 15 21:10 alacritty.recording
+drwxr-xr-x  4 undeadleech undeadleech  120 Nov 15 20:33 alacritty_terminal
+-rw-r--r--  1 undeadleech undeadleech  17K Nov 15 20:33 alacritty.yml
+-rw-r--r--  1 undeadleech undeadleech 128K Nov 15 20:33 Cargo.lock
+-rw-r--r--  1 undeadleech undeadleech  245 Nov 15 20:33 Cargo.toml
+-rw-r--r--  1 undeadleech undeadleech  22K Nov 15 20:38 CHANGELOG.md
+drwxr-xr-x  4 undeadleech undeadleech  140 Nov 15 20:33 ci
+-rw-r--r--  1 undeadleech undeadleech 5.5K Nov 15 20:33 CONTRIBUTING.md
+drwxr-xr-x  2 undeadleech undeadleech   60 Nov 15 20:33 .copr
+drwxr-xr-x  4 undeadleech undeadleech  160 Nov 15 20:33 copypasta
+drwxr-xr-x  2 undeadleech undeadleech   60 Nov 15 20:33 docs
+drwxr-xr-x  7 undeadleech undeadleech  180 Nov 15 20:33 extra
+drwxr-xr-x  3 undeadleech undeadleech   80 Nov 15 20:33 font
+drwxr-xr-x  8 undeadleech undeadleech  300 Nov 15 21:09 .git
+drwxr-xr-x  2 undeadleech undeadleech   60 Nov 15 20:33 .github
+-rw-r--r--  1 undeadleech undeadleech  333 Nov 15 20:33 .gitignore
+-rw-r--r--  1 undeadleech undeadleech 9.1K Nov 15 20:33 INSTALL.md
+-rw-r--r--  1 undeadleech undeadleech  11K Nov 15 20:33 LICENSE-APACHE
+-rw-r--r--  1 undeadleech undeadleech 1.5K Nov 15 20:33 Makefile
+-rw-r--r--  1 undeadleech undeadleech 6.8K Nov 15 20:33 README.md
+drwxr-xr-x  2 undeadleech undeadleech  120 Nov 15 20:33 res
+-rw-r--r--  1 undeadleech undeadleech  358 Nov 15 20:33 rustfmt.toml
+drwxr-xr-x  2 undeadleech undeadleech  180 Nov 15 20:33 scripts
+drwxr-xr-x  3 undeadleech undeadleech  100 Nov 15 20:33 servo-freetype-proxy
+drwxr-xr-x  3 undeadleech undeadleech   80 Nov 15 20:36 target
+-rw-r--r--  1 undeadleech undeadleech 1.7K Nov 15 20:33 .travis.yml
+drwxr-xr-x  3 undeadleech undeadleech  100 Nov 15 20:33 winpty
+[undeadleech@archhq alacritty]$ echo -[ "[K[K[Ke "\e[10H"
+[10H
+[undeadleech@archhq alacritty]$ echo -e "\e[1000M"
+[1000M
+[undeadleech@archhq alacritty]$ 

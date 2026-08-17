@@ -1,0 +1,19 @@
+---
+- name: Single Pair Block Mapping
+  from: https://github.com/ingydotnet/yaml-pegex-pm/blob/master/test/mapping.tml
+  tags: simple mapping
+  yaml: |
+    foo: bar
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :foo
+       =VAL :bar
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "foo": "bar"
+    }

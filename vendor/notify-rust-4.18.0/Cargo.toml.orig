@@ -1,0 +1,105 @@
+[package]
+name = "notify-rust"
+version = "4.18.0"
+authors = ["Hendrik Sollich <hendrik@hoodie.de>"]
+description = "Show desktop notifications (linux, bsd, mac). Pure Rust dbus client and server."
+repository = "https://github.com/hoodie/notify-rust"
+documentation = "https://docs.rs/notify-rust/"
+edition = "2021"
+rust-version = "1.89.0"
+license = "MIT OR Apache-2.0"
+keywords = ["desktop", "notification", "notify", "linux", "macos"]
+readme = "README.md"
+include = [
+    "README.md",
+    "History.md",
+    "CHANGELOG.md",
+    "LICENSE-*",
+    "Cargo.toml",
+    "src/**/*.rs",
+    "tests/*.rs",
+]
+
+[features]
+default = [
+    "z",
+    # "preview-macos-un"
+]
+preview-macos-un = ["dep:mac-usernotifications"]
+# server = []
+d = ["dbus"]
+d_vendored = ["dbus/vendored"]
+z = ["zbus", "serde", "async"]
+z-with-tokio = ["zbus", "serde", "tokio"]
+async = ["zbus/async-io"]
+tokio = ["zbus/tokio"]
+debug_namespace = []
+images = ["images_no_default_features", "image/rayon", "image/default-formats"]
+images_no_default_features = ["image", "lazy_static"]
+
+
+[dependencies]
+log = "0.4"
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+dbus = { version = "0.9", optional = true }
+lazy_static = { version = "1.5", optional = true }
+image = { version = "0.25", optional = true, default-features = false }
+zbus = { version = "5", optional = true, default-features = false }
+serde = { version = "1", features = ["derive"], optional = true }
+env_logger = { version = "0.11", optional = true }                      # TODO: remove from here
+futures-lite = { version = "2.6.1" }
+
+[target.'cfg(target_os="macos")'.dependencies]
+mac-notification-sys = "0.6.15"
+mac-usernotifications = { version = "0.3.1", optional = true }
+chrono = { version = "0.4", optional = true }
+
+[target.'cfg(target_os="windows")'.dependencies]
+winrt-notification = { package = "tauri-winrt-notification", version = "0.7" }
+
+[dev-dependencies]
+color-backtrace = "0.7" # wait for MSVR 1.70 to update
+env_logger = "0.11"
+maplit = "1.0"
+cfg-if = "1.0"
+
+[dev-dependencies.async-std]
+version = "1.13.2"
+features = ["attributes"]
+
+[target.'cfg(target_os="macos")'.dev-dependencies]
+oslog = "0.2"
+objc2-foundation = "0.3.2"
+
+
+[package.metadata.bundle]
+name = "notify-rust-example"
+identifier = "de.hoodie.notify-rust.example"
+version = "4"
+short_description = "notify-rust example"
+
+[[example]]
+name = "interruption_level"
+path = "examples/interruption_level.rs"
+required-features = ["preview-macos-un"]
+
+[[example]]
+name = "images"
+path = "examples/images.rs"
+required-features = ["images"]
+
+[[example]]
+name = "schedule"
+path = "examples/schedule.rs"
+required-features = ["chrono"]
+
+[[example]]
+name = "wait_for_closing_async"
+path = "examples/wait_for_closing_async.rs"
+required-features = ["async"]
+
+[[example]]
+name = "simple_async"
+path = "examples/simple_async.rs"
+required-features = ["async"]

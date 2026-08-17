@@ -1,0 +1,18 @@
+---
+- name: Spec Example 6.19. Secondary Tag Handle
+  from: http://www.yaml.org/spec/1.2/spec.html#id2782940
+  tags: spec header tag unknown-tag
+  yaml: |
+    %TAG !! tag:example.com,2000:app/
+    ---
+    !!int 1 - 3 # Interval, not integer
+  tree: |
+    +STR
+     +DOC ---
+      =VAL <tag:example.com,2000:app/int> :1 - 3
+     -DOC
+    -STR
+  json: |
+    "1 - 3"
+  dump: |
+    --- !<tag:example.com,2000:app/int> 1 - 3

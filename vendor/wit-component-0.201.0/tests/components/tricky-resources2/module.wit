@@ -1,0 +1,14 @@
+package foo:bar;
+
+interface a {
+  resource r;
+}
+
+world module {
+  export anon: interface {
+    use a.{r};
+
+    foo: func() -> r;
+  }
+  export a;
+}

@@ -1,0 +1,16 @@
+[package]
+name = "errno-dragonfly"
+version = "0.1.2"
+authors = ["Michael Neumann <mneumann@ntecs.de>"]
+description = "Exposes errno functionality to stable Rust on DragonFlyBSD"
+license = "MIT"
+repository = "https://github.com/mneumann/errno-dragonfly-rs"
+keywords = ["dragonfly"]
+include = ["Cargo.toml", "LICENSE", "README.md", "build.rs", "src/lib.rs", "src/errno.c" ]
+edition = "2018"
+
+[dependencies]
+libc = { version = "0.2", default-features = false }
+
+[build-dependencies]
+cc = "1.0"

@@ -1,0 +1,64 @@
+[package]
+name = "any_vec"
+authors = ["Andrey Diduh <tower120@gmail.com>"]
+license = "MIT OR Apache-2.0"
+version = "0.14.0"
+edition = "2021"
+description = "Type erased vector. Most operations can be done without type knowledge. Mostly zero overhead."
+repository = "https://github.com/tower120/any_vec"
+keywords = ["vec", "any", "container", "type-erasure", "no_std"]
+categories = ["data-structures", "no-std", "no-std::no-alloc"]
+exclude = [".github"]
+
+[features]
+default = ["alloc"]
+# Include alloc crate. This allows using mem::Heap.  
+alloc = []
+
+[package.metadata.docs.rs]
+features = []
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+
+[dev-dependencies]
+itertools = "0.12.1"
+criterion = "0.5.1"
+rand = "0.8.5"
+impls = "1.0.3"
+
+[[bench]]
+name = "insert"
+harness = false
+
+[[bench]]
+name = "push"
+harness = false
+
+[[bench]]
+name = "remove"
+harness = false
+
+[[bench]]
+name = "swap_remove"
+harness = false
+
+[[bench]]
+name = "drain"
+harness = false
+
+[[bench]]
+name = "iter"
+harness = false
+
+[[bench]]
+name = "element_clone"
+harness = false
+
+[[bench]]
+name = "clone"
+harness = false
+
+[[bench]]
+name = "raw_parts"
+harness = false

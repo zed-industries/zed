@@ -1,0 +1,100 @@
+package foo:%flags;
+
+interface imports {
+  flags flag1 {
+    b0,
+  }
+
+  flags flag2 {
+    b0,
+    b1,
+  }
+
+  flags flag4 {
+    b0,
+    b1,
+    b2,
+    b3,
+  }
+
+  flags flag8 {
+    b0,
+    b1,
+    b2,
+    b3,
+    b4,
+    b5,
+    b6,
+    b7,
+  }
+
+  flags flag16 {
+    b0,
+    b1,
+    b2,
+    b3,
+    b4,
+    b5,
+    b6,
+    b7,
+    b8,
+    b9,
+    b10,
+    b11,
+    b12,
+    b13,
+    b14,
+    b15,
+  }
+
+  flags flag32 {
+    b0,
+    b1,
+    b2,
+    b3,
+    b4,
+    b5,
+    b6,
+    b7,
+    b8,
+    b9,
+    b10,
+    b11,
+    b12,
+    b13,
+    b14,
+    b15,
+    b16,
+    b17,
+    b18,
+    b19,
+    b20,
+    b21,
+    b22,
+    b23,
+    b24,
+    b25,
+    b26,
+    b27,
+    b28,
+    b29,
+    b30,
+    b31,
+  }
+
+  roundtrip-flag1: func(x: flag1) -> flag1;
+
+  roundtrip-flag2: func(x: flag2) -> flag2;
+
+  roundtrip-flag4: func(x: flag4) -> flag4;
+
+  roundtrip-flag8: func(x: flag8) -> flag8;
+
+  roundtrip-flag16: func(x: flag16) -> flag16;
+
+  roundtrip-flag32: func(x: flag32) -> flag32;
+}
+
+world flags-world {
+  import imports;
+}

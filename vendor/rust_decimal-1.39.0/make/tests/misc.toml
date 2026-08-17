@@ -1,0 +1,47 @@
+[tasks.test-misc]
+dependencies = [
+    "test-proptest",
+    "test-rust-fuzz",
+    "test-rocket-traits",
+    "test-borsh",
+    "test-rkyv",
+    "test-rand"
+]
+
+[tasks.test-proptest]
+command = "cargo"
+args = ["test", "--workspace", "--no-default-features", "--features=proptest", "proptest_tests", "--", "--skip", "generated"]
+
+[tasks.test-rust-fuzz]
+command = "cargo"
+args = ["test", "--workspace", "--no-default-features", "--features=rust-fuzz", "rust_fuzz_tests", "--", "--skip", "generated"]
+
+[tasks.test-rocket-traits]
+command = "cargo"
+args = ["test", "--workspace", "--features=rocket-traits", "rocket_tests"]
+
+[tasks.test-borsh]
+command = "cargo"
+args = ["test", "--workspace", "--features=borsh", "borsh_tests", "--", "--skip", "generated"]
+
+[tasks.test-ndarray]
+command = "cargo"
+args = ["test", "--workspace", "--features=ndarray", "nd_array_tests", "--", "--skip", "generated"]
+
+[tasks.test-rkyv]
+command = "cargo"
+args = ["test", "--workspace", "--features=rkyv", "--features=rkyv-safe", "rkyv_tests", "--", "--skip", "generated"]
+
+[tasks.test-rand]
+dependencies = [
+    "test-rand-0_8",
+    "test-rand-0_9"
+]
+
+[tasks.test-rand-0_8]
+command = "cargo"
+args = ["test", "--workspace", "--features=rand", "rand_tests", "--", "--skip", "generated"]
+
+[tasks.test-rand-0_9]
+command = "cargo"
+args = ["test", "--workspace", "--features=rand-0_9", "rand_tests", "--", "--skip", "generated"]

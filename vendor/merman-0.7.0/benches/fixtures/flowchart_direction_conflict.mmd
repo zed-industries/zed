@@ -1,0 +1,35 @@
+flowchart TB
+  subgraph Capture[Capture Lane]
+    direction LR
+    C1[Web]
+    C2[Mobile]
+    C3[Partner API]
+    C1 --> C2 --> C3
+  end
+
+  subgraph Decisions[Decision Lane]
+    direction TB
+    D1[Scoring]
+    D2{Manual check?}
+    D3[Auto approve]
+    D4[Manual review]
+    D1 --> D2
+    D2 -->|no| D3
+    D2 -->|yes| D4
+  end
+
+  subgraph Fulfill[Fulfillment Lane]
+    direction LR
+    F1[Reserve]
+    F2[Pack]
+    F3[Ship]
+    F1 --> F2 --> F3
+  end
+
+  C2 -->|candidate order| D1
+  C3 -->|high-risk order| D2
+  D3 -->|approved flow| F1
+  D4 -->|manual approval| F1
+  F2 -->|packing anomaly| D4
+  F3 -->|delivery exception| D2
+  F3 -->|status callbacks| C1

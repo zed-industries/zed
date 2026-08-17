@@ -1,0 +1,6 @@
+POST /?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIDEXAMPLE%2F20150830%2Fus-east-1%2Fservice%2Faws4_request&X-Amz-Date=20150830T123600Z&X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost&X-Amz-Expires=3600&X-Amz-Signature=0dbeb9b026c7b6675f266b8427efec9b4fa8b1f6ef1477d717aea231106eab4d HTTP/1.1
+Content-Type:application/x-www-form-urlencoded; charset=utf-8
+Host:example.amazonaws.com
+Content-Length:13
+
+Param1=value1

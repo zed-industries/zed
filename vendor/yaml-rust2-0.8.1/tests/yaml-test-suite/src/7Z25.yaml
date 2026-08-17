@@ -1,0 +1,30 @@
+---
+- name: Bare document after document end marker
+  from: '@perlpunk'
+  tags: footer
+  yaml: |
+    ---
+    scalar1
+    ...
+    key: value
+  tree: |
+    +STR
+     +DOC ---
+      =VAL :scalar1
+     -DOC ...
+     +DOC
+      +MAP
+       =VAL :key
+       =VAL :value
+      -MAP
+     -DOC
+    -STR
+  json: |
+    "scalar1"
+    {
+      "key": "value"
+    }
+  dump: |
+    --- scalar1
+    ...
+    key: value

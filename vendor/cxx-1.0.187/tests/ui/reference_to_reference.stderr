@@ -1,0 +1,11 @@
+error: C++ does not allow references to references
+ --> tests/ui/reference_to_reference.rs:5:23
+  |
+5 |         fn repro_c(t: &&ThingC);
+  |                       ^^^^^^^^
+
+error: C++ does not allow references to references
+ --> tests/ui/reference_to_reference.rs:9:23
+  |
+9 |         fn repro_r(t: &&ThingR);
+  |                       ^^^^^^^^

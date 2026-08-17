@@ -1,0 +1,18 @@
+language: rust
+rust:
+  - stable
+env:
+  - RUST_BACKTRACE=1
+cache:
+  directories:
+    - /home/travis/.cargo
+before_cache:
+  - cargo cache -r registry
+before_script:
+  - rustup component add rustfmt
+  - (test -x $HOME/.cargo/bin/cargo-cache || cargo install cargo-cache)
+script:
+  - cargo fmt --all -- --check
+  - cargo test --no-default-features
+  - cargo test --no-default-features --features alloc
+  - cargo test --all-targets --all-features

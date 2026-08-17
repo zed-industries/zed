@@ -1,0 +1,301 @@
+{
+  "worlds": [
+    {
+      "name": "ungated-world",
+      "imports": {
+        "interface-4": {
+          "interface": {
+            "id": 4,
+            "stability": {
+              "unstable": {
+                "feature": "active"
+              }
+            }
+          }
+        }
+      },
+      "exports": {
+        "interface-4": {
+          "interface": {
+            "id": 4,
+            "stability": {
+              "unstable": {
+                "feature": "active"
+              }
+            }
+          }
+        }
+      },
+      "package": 0,
+      "stability": {
+        "unstable": {
+          "feature": "active"
+        }
+      }
+    },
+    {
+      "name": "mixed-world",
+      "imports": {
+        "interface-4": {
+          "interface": {
+            "id": 4,
+            "stability": {
+              "unstable": {
+                "feature": "active"
+              }
+            }
+          }
+        }
+      },
+      "exports": {
+        "interface-4": {
+          "interface": {
+            "id": 4,
+            "stability": {
+              "unstable": {
+                "feature": "active"
+              }
+            }
+          }
+        }
+      },
+      "package": 0
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "ungated",
+      "types": {},
+      "functions": {
+        "ungated": {
+          "name": "ungated",
+          "kind": "freestanding",
+          "params": [],
+          "stability": {
+            "unstable": {
+              "feature": "active"
+            }
+          }
+        }
+      },
+      "stability": {
+        "unstable": {
+          "feature": "active"
+        }
+      },
+      "package": 0
+    },
+    {
+      "name": "ungated2",
+      "types": {
+        "ungated": 0,
+        "ungated2": 1
+      },
+      "functions": {},
+      "stability": {
+        "unstable": {
+          "feature": "active"
+        }
+      },
+      "package": 0
+    },
+    {
+      "name": "ungated-use-target",
+      "types": {
+        "t": 2
+      },
+      "functions": {},
+      "stability": {
+        "unstable": {
+          "feature": "active"
+        }
+      },
+      "package": 0
+    },
+    {
+      "name": "ungated-use",
+      "types": {
+        "t": 3
+      },
+      "functions": {},
+      "stability": {
+        "unstable": {
+          "feature": "active"
+        }
+      },
+      "package": 0
+    },
+    {
+      "name": "ungated-for-world",
+      "types": {},
+      "functions": {},
+      "stability": {
+        "unstable": {
+          "feature": "active"
+        }
+      },
+      "package": 0
+    },
+    {
+      "name": "with-resources",
+      "types": {
+        "ungated": 4
+      },
+      "functions": {
+        "[constructor]ungated": {
+          "name": "[constructor]ungated",
+          "kind": {
+            "constructor": 4
+          },
+          "params": [],
+          "result": 6,
+          "stability": {
+            "unstable": {
+              "feature": "active"
+            }
+          }
+        },
+        "[static]ungated.x": {
+          "name": "[static]ungated.x",
+          "kind": {
+            "static": 4
+          },
+          "params": [],
+          "stability": {
+            "unstable": {
+              "feature": "active"
+            }
+          }
+        },
+        "[method]ungated.y": {
+          "name": "[method]ungated.y",
+          "kind": {
+            "method": 4
+          },
+          "params": [
+            {
+              "name": "self",
+              "type": 5
+            }
+          ],
+          "stability": {
+            "unstable": {
+              "feature": "active"
+            }
+          }
+        }
+      },
+      "package": 0
+    }
+  ],
+  "types": [
+    {
+      "name": "ungated",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "interface": 1
+      },
+      "stability": {
+        "unstable": {
+          "feature": "active"
+        }
+      }
+    },
+    {
+      "name": "ungated2",
+      "kind": {
+        "type": 0
+      },
+      "owner": {
+        "interface": 1
+      },
+      "stability": {
+        "unstable": {
+          "feature": "active"
+        }
+      }
+    },
+    {
+      "name": "t",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "interface": 2
+      },
+      "stability": {
+        "unstable": {
+          "feature": "active"
+        }
+      }
+    },
+    {
+      "name": "t",
+      "kind": {
+        "type": 2
+      },
+      "owner": {
+        "interface": 3
+      },
+      "stability": {
+        "unstable": {
+          "feature": "active"
+        }
+      }
+    },
+    {
+      "name": "ungated",
+      "kind": "resource",
+      "owner": {
+        "interface": 5
+      },
+      "stability": {
+        "unstable": {
+          "feature": "active"
+        }
+      }
+    },
+    {
+      "name": null,
+      "kind": {
+        "handle": {
+          "borrow": 4
+        }
+      },
+      "owner": null,
+      "stability": {
+        "unstable": {
+          "feature": "active"
+        }
+      }
+    },
+    {
+      "name": null,
+      "kind": {
+        "handle": {
+          "own": 4
+        }
+      },
+      "owner": null
+    }
+  ],
+  "packages": [
+    {
+      "name": "a:b",
+      "interfaces": {
+        "ungated": 0,
+        "ungated2": 1,
+        "ungated-use-target": 2,
+        "ungated-use": 3,
+        "ungated-for-world": 4,
+        "with-resources": 5
+      },
+      "worlds": {
+        "ungated-world": 0,
+        "mixed-world": 1
+      }
+    }
+  ]
+}

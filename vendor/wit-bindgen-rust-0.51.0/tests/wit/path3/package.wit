@@ -1,0 +1,3 @@
+package test:inline-and-path;
+
+interface bar {}

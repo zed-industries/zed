@@ -1,0 +1,98 @@
+name: Rust
+
+on:
+  push: {}
+  pull_request: {}
+
+jobs:
+  build_test:
+    runs-on: ${{ matrix.rust.os }}
+    strategy:
+      matrix:
+        rust:
+        # x86
+        - { target: i686-pc-windows-msvc, toolchain: "1.61", os: windows-latest }
+        - { target: i686-pc-windows-msvc, toolchain: stable, os: windows-latest }
+        - { target: i686-pc-windows-msvc, toolchain: beta, os: windows-latest }
+        - { target: i686-pc-windows-msvc, toolchain: nightly, os: windows-latest }
+        # x86_64
+        - { target: x86_64-unknown-linux-gnu, toolchain: "1.61", os: ubuntu-latest }
+        - { target: x86_64-unknown-linux-gnu, toolchain: stable, os: ubuntu-latest }
+        - { target: x86_64-unknown-linux-gnu, toolchain: beta, os: ubuntu-latest }
+        - { target: x86_64-unknown-linux-gnu, toolchain: nightly, os: ubuntu-latest }
+        # aarch64
+        - { target: aarch64-apple-darwin, toolchain: "1.61", os: macos-latest }
+        - { target: aarch64-apple-darwin, toolchain: stable, os: macos-latest }
+        - { target: aarch64-apple-darwin, toolchain: beta, os: macos-latest }
+        - { target: aarch64-apple-darwin, toolchain: nightly, os: macos-latest }
+        # wasm32
+        #- { target: wasm32-wasi, toolchain: "1.61", os: ubuntu-latest, wasmtime: v5.0.0 }
+        #- { target: wasm32-wasi, toolchain: stable, os: ubuntu-latest, wasmtime: v5.0.0 }
+        #- { target: wasm32-wasip1, toolchain: beta, os: ubuntu-latest, wasmtime: v5.0.0 }
+        #- { target: wasm32-wasip1, toolchain: nightly, os: ubuntu-latest, wasmtime: v5.0.0 }
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ matrix.rust.toolchain }}
+        target:  ${{ matrix.rust.target }}
+
+    - name: Install wasmtime
+      if: matrix.rust.target == 'wasm32-wasi' || matrix.rust.target == 'wasm32-wasip1'
+      run: |
+        curl https://wasmtime.dev/install.sh -sSf | bash -s -- --version ${{ matrix.rust.wasmtime }}
+        echo "$HOME/.wasmtime/bin" >> $GITHUB_PATH
+
+    - name: Build the crate
+      run: cargo build --target ${{ matrix.rust.target }}
+
+    - name: Test with default CPU features + No Default Cargo Features
+      env:
+        CARGO_TARGET_WASM32_WASI_RUNNER: wasmtime run --wasm-features all --dir .
+      run: cargo test --target ${{ matrix.rust.target }} --no-default-features
+    - name: Test with default CPU features + All Cargo Features
+      env:
+        CARGO_TARGET_WASM32_WASI_RUNNER: wasmtime run --wasm-features all --dir .
+      run: cargo test --target ${{ matrix.rust.target }} --all-features
+    
+    - name: Build the crate with SSE4.1 (the "native" of CI will be above this)
+      if: matrix.rust.os == 'ubuntu-latest' && matrix.rust.target == 'x86_64-unknown-linux-gnu'
+      run: RUSTFLAGS="-Ctarget-feature=+sse4.1" cargo build --target ${{ matrix.rust.target }}
+
+    - name: switch over to native cpu features
+      run: mv .cargo-ci .cargo
+
+    - name: Test with 'native' CPU features + No Default Cargo Features
+      run: cargo test --target ${{ matrix.rust.target }} --no-default-features
+
+    - name: Test with 'native' CPU features + All Cargo Features
+      run: cargo test --target ${{ matrix.rust.target }} --all-features
+  
+  #cross_compile_aarch64:
+  #  runs-on: ubuntu-latest
+  #  strategy:
+  #    matrix:
+  #      rust: ["1.61", stable, nightly]
+  #      features: ["", "std"]
+  #  steps:
+  #    - name: Installing emulator and linker
+  #      run: |
+  #        sudo apt-get update
+  #        sudo apt-get install qemu binfmt-support qemu-user-static gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+  #    - name: Installing Rust toolchain
+  #      uses: dtolnay/rust-toolchain@master
+  #      with:
+  #        toolchain: ${{ matrix.rust }}
+  #        target: aarch64-unknown-linux-musl
+  #    - uses: actions/checkout@v4
+  #    - name: build
+  #      run: >
+  #        cargo build --verbose --no-default-features --target aarch64-unknown-linux-musl --features "$FEATURES"
+  #      env:
+  #        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-gnu-gcc
+  #    - name: test
+  #      run: >
+  #        cargo test --tests --benches --no-default-features --target aarch64-unknown-linux-musl --features "$FEATURES"
+  #      env:
+  #        FEATURES: ${{ matrix.features }}
+  #        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-gnu-gcc

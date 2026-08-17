@@ -1,0 +1,16 @@
+{
+  "homepage": "https://cxx.rs",
+  "maintainers": [
+    {
+      "github": "dtolnay",
+      "github_user_id": 1940490,
+      "email": "dtolnay@gmail.com",
+      "name": "David Tolnay"
+    }
+  ],
+  "repository": [
+    "github:dtolnay/cxx"
+  ],
+  "versions": [],
+  "yanked_versions": {}
+}

@@ -1,0 +1,308 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="plasma_shell">
+  <copyright><![CDATA[
+    SPDX-FileCopyrightText: 2013-2014 Pier Luigi Fiorini
+
+    SPDX-License-Identifier: LGPL-2.1-or-later
+  ]]></copyright>
+
+  <interface name="org_kde_plasma_shell" version="8">
+    <description summary="create shell windows and helpers">
+      This interface is used by KF5 powered Wayland shells to communicate with
+      the compositor and can only be bound one time.
+
+      Warning! The protocol described in this file is a desktop environment
+      implementation detail. Regular clients must not use this protocol.
+      Backward incompatible changes may be added without bumping the major
+      version of the extension.
+    </description>
+
+    <!-- Surfaces -->
+
+    <request name="get_surface">
+      <description summary="create a shell surface from a surface">
+	Create a shell surface for an existing surface.
+
+	Only one shell surface can be associated with a given
+	surface.
+      </description>
+      <arg name="id" type="new_id" interface="org_kde_plasma_surface"/>
+      <arg name="surface" type="object" interface="wl_surface"/>
+    </request>
+  </interface>
+
+  <interface name="org_kde_plasma_surface" version="8">
+    <description summary="metadata interface">
+      An interface that may be implemented by a wl_surface, for
+      implementations that provide the shell user interface.
+
+      It provides requests to set surface roles, assign an output
+      or set the position in output coordinates.
+
+      On the server side the object is automatically destroyed when
+      the related wl_surface is destroyed.  On client side,
+      org_kde_plasma_surface.destroy() must be called before
+      destroying the wl_surface object.
+    </description>
+
+    <!-- Destructor -->
+
+    <request name="destroy" type="destructor">
+      <description summary="remove org_kde_plasma_surface interface">
+        The org_kde_plasma_surface interface is removed from the
+        wl_surface object that was turned into a shell surface with the
+        org_kde_plasma_shell.get_surface request.
+        The shell surface role is lost and wl_surface is unmapped.
+      </description>
+    </request>
+
+    <!-- Output and position -->
+
+    <request name="set_output">
+      <description summary="assign an output to this shell surface">
+        Assign an output to this shell surface.
+        The compositor will use this information to set the position
+        when org_kde_plasma_surface.set_position request is
+        called.
+      </description>
+      <arg name="output" type="object" interface="wl_output"/>
+    </request>
+
+    <request name="set_position">
+      <description summary="change the shell surface position">
+        Move the surface to new coordinates.
+
+        Coordinates are global, for example 50,50 for a 1920,0+1920x1080 output
+        is 1970,50 in global coordinates space.
+
+        Use org_kde_plasma_surface.set_output to assign an output
+        to this surface.
+      </description>
+      <arg name="x" type="int" summary="x coordinate in global space"/>
+      <arg name="y" type="int" summary="y coordinate in global space"/>
+    </request>
+
+    <!-- Role -->
+
+    <enum name="role">
+      <entry name="normal" value="0"/>
+      <entry name="desktop" value="1"/>
+      <entry name="panel" value="2"/>
+      <entry name="onscreendisplay" value="3"/>
+      <entry name="notification" value="4"/>
+      <entry name="tooltip" value="5"/>
+      <entry name="criticalnotification" value="6" since="6"/>
+      <entry name="appletpopup" value="7" since="8"/>
+    </enum>
+
+    <request name="set_role">
+      <description summary="assign a role to this surface">
+        Assign a role to a shell surface.
+
+        The compositor handles surfaces depending on their role.
+        See the explanation below.
+
+        This request fails if the surface already has a role, this means
+        the surface role may be assigned only once.
+
+        == Surfaces with splash role ==
+
+        Splash surfaces are placed above every other surface during the
+        shell startup phase.
+
+        The surfaces are placed according to the output coordinates.
+        No size is imposed to those surfaces, the shell has to resize
+        them according to output size.
+
+        These surfaces are meant to hide the desktop during the startup
+        phase so that the user will always see a ready to work desktop.
+
+        A shell might not create splash surfaces if the compositor reveals
+        the desktop in an alternative fashion, for example with a fade
+        in effect.
+
+        That depends on how much time the desktop usually need to prepare
+        the workspace or specific design decisions.
+        This specification doesn't impose any particular design.
+
+        When the startup phase is finished, the shell will send the
+        org_kde_plasma.desktop_ready request to the compositor.
+
+        == Surfaces with desktop role ==
+
+        Desktop surfaces are placed below all other surfaces and are used
+        to show the actual desktop view with icons, search results or
+        controls the user will interact with. What to show depends on the
+        shell implementation.
+
+        The surfaces are placed according to the output coordinates.
+        No size is imposed to those surfaces, the shell has to resize
+        them according to output size.
+
+        Only one surface per output can have the desktop role.
+
+        == Surfaces with dashboard role ==
+
+        Dashboard surfaces are placed above desktop surfaces and are used to
+        show additional widgets and controls.
+
+        The surfaces are placed according to the output coordinates.
+        No size is imposed to those surfaces, the shell has to resize
+        them according to output size.
+
+        Only one surface per output can have the dashboard role.
+
+        == Surfaces with config role ==
+
+        A configuration surface is shown when the user wants to configure
+        panel or desktop views.
+
+        Only one surface per output can have the config role.
+
+        TODO: This should grab the input like popup menus, right?
+
+        == Surfaces with overlay role ==
+
+        Overlays are special surfaces that shows for a limited amount
+        of time.  Such surfaces are useful to display things like volume,
+        brightness and status changes.
+
+        Compositors may decide to show those surfaces in a layer above
+        all surfaces, even full screen ones if so is desired.
+
+        == Surfaces with notification role ==
+
+        Notification surfaces display informative content for a limited
+        amount of time.  The compositor may decide to show them in a corner
+        depending on the configuration.
+
+        These surfaces are shown in a layer above all other surfaces except
+        for full screen ones.
+
+        == Surfaces with lock role ==
+
+        The lock surface is shown by the compositor when the session is
+        locked, users interact with it to unlock the session.
+
+        Compositors should move lock surfaces to 0,0 in output
+        coordinates space and hide all other surfaces for security sake.
+        For the same reason it is recommended that clients make the
+        lock surface as big as the screen.
+
+        Only one surface per output can have the lock role.
+      </description>
+      <arg name="role" type="uint"/>
+    </request>
+
+    <!-- Flags -->
+
+    <enum name="panel_behavior">
+      <description summary="Behavior for panel surface">
+      </description>
+      <entry name="always_visible" value="1">
+        <description summary="normal panel visibility">
+          The panel is on top of other surfaces, windows cannot cover (full screen
+          windows excluded).
+        </description>
+      </entry>
+      <entry name="auto_hide" value="2">
+        <description summary="hide automatically">
+          The panel is hidden automatically and restored when the mouse is over.
+        </description>
+      </entry>
+      <entry name="windows_can_cover" value="3">
+        <description summary="windows can cover">
+          Windows can cover the panel.
+        </description>
+      </entry>
+      <entry name="windows_go_below" value="4">
+        <description summary="windows go below">
+          Maximized windows take the whole screen space but the panel is above
+          the windows.
+        </description>
+      </entry>
+    </enum>
+
+    <request name="set_panel_behavior">
+      <description summary="set or unset the panel ">
+        Set flags bitmask as described by the flag enum.
+        Pass 0 to unset any flag, the surface will adjust its behavior to
+        the default.
+
+        Deprecated in Plasma 6. Setting this flag will have no effect. Applications should use layer shell where appropriate.
+      </description>
+      <arg name="flag" type="uint" summary="panel_behavior enum value"/>
+    </request>
+
+    <!-- Skip taskbar-->
+    <request name="set_skip_taskbar" since="2">
+      <description summary="make the window skip the taskbar">
+        Setting this bit to the window, will make it say it prefers to not be listed in the taskbar. Taskbar implementations may or may not follow this hint.
+      </description>
+      <arg name="skip" type="uint" summary="Boolean value that sets whether to skip the taskbar"/>
+    </request>
+
+    <enum name="error" since="4">
+        <entry name="panel_not_auto_hide" value="0"
+               summary="Request panel_auto_hide performed on a surface which does not correspond to an auto-hide panel."/>
+    </enum>
+
+    <request name="panel_auto_hide_hide" since="4">
+        <description summary="Hide the auto-hiding panel">
+            A panel surface with panel_behavior auto_hide can perform this request to hide the panel
+            on a screen edge without unmapping it. The compositor informs the client about the panel
+            being hidden with the event auto_hidden_panel_hidden.
+
+            The compositor will restore the visibility state of the
+            surface when the pointer touches the screen edge the panel borders. Once the compositor restores
+            the visibility the event auto_hidden_panel_shown will be sent. This event will also be sent
+            if the compositor is unable to hide the panel.
+
+            The client can also request to show the panel again with the request panel_auto_hide_show.
+        </description>
+    </request>
+
+    <request name="panel_auto_hide_show" since="4">
+        <description summary="Show the auto-hiding panel">
+            A panel surface with panel_behavior auto_hide can perform this request to show the panel
+            again which got hidden with panel_auto_hide_hide.
+        </description>
+    </request>
+
+    <request name="set_panel_takes_focus" since="4">
+      <description summary="Whether a panel takes focus">
+          By default various org_kde_plasma_surface roles do not take focus and cannot be
+          activated. With this request the compositor can be instructed to pass focus also to this
+          org_kde_plasma_surface.
+      </description>
+      <arg name="takes_focus" type="uint" summary="Boolean value that sets whether the panel takes focus"/>
+    </request>
+
+    <event name="auto_hidden_panel_hidden" since="4">
+        <description summary="Auto-hiding panel is hidden">
+            An auto-hiding panel got hidden by the compositor.
+        </description>
+    </event>
+
+    <event name="auto_hidden_panel_shown" since="4">
+        <description summary="Auto-hiding panel is shown">
+            An auto-hiding panel got shown by the compositor.
+        </description>
+    </event>
+
+    <!-- Skip switcher -->
+    <request name="set_skip_switcher" since="5">
+        <description summary="make the window not appear in a switcher">
+          Setting this bit will indicate that the window prefers not to be listed in a switcher.
+        </description>
+        <arg name="skip" type="uint" summary="Boolean value that sets whether to skip the window switcher."/>
+     </request>
+
+    <request name="open_under_cursor" since="7">
+      <description summary="open under cursor">
+        Request the initial position of this surface to be under the current
+        cursor position. Has to be called before attaching any buffer to this surface.
+      </description>
+    </request>
+  </interface>
+</protocol>

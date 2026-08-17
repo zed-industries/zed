@@ -1,0 +1,106 @@
+;; Minimized bug reproducer for earlier priority-range-merging trie
+;; implementation in ISLE compiler. This example, when compiled with
+;; old versions of islec, would result in the bottom-most rule (at
+;; priority 0) being applied before the rule involving `iconst` at
+;; priority 1 below.
+
+(type Unit (primitive Unit))
+(type Reg (primitive Reg))
+(type MemFlags (primitive MemFlags))
+(type MachLabel (primitive MachLabel))
+(type Value (primitive Value))
+
+(decl iadd (Value Value) Value)
+(extern extractor iadd iadd)
+(decl ishl (Value Value) Value)
+(extern extractor ishl ishl)
+(decl uextend (Value) Value)
+(extern extractor uextend uextend)
+(decl sextend (Value) Value)
+(extern extractor sextend sextend)
+(decl iconst (u32) Value)
+(extern extractor iconst iconst)
+
+(decl put_in_reg (Value) Reg)
+(convert Value Reg put_in_reg)
+(extern constructor put_in_reg put_in_reg)
+
+(decl invalid_reg () Reg)
+(extern extractor invalid_reg invalid_reg)
+(decl valid_reg () Reg)
+(extern extractor valid_reg valid_reg)
+
+(decl pure u32_lteq (u32 u32) Unit)
+(extern constructor u32_lteq u32_lteq)
+
+(decl pure s32_add_fallible (u32 u32) u32)
+(extern constructor s32_add_fallible s32_add_fallible)
+
+(decl x64_add (Reg Reg) Reg)
+(extern constructor x64_add x64_add)
+
+;; An `Amode` represents a possible addressing mode that can be used
+;; in instructions. These denote a 64-bit value only.
+(type Amode (enum
+             ;; Immediate sign-extended and a register
+             (ImmReg (simm32 u32)
+                     (base Reg)
+                     (flags MemFlags))
+
+             ;; Sign-extend-32-to-64(simm32) + base + (index << shift)
+             (ImmRegRegShift (simm32 u32)
+                             (base Reg)
+                             (index Reg)
+                             (shift u32)
+                             (flags MemFlags))
+
+             ;; Sign-extend-32-to-64(immediate) + RIP (instruction
+             ;; pointer). The appropriate relocation is emitted so
+             ;; that the resulting immediate makes this Amode refer to
+             ;; the given MachLabel.
+             (RipRelative (target MachLabel))))
+
+;; One step in amode processing: take an existing amode and add
+;; another value to it.
+(decl amode_add (Amode Value) Amode)
+
+;; -- Top-level driver: pull apart the addends.
+;;
+;; Any amode can absorb an `iadd` by absorbing first the LHS of the
+;; add, then the RHS.
+;;
+;; Priority 2 to take this above fallbacks and ensure we traverse the
+;; `iadd` tree fully.
+(rule 2 (amode_add amode (iadd x y))
+      (let ((amode1 Amode (amode_add amode x))
+            (amode2 Amode (amode_add amode1 y)))
+        amode2))
+
+;; -- Case 1 (adding a register to the initial Amode with invalid_reg).
+;;
+;; An Amode.ImmReg with invalid_reg (initial state) can absorb a
+;; register as the base register.
+(rule (amode_add (Amode.ImmReg off (invalid_reg) flags) value)
+      (Amode.ImmReg off value flags))
+
+;; -- Case 4 (absorbing constant offsets).
+;;
+;; An Amode can absorb a constant (i64, or extended i32) as long as
+;; the sum still fits in the signed-32-bit offset.
+;;
+;; Priority 3 in order to take this option above the fallback
+;; (immediate in register). Two rules, for imm+reg and
+;; imm+reg+scale*reg cases.
+(rule 1 (amode_add (Amode.ImmRegRegShift off base index shift flags)
+                   (iconst c))
+      (if-let sum (s32_add_fallible off c))
+      (Amode.ImmRegRegShift sum base index shift flags))
+
+;; -- Case 5 (fallback to add a new value to an imm+reg+scale*reg).
+;;
+;; An Amode.ImmRegRegShift can absorb any other value by creating a
+;; new add instruction and replacing the base with
+;; (base+value).
+(rule (amode_add (Amode.ImmRegRegShift off base index shift flags) value)
+      (let ((sum Reg (x64_add base value)))
+        (Amode.ImmRegRegShift off sum index shift flags)))

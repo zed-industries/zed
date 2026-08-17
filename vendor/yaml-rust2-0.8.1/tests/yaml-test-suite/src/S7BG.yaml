@@ -1,0 +1,22 @@
+---
+- name: Colon followed by comma
+  from: '@perlpunk'
+  tags: scalar
+  yaml: |
+    ---
+    - :,
+  tree: |
+    +STR
+     +DOC ---
+      +SEQ
+       =VAL ::,
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      ":,"
+    ]
+  dump: |
+    ---
+    - :,

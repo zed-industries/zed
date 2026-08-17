@@ -1,0 +1,11 @@
+package root:component;
+
+world root {
+  type t = u32;
+
+  record r {
+    x: t,
+  }
+
+  export a: func(r: r) -> t;
+}

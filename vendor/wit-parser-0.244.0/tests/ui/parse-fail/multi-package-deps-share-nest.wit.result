@@ -1,0 +1,3 @@
+failed to resolve directory while parsing WIT for path [tests/ui/parse-fail/multi-package-deps-share-nest]: package foo:shared is defined in two different locations:
+* tests/ui/parse-fail/multi-package-deps-share-nest/deps/dep2/types.wit:3:9
+* tests/ui/parse-fail/multi-package-deps-share-nest/deps/dep1/types.wit:3:9

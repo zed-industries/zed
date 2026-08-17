@@ -1,0 +1,13 @@
+ program      =   { SOI ~ expr ~ EOI }
+   expr       =   { prefix* ~ primary ~ postfix* ~ (infix ~ prefix* ~ primary ~ postfix* )* }
+     infix    =  _{ add | sub | mul | div | pow }
+       add    =   { "+" } // Addition
+       sub    =   { "-" } // Subtraction
+       mul    =   { "*" } // Multiplication
+       div    =   { "/" } // Division
+       pow    =   { "^" } // Exponentiation
+     prefix   =  _{ neg }
+       neg    =   { "-" } // Negation
+     postfix  =  _{ fac }
+       fac    =   { "!" } // Factorial
+     primary  =  _{ int | "(" ~ expr ~ ")" }

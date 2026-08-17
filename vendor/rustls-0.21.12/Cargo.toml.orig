@@ -1,0 +1,57 @@
+[package]
+name = "rustls"
+version = "0.21.12"
+edition = "2021"
+rust-version = "1.63"
+license = "Apache-2.0 OR ISC OR MIT"
+readme = "../README.md"
+description = "Rustls is a modern TLS library written in Rust."
+homepage = "https://github.com/rustls/rustls"
+repository = "https://github.com/rustls/rustls"
+categories = ["network-programming", "cryptography"]
+autobenches = false
+build = "build.rs"
+
+[build-dependencies]
+rustversion = { version = "1.0.6", optional = true }
+
+[dependencies]
+log = { version = "0.4.4", optional = true }
+ring = "0.17"
+sct = "0.7.0"
+webpki = { package = "rustls-webpki", version = "0.101.7", features = ["alloc", "std"] }
+
+[features]
+default = ["logging", "tls12"]
+logging = ["log"]
+dangerous_configuration = []
+secret_extraction = []
+quic = []
+tls12 = []
+read_buf = ["rustversion"]
+
+[dev-dependencies]
+bencher = "0.1.5"
+env_logger = "0.10"
+log = "0.4.4"
+webpki-roots = "0.25.0"
+rustls-pemfile = "1.0.3"
+base64 = "0.21"
+
+[[example]]
+name = "bogo_shim"
+path = "examples/internal/bogo_shim.rs"
+required-features = ["dangerous_configuration", "quic"]
+
+[[example]]
+name = "bench"
+path = "examples/internal/bench.rs"
+
+[[bench]]
+name = "benchmarks"
+path = "benches/benchmarks.rs"
+harness = false
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

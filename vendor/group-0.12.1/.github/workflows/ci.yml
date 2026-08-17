@@ -1,0 +1,100 @@
+name: CI checks
+
+on: [push, pull_request]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v1
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: 1.56.0
+          override: true
+
+      # Ensure all code has been formatted with rustfmt
+      - run: rustup component add rustfmt
+      - name: Check formatting
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: -- --check --color always
+
+  test:
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+
+    steps:
+      - uses: actions/checkout@v1
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: 1.56.0
+          override: true
+      - name: cargo fetch
+        uses: actions-rs/cargo@v1
+        with:
+          command: fetch
+      - name: Build tests
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --verbose --release --tests
+      - name: Run tests
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --verbose --release
+      - name: Run --all-features tests
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --all-features --verbose --release
+
+  no-std:
+    name: Check no-std compatibility
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v1
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: 1.56.0
+          override: true
+      - run: rustup target add thumbv6m-none-eabi
+      - name: cargo fetch
+        uses: actions-rs/cargo@v1
+        with:
+          command: fetch
+      - name: Build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --verbose --target thumbv6m-none-eabi --no-default-features
+
+  doc-links:
+    name: Nightly lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v1
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          override: true
+      - name: cargo fetch
+        uses: actions-rs/cargo@v1
+        with:
+          command: fetch
+
+      # Ensure intra-documentation links all resolve correctly
+      # Requires #![deny(intra_doc_link_resolution_failure)] in crate.
+      - name: Check intra-doc links
+        uses: actions-rs/cargo@v1
+        with:
+          command: doc
+          args: --document-private-items

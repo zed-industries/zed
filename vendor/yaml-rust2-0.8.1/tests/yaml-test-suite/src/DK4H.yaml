@@ -1,0 +1,14 @@
+---
+- name: Implicit key followed by newline
+  from: '@perlpunk'
+  tags: error flow mapping sequence
+  fail: true
+  yaml: |
+    ---
+    [ key
+      : value ]
+  tree: |
+    +STR
+     +DOC ---
+      +SEQ []
+       =VAL :key

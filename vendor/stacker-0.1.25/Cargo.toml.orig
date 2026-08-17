@@ -1,0 +1,51 @@
+[package]
+name = "stacker"
+version = "0.1.25"
+edition = "2021"
+rust-version = "1.63"
+authors = ["Alex Crichton <alex@alexcrichton.com>", "Simonas Kazlauskas <stacker@kazlauskas.me>"]
+build = "build.rs"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/rust-lang/stacker"
+homepage = "https://github.com/rust-lang/stacker"
+documentation = "https://docs.rs/stacker/0.1.24"
+description = """
+A stack growth library useful when implementing deeply recursive algorithms that
+may accidentally blow the stack.
+"""
+
+[lib]
+name = "stacker"
+doctest = false
+test = false
+
+[dependencies]
+cfg-if = "1.0.0"
+libc = "0.2.156"
+psm = { path = "psm", version = "0.1.7" }
+
+[target.'cfg(all(windows, not(target_arch = "arm64ec")))'.dependencies.windows-sys]
+version = ">=0.60.0, <0.62.0"
+features = [
+    "Win32_System_Memory",
+    "Win32_System_Threading",
+    "Win32_Foundation",
+]
+
+[target.arm64ec-pc-windows-msvc.dependencies.windows-sys]
+version = ">=0.60.0, <0.62.0"
+features = [
+    "Win32_System_Memory",
+    "Win32_System_Threading",
+    "Win32_Foundation",
+]
+
+
+[build-dependencies]
+cc = "1.2.33"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(target_os, values("motor"))',
+] }

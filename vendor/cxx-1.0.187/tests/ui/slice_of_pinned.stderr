@@ -1,0 +1,7 @@
+error[E0277]: mutable slice of pinned type is not supported
+  --> tests/ui/slice_of_pinned.rs:11:31
+   |
+11 |         fn f(_: &[Pinned], _: &mut [Pinned]);
+   |                               ^^^^^^^^^^^^^ requires `Pinned: Unpin`
+   |
+   = help: the trait `SliceOfUnpin_Pinned` is not implemented for `&mut [Pinned]`

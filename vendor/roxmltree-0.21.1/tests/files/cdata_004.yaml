@@ -1,0 +1,10 @@
+Document:
+  - Element:
+      tag_name: p
+      children:
+        - Text: "\n    some\n    "
+        - Element:
+            tag_name: p
+            children:
+              - Text: "\n        long\n    "
+        - Text: "\n    text\n"

@@ -1,0 +1,44 @@
+[package]
+authors = ["The Winch Project Developers"]
+name = "winch-codegen"
+description = "Winch code generation library"
+license = "Apache-2.0 WITH LLVM-exception"
+repository = "https://github.com/bytecodealliance/wasmtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+wasmparser = { workspace = true }
+smallvec = { workspace = true }
+anyhow = { workspace = true }
+target-lexicon = { workspace = true, features = ["std"] }
+# The following two dependencies (cranelift-codegen, regalloc2) are temporary;
+# mostly to have access to `PReg`s and the calling convention.
+# In the next iteration we'll factor out the common bits so that they can be consumed
+# by Cranelift and Winch.
+cranelift-codegen = { workspace = true, features = ["unwind"] }
+regalloc2 = { workspace = true }
+cranelift-assembler-x64 = { workspace = true }
+gimli = { workspace = true }
+wasmtime-environ = { workspace = true }
+wasmtime-cranelift = { workspace = true }
+thiserror = { workspace = true }
+wasmtime-math = { workspace = true }
+
+[features]
+x64 = ["cranelift-codegen/x86"]
+arm64 = ["cranelift-codegen/arm64"]
+all-arch = [
+    "x64",
+    "arm64",
+]
+gc = ['wasmtime-environ/gc']
+gc-drc = ['wasmtime-environ/gc-drc']
+gc-null = ['wasmtime-environ/gc-null']
+stack-switching = ['wasmtime-environ/stack-switching']
+threads = ['wasmtime-environ/threads']
+wmemcheck = ['wasmtime-environ/wmemcheck']

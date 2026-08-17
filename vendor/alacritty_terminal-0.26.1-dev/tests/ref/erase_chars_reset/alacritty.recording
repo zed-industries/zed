@@ -1,0 +1,5 @@
+[?2004h[kchibisov@NightLord alacritty]$ [K[kchibisov@NightLord alacritty]$ [K[kchibisov@NightLord alacritty]$ echo -e "hello        world" "\033[10;D"  "\033[4;X"[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[21Pprintf "\e[31;1;4;9mTEST asd\n"
+[?2004l[31;1;4;9mTEST asd
+[?2004h[kchibisov@NightLord alacritty]$ printf "\e[31;1;4;9mTEST asd\n"echo -e "hello        world" "\033[10;D"  "\033[4;X"
+[?2004lhello        world [10;D [4;X
+[?2004h[kchibisov@NightLord alacritty]$ 

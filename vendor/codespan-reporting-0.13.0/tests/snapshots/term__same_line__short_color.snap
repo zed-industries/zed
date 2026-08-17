@@ -1,0 +1,7 @@
+---
+source: codespan-reporting/tests/term.rs
+expression: TEST_DATA.emit_color(&config)
+---
+one_line.rs:3:12: {fg:Red bold bright}error[E0499]{bold bright}: cannot borrow `v` as mutable more than once at a time{/}
+{fg:Red bold bright}error{bold bright}: aborting due to previous error{/}
+

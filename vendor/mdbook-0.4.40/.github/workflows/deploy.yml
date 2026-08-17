@@ -1,0 +1,67 @@
+name: Deploy
+on:
+  release:
+    types: [created]
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-20.04
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-20.04
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-20.04
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+    name: Deploy ${{ matrix.target }}
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Rust
+      run: ci/install-rust.sh stable ${{ matrix.target }}
+    - name: Build asset
+      run: ci/make-release-asset.sh ${{ matrix.os }} ${{ matrix.target }}
+    - name: Update release with new asset
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: gh release upload $MDBOOK_TAG $MDBOOK_ASSET
+  pages:
+    name: GitHub Pages
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Rust (rustup)
+      run: rustup update stable --no-self-update && rustup default stable
+    - name: Build book
+      run: cargo run -- build guide
+    - name: Deploy to GitHub
+      env:
+        GITHUB_DEPLOY_KEY: ${{ secrets.GITHUB_DEPLOY_KEY }}
+      run: |
+        touch guide/book/.nojekyll
+        curl -LsSf https://raw.githubusercontent.com/rust-lang/simpleinfra/master/setup-deploy-keys/src/deploy.rs | rustc - -o /tmp/deploy
+        cd guide/book
+        /tmp/deploy
+  publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust (rustup)
+        run: rustup update stable --no-self-update && rustup default stable
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --no-verify

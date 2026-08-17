@@ -1,0 +1,37 @@
+name: I have a feature request for SQLx
+description: Create a feature-request issue
+labels: [enhancement]
+body:
+  - type: textarea
+    id: related-issues
+    validations:
+      required: true
+    attributes:
+      label: I have found these related issues/pull requests
+      description: "Provide context for your pull request."
+      placeholder: |
+          Closes \#...
+          Relates to \#...
+  - type: textarea
+    id: feature-description
+    validations:
+      required: true
+    attributes:
+      label: Description
+      description: A clear and concise description of what the problem is
+      placeholder: You should add ...
+  - type: textarea
+    id: solution
+    validations:
+      required: true
+    attributes:
+      label: Prefered solution
+      description: A clear and concise description of what you want to happen.
+      placeholder: In my use-case, ...
+  - type: textarea
+    id: breaking-change
+    validations:
+      required: true
+    attributes:
+      label: Is this a breaking change? Why or why not?
+

@@ -1,0 +1,56 @@
+# Copyright 2019 The Fuchsia Authors
+#
+# Licensed under a BSD-style license <LICENSE-BSD>, Apache License, Version 2.0
+# <LICENSE-APACHE or https://www.apache.org/licenses/LICENSE-2.0>, or the MIT
+# license <LICENSE-MIT or https://opensource.org/licenses/MIT>, at your option.
+# This file may not be copied, modified, or distributed except according to
+# those terms.
+
+[package]
+edition = "2021"
+name = "zerocopy-derive"
+version = "0.8.27"
+authors = ["Joshua Liebow-Feeser <joshlf@google.com>", "Jack Wrenn <jswrenn@amazon.com>"]
+description = "Custom derive for traits from the zerocopy crate"
+license = "BSD-2-Clause OR Apache-2.0 OR MIT"
+repository = "https://github.com/google/zerocopy"
+
+# We prefer to include tests when publishing to crates.io so that Crater [1] can
+# detect regressions in our test suite. These two tests are excessively large,
+# so we exclude them to keep the published crate file small.
+#
+# [1] https://github.com/rust-lang/crater
+exclude = [".*", "tests/enum_from_bytes.rs", "tests/ui-nightly/enum_from_bytes_u16_too_few.rs.disabled"]
+
+[lints.rust]
+# See #1792 for more context.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(zerocopy_derive_union_into_bytes)'] }
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1.0.1"
+quote = "1.0.10"
+syn = { version = "2.0.46", features = ["full"] }
+
+[dev-dependencies]
+dissimilar = "1.0.9"
+# We don't use this directly, but trybuild does. On the MSRV toolchain, the
+# version resolver fails to select any version for once_cell unless we
+# depend on it directly.
+once_cell = "=1.9"
+# Same MSRV issue as above.
+libc = "=0.2.163"
+# This is the latest version which is compatible with `syn` 2.0.46, which we pin
+# to in CI for MSRV compatibility reasons.
+prettyplease = "=0.2.17"
+rustversion = "1.0"
+static_assertions = "1.1"
+testutil = { path = "../testutil" }
+# Pinned to a specific version so that the version used for local development
+# and the version used in CI are guaranteed to be the same. Future versions
+# sometimes change the output format slightly, so a version mismatch can cause
+# CI test failures.
+trybuild = { version = "=1.0.89", features = ["diff"] }
+zerocopy = { path = "../", features = ["derive"] }

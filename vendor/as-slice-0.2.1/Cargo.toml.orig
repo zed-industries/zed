@@ -1,0 +1,16 @@
+[package]
+authors = ["Jorge Aparicio <jorge@japaric.io>", "Emil Fresk <emil.fresk@gmail.com>"]
+categories = [ "no-std"]
+description = "`AsSlice` and `AsMutSlice` traits"
+keywords = ["conversion", "slice", "array"]
+license = "MIT OR Apache-2.0"
+name = "as-slice"
+readme = "README.md"
+repository = "https://github.com/japaric/as-slice"
+version = "0.2.1"
+
+[dependencies]
+
+[dependencies.stable_deref_trait]
+default-features = false
+version = "1.1.1"

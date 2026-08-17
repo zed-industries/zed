@@ -1,0 +1,58 @@
+error[E0277]: the member `Unset<y>` was not set, but this method requires it to be set
+  --> tests/integration/ui/compile_fail/diagnostic_on_unimplemented.rs:14:37
+   |
+14 |     let _ = Example::builder().x(1).build();
+   |                                     ^^^^^ the member `Unset<y>` was not set, but this method requires it to be set
+   |
+   = help: the trait `IsSet` is not implemented for `Unset<y>`
+note: required for `SetX` to implement `IsComplete`
+  --> tests/integration/ui/compile_fail/diagnostic_on_unimplemented.rs:4:14
+   |
+ 4 |     #[derive(Builder)]
+   |              ^^^^^^^ unsatisfied trait bound introduced in this `derive` macro
+note: required by a bound in `ExampleBuilder::<S>::build`
+  --> tests/integration/ui/compile_fail/diagnostic_on_unimplemented.rs:4:14
+   |
+ 4 |     #[derive(Builder)]
+   |              ^^^^^^^ required by this bound in `ExampleBuilder::<S>::build`
+ 5 |     struct Example {
+   |            ------- required by a bound in this associated function
+   = note: this error originates in the derive macro `Builder` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the member `Unset<renamed>` was not set, but this method requires it to be set
+  --> tests/integration/ui/compile_fail/diagnostic_on_unimplemented.rs:14:37
+   |
+14 |     let _ = Example::builder().x(1).build();
+   |                                     ^^^^^ the member `Unset<renamed>` was not set, but this method requires it to be set
+   |
+   = help: the trait `IsSet` is not implemented for `Unset<renamed>`
+note: required for `SetX` to implement `IsComplete`
+  --> tests/integration/ui/compile_fail/diagnostic_on_unimplemented.rs:4:14
+   |
+ 4 |     #[derive(Builder)]
+   |              ^^^^^^^ unsatisfied trait bound introduced in this `derive` macro
+note: required by a bound in `ExampleBuilder::<S>::build`
+  --> tests/integration/ui/compile_fail/diagnostic_on_unimplemented.rs:4:14
+   |
+ 4 |     #[derive(Builder)]
+   |              ^^^^^^^ required by this bound in `ExampleBuilder::<S>::build`
+ 5 |     struct Example {
+   |            ------- required by a bound in this associated function
+   = note: this error originates in the derive macro `Builder` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the member `Set<y>` was already set, but this method requires it to be unset
+  --> tests/integration/ui/compile_fail/diagnostic_on_unimplemented.rs:17:37
+   |
+17 |     let _ = Example::builder().y(1).y(2);
+   |                                     ^ the member `Set<y>` was already set, but this method requires it to be unset
+   |
+   = help: the trait `IsUnset` is not implemented for `Set<y>`
+note: required by a bound in `ExampleBuilder::<S>::y`
+  --> tests/integration/ui/compile_fail/diagnostic_on_unimplemented.rs:4:14
+   |
+ 4 |     #[derive(Builder)]
+   |              ^^^^^^^ required by this bound in `ExampleBuilder::<S>::y`
+...
+ 7 |         y: u32,
+   |         - required by a bound in this associated function
+   = note: this error originates in the derive macro `Builder` (in Nightly builds, run with -Z macro-backtrace for more info)

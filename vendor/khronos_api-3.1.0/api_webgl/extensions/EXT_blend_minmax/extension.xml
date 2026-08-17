@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ratified href="EXT_blend_minmax/">
+  <name>EXT_blend_minmax</name>
+
+  <contact> <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL
+  working group</a> (public_webgl 'at' khronos.org) </contact>
+
+  <contributors>
+    <contributor>Florian Boesch (pyalot 'at' gmail.com)</contributor>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+
+  <number>25</number>
+
+  <depends>
+    <api version="1.0"/>
+    <core version="2.0" />
+  </depends>
+
+  <overview>
+    <mirrors href="http://www.khronos.org/registry/gles/extensions/EXT/blend_minmax.txt"
+             name="EXT_blend_minmax">
+    </mirrors>
+
+    <features>
+      <feature>
+        The <code>blendEquation</code> and <code>blendEquationSeparate</code>
+        entry points are extended to accept <code>MIN_EXT</code> and <code>MAX_EXT</code>
+      </feature>
+    </features>
+  </overview>
+
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface EXT_blend_minmax {
+  const GLenum MIN_EXT = 0x8007;
+  const GLenum MAX_EXT = 0x8008;
+};
+  </idl>
+
+  <samplecode xml:space="preserve">
+    <pre>
+        var ext = gl.getExtension('EXT_blend_minmax');
+        gl.blendEquation(ext.MAX_EXT);
+        gl.getParameter(gl.BLEND_EQUATION) == ext.MAX_EXT;
+    </pre>
+  </samplecode>
+
+  <history>
+    <revision date="2012/12/12">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2014/02/12">
+      <change>Moved to draft.</change>
+    </revision>
+    <revision date="2014/05/12">
+      <change>Removed blendEquationEXT function and the BLEND_EQUATION_EXT and
+        FUNC_ADD_EXT enums, all of which are already have equivalents in WebGL.</change>
+    </revision>
+    <revision date="2014/06/27">
+      <change>Moved to community approved after discussion on public_webgl list.</change>
+    </revision>
+    <revision date="2014/07/15">
+      <change>Added NoInterfaceObject extended attribute.</change>
+    </revision>
+    <revision date="2015/05/29">
+      <change>Ratified by Khronos Board of Promoters.</change>
+    </revision>
+  </history>
+</ratified>

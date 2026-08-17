@@ -1,0 +1,39 @@
+---
+- name: Spec Example 6.2. Indentation Indicators
+  from: http://www.yaml.org/spec/1.2/spec.html#id2778101
+  tags: explicit-key spec libyaml-err indent whitespace sequence upto-1.2
+  yaml: |
+    ? a
+    : -»b
+      -  -—»c
+         - d
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :a
+       +SEQ
+        =VAL :b
+        +SEQ
+         =VAL :c
+         =VAL :d
+        -SEQ
+       -SEQ
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "a": [
+        "b",
+        [
+          "c",
+          "d"
+        ]
+      ]
+    }
+  dump: |
+    a:
+    - b
+    - - c
+      - d

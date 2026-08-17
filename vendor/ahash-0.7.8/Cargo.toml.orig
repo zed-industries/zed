@@ -1,0 +1,96 @@
+[package]
+name = "ahash"
+version = "0.7.8"
+authors = ["Tom Kaitchuck <Tom.Kaitchuck@gmail.com>"]
+license = "MIT OR Apache-2.0"
+description = "A non-cryptographic hash function using AES-NI for high performance"
+documentation = "https://docs.rs/ahash"
+repository = "https://github.com/tkaitchuck/ahash"
+keywords = ["hash", "hasher", "hashmap", "aes", "no-std"]
+categories = ["algorithms", "data-structures", "no-std"]
+edition = "2018"
+readme = "README.md"
+build = "./build.rs"
+exclude = ["/smhasher", "/benchmark_tools"]
+
+[lib]
+name = "ahash"
+path = "src/lib.rs"
+test = true
+doctest = true
+bench = true
+doc = true
+
+[features]
+default = ["std"]
+
+# Enabling this will enable `AHashMap` and `AHashSet`.
+std = []
+
+# This is an alternitive to runtime key generation which does compile time key generation if getrandom is not available.
+# (If getrandom is available this does nothing.)
+# If this is on (and getrandom is off) it implies the produced binary will not be identical.
+# If this is disabled and gerrandom is unavailable constant keys are used.
+compile-time-rng = ["const-random"]
+
+# in case this is being used on an architecture lacking core::sync::atomic::AtomicUsize and friends
+atomic-polyfill = [ "dep:atomic-polyfill", "once_cell/atomic-polyfill"]
+
+[[bench]]
+name = "ahash"
+path = "tests/bench.rs"
+harness = false
+
+[[bench]]
+name = "map"
+path = "tests/map_tests.rs"
+harness = false
+
+[profile.test]
+opt-level = 2
+lto = 'fat'
+
+[profile.release]
+opt-level = 3
+debug = false
+lto = 'fat'
+debug-assertions = false
+codegen-units = 1
+
+[profile.bench]
+opt-level = 3
+debug = false
+lto = 'fat'
+debug-assertions = false
+codegen-units = 1
+
+[build-dependencies]
+version_check = "0.9"
+
+[target.'cfg(any(target_os = "linux", target_os = "android", target_os = "windows", target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly", target_os = "solaris", target_os = "illumos", target_os = "fuchsia", target_os = "redox", target_os = "cloudabi", target_os = "haiku", target_os = "vxworks", target_os = "emscripten", target_os = "wasi"))'.dependencies]
+getrandom = { version = "0.2.3" }
+const-random = { version = "0.1.12", optional = true }
+serde = { version = "1.0.117", optional = true }
+
+[target.'cfg(not(any(target_os = "linux", target_os = "android", target_os = "windows", target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly", target_os = "solaris", target_os = "illumos", target_os = "fuchsia", target_os = "redox", target_os = "cloudabi", target_os = "haiku", target_os = "vxworks", target_os = "emscripten", target_os = "wasi")))'.dependencies]
+const-random = { version = "0.1.12", optional = true }
+serde = { version = "1.0.117", optional = true }
+atomic-polyfill = { version="1.0.1", optional=true}
+
+[target.'cfg(not(all(target_arch = "arm", target_os = "none")))'.dependencies]
+once_cell = { version = "1.13.1", default-features = false, features = ["alloc"] }
+
+[dev-dependencies]
+no-panic = "0.1.10"
+criterion = {version =  "0.3.2"}
+seahash = "4.0"
+fnv = "1.0.5"
+fxhash = "0.2.1"
+hex = "0.4.2"
+rand = "0.7.3"
+serde_json = "1.0.59"
+
+[package.metadata.docs.rs]
+rustc-args = ["-C", "target-feature=+aes"]
+rustdoc-args = ["-C", "target-feature=+aes"]
+features = ["std"]

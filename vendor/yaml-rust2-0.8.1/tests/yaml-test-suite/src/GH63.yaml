@@ -1,0 +1,27 @@
+---
+- name: Mixed Block Mapping (explicit to implicit)
+  from: NimYAML tests
+  tags: explicit-key mapping
+  yaml: |
+    ? a
+    : 1.3
+    fifteen: d
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :a
+       =VAL :1.3
+       =VAL :fifteen
+       =VAL :d
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "a": 1.3,
+      "fifteen": "d"
+    }
+  dump: |
+    a: 1.3
+    fifteen: d

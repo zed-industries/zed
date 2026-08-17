@@ -1,0 +1,5 @@
+expected keyword `func`, found '('
+     --> tests/ui/parse-fail/async1.wit:2:9
+      |
+    2 | a: async()
+      |         ^

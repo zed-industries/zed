@@ -1,0 +1,4 @@
+POST /test/@connections/JBDvjfGEIAMCERw%3D HTTP/1.1
+X-amz-date:20150830T123600Z
+Authorization:AWS4-HMAC-SHA256 Credential=ANOTREAL/20150830/us-east-1/service/aws4_request, SignedHeaders=host;x-amz-date, Signature=57d157672191bac40bae387e48bbe14b15303c001fdbb01f4abf295dccb09705
+Host:tj9n5r0m12.execute-api.us-east-1.amazonaws.com

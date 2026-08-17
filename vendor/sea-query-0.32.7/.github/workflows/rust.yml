@@ -1,0 +1,273 @@
+name: tests
+
+on:
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - '.github/ISSUE_TEMPLATE/**'
+      - .gitignore
+  push:
+    branches:
+      - master
+      - 0.*.x
+      - pr/**/ci
+      - ci-*
+    paths-ignore:
+      - '**.md'
+      - '.github/ISSUE_TEMPLATE/**'
+      - .gitignore
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rustfmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          components: rustfmt
+      - run: cargo fmt --manifest-path Cargo.toml --all -- --check
+      - run: cargo fmt --manifest-path sea-query-attr/Cargo.toml --all -- --check
+      - run: cargo fmt --manifest-path sea-query-binder/Cargo.toml --all -- --check
+      - run: cargo fmt --manifest-path sea-query-derive/Cargo.toml --all -- --check
+      - run: cargo fmt --manifest-path sea-query-postgres/Cargo.toml --all -- --check
+      - run: cargo fmt --manifest-path sea-query-rusqlite/Cargo.toml --all -- --check
+      - run: cargo fmt --manifest-path examples/sqlx_sqlite/Cargo.toml --all -- --check
+      - run: cargo fmt --manifest-path examples/sqlx_any/Cargo.toml --all -- --check
+      - run: cargo fmt --manifest-path examples/rusqlite/Cargo.toml --all -- --check
+      - run: cargo fmt --manifest-path examples/sqlx_postgres/Cargo.toml --all -- --check
+      - run: cargo fmt --manifest-path examples/postgres/Cargo.toml --all -- --check
+      - run: cargo fmt --manifest-path examples/sqlx_mysql/Cargo.toml --all -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: clippy
+      - run: cargo clippy --features=all-features --workspace -- -D warnings
+      - run: cargo clippy --manifest-path sea-query-binder/Cargo.toml --workspace --features runtime-async-std-rustls --features=with-chrono,with-json,with-rust_decimal,with-bigdecimal,with-uuid,with-time,with-ipnetwork,with-mac_address,postgres-array,postgres-vector -- -D warnings
+      - run: cargo clippy --manifest-path sea-query-rusqlite/Cargo.toml --all-features --workspace -- -D warnings
+      - run: cargo clippy --manifest-path sea-query-postgres/Cargo.toml --all-features --workspace -- -D warnings
+
+  build:
+    name: Build `sea-query`
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --workspace --no-default-features
+      - run: cargo build --workspace --all-features
+      - run: cargo build --workspace --features=with-chrono
+      - run: cargo build --workspace --features=with-json
+      - run: cargo build --workspace --features=with-rust_decimal
+      - run: cargo build --workspace --features=with-bigdecimal
+      - run: cargo build --workspace --features=with-uuid
+      - run: cargo build --workspace --features=with-time
+      - run: cargo build --workspace --features=with-ipnetwork
+      - run: cargo build --workspace --features=with-mac_address
+      - run: cargo build --workspace --features=postgres-array
+      - run: cargo build --workspace --features=postgres-vector
+      - run: cargo build --workspace --features=thread-safe
+
+  binder-build:
+    name: Build `sea-query-binder`
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [async-std]
+        tls: [rustls]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --manifest-path sea-query-binder/Cargo.toml --workspace  --features sqlx-postgres,sqlx-sqlite,sqlx-any,sqlx-mysql --features=runtime-${{ matrix.runtime }}-${{ matrix.tls }} --features=with-chrono,with-json,with-rust_decimal,with-bigdecimal,with-uuid,with-time,with-ipnetwork,with-mac_address,postgres-array,postgres-vector
+      - run: cargo build --manifest-path sea-query-binder/Cargo.toml --workspace  --features sqlx-postgres,sqlx-sqlite,sqlx-any,sqlx-mysql --features=runtime-${{ matrix.runtime }}-${{ matrix.tls }} --features=with-chrono
+      - run: cargo build --manifest-path sea-query-binder/Cargo.toml --workspace  --features sqlx-postgres,sqlx-sqlite,sqlx-any,sqlx-mysql --features=runtime-${{ matrix.runtime }}-${{ matrix.tls }} --features=with-json
+      - run: cargo build --manifest-path sea-query-binder/Cargo.toml --workspace  --features sqlx-postgres,sqlx-sqlite,sqlx-any,sqlx-mysql --features=runtime-${{ matrix.runtime }}-${{ matrix.tls }} --features=with-rust_decimal
+      - run: cargo build --manifest-path sea-query-binder/Cargo.toml --workspace  --features sqlx-postgres,sqlx-sqlite,sqlx-any,sqlx-mysql --features=runtime-${{ matrix.runtime }}-${{ matrix.tls }} --features=with-bigdecimal
+      - run: cargo build --manifest-path sea-query-binder/Cargo.toml --workspace  --features sqlx-postgres,sqlx-sqlite,sqlx-any,sqlx-mysql --features=runtime-${{ matrix.runtime }}-${{ matrix.tls }} --features=with-uuid
+      - run: cargo build --manifest-path sea-query-binder/Cargo.toml --workspace  --features sqlx-postgres,sqlx-sqlite,sqlx-any,sqlx-mysql --features=runtime-${{ matrix.runtime }}-${{ matrix.tls }} --features=with-time
+      - run: cargo build --manifest-path sea-query-binder/Cargo.toml --workspace  --features sqlx-postgres,sqlx-sqlite,sqlx-any,sqlx-mysql --features=runtime-${{ matrix.runtime }}-${{ matrix.tls }} --features=with-ipnetwork
+      - run: cargo build --manifest-path sea-query-binder/Cargo.toml --workspace  --features sqlx-postgres,sqlx-sqlite,sqlx-any,sqlx-mysql --features=runtime-${{ matrix.runtime }}-${{ matrix.tls }} --features=with-mac_address
+      - run: cargo build --manifest-path sea-query-binder/Cargo.toml --workspace  --features sqlx-postgres,sqlx-sqlite,sqlx-any,sqlx-mysql --features=runtime-${{ matrix.runtime }}-${{ matrix.tls }} --features=postgres-array
+      - run: cargo build --manifest-path sea-query-binder/Cargo.toml --workspace  --features sqlx-postgres,sqlx-sqlite,sqlx-any,sqlx-mysql --features=runtime-${{ matrix.runtime }}-${{ matrix.tls }} --features=postgres-vector
+
+  rusqlite-build:
+    name: Build `sea-query-rusqlite`
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --manifest-path sea-query-rusqlite/Cargo.toml --workspace  --features=with-chrono,with-json,with-rust_decimal,with-bigdecimal,with-uuid,with-time,with-ipnetwork,with-mac_address,postgres-array,postgres-vector
+      - run: cargo build --manifest-path sea-query-rusqlite/Cargo.toml --workspace  --features=with-chrono
+      - run: cargo build --manifest-path sea-query-rusqlite/Cargo.toml --workspace  --features=with-json
+      - run: cargo build --manifest-path sea-query-rusqlite/Cargo.toml --workspace  --features=with-rust_decimal
+      - run: cargo build --manifest-path sea-query-rusqlite/Cargo.toml --workspace  --features=with-bigdecimal
+      - run: cargo build --manifest-path sea-query-rusqlite/Cargo.toml --workspace  --features=with-uuid
+      - run: cargo build --manifest-path sea-query-rusqlite/Cargo.toml --workspace  --features=with-time
+      - run: cargo build --manifest-path sea-query-rusqlite/Cargo.toml --workspace  --features=with-ipnetwork
+      - run: cargo build --manifest-path sea-query-rusqlite/Cargo.toml --workspace  --features=with-mac_address
+      - run: cargo build --manifest-path sea-query-rusqlite/Cargo.toml --workspace  --features=postgres-array
+      - run: cargo build --manifest-path sea-query-rusqlite/Cargo.toml --workspace  --features=postgres-vector
+
+  postgres-build:
+    name: Build `sea-query-postgres`
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --manifest-path sea-query-postgres/Cargo.toml --workspace  --features=with-chrono,with-json,with-rust_decimal,with-bigdecimal,with-uuid,with-time,with-ipnetwork,with-mac_address,postgres-array,postgres-vector
+      - run: cargo build --manifest-path sea-query-postgres/Cargo.toml --workspace  --features=with-chrono
+      - run: cargo build --manifest-path sea-query-postgres/Cargo.toml --workspace  --features=with-json
+      - run: cargo build --manifest-path sea-query-postgres/Cargo.toml --workspace  --features=with-rust_decimal
+      - run: cargo build --manifest-path sea-query-postgres/Cargo.toml --workspace  --features=with-bigdecimal
+      - run: cargo build --manifest-path sea-query-postgres/Cargo.toml --workspace  --features=with-uuid
+      - run: cargo build --manifest-path sea-query-postgres/Cargo.toml --workspace  --features=with-time
+      - run: cargo build --manifest-path sea-query-postgres/Cargo.toml --workspace  --features=with-ipnetwork
+      - run: cargo build --manifest-path sea-query-postgres/Cargo.toml --workspace  --features=with-mac_address
+      - run: cargo build --manifest-path sea-query-postgres/Cargo.toml --workspace  --features=postgres-array
+      - run: cargo build --manifest-path sea-query-postgres/Cargo.toml --workspace  --features=postgres-vector
+
+  test:
+    name: Unit Test
+    runs-on: ubuntu-latest
+    needs: ["build"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test
+      - run: cargo test --features=all-features
+      - run: cargo test --test option-more-parentheses --features=tests-cfg,option-more-parentheses
+
+  derive-test:
+    name: Derive Tests
+    runs-on: ubuntu-latest
+    needs: ["build"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --package sea-query-derive
+      - run: cargo test --package sea-query-derive
+
+  sqlite:
+    name: SQLite
+    runs-on: ubuntu-latest
+    needs: ["test", "derive-test", "rusqlite-build", "binder-build"]
+    strategy:
+      matrix:
+        example: [rusqlite, sqlx_sqlite]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --manifest-path examples/${{ matrix.example }}/Cargo.toml
+      - run: cargo run --manifest-path examples/${{ matrix.example }}/Cargo.toml
+
+  mysql:
+    name: MySQL
+    runs-on: ubuntu-latest
+    needs: ["test", "derive-test", "binder-build"]
+    strategy:
+      matrix:
+        version: [8.0, 5.7]
+        example: [sqlx_mysql]
+    services:
+      mysql:
+        image: mysql:${{ matrix.version }}
+        env:
+          MYSQL_HOST: 127.0.0.1
+          MYSQL_DATABASE: query
+          MYSQL_USER: sea
+          MYSQL_PASSWORD: sea
+          MYSQL_ROOT_PASSWORD: sea
+        ports:
+          - "3306:3306"
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --manifest-path examples/${{ matrix.example }}/Cargo.toml
+      - run: cargo run --manifest-path examples/${{ matrix.example }}/Cargo.toml
+
+  mariadb:
+    name: MariaDB
+    runs-on: ubuntu-latest
+    needs: ["test", "derive-test", "binder-build"]
+    strategy:
+      matrix:
+        version: [10.6]
+        example: [sqlx_mysql]
+    services:
+      mariadb:
+        image: mariadb:${{ matrix.version }}
+        env:
+          MYSQL_HOST: 127.0.0.1
+          MYSQL_DATABASE: query
+          MYSQL_USER: sea
+          MYSQL_PASSWORD: sea
+          MYSQL_ROOT_PASSWORD: sea
+        ports:
+          - "3306:3306"
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --manifest-path examples/${{ matrix.example }}/Cargo.toml
+      - run: cargo run --manifest-path examples/${{ matrix.example }}/Cargo.toml
+
+  postgres:
+    name: PostgreSQL
+    runs-on: ubuntu-latest
+    needs: ["test", "derive-test", "binder-build", "postgres-build"]
+    strategy:
+      matrix:
+        version: [14.4, 13.7, 12.11]
+        example: [postgres, sqlx_postgres]
+    services:
+      postgres:
+        image: postgres:${{ matrix.version }}
+        env:
+          POSTGRES_HOST: 127.0.0.1
+          POSTGRES_DB: query
+          POSTGRES_USER: sea
+          POSTGRES_PASSWORD: sea
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --manifest-path examples/${{ matrix.example }}/Cargo.toml
+      - run: cargo run --manifest-path examples/${{ matrix.example }}/Cargo.toml
+
+  any:
+    name: Any
+    runs-on: ubuntu-latest
+    needs: ["test", "derive-test", "binder-build"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --manifest-path examples/sqlx_any/Cargo.toml

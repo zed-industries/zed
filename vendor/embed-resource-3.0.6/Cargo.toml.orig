@@ -1,0 +1,62 @@
+[package]
+name = "embed-resource"
+description = "A Cargo library to handle compilation and inclusion of Windows resources in the most resilient fashion imaginable"
+repository = "https://github.com/nabijaczleweli/rust-embed-resource"
+readme = "README.md"
+keywords = ["cargo", "build", "windows", "resource", "manifest"]
+categories = ["development-tools", "os::windows-apis"]
+license = "MIT"
+# Remember to also update in appveyor.yml
+# Remember to also update in src/lib.rs ~L40 (Cargo.toml example)
+# Remember to also update in README
+# Remember to also update in .github/workflows/msvc/test.py
+# Remember to also update in .github/workflows/msvc/version.rc
+version = "3.0.6"
+authors = ["наб <nabijaczleweli@nabijaczleweli.xyz>",
+           "Cat Plus Plus <piotrlegnica@piotrl.pl>",
+           "Liigo <liigo@qq.com>",
+           "azyobuzin <azyobuzin@users.sourceforge.jp>",
+           "Peter Atashian <retep998@gmail.com>",
+           "pravic <ehysta@gmail.com>",
+           "Gabriel Majeri <gabriel.majeri6@gmail.com>",
+           "SonnyX",
+           "Johan Andersson <repi@repi.se>",
+           "Jordan Poles <jpdev.noreply@gmail.com>",
+           "MSxDOS <melcodos@gmail.com>",
+           "Jim McGrath <jimmc2@gmail.com>",
+           "roblabla <unfiltered@roblab.la>",
+           "Jasper Bekkers <jasper@traverseresearch.nl>",
+           "Richard Markiewicz <rmarkiewicz@devolutions.net>",
+           "Emerson de Freitas Barcelos <emersonfxbx@gmail.com>",
+           "Li Keqing <me@kaze.ai>",
+           "Alexis Bourget <alexis.bourget@gmail.com>",
+           "Michael Farrell <micolous+git@gmail.com>",
+           "Jacob Okamoto <oko@oko.io>",
+           "Marijn Suijten <marijn@traverseresearch.nl>",
+           "Lucas Nogueira <lucas@tauri.app>",
+           "CharlesChen0823 <yongchen0823@gmail.com>",
+           "Daniel Schaefer <dhs@frame.work>",
+           "Rene Leonhardt",
+           "ssrlive"]
+exclude = ["*.enc"]
+
+
+[dependencies]
+rustc_version = "0.4"
+toml = "0.9"
+
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+memchr = "2.7"
+cc = "1.2"
+
+[target.'cfg(all(target_os = "windows", target_env = "msvc"))'.dependencies]
+cc = "1.2"
+vswhom = "0.1"
+
+[target.'cfg(all(target_os = "windows", target_env = "msvc"))'.dependencies.winreg]
+version = "0.55"
+default-features = false
+
+
+[workspace]
+members = [".github/workflows/msvc"]

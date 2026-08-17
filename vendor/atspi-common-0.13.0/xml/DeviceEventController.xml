@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<node xmlns:doc="http://www.freedesktop.org/dbus/1.0/doc.dtd">
+  <!--
+      org.a11y.atspi.DeviceEventController:
+      @short_description: Legacy interface for keystroke listeners and generation of keyboard/mouse events
+
+      This interface is being replaced by the functions in atspi-device-listener.h.
+  -->
+  <interface name="org.a11y.atspi.DeviceEventController">
+
+    <!--
+        RegisterKeystrokeListener:
+        @listener: path of object to be notified when the following keys are pressed
+        @keys: array of (key_code, key_sym, key_string, unused)
+        @mask: modifier mask in X11 style (see Xlib.h)
+        @types: mask of press/release; see the description below.
+        @mode: struct of flags (synchronous, preemptive, global), see the description below.
+
+        The @types can be a mask of the following:
+
+          * KEY_PRESS   = 1 << 0
+          * KEY_RELEASE = 1 << 1
+
+        Note that Orca always passes (KEY_PRESS | KEY_RELEASE).
+
+        The @mode is composed of three flags (see AtspiKeyListenerSyncType):
+
+          * synchronous: Events are delivered synchronously, before
+            the currently focused application sees them.  If false,
+            events may be delivered asynchronously, which means in some
+            cases they may already have been delivered to the
+            application before the AT client receives the notification.
+
+          * preemptive: (called CANCONSUME in AtspiKeyListenerSyncType)
+            Events may be consumed by the AT client.  Requires the synchronous flag to be set.
+
+          * global: (called ALL_WINDOWS in AtspiKeyListenerSyncType)
+            Events are received not from the application toolkit layer,
+            but from the device driver or windowing system subsystem.
+
+        Returns: boolean indicating whether the operation was successful.  This is always
+        TRUE for non-global listeners (c.f. @mode), and may be FALSE for global listeners
+        if the underlying XGrabKey() failed (see spi_dec_x11_grab_key).
+    -->
+    <method name="RegisterKeystrokeListener">
+      <arg direction="in" name="listener" type="o"/>
+      <arg direction="in" name="keys" type="a(iisi)"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In1" value="QSpiKeyTypeArray"/>
+      <arg direction="in" name="mask" type="u"/>
+      <arg direction="in" name="types" type="u"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In3" value="QSpiEventTypeArray"/>
+      <arg direction="in" name="mode" type="(bbb)"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In4" value="QSpiEventMode"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+    <method name="DeregisterKeystrokeListener">
+      <arg direction="in" name="listener" type="o"/>
+      <arg direction="in" name="keys" type="a(iisi)"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In1" value="QSpiKeyTypeArray"/>
+      <arg direction="in" name="mask" type="u"/>
+      <arg direction="in" name="type" type="u"/>
+    </method>
+
+    <method name="GetKeystrokeListeners">
+      <arg direction="out" type="a(souua(iisi)u(bbb))"/>
+    </method>
+
+    <method name="GenerateKeyboardEvent">
+      <arg direction="in" name="keycode" type="i"/>
+      <arg direction="in" name="keystring" type="s"/>
+      <arg direction="in" name="type" type="u"/>
+    </method>
+
+    <method name="GenerateMouseEvent">
+      <arg direction="in" name="x" type="i"/>
+      <arg direction="in" name="y" type="i"/>
+      <arg direction="in" name="eventName" type="s"/>
+    </method>
+
+    <method name="NotifyListenersSync">
+      <arg direction="in" name="event" type="(uiuuisb)"/>
+      <arg direction="out" type="b"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiDeviceEvent"/>
+    </method>
+
+    <method name="NotifyListenersAsync">
+      <arg direction="in" name="event" type="(uiuuisb)"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiDeviceEvent"/>
+    </method>
+
+  </interface>
+</node>

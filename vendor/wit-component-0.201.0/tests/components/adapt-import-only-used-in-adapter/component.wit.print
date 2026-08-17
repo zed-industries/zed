@@ -1,0 +1,9 @@
+package root:component;
+
+world root {
+  import foo:foo/adapter-imports;
+  import foo: func(x: string);
+
+  export bar: func();
+  export adapter-bar: func(x: string);
+}

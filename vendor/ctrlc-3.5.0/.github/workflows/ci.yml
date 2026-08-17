@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        rust: [stable, beta, nightly]
+        include:
+          - os: windows-latest
+            rust: stable-x86_64-pc-windows-gnu
+          - os: windows-latest
+            rust: nightly-x86_64-pc-windows-gnu
+          - os: windows-latest
+            rust: stable-i686-pc-windows-msvc
+          - os: windows-latest
+            rust: nightly-i686-pc-windows-msvc
+          - os: windows-latest
+            rust: stable-i686-pc-windows-gnu
+          - os: windows-latest
+            rust: nightly-i686-pc-windows-gnu
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+      - run: cargo build
+      - run: cargo build --features termination
+      - run: cargo test
+      - run: cargo test --features termination
+
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo fmt --check

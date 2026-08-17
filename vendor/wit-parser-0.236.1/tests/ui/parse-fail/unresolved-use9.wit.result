@@ -1,0 +1,5 @@
+interface or world `bar` does not exist
+     --> tests/ui/parse-fail/unresolved-use9.wit:7:9
+      |
+    7 |     use bar.{i32};
+      |         ^--

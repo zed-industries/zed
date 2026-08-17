@@ -1,0 +1,31 @@
+
+language: rust
+cache: cargo
+
+matrix:
+  fast_finish: false
+  allow_failures:
+    - rust: nightly
+      os: osx
+  os:
+    - osx:
+      osx_image: xcode10.1
+  include:
+    - name: "macOS Rust Stable"
+      os: osx
+      rust: stable
+      script:
+        - cargo build --release --all
+        - cargo test --release --all
+        - cargo test --release --all-features
+        - cargo test --release --no-default-features
+        - cargo doc --release --no-deps --all
+    - name: "macOS Rust Nightly"
+      os: osx
+      rust: nightly
+      script:
+        - cargo build --release --all
+        - cargo test --release --all
+        - cargo test --release --all-features
+        - cargo test --release --no-default-features
+        - cargo doc --release --no-deps --all

@@ -1,0 +1,1194 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<?codewarrior exportversion="1.0.1" ideversion="5.0" ?>
+
+<!DOCTYPE PROJECT [
+<!ELEMENT PROJECT (TARGETLIST, TARGETORDER, GROUPLIST, DESIGNLIST?)>
+<!ELEMENT TARGETLIST (TARGET+)>
+<!ELEMENT TARGET (NAME, SETTINGLIST, FILELIST?, LINKORDER?, SEGMENTLIST?, OVERLAYGROUPLIST?, SUBTARGETLIST?, SUBPROJECTLIST?, FRAMEWORKLIST?, PACKAGEACTIONSLIST?)>
+<!ELEMENT NAME (#PCDATA)>
+<!ELEMENT USERSOURCETREETYPE (#PCDATA)>
+<!ELEMENT PATH (#PCDATA)>
+<!ELEMENT FILELIST (FILE*)>
+<!ELEMENT FILE (PATHTYPE, PATHROOT?, ACCESSPATH?, PATH, PATHFORMAT?, ROOTFILEREF?, FILEKIND?, FILEFLAGS?)>
+<!ELEMENT PATHTYPE (#PCDATA)>
+<!ELEMENT PATHROOT (#PCDATA)>
+<!ELEMENT ACCESSPATH (#PCDATA)>
+<!ELEMENT PATHFORMAT (#PCDATA)>
+<!ELEMENT ROOTFILEREF (PATHTYPE, PATHROOT?, ACCESSPATH?, PATH, PATHFORMAT?)>
+<!ELEMENT FILEKIND (#PCDATA)>
+<!ELEMENT FILEFLAGS (#PCDATA)>
+<!ELEMENT FILEREF (TARGETNAME?, PATHTYPE, PATHROOT?, ACCESSPATH?, PATH, PATHFORMAT?)>
+<!ELEMENT TARGETNAME (#PCDATA)>
+<!ELEMENT SETTINGLIST ((SETTING|PANELDATA)+)>
+<!ELEMENT SETTING (NAME?, (VALUE|(SETTING+)))>
+<!ELEMENT PANELDATA (NAME, VALUE)>
+<!ELEMENT VALUE (#PCDATA)>
+<!ELEMENT LINKORDER (FILEREF*)>
+<!ELEMENT SEGMENTLIST (SEGMENT+)>
+<!ELEMENT SEGMENT (NAME, ATTRIBUTES?, FILEREF*)>
+<!ELEMENT ATTRIBUTES (#PCDATA)>
+<!ELEMENT OVERLAYGROUPLIST (OVERLAYGROUP+)>
+<!ELEMENT OVERLAYGROUP (NAME, BASEADDRESS, OVERLAY*)>
+<!ELEMENT BASEADDRESS (#PCDATA)>
+<!ELEMENT OVERLAY (NAME, FILEREF*)>
+<!ELEMENT SUBTARGETLIST (SUBTARGET+)>
+<!ELEMENT SUBTARGET (TARGETNAME, ATTRIBUTES?, FILEREF?)>
+<!ELEMENT SUBPROJECTLIST (SUBPROJECT+)>
+<!ELEMENT SUBPROJECT (FILEREF, SUBPROJECTTARGETLIST)>
+<!ELEMENT SUBPROJECTTARGETLIST (SUBPROJECTTARGET*)>
+<!ELEMENT SUBPROJECTTARGET (TARGETNAME, ATTRIBUTES?, FILEREF?)>
+<!ELEMENT FRAMEWORKLIST (FRAMEWORK+)>
+<!ELEMENT FRAMEWORK (FILEREF, LIBRARYFILE?, VERSION?)>
+<!ELEMENT PACKAGEACTIONSLIST (PACKAGEACTION+)>
+<!ELEMENT PACKAGEACTION (#PCDATA)>
+<!ELEMENT LIBRARYFILE (FILEREF)>
+<!ELEMENT VERSION (#PCDATA)>
+<!ELEMENT TARGETORDER (ORDEREDTARGET|ORDEREDDESIGN)*>
+<!ELEMENT ORDEREDTARGET (NAME)>
+<!ELEMENT ORDEREDDESIGN (NAME, ORDEREDTARGET+)>
+<!ELEMENT GROUPLIST (GROUP|FILEREF)*>
+<!ELEMENT GROUP (NAME, (GROUP|FILEREF)*)>
+<!ELEMENT DESIGNLIST (DESIGN+)>
+<!ELEMENT DESIGN (NAME, DESIGNDATA)>
+<!ELEMENT DESIGNDATA (#PCDATA)>
+]>
+
+<PROJECT>
+    <TARGETLIST>
+        <TARGET>
+            <NAME>FreeTypeLib</NAME>
+            <SETTINGLIST>
+
+                <!-- Settings for "Source Trees" panel -->
+                <SETTING><NAME>UserSourceTrees</NAME><VALUE></VALUE></SETTING>
+
+                <!-- Settings for "Access Paths" panel -->
+                <SETTING><NAME>AlwaysSearchUserPaths</NAME><VALUE>true</VALUE></SETTING>
+                <SETTING><NAME>InterpretDOSAndUnixPaths</NAME><VALUE>true</VALUE></SETTING>
+                <SETTING><NAME>RequireFrameworkStyleIncludes</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>SourceRelativeIncludes</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>UserSearchPaths</NAME>
+                    <SETTING>
+                        <SETTING><NAME>SearchPath</NAME>
+                            <SETTING><NAME>Path</NAME><VALUE>:</VALUE></SETTING>
+                            <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
+                            <SETTING><NAME>PathRoot</NAME><VALUE>Project</VALUE></SETTING>
+                        </SETTING>
+                        <SETTING><NAME>Recursive</NAME><VALUE>true</VALUE></SETTING>
+                        <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>SearchPath</NAME>
+                            <SETTING><NAME>Path</NAME><VALUE>:::include:</VALUE></SETTING>
+                            <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
+                            <SETTING><NAME>PathRoot</NAME><VALUE>Project</VALUE></SETTING>
+                        </SETTING>
+                        <SETTING><NAME>Recursive</NAME><VALUE>true</VALUE></SETTING>
+                        <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>SearchPath</NAME>
+                            <SETTING><NAME>Path</NAME><VALUE>:::src:</VALUE></SETTING>
+                            <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
+                            <SETTING><NAME>PathRoot</NAME><VALUE>Project</VALUE></SETTING>
+                        </SETTING>
+                        <SETTING><NAME>Recursive</NAME><VALUE>true</VALUE></SETTING>
+                        <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>SearchPath</NAME>
+                            <SETTING><NAME>Path</NAME><VALUE>::</VALUE></SETTING>
+                            <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
+                            <SETTING><NAME>PathRoot</NAME><VALUE>Project</VALUE></SETTING>
+                        </SETTING>
+                        <SETTING><NAME>Recursive</NAME><VALUE>true</VALUE></SETTING>
+                        <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
+                    </SETTING>
+                </SETTING>
+                <SETTING><NAME>SystemSearchPaths</NAME>
+                    <SETTING>
+                        <SETTING><NAME>SearchPath</NAME>
+                            <SETTING><NAME>Path</NAME><VALUE>:</VALUE></SETTING>
+                            <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
+                            <SETTING><NAME>PathRoot</NAME><VALUE>CodeWarrior</VALUE></SETTING>
+                        </SETTING>
+                        <SETTING><NAME>Recursive</NAME><VALUE>true</VALUE></SETTING>
+                        <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
+                    </SETTING>
+                </SETTING>
+
+                <!-- Settings for "Debugger Runtime" panel -->
+                <SETTING><NAME>MWRuntimeSettings_WorkingDirectory</NAME><VALUE></VALUE></SETTING>
+                <SETTING><NAME>MWRuntimeSettings_CommandLine</NAME><VALUE></VALUE></SETTING>
+                <SETTING><NAME>MWRuntimeSettings_HostApplication</NAME>
+                    <SETTING><NAME>Path</NAME><VALUE></VALUE></SETTING>
+                    <SETTING><NAME>PathFormat</NAME><VALUE>Generic</VALUE></SETTING>
+                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
+                </SETTING>
+                <SETTING><NAME>MWRuntimeSettings_EnvVars</NAME><VALUE></VALUE></SETTING>
+
+                <!-- Settings for "Target Settings" panel -->
+                <SETTING><NAME>Linker</NAME><VALUE>MacOS PPC Linker</VALUE></SETTING>
+                <SETTING><NAME>PreLinker</NAME><VALUE></VALUE></SETTING>
+                <SETTING><NAME>PostLinker</NAME><VALUE></VALUE></SETTING>
+                <SETTING><NAME>Targetname</NAME><VALUE>FreeTypeLib</VALUE></SETTING>
+                <SETTING><NAME>OutputDirectory</NAME>
+                    <SETTING><NAME>Path</NAME><VALUE>:::objs:</VALUE></SETTING>
+                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
+                    <SETTING><NAME>PathRoot</NAME><VALUE>Project</VALUE></SETTING>
+                </SETTING>
+                <SETTING><NAME>SaveEntriesUsingRelativePaths</NAME><VALUE>false</VALUE></SETTING>
+
+                <!-- Settings for "File Mappings" panel -->
+                <SETTING><NAME>FileMappings</NAME>
+                    <SETTING>
+                        <SETTING><NAME>FileType</NAME><VALUE>APPL</VALUE></SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>true</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>true</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>false</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>FileType</NAME><VALUE>Appl</VALUE></SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>true</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>true</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>false</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>FileType</NAME><VALUE>MMLB</VALUE></SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE>Lib Import PPC</VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>false</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>FileType</NAME><VALUE>MPLF</VALUE></SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE>Lib Import PPC</VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>false</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>FileType</NAME><VALUE>MWCD</VALUE></SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>true</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>true</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>false</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>FileType</NAME><VALUE>RSRC</VALUE></SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>true</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>true</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>false</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>FileType</NAME><VALUE>TEXT</VALUE></SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE>.bh</VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE>Balloon Help</VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>false</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>FileType</NAME><VALUE>TEXT</VALUE></SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE>.c</VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE>MW C/C++ PPC</VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE>C/C++</VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>false</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>FileType</NAME><VALUE>TEXT</VALUE></SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE>.c++</VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE>MW C/C++ PPC</VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE>C/C++</VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>false</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>FileType</NAME><VALUE>TEXT</VALUE></SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE>.cc</VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE>MW C/C++ PPC</VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE>C/C++</VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>false</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>FileType</NAME><VALUE>TEXT</VALUE></SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE>.cp</VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE>MW C/C++ PPC</VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE>C/C++</VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>false</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>FileType</NAME><VALUE>TEXT</VALUE></SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE>.cpp</VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE>MW C/C++ PPC</VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE>C/C++</VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>false</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>FileType</NAME><VALUE>TEXT</VALUE></SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE>.exp</VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>false</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>FileType</NAME><VALUE>TEXT</VALUE></SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE>.h</VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE>MW C/C++ PPC</VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE>C/C++</VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>true</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>FileType</NAME><VALUE>TEXT</VALUE></SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE>.p</VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE>MW Pascal PPC</VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>false</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>FileType</NAME><VALUE>TEXT</VALUE></SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE>.pas</VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE>MW Pascal PPC</VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>false</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>FileType</NAME><VALUE>TEXT</VALUE></SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE>.pch</VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE>MW C/C++ PPC</VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE>C/C++</VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>true</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>false</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>FileType</NAME><VALUE>TEXT</VALUE></SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE>.pch++</VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE>MW C/C++ PPC</VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE>C/C++</VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>true</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>false</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>FileType</NAME><VALUE>TEXT</VALUE></SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE>.ppu</VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE>MW Pascal PPC</VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>true</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>false</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>FileType</NAME><VALUE>TEXT</VALUE></SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE>.r</VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE>Rez</VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE>Rez</VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>false</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>FileType</NAME><VALUE>TEXT</VALUE></SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE>.s</VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE>PPCAsm</VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>false</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>FileType</NAME><VALUE>XCOF</VALUE></SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE>XCOFF Import PPC</VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>false</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>FileType</NAME><VALUE>docu</VALUE></SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>true</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>true</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>false</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>FileType</NAME><VALUE>rsrc</VALUE></SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>true</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>true</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>false</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>FileType</NAME><VALUE>shlb</VALUE></SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE>PEF Import PPC</VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>false</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>FileType</NAME><VALUE>stub</VALUE></SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE>PEF Import PPC</VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>false</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE>.doc</VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>true</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>true</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE>.o</VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE>XCOFF Import PPC</VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>false</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE>.ppob</VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>true</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>true</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>false</VALUE></SETTING>
+                    </SETTING>
+                    <SETTING>
+                        <SETTING><NAME>FileExtension</NAME><VALUE>.rsrc</VALUE></SETTING>
+                        <SETTING><NAME>Compiler</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>EditLanguage</NAME><VALUE></VALUE></SETTING>
+                        <SETTING><NAME>Precompile</NAME><VALUE>false</VALUE></SETTING>
+                        <SETTING><NAME>Launchable</NAME><VALUE>true</VALUE></SETTING>
+                        <SETTING><NAME>ResourceFile</NAME><VALUE>true</VALUE></SETTING>
+                        <SETTING><NAME>IgnoredByMake</NAME><VALUE>false</VALUE></SETTING>
+                    </SETTING>
+                </SETTING>
+
+                <!-- Settings for "Build Extras" panel -->
+                <SETTING><NAME>CacheModDates</NAME><VALUE>true</VALUE></SETTING>
+                <SETTING><NAME>DumpBrowserInfo</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>CacheSubprojects</NAME><VALUE>true</VALUE></SETTING>
+                <SETTING><NAME>UseThirdPartyDebugger</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>BrowserGenerator</NAME><VALUE>1</VALUE></SETTING>
+                <SETTING><NAME>DebuggerAppPath</NAME>
+                    <SETTING><NAME>Path</NAME><VALUE></VALUE></SETTING>
+                    <SETTING><NAME>PathFormat</NAME><VALUE>Generic</VALUE></SETTING>
+                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
+                </SETTING>
+                <SETTING><NAME>DebuggerCmdLineArgs</NAME><VALUE></VALUE></SETTING>
+                <SETTING><NAME>DebuggerWorkingDir</NAME>
+                    <SETTING><NAME>Path</NAME><VALUE></VALUE></SETTING>
+                    <SETTING><NAME>PathFormat</NAME><VALUE>Generic</VALUE></SETTING>
+                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
+                </SETTING>
+                <SETTING><NAME>CodeCompletionPrefixFileName</NAME><VALUE>MacHeaders.c</VALUE></SETTING>
+                <SETTING><NAME>CodeCompletionMacroFileName</NAME><VALUE>MacOS_Carbon_C++_Macros.h</VALUE></SETTING>
+
+                <!-- Settings for "Debugger Target" panel -->
+                <SETTING><NAME>ConsoleEncoding</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>LogSystemMessages</NAME><VALUE>true</VALUE></SETTING>
+                <SETTING><NAME>AutoTargetDLLs</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>StopAtWatchpoints</NAME><VALUE>true</VALUE></SETTING>
+                <SETTING><NAME>PauseWhileRunning</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>PauseInterval</NAME><VALUE>5</VALUE></SETTING>
+                <SETTING><NAME>PauseUIFlags</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>AltExePath</NAME>
+                    <SETTING><NAME>Path</NAME><VALUE></VALUE></SETTING>
+                    <SETTING><NAME>PathFormat</NAME><VALUE>Generic</VALUE></SETTING>
+                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
+                </SETTING>
+                <SETTING><NAME>StopAtTempBPOnLaunch</NAME><VALUE>true</VALUE></SETTING>
+                <SETTING><NAME>CacheSymbolics</NAME><VALUE>true</VALUE></SETTING>
+                <SETTING><NAME>TempBPFunctionName</NAME><VALUE>main</VALUE></SETTING>
+                <SETTING><NAME>TempBPType</NAME><VALUE>0</VALUE></SETTING>
+
+                <!-- Settings for "Remote Debug" panel -->
+                <SETTING><NAME>Enabled</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>ConnectionName</NAME><VALUE></VALUE></SETTING>
+                <SETTING><NAME>DownloadPath</NAME><VALUE></VALUE></SETTING>
+                <SETTING><NAME>LaunchRemoteApp</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>RemoteAppPath</NAME><VALUE></VALUE></SETTING>
+                <SETTING><NAME>CoreID</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>JTAGClockSpeed</NAME><VALUE>8000</VALUE></SETTING>
+                <SETTING><NAME>IsMultiCore</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>OSDownload</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>UseGlobalOSDownload</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>OSDownloadConnectionName</NAME><VALUE></VALUE></SETTING>
+                <SETTING><NAME>OSDownloadPath</NAME><VALUE></VALUE></SETTING>
+                <SETTING><NAME>AltDownload</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>AltDownloadConnectionName</NAME><VALUE></VALUE></SETTING>
+
+                <!-- Settings for "Auto-target" panel -->
+                <SETTING><NAME>OtherExecutables</NAME><VALUE></VALUE></SETTING>
+
+                <!-- Settings for "Analyzer Connections" panel -->
+                <SETTING><NAME>AnalyzerConnectionName</NAME><VALUE></VALUE></SETTING>
+
+                <!-- Settings for "Custom Keywords" panel -->
+                <SETTING><NAME>CustomColor1</NAME>
+                    <SETTING><NAME>Red</NAME><VALUE>0</VALUE></SETTING>
+                    <SETTING><NAME>Green</NAME><VALUE>32767</VALUE></SETTING>
+                    <SETTING><NAME>Blue</NAME><VALUE>0</VALUE></SETTING>
+                </SETTING>
+                <SETTING><NAME>CustomColor2</NAME>
+                    <SETTING><NAME>Red</NAME><VALUE>0</VALUE></SETTING>
+                    <SETTING><NAME>Green</NAME><VALUE>32767</VALUE></SETTING>
+                    <SETTING><NAME>Blue</NAME><VALUE>0</VALUE></SETTING>
+                </SETTING>
+                <SETTING><NAME>CustomColor3</NAME>
+                    <SETTING><NAME>Red</NAME><VALUE>0</VALUE></SETTING>
+                    <SETTING><NAME>Green</NAME><VALUE>32767</VALUE></SETTING>
+                    <SETTING><NAME>Blue</NAME><VALUE>0</VALUE></SETTING>
+                </SETTING>
+                <SETTING><NAME>CustomColor4</NAME>
+                    <SETTING><NAME>Red</NAME><VALUE>0</VALUE></SETTING>
+                    <SETTING><NAME>Green</NAME><VALUE>32767</VALUE></SETTING>
+                    <SETTING><NAME>Blue</NAME><VALUE>0</VALUE></SETTING>
+                </SETTING>
+
+                <!-- Settings for "C/C++ Compiler" panel -->
+                <SETTING><NAME>MWFrontEnd_C_cplusplus</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWFrontEnd_C_checkprotos</NAME><VALUE>1</VALUE></SETTING>
+                <SETTING><NAME>MWFrontEnd_C_arm</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWFrontEnd_C_trigraphs</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWFrontEnd_C_onlystdkeywords</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWFrontEnd_C_enumsalwaysint</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWFrontEnd_C_ansistrict</NAME><VALUE>1</VALUE></SETTING>
+                <SETTING><NAME>MWFrontEnd_C_wchar_type</NAME><VALUE>1</VALUE></SETTING>
+                <SETTING><NAME>MWFrontEnd_C_enableexceptions</NAME><VALUE>1</VALUE></SETTING>
+                <SETTING><NAME>MWFrontEnd_C_dontreusestrings</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWFrontEnd_C_poolstrings</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWFrontEnd_C_dontinline</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWFrontEnd_C_useRTTI</NAME><VALUE>1</VALUE></SETTING>
+                <SETTING><NAME>MWFrontEnd_C_unsignedchars</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWFrontEnd_C_autoinline</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWFrontEnd_C_booltruefalse</NAME><VALUE>1</VALUE></SETTING>
+                <SETTING><NAME>MWFrontEnd_C_inlinelevel</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWFrontEnd_C_ecplusplus</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWFrontEnd_C_defer_codegen</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWFrontEnd_C_templateparser</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWFrontEnd_C_c99</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWFrontEnd_C_bottomupinline</NAME><VALUE>1</VALUE></SETTING>
+                <SETTING><NAME>MWFrontEnd_C_gcc_extensions</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWFrontEnd_C_instance_manager</NAME><VALUE>0</VALUE></SETTING>
+
+                <!-- Settings for "C/C++ Preprocessor" panel -->
+                <SETTING><NAME>C_CPP_Preprocessor_EmitFile</NAME><VALUE>true</VALUE></SETTING>
+                <SETTING><NAME>C_CPP_Preprocessor_EmitLine</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>C_CPP_Preprocessor_EmitFullPath</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>C_CPP_Preprocessor_KeepComments</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>C_CPP_Preprocessor_PCHUsesPrefixText</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>C_CPP_Preprocessor_EmitPragmas</NAME><VALUE>true</VALUE></SETTING>
+                <SETTING><NAME>C_CPP_Preprocessor_KeepWhiteSpace</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>C_CPP_Preprocessor_MultiByteEncoding</NAME><VALUE>encASCII_Unicode</VALUE></SETTING>
+                <SETTING><NAME>C_CPP_Preprocessor_PrefixText</NAME><VALUE>/* settings imported from old "C/C++ Language" panel */
+
+#if !__option(precompile)
+#include "ftoption.h" /* was "Prefix file" */
+#endif
+</VALUE></SETTING>
+
+                <!-- Settings for "C/C++ Warnings" panel -->
+                <SETTING><NAME>MWWarning_C_warn_illpragma</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWWarning_C_warn_emptydecl</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWWarning_C_warn_possunwant</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWWarning_C_warn_unusedvar</NAME><VALUE>1</VALUE></SETTING>
+                <SETTING><NAME>MWWarning_C_warn_unusedarg</NAME><VALUE>1</VALUE></SETTING>
+                <SETTING><NAME>MWWarning_C_warn_extracomma</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWWarning_C_pedantic</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWWarning_C_warningerrors</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWWarning_C_warn_hidevirtual</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWWarning_C_warn_implicitconv</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWWarning_C_warn_notinlined</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWWarning_C_warn_structclass</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWWarning_C_warn_missingreturn</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWWarning_C_warn_no_side_effect</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWWarning_C_warn_resultnotused</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWWarning_C_warn_padding</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWWarning_C_warn_impl_i2f_conv</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWWarning_C_warn_impl_f2i_conv</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWWarning_C_warn_impl_s2u_conv</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWWarning_C_warn_illtokenpasting</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWWarning_C_warn_filenamecaps</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWWarning_C_warn_filenamecapssystem</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWWarning_C_warn_undefmacro</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWWarning_C_warn_ptrintconv</NAME><VALUE>0</VALUE></SETTING>
+
+                <!-- Settings for "MacOS Merge Panel" panel -->
+                <SETTING><NAME>MWMerge_MacOS_projectType</NAME><VALUE>Application</VALUE></SETTING>
+                <SETTING><NAME>MWMerge_MacOS_outputName</NAME><VALUE>Merge Out</VALUE></SETTING>
+                <SETTING><NAME>MWMerge_MacOS_outputCreator</NAME><VALUE>????</VALUE></SETTING>
+                <SETTING><NAME>MWMerge_MacOS_outputType</NAME><VALUE>APPL</VALUE></SETTING>
+                <SETTING><NAME>MWMerge_MacOS_suppressWarning</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWMerge_MacOS_copyFragments</NAME><VALUE>1</VALUE></SETTING>
+                <SETTING><NAME>MWMerge_MacOS_copyResources</NAME><VALUE>1</VALUE></SETTING>
+                <SETTING><NAME>MWMerge_MacOS_flattenResource</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWMerge_MacOS_flatFileName</NAME><VALUE>a.rsrc</VALUE></SETTING>
+                <SETTING><NAME>MWMerge_MacOS_flatFileOutputPath</NAME>
+                    <SETTING><NAME>Path</NAME><VALUE>:</VALUE></SETTING>
+                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
+                    <SETTING><NAME>PathRoot</NAME><VALUE>Project</VALUE></SETTING>
+                </SETTING>
+                <SETTING><NAME>MWMerge_MacOS_skipResources</NAME>
+                    <SETTING><VALUE>DLGX</VALUE></SETTING>
+                    <SETTING><VALUE>ckid</VALUE></SETTING>
+                    <SETTING><VALUE>Proj</VALUE></SETTING>
+                    <SETTING><VALUE>WSPC</VALUE></SETTING>
+                </SETTING>
+
+                <!-- Settings for "Output Flags" panel -->
+                <SETTING><NAME>FileLocked</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>ResourcesMapIsReadOnly</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>PrinterDriverIsMultiFinderCompatible</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>Invisible</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>HasBundle</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>NameLocked</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>Stationery</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>HasCustomIcon</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>Shared</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>HasBeenInited</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>Label</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>Comments</NAME><VALUE></VALUE></SETTING>
+                <SETTING><NAME>HasCustomBadge</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>HasRoutingInfo</NAME><VALUE>false</VALUE></SETTING>
+
+                <!-- Settings for "PPC CodeGen" panel -->
+                <SETTING><NAME>MWCodeGen_PPC_structalignment</NAME><VALUE>PPC_mw</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_PPC_tracebacktables</NAME><VALUE>None</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_PPC_processor</NAME><VALUE>Generic</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_PPC_function_align</NAME><VALUE>4</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_PPC_tocdata</NAME><VALUE>1</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_PPC_largetoc</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_PPC_profiler</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_PPC_vectortocdata</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_PPC_poolconst</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_PPC_peephole</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_PPC_readonlystrings</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_PPC_linkerpoolsstrings</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_PPC_volatileasm</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_PPC_schedule</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_PPC_altivec</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_PPC_altivec_move_block</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_PPC_strictIEEEfp</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_PPC_fpcontract</NAME><VALUE>1</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_PPC_genfsel</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_PPC_orderedfpcmp</NAME><VALUE>0</VALUE></SETTING>
+
+                <!-- Settings for "PPC CodeGen Mach-O" panel -->
+                <SETTING><NAME>MWCodeGen_MachO_structalignment</NAME><VALUE>PPC_mw</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_MachO_profiler_enum</NAME><VALUE>Off</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_MachO_processor</NAME><VALUE>Generic</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_MachO_function_align</NAME><VALUE>4</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_MachO_common</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_MachO_boolisint</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_MachO_peephole</NAME><VALUE>1</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_MachO_readonlystrings</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_MachO_linkerpoolsstrings</NAME><VALUE>1</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_MachO_volatileasm</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_MachO_schedule</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_MachO_altivec</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_MachO_vecmove</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_MachO_fp_ieee_strict</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_MachO_fpcontract</NAME><VALUE>1</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_MachO_genfsel</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWCodeGen_MachO_fp_cmps_ordered</NAME><VALUE>0</VALUE></SETTING>
+
+                <!-- Settings for "PPC Disassembler" panel -->
+                <SETTING><NAME>MWDisassembler_PPC_showcode</NAME><VALUE>1</VALUE></SETTING>
+                <SETTING><NAME>MWDisassembler_PPC_extended</NAME><VALUE>1</VALUE></SETTING>
+                <SETTING><NAME>MWDisassembler_PPC_mix</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWDisassembler_PPC_nohex</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWDisassembler_PPC_showdata</NAME><VALUE>1</VALUE></SETTING>
+                <SETTING><NAME>MWDisassembler_PPC_showexceptions</NAME><VALUE>1</VALUE></SETTING>
+                <SETTING><NAME>MWDisassembler_PPC_showsym</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWDisassembler_PPC_shownames</NAME><VALUE>1</VALUE></SETTING>
+
+                <!-- Settings for "PPC Global Optimizer" panel -->
+                <SETTING><NAME>GlobalOptimizer_PPC_optimizationlevel</NAME><VALUE>Level0</VALUE></SETTING>
+                <SETTING><NAME>GlobalOptimizer_PPC_optfor</NAME><VALUE>Speed</VALUE></SETTING>
+
+                <!-- Settings for "PPC Linker" panel -->
+                <SETTING><NAME>MWLinker_PPC_linksym</NAME><VALUE>1</VALUE></SETTING>
+                <SETTING><NAME>MWLinker_PPC_symfullpath</NAME><VALUE>1</VALUE></SETTING>
+                <SETTING><NAME>MWLinker_PPC_linkmap</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWLinker_PPC_nolinkwarnings</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWLinker_PPC_dontdeadstripinitcode</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWLinker_PPC_permitmultdefs</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWLinker_PPC_linkmode</NAME><VALUE>Fast</VALUE></SETTING>
+                <SETTING><NAME>MWLinker_PPC_code_folding</NAME><VALUE>None</VALUE></SETTING>
+                <SETTING><NAME>MWLinker_PPC_initname</NAME><VALUE></VALUE></SETTING>
+                <SETTING><NAME>MWLinker_PPC_mainname</NAME><VALUE></VALUE></SETTING>
+                <SETTING><NAME>MWLinker_PPC_termname</NAME><VALUE></VALUE></SETTING>
+
+                <!-- Settings for "PPC Mac OS X Linker" panel -->
+                <SETTING><NAME>MWLinker_MacOSX_linksym</NAME><VALUE>1</VALUE></SETTING>
+                <SETTING><NAME>MWLinker_MacOSX_symfullpath</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWLinker_MacOSX_nolinkwarnings</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWLinker_MacOSX_linkmap</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWLinker_MacOSX_dontdeadstripinitcode</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWLinker_MacOSX_permitmultdefs</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWLinker_MacOSX_use_objectivec_semantics</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWLinker_MacOSX_strip_debug_symbols</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWLinker_MacOSX_split_segs</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWLinker_MacOSX_report_msl_overloads</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWLinker_MacOSX_objects_follow_linkorder</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWLinker_MacOSX_linkmode</NAME><VALUE>Normal</VALUE></SETTING>
+                <SETTING><NAME>MWLinker_MacOSX_exports</NAME><VALUE>ReferencedGlobals</VALUE></SETTING>
+                <SETTING><NAME>MWLinker_MacOSX_sortcode</NAME><VALUE>None</VALUE></SETTING>
+                <SETTING><NAME>MWLinker_MacOSX_mainname</NAME><VALUE></VALUE></SETTING>
+                <SETTING><NAME>MWLinker_MacOSX_initname</NAME><VALUE></VALUE></SETTING>
+                <SETTING><NAME>MWLinker_MacOSX_code_folding</NAME><VALUE>None</VALUE></SETTING>
+                <SETTING><NAME>MWLinker_MacOSX_stabsgen</NAME><VALUE>None</VALUE></SETTING>
+
+                <!-- Settings for "PPC Mac OS X Project" panel -->
+                <SETTING><NAME>MWProject_MacOSX_type</NAME><VALUE>Executable</VALUE></SETTING>
+                <SETTING><NAME>MWProject_MacOSX_outfile</NAME><VALUE></VALUE></SETTING>
+                <SETTING><NAME>MWProject_MacOSX_filecreator</NAME><VALUE>????</VALUE></SETTING>
+                <SETTING><NAME>MWProject_MacOSX_filetype</NAME><VALUE>MEXE</VALUE></SETTING>
+                <SETTING><NAME>MWProject_MacOSX_vmaddress</NAME><VALUE>4096</VALUE></SETTING>
+                <SETTING><NAME>MWProject_MacOSX_usedefaultvmaddr</NAME><VALUE>1</VALUE></SETTING>
+                <SETTING><NAME>MWProject_MacOSX_flatrsrc</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWProject_MacOSX_flatrsrcfilename</NAME><VALUE></VALUE></SETTING>
+                <SETTING><NAME>MWProject_MacOSX_flatrsrcoutputdir</NAME>
+                    <SETTING><NAME>Path</NAME><VALUE>:</VALUE></SETTING>
+                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
+                    <SETTING><NAME>PathRoot</NAME><VALUE>Project</VALUE></SETTING>
+                </SETTING>
+                <SETTING><NAME>MWProject_MacOSX_installpath</NAME><VALUE>./</VALUE></SETTING>
+                <SETTING><NAME>MWProject_MacOSX_dont_prebind</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWProject_MacOSX_flat_namespace</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWProject_MacOSX_frameworkversion</NAME><VALUE>A</VALUE></SETTING>
+                <SETTING><NAME>MWProject_MacOSX_currentversion</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWProject_MacOSX_flat_oldimpversion</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWProject_MacOSX_AddrMode</NAME><VALUE>1</VALUE></SETTING>
+
+                <!-- Settings for "PPC PEF" panel -->
+                <SETTING><NAME>MWPEF_exports</NAME><VALUE>None</VALUE></SETTING>
+                <SETTING><NAME>MWPEF_libfolder</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWPEF_sortcode</NAME><VALUE>None</VALUE></SETTING>
+                <SETTING><NAME>MWPEF_expandbss</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWPEF_sharedata</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWPEF_olddefversion</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWPEF_oldimpversion</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWPEF_currentversion</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWPEF_fragmentname</NAME><VALUE></VALUE></SETTING>
+                <SETTING><NAME>MWPEF_collapsereloads</NAME><VALUE>0</VALUE></SETTING>
+
+                <!-- Settings for "PPC Project" panel -->
+                <SETTING><NAME>MWProject_PPC_type</NAME><VALUE>Library</VALUE></SETTING>
+                <SETTING><NAME>MWProject_PPC_outfile</NAME><VALUE>FreeTypeLib</VALUE></SETTING>
+                <SETTING><NAME>MWProject_PPC_filecreator</NAME><VALUE>????</VALUE></SETTING>
+                <SETTING><NAME>MWProject_PPC_filetype</NAME><VALUE>????</VALUE></SETTING>
+                <SETTING><NAME>MWProject_PPC_size</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWProject_PPC_minsize</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWProject_PPC_stacksize</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWProject_PPC_flags</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWProject_PPC_symfilename</NAME><VALUE></VALUE></SETTING>
+                <SETTING><NAME>MWProject_PPC_rsrcname</NAME><VALUE></VALUE></SETTING>
+                <SETTING><NAME>MWProject_PPC_rsrcheader</NAME><VALUE>Native</VALUE></SETTING>
+                <SETTING><NAME>MWProject_PPC_rsrctype</NAME><VALUE>????</VALUE></SETTING>
+                <SETTING><NAME>MWProject_PPC_rsrcid</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWProject_PPC_rsrcflags</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWProject_PPC_rsrcstore</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWProject_PPC_rsrcmerge</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWProject_PPC_flatrsrc</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWProject_PPC_flatrsrcoutputdir</NAME>
+                    <SETTING><NAME>Path</NAME><VALUE>:</VALUE></SETTING>
+                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
+                    <SETTING><NAME>PathRoot</NAME><VALUE>Project</VALUE></SETTING>
+                </SETTING>
+                <SETTING><NAME>MWProject_PPC_flatrsrcfilename</NAME><VALUE></VALUE></SETTING>
+
+                <!-- Settings for "PPCAsm Panel" panel -->
+                <SETTING><NAME>MWAssembler_PPC_auxheader</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWAssembler_PPC_symmode</NAME><VALUE>Mac</VALUE></SETTING>
+                <SETTING><NAME>MWAssembler_PPC_dialect</NAME><VALUE>PPC</VALUE></SETTING>
+                <SETTING><NAME>MWAssembler_PPC_prefixfile</NAME><VALUE></VALUE></SETTING>
+                <SETTING><NAME>MWAssembler_PPC_typecheck</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWAssembler_PPC_warnings</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWAssembler_PPC_casesensitive</NAME><VALUE>0</VALUE></SETTING>
+
+                <!-- Settings for "Property List" panel -->
+                <SETTING><NAME>PList_OutputType</NAME><VALUE>File</VALUE></SETTING>
+                <SETTING><NAME>PList_OutputEncoding</NAME><VALUE>UTF-8</VALUE></SETTING>
+                <SETTING><NAME>PList_PListVersion</NAME><VALUE>1.0</VALUE></SETTING>
+                <SETTING><NAME>PList_Prefix</NAME><VALUE></VALUE></SETTING>
+                <SETTING><NAME>PList_FileFilename</NAME><VALUE>Info.plist</VALUE></SETTING>
+                <SETTING><NAME>PList_FileDirectory</NAME>
+                    <SETTING><NAME>Path</NAME><VALUE>:</VALUE></SETTING>
+                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
+                    <SETTING><NAME>PathRoot</NAME><VALUE>Project</VALUE></SETTING>
+                </SETTING>
+                <SETTING><NAME>PList_ResourceType</NAME><VALUE>plst</VALUE></SETTING>
+                <SETTING><NAME>PList_ResourceID</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>PList_ResourceName</NAME><VALUE></VALUE></SETTING>
+
+                <!-- Settings for "Rez Compiler" panel -->
+                <SETTING><NAME>MWRez_Language_maxwidth</NAME><VALUE>80</VALUE></SETTING>
+                <SETTING><NAME>MWRez_Language_script</NAME><VALUE>Roman</VALUE></SETTING>
+                <SETTING><NAME>MWRez_Language_alignment</NAME><VALUE>Align1</VALUE></SETTING>
+                <SETTING><NAME>MWRez_Language_filtermode</NAME><VALUE>FilterSkip</VALUE></SETTING>
+                <SETTING><NAME>MWRez_Language_suppresswarnings</NAME><VALUE>0</VALUE></SETTING>
+                <SETTING><NAME>MWRez_Language_escapecontrolchars</NAME><VALUE>1</VALUE></SETTING>
+                <SETTING><NAME>MWRez_Language_prefixname</NAME><VALUE></VALUE></SETTING>
+                <SETTING><NAME>MWRez_Language_filteredtypes</NAME><VALUE>'CODE' 'DATA' 'PICT'</VALUE></SETTING>
+            </SETTINGLIST>
+            <FILELIST>
+                <FILE>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>ftsystem.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                    <FILEKIND>Text</FILEKIND>
+                    <FILEFLAGS>Debug</FILEFLAGS>
+                </FILE>
+                <FILE>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>ftbase.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                    <FILEKIND>Text</FILEKIND>
+                    <FILEFLAGS>Debug</FILEFLAGS>
+                </FILE>
+                <FILE>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>ftinit.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                    <FILEKIND>Text</FILEKIND>
+                    <FILEFLAGS>Debug</FILEFLAGS>
+                </FILE>
+                <FILE>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>sfnt.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                    <FILEKIND>Text</FILEKIND>
+                    <FILEFLAGS>Debug</FILEFLAGS>
+                </FILE>
+                <FILE>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>psnames.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                    <FILEKIND>Text</FILEKIND>
+                    <FILEFLAGS>Debug</FILEFLAGS>
+                </FILE>
+                <FILE>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>ftdebug.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                    <FILEKIND>Text</FILEKIND>
+                    <FILEFLAGS>Debug</FILEFLAGS>
+                </FILE>
+                <FILE>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>type1cid.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                    <FILEKIND>Text</FILEKIND>
+                    <FILEFLAGS>Debug</FILEFLAGS>
+                </FILE>
+                <FILE>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>cff.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                    <FILEKIND>Text</FILEKIND>
+                    <FILEFLAGS>Debug</FILEFLAGS>
+                </FILE>
+                <FILE>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>smooth.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                    <FILEKIND>Text</FILEKIND>
+                    <FILEFLAGS>Debug</FILEFLAGS>
+                </FILE>
+                <FILE>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>winfnt.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                    <FILEKIND>Text</FILEKIND>
+                    <FILEFLAGS>Debug</FILEFLAGS>
+                </FILE>
+                <FILE>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>truetype.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                    <FILEKIND>Text</FILEKIND>
+                    <FILEFLAGS>Debug</FILEFLAGS>
+                </FILE>
+                <FILE>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>ftmac.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                    <FILEKIND>Text</FILEKIND>
+                    <FILEFLAGS>Debug</FILEFLAGS>
+                </FILE>
+                <FILE>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>psaux.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                    <FILEKIND>Text</FILEKIND>
+                    <FILEFLAGS></FILEFLAGS>
+                </FILE>
+                <FILE>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>ftcache.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                    <FILEKIND>Text</FILEKIND>
+                    <FILEFLAGS></FILEFLAGS>
+                </FILE>
+                <FILE>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>ftglyph.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                    <FILEKIND>Text</FILEKIND>
+                    <FILEFLAGS></FILEFLAGS>
+                </FILE>
+                <FILE>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>type1.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                    <FILEKIND>Text</FILEKIND>
+                    <FILEFLAGS>Debug</FILEFLAGS>
+                </FILE>
+                <FILE>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>pshinter.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                    <FILEKIND>Text</FILEKIND>
+                    <FILEFLAGS>Debug</FILEFLAGS>
+                </FILE>
+                <FILE>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>pcf.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                    <FILEKIND>Text</FILEKIND>
+                    <FILEFLAGS>Debug</FILEFLAGS>
+                </FILE>
+                <FILE>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>ftraster.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                    <FILEKIND>Text</FILEKIND>
+                    <FILEFLAGS>Debug</FILEFLAGS>
+                </FILE>
+                <FILE>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>ftrend1.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                    <FILEKIND>Text</FILEKIND>
+                    <FILEFLAGS>Debug</FILEFLAGS>
+                </FILE>
+            </FILELIST>
+            <LINKORDER>
+                <FILEREF>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>ftsystem.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                </FILEREF>
+                <FILEREF>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>ftbase.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                </FILEREF>
+                <FILEREF>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>ftinit.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                </FILEREF>
+                <FILEREF>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>sfnt.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                </FILEREF>
+                <FILEREF>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>psnames.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                </FILEREF>
+                <FILEREF>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>ftdebug.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                </FILEREF>
+                <FILEREF>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>type1cid.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                </FILEREF>
+                <FILEREF>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>cff.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                </FILEREF>
+                <FILEREF>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>smooth.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                </FILEREF>
+                <FILEREF>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>winfnt.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                </FILEREF>
+                <FILEREF>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>truetype.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                </FILEREF>
+                <FILEREF>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>ftmac.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                </FILEREF>
+                <FILEREF>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>psaux.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                </FILEREF>
+                <FILEREF>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>ftcache.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                </FILEREF>
+                <FILEREF>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>ftglyph.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                </FILEREF>
+                <FILEREF>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>type1.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                </FILEREF>
+                <FILEREF>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>pshinter.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                </FILEREF>
+                <FILEREF>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>pcf.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                </FILEREF>
+                <FILEREF>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>ftraster.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                </FILEREF>
+                <FILEREF>
+                    <PATHTYPE>Name</PATHTYPE>
+                    <PATH>ftrend1.c</PATH>
+                    <PATHFORMAT>MacOS</PATHFORMAT>
+                </FILEREF>
+            </LINKORDER>
+        </TARGET>
+    </TARGETLIST>
+
+    <TARGETORDER>
+        <ORDEREDTARGET><NAME>FreeTypeLib</NAME></ORDEREDTARGET>
+    </TARGETORDER>
+
+    <GROUPLIST>
+        <GROUP><NAME>base</NAME>
+            <FILEREF>
+                <TARGETNAME>FreeTypeLib</TARGETNAME>
+                <PATHTYPE>Name</PATHTYPE>
+                <PATH>ftbase.c</PATH>
+                <PATHFORMAT>MacOS</PATHFORMAT>
+            </FILEREF>
+            <FILEREF>
+                <TARGETNAME>FreeTypeLib</TARGETNAME>
+                <PATHTYPE>Name</PATHTYPE>
+                <PATH>ftdebug.c</PATH>
+                <PATHFORMAT>MacOS</PATHFORMAT>
+            </FILEREF>
+            <FILEREF>
+                <TARGETNAME>FreeTypeLib</TARGETNAME>
+                <PATHTYPE>Name</PATHTYPE>
+                <PATH>ftglyph.c</PATH>
+                <PATHFORMAT>MacOS</PATHFORMAT>
+            </FILEREF>
+            <FILEREF>
+                <TARGETNAME>FreeTypeLib</TARGETNAME>
+                <PATHTYPE>Name</PATHTYPE>
+                <PATH>ftinit.c</PATH>
+                <PATHFORMAT>MacOS</PATHFORMAT>
+            </FILEREF>
+            <FILEREF>
+                <TARGETNAME>FreeTypeLib</TARGETNAME>
+                <PATHTYPE>Name</PATHTYPE>
+                <PATH>ftsystem.c</PATH>
+                <PATHFORMAT>MacOS</PATHFORMAT>
+            </FILEREF>
+            <FILEREF>
+                <TARGETNAME>FreeTypeLib</TARGETNAME>
+                <PATHTYPE>Name</PATHTYPE>
+                <PATH>ftmac.c</PATH>
+                <PATHFORMAT>MacOS</PATHFORMAT>
+            </FILEREF>
+        </GROUP>
+        <GROUP><NAME>ftmodules</NAME>
+            <FILEREF>
+                <TARGETNAME>FreeTypeLib</TARGETNAME>
+                <PATHTYPE>Name</PATHTYPE>
+                <PATH>cff.c</PATH>
+                <PATHFORMAT>MacOS</PATHFORMAT>
+            </FILEREF>
+            <FILEREF>
+                <TARGETNAME>FreeTypeLib</TARGETNAME>
+                <PATHTYPE>Name</PATHTYPE>
+                <PATH>ftcache.c</PATH>
+                <PATHFORMAT>MacOS</PATHFORMAT>
+            </FILEREF>
+            <FILEREF>
+                <TARGETNAME>FreeTypeLib</TARGETNAME>
+                <PATHTYPE>Name</PATHTYPE>
+                <PATH>psaux.c</PATH>
+                <PATHFORMAT>MacOS</PATHFORMAT>
+            </FILEREF>
+            <FILEREF>
+                <TARGETNAME>FreeTypeLib</TARGETNAME>
+                <PATHTYPE>Name</PATHTYPE>
+                <PATH>psnames.c</PATH>
+                <PATHFORMAT>MacOS</PATHFORMAT>
+            </FILEREF>
+            <FILEREF>
+                <TARGETNAME>FreeTypeLib</TARGETNAME>
+                <PATHTYPE>Name</PATHTYPE>
+                <PATH>sfnt.c</PATH>
+                <PATHFORMAT>MacOS</PATHFORMAT>
+            </FILEREF>
+            <FILEREF>
+                <TARGETNAME>FreeTypeLib</TARGETNAME>
+                <PATHTYPE>Name</PATHTYPE>
+                <PATH>smooth.c</PATH>
+                <PATHFORMAT>MacOS</PATHFORMAT>
+            </FILEREF>
+            <FILEREF>
+                <TARGETNAME>FreeTypeLib</TARGETNAME>
+                <PATHTYPE>Name</PATHTYPE>
+                <PATH>truetype.c</PATH>
+                <PATHFORMAT>MacOS</PATHFORMAT>
+            </FILEREF>
+            <FILEREF>
+                <TARGETNAME>FreeTypeLib</TARGETNAME>
+                <PATHTYPE>Name</PATHTYPE>
+                <PATH>type1cid.c</PATH>
+                <PATHFORMAT>MacOS</PATHFORMAT>
+            </FILEREF>
+            <FILEREF>
+                <TARGETNAME>FreeTypeLib</TARGETNAME>
+                <PATHTYPE>Name</PATHTYPE>
+                <PATH>winfnt.c</PATH>
+                <PATHFORMAT>MacOS</PATHFORMAT>
+            </FILEREF>
+            <FILEREF>
+                <TARGETNAME>FreeTypeLib</TARGETNAME>
+                <PATHTYPE>Name</PATHTYPE>
+                <PATH>type1.c</PATH>
+                <PATHFORMAT>MacOS</PATHFORMAT>
+            </FILEREF>
+            <FILEREF>
+                <TARGETNAME>FreeTypeLib</TARGETNAME>
+                <PATHTYPE>Name</PATHTYPE>
+                <PATH>pshinter.c</PATH>
+                <PATHFORMAT>MacOS</PATHFORMAT>
+            </FILEREF>
+            <FILEREF>
+                <TARGETNAME>FreeTypeLib</TARGETNAME>
+                <PATHTYPE>Name</PATHTYPE>
+                <PATH>pcf.c</PATH>
+                <PATHFORMAT>MacOS</PATHFORMAT>
+            </FILEREF>
+            <FILEREF>
+                <TARGETNAME>FreeTypeLib</TARGETNAME>
+                <PATHTYPE>Name</PATHTYPE>
+                <PATH>ftraster.c</PATH>
+                <PATHFORMAT>MacOS</PATHFORMAT>
+            </FILEREF>
+            <FILEREF>
+                <TARGETNAME>FreeTypeLib</TARGETNAME>
+                <PATHTYPE>Name</PATHTYPE>
+                <PATH>ftrend1.c</PATH>
+                <PATHFORMAT>MacOS</PATHFORMAT>
+            </FILEREF>
+        </GROUP>
+    </GROUPLIST>
+
+</PROJECT>

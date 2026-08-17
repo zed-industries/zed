@@ -1,0 +1,54 @@
+[package]
+name = "rtrb"
+version = "0.3.2"
+authors = [
+    "Stjepan Glavina <stjepang@gmail.com>",
+    "Matthias Geier <Matthias.Geier@gmail.com>",
+]
+repository = "https://github.com/mgeier/rtrb"
+description = "A realtime-safe single-producer single-consumer ring buffer"
+readme = "README.md"
+categories = ["concurrency", "data-structures", "no-std"]
+keywords = ["lock-free", "wait-free", "spsc", "queue"]
+license = "MIT OR Apache-2.0"
+edition = "2018"
+rust-version = "1.38"
+
+exclude = [
+    ".*",
+]
+
+[features]
+default = ["std"]
+std = []
+
+[dev-dependencies]
+rand = "0.8"
+criterion = "0.3"
+# TODO: This is only needed for the doctests of cache_padded.rs! Is there a way to avoid this?
+crossbeam-utils = { version = "0.8", default-features = false }
+
+# aggressive optimization for benchmarks
+[profile.bench]
+lto = true
+opt-level = 3
+codegen-units = 1
+
+[lib]
+bench = false # Don't disturb criterion command line parsing
+
+[[bench]]
+name = "single_thread_single_byte"
+harness = false
+
+[[bench]]
+name = "single_thread_two_bytes"
+harness = false
+
+[[bench]]
+name = "single_thread_with_chunks"
+harness = false
+
+[[bench]]
+name = "two_threads"
+harness = false

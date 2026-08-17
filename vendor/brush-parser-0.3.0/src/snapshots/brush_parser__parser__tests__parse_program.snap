@@ -1,0 +1,152 @@
+---
+source: brush-parser/src/parser.rs
+expression: "ParseResult { input, result: &result }"
+---
+ParseResult(
+  input: "\n\n#!/usr/bin/env bash\n\nfor f in A B C; do\n\n    # sdfsdf\n    echo \"${f@L}\" >&2\n\n   done\n\n",
+  result: Program(
+    cmds: [
+      List([
+        Item(AndOr(
+          first: Pipeline(
+            seq: [
+              Compound(ForClause(ForClauseCommand(
+                variable_name: "f",
+                values: Some([
+                  W(
+                    v: "A",
+                    loc: Some(Loc(
+                      start: Pos(
+                        idx: 32,
+                        line: 5,
+                        col: 10,
+                      ),
+                      end: Pos(
+                        idx: 33,
+                        line: 5,
+                        col: 11,
+                      ),
+                    )),
+                  ),
+                  W(
+                    v: "B",
+                    loc: Some(Loc(
+                      start: Pos(
+                        idx: 34,
+                        line: 5,
+                        col: 12,
+                      ),
+                      end: Pos(
+                        idx: 35,
+                        line: 5,
+                        col: 13,
+                      ),
+                    )),
+                  ),
+                  W(
+                    v: "C",
+                    loc: Some(Loc(
+                      start: Pos(
+                        idx: 36,
+                        line: 5,
+                        col: 14,
+                      ),
+                      end: Pos(
+                        idx: 37,
+                        line: 5,
+                        col: 15,
+                      ),
+                    )),
+                  ),
+                ]),
+                body: DoGroupCommand(
+                  list: List([
+                    Item(AndOr(
+                      first: Pipeline(
+                        seq: [
+                          Simple(Simple(
+                            w: Some(W(
+                              v: "echo",
+                              loc: Some(Loc(
+                                start: Pos(
+                                  idx: 60,
+                                  line: 8,
+                                  col: 5,
+                                ),
+                                end: Pos(
+                                  idx: 64,
+                                  line: 8,
+                                  col: 9,
+                                ),
+                              )),
+                            )),
+                            suffix: Some(Suffix([
+                              Word(W(
+                                v: "\"${f@L}\"",
+                                loc: Some(Loc(
+                                  start: Pos(
+                                    idx: 65,
+                                    line: 8,
+                                    col: 10,
+                                  ),
+                                  end: Pos(
+                                    idx: 73,
+                                    line: 8,
+                                    col: 18,
+                                  ),
+                                )),
+                              )),
+                              IoRedirect(File(None, DuplicateOutput, Duplicate(W(
+                                v: "2",
+                                loc: Some(Loc(
+                                  start: Pos(
+                                    idx: 76,
+                                    line: 8,
+                                    col: 21,
+                                  ),
+                                  end: Pos(
+                                    idx: 77,
+                                    line: 8,
+                                    col: 22,
+                                  ),
+                                )),
+                              )))),
+                            ])),
+                          )),
+                        ],
+                      ),
+                    ), Sequence),
+                  ]),
+                  loc: Loc(
+                    start: Pos(
+                      idx: 39,
+                      line: 5,
+                      col: 17,
+                    ),
+                    end: Pos(
+                      idx: 86,
+                      line: 10,
+                      col: 8,
+                    ),
+                  ),
+                ),
+                loc: Loc(
+                  start: Pos(
+                    idx: 23,
+                    line: 5,
+                    col: 1,
+                  ),
+                  end: Pos(
+                    idx: 86,
+                    line: 10,
+                    col: 8,
+                  ),
+                ),
+              )), None),
+            ],
+          ),
+        ), Sequence),
+      ]),
+    ],
+  ),
+)

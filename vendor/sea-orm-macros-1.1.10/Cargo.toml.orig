@@ -1,0 +1,38 @@
+[package]
+name = "sea-orm-macros"
+version = "1.1.10"
+authors = [ "Billy Chan <ccw.billy.123@gmail.com>" ]
+edition = "2021"
+description = "Derive macros for SeaORM"
+license = "MIT OR Apache-2.0"
+homepage = "https://www.sea-ql.org/SeaORM"
+documentation = "https://docs.rs/sea-orm"
+repository = "https://github.com/SeaQL/sea-orm"
+categories = [ "database" ]
+keywords = ["async", "orm", "mysql", "postgres", "sqlite"]
+rust-version = "1.65"
+
+[lib]
+name = "sea_orm_macros"
+path = "src/lib.rs"
+proc-macro = true
+
+[dependencies]
+bae = { version = "0.2", package = "sea-bae", default-features = false, optional = true }
+syn = { version = "2", default-features = false, features = ["parsing", "proc-macro", "derive", "printing"] }
+quote = { version = "1", default-features = false }
+heck = { version = "0.4", default-features = false }
+proc-macro2 = { version = "1", default-features = false }
+proc-macro-crate = { version = "3.2.0", optional = true }
+unicode-ident = { version = "1" }
+
+[dev-dependencies]
+sea-orm = { path = "../", features = ["macros", "tests-cfg"] }
+serde = { version = "1.0", features = ["derive"] }
+
+[features]
+default = ["derive"]
+postgres-array = []
+derive = ["bae"]
+strum = []
+seaography = ["proc-macro-crate"]

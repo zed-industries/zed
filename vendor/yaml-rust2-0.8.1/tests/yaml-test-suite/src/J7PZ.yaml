@@ -1,0 +1,52 @@
+---
+- name: Spec Example 2.26. Ordered Mappings
+  from: http://www.yaml.org/spec/1.2/spec.html#id2761780
+  tags: spec mapping tag unknown-tag
+  yaml: |
+    # The !!omap tag is one of the optional types
+    # introduced for YAML 1.1. In 1.2, it is not
+    # part of the standard tags and should not be
+    # enabled by default.
+    # Ordered maps are represented as
+    # A sequence of mappings, with
+    # each mapping having one key
+    --- !!omap
+    - Mark McGwire: 65
+    - Sammy Sosa: 63
+    - Ken Griffy: 58
+  tree: |
+    +STR
+     +DOC ---
+      +SEQ <tag:yaml.org,2002:omap>
+       +MAP
+        =VAL :Mark McGwire
+        =VAL :65
+       -MAP
+       +MAP
+        =VAL :Sammy Sosa
+        =VAL :63
+       -MAP
+       +MAP
+        =VAL :Ken Griffy
+        =VAL :58
+       -MAP
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      {
+        "Mark McGwire": 65
+      },
+      {
+        "Sammy Sosa": 63
+      },
+      {
+        "Ken Griffy": 58
+      }
+    ]
+  dump: |
+    --- !!omap
+    - Mark McGwire: 65
+    - Sammy Sosa: 63
+    - Ken Griffy: 58

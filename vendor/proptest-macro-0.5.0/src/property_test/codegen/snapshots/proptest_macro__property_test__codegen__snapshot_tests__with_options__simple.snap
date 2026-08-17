@@ -1,0 +1,47 @@
+---
+source: proptest-macro/src/property_test/codegen/mod.rs
+expression: formatted
+---
+#[test]
+fn foo() {
+    #[derive(Debug)]
+    struct FooArgs {
+        x: i32,
+    }
+    impl ::hello::world::prelude::Arbitrary for FooArgs {
+        type Parameters = ();
+        type Strategy = ::hello::world::strategy::Map<
+            ::hello::world::arbitrary::StrategyFor<(i32,)>,
+            fn((i32,)) -> Self,
+        >;
+        fn arbitrary_with((): Self::Parameters) -> Self::Strategy {
+            use ::hello::world::strategy::Strategy;
+            ::hello::world::prelude::any::<(i32,)>().prop_map(|(x,)| Self { x })
+        }
+    }
+    let config = ::hello::world::test_runner::Config {
+        test_name: Some(concat!(module_path!(), "::", stringify!(foo))),
+        source_file: Some(file!()),
+        ..::hello::world::test_runner::Config::default()
+    };
+    let mut runner = ::hello::world::test_runner::TestRunner::new(config);
+    let result = runner
+        .run(
+            &::hello::world::strategy::Strategy::prop_map(
+                ::hello::world::prelude::any::<FooArgs>(),
+                |values| {
+                    ::hello::world::sugar::NamedArguments(stringify!(FooArgs), values)
+                },
+            ),
+            |::hello::world::sugar::NamedArguments(_, FooArgs { x })| {
+                let result = {
+                    println!("{x}");
+                };
+                Ok(result)
+            },
+        );
+    match result {
+        Ok(()) => {}
+        Err(e) => panic!("{}", e),
+    }
+}

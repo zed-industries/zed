@@ -1,0 +1,104 @@
+[package]
+name = "jsonschema"
+version = "0.37.4"
+description = "JSON schema validaton library"
+keywords = ["jsonschema", "validation"]
+categories = ["web-programming"]
+readme = "../../README.md"
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[features]
+default = ["resolve-http", "resolve-file"]
+resolve-http = ["reqwest"]
+resolve-file = []
+resolve-async = [
+    "referencing/retrieve-async",
+    "reqwest/default",
+    "dep:async-trait",
+    "dep:tokio",
+]
+# Support for arbitrarily large integers and exact decimal values when parsing JSON from strings.
+arbitrary-precision = ["serde_json/arbitrary_precision", "dep:num-bigint"]
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+reqwest = { version = "0.12", features = [
+  "blocking",
+  "json",
+], default-features = false, optional = true }
+tokio = { version = "1.0", features = ["fs", "rt"], optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.3.4", features = ["wasm_js"] }
+reqwest = { version = "0.12", features = ["json"], default-features = false, optional = true }
+tokio = { version = "1.0", features = ["rt"], optional = true }
+
+[dependencies]
+ahash.workspace = true
+async-trait = { version = "0.1.86", optional = true }
+bytecount = { version = "0.6", features = ["runtime-dispatch-simd"] }
+data-encoding = "2.9"
+email_address = "0.2.9"
+fancy-regex = "0.16"
+fraction = { version = "0.15", default-features = false, features = [
+  "with-bigint",
+] }
+idna = "1.0.2"
+itoa = "1"
+num-bigint = { version = "0.4", optional = true }
+num-cmp = "0.1"
+num-traits = "0.2.19"
+percent-encoding = "2.3"
+referencing = { version = "0.37.4", path = "../jsonschema-referencing" }
+regex = "1.11.1"
+regex-syntax = "0.8.5"
+serde.workspace = true
+serde_json.workspace = true
+unicode-general-category = "1.1"
+uuid-simd = { version = "0.8", default-features = false, features = ["std", "detect"] }
+
+[dev-dependencies]
+test-case = "3"
+futures = { version = "0.3", default-features = false, features = ["std"] }
+testsuite = { package = "jsonschema-testsuite", path = "../jsonschema-testsuite" }
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dev-dependencies]
+wasm-bindgen-test = "0.3.55"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+benchmark = { path = "../benchmark/" }
+codspeed-criterion-compat = { version = "4.1", default-features = false }
+criterion = { version = "0.7", default-features = false }
+tempfile = "3.13.0"
+test-case = "3"
+tokio = { version = "1", features = ["macros", "rt"] }
+
+[lints]
+workspace = true
+
+[[bench]]
+harness = false
+name = "jsonschema"
+
+[[bench]]
+harness = false
+name = "keywords"
+
+[[bench]]
+harness = false
+name = "errors"
+
+[[bench]]
+harness = false
+name = "location"
+
+[[bench]]
+harness = false
+name = "unevaluated_properties"
+
+[[bench]]
+harness = false
+name = "unevaluated_items"

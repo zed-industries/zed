@@ -1,0 +1,95 @@
+#![allow(unused_imports)]
+#![allow(clippy::all)]
+use super::*;
+use wasm_bindgen::prelude::*;
+#[cfg(web_sys_unstable_apis)]
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(
+        extends = "::js_sys::Object",
+        js_name = "RTCEncodedVideoFrame",
+        typescript_type = "RTCEncodedVideoFrame"
+    )]
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[doc = "The `RtcEncodedVideoFrame` class."]
+    #[doc = ""]
+    #[doc = "[MDN Documentation](https://developer.mozilla.org/en-US/docs/Web/API/RTCEncodedVideoFrame)"]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `RtcEncodedVideoFrame`*"]
+    #[doc = ""]
+    #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
+    #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
+    pub type RtcEncodedVideoFrame;
+    #[cfg(web_sys_unstable_apis)]
+    #[cfg(feature = "RtcEncodedVideoFrameType")]
+    #[wasm_bindgen(method, getter, js_class = "RTCEncodedVideoFrame", js_name = "type")]
+    #[doc = "Getter for the `type` field of this object."]
+    #[doc = ""]
+    #[doc = "[MDN Documentation](https://developer.mozilla.org/en-US/docs/Web/API/RTCEncodedVideoFrame/type)"]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `RtcEncodedVideoFrame`, `RtcEncodedVideoFrameType`*"]
+    #[doc = ""]
+    #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
+    #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
+    pub fn type_(this: &RtcEncodedVideoFrame) -> RtcEncodedVideoFrameType;
+    #[cfg(web_sys_unstable_apis)]
+    #[wasm_bindgen(method, getter, js_class = "RTCEncodedVideoFrame", js_name = "data")]
+    #[doc = "Getter for the `data` field of this object."]
+    #[doc = ""]
+    #[doc = "[MDN Documentation](https://developer.mozilla.org/en-US/docs/Web/API/RTCEncodedVideoFrame/data)"]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `RtcEncodedVideoFrame`*"]
+    #[doc = ""]
+    #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
+    #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
+    pub fn data(this: &RtcEncodedVideoFrame) -> ::js_sys::ArrayBuffer;
+    #[cfg(web_sys_unstable_apis)]
+    #[wasm_bindgen(method, setter, js_class = "RTCEncodedVideoFrame", js_name = "data")]
+    #[doc = "Setter for the `data` field of this object."]
+    #[doc = ""]
+    #[doc = "[MDN Documentation](https://developer.mozilla.org/en-US/docs/Web/API/RTCEncodedVideoFrame/data)"]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `RtcEncodedVideoFrame`*"]
+    #[doc = ""]
+    #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
+    #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
+    pub fn set_data(this: &RtcEncodedVideoFrame, value: &::js_sys::ArrayBuffer);
+    #[cfg(web_sys_unstable_apis)]
+    #[wasm_bindgen(catch, constructor, js_class = "RTCEncodedVideoFrame")]
+    #[doc = "The `new RtcEncodedVideoFrame(..)` constructor, creating a new instance of `RtcEncodedVideoFrame`."]
+    #[doc = ""]
+    #[doc = "[MDN Documentation](https://developer.mozilla.org/en-US/docs/Web/API/RTCEncodedVideoFrame/RTCEncodedVideoFrame)"]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `RtcEncodedVideoFrame`*"]
+    #[doc = ""]
+    #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
+    #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
+    pub fn new(original_frame: &RtcEncodedVideoFrame) -> Result<RtcEncodedVideoFrame, JsValue>;
+    #[cfg(web_sys_unstable_apis)]
+    #[cfg(feature = "RtcEncodedVideoFrameOptions")]
+    #[wasm_bindgen(catch, constructor, js_class = "RTCEncodedVideoFrame")]
+    #[doc = "The `new RtcEncodedVideoFrame(..)` constructor, creating a new instance of `RtcEncodedVideoFrame`."]
+    #[doc = ""]
+    #[doc = "[MDN Documentation](https://developer.mozilla.org/en-US/docs/Web/API/RTCEncodedVideoFrame/RTCEncodedVideoFrame)"]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `RtcEncodedVideoFrame`, `RtcEncodedVideoFrameOptions`*"]
+    #[doc = ""]
+    #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
+    #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
+    pub fn new_with_options(
+        original_frame: &RtcEncodedVideoFrame,
+        options: &RtcEncodedVideoFrameOptions,
+    ) -> Result<RtcEncodedVideoFrame, JsValue>;
+    #[cfg(web_sys_unstable_apis)]
+    #[cfg(feature = "RtcEncodedVideoFrameMetadata")]
+    #[wasm_bindgen(method, js_class = "RTCEncodedVideoFrame", js_name = "getMetadata")]
+    #[doc = "The `getMetadata()` method."]
+    #[doc = ""]
+    #[doc = "[MDN Documentation](https://developer.mozilla.org/en-US/docs/Web/API/RTCEncodedVideoFrame/getMetadata)"]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `RtcEncodedVideoFrame`, `RtcEncodedVideoFrameMetadata`*"]
+    #[doc = ""]
+    #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
+    #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
+    pub fn get_metadata(this: &RtcEncodedVideoFrame) -> RtcEncodedVideoFrameMetadata;
+}

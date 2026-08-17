@@ -1,0 +1,6 @@
+package foo:bar;
+
+interface foo {
+  foo: func();
+  type t = borrow<foo>;
+}

@@ -1,0 +1,66 @@
+
+<svg width="1395px" height="448px" viewBox="0 0 1395 448" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <defs>
+        <linearGradient x1="55.0356976%" y1="73.5772375%" x2="4.06132959%" y2="75.1295482%" id="linearGradient-1">
+            <stop stop-color="#831662" offset="0%"></stop>
+            <stop stop-color="#C5309A" offset="100%"></stop>
+        </linearGradient>
+        <linearGradient x1="55.0356976%" y1="69.1628915%" x2="4.06132959%" y2="70.4245643%" id="linearGradient-2">
+            <stop stop-color="#831662" offset="0%"></stop>
+            <stop stop-color="#C5309A" offset="100%"></stop>
+        </linearGradient>
+        <linearGradient x1="32.2245124%" y1="88.5052261%" x2="9.22591829%" y2="88.5052261%" id="linearGradient-3">
+            <stop stop-color="#C5304D" offset="0%"></stop>
+            <stop stop-color="#C5309A" offset="100%"></stop>
+        </linearGradient>
+        <linearGradient x1="57.8152523%" y1="90.4434915%" x2="4.06132959%" y2="90.4434915%" id="linearGradient-4">
+            <stop stop-color="#2AAD82" offset="0%"></stop>
+            <stop stop-color="#1A2265" offset="100%"></stop>
+        </linearGradient>
+    </defs>
+    <g id="Page-1" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+        <rect id="Rectangle" stroke="#979797" fill="#D8D8D8" x="0.5" y="322.5" width="1394" height="125"></rect>
+        <path d="M854.827377,358 L861.172623,405" id="Line" stroke="#C5304D" stroke-width="11" stroke-linecap="square" transform="translate(858.172623, 381.500000) rotate(8.000000) translate(-858.172623, -381.500000) "></path>
+        <g id="Group" transform="translate(80.000000, 354.000000)">
+            <circle id="Oval" fill="#C5309A" cx="27" cy="27" r="27"></circle>
+            <text id="S" font-family="Helvetica" font-size="36" font-weight="normal" fill="#000000">
+                <tspan x="15" y="41">S</tspan>
+            </text>
+        </g>
+        <rect id="Rectangle" fill="#4754BA" x="0" y="161" width="1395" height="161"></rect>
+        <rect id="Rectangle" fill="#2A867E" x="0" y="0" width="1395" height="161"></rect>
+        <polyline id="Line-2" stroke="url(#linearGradient-1)" stroke-width="25" stroke-linecap="square" points="478.175781 380.76092 414.5625 380.76092 370.058594 88.4179687 315.320313 380.76092 154.283195 381 107 381"></polyline>
+        <polyline id="Line-2" stroke="url(#linearGradient-2)" stroke-width="25" stroke-linecap="square" points="1319.71394 380.342952 1303.27644 380.342952 1258.77253 88 1204.03425 380.342952 1042.99713 380.582031 908 380.582031"></polyline>
+        <polyline id="Line-2" stroke="url(#linearGradient-3)" stroke-width="25" stroke-linecap="square" points="844.175781 380.342952 780.5625 380.342952 736.058594 88 681.320313 380.342952 562.011719 381"></polyline>
+        <g id="Group-4" transform="translate(470.000000, 355.000000)">
+            <circle id="Oval" fill="#22736C" cx="27" cy="27" r="27"></circle>
+            <path d="M20.5,15 C20.5,26.1350598 20.5,26.1947111 20.5,32.3896484 C20.5,36.4265139 20.5,38.8274781 20.5,38.8274781" id="Path-10" stroke="#0E0B0B" stroke-width="6"></path>
+            <path d="M32.5,15 C32.5,26.2156828 32.5,26.275766 32.5,32.5155575 C32.5,36.5816517 32.5,39 32.5,39" id="Path-10" stroke="#0E0B0B" stroke-width="6"></path>
+        </g>
+        <g id="Group-7" transform="translate(1290.000000, 338.000000)">
+            <polygon id="Triangle" stroke="#000000" stroke-width="7" fill="#FF0000" stroke-linejoin="round" points="36 0 72 61 0 61"></polygon>
+            <text id="!" font-family="Helvetica-Bold, Helvetica" font-size="36" font-weight="bold" fill="#000000">
+                <tspan x="30" y="49">!</tspan>
+            </text>
+        </g>
+        <polyline id="Line-2" stroke="url(#linearGradient-4)" stroke-width="25" stroke-linecap="square" points="569.088363 380.342952 524.584456 88 492 262.025123"></polyline>
+        <polyline id="Line-2" stroke="url(#linearGradient-4)" stroke-width="25" stroke-linecap="square" points="908.088363 380.342952 863.584456 88 831 262.025123"></polyline>
+        <polyline id="Line-2" stroke="url(#linearGradient-4)" stroke-width="25" stroke-linecap="square" points="107.088363 380.342952 62.5844564 88 30 262.025123"></polyline>
+        <g id="Group-6" transform="translate(908.000000, 381.000000) rotate(180.000000) translate(-908.000000, -381.000000) translate(881.000000, 354.000000)">
+            <circle id="Oval" fill="#22736C" cx="27" cy="27" r="27"></circle>
+            <polygon id="Triangle" fill="#000000" transform="translate(25.500000, 26.500000) rotate(-89.000000) translate(-25.500000, -26.500000) " points="25.5 14 42 39 9 39"></polygon>
+        </g>
+        <g id="Group-5" transform="translate(80.000000, 354.000000)">
+            <circle id="Oval" fill="#C5309A" cx="27" cy="27" r="27"></circle>
+            <text id="T" font-family="Helvetica-Bold, Helvetica" font-size="36" font-weight="bold" fill="#000000">
+                <tspan x="16" y="42">T</tspan>
+            </text>
+        </g>
+        <g id="Group-5" transform="translate(542.000000, 355.000000)">
+            <circle id="Oval" fill="#C5309A" cx="27" cy="27" r="27"></circle>
+            <text id="T" font-family="Helvetica-Bold, Helvetica" font-size="36" font-weight="bold" fill="#000000">
+                <tspan x="16" y="42">T</tspan>
+            </text>
+        </g>
+    </g>
+</svg>

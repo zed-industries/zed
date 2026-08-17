@@ -1,0 +1,40 @@
+package foo:foo;
+
+interface integers {
+  a1: func(x: u8);
+  a2: func(x: s8);
+  a3: func(x: u16);
+  a4: func(x: s16);
+  a5: func(x: u32);
+  a6: func(x: s32);
+  a7: func(x: u64);
+  a8: func(x: s64);
+
+  a9: func(
+    p1: u8,
+    p2: s8,
+    p3: u16,
+    p4: s16,
+    p5: u32,
+    p6: s32,
+    p7: u64,
+    p8: s64,
+  );
+
+
+  r1: func() -> u8;
+  r2: func() -> s8;
+  r3: func() -> u16;
+  r4: func() -> s16;
+  r5: func() -> u32;
+  r6: func() -> s32;
+  r7: func() -> u64;
+  r8: func() -> s64;
+
+  pair-ret: func() -> tuple<s64, u8>;
+}
+
+world the-world {
+  import integers;
+  export integers;
+}

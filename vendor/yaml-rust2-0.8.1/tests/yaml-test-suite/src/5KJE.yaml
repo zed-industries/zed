@@ -1,0 +1,38 @@
+---
+- name: Spec Example 7.13. Flow Sequence
+  from: http://www.yaml.org/spec/1.2/spec.html#id2790506
+  tags: spec flow sequence
+  yaml: |
+    - [ one, two, ]
+    - [three ,four]
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       +SEQ []
+        =VAL :one
+        =VAL :two
+       -SEQ
+       +SEQ []
+        =VAL :three
+        =VAL :four
+       -SEQ
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      [
+        "one",
+        "two"
+      ],
+      [
+        "three",
+        "four"
+      ]
+    ]
+  dump: |
+    - - one
+      - two
+    - - three
+      - four

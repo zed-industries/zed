@@ -1,0 +1,20 @@
+package foo:foo;
+
+interface shared1 {
+  type t1 = u8;
+}
+
+interface shared2 {
+  type t2 = u8;
+}
+
+world w1 {
+  import shared1;
+  import foo: interface {
+    use shared1.{t1};
+  }
+  import shared2;
+  import bar: interface {
+    use shared2.{t2};
+  }
+}

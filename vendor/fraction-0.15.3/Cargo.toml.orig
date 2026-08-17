@@ -1,0 +1,64 @@
+[package]
+name = "fraction"
+version = "0.15.3"
+authors = ["dnsl48 <dnsl48@gmail.com>"]
+
+description = "Lossless fractions and decimals; drop-in float replacement"
+keywords = ["fraction", "decimal", "float", "numeric"]
+categories = ["data-structures"]
+
+license = "MIT/Apache-2.0"
+
+homepage = "https://github.com/dnsl48/fraction.git"
+repository = "https://github.com/dnsl48/fraction.git"
+readme = "README.md"
+
+documentation = "https://docs.rs/fraction/"
+
+
+exclude = ["src/tests/division/*"]
+
+
+[package.metadata.docs.rs]
+all-features = true
+
+[profile.test]
+opt-level = 3
+
+[dependencies]
+
+num = { version = "0.4.2", default-features = false }
+
+byteorder = { version = "1", optional = true }
+bytes = { version = "1", optional = true }
+postgres-types = { version = "0.2", optional = true }
+
+serde = { version = "1", optional = true }
+serde_derive = { version = "1", optional = true }
+
+juniper = { version = "0.15", optional = true }
+
+lazy_static = { version = "1", optional = true }
+
+
+[features]
+default = ["with-bigint", "with-decimal", "with-dynaint"]
+
+with-bigint = ["num/num-bigint", "num/std", "lazy_static"]
+with-decimal = []
+with-dynaint = []
+with-approx = ["with-bigint"]
+
+with-juniper-support = ["juniper"]
+with-postgres-support = ["postgres-types", "byteorder", "bytes"]
+with-serde-support = ["serde", "serde_derive", "num/serde"]
+
+with-unicode = []
+
+[dev-dependencies]
+criterion = "0.4"
+rand = "0.8.5"
+
+[[bench]]
+name = "bench_fraction"
+harness = false

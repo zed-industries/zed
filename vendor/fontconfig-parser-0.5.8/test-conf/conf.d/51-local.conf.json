@@ -1,0 +1,12 @@
+[
+  {
+    "Description": "Load local customization file"
+  },
+  {
+    "Include": {
+      "prefix": "Default",
+      "ignore_missing": true,
+      "path": "local.conf"
+    }
+  }
+]

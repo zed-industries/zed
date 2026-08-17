@@ -1,0 +1,28 @@
+[tasks.coverage]
+dependencies = ["codecov-clean"]
+env = { "CARGO_INCREMENTAL" = "0", "RUSTFLAGS" = "-Zprofile -Ccodegen-units=1 -Copt-level=0 -Clink-dead-code -Coverflow-checks=off -Zpanic_abort_tests -Cpanic=abort", "RUSTDOCFLAGS" = "-Cpanic=abort" }
+run_task = "codecov-grcov"
+
+[tasks.codecov-grcov]
+dependencies = ["codecov-build", "codecov-test"]
+command = "grcov"
+args = [".", "-s", ".", "--binary-path", "./target/debug/", "-t",  "html", "--branch", "--ignore-not-existing", "-o", "./target/debug/coverage/"]
+
+[tasks.codecov-open]
+command = "open"
+args = [ "./target/debug/coverage/index.html" ]
+
+[tasks.codecov-clean]
+toolchain = "nightly"
+command = "cargo"
+args = [ "clean" ]
+
+[tasks.codecov-build]
+toolchain = "nightly"
+command = "cargo"
+args = [ "build", "-p", "rust_decimal", "--features=default" ]
+
+[tasks.codecov-test]
+toolchain = "nightly"
+command = "cargo"
+args = [ "test", "-p", "rust_decimal", "--features=default"  ]

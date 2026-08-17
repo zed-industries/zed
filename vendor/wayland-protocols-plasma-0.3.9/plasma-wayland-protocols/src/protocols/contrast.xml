@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="contrast">
+  <copyright><![CDATA[
+    SPDX-FileCopyrightText: 2015 Martin Gräßlin
+    SPDX-FileCopyrightText: 2015 Marco Martin
+
+    SPDX-License-Identifier: LGPL-2.1-or-later
+  ]]></copyright>
+  <interface name="org_kde_kwin_contrast_manager" version="2">
+      <request name="create">
+          <arg name="id" type="new_id" interface="org_kde_kwin_contrast"/>
+          <arg name="surface" type="object" interface="wl_surface"/>
+      </request>
+      <request name="unset">
+          <arg name="surface" type="object" interface="wl_surface"/>
+      </request>
+  </interface>
+  <interface name="org_kde_kwin_contrast" version="2">
+      <request name="commit">
+      </request>
+      <request name="set_region">
+        <arg name="region" type="object" interface="wl_region" allow-null="true"/>
+      </request>
+      <request name="set_contrast">
+        <arg name="contrast" type="fixed"/>
+      </request>
+      <request name="set_intensity">
+        <arg name="intensity" type="fixed"/>
+      </request>
+      <request name="set_saturation">
+        <arg name="saturation" type="fixed"/>
+      </request>
+      <request name="release" type="destructor">
+        <description summary="release the contrast object"/>
+      </request>
+
+      <request name="set_frost" since="2">
+        <description summary="opt into frost effect w/ given colour">
+          enables 'frost' variant of contrast effect.
+
+          'frost' is an enhanced version of the contrast effect that
+          uses different colour arithmetic to get backgrounds simultaneously
+          higher in contrast and (apparent) transparency.
+
+          r, g, b, a are channels from 0-255, indicating a colour to use in contrast calculation.
+          should be based off of the "main" background colour of the surface.
+        </description>
+
+        <arg name="red" type="int" />
+        <arg name="green" type="int" />
+        <arg name="blue" type="int" />
+        <arg name="alpha" type="int" />
+      </request>
+      <request name="unset_frost" since="2">
+        <description summary="opts out of frost effect" />
+      </request>
+  </interface>
+</protocol>

@@ -1,0 +1,12 @@
+package foo:bar;
+
+interface foo {
+  resource a;
+}
+
+world module {
+  import foo;
+  use foo.{a};
+
+  export foo;
+}

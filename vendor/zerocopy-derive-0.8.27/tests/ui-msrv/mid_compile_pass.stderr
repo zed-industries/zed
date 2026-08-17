@@ -1,0 +1,97 @@
+error[E0277]: the trait bound `T: KnownLayout` is not satisfied
+  --> tests/ui-msrv/mid_compile_pass.rs:59:26
+   |
+59 | fn test_kl13<T>(t: T) -> impl KnownLayout {
+   |                          ^^^^^^^^^^^^^^^^ the trait `KnownLayout` is not implemented for `T`
+   |
+note: required because of the requirements on the impl of `KnownLayout` for `KL13<T>`
+  --> tests/ui-msrv/mid_compile_pass.rs:55:10
+   |
+55 | #[derive(KnownLayout)]
+   |          ^^^^^^^^^^^
+   = note: this error originates in the derive macro `KnownLayout` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider restricting type parameter `T`
+   |
+59 | fn test_kl13<T: zerocopy::KnownLayout>(t: T) -> impl KnownLayout {
+   |               +++++++++++++++++++++++
+
+error[E0277]: the size for values of type `T` cannot be known at compilation time
+  --> tests/ui-msrv/mid_compile_pass.rs:31:15
+   |
+30 | fn test_kl04<T: ?Sized>(kl: &KL04<T>) {
+   |              - this type parameter needs to be `std::marker::Sized`
+31 |     assert_kl(kl);
+   |               ^^ doesn't have a size known at compile-time
+   |
+note: required because it appears within the type `KL04<T>`
+  --> tests/ui-msrv/mid_compile_pass.rs:28:8
+   |
+28 | struct KL04<T: ?Sized>(u8, T);
+   |        ^^^^
+note: required because of the requirements on the impl of `KnownLayout` for `KL04<T>`
+  --> tests/ui-msrv/mid_compile_pass.rs:27:10
+   |
+27 | #[derive(KnownLayout)]
+   |          ^^^^^^^^^^^
+note: required by a bound in `assert_kl`
+  --> tests/ui-msrv/mid_compile_pass.rs:23:26
+   |
+23 | fn assert_kl<T: ?Sized + KnownLayout>(_: &T) {}
+   |                          ^^^^^^^^^^^ required by this bound in `assert_kl`
+   = note: this error originates in the derive macro `KnownLayout` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider removing the `?Sized` bound to make the type parameter `Sized`
+   |
+30 - fn test_kl04<T: ?Sized>(kl: &KL04<T>) {
+30 + fn test_kl04<T>(kl: &KL04<T>) {
+   |
+
+error[E0277]: the size for values of type `T` cannot be known at compilation time
+  --> tests/ui-msrv/mid_compile_pass.rs:40:15
+   |
+39 | fn test_kl06<T: ?Sized + KnownLayout>(kl: &KL06<T>) {
+   |              - this type parameter needs to be `std::marker::Sized`
+40 |     assert_kl(kl);
+   |               ^^ doesn't have a size known at compile-time
+   |
+note: required because it appears within the type `KL06<T>`
+  --> tests/ui-msrv/mid_compile_pass.rs:37:8
+   |
+37 | struct KL06<T: ?Sized + KnownLayout>(u8, T);
+   |        ^^^^
+note: required because of the requirements on the impl of `KnownLayout` for `KL06<T>`
+  --> tests/ui-msrv/mid_compile_pass.rs:36:10
+   |
+36 | #[derive(KnownLayout)]
+   |          ^^^^^^^^^^^
+note: required by a bound in `assert_kl`
+  --> tests/ui-msrv/mid_compile_pass.rs:23:26
+   |
+23 | fn assert_kl<T: ?Sized + KnownLayout>(_: &T) {}
+   |                          ^^^^^^^^^^^ required by this bound in `assert_kl`
+   = note: this error originates in the derive macro `KnownLayout` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider removing the `?Sized` bound to make the type parameter `Sized`
+   |
+39 - fn test_kl06<T: ?Sized + KnownLayout>(kl: &KL06<T>) {
+39 + fn test_kl06<T: KnownLayout>(kl: &KL06<T>) {
+   |
+
+error[E0277]: the trait bound `T: KnownLayout` is not satisfied
+  --> tests/ui-msrv/mid_compile_pass.rs:50:15
+   |
+50 |     assert_kl(kl)
+   |               ^^
+   |               |
+   |               expected an implementor of trait `KnownLayout`
+   |               help: consider borrowing here: `&kl`
+   |
+note: required because of the requirements on the impl of `KnownLayout` for `KL12<T>`
+  --> tests/ui-msrv/mid_compile_pass.rs:45:10
+   |
+45 | #[derive(KnownLayout)]
+   |          ^^^^^^^^^^^
+note: required by a bound in `assert_kl`
+  --> tests/ui-msrv/mid_compile_pass.rs:23:26
+   |
+23 | fn assert_kl<T: ?Sized + KnownLayout>(_: &T) {}
+   |                          ^^^^^^^^^^^ required by this bound in `assert_kl`
+   = note: this error originates in the derive macro `KnownLayout` (in Nightly builds, run with -Z macro-backtrace for more info)

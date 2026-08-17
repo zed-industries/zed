@@ -1,0 +1,5 @@
+architecture-beta
+  group api(icon)[API]
+  service web(icon)[Web] in api
+  service db(icon)[DB] in api
+  web:R --> L:db

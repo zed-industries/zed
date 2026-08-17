@@ -1,0 +1,40 @@
+<html>
+<header>
+<title>
+  FreeType&nbsp;2 Project Files for Visual&nbsp;C++&nbsp;2010 or newer
+</title>
+
+<body>
+<h1>
+  FreeType&nbsp;2 Project Files for Visual&nbsp;C++&nbsp;2010 or newer
+</h1>
+
+<p>This directory contains solution and project files for
+Visual&nbsp;C++&nbsp;2010 or newer, named <tt>freetype.sln</tt>,
+and <tt>freetype.vcxproj</tt>.  It compiles the following libraries
+from the FreeType 2.13.2 sources:</p>
+
+<ul>
+  <li>freetype.dll using 'Release' or 'Debug' configurations</li>
+  <li>freetype.lib using 'Release Static' or 'Debug Static' configurations</li>
+</ul>
+
+<p>Both Win32 and x64 builds are supported.  Build directories and target
+files are placed in the top-level <tt>objs</tt> directory.</p>
+
+<p>Customization of the FreeType library is done by editing the
+<tt>ftoption.h</tt> header file in the top-level <tt>devel</tt> path.
+Alternatively, you may copy the file to another directory and change the
+include directory in <tt>freetype.users.props</tt>.</p>
+
+<p>To configure library dependencies like <em>zlib</em> and <em>libpng</em>,
+edit the <tt>freetype.users.props</tt> file in this directory.  It also
+simplifies automated (command-line) builds using <a
+href="https://msdn.microsoft.com/library/dd393574%28v=vs.100%29.aspx">msbuild</a>.</p>
+
+<p>To link your executable with FreeType DLL, you may want to define
+DLL_IMPORT so that the imported functions are appropriately
+attributed with <tt>dllimport<tt>.</p>
+
+</body>
+</html>

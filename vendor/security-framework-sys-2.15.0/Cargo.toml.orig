@@ -1,0 +1,38 @@
+[package]
+name = "security-framework-sys"
+version = "2.15.0"
+authors = ["Steven Fackler <sfackler@gmail.com>", "Kornel <kornel@geekhood.net>"]
+license = "MIT OR Apache-2.0"
+description = "Apple `Security.framework` low-level FFI bindings"
+repository = "https://github.com/kornelski/rust-security-framework"
+homepage = "https://lib.rs/crates/security-framework-sys"
+readme = "README.md"
+keywords = ["ffi", "iOS", "TLS", "SSL", "crypto"]
+categories = ["os::macos-apis", "external-ffi-bindings"]
+edition = "2021"
+rust-version = "1.66"
+
+[dependencies]
+core-foundation-sys = "0.8.6"
+libc = "0.2.150"
+
+[features]
+default = ["OSX_10_12"]
+# Always enabled. No-op.
+OSX_10_9 = []
+# Always enabled. No-op.
+OSX_10_10 = ["OSX_10_9"]
+OSX_10_11 = ["OSX_10_10"]
+OSX_10_12 = ["OSX_10_11"]
+OSX_10_13 = ["OSX_10_12"]
+OSX_10_14 = ["OSX_10_13"]
+OSX_10_15 = ["OSX_10_14"]
+
+[package.metadata.docs.rs]
+targets = ["x86_64-apple-darwin", "aarch64-apple-ios"]
+
+[badges]
+maintenance = { status = "looking-for-maintainer" }
+
+[lints]
+workspace = true

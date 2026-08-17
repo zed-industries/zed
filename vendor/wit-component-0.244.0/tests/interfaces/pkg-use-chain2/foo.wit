@@ -1,0 +1,5 @@
+package foo:foo;
+
+interface foo {
+  use bar.{the-name};
+}

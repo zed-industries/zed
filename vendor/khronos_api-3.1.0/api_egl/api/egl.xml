@@ -1,0 +1,3122 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<registry>
+    <!--
+    Copyright (c) 2013-2017 The Khronos Group Inc.
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and/or associated documentation files (the
+    "Materials"), to deal in the Materials without restriction, including
+    without limitation the rights to use, copy, modify, merge, publish,
+    distribute, sublicense, and/or sell copies of the Materials, and to
+    permit persons to whom the Materials are furnished to do so, subject to
+    the following conditions:
+
+    The above copyright notice and this permission notice shall be included
+    in all copies or substantial portions of the Materials.
+
+    THE MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+    EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+    MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+    IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+    CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+    TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+    MATERIALS OR THE USE OR OTHER DEALINGS IN THE MATERIALS.
+    -->
+    <!--
+    This file, egl.xml, is the EGL API Registry. The older ".spec" file
+    format has been retired and will no longer be updated with new
+    extensions and API versions. The canonical version of the registry,
+    together with documentation, schema, and Python generator scripts used
+    to generate C header files for EGL, can be found in the Khronos Registry
+    at
+        https://www.github.com/KhronosGroup/EGL-Registry
+    -->
+
+    <!-- SECTION: EGL type definitions. Does not include GL types. -->
+    <types>
+            <!-- These are dependencies EGL types require to be declared legally -->
+        <type name="khrplatform">#include &lt;KHR/khrplatform.h&gt;</type>
+        <type name="eglplatform" requires="khrplatform">#include &lt;EGL/eglplatform.h&gt;</type>
+        <type name="khronos_utime_nanoseconds_t" requires="khrplatform"/>
+        <type name="khronos_stime_nanoseconds_t" requires="khrplatform"/>
+        <type name="khronos_uint64_t" requires="khrplatform"/>
+        <type name="khronos_ssize_t" requires="khrplatform"/>
+        <type name="EGLNativeDisplayType" requires="eglplatform"/>
+        <type name="EGLNativePixmapType" requires="eglplatform"/>
+        <type name="EGLNativeWindowType" requires="eglplatform"/>
+        <type name="EGLint" requires="eglplatform"/>
+        <type name="NativeDisplayType" requires="eglplatform"/>
+        <type name="NativePixmapType" requires="eglplatform"/>
+        <type name="NativeWindowType" requires="eglplatform"/>
+        <type>struct <name>AHardwareBuffer</name>;</type>
+        <!-- Dummy placeholders for non-EGL types -->
+        <type name="Bool"/>
+            <!-- These are actual EGL types.  -->
+        <type>typedef unsigned int <name>EGLBoolean</name>;</type>
+        <type>typedef unsigned int <name>EGLenum</name>;</type>
+        <type requires="khrplatform">typedef intptr_t <name>EGLAttribKHR</name>;</type>
+        <type requires="khrplatform">typedef intptr_t <name>EGLAttrib</name>;</type>
+        <type>typedef void *<name>EGLClientBuffer</name>;</type>
+        <type>typedef void *<name>EGLConfig</name>;</type>
+        <type>typedef void *<name>EGLContext</name>;</type>
+        <type>typedef void *<name>EGLDeviceEXT</name>;</type>
+        <type>typedef void *<name>EGLDisplay</name>;</type>
+        <type>typedef void *<name>EGLImage</name>;</type>
+        <type>typedef void *<name>EGLImageKHR</name>;</type>
+        <type>typedef void *<name>EGLLabelKHR</name>;</type>
+        <type>typedef void *<name>EGLObjectKHR</name>;</type>
+        <type>typedef void *<name>EGLOutputLayerEXT</name>;</type>
+        <type>typedef void *<name>EGLOutputPortEXT</name>;</type>
+        <type>typedef void *<name>EGLStreamKHR</name>;</type>
+        <type>typedef void *<name>EGLSurface</name>;</type>
+        <type>typedef void *<name>EGLSync</name>;</type>
+        <type>typedef void *<name>EGLSyncKHR</name>;</type>
+        <type>typedef void *<name>EGLSyncNV</name>;</type>
+        <type>typedef void (*<name>__eglMustCastToProperFunctionPointerType</name>)(void);</type>
+        <type requires="khrplatform">typedef khronos_utime_nanoseconds_t <name>EGLTimeKHR</name>;</type>
+        <type requires="khrplatform">typedef khronos_utime_nanoseconds_t <name>EGLTime</name>;</type>
+        <type requires="khrplatform">typedef khronos_utime_nanoseconds_t <name>EGLTimeNV</name>;</type>
+        <type requires="khrplatform">typedef khronos_utime_nanoseconds_t <name>EGLuint64NV</name>;</type>
+        <type requires="khrplatform">typedef khronos_uint64_t <name>EGLuint64KHR</name>;</type>
+        <type requires="khrplatform">typedef khronos_stime_nanoseconds_t <name>EGLnsecsANDROID</name>;</type>
+        <type>typedef int <name>EGLNativeFileDescriptorKHR</name>;</type>
+        <type requires="khrplatform">typedef khronos_ssize_t <name>EGLsizeiANDROID</name>;</type>
+        <type requires="EGLsizeiANDROID">typedef void (*<name>EGLSetBlobFuncANDROID</name>) (const void *key, EGLsizeiANDROID keySize, const void *value, EGLsizeiANDROID valueSize);</type>
+        <type requires="EGLsizeiANDROID">typedef EGLsizeiANDROID (*<name>EGLGetBlobFuncANDROID</name>) (const void *key, EGLsizeiANDROID keySize, void *value, EGLsizeiANDROID valueSize);</type>
+        <type>struct <name>EGLClientPixmapHI</name> {
+    void  *pData;
+    EGLint iWidth;
+    EGLint iHeight;
+    EGLint iStride;
+};</type>
+        <type>typedef void (<apientry/> *<name>EGLDEBUGPROCKHR</name>)(EGLenum error,const char *command,EGLint messageType,EGLLabelKHR threadLabel,EGLLabelKHR objectLabel,const char* message);</type>
+    </types>
+
+    <!-- SECTION: EGL enumerant (token) definitions. -->
+
+    <!-- Bitmasks each have their own namespace, as do a few other
+         categories of enumeration -->
+
+    <enums namespace="EGLSurfaceTypeMask" type="bitmask" comment="EGL_SURFACE_TYPE bits">
+        <enum value="0x0001" name="EGL_PBUFFER_BIT"/>
+        <enum value="0x0002" name="EGL_PIXMAP_BIT"/>
+        <enum value="0x0004" name="EGL_WINDOW_BIT"/>
+        <enum value="0x0008" name="EGL_PBUFFER_IMAGE_BIT_TAO" comment="Unreleased TAO extension"/>
+        <enum value="0x0010" name="EGL_PBUFFER_PALETTE_IMAGE_BIT_TAO" comment="Unreleased TAO extension"/>
+        <enum value="0x0020" name="EGL_VG_COLORSPACE_LINEAR_BIT"/>
+        <enum value="0x0020" name="EGL_VG_COLORSPACE_LINEAR_BIT_KHR"/>
+        <enum value="0x0040" name="EGL_VG_ALPHA_FORMAT_PRE_BIT"/>
+        <enum value="0x0040" name="EGL_VG_ALPHA_FORMAT_PRE_BIT_KHR"/>
+        <enum value="0x0080" name="EGL_LOCK_SURFACE_BIT_KHR"/>
+        <enum value="0x0100" name="EGL_OPTIMAL_FORMAT_BIT_KHR"/>
+        <enum value="0x0200" name="EGL_MULTISAMPLE_RESOLVE_BOX_BIT"/>
+        <enum value="0x0400" name="EGL_SWAP_BEHAVIOR_PRESERVED_BIT"/>
+        <enum value="0x0800" name="EGL_STREAM_BIT_KHR"/>
+            <!--
+        <enum value="0x0800"      name="EGL_STREAM_BIT_NV" comment="Draft EGL_NV_stream_producer_eglsurface extension (bug 8064)"/>
+            -->
+        <enum value="0x1000" name="EGL_MUTABLE_RENDER_BUFFER_BIT_KHR"/>
+    </enums>
+
+    <enums namespace="EGLRenderableTypeMask" type="bitmask" comment="EGL_RENDERABLE_TYPE bits">
+        <enum value="0x0001" name="EGL_OPENGL_ES_BIT"/>
+        <enum value="0x0002" name="EGL_OPENVG_BIT"/>
+        <enum value="0x0004" name="EGL_OPENGL_ES2_BIT"/>
+        <enum value="0x0008" name="EGL_OPENGL_BIT"/>
+        <enum value="0x0010" name="EGL_INTEROP_BIT_KHR" comment="EGL_KHR_interop"/>
+        <enum value="0x0020" name="EGL_OPENMAX_IL_BIT_KHR" comment="EGL_KHR_interop"/>
+        <enum value="0x00000040" name="EGL_OPENGL_ES3_BIT"/>
+        <enum value="0x00000040" name="EGL_OPENGL_ES3_BIT_KHR" alias="EGL_OPENGL_ES3_BIT"/>
+    </enums>
+
+    <enums namespace="EGLLockUsageHintKHRMask" type="bitmask" comment="EGL_LOCK_USAGE_HINT_KHR bits">
+        <enum value="0x0001" name="EGL_READ_SURFACE_BIT_KHR"/>
+        <enum value="0x0002" name="EGL_WRITE_SURFACE_BIT_KHR"/>
+    </enums>
+
+    <enums namespace="EGLNativeBufferUsageFlags" type="bitmask" comment="EGL_NATIVE_BUFFER_USAGE_ANDROID bits">
+        <enum value="0x00000001" name="EGL_NATIVE_BUFFER_USAGE_PROTECTED_BIT_ANDROID"/>
+        <enum value="0x00000002" name="EGL_NATIVE_BUFFER_USAGE_RENDERBUFFER_BIT_ANDROID"/>
+        <enum value="0x00000004" name="EGL_NATIVE_BUFFER_USAGE_TEXTURE_BIT_ANDROID"/>
+    </enums>
+
+    <enums namespace="EGLSyncFlagsKHR" type="bitmask" comment="Fence/reusable sync wait bits">
+        <enum value="0x0001" name="EGL_SYNC_FLUSH_COMMANDS_BIT"/>
+        <enum value="0x0001" name="EGL_SYNC_FLUSH_COMMANDS_BIT_KHR" alias="EGL_SYNC_FLUSH_COMMANDS_BIT"/>
+        <enum value="0x0001" name="EGL_SYNC_FLUSH_COMMANDS_BIT_NV" alias="EGL_SYNC_FLUSH_COMMANDS_BIT"/>
+    </enums>
+
+    <enums namespace="EGLDRMBufferUseMESAMask" type="bitmask" comment="EGL_DRM_BUFFER_USE_MESA bits">
+        <enum value="0x00000001" name="EGL_DRM_BUFFER_USE_SCANOUT_MESA"/>
+        <enum value="0x00000002" name="EGL_DRM_BUFFER_USE_SHARE_MESA"/>
+        <enum value="0x00000004" name="EGL_DRM_BUFFER_USE_CURSOR_MESA"/>
+    </enums>
+
+    <!-- Should be shared with GL, but aren't aren't since the
+         FORWARD_COMPATIBLE and DEBUG_BIT values are swapped in the
+         corresponding GL enums. Oops :-( -->
+    <enums namespace="EGLContextFlagMask" type="bitmask" comment="EGL_CONTEXT_FLAGS_KHR bits">
+        <enum value="0x00000001" name="EGL_CONTEXT_OPENGL_DEBUG_BIT_KHR"/>
+        <enum value="0x00000002" name="EGL_CONTEXT_OPENGL_FORWARD_COMPATIBLE_BIT_KHR"/>
+        <enum value="0x00000004" name="EGL_CONTEXT_OPENGL_ROBUST_ACCESS_BIT_KHR"/>
+    </enums>
+
+    <enums namespace="EGLContextProfileMask" type="bitmask" comment="Shared with GL">
+        <enum value="0x00000001" name="EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT"/>
+        <enum value="0x00000001" name="EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT_KHR" alias="EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT"/>
+        <enum value="0x00000002" name="EGL_CONTEXT_OPENGL_COMPATIBILITY_PROFILE_BIT"/>
+        <enum value="0x00000002" name="EGL_CONTEXT_OPENGL_COMPATIBILITY_PROFILE_BIT_KHR" alias="EGL_CONTEXT_OPENGL_COMPATIBILITY_PROFILE_BIT"/>
+    </enums>
+
+    <!-- The default ("API") enum namespace starts here. While some
+         assigned values may overlap, and different parts of the
+         namespace are reserved for different purposes, it is a single
+         namespace. The "class" attribute indicates some of the reserved
+         purposes but is by no means complete (and cannot be, since many
+         tokens are reused for different purposes in different
+         extensions and API versions). -->
+
+    <enums namespace="EGL" start="0x0000" end="0x2FFF" vendor="KHR" comment="Reserved for enumerants shared with WGL, GLX, and GL">
+        <enum value="0" name="EGL_CONTEXT_RELEASE_BEHAVIOR_NONE_KHR"/>
+        <enum value="0x2097" name="EGL_CONTEXT_RELEASE_BEHAVIOR_KHR"/>
+        <enum value="0x2098" name="EGL_CONTEXT_RELEASE_BEHAVIOR_FLUSH_KHR"/>
+    </enums>
+
+    <enums namespace="EGL" group="Boolean" vendor="ARB">
+        <enum value="0" name="EGL_FALSE"/>
+        <enum value="1" name="EGL_TRUE"/>
+    </enums>
+
+    <enums namespace="EGL" group="SpecialNumbers" vendor="ARB" comment="Tokens whose numeric value is intrinsically meaningful">
+        <enum value="EGL_CAST(EGLint,-1)" name="EGL_DONT_CARE"/>
+        <enum value="EGL_CAST(EGLint,-1)" name="EGL_UNKNOWN"/>
+        <enum value="-1" name="EGL_NO_NATIVE_FENCE_FD_ANDROID"/>
+        <enum value="0" name="EGL_DEPTH_ENCODING_NONE_NV"/>
+        <enum value="EGL_CAST(EGLContext,0)" name="EGL_NO_CONTEXT"/>
+        <enum value="EGL_CAST(EGLDeviceEXT,0)" name="EGL_NO_DEVICE_EXT"/>
+        <enum value="EGL_CAST(EGLDisplay,0)" name="EGL_NO_DISPLAY"/>
+        <enum value="EGL_CAST(EGLImage,0)" name="EGL_NO_IMAGE"/>
+        <enum value="EGL_CAST(EGLImageKHR,0)" name="EGL_NO_IMAGE_KHR"/>
+        <enum value="EGL_CAST(EGLNativeDisplayType,0)" name="EGL_DEFAULT_DISPLAY"/>
+        <enum value="EGL_CAST(EGLNativeFileDescriptorKHR,-1)" name="EGL_NO_FILE_DESCRIPTOR_KHR"/>
+        <enum value="EGL_CAST(EGLOutputLayerEXT,0)" name="EGL_NO_OUTPUT_LAYER_EXT"/>
+        <enum value="EGL_CAST(EGLOutputPortEXT,0)" name="EGL_NO_OUTPUT_PORT_EXT"/>
+        <enum value="EGL_CAST(EGLStreamKHR,0)" name="EGL_NO_STREAM_KHR"/>
+        <enum value="EGL_CAST(EGLSurface,0)" name="EGL_NO_SURFACE"/>
+        <enum value="EGL_CAST(EGLSync,0)" name="EGL_NO_SYNC"/>
+        <enum value="EGL_CAST(EGLSyncKHR,0)" name="EGL_NO_SYNC_KHR" alias="EGL_NO_SYNC"/>
+        <enum value="EGL_CAST(EGLSyncNV,0)" name="EGL_NO_SYNC_NV" alias="EGL_NO_SYNC"/>
+        <enum value="EGL_CAST(EGLConfig,0)" name="EGL_NO_CONFIG_KHR"/>
+        <enum value="10000" name="EGL_DISPLAY_SCALING"/>
+        <enum value="0xFFFFFFFFFFFFFFFF" name="EGL_FOREVER" type="ull"/>
+        <enum value="0xFFFFFFFFFFFFFFFF" name="EGL_FOREVER_KHR" type="ull" alias="EGL_FOREVER"/>
+        <enum value="0xFFFFFFFFFFFFFFFF" name="EGL_FOREVER_NV" type="ull" alias="EGL_FOREVER"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x3000" end="0x305F" vendor="KHR">
+        <enum value="0x3000" name="EGL_SUCCESS"/>
+        <enum value="0x3001" name="EGL_NOT_INITIALIZED"/>
+        <enum value="0x3002" name="EGL_BAD_ACCESS"/>
+        <enum value="0x3003" name="EGL_BAD_ALLOC"/>
+        <enum value="0x3004" name="EGL_BAD_ATTRIBUTE"/>
+        <enum value="0x3005" name="EGL_BAD_CONFIG"/>
+        <enum value="0x3006" name="EGL_BAD_CONTEXT"/>
+        <enum value="0x3007" name="EGL_BAD_CURRENT_SURFACE"/>
+        <enum value="0x3008" name="EGL_BAD_DISPLAY"/>
+        <enum value="0x3009" name="EGL_BAD_MATCH"/>
+        <enum value="0x300A" name="EGL_BAD_NATIVE_PIXMAP"/>
+        <enum value="0x300B" name="EGL_BAD_NATIVE_WINDOW"/>
+        <enum value="0x300C" name="EGL_BAD_PARAMETER"/>
+        <enum value="0x300D" name="EGL_BAD_SURFACE"/>
+        <enum value="0x300E" name="EGL_CONTEXT_LOST"/>
+            <unused start="0x300F" end="0x301F" comment="for additional errors"/>
+        <enum value="0x3020" name="EGL_BUFFER_SIZE"/>
+        <enum value="0x3021" name="EGL_ALPHA_SIZE"/>
+        <enum value="0x3022" name="EGL_BLUE_SIZE"/>
+        <enum value="0x3023" name="EGL_GREEN_SIZE"/>
+        <enum value="0x3024" name="EGL_RED_SIZE"/>
+        <enum value="0x3025" name="EGL_DEPTH_SIZE"/>
+        <enum value="0x3026" name="EGL_STENCIL_SIZE"/>
+        <enum value="0x3027" name="EGL_CONFIG_CAVEAT"/>
+        <enum value="0x3028" name="EGL_CONFIG_ID"/>
+        <enum value="0x3029" name="EGL_LEVEL"/>
+        <enum value="0x302A" name="EGL_MAX_PBUFFER_HEIGHT"/>
+        <enum value="0x302B" name="EGL_MAX_PBUFFER_PIXELS"/>
+        <enum value="0x302C" name="EGL_MAX_PBUFFER_WIDTH"/>
+        <enum value="0x302D" name="EGL_NATIVE_RENDERABLE"/>
+        <enum value="0x302E" name="EGL_NATIVE_VISUAL_ID"/>
+        <enum value="0x302F" name="EGL_NATIVE_VISUAL_TYPE"/>
+        <enum value="0x3031" name="EGL_SAMPLES"/>
+        <enum value="0x3032" name="EGL_SAMPLE_BUFFERS"/>
+        <enum value="0x3033" name="EGL_SURFACE_TYPE"/>
+        <enum value="0x3034" name="EGL_TRANSPARENT_TYPE"/>
+        <enum value="0x3035" name="EGL_TRANSPARENT_BLUE_VALUE"/>
+        <enum value="0x3036" name="EGL_TRANSPARENT_GREEN_VALUE"/>
+        <enum value="0x3037" name="EGL_TRANSPARENT_RED_VALUE"/>
+        <enum value="0x3038" name="EGL_NONE" comment="Attribute list terminator"/>
+        <enum value="0x3039" name="EGL_BIND_TO_TEXTURE_RGB"/>
+        <enum value="0x303A" name="EGL_BIND_TO_TEXTURE_RGBA"/>
+        <enum value="0x303B" name="EGL_MIN_SWAP_INTERVAL"/>
+        <enum value="0x303C" name="EGL_MAX_SWAP_INTERVAL"/>
+        <enum value="0x303D" name="EGL_LUMINANCE_SIZE"/>
+        <enum value="0x303E" name="EGL_ALPHA_MASK_SIZE"/>
+        <enum value="0x303F" name="EGL_COLOR_BUFFER_TYPE"/>
+        <enum value="0x3040" name="EGL_RENDERABLE_TYPE"/>
+        <enum value="0x3041" name="EGL_MATCH_NATIVE_PIXMAP"/>
+        <enum value="0x3042" name="EGL_CONFORMANT"/>
+        <enum value="0x3042" name="EGL_CONFORMANT_KHR"/>
+        <enum value="0x3043" name="EGL_MATCH_FORMAT_KHR"/>
+            <unused start="0x3044" end="0x304F" comment="for additional config attributes"/>
+        <enum value="0x3050" name="EGL_SLOW_CONFIG"/>
+        <enum value="0x3051" name="EGL_NON_CONFORMANT_CONFIG"/>
+        <enum value="0x3052" name="EGL_TRANSPARENT_RGB"/>
+        <enum value="0x3053" name="EGL_VENDOR"/>
+        <enum value="0x3054" name="EGL_VERSION"/>
+        <enum value="0x3055" name="EGL_EXTENSIONS"/>
+        <enum value="0x3056" name="EGL_HEIGHT"/>
+        <enum value="0x3057" name="EGL_WIDTH"/>
+        <enum value="0x3058" name="EGL_LARGEST_PBUFFER"/>
+        <enum value="0x3059" name="EGL_DRAW"/>
+        <enum value="0x305A" name="EGL_READ"/>
+        <enum value="0x305B" name="EGL_CORE_NATIVE_ENGINE"/>
+        <enum value="0x305C" name="EGL_NO_TEXTURE"/>
+        <enum value="0x305D" name="EGL_TEXTURE_RGB"/>
+        <enum value="0x305E" name="EGL_TEXTURE_RGBA"/>
+        <enum value="0x305F" name="EGL_TEXTURE_2D"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x3060-0x306F" vendor="TAO" comment="Reserved for Phil Huxley">
+        <unused start="0x3060" end="0x306F"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x3070-0x307F" vendor="NOK" comment="Reserved for Jani Vaarala">
+        <unused start="0x3070" end="0x307E"/>
+        <enum value="0x307F" name="EGL_Y_INVERTED_NOK"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x3080-0x30AF" vendor="KHR">
+        <enum value="0x3080" name="EGL_TEXTURE_FORMAT"/>
+        <enum value="0x3081" name="EGL_TEXTURE_TARGET"/>
+        <enum value="0x3082" name="EGL_MIPMAP_TEXTURE"/>
+        <enum value="0x3083" name="EGL_MIPMAP_LEVEL"/>
+        <enum value="0x3084" name="EGL_BACK_BUFFER"/>
+        <enum value="0x3085" name="EGL_SINGLE_BUFFER"/>
+        <enum value="0x3086" name="EGL_RENDER_BUFFER"/>
+        <enum value="0x3087" name="EGL_COLORSPACE" alias="EGL_VG_COLORSPACE"/>
+        <enum value="0x3087" name="EGL_VG_COLORSPACE"/>
+        <enum value="0x3088" name="EGL_ALPHA_FORMAT" alias="EGL_VG_ALPHA_FORMAT"/>
+        <enum value="0x3088" name="EGL_VG_ALPHA_FORMAT"/>
+        <enum value="0x3089" name="EGL_COLORSPACE_sRGB"/>
+        <enum value="0x3089" name="EGL_GL_COLORSPACE_SRGB" alias="EGL_COLORSPACE_sRGB"/>
+        <enum value="0x3089" name="EGL_GL_COLORSPACE_SRGB_KHR" alias="EGL_COLORSPACE_sRGB"/>
+        <enum value="0x3089" name="EGL_VG_COLORSPACE_sRGB" alias="EGL_COLORSPACE_sRGB"/>
+        <enum value="0x308A" name="EGL_COLORSPACE_LINEAR"/>
+        <enum value="0x308A" name="EGL_GL_COLORSPACE_LINEAR" alias="EGL_COLORSPACE_LINEAR"/>
+        <enum value="0x308A" name="EGL_GL_COLORSPACE_LINEAR_KHR" alias="EGL_COLORSPACE_LINEAR"/>
+        <enum value="0x308A" name="EGL_VG_COLORSPACE_LINEAR" alias="EGL_COLORSPACE_LINEAR"/>
+        <enum value="0x308B" name="EGL_ALPHA_FORMAT_NONPRE" alias="EGL_VG_ALPHA_FORMAT_NONPRE"/>
+        <enum value="0x308B" name="EGL_VG_ALPHA_FORMAT_NONPRE"/>
+        <enum value="0x308C" name="EGL_ALPHA_FORMAT_PRE" alias="EGL_VG_ALPHA_FORMAT_PRE"/>
+        <enum value="0x308C" name="EGL_VG_ALPHA_FORMAT_PRE"/>
+        <enum value="0x308D" name="EGL_CLIENT_APIS"/>
+        <enum value="0x308E" name="EGL_RGB_BUFFER"/>
+        <enum value="0x308F" name="EGL_LUMINANCE_BUFFER"/>
+        <enum value="0x3090" name="EGL_HORIZONTAL_RESOLUTION"/>
+        <enum value="0x3091" name="EGL_VERTICAL_RESOLUTION"/>
+        <enum value="0x3092" name="EGL_PIXEL_ASPECT_RATIO"/>
+        <enum value="0x3093" name="EGL_SWAP_BEHAVIOR"/>
+        <enum value="0x3094" name="EGL_BUFFER_PRESERVED"/>
+        <enum value="0x3095" name="EGL_BUFFER_DESTROYED"/>
+        <enum value="0x3096" name="EGL_OPENVG_IMAGE"/>
+        <enum value="0x3097" name="EGL_CONTEXT_CLIENT_TYPE"/>
+        <enum value="0x3098" name="EGL_CONTEXT_CLIENT_VERSION"/>
+        <enum value="0x3098" name="EGL_CONTEXT_MAJOR_VERSION" alias="EGL_CONTEXT_CLIENT_VERSION"/>
+        <enum value="0x3098" name="EGL_CONTEXT_MAJOR_VERSION_KHR" alias="EGL_CONTEXT_CLIENT_VERSION"/>
+        <enum value="0x3099" name="EGL_MULTISAMPLE_RESOLVE"/>
+        <enum value="0x309A" name="EGL_MULTISAMPLE_RESOLVE_DEFAULT"/>
+        <enum value="0x309B" name="EGL_MULTISAMPLE_RESOLVE_BOX"/>
+        <enum value="0x309C" name="EGL_CL_EVENT_HANDLE"/>
+        <enum value="0x309C" name="EGL_CL_EVENT_HANDLE_KHR" alias="EGL_CL_EVENT_HANDLE"/>
+        <enum value="0x309D" name="EGL_GL_COLORSPACE"/>
+        <enum value="0x309D" name="EGL_GL_COLORSPACE_KHR" alias="EGL_GL_COLORSPACE"/>
+            <unused start="0x309E" end="0x309F"/>
+        <enum value="0x30A0" name="EGL_OPENGL_ES_API"/>
+        <enum value="0x30A1" name="EGL_OPENVG_API"/>
+        <enum value="0x30A2" name="EGL_OPENGL_API"/>
+            <unused start="0x30A3" end="0x30AF" comment="for additional client API names"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x30B0-0x30BF" vendor="NV" comment="Reserved for Ignacio Llamas">
+        <enum value="0x30B0" name="EGL_NATIVE_PIXMAP_KHR"/>
+        <enum value="0x30B1" name="EGL_GL_TEXTURE_2D"/>
+        <enum value="0x30B1" name="EGL_GL_TEXTURE_2D_KHR" alias="EGL_GL_TEXTURE_2D"/>
+        <enum value="0x30B2" name="EGL_GL_TEXTURE_3D"/>
+        <enum value="0x30B2" name="EGL_GL_TEXTURE_3D_KHR" alias="EGL_GL_TEXTURE_3D"/>
+        <enum value="0x30B3" name="EGL_GL_TEXTURE_CUBE_MAP_POSITIVE_X"/>
+        <enum value="0x30B3" name="EGL_GL_TEXTURE_CUBE_MAP_POSITIVE_X_KHR" alias="EGL_GL_TEXTURE_CUBE_MAP_POSITIVE_X"/>
+        <enum value="0x30B4" name="EGL_GL_TEXTURE_CUBE_MAP_NEGATIVE_X"/>
+        <enum value="0x30B4" name="EGL_GL_TEXTURE_CUBE_MAP_NEGATIVE_X_KHR" alias="EGL_GL_TEXTURE_CUBE_MAP_NEGATIVE_X"/>
+        <enum value="0x30B5" name="EGL_GL_TEXTURE_CUBE_MAP_POSITIVE_Y"/>
+        <enum value="0x30B5" name="EGL_GL_TEXTURE_CUBE_MAP_POSITIVE_Y_KHR" alias="EGL_GL_TEXTURE_CUBE_MAP_POSITIVE_Y"/>
+        <enum value="0x30B6" name="EGL_GL_TEXTURE_CUBE_MAP_NEGATIVE_Y"/>
+        <enum value="0x30B6" name="EGL_GL_TEXTURE_CUBE_MAP_NEGATIVE_Y_KHR" alias="EGL_GL_TEXTURE_CUBE_MAP_NEGATIVE_Y"/>
+        <enum value="0x30B7" name="EGL_GL_TEXTURE_CUBE_MAP_POSITIVE_Z"/>
+        <enum value="0x30B7" name="EGL_GL_TEXTURE_CUBE_MAP_POSITIVE_Z_KHR" alias="EGL_GL_TEXTURE_CUBE_MAP_POSITIVE_Z"/>
+        <enum value="0x30B8" name="EGL_GL_TEXTURE_CUBE_MAP_NEGATIVE_Z"/>
+        <enum value="0x30B8" name="EGL_GL_TEXTURE_CUBE_MAP_NEGATIVE_Z_KHR" alias="EGL_GL_TEXTURE_CUBE_MAP_NEGATIVE_Z"/>
+        <enum value="0x30B9" name="EGL_GL_RENDERBUFFER"/>
+        <enum value="0x30B9" name="EGL_GL_RENDERBUFFER_KHR" alias="EGL_GL_RENDERBUFFER"/>
+        <enum value="0x30BA" name="EGL_VG_PARENT_IMAGE_KHR"/>
+        <enum value="0x30BC" name="EGL_GL_TEXTURE_LEVEL"/>
+        <enum value="0x30BC" name="EGL_GL_TEXTURE_LEVEL_KHR" alias="EGL_GL_TEXTURE_LEVEL"/>
+        <enum value="0x30BD" name="EGL_GL_TEXTURE_ZOFFSET"/>
+        <enum value="0x30BD" name="EGL_GL_TEXTURE_ZOFFSET_KHR" alias="EGL_GL_TEXTURE_ZOFFSET"/>
+        <enum value="0x30BE" name="EGL_POST_SUB_BUFFER_SUPPORTED_NV"/>
+        <enum value="0x30BF" name="EGL_CONTEXT_OPENGL_ROBUST_ACCESS_EXT"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x30C0-0x30CF" vendor="KHR">
+        <enum value="0x30C0" name="EGL_FORMAT_RGB_565_EXACT_KHR"/>
+        <enum value="0x30C1" name="EGL_FORMAT_RGB_565_KHR"/>
+        <enum value="0x30C2" name="EGL_FORMAT_RGBA_8888_EXACT_KHR"/>
+        <enum value="0x30C3" name="EGL_FORMAT_RGBA_8888_KHR"/>
+        <enum value="0x30C4" name="EGL_MAP_PRESERVE_PIXELS_KHR"/>
+        <enum value="0x30C5" name="EGL_LOCK_USAGE_HINT_KHR"/>
+        <enum value="0x30C6" name="EGL_BITMAP_POINTER_KHR"/>
+        <enum value="0x30C7" name="EGL_BITMAP_PITCH_KHR"/>
+        <enum value="0x30C8" name="EGL_BITMAP_ORIGIN_KHR"/>
+        <enum value="0x30C9" name="EGL_BITMAP_PIXEL_RED_OFFSET_KHR"/>
+        <enum value="0x30CA" name="EGL_BITMAP_PIXEL_GREEN_OFFSET_KHR"/>
+        <enum value="0x30CB" name="EGL_BITMAP_PIXEL_BLUE_OFFSET_KHR"/>
+        <enum value="0x30CC" name="EGL_BITMAP_PIXEL_ALPHA_OFFSET_KHR"/>
+        <enum value="0x30CD" name="EGL_BITMAP_PIXEL_LUMINANCE_OFFSET_KHR"/>
+        <enum value="0x30CE" name="EGL_LOWER_LEFT_KHR"/>
+        <enum value="0x30CF" name="EGL_UPPER_LEFT_KHR"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x30D0" end="0x30DF" vendor="Symbian" comment="Reserved for Robert Palmer (bug #2545)">
+            <unused start="0x30D0" end="0x30D1"/>
+        <enum value="0x30D2" name="EGL_IMAGE_PRESERVED"/>
+        <enum value="0x30D2" name="EGL_IMAGE_PRESERVED_KHR"/>
+            <unused start="0x30D3" end="0x30D9"/>
+        <enum value="0x30DA" name="EGL_SHARED_IMAGE_NOK" comment="Unreleased extension"/>
+            <unused start="0x30DB" end="0x30DF"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x30E0" end="0x30EF" vendor="NV" comment="Reserved for Russell Pflughaupt (bug #3314)">
+        <enum value="0x30E0" name="EGL_COVERAGE_BUFFERS_NV"/>
+        <enum value="0x30E1" name="EGL_COVERAGE_SAMPLES_NV"/>
+        <enum value="0x30E2" name="EGL_DEPTH_ENCODING_NV"/>
+        <enum value="0x30E3" name="EGL_DEPTH_ENCODING_NONLINEAR_NV"/>
+            <unused start="0x30E4" end="0x30E5"/>
+        <enum value="0x30E6" name="EGL_SYNC_PRIOR_COMMANDS_COMPLETE_NV"/>
+        <enum value="0x30E7" name="EGL_SYNC_STATUS_NV"/>
+        <enum value="0x30E8" name="EGL_SIGNALED_NV"/>
+        <enum value="0x30E9" name="EGL_UNSIGNALED_NV"/>
+        <enum value="0x30EA" name="EGL_ALREADY_SIGNALED_NV"/>
+        <enum value="0x30EB" name="EGL_TIMEOUT_EXPIRED_NV"/>
+        <enum value="0x30EC" name="EGL_CONDITION_SATISFIED_NV"/>
+        <enum value="0x30ED" name="EGL_SYNC_TYPE_NV"/>
+        <enum value="0x30EE" name="EGL_SYNC_CONDITION_NV"/>
+        <enum value="0x30EF" name="EGL_SYNC_FENCE_NV"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x30F0" end="0x30FF" vendor="KHR">
+        <enum value="0x30F0" name="EGL_SYNC_PRIOR_COMMANDS_COMPLETE"/>
+        <enum value="0x30F0" name="EGL_SYNC_PRIOR_COMMANDS_COMPLETE_KHR" alias="EGL_SYNC_PRIOR_COMMANDS_COMPLETE"/>
+        <enum value="0x30F1" name="EGL_SYNC_STATUS"/>
+        <enum value="0x30F1" name="EGL_SYNC_STATUS_KHR" alias="EGL_SYNC_STATUS"/>
+        <enum value="0x30F2" name="EGL_SIGNALED"/>
+        <enum value="0x30F2" name="EGL_SIGNALED_KHR" alias="EGL_SIGNALED"/>
+        <enum value="0x30F3" name="EGL_UNSIGNALED"/>
+        <enum value="0x30F3" name="EGL_UNSIGNALED_KHR" alias="EGL_UNSIGNALED"/>
+        <enum value="0x30F5" name="EGL_TIMEOUT_EXPIRED"/>
+        <enum value="0x30F5" name="EGL_TIMEOUT_EXPIRED_KHR" alias="EGL_TIMEOUT_EXPIRED"/>
+        <enum value="0x30F6" name="EGL_CONDITION_SATISFIED"/>
+        <enum value="0x30F6" name="EGL_CONDITION_SATISFIED_KHR" alias="EGL_CONDITION_SATISFIED"/>
+        <enum value="0x30F7" name="EGL_SYNC_TYPE"/>
+        <enum value="0x30F7" name="EGL_SYNC_TYPE_KHR" alias="EGL_SYNC_TYPE"/>
+        <enum value="0x30F8" name="EGL_SYNC_CONDITION"/>
+        <enum value="0x30F8" name="EGL_SYNC_CONDITION_KHR" alias="EGL_SYNC_CONDITION"/>
+        <enum value="0x30F9" name="EGL_SYNC_FENCE"/>
+        <enum value="0x30F9" name="EGL_SYNC_FENCE_KHR" alias="EGL_SYNC_FENCE"/>
+        <enum value="0x30FA" name="EGL_SYNC_REUSABLE_KHR"/>
+        <enum value="0x30FB" name="EGL_CONTEXT_MINOR_VERSION"/>
+        <enum value="0x30FB" name="EGL_CONTEXT_MINOR_VERSION_KHR" alias="EGL_CONTEXT_MINOR_VERSION"/>
+        <enum value="0x30FC" name="EGL_CONTEXT_FLAGS_KHR"/>
+        <enum value="0x30FD" name="EGL_CONTEXT_OPENGL_PROFILE_MASK"/>
+        <enum value="0x30FD" name="EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR" alias="EGL_CONTEXT_OPENGL_PROFILE_MASK"/>
+        <enum value="0x30FE" name="EGL_SYNC_CL_EVENT"/>
+        <enum value="0x30FE" name="EGL_SYNC_CL_EVENT_KHR" alias="EGL_SYNC_CL_EVENT"/>
+        <enum value="0x30FF" name="EGL_SYNC_CL_EVENT_COMPLETE"/>
+        <enum value="0x30FF" name="EGL_SYNC_CL_EVENT_COMPLETE_KHR" alias="EGL_SYNC_CL_EVENT_COMPLETE"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x3100" end="0x310F" vendor="IMG" comment="Reserved for Ben Bowman (Khronos bug 4748)">
+        <enum value="0x3100" name="EGL_CONTEXT_PRIORITY_LEVEL_IMG"/>
+        <enum value="0x3101" name="EGL_CONTEXT_PRIORITY_HIGH_IMG"/>
+        <enum value="0x3102" name="EGL_CONTEXT_PRIORITY_MEDIUM_IMG"/>
+        <enum value="0x3103" name="EGL_CONTEXT_PRIORITY_LOW_IMG"/>
+            <unused start="0x3104"/>
+        <enum value="0x3105" name="EGL_NATIVE_BUFFER_MULTIPLANE_SEPARATE_IMG"/>
+        <enum value="0x3106" name="EGL_NATIVE_BUFFER_PLANE_OFFSET_IMG"/>
+            <unused start="0x3107" end="0x310F"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x3110" end="0x311F" vendor="ATX" comment="Reserved for Tim Renouf, Antix (Khronos bug 4949)">
+        <enum value="0x3110" name="EGL_BITMAP_PIXEL_SIZE_KHR"/>
+            <unused start="0x3111" end="0x311F"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x3120" end="0x312F" vendor="AMD" comment="Reserved for David Garcia (Khronos bug 5149)">
+            <unused start="0x3120" end="0x312F"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x3130" end="0x313F" vendor="NV" comment="Reserved for Greg Prisament (Khronos bug 5166)">
+            <unused start="0x3130"/>
+        <enum value="0x3131" name="EGL_COVERAGE_SAMPLE_RESOLVE_NV"/>
+        <enum value="0x3132" name="EGL_COVERAGE_SAMPLE_RESOLVE_DEFAULT_NV"/>
+        <enum value="0x3133" name="EGL_COVERAGE_SAMPLE_RESOLVE_NONE_NV"/>
+        <enum value="0x3134" name="EGL_MULTIVIEW_VIEW_COUNT_EXT"/>
+            <unused start="0x3135"/>
+        <enum value="0x3136" name="EGL_AUTO_STEREO_NV"/>
+            <unused start="0x3137"/>
+        <enum value="0x3138" name="EGL_CONTEXT_OPENGL_RESET_NOTIFICATION_STRATEGY_EXT"/>
+            <unused start="0x3139" end="0x313C"/>
+        <enum value="0x313D" name="EGL_BUFFER_AGE_KHR"/>
+        <enum value="0x313D" name="EGL_BUFFER_AGE_EXT" alias="EGL_BUFFER_AGE_KHR"/>
+            <unused start="0x313E" end="0x313F"/>
+        <enum value="0x313F" name="EGL_PLATFORM_DEVICE_EXT"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x3140" end="0x314F" vendor="Google" comment="Reserved for Mathias Agopian (Khronos bug 5199)">
+        <enum value="0x3140" name="EGL_NATIVE_BUFFER_ANDROID"/>
+        <enum value="0x3141" name="EGL_PLATFORM_ANDROID_KHR"/>
+        <enum value="0x3142" name="EGL_RECORDABLE_ANDROID"/>
+        <enum value="0x3143" name="EGL_NATIVE_BUFFER_USAGE_ANDROID"/>
+        <enum value="0x3144" name="EGL_SYNC_NATIVE_FENCE_ANDROID"/>
+        <enum value="0x3145" name="EGL_SYNC_NATIVE_FENCE_FD_ANDROID"/>
+        <enum value="0x3146" name="EGL_SYNC_NATIVE_FENCE_SIGNALED_ANDROID"/>
+        <enum value="0x3147" name="EGL_FRAMEBUFFER_TARGET_ANDROID"/>
+            <unused start="0x3148" end="0x314B"/>
+        <enum value="0x314C" name="EGL_FRONT_BUFFER_AUTO_REFRESH_ANDROID"/>
+        <enum value="0x314D" name="EGL_GL_COLORSPACE_DEFAULT_EXT"/>
+            <unused start="0x314E" end="0x314F"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x3150" end="0x315F" vendor="NOK" comment="Reserved for Robert Palmer (Khronos bug 5368)">
+            <unused start="0x3150" end="0x315F"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x3160" end="0x316F" vendor="Seaweed" comment="Reserved for Sree Sridharan (Khronos public bug 198)">
+            <unused start="0x3160" end="0x316F"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x3170" end="0x318F" vendor="QNX" comment="Reserved for Joel Pilon (Khronos bug 5834)">
+            <unused start="0x3170" end="0x318F"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x3190" end="0x31AF" vendor="FSL" comment="Reserved for Brian Murray, Freescale (Khronos bug 5939)">
+            <unused start="0x3190" end="0x31AF"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x31B0" end="0x31BF" vendor="KHR" comment="Reserved for Marcus Lorentzon (Khronos bug 6437)">
+        <enum value="0x31B0" name="EGL_CONTEXT_OPENGL_DEBUG"/>
+        <enum value="0x31B1" name="EGL_CONTEXT_OPENGL_FORWARD_COMPATIBLE"/>
+        <enum value="0x31B2" name="EGL_CONTEXT_OPENGL_ROBUST_ACCESS"/>
+        <enum value="0x31B3" name="EGL_CONTEXT_OPENGL_NO_ERROR_KHR"/>
+            <unused start="0x31B4" end="0x31BC" comment="0x31B3-0x31BC formerly reserved for EGL_image_stream"/>
+        <enum value="0x31BD" name="EGL_CONTEXT_OPENGL_RESET_NOTIFICATION_STRATEGY_KHR" alias="EGL_CONTEXT_OPENGL_RESET_NOTIFICATION_STRATEGY"/>
+        <enum value="0x31BD" name="EGL_CONTEXT_OPENGL_RESET_NOTIFICATION_STRATEGY"/>
+        <enum value="0x31BE" name="EGL_NO_RESET_NOTIFICATION"/>
+        <enum value="0x31BE" name="EGL_NO_RESET_NOTIFICATION_KHR" alias="EGL_NO_RESET_NOTIFICATION"/>
+        <enum value="0x31BE" name="EGL_NO_RESET_NOTIFICATION_EXT" alias="EGL_NO_RESET_NOTIFICATION"/>
+        <enum value="0x31BF" name="EGL_LOSE_CONTEXT_ON_RESET"/>
+        <enum value="0x31BF" name="EGL_LOSE_CONTEXT_ON_RESET_KHR" alias="EGL_LOSE_CONTEXT_ON_RESET"/>
+        <enum value="0x31BF" name="EGL_LOSE_CONTEXT_ON_RESET_EXT" alias="EGL_LOSE_CONTEXT_ON_RESET"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x31C0" end="0x31CF" vendor="QCOM" comment="Reserved for Maurice Ribble (Khronos bug 6644) - EGL_QCOM_create_image spec TBD">
+            <unused start="0x31C0" end="0x31CF"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x31D0" end="0x31DF" vendor="MESA" comment="Reserved for Kristian H&#248;gsberg (Khronos bug 6757)">
+        <enum value="0x31D0" name="EGL_DRM_BUFFER_FORMAT_MESA"/>
+        <enum value="0x31D1" name="EGL_DRM_BUFFER_USE_MESA"/>
+        <enum value="0x31D2" name="EGL_DRM_BUFFER_FORMAT_ARGB32_MESA"/>
+        <enum value="0x31D3" name="EGL_DRM_BUFFER_MESA"/>
+        <enum value="0x31D4" name="EGL_DRM_BUFFER_STRIDE_MESA"/>
+        <enum value="0x31D5" name="EGL_PLATFORM_X11_KHR"/>
+        <enum value="0x31D5" name="EGL_PLATFORM_X11_EXT" alias="EGL_PLATFORM_X11_KHR"/>
+        <enum value="0x31D6" name="EGL_PLATFORM_X11_SCREEN_KHR"/>
+        <enum value="0x31D6" name="EGL_PLATFORM_X11_SCREEN_EXT" alias="EGL_PLATFORM_X11_SCREEN_KHR"/>
+        <enum value="0x31D7" name="EGL_PLATFORM_GBM_KHR"/>
+        <enum value="0x31D7" name="EGL_PLATFORM_GBM_MESA" alias="EGL_PLATFORM_GBM_KHR"/>
+        <enum value="0x31D8" name="EGL_PLATFORM_WAYLAND_KHR"/>
+        <enum value="0x31D8" name="EGL_PLATFORM_WAYLAND_EXT" alias="EGL_PLATFORM_WAYLAND_KHR"/>
+            <unused start="0x31D9" end="0x31DC"/>
+        <enum value="0x31DD" name="EGL_PLATFORM_SURFACELESS_MESA"/>
+            <unused start="0x31DE" end="0x31DF"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x31E0" end="0x31EF" vendor="HI" comment="Reserved for Mark Callow (Khronos bug 6799)">
+            <unused start="0x31E0" end="0x31EF"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x31F0" end="0x31FF" vendor="KHR">
+            <unused start="0x31F0" end="0x31FB" comment="Placeholders for draft extensions follow"/>
+        <!--
+            <enum value="0x31F0" name="EGL_IMAGE_USE_AS_OPENGL_ES1_RENDERBUFFER_KHR"        comment="Draft KHR_image_use_gl1_renderbuffer"/>
+            <enum value="0x31F1" name="EGL_IMAGE_USE_AS_OPENGL_ES1_TEXTURE_2D_KHR"          comment="Draft KHR_image_use_gl1_texture_2d"/>
+            <enum value="0x31F2" name="EGL_IMAGE_USE_AS_OPENGL_ES1_TEXTURE_EXTERNAL_KHR"    comment="Draft KHR_image_use_gl1_texture_external"/>
+            <enum value="0x31F3" name="EGL_IMAGE_USE_AS_OPENGL_ES2_RENDERBUFFER_KHR"        comment="Draft KHR_image_use_gl2_renderbuffer"/>
+            <enum value="0x31F4" name="EGL_IMAGE_USE_AS_OPENGL_ES2_TEXTURE_2D_KHR"          comment="Draft KHR_image_use_gl2_texture_2d"/>
+            <enum value="0x31F5" name="EGL_IMAGE_USE_AS_OPENGL_ES2_TEXTURE_EXTERNAL_KHR"    comment="Draft KHR_image_use_gl2_texture_external"/>
+            <enum value="0x31F6" name="EGL_IMAGE_USE_AS_OPENVG_IMAGE_KHR"                   comment="Draft KHR_image_use_vg_vgimage"/>
+            <enum value="0x31F7" name="EGL_STREAM_CONSUMER_ATTACHMENT_MESA"                 comment="Draft EGL_MESA_image_stream_internal"/>
+            <enum value="0x31F8" name="EGL_NO_FORMAT_MESA"                                  comment="Draft EGL_MESA_image_stream_internal"/>
+            <enum value="0x31F9" name="EGL_FORMAT_RGBA8888_MESA"                            comment="Draft EGL_MESA_image_stream_internal"/>
+            <enum value="0x31FA" name="EGL_FORMAT_RGB888_MESA"                              comment="Draft EGL_MESA_image_stream_internal"/>
+            <enum value="0x31FB" name="EGL_FORMAT_RGB565_MESA"                              comment="Draft EGL_MESA_image_stream_internal"/>
+        -->
+        <enum value="0x31FC" name="EGL_STREAM_FIFO_LENGTH_KHR"/>
+        <enum value="0x31FD" name="EGL_STREAM_TIME_NOW_KHR"/>
+        <enum value="0x31FE" name="EGL_STREAM_TIME_CONSUMER_KHR"/>
+        <enum value="0x31FF" name="EGL_STREAM_TIME_PRODUCER_KHR"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x3200" end="0x320F" vendor="ANGLE" comment="Reserved for Daniel Koch, ANGLE Project (Khronos bug 7139)">
+        <enum value="0x3200" name="EGL_D3D_TEXTURE_2D_SHARE_HANDLE_ANGLE"/>
+        <enum value="0x3201" name="EGL_FIXED_SIZE_ANGLE"/>
+            <unused start="0x3202" end="0x320F"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x3210" end="0x321F" vendor="KHR">
+        <enum value="0x3210" name="EGL_CONSUMER_LATENCY_USEC_KHR"/>
+            <unused start="0x3211"/>
+        <enum value="0x3212" name="EGL_PRODUCER_FRAME_KHR"/>
+        <enum value="0x3213" name="EGL_CONSUMER_FRAME_KHR"/>
+        <enum value="0x3214" name="EGL_STREAM_STATE_KHR"/>
+        <enum value="0x3215" name="EGL_STREAM_STATE_CREATED_KHR"/>
+        <enum value="0x3216" name="EGL_STREAM_STATE_CONNECTING_KHR"/>
+        <enum value="0x3217" name="EGL_STREAM_STATE_EMPTY_KHR"/>
+        <enum value="0x3218" name="EGL_STREAM_STATE_NEW_FRAME_AVAILABLE_KHR"/>
+        <enum value="0x3219" name="EGL_STREAM_STATE_OLD_FRAME_AVAILABLE_KHR"/>
+        <enum value="0x321A" name="EGL_STREAM_STATE_DISCONNECTED_KHR"/>
+        <enum value="0x321B" name="EGL_BAD_STREAM_KHR"/>
+        <enum value="0x321C" name="EGL_BAD_STATE_KHR"/>
+        <enum value="0x321D" name="EGL_BUFFER_COUNT_NV" comment="From EGL_NV_stream_producer_eglsurface, which has no known specification and was replaced by a KHR extension"/>
+        <enum value="0x321E" name="EGL_CONSUMER_ACQUIRE_TIMEOUT_USEC_KHR"/>
+        <enum value="0x321F" name="EGL_SYNC_NEW_FRAME_NV"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x3220" end="0x325F" vendor="NV" comment="Reserved for Greg Roth (Bug 8220)">
+            <unused start="0x3220" end="0x322A"/>
+        <enum value="0x322B" name="EGL_BAD_DEVICE_EXT"/>
+        <enum value="0x322C" name="EGL_DEVICE_EXT"/>
+        <enum value="0x322D" name="EGL_BAD_OUTPUT_LAYER_EXT"/>
+        <enum value="0x322E" name="EGL_BAD_OUTPUT_PORT_EXT"/>
+        <enum value="0x322F" name="EGL_SWAP_INTERVAL_EXT"/>
+            <unused start="0x3230" end="0x3232"/>
+        <enum value="0x3233" name="EGL_DRM_DEVICE_FILE_EXT"/>
+        <enum value="0x3234" name="EGL_DRM_CRTC_EXT"/>
+        <enum value="0x3235" name="EGL_DRM_PLANE_EXT"/>
+        <enum value="0x3236" name="EGL_DRM_CONNECTOR_EXT"/>
+        <enum value="0x3237" name="EGL_OPENWF_DEVICE_ID_EXT"/>
+        <enum value="0x3238" name="EGL_OPENWF_PIPELINE_ID_EXT"/>
+        <enum value="0x3239" name="EGL_OPENWF_PORT_ID_EXT"/>
+        <enum value="0x323A" name="EGL_CUDA_DEVICE_NV"/>
+        <enum value="0x323B" name="EGL_CUDA_EVENT_HANDLE_NV"/>
+        <enum value="0x323C" name="EGL_SYNC_CUDA_EVENT_NV"/>
+        <enum value="0x323D" name="EGL_SYNC_CUDA_EVENT_COMPLETE_NV"/>
+            <unused start="0x323E"/>
+        <enum value="0x323F" name="EGL_STREAM_CROSS_PARTITION_NV"/>
+        <enum value="0x3240" name="EGL_STREAM_STATE_INITIALIZING_NV"/>
+        <enum value="0x3241" name="EGL_STREAM_TYPE_NV"/>
+        <enum value="0x3242" name="EGL_STREAM_PROTOCOL_NV"/>
+        <enum value="0x3243" name="EGL_STREAM_ENDPOINT_NV"/>
+        <enum value="0x3244" name="EGL_STREAM_LOCAL_NV"/>
+        <enum value="0x3245" name="EGL_STREAM_CROSS_PROCESS_NV"/>
+        <enum value="0x3246" name="EGL_STREAM_PROTOCOL_FD_NV"/>
+        <enum value="0x3247" name="EGL_STREAM_PRODUCER_NV"/>
+        <enum value="0x3248" name="EGL_STREAM_CONSUMER_NV"/>
+            <unused start="0x3239" end="0x324A"/>
+        <enum value="0x324B" name="EGL_STREAM_PROTOCOL_SOCKET_NV"/>
+        <enum value="0x324C" name="EGL_SOCKET_HANDLE_NV"/>
+        <enum value="0x324D" name="EGL_SOCKET_TYPE_NV"/>
+        <enum value="0x324E" name="EGL_SOCKET_TYPE_UNIX_NV"/>
+        <enum value="0x324F" name="EGL_SOCKET_TYPE_INET_NV"/>
+        <enum value="0x3250" name="EGL_MAX_STREAM_METADATA_BLOCKS_NV"/>
+        <enum value="0x3251" name="EGL_MAX_STREAM_METADATA_BLOCK_SIZE_NV"/>
+        <enum value="0x3252" name="EGL_MAX_STREAM_METADATA_TOTAL_SIZE_NV"/>
+        <enum value="0x3253" name="EGL_PRODUCER_METADATA_NV"/>
+        <enum value="0x3254" name="EGL_CONSUMER_METADATA_NV"/>
+        <enum value="0x3255" name="EGL_METADATA0_SIZE_NV"/>
+        <enum value="0x3256" name="EGL_METADATA1_SIZE_NV"/>
+        <enum value="0x3257" name="EGL_METADATA2_SIZE_NV"/>
+        <enum value="0x3258" name="EGL_METADATA3_SIZE_NV"/>
+        <enum value="0x3259" name="EGL_METADATA0_TYPE_NV"/>
+        <enum value="0x325A" name="EGL_METADATA1_TYPE_NV"/>
+        <enum value="0x325B" name="EGL_METADATA2_TYPE_NV"/>
+        <enum value="0x325C" name="EGL_METADATA3_TYPE_NV"/>
+            <unused start="0x325D" end="0x325F"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x3260" end="0x326F" vendor="BCOM" comment="Reserved for Gary Sweet, Broadcom (Public bug 620)">
+            <unused start="0x3260" end="0x326F"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x3270" end="0x328F" vendor="ARM" comment="Reserved for Tom Cooksey (Bug 9963)">
+        <enum value="0x3270" name="EGL_LINUX_DMA_BUF_EXT"/>
+        <enum value="0x3271" name="EGL_LINUX_DRM_FOURCC_EXT"/>
+        <enum value="0x3272" name="EGL_DMA_BUF_PLANE0_FD_EXT"/>
+        <enum value="0x3273" name="EGL_DMA_BUF_PLANE0_OFFSET_EXT"/>
+        <enum value="0x3274" name="EGL_DMA_BUF_PLANE0_PITCH_EXT"/>
+        <enum value="0x3275" name="EGL_DMA_BUF_PLANE1_FD_EXT"/>
+        <enum value="0x3276" name="EGL_DMA_BUF_PLANE1_OFFSET_EXT"/>
+        <enum value="0x3277" name="EGL_DMA_BUF_PLANE1_PITCH_EXT"/>
+        <enum value="0x3278" name="EGL_DMA_BUF_PLANE2_FD_EXT"/>
+        <enum value="0x3279" name="EGL_DMA_BUF_PLANE2_OFFSET_EXT"/>
+        <enum value="0x327A" name="EGL_DMA_BUF_PLANE2_PITCH_EXT"/>
+        <enum value="0x327B" name="EGL_YUV_COLOR_SPACE_HINT_EXT"/>
+        <enum value="0x327C" name="EGL_SAMPLE_RANGE_HINT_EXT"/>
+        <enum value="0x327D" name="EGL_YUV_CHROMA_HORIZONTAL_SITING_HINT_EXT"/>
+        <enum value="0x327E" name="EGL_YUV_CHROMA_VERTICAL_SITING_HINT_EXT"/>
+        <enum value="0x327F" name="EGL_ITU_REC601_EXT"/>
+        <enum value="0x3280" name="EGL_ITU_REC709_EXT"/>
+        <enum value="0x3281" name="EGL_ITU_REC2020_EXT"/>
+        <enum value="0x3282" name="EGL_YUV_FULL_RANGE_EXT"/>
+        <enum value="0x3283" name="EGL_YUV_NARROW_RANGE_EXT"/>
+        <enum value="0x3284" name="EGL_YUV_CHROMA_SITING_0_EXT"/>
+        <enum value="0x3285" name="EGL_YUV_CHROMA_SITING_0_5_EXT"/>
+        <enum value="0x3286" name="EGL_DISCARD_SAMPLES_ARM"/>
+            <unused start="0x3287" end="0x3289"/>
+        <enum value="0x328A" name="EGL_SYNC_PRIOR_COMMANDS_IMPLICIT_EXTERNAL_ARM"/>
+            <unused start="0x328B" end="0x328F"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x3290" end="0x329F" vendor="MESA" comment="Reserved for John K&#229;re Alsaker (Public bug 757)">
+            <unused start="0x3290" end="0x329F"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x32A0" end="0x32AF" vendor="Samsung" comment="Reserved for Dongyeon Kim (Public bug 880)">
+        <enum value="0x32A0" name="EGL_NATIVE_BUFFER_TIZEN"/>
+        <enum value="0x32A1" name="EGL_NATIVE_SURFACE_TIZEN"/>
+            <unused start="0x32A2" end="0x32AF"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x32B0" end="0x32BF" vendor="QCOM" comment="Reserved for Jeff Vigil (Bug 10663) - EGL_QCOM_lock_image spec TBD">
+            <unused start="0x32B0" end="0x32BF"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x32C0" end="0x32CF" vendor="Vivante" comment="Reserved for Yanjun Zhang (Bug 11498)">
+        <enum value="0x32C0" name="EGL_PROTECTED_CONTENT_EXT"/>
+            <unused start="0x32C1" end="0x32CF"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x32D0" end="0x32EF" vendor="QCOM" comment="Reserved for Jeff Vigil (Bug 11735) - EGL_QCOM_gpu_perf spec TBD + Bug 12286 - EGL_QCOM_content_protection spec TBD">
+            <unused start="0x32D0" end="0x32EF"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x32F0" end="0x32FF" vendor="BCOM" comment="Reserved for Gary Sweet, Broadcom (Bug 12870)">
+            <unused start="0x32F0" end="0x32FF"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x3300" end="0x331F" vendor="QCOM" comment="Reserved for Jeff Vigil (Bugs 12973,12849) - EGL_EXT_yuv_surface spec TBD">
+        <enum value="0x3300" name="EGL_YUV_BUFFER_EXT"/>
+        <enum value="0x3301" name="EGL_YUV_ORDER_EXT"/>
+        <enum value="0x3302" name="EGL_YUV_ORDER_YUV_EXT"/>
+        <enum value="0x3303" name="EGL_YUV_ORDER_YVU_EXT"/>
+        <enum value="0x3304" name="EGL_YUV_ORDER_YUYV_EXT"/>
+        <enum value="0x3305" name="EGL_YUV_ORDER_UYVY_EXT"/>
+        <enum value="0x3306" name="EGL_YUV_ORDER_YVYU_EXT"/>
+        <enum value="0x3307" name="EGL_YUV_ORDER_VYUY_EXT"/>
+        <enum value="0x3308" name="EGL_YUV_ORDER_AYUV_EXT"/>
+            <unused start="0x3309"/>
+        <enum value="0x330A" name="EGL_YUV_CSC_STANDARD_EXT"/>
+        <enum value="0x330B" name="EGL_YUV_CSC_STANDARD_601_EXT"/>
+        <enum value="0x330C" name="EGL_YUV_CSC_STANDARD_709_EXT"/>
+        <enum value="0x330D" name="EGL_YUV_CSC_STANDARD_2020_EXT"/>
+            <unused start="0x330E" end="0x3310"/>
+        <enum value="0x3311" name="EGL_YUV_NUMBER_OF_PLANES_EXT"/>
+        <enum value="0x3312" name="EGL_YUV_SUBSAMPLE_EXT"/>
+        <enum value="0x3313" name="EGL_YUV_SUBSAMPLE_4_2_0_EXT"/>
+        <enum value="0x3314" name="EGL_YUV_SUBSAMPLE_4_2_2_EXT"/>
+        <enum value="0x3315" name="EGL_YUV_SUBSAMPLE_4_4_4_EXT"/>
+            <unused start="0x3316"/>
+        <enum value="0x3317" name="EGL_YUV_DEPTH_RANGE_EXT"/>
+        <enum value="0x3318" name="EGL_YUV_DEPTH_RANGE_LIMITED_EXT"/>
+        <enum value="0x3319" name="EGL_YUV_DEPTH_RANGE_FULL_EXT"/>
+        <enum value="0x331A" name="EGL_YUV_PLANE_BPP_EXT"/>
+        <enum value="0x331B" name="EGL_YUV_PLANE_BPP_0_EXT"/>
+        <enum value="0x331C" name="EGL_YUV_PLANE_BPP_8_EXT"/>
+        <enum value="0x331D" name="EGL_YUV_PLANE_BPP_10_EXT"/>
+            <unused start="0x331E" end="0x331F"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x3320" end="0x339F" vendor="NV" comment="Reserved for James Jones (Bug 13209)">
+            <unused start="0x3320" end="0x3327"/>
+        <enum value="0x3328" name="EGL_PENDING_METADATA_NV"/>
+        <enum value="0x3329" name="EGL_PENDING_FRAME_NV"/>
+        <enum value="0x332A" name="EGL_STREAM_TIME_PENDING_NV"/>
+            <unused start="0x332B"/>
+        <enum value="0x332C" name="EGL_YUV_PLANE0_TEXTURE_UNIT_NV"/>
+        <enum value="0x332D" name="EGL_YUV_PLANE1_TEXTURE_UNIT_NV"/>
+        <enum value="0x332E" name="EGL_YUV_PLANE2_TEXTURE_UNIT_NV"/>
+            <unused start="0x332F" end="0x3333"/>
+        <enum value="0x3334" name="EGL_SUPPORT_RESET_NV"/>
+        <enum value="0x3335" name="EGL_SUPPORT_REUSE_NV"/>
+        <enum value="0x3336" name="EGL_STREAM_FIFO_SYNCHRONOUS_NV"/>
+        <enum value="0x3337" name="EGL_PRODUCER_MAX_FRAME_HINT_NV"/>
+        <enum value="0x3338" name="EGL_CONSUMER_MAX_FRAME_HINT_NV"/>
+        <enum value="0x3339" name="EGL_COLOR_COMPONENT_TYPE_EXT"/>
+        <enum value="0x333A" name="EGL_COLOR_COMPONENT_TYPE_FIXED_EXT"/>
+        <enum value="0x333B" name="EGL_COLOR_COMPONENT_TYPE_FLOAT_EXT"/>
+        <enum value="0x333C" name="EGL_DRM_MASTER_FD_EXT"/>
+            <unused start="0x333D" end="0x333E"/>
+        <enum value="0x333F" name="EGL_GL_COLORSPACE_BT2020_LINEAR_EXT"/>
+        <enum value="0x3340" name="EGL_GL_COLORSPACE_BT2020_PQ_EXT"/>
+        <enum value="0x3341" name="EGL_SMPTE2086_DISPLAY_PRIMARY_RX_EXT"/>
+        <enum value="0x3342" name="EGL_SMPTE2086_DISPLAY_PRIMARY_RY_EXT"/>
+        <enum value="0x3343" name="EGL_SMPTE2086_DISPLAY_PRIMARY_GX_EXT"/>
+        <enum value="0x3344" name="EGL_SMPTE2086_DISPLAY_PRIMARY_GY_EXT"/>
+        <enum value="0x3345" name="EGL_SMPTE2086_DISPLAY_PRIMARY_BX_EXT"/>
+        <enum value="0x3346" name="EGL_SMPTE2086_DISPLAY_PRIMARY_BY_EXT"/>
+        <enum value="0x3347" name="EGL_SMPTE2086_WHITE_POINT_X_EXT"/>
+        <enum value="0x3348" name="EGL_SMPTE2086_WHITE_POINT_Y_EXT"/>
+        <enum value="0x3349" name="EGL_SMPTE2086_MAX_LUMINANCE_EXT"/>
+        <enum value="0x334A" name="EGL_SMPTE2086_MIN_LUMINANCE_EXT"/>
+        <enum value="50000"  name="EGL_METADATA_SCALING_EXT"/>
+            <unused start="0x334B"/>
+        <enum value="0x334C" name="EGL_GENERATE_RESET_ON_VIDEO_MEMORY_PURGE_NV"/>
+        <enum value="0x334D" name="EGL_STREAM_CROSS_OBJECT_NV"/>
+        <enum value="0x334E" name="EGL_STREAM_CROSS_DISPLAY_NV"/>
+        <enum value="0x334F" name="EGL_STREAM_CROSS_SYSTEM_NV"/>
+        <enum value="0x3350" name="EGL_GL_COLORSPACE_SCRGB_LINEAR_EXT"/>
+        <enum value="0x3351" name="EGL_GL_COLORSPACE_SCRGB_EXT"/>
+        <enum value="0x3352" name="EGL_TRACK_REFERENCES_KHR"/>
+            <unused start="0x3353" end="0x3356"/>
+        <enum value="0x3357" name="EGL_CONTEXT_PRIORITY_REALTIME_NV"/>
+            <unused start="0x3358" end="0x335F"/>
+        <enum value="0x3360" name="EGL_CTA861_3_MAX_CONTENT_LIGHT_LEVEL_EXT"/>
+        <enum value="0x3361" name="EGL_CTA861_3_MAX_FRAME_AVERAGE_LEVEL_EXT"/>
+        <enum value="0x3362" name="EGL_GL_COLORSPACE_DISPLAY_P3_LINEAR_EXT"/>
+        <enum value="0x3363" name="EGL_GL_COLORSPACE_DISPLAY_P3_EXT"/>
+        <enum value="0x3364" name="EGL_SYNC_CLIENT_EXT"/>
+        <enum value="0x3365" name="EGL_SYNC_CLIENT_SIGNAL_EXT"/>
+            <unused start="0x3366" end="0x339F"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x33A0" end="0x33AF" vendor="ANGLE" comment="Reserved for Shannon Woods (Bug 13175)">
+        <enum value="0x33A0" name="EGL_D3D9_DEVICE_ANGLE"/>
+        <enum value="0x33A1" name="EGL_D3D11_DEVICE_ANGLE"/>
+            <unused start="0x33A2" end="0x33AF"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x33B0" end="0x33BF" vendor="KHR" comment="Reserved for EGL_KHR_debug / Jeff Vigil (Bug 13357)">
+        <enum value="0x33B0" name="EGL_OBJECT_THREAD_KHR"/>
+        <enum value="0x33B1" name="EGL_OBJECT_DISPLAY_KHR"/>
+        <enum value="0x33B2" name="EGL_OBJECT_CONTEXT_KHR"/>
+        <enum value="0x33B3" name="EGL_OBJECT_SURFACE_KHR"/>
+        <enum value="0x33B4" name="EGL_OBJECT_IMAGE_KHR"/>
+        <enum value="0x33B5" name="EGL_OBJECT_SYNC_KHR"/>
+        <enum value="0x33B6" name="EGL_OBJECT_STREAM_KHR"/>
+            <unused start="0x33B7"/>
+        <enum value="0x33B8" name="EGL_DEBUG_CALLBACK_KHR"/>
+        <enum value="0x33B9" name="EGL_DEBUG_MSG_CRITICAL_KHR"/>
+        <enum value="0x33BA" name="EGL_DEBUG_MSG_ERROR_KHR"/>
+        <enum value="0x33BB" name="EGL_DEBUG_MSG_WARN_KHR"/>
+        <enum value="0x33BC" name="EGL_DEBUG_MSG_INFO_KHR"/>
+            <unused start="0x33BD" end="0x33BF"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x33C0" end="0x33DF" vendor="BCOM" comment="Reserved for Gary Sweet (Bug 12203)">
+            <unused start="0x33C0" end="0x33DF"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x33E0" end="0x342F" vendor="QCOM" comment="Reserved for Jeff Vigil (Bugs 10663,13364)">
+            <unused start="0x33E0" end="0x342F"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x3430" end="0x343F" vendor="ANDROID" comment="Reserved for Pablo Ceballos (Bug 15874)">
+        <enum value="EGL_CAST(EGLnsecsANDROID,-2)" name="EGL_TIMESTAMP_PENDING_ANDROID"/>
+        <enum value="EGL_CAST(EGLnsecsANDROID,-1)" name="EGL_TIMESTAMP_INVALID_ANDROID"/>
+        <enum value="0x3430" name="EGL_TIMESTAMPS_ANDROID"/>
+        <enum value="0x3431" name="EGL_COMPOSITE_DEADLINE_ANDROID"/>
+        <enum value="0x3432" name="EGL_COMPOSITE_INTERVAL_ANDROID"/>
+        <enum value="0x3433" name="EGL_COMPOSITE_TO_PRESENT_LATENCY_ANDROID"/>
+        <enum value="0x3434" name="EGL_REQUESTED_PRESENT_TIME_ANDROID"/>
+        <enum value="0x3435" name="EGL_RENDERING_COMPLETE_TIME_ANDROID"/>
+        <enum value="0x3436" name="EGL_COMPOSITION_LATCH_TIME_ANDROID"/>
+        <enum value="0x3437" name="EGL_FIRST_COMPOSITION_START_TIME_ANDROID"/>
+        <enum value="0x3438" name="EGL_LAST_COMPOSITION_START_TIME_ANDROID"/>
+        <enum value="0x3439" name="EGL_FIRST_COMPOSITION_GPU_FINISHED_TIME_ANDROID"/>
+        <enum value="0x343A" name="EGL_DISPLAY_PRESENT_TIME_ANDROID"/>
+        <enum value="0x343B" name="EGL_DEQUEUE_READY_TIME_ANDROID"/>
+        <enum value="0x343C" name="EGL_READS_DONE_TIME_ANDROID"/>
+            <unused start="0x343D" end="0x343F"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x3440" end="0x344F" vendor="ANDROID" comment="Reserved for Kristian Kristensen (Bug 16033)">
+        <enum value="0x3440" name="EGL_DMA_BUF_PLANE3_FD_EXT"/>
+        <enum value="0x3441" name="EGL_DMA_BUF_PLANE3_OFFSET_EXT"/>
+        <enum value="0x3442" name="EGL_DMA_BUF_PLANE3_PITCH_EXT"/>
+        <enum value="0x3443" name="EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT"/>
+        <enum value="0x3444" name="EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT"/>
+        <enum value="0x3445" name="EGL_DMA_BUF_PLANE1_MODIFIER_LO_EXT"/>
+        <enum value="0x3446" name="EGL_DMA_BUF_PLANE1_MODIFIER_HI_EXT"/>
+        <enum value="0x3447" name="EGL_DMA_BUF_PLANE2_MODIFIER_LO_EXT"/>
+        <enum value="0x3448" name="EGL_DMA_BUF_PLANE2_MODIFIER_HI_EXT"/>
+        <enum value="0x3449" name="EGL_DMA_BUF_PLANE3_MODIFIER_LO_EXT"/>
+        <enum value="0x344A" name="EGL_DMA_BUF_PLANE3_MODIFIER_HI_EXT"/>
+            <unused start="0x344B" end="0x344F"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x3450" end="0x345F" vendor="ANGLE" comment="Reserved for Shannon Woods (Bug 16106)">
+            <unused start="0x3450" end="0x345F"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x3460" end="0x346F" vendor="COREAVI" comment="Reserved for Daniel Herring (Bug 16162)">
+        <enum value="0x3460" name="EGL_PRIMARY_COMPOSITOR_CONTEXT_EXT"/>
+        <enum value="0x3461" name="EGL_EXTERNAL_REF_ID_EXT"/>
+        <enum value="0x3462" name="EGL_COMPOSITOR_DROP_NEWEST_FRAME_EXT"/>
+        <enum value="0x3463" name="EGL_COMPOSITOR_KEEP_NEWEST_FRAME_EXT"/>
+        <enum value="0x3464" name="EGL_FRONT_BUFFER_EXT"/>
+        <unused start="0x3465" end="0x346F"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x3470" end="0x347F" vendor="EXT" comment="Reserved for Daniel Stone (PR 14)">
+        <enum value="0x3470" name="EGL_IMPORT_SYNC_TYPE_EXT"/>
+        <enum value="0x3471" name="EGL_IMPORT_IMPLICIT_SYNC_EXT"/>
+        <enum value="0x3472" name="EGL_IMPORT_EXPLICIT_SYNC_EXT"/>
+    </enums>
+    <enums namespace="EGL" start="0x3480" end="0x348F" vendor="ANGLE" comment="Reserved for Courtney Goeltzenleuchter - ANGLE (gitlab EGL bug 7)">
+            <unused start="0x3480" end="0x348F"/>
+    </enums>
+
+<!-- Please remember that new enumerant allocations must be obtained by
+     request to the Khronos API registrar (see comments at the top of this
+     file) File requests in the Khronos Bugzilla, EGL project, Registry
+     component. Also note that some EGL enum values are shared with other
+     Khronos APIs, and new ranges should be allocated with such overlaps in
+     mind. -->
+
+<!-- Reservable for future use. To generate a new range, allocate multiples
+     of 16 starting at the lowest available point in this block. -->
+    <enums namespace="EGL" start="0x3490" end="0x3FFF" vendor="KHR" comment="Reserved for future use">
+            <unused start="0x3490" end="0x3FFF"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x8F70" end="0x8F7F" vendor="HI" comment="For Mark Callow, Khronos bug 4055. Shared with GL.">
+        <enum value="0x8F70" name="EGL_COLOR_FORMAT_HI"/>
+        <enum value="0x8F71" name="EGL_COLOR_RGB_HI"/>
+        <enum value="0x8F72" name="EGL_COLOR_RGBA_HI"/>
+        <enum value="0x8F73" name="EGL_COLOR_ARGB_HI"/>
+        <enum value="0x8F74" name="EGL_CLIENT_PIXMAP_POINTER_HI"/>
+    </enums>
+
+    <!-- SECTION: EGL command definitions. -->
+    <commands namespace="EGL">
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglBindAPI</name></proto>
+            <param><ptype>EGLenum</ptype> <name>api</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglBindTexImage</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSurface</ptype> <name>surface</name></param>
+            <param><ptype>EGLint</ptype> <name>buffer</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglChooseConfig</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param>const <ptype>EGLint</ptype> *<name>attrib_list</name></param>
+            <param><ptype>EGLConfig</ptype> *<name>configs</name></param>
+            <param><ptype>EGLint</ptype> <name>config_size</name></param>
+            <param><ptype>EGLint</ptype> *<name>num_config</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglClientSignalSyncEXT</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSync</ptype> <name>sync</name></param>
+            <param>const <ptype>EGLAttrib</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLint</ptype> <name>eglClientWaitSync</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSync</ptype> <name>sync</name></param>
+            <param><ptype>EGLint</ptype> <name>flags</name></param>
+            <param><ptype>EGLTime</ptype> <name>timeout</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLint</ptype> <name>eglClientWaitSyncKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSyncKHR</ptype> <name>sync</name></param>
+            <param><ptype>EGLint</ptype> <name>flags</name></param>
+            <param><ptype>EGLTimeKHR</ptype> <name>timeout</name></param>
+            <alias name="eglClientWaitSync"/>
+        </command>
+        <command>
+            <proto><ptype>EGLint</ptype> <name>eglClientWaitSyncNV</name></proto>
+            <param><ptype>EGLSyncNV</ptype> <name>sync</name></param>
+            <param><ptype>EGLint</ptype> <name>flags</name></param>
+            <param><ptype>EGLTimeNV</ptype> <name>timeout</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglCopyBuffers</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSurface</ptype> <name>surface</name></param>
+            <param><ptype>EGLNativePixmapType</ptype> <name>target</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLContext</ptype> <name>eglCreateContext</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLConfig</ptype> <name>config</name></param>
+            <param><ptype>EGLContext</ptype> <name>share_context</name></param>
+            <param>const <ptype>EGLint</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLImageKHR</ptype> <name>eglCreateDRMImageMESA</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param>const <ptype>EGLint</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLSyncNV</ptype> <name>eglCreateFenceSyncNV</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLenum</ptype> <name>condition</name></param>
+            <param>const <ptype>EGLint</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLImage</ptype> <name>eglCreateImage</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLContext</ptype> <name>ctx</name></param>
+            <param><ptype>EGLenum</ptype> <name>target</name></param>
+            <param><ptype>EGLClientBuffer</ptype> <name>buffer</name></param>
+            <param>const <ptype>EGLAttrib</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLImageKHR</ptype> <name>eglCreateImageKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLContext</ptype> <name>ctx</name></param>
+            <param><ptype>EGLenum</ptype> <name>target</name></param>
+            <param><ptype>EGLClientBuffer</ptype> <name>buffer</name></param>
+            <param>const <ptype>EGLint</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLClientBuffer</ptype> <name>eglCreateNativeClientBufferANDROID</name></proto>
+            <param>const <ptype>EGLint</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLSurface</ptype> <name>eglCreatePbufferFromClientBuffer</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLenum</ptype> <name>buftype</name></param>
+            <param><ptype>EGLClientBuffer</ptype> <name>buffer</name></param>
+            <param><ptype>EGLConfig</ptype> <name>config</name></param>
+            <param>const <ptype>EGLint</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLSurface</ptype> <name>eglCreatePbufferSurface</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLConfig</ptype> <name>config</name></param>
+            <param>const <ptype>EGLint</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLSurface</ptype> <name>eglCreatePixmapSurface</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLConfig</ptype> <name>config</name></param>
+            <param><ptype>EGLNativePixmapType</ptype> <name>pixmap</name></param>
+            <param>const <ptype>EGLint</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLSurface</ptype> <name>eglCreatePixmapSurfaceHI</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLConfig</ptype> <name>config</name></param>
+            <param>struct <ptype>EGLClientPixmapHI</ptype> *<name>pixmap</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLSurface</ptype> <name>eglCreatePlatformPixmapSurface</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLConfig</ptype> <name>config</name></param>
+            <param>void *<name>native_pixmap</name></param>
+            <param>const <ptype>EGLAttrib</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLSurface</ptype> <name>eglCreatePlatformPixmapSurfaceEXT</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLConfig</ptype> <name>config</name></param>
+            <param>void *<name>native_pixmap</name></param>
+            <param>const <ptype>EGLint</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLSurface</ptype> <name>eglCreatePlatformWindowSurface</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLConfig</ptype> <name>config</name></param>
+            <param>void *<name>native_window</name></param>
+            <param>const <ptype>EGLAttrib</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLSurface</ptype> <name>eglCreatePlatformWindowSurfaceEXT</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLConfig</ptype> <name>config</name></param>
+            <param>void *<name>native_window</name></param>
+            <param>const <ptype>EGLint</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLStreamKHR</ptype> <name>eglCreateStreamFromFileDescriptorKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLNativeFileDescriptorKHR</ptype> <name>file_descriptor</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLStreamKHR</ptype> <name>eglCreateStreamKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param>const <ptype>EGLint</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLStreamKHR</ptype> <name>eglCreateStreamAttribKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param>const <ptype>EGLAttrib</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLSurface</ptype> <name>eglCreateStreamProducerSurfaceKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLConfig</ptype> <name>config</name></param>
+            <param><ptype>EGLStreamKHR</ptype> <name>stream</name></param>
+            <param>const <ptype>EGLint</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLSyncKHR</ptype> <name>eglCreateStreamSyncNV</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLStreamKHR</ptype> <name>stream</name></param>
+            <param><ptype>EGLenum</ptype> <name>type</name></param>
+            <param>const <ptype>EGLint</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLSync</ptype> <name>eglCreateSync</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLenum</ptype> <name>type</name></param>
+            <param>const <ptype>EGLAttrib</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLSyncKHR</ptype> <name>eglCreateSyncKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLenum</ptype> <name>type</name></param>
+            <param>const <ptype>EGLint</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLSyncKHR</ptype> <name>eglCreateSync64KHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLenum</ptype> <name>type</name></param>
+            <param>const <ptype>EGLAttribKHR</ptype> *<name>attrib_list</name></param>
+            <alias name="eglCreateSync"/>
+        </command>
+        <command>
+            <proto><ptype>EGLSurface</ptype> <name>eglCreateWindowSurface</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLConfig</ptype> <name>config</name></param>
+            <param><ptype>EGLNativeWindowType</ptype> <name>win</name></param>
+            <param>const <ptype>EGLint</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLint</ptype> <name>eglDebugMessageControlKHR</name></proto>
+            <param><ptype>EGLDEBUGPROCKHR</ptype> <name>callback</name></param>
+            <param>const <ptype>EGLAttrib</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglDestroyContext</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLContext</ptype> <name>ctx</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglDestroyImage</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLImage</ptype> <name>image</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglDestroyImageKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLImageKHR</ptype> <name>image</name></param>
+            <alias name="eglDestroyImage"/>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglDestroyStreamKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLStreamKHR</ptype> <name>stream</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglDestroySurface</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSurface</ptype> <name>surface</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglDestroySync</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSync</ptype> <name>sync</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglDestroySyncKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSyncKHR</ptype> <name>sync</name></param>
+            <alias name="eglDestroySync"/>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglDestroySyncNV</name></proto>
+            <param><ptype>EGLSyncNV</ptype> <name>sync</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLint</ptype> <name>eglDupNativeFenceFDANDROID</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSyncKHR</ptype> <name>sync</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglExportDMABUFImageMESA</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLImageKHR</ptype> <name>image</name></param>
+            <param>int *<name>fds</name></param>
+            <param><ptype>EGLint</ptype> *<name>strides</name></param>
+            <param><ptype>EGLint</ptype> *<name>offsets</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglExportDMABUFImageQueryMESA</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLImageKHR</ptype> <name>image</name></param>
+            <param>int *<name>fourcc</name></param>
+            <param>int *<name>num_planes</name></param>
+            <param><ptype>EGLuint64KHR</ptype> *<name>modifiers</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglExportDRMImageMESA</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLImageKHR</ptype> <name>image</name></param>
+            <param><ptype>EGLint</ptype> *<name>name</name></param>
+            <param><ptype>EGLint</ptype> *<name>handle</name></param>
+            <param><ptype>EGLint</ptype> *<name>stride</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglFenceNV</name></proto>
+            <param><ptype>EGLSyncNV</ptype> <name>sync</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglGetConfigAttrib</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLConfig</ptype> <name>config</name></param>
+            <param><ptype>EGLint</ptype> <name>attribute</name></param>
+            <param><ptype>EGLint</ptype> *<name>value</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglGetConfigs</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLConfig</ptype> *<name>configs</name></param>
+            <param><ptype>EGLint</ptype> <name>config_size</name></param>
+            <param><ptype>EGLint</ptype> *<name>num_config</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLContext</ptype> <name>eglGetCurrentContext</name></proto>
+        </command>
+        <command>
+            <proto><ptype>EGLDisplay</ptype> <name>eglGetCurrentDisplay</name></proto>
+        </command>
+        <command>
+            <proto><ptype>EGLSurface</ptype> <name>eglGetCurrentSurface</name></proto>
+            <param><ptype>EGLint</ptype> <name>readdraw</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLDisplay</ptype> <name>eglGetDisplay</name></proto>
+            <param><ptype>EGLNativeDisplayType</ptype> <name>display_id</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLint</ptype> <name>eglGetError</name></proto>
+        </command>
+        <command>
+            <proto><ptype>EGLClientBuffer</ptype> <name>eglGetNativeClientBufferANDROID</name></proto>
+            <param>const struct <ptype>AHardwareBuffer</ptype> *<name>buffer</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglGetOutputLayersEXT</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param>const <ptype>EGLAttrib</ptype> *<name>attrib_list</name></param>
+            <param><ptype>EGLOutputLayerEXT</ptype> *<name>layers</name></param>
+            <param><ptype>EGLint</ptype> <name>max_layers</name></param>
+            <param><ptype>EGLint</ptype> *<name>num_layers</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglGetOutputPortsEXT</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param>const <ptype>EGLAttrib</ptype> *<name>attrib_list</name></param>
+            <param><ptype>EGLOutputPortEXT</ptype> *<name>ports</name></param>
+            <param><ptype>EGLint</ptype> <name>max_ports</name></param>
+            <param><ptype>EGLint</ptype> *<name>num_ports</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLDisplay</ptype> <name>eglGetPlatformDisplay</name></proto>
+            <param><ptype>EGLenum</ptype> <name>platform</name></param>
+            <param>void *<name>native_display</name></param>
+            <param>const <ptype>EGLAttrib</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLDisplay</ptype> <name>eglGetPlatformDisplayEXT</name></proto>
+            <param><ptype>EGLenum</ptype> <name>platform</name></param>
+            <param>void *<name>native_display</name></param>
+            <param>const <ptype>EGLint</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>__eglMustCastToProperFunctionPointerType</ptype> <name>eglGetProcAddress</name></proto>
+            <param>const char *<name>procname</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLNativeFileDescriptorKHR</ptype> <name>eglGetStreamFileDescriptorKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLStreamKHR</ptype> <name>stream</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglGetSyncAttrib</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSync</ptype> <name>sync</name></param>
+            <param><ptype>EGLint</ptype> <name>attribute</name></param>
+            <param><ptype>EGLAttrib</ptype> *<name>value</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglGetSyncAttribKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSyncKHR</ptype> <name>sync</name></param>
+            <param><ptype>EGLint</ptype> <name>attribute</name></param>
+            <param><ptype>EGLint</ptype> *<name>value</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglGetSyncAttribNV</name></proto>
+            <param><ptype>EGLSyncNV</ptype> <name>sync</name></param>
+            <param><ptype>EGLint</ptype> <name>attribute</name></param>
+            <param><ptype>EGLint</ptype> *<name>value</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLuint64NV</ptype> <name>eglGetSystemTimeFrequencyNV</name></proto>
+        </command>
+        <command>
+            <proto><ptype>EGLuint64NV</ptype> <name>eglGetSystemTimeNV</name></proto>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglInitialize</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLint</ptype> *<name>major</name></param>
+            <param><ptype>EGLint</ptype> *<name>minor</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLint</ptype> <name>eglLabelObjectKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>display</name></param>
+            <param><ptype>EGLenum</ptype> <name>objectType</name></param>
+            <param><ptype>EGLObjectKHR</ptype> <name>object</name></param>
+            <param><ptype>EGLLabelKHR</ptype> <name>label</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglLockSurfaceKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSurface</ptype> <name>surface</name></param>
+            <param>const <ptype>EGLint</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglMakeCurrent</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSurface</ptype> <name>draw</name></param>
+            <param><ptype>EGLSurface</ptype> <name>read</name></param>
+            <param><ptype>EGLContext</ptype> <name>ctx</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglOutputLayerAttribEXT</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLOutputLayerEXT</ptype> <name>layer</name></param>
+            <param><ptype>EGLint</ptype> <name>attribute</name></param>
+            <param><ptype>EGLAttrib</ptype> <name>value</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglOutputPortAttribEXT</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLOutputPortEXT</ptype> <name>port</name></param>
+            <param><ptype>EGLint</ptype> <name>attribute</name></param>
+            <param><ptype>EGLAttrib</ptype> <name>value</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglPostSubBufferNV</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSurface</ptype> <name>surface</name></param>
+            <param><ptype>EGLint</ptype> <name>x</name></param>
+            <param><ptype>EGLint</ptype> <name>y</name></param>
+            <param><ptype>EGLint</ptype> <name>width</name></param>
+            <param><ptype>EGLint</ptype> <name>height</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglPresentationTimeANDROID</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSurface</ptype> <name>surface</name></param>
+            <param><ptype>EGLnsecsANDROID</ptype> <name>time</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglGetCompositorTimingSupportedANDROID</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSurface</ptype> <name>surface</name></param>
+            <param><ptype>EGLint</ptype> <name>name</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglGetCompositorTimingANDROID</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSurface</ptype> <name>surface</name></param>
+            <param><ptype>EGLint</ptype> <name>numTimestamps</name></param>
+            <param> const <ptype>EGLint</ptype> *<name>names</name></param>
+            <param><ptype>EGLnsecsANDROID</ptype> *<name>values</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglGetNextFrameIdANDROID</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSurface</ptype> <name>surface</name></param>
+            <param><ptype>EGLuint64KHR</ptype> *<name>frameId</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglGetFrameTimestampSupportedANDROID</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSurface</ptype> <name>surface</name></param>
+            <param><ptype>EGLint</ptype> <name>timestamp</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglGetFrameTimestampsANDROID</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSurface</ptype> <name>surface</name></param>
+            <param><ptype>EGLuint64KHR</ptype> <name>frameId</name></param>
+            <param><ptype>EGLint</ptype> <name>numTimestamps</name></param>
+            <param> const <ptype>EGLint</ptype> *<name>timestamps</name></param>
+            <param><ptype>EGLnsecsANDROID</ptype> *<name>values</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLenum</ptype> <name>eglQueryAPI</name></proto>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglQueryContext</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLContext</ptype> <name>ctx</name></param>
+            <param><ptype>EGLint</ptype> <name>attribute</name></param>
+            <param><ptype>EGLint</ptype> *<name>value</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglQueryDebugKHR</name></proto>
+            <param><ptype>EGLint</ptype> <name>attribute</name></param>
+            <param><ptype>EGLAttrib</ptype> *<name>value</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglQueryDeviceAttribEXT</name></proto>
+            <param><ptype>EGLDeviceEXT</ptype> <name>device</name></param>
+            <param><ptype>EGLint</ptype> <name>attribute</name></param>
+            <param><ptype>EGLAttrib</ptype> *<name>value</name></param>
+        </command>
+        <command>
+            <proto>const char *<name>eglQueryDeviceStringEXT</name></proto>
+            <param><ptype>EGLDeviceEXT</ptype> <name>device</name></param>
+            <param><ptype>EGLint</ptype> <name>name</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglQueryDevicesEXT</name></proto>
+            <param><ptype>EGLint</ptype> <name>max_devices</name></param>
+            <param><ptype>EGLDeviceEXT</ptype> *<name>devices</name></param>
+            <param><ptype>EGLint</ptype> *<name>num_devices</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglQueryDisplayAttribEXT</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLint</ptype> <name>attribute</name></param>
+            <param><ptype>EGLAttrib</ptype> *<name>value</name></param>
+            <alias name="eglQueryDisplayAttribKHR"/>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglQueryDisplayAttribKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLint</ptype> <name>name</name></param>
+            <param><ptype>EGLAttrib</ptype> *<name>value</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglQueryDisplayAttribNV</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLint</ptype> <name>attribute</name></param>
+            <param><ptype>EGLAttrib</ptype> *<name>value</name></param>
+            <alias name="eglQueryDisplayAttribKHR"/>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglQueryDmaBufFormatsEXT</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLint</ptype> <name>max_formats</name></param>
+            <param><ptype>EGLint</ptype> *<name>formats</name></param>
+            <param><ptype>EGLint</ptype> *<name>num_formats</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglQueryDmaBufModifiersEXT</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLint</ptype> <name>format</name></param>
+            <param><ptype>EGLint</ptype> <name>max_modifiers</name></param>
+            <param><ptype>EGLuint64KHR</ptype> *<name>modifiers</name></param>
+            <param><ptype>EGLBoolean</ptype> *<name>external_only</name></param>
+            <param><ptype>EGLint</ptype> *<name>num_modifiers</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglQueryNativeDisplayNV</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLNativeDisplayType</ptype> *<name>display_id</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglQueryNativePixmapNV</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSurface</ptype> <name>surf</name></param>
+            <param><ptype>EGLNativePixmapType</ptype> *<name>pixmap</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglQueryNativeWindowNV</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSurface</ptype> <name>surf</name></param>
+            <param><ptype>EGLNativeWindowType</ptype> *<name>window</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglQueryOutputLayerAttribEXT</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLOutputLayerEXT</ptype> <name>layer</name></param>
+            <param><ptype>EGLint</ptype> <name>attribute</name></param>
+            <param><ptype>EGLAttrib</ptype> *<name>value</name></param>
+        </command>
+        <command>
+            <proto>const char *<name>eglQueryOutputLayerStringEXT</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLOutputLayerEXT</ptype> <name>layer</name></param>
+            <param><ptype>EGLint</ptype> <name>name</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglQueryOutputPortAttribEXT</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLOutputPortEXT</ptype> <name>port</name></param>
+            <param><ptype>EGLint</ptype> <name>attribute</name></param>
+            <param><ptype>EGLAttrib</ptype> *<name>value</name></param>
+        </command>
+        <command>
+            <proto>const char *<name>eglQueryOutputPortStringEXT</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLOutputPortEXT</ptype> <name>port</name></param>
+            <param><ptype>EGLint</ptype> <name>name</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglQueryStreamKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLStreamKHR</ptype> <name>stream</name></param>
+            <param><ptype>EGLenum</ptype> <name>attribute</name></param>
+            <param><ptype>EGLint</ptype> *<name>value</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglQueryStreamAttribKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLStreamKHR</ptype> <name>stream</name></param>
+            <param><ptype>EGLenum</ptype> <name>attribute</name></param>
+            <param><ptype>EGLAttrib</ptype> *<name>value</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglQueryStreamMetadataNV</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLStreamKHR</ptype> <name>stream</name></param>
+            <param><ptype>EGLenum</ptype> <name>name</name></param>
+            <param><ptype>EGLint</ptype> <name>n</name></param>
+            <param><ptype>EGLint</ptype> <name>offset</name></param>
+            <param><ptype>EGLint</ptype> <name>size</name></param>
+            <param>void *<name>data</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglQueryStreamTimeKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLStreamKHR</ptype> <name>stream</name></param>
+            <param><ptype>EGLenum</ptype> <name>attribute</name></param>
+            <param><ptype>EGLTimeKHR</ptype> *<name>value</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglQueryStreamu64KHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLStreamKHR</ptype> <name>stream</name></param>
+            <param><ptype>EGLenum</ptype> <name>attribute</name></param>
+            <param><ptype>EGLuint64KHR</ptype> *<name>value</name></param>
+        </command>
+        <command>
+            <proto>const char *<name>eglQueryString</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLint</ptype> <name>name</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglQuerySurface</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSurface</ptype> <name>surface</name></param>
+            <param><ptype>EGLint</ptype> <name>attribute</name></param>
+            <param><ptype>EGLint</ptype> *<name>value</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglQuerySurface64KHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSurface</ptype> <name>surface</name></param>
+            <param><ptype>EGLint</ptype> <name>attribute</name></param>
+            <param><ptype>EGLAttribKHR</ptype> *<name>value</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglQuerySurfacePointerANGLE</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSurface</ptype> <name>surface</name></param>
+            <param><ptype>EGLint</ptype> <name>attribute</name></param>
+            <param>void **<name>value</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglReleaseTexImage</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSurface</ptype> <name>surface</name></param>
+            <param><ptype>EGLint</ptype> <name>buffer</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglReleaseThread</name></proto>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglResetStreamNV</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLStreamKHR</ptype> <name>stream</name></param>
+        </command>
+        <command>
+            <proto>void <name>eglSetBlobCacheFuncsANDROID</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSetBlobFuncANDROID</ptype> <name>set</name></param>
+            <param><ptype>EGLGetBlobFuncANDROID</ptype> <name>get</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglSetDamageRegionKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSurface</ptype> <name>surface</name></param>
+            <param><ptype>EGLint</ptype> *<name>rects</name></param>
+            <param><ptype>EGLint</ptype> <name>n_rects</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglSetStreamAttribKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLStreamKHR</ptype> <name>stream</name></param>
+            <param><ptype>EGLenum</ptype> <name>attribute</name></param>
+            <param><ptype>EGLAttrib</ptype> <name>value</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglSetStreamMetadataNV</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLStreamKHR</ptype> <name>stream</name></param>
+            <param><ptype>EGLint</ptype> <name>n</name></param>
+            <param><ptype>EGLint</ptype> <name>offset</name></param>
+            <param><ptype>EGLint</ptype> <name>size</name></param>
+            <param>const void *<name>data</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglSignalSyncKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSyncKHR</ptype> <name>sync</name></param>
+            <param><ptype>EGLenum</ptype> <name>mode</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglSignalSyncNV</name></proto>
+            <param><ptype>EGLSyncNV</ptype> <name>sync</name></param>
+            <param><ptype>EGLenum</ptype> <name>mode</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglStreamAttribKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLStreamKHR</ptype> <name>stream</name></param>
+            <param><ptype>EGLenum</ptype> <name>attribute</name></param>
+            <param><ptype>EGLint</ptype> <name>value</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglStreamConsumerAcquireKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLStreamKHR</ptype> <name>stream</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglStreamConsumerAcquireAttribKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLStreamKHR</ptype> <name>stream</name></param>
+            <param>const <ptype>EGLAttrib</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglStreamConsumerGLTextureExternalKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLStreamKHR</ptype> <name>stream</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglStreamConsumerGLTextureExternalAttribsNV</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLStreamKHR</ptype> <name>stream</name></param>
+            <param>const <ptype>EGLAttrib</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglStreamConsumerOutputEXT</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLStreamKHR</ptype> <name>stream</name></param>
+            <param><ptype>EGLOutputLayerEXT</ptype> <name>layer</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglStreamConsumerReleaseKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLStreamKHR</ptype> <name>stream</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglStreamConsumerReleaseAttribKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLStreamKHR</ptype> <name>stream</name></param>
+            <param>const <ptype>EGLAttrib</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglStreamFlushNV</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLStreamKHR</ptype> <name>stream</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglSurfaceAttrib</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSurface</ptype> <name>surface</name></param>
+            <param><ptype>EGLint</ptype> <name>attribute</name></param>
+            <param><ptype>EGLint</ptype> <name>value</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglSwapBuffers</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSurface</ptype> <name>surface</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglSwapBuffersWithDamageEXT</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSurface</ptype> <name>surface</name></param>
+            <param><ptype>EGLint</ptype> *<name>rects</name></param>
+            <param><ptype>EGLint</ptype> <name>n_rects</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglSwapBuffersWithDamageKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSurface</ptype> <name>surface</name></param>
+            <param><ptype>EGLint</ptype> *<name>rects</name></param>
+            <param><ptype>EGLint</ptype> <name>n_rects</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglSwapBuffersRegionNOK</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSurface</ptype> <name>surface</name></param>
+            <param><ptype>EGLint</ptype> <name>numRects</name></param>
+            <param>const <ptype>EGLint</ptype> *<name>rects</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglSwapBuffersRegion2NOK</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSurface</ptype> <name>surface</name></param>
+            <param><ptype>EGLint</ptype> <name>numRects</name></param>
+            <param>const <ptype>EGLint</ptype> *<name>rects</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglSwapInterval</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLint</ptype> <name>interval</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglTerminate</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglUnlockSurfaceKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSurface</ptype> <name>surface</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglUnsignalSyncEXT</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSync</ptype> <name>sync</name></param>
+            <param>const <ptype>EGLAttrib</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglWaitClient</name></proto>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglWaitGL</name></proto>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglWaitNative</name></proto>
+            <param><ptype>EGLint</ptype> <name>engine</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglWaitSync</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSync</ptype> <name>sync</name></param>
+            <param><ptype>EGLint</ptype> <name>flags</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLint</ptype> <name>eglWaitSyncKHR</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSyncKHR</ptype> <name>sync</name></param>
+            <param><ptype>EGLint</ptype> <name>flags</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglCompositorSetContextListEXT</name></proto>
+            <param>const <ptype>EGLint</ptype> *<name>external_ref_ids</name></param>
+            <param><ptype>EGLint</ptype> <name>num_entries</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglCompositorSetContextAttributesEXT</name></proto>
+            <param><ptype>EGLint</ptype> <name>external_ref_id</name></param>
+            <param>const <ptype>EGLint</ptype> *<name>context_attributes</name></param>
+            <param><ptype>EGLint</ptype> <name>num_entries</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglCompositorSetWindowListEXT</name></proto>
+            <param><ptype>EGLint</ptype> <name>external_ref_id</name></param>
+            <param>const <ptype>EGLint</ptype> *<name>external_win_ids</name></param>
+            <param><ptype>EGLint</ptype> <name>num_entries</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglCompositorSetWindowAttributesEXT</name></proto>
+            <param><ptype>EGLint</ptype> <name>external_win_id</name></param>
+            <param>const <ptype>EGLint</ptype> *<name>window_attributes</name></param>
+            <param><ptype>EGLint</ptype> <name>num_entries</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglCompositorBindTexWindowEXT</name></proto>
+            <param><ptype>EGLint</ptype> <name>external_win_id</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglCompositorSetSizeEXT</name></proto>
+            <param><ptype>EGLint</ptype> <name>external_win_id</name></param>
+            <param><ptype>EGLint</ptype> <name>width</name></param>
+            <param><ptype>EGLint</ptype> <name>height</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglCompositorSwapPolicyEXT</name></proto>
+            <param><ptype>EGLint</ptype> <name>external_win_id</name></param>
+            <param><ptype>EGLint</ptype> <name>policy</name></param>
+        </command>
+    </commands>
+
+    <!-- SECTION: EGL API interface definitions. -->
+    <feature api="egl" name="EGL_VERSION_1_0" number="1.0">
+        <require>
+            <enum name="EGL_ALPHA_SIZE"/>
+            <enum name="EGL_BAD_ACCESS"/>
+            <enum name="EGL_BAD_ALLOC"/>
+            <enum name="EGL_BAD_ATTRIBUTE"/>
+            <enum name="EGL_BAD_CONFIG"/>
+            <enum name="EGL_BAD_CONTEXT"/>
+            <enum name="EGL_BAD_CURRENT_SURFACE"/>
+            <enum name="EGL_BAD_DISPLAY"/>
+            <enum name="EGL_BAD_MATCH"/>
+            <enum name="EGL_BAD_NATIVE_PIXMAP"/>
+            <enum name="EGL_BAD_NATIVE_WINDOW"/>
+            <enum name="EGL_BAD_PARAMETER"/>
+            <enum name="EGL_BAD_SURFACE"/>
+            <enum name="EGL_BLUE_SIZE"/>
+            <enum name="EGL_BUFFER_SIZE"/>
+            <enum name="EGL_CONFIG_CAVEAT"/>
+            <enum name="EGL_CONFIG_ID"/>
+            <enum name="EGL_CORE_NATIVE_ENGINE"/>
+            <enum name="EGL_DEPTH_SIZE"/>
+            <enum name="EGL_DONT_CARE"/>
+            <enum name="EGL_DRAW"/>
+            <enum name="EGL_EXTENSIONS"/>
+            <enum name="EGL_FALSE"/>
+            <enum name="EGL_GREEN_SIZE"/>
+            <enum name="EGL_HEIGHT"/>
+            <enum name="EGL_LARGEST_PBUFFER"/>
+            <enum name="EGL_LEVEL"/>
+            <enum name="EGL_MAX_PBUFFER_HEIGHT"/>
+            <enum name="EGL_MAX_PBUFFER_PIXELS"/>
+            <enum name="EGL_MAX_PBUFFER_WIDTH"/>
+            <enum name="EGL_NATIVE_RENDERABLE"/>
+            <enum name="EGL_NATIVE_VISUAL_ID"/>
+            <enum name="EGL_NATIVE_VISUAL_TYPE"/>
+            <enum name="EGL_NONE"/>
+            <enum name="EGL_NON_CONFORMANT_CONFIG"/>
+            <enum name="EGL_NOT_INITIALIZED"/>
+            <enum name="EGL_NO_CONTEXT"/>
+            <enum name="EGL_NO_DISPLAY"/>
+            <enum name="EGL_NO_SURFACE"/>
+            <enum name="EGL_PBUFFER_BIT"/>
+            <enum name="EGL_PIXMAP_BIT"/>
+            <enum name="EGL_READ"/>
+            <enum name="EGL_RED_SIZE"/>
+            <enum name="EGL_SAMPLES"/>
+            <enum name="EGL_SAMPLE_BUFFERS"/>
+            <enum name="EGL_SLOW_CONFIG"/>
+            <enum name="EGL_STENCIL_SIZE"/>
+            <enum name="EGL_SUCCESS"/>
+            <enum name="EGL_SURFACE_TYPE"/>
+            <enum name="EGL_TRANSPARENT_BLUE_VALUE"/>
+            <enum name="EGL_TRANSPARENT_GREEN_VALUE"/>
+            <enum name="EGL_TRANSPARENT_RED_VALUE"/>
+            <enum name="EGL_TRANSPARENT_RGB"/>
+            <enum name="EGL_TRANSPARENT_TYPE"/>
+            <enum name="EGL_TRUE"/>
+            <enum name="EGL_VENDOR"/>
+            <enum name="EGL_VERSION"/>
+            <enum name="EGL_WIDTH"/>
+            <enum name="EGL_WINDOW_BIT"/>
+            <command name="eglChooseConfig"/>
+            <command name="eglCopyBuffers"/>
+            <command name="eglCreateContext"/>
+            <command name="eglCreatePbufferSurface"/>
+            <command name="eglCreatePixmapSurface"/>
+            <command name="eglCreateWindowSurface"/>
+            <command name="eglDestroyContext"/>
+            <command name="eglDestroySurface"/>
+            <command name="eglGetConfigAttrib"/>
+            <command name="eglGetConfigs"/>
+            <command name="eglGetCurrentDisplay"/>
+            <command name="eglGetCurrentSurface"/>
+            <command name="eglGetDisplay"/>
+            <command name="eglGetError"/>
+            <command name="eglGetProcAddress"/>
+            <command name="eglInitialize"/>
+            <command name="eglMakeCurrent"/>
+            <command name="eglQueryContext"/>
+            <command name="eglQueryString"/>
+            <command name="eglQuerySurface"/>
+            <command name="eglSwapBuffers"/>
+            <command name="eglTerminate"/>
+            <command name="eglWaitGL"/>
+            <command name="eglWaitNative"/>
+        </require>
+    </feature>
+    <feature api="egl" name="EGL_VERSION_1_1" number="1.1">
+        <require>
+            <enum name="EGL_BACK_BUFFER"/>
+            <enum name="EGL_BIND_TO_TEXTURE_RGB"/>
+            <enum name="EGL_BIND_TO_TEXTURE_RGBA"/>
+            <enum name="EGL_CONTEXT_LOST"/>
+            <enum name="EGL_MIN_SWAP_INTERVAL"/>
+            <enum name="EGL_MAX_SWAP_INTERVAL"/>
+            <enum name="EGL_MIPMAP_TEXTURE"/>
+            <enum name="EGL_MIPMAP_LEVEL"/>
+            <enum name="EGL_NO_TEXTURE"/>
+            <enum name="EGL_TEXTURE_2D"/>
+            <enum name="EGL_TEXTURE_FORMAT"/>
+            <enum name="EGL_TEXTURE_RGB"/>
+            <enum name="EGL_TEXTURE_RGBA"/>
+            <enum name="EGL_TEXTURE_TARGET"/>
+            <command name="eglBindTexImage"/>
+            <command name="eglReleaseTexImage"/>
+            <command name="eglSurfaceAttrib"/>
+            <command name="eglSwapInterval"/>
+        </require>
+    </feature>
+    <feature api="egl" name="EGL_VERSION_1_2" number="1.2">
+        <require>
+            <enum name="EGL_ALPHA_FORMAT"/>
+            <enum name="EGL_ALPHA_FORMAT_NONPRE"/>
+            <enum name="EGL_ALPHA_FORMAT_PRE"/>
+            <enum name="EGL_ALPHA_MASK_SIZE"/>
+            <enum name="EGL_BUFFER_PRESERVED"/>
+            <enum name="EGL_BUFFER_DESTROYED"/>
+            <enum name="EGL_CLIENT_APIS"/>
+            <enum name="EGL_COLORSPACE"/>
+            <enum name="EGL_COLORSPACE_sRGB"/>
+            <enum name="EGL_COLORSPACE_LINEAR"/>
+            <enum name="EGL_COLOR_BUFFER_TYPE"/>
+            <enum name="EGL_CONTEXT_CLIENT_TYPE"/>
+            <enum name="EGL_DISPLAY_SCALING"/>
+            <enum name="EGL_HORIZONTAL_RESOLUTION"/>
+            <enum name="EGL_LUMINANCE_BUFFER"/>
+            <enum name="EGL_LUMINANCE_SIZE"/>
+            <enum name="EGL_OPENGL_ES_BIT"/>
+            <enum name="EGL_OPENVG_BIT"/>
+            <enum name="EGL_OPENGL_ES_API"/>
+            <enum name="EGL_OPENVG_API"/>
+            <enum name="EGL_OPENVG_IMAGE"/>
+            <enum name="EGL_PIXEL_ASPECT_RATIO"/>
+            <enum name="EGL_RENDERABLE_TYPE"/>
+            <enum name="EGL_RENDER_BUFFER"/>
+            <enum name="EGL_RGB_BUFFER"/>
+            <enum name="EGL_SINGLE_BUFFER"/>
+            <enum name="EGL_SWAP_BEHAVIOR"/>
+            <enum name="EGL_UNKNOWN"/>
+            <enum name="EGL_VERTICAL_RESOLUTION"/>
+            <command name="eglBindAPI"/>
+            <command name="eglQueryAPI"/>
+            <command name="eglCreatePbufferFromClientBuffer"/>
+            <command name="eglReleaseThread"/>
+            <command name="eglWaitClient"/>
+        </require>
+    </feature>
+    <feature api="egl" name="EGL_VERSION_1_3" number="1.3">
+        <require>
+            <enum name="EGL_CONFORMANT"/>
+            <enum name="EGL_CONTEXT_CLIENT_VERSION"/>
+            <enum name="EGL_MATCH_NATIVE_PIXMAP"/>
+            <enum name="EGL_OPENGL_ES2_BIT"/>
+            <enum name="EGL_VG_ALPHA_FORMAT"/>
+            <enum name="EGL_VG_ALPHA_FORMAT_NONPRE"/>
+            <enum name="EGL_VG_ALPHA_FORMAT_PRE"/>
+            <enum name="EGL_VG_ALPHA_FORMAT_PRE_BIT"/>
+            <enum name="EGL_VG_COLORSPACE"/>
+            <enum name="EGL_VG_COLORSPACE_sRGB"/>
+            <enum name="EGL_VG_COLORSPACE_LINEAR"/>
+            <enum name="EGL_VG_COLORSPACE_LINEAR_BIT"/>
+        </require>
+    </feature>
+    <feature api="egl" name="EGL_VERSION_1_4" number="1.4">
+        <require>
+            <enum name="EGL_DEFAULT_DISPLAY"/>
+            <enum name="EGL_MULTISAMPLE_RESOLVE_BOX_BIT"/>
+            <enum name="EGL_MULTISAMPLE_RESOLVE"/>
+            <enum name="EGL_MULTISAMPLE_RESOLVE_DEFAULT"/>
+            <enum name="EGL_MULTISAMPLE_RESOLVE_BOX"/>
+            <enum name="EGL_OPENGL_API"/>
+            <enum name="EGL_OPENGL_BIT"/>
+            <enum name="EGL_SWAP_BEHAVIOR_PRESERVED_BIT"/>
+            <command name="eglGetCurrentContext"/>
+        </require>
+    </feature>
+    <feature api="egl" name="EGL_VERSION_1_5" number="1.5">
+        <require comment="EGL_KHR_create_context features">
+            <enum name="EGL_CONTEXT_MAJOR_VERSION"/>
+            <enum name="EGL_CONTEXT_MINOR_VERSION"/>
+            <enum name="EGL_CONTEXT_OPENGL_PROFILE_MASK"/>
+            <enum name="EGL_CONTEXT_OPENGL_RESET_NOTIFICATION_STRATEGY"/>
+            <enum name="EGL_NO_RESET_NOTIFICATION"/>
+            <enum name="EGL_LOSE_CONTEXT_ON_RESET"/>
+            <enum name="EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT"/>
+            <enum name="EGL_CONTEXT_OPENGL_COMPATIBILITY_PROFILE_BIT"/>
+            <enum name="EGL_CONTEXT_OPENGL_DEBUG"/>
+            <enum name="EGL_CONTEXT_OPENGL_FORWARD_COMPATIBLE"/>
+            <enum name="EGL_CONTEXT_OPENGL_ROBUST_ACCESS"/>
+            <enum name="EGL_OPENGL_ES3_BIT"/>
+        </require>
+        <require comment="EGL_EXT_create_context_robustness">
+            <enum name="EGL_CONTEXT_OPENGL_ROBUST_ACCESS"/>
+            <enum name="EGL_CONTEXT_OPENGL_RESET_NOTIFICATION_STRATEGY"/>
+        </require>
+        <require comment="EGL_EXT_client_extensions"/>
+        <require comment="EGL_KHR_cl_event2">
+            <enum name="EGL_CL_EVENT_HANDLE"/>
+            <enum name="EGL_SYNC_CL_EVENT"/>
+            <enum name="EGL_SYNC_CL_EVENT_COMPLETE"/>
+        </require>
+        <require comment="EGL_KHR_fence_sync">
+            <enum name="EGL_SYNC_PRIOR_COMMANDS_COMPLETE"/>
+            <enum name="EGL_SYNC_TYPE"/>
+            <enum name="EGL_SYNC_STATUS"/>
+            <enum name="EGL_SYNC_CONDITION"/>
+            <enum name="EGL_SIGNALED"/>
+            <enum name="EGL_UNSIGNALED"/>
+            <enum name="EGL_SYNC_FLUSH_COMMANDS_BIT"/>
+            <enum name="EGL_FOREVER"/>
+            <enum name="EGL_TIMEOUT_EXPIRED"/>
+            <enum name="EGL_CONDITION_SATISFIED"/>
+            <enum name="EGL_NO_SYNC"/>
+            <enum name="EGL_SYNC_FENCE"/>
+            <command name="eglCreateSync"/>
+            <command name="eglDestroySync"/>
+            <command name="eglClientWaitSync"/>
+            <command name="eglGetSyncAttrib"/>
+        </require>
+        <require comment="EGL_KHR_get_all_proc_addresses"/>
+        <require comment="EGL_KHR_client_get_all_proc_addresses"/>
+        <require comment="EGL_KHR_gl_colorspace">
+            <enum name="EGL_GL_COLORSPACE"/>
+            <enum name="EGL_GL_COLORSPACE_SRGB"/>
+            <enum name="EGL_GL_COLORSPACE_LINEAR"/>
+        </require>
+        <require comment="EGL_KHR_gl_renderbuffer_image">
+            <enum name="EGL_GL_RENDERBUFFER"/>
+        </require>
+        <require comment="EGL_KHR_gl_texture_2D_image">
+            <enum name="EGL_GL_TEXTURE_2D"/>
+            <enum name="EGL_GL_TEXTURE_LEVEL"/>
+        </require>
+        <require comment="EGL_KHR_gl_texture_3D_image">
+            <enum name="EGL_GL_TEXTURE_3D"/>
+            <enum name="EGL_GL_TEXTURE_ZOFFSET"/>
+        </require>
+        <require comment="EGL_KHR_gl_texture_cubemap_image">
+            <enum name="EGL_GL_TEXTURE_CUBE_MAP_POSITIVE_X"/>
+            <enum name="EGL_GL_TEXTURE_CUBE_MAP_NEGATIVE_X"/>
+            <enum name="EGL_GL_TEXTURE_CUBE_MAP_POSITIVE_Y"/>
+            <enum name="EGL_GL_TEXTURE_CUBE_MAP_NEGATIVE_Y"/>
+            <enum name="EGL_GL_TEXTURE_CUBE_MAP_POSITIVE_Z"/>
+            <enum name="EGL_GL_TEXTURE_CUBE_MAP_NEGATIVE_Z"/>
+        </require>
+        <require comment="EGL_KHR_image_base">
+            <enum name="EGL_IMAGE_PRESERVED"/>
+            <enum name="EGL_NO_IMAGE"/>
+            <command name="eglCreateImage"/>
+            <command name="eglDestroyImage"/>
+        </require>
+        <require comment="EGL_EXT_platform_base">
+            <command name="eglGetPlatformDisplay"/>
+            <command name="eglCreatePlatformWindowSurface"/>
+            <command name="eglCreatePlatformPixmapSurface"/>
+        </require>
+        <require comment="EGL_KHR_surfaceless_context - just relaxes an error condition"/>
+        <require comment="EGL_KHR_wait_sync">
+            <command name="eglWaitSync"/>
+        </require>
+    </feature>
+
+    <!-- SECTION: EGL extension interface definitions -->
+    <extensions>
+        <extension name="EGL_ANDROID_blob_cache" supported="egl">
+            <require>
+                <command name="eglSetBlobCacheFuncsANDROID"/>
+            </require>
+        </extension>
+        <extension name="EGL_ANDROID_create_native_client_buffer" supported="egl">
+            <require>
+                <enum name="EGL_NATIVE_BUFFER_USAGE_ANDROID"/>
+                <enum name="EGL_NATIVE_BUFFER_USAGE_PROTECTED_BIT_ANDROID"/>
+                <enum name="EGL_NATIVE_BUFFER_USAGE_RENDERBUFFER_BIT_ANDROID"/>
+                <enum name="EGL_NATIVE_BUFFER_USAGE_TEXTURE_BIT_ANDROID"/>
+                <command name="eglCreateNativeClientBufferANDROID"/>
+            </require>
+        </extension>
+        <extension name="EGL_ANDROID_framebuffer_target" supported="egl">
+            <require>
+                <enum name="EGL_FRAMEBUFFER_TARGET_ANDROID"/>
+            </require>
+        </extension>
+        <extension name="EGL_ANDROID_get_native_client_buffer" supported="egl">
+            <require>
+                <command name="eglGetNativeClientBufferANDROID"/>
+            </require>
+        </extension>
+        <extension name="EGL_ANDROID_front_buffer_auto_refresh" supported="egl">
+            <require>
+                <enum name="EGL_FRONT_BUFFER_AUTO_REFRESH_ANDROID"/>
+            </require>
+        </extension>
+        <extension name="EGL_ANDROID_image_native_buffer" supported="egl">
+            <require>
+                <enum name="EGL_NATIVE_BUFFER_ANDROID"/>
+            </require>
+        </extension>
+        <extension name="EGL_ANDROID_native_fence_sync" supported="egl">
+            <require>
+                <enum name="EGL_SYNC_NATIVE_FENCE_ANDROID"/>
+                <enum name="EGL_SYNC_NATIVE_FENCE_FD_ANDROID"/>
+                <enum name="EGL_SYNC_NATIVE_FENCE_SIGNALED_ANDROID"/>
+                <enum name="EGL_NO_NATIVE_FENCE_FD_ANDROID"/>
+                <command name="eglDupNativeFenceFDANDROID"/>
+            </require>
+        </extension>
+        <extension name="EGL_ANDROID_presentation_time" supported="egl">
+            <require>
+                <command name="eglPresentationTimeANDROID"/>
+            </require>
+        </extension>
+        <extension name="EGL_ANDROID_get_frame_timestamps" supported="egl">
+            <require>
+                <enum name="EGL_TIMESTAMP_PENDING_ANDROID"/>
+                <enum name="EGL_TIMESTAMP_INVALID_ANDROID"/>
+                <enum name="EGL_TIMESTAMPS_ANDROID"/>
+                <enum name="EGL_COMPOSITE_DEADLINE_ANDROID"/>
+                <enum name="EGL_COMPOSITE_INTERVAL_ANDROID"/>
+                <enum name="EGL_COMPOSITE_TO_PRESENT_LATENCY_ANDROID"/>
+                <enum name="EGL_REQUESTED_PRESENT_TIME_ANDROID"/>
+                <enum name="EGL_RENDERING_COMPLETE_TIME_ANDROID"/>
+                <enum name="EGL_COMPOSITION_LATCH_TIME_ANDROID"/>
+                <enum name="EGL_FIRST_COMPOSITION_START_TIME_ANDROID"/>
+                <enum name="EGL_LAST_COMPOSITION_START_TIME_ANDROID"/>
+                <enum name="EGL_FIRST_COMPOSITION_GPU_FINISHED_TIME_ANDROID"/>
+                <enum name="EGL_DISPLAY_PRESENT_TIME_ANDROID"/>
+                <enum name="EGL_DEQUEUE_READY_TIME_ANDROID"/>
+                <enum name="EGL_READS_DONE_TIME_ANDROID"/>
+                <command name="eglGetCompositorTimingSupportedANDROID"/>
+                <command name="eglGetCompositorTimingANDROID"/>
+                <command name="eglGetNextFrameIdANDROID"/>
+                <command name="eglGetFrameTimestampSupportedANDROID"/>
+                <command name="eglGetFrameTimestampsANDROID"/>
+            </require>
+        </extension>
+        <extension name="EGL_ANDROID_recordable" supported="egl">
+            <require>
+                <enum name="EGL_RECORDABLE_ANDROID"/>
+            </require>
+        </extension>
+        <extension name="EGL_ANGLE_d3d_share_handle_client_buffer" supported="egl">
+            <require>
+                <enum name="EGL_D3D_TEXTURE_2D_SHARE_HANDLE_ANGLE"/>
+            </require>
+        </extension>
+        <extension name="EGL_ANGLE_device_d3d" supported="egl">
+            <require>
+                <enum name="EGL_D3D9_DEVICE_ANGLE"/>
+                <enum name="EGL_D3D11_DEVICE_ANGLE"/>
+            </require>
+        </extension>
+        <extension name="EGL_ANGLE_query_surface_pointer" supported="egl">
+            <require>
+                <command name="eglQuerySurfacePointerANGLE"/>
+            </require>
+        </extension>
+        <extension name="EGL_ANGLE_surface_d3d_texture_2d_share_handle" supported="egl">
+            <require>
+                <enum name="EGL_D3D_TEXTURE_2D_SHARE_HANDLE_ANGLE"/>
+            </require>
+        </extension>
+        <extension name="EGL_ANGLE_window_fixed_size" supported="egl">
+            <require>
+                <enum name="EGL_FIXED_SIZE_ANGLE"/>
+            </require>
+        </extension>
+        <extension name="EGL_ARM_implicit_external_sync" supported="egl">
+            <require>
+                <enum name="EGL_SYNC_PRIOR_COMMANDS_IMPLICIT_EXTERNAL_ARM"/>
+            </require>
+        </extension>
+        <extension name="EGL_ARM_pixmap_multisample_discard" supported="egl">
+            <require>
+                <enum name="EGL_DISCARD_SAMPLES_ARM"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_buffer_age" supported="egl">
+            <require>
+                <enum name="EGL_BUFFER_AGE_EXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_client_extensions" supported="egl"/>
+        <extension name="EGL_EXT_client_sync" supported="egl">
+            <require>
+                <enum name="EGL_SYNC_CLIENT_EXT"/>
+                <enum name="EGL_SYNC_CLIENT_SIGNAL_EXT"/>
+                <command name="eglClientSignalSyncEXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_create_context_robustness" supported="egl">
+            <require>
+                <enum name="EGL_CONTEXT_OPENGL_ROBUST_ACCESS_EXT"/>
+                <enum name="EGL_CONTEXT_OPENGL_RESET_NOTIFICATION_STRATEGY_EXT"/>
+                <enum name="EGL_NO_RESET_NOTIFICATION_EXT"/>
+                <enum name="EGL_LOSE_CONTEXT_ON_RESET_EXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_device_base" supported="egl">
+            <require>
+                <enum name="EGL_NO_DEVICE_EXT"/>
+                <enum name="EGL_BAD_DEVICE_EXT"/>
+                <enum name="EGL_DEVICE_EXT"/>
+                <command name="eglQueryDeviceAttribEXT"/>
+                <command name="eglQueryDeviceStringEXT"/>
+                <command name="eglQueryDevicesEXT"/>
+                <command name="eglQueryDisplayAttribEXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_device_drm" supported="egl">
+            <require>
+                <enum name="EGL_DRM_DEVICE_FILE_EXT"/>
+                <enum name="EGL_DRM_MASTER_FD_EXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_device_enumeration" supported="egl">
+            <require>
+                <command name="eglQueryDevicesEXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_device_openwf" supported="egl">
+            <require>
+                <enum name="EGL_OPENWF_DEVICE_ID_EXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_device_query" supported="egl">
+            <require>
+                <enum name="EGL_NO_DEVICE_EXT"/>
+                <enum name="EGL_BAD_DEVICE_EXT"/>
+                <enum name="EGL_DEVICE_EXT"/>
+                <command name="eglQueryDeviceAttribEXT"/>
+                <command name="eglQueryDeviceStringEXT"/>
+                <command name="eglQueryDisplayAttribEXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_gl_colorspace_bt2020_linear" supported="egl">
+            <require>
+                <enum name="EGL_GL_COLORSPACE_BT2020_LINEAR_EXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_gl_colorspace_bt2020_pq" supported="egl">
+            <require>
+                <enum name="EGL_GL_COLORSPACE_BT2020_PQ_EXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_gl_colorspace_scrgb" supported="egl">
+            <require>
+                <enum name="EGL_GL_COLORSPACE_SCRGB_EXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_gl_colorspace_scrgb_linear" supported="egl">
+            <require>
+                <enum name="EGL_GL_COLORSPACE_SCRGB_LINEAR_EXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_gl_colorspace_display_p3_linear" supported="egl">
+            <require>
+                <enum name="EGL_GL_COLORSPACE_DISPLAY_P3_LINEAR_EXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_gl_colorspace_display_p3" supported="egl">
+            <require>
+                <enum name="EGL_GL_COLORSPACE_DISPLAY_P3_EXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_image_dma_buf_import" supported="egl">
+            <require>
+                <enum name="EGL_LINUX_DMA_BUF_EXT"/>
+                <enum name="EGL_LINUX_DRM_FOURCC_EXT"/>
+                <enum name="EGL_DMA_BUF_PLANE0_FD_EXT"/>
+                <enum name="EGL_DMA_BUF_PLANE0_OFFSET_EXT"/>
+                <enum name="EGL_DMA_BUF_PLANE0_PITCH_EXT"/>
+                <enum name="EGL_DMA_BUF_PLANE1_FD_EXT"/>
+                <enum name="EGL_DMA_BUF_PLANE1_OFFSET_EXT"/>
+                <enum name="EGL_DMA_BUF_PLANE1_PITCH_EXT"/>
+                <enum name="EGL_DMA_BUF_PLANE2_FD_EXT"/>
+                <enum name="EGL_DMA_BUF_PLANE2_OFFSET_EXT"/>
+                <enum name="EGL_DMA_BUF_PLANE2_PITCH_EXT"/>
+                <enum name="EGL_YUV_COLOR_SPACE_HINT_EXT"/>
+                <enum name="EGL_SAMPLE_RANGE_HINT_EXT"/>
+                <enum name="EGL_YUV_CHROMA_HORIZONTAL_SITING_HINT_EXT"/>
+                <enum name="EGL_YUV_CHROMA_VERTICAL_SITING_HINT_EXT"/>
+                <enum name="EGL_ITU_REC601_EXT"/>
+                <enum name="EGL_ITU_REC709_EXT"/>
+                <enum name="EGL_ITU_REC2020_EXT"/>
+                <enum name="EGL_YUV_FULL_RANGE_EXT"/>
+                <enum name="EGL_YUV_NARROW_RANGE_EXT"/>
+                <enum name="EGL_YUV_CHROMA_SITING_0_EXT"/>
+                <enum name="EGL_YUV_CHROMA_SITING_0_5_EXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_image_dma_buf_import_modifiers" supported="egl">
+            <require>
+                <enum name="EGL_DMA_BUF_PLANE3_FD_EXT"/>
+                <enum name="EGL_DMA_BUF_PLANE3_OFFSET_EXT"/>
+                <enum name="EGL_DMA_BUF_PLANE3_PITCH_EXT"/>
+                <enum name="EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT"/>
+                <enum name="EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT"/>
+                <enum name="EGL_DMA_BUF_PLANE1_MODIFIER_LO_EXT"/>
+                <enum name="EGL_DMA_BUF_PLANE1_MODIFIER_HI_EXT"/>
+                <enum name="EGL_DMA_BUF_PLANE2_MODIFIER_LO_EXT"/>
+                <enum name="EGL_DMA_BUF_PLANE2_MODIFIER_HI_EXT"/>
+                <enum name="EGL_DMA_BUF_PLANE3_MODIFIER_LO_EXT"/>
+                <enum name="EGL_DMA_BUF_PLANE3_MODIFIER_HI_EXT"/>
+                <command name="eglQueryDmaBufFormatsEXT"/>
+                <command name="eglQueryDmaBufModifiersEXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_image_gl_colorspace" supported="egl">
+            <require>
+                <enum name="EGL_GL_COLORSPACE"/>
+                <enum name="EGL_GL_COLORSPACE_DEFAULT_EXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_multiview_window" supported="egl">
+            <require>
+                <enum name="EGL_MULTIVIEW_VIEW_COUNT_EXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_output_base" supported="egl">
+            <require>
+                <type name="EGLOutputLayerEXT"/>
+                <type name="EGLOutputPortEXT"/>
+                <enum name="EGL_NO_OUTPUT_LAYER_EXT"/>
+                <enum name="EGL_NO_OUTPUT_PORT_EXT"/>
+                <enum name="EGL_BAD_OUTPUT_LAYER_EXT"/>
+                <enum name="EGL_BAD_OUTPUT_PORT_EXT"/>
+                <enum name="EGL_SWAP_INTERVAL_EXT"/>
+                <command name="eglGetOutputLayersEXT"/>
+                <command name="eglGetOutputPortsEXT"/>
+                <command name="eglOutputLayerAttribEXT"/>
+                <command name="eglQueryOutputLayerAttribEXT"/>
+                <command name="eglQueryOutputLayerStringEXT"/>
+                <command name="eglOutputPortAttribEXT"/>
+                <command name="eglQueryOutputPortAttribEXT"/>
+                <command name="eglQueryOutputPortStringEXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_output_drm" supported="egl">
+            <require>
+                <enum name="EGL_DRM_CRTC_EXT"/>
+                <enum name="EGL_DRM_PLANE_EXT"/>
+                <enum name="EGL_DRM_CONNECTOR_EXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_output_openwf" supported="egl">
+            <require>
+                <enum name="EGL_OPENWF_PIPELINE_ID_EXT"/>
+                <enum name="EGL_OPENWF_PORT_ID_EXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_pixel_format_float" supported="egl">
+            <require>
+                <enum name="EGL_COLOR_COMPONENT_TYPE_EXT"/>
+                <enum name="EGL_COLOR_COMPONENT_TYPE_FIXED_EXT"/>
+                <enum name="EGL_COLOR_COMPONENT_TYPE_FLOAT_EXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_platform_base" supported="egl">
+            <require>
+                <command name="eglGetPlatformDisplayEXT"/>
+                <command name="eglCreatePlatformWindowSurfaceEXT"/>
+                <command name="eglCreatePlatformPixmapSurfaceEXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_platform_device" supported="egl">
+            <require>
+                <enum name="EGL_PLATFORM_DEVICE_EXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_platform_wayland" supported="egl">
+            <require>
+                <enum name="EGL_PLATFORM_WAYLAND_EXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_platform_x11" supported="egl">
+            <require>
+                <enum name="EGL_PLATFORM_X11_EXT"/>
+                <enum name="EGL_PLATFORM_X11_SCREEN_EXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_protected_content" supported="egl">
+            <require>
+                <enum name="EGL_PROTECTED_CONTENT_EXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_protected_surface" supported="egl">
+            <require>
+                <enum name="EGL_PROTECTED_CONTENT_EXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_stream_consumer_egloutput" supported="egl">
+            <require>
+                <command name="eglStreamConsumerOutputEXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_surface_SMPTE2086_metadata" supported="egl">
+            <require>
+                <enum name="EGL_SMPTE2086_DISPLAY_PRIMARY_RX_EXT"/>
+                <enum name="EGL_SMPTE2086_DISPLAY_PRIMARY_RY_EXT"/>
+                <enum name="EGL_SMPTE2086_DISPLAY_PRIMARY_GX_EXT"/>
+                <enum name="EGL_SMPTE2086_DISPLAY_PRIMARY_GY_EXT"/>
+                <enum name="EGL_SMPTE2086_DISPLAY_PRIMARY_BX_EXT"/>
+                <enum name="EGL_SMPTE2086_DISPLAY_PRIMARY_BY_EXT"/>
+                <enum name="EGL_SMPTE2086_WHITE_POINT_X_EXT"/>
+                <enum name="EGL_SMPTE2086_WHITE_POINT_Y_EXT"/>
+                <enum name="EGL_SMPTE2086_MAX_LUMINANCE_EXT"/>
+                <enum name="EGL_SMPTE2086_MIN_LUMINANCE_EXT"/>
+                <enum name="EGL_METADATA_SCALING_EXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_swap_buffers_with_damage" supported="egl">
+            <require>
+                <command name="eglSwapBuffersWithDamageEXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_sync_reuse" supported="egl">
+            <require>
+                <command name="eglUnsignalSyncEXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_yuv_surface" supported="egl">
+            <require>
+                <enum name="EGL_YUV_ORDER_EXT"/>
+                <enum name="EGL_YUV_NUMBER_OF_PLANES_EXT"/>
+                <enum name="EGL_YUV_SUBSAMPLE_EXT"/>
+                <enum name="EGL_YUV_DEPTH_RANGE_EXT"/>
+                <enum name="EGL_YUV_CSC_STANDARD_EXT"/>
+                <enum name="EGL_YUV_PLANE_BPP_EXT"/>
+                <enum name="EGL_YUV_BUFFER_EXT"/>
+                <enum name="EGL_YUV_ORDER_YUV_EXT"/>
+                <enum name="EGL_YUV_ORDER_YVU_EXT"/>
+                <enum name="EGL_YUV_ORDER_YUYV_EXT"/>
+                <enum name="EGL_YUV_ORDER_UYVY_EXT"/>
+                <enum name="EGL_YUV_ORDER_YVYU_EXT"/>
+                <enum name="EGL_YUV_ORDER_VYUY_EXT"/>
+                <enum name="EGL_YUV_ORDER_AYUV_EXT"/>
+                <enum name="EGL_YUV_SUBSAMPLE_4_2_0_EXT"/>
+                <enum name="EGL_YUV_SUBSAMPLE_4_2_2_EXT"/>
+                <enum name="EGL_YUV_SUBSAMPLE_4_4_4_EXT"/>
+                <enum name="EGL_YUV_DEPTH_RANGE_LIMITED_EXT"/>
+                <enum name="EGL_YUV_DEPTH_RANGE_FULL_EXT"/>
+                <enum name="EGL_YUV_CSC_STANDARD_601_EXT"/>
+                <enum name="EGL_YUV_CSC_STANDARD_709_EXT"/>
+                <enum name="EGL_YUV_CSC_STANDARD_2020_EXT"/>
+                <enum name="EGL_YUV_PLANE_BPP_0_EXT"/>
+                <enum name="EGL_YUV_PLANE_BPP_8_EXT"/>
+                <enum name="EGL_YUV_PLANE_BPP_10_EXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_HI_clientpixmap" supported="egl">
+            <require>
+                <enum name="EGL_CLIENT_PIXMAP_POINTER_HI"/>
+                <command name="eglCreatePixmapSurfaceHI"/>
+            </require>
+        </extension>
+        <extension name="EGL_HI_colorformats" supported="egl">
+            <require>
+                <enum name="EGL_COLOR_FORMAT_HI"/>
+                <enum name="EGL_COLOR_RGB_HI"/>
+                <enum name="EGL_COLOR_RGBA_HI"/>
+                <enum name="EGL_COLOR_ARGB_HI"/>
+            </require>
+        </extension>
+        <extension name="EGL_IMG_context_priority" supported="egl">
+            <require>
+                <enum name="EGL_CONTEXT_PRIORITY_LEVEL_IMG"/>
+                <enum name="EGL_CONTEXT_PRIORITY_HIGH_IMG"/>
+                <enum name="EGL_CONTEXT_PRIORITY_MEDIUM_IMG"/>
+                <enum name="EGL_CONTEXT_PRIORITY_LOW_IMG"/>
+            </require>
+        </extension>
+        <extension name="EGL_IMG_image_plane_attribs" supported="egl">
+            <require>
+                <enum name="EGL_NATIVE_BUFFER_MULTIPLANE_SEPARATE_IMG"/>
+                <enum name="EGL_NATIVE_BUFFER_PLANE_OFFSET_IMG"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_cl_event" supported="egl">
+            <require>
+                <enum name="EGL_CL_EVENT_HANDLE_KHR"/>
+                <enum name="EGL_SYNC_CL_EVENT_KHR"/>
+                <enum name="EGL_SYNC_CL_EVENT_COMPLETE_KHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_cl_event2" supported="egl">
+            <require>
+                <enum name="EGL_CL_EVENT_HANDLE_KHR"/>
+                <enum name="EGL_SYNC_CL_EVENT_KHR"/>
+                <enum name="EGL_SYNC_CL_EVENT_COMPLETE_KHR"/>
+                <command name="eglCreateSync64KHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_config_attribs" supported="egl">
+            <require>
+                <enum name="EGL_CONFORMANT_KHR"/>
+                <enum name="EGL_VG_COLORSPACE_LINEAR_BIT_KHR"/>
+                <enum name="EGL_VG_ALPHA_FORMAT_PRE_BIT_KHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_client_get_all_proc_addresses" supported="egl" comment="Alias of EGL_KHR_get_all_proc_addresses"/>
+        <extension name="EGL_KHR_context_flush_control" supported="egl">
+            <require>
+                <enum name="EGL_CONTEXT_RELEASE_BEHAVIOR_NONE_KHR"/>
+                <enum name="EGL_CONTEXT_RELEASE_BEHAVIOR_KHR"/>
+                <enum name="EGL_CONTEXT_RELEASE_BEHAVIOR_FLUSH_KHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_create_context" supported="egl">
+            <require>
+                <enum name="EGL_CONTEXT_MAJOR_VERSION_KHR"/>
+                <enum name="EGL_CONTEXT_MINOR_VERSION_KHR"/>
+                <enum name="EGL_CONTEXT_FLAGS_KHR"/>
+                <enum name="EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR"/>
+                <enum name="EGL_CONTEXT_OPENGL_RESET_NOTIFICATION_STRATEGY_KHR"/>
+                <enum name="EGL_NO_RESET_NOTIFICATION_KHR"/>
+                <enum name="EGL_LOSE_CONTEXT_ON_RESET_KHR"/>
+                <enum name="EGL_CONTEXT_OPENGL_DEBUG_BIT_KHR"/>
+                <enum name="EGL_CONTEXT_OPENGL_FORWARD_COMPATIBLE_BIT_KHR"/>
+                <enum name="EGL_CONTEXT_OPENGL_ROBUST_ACCESS_BIT_KHR"/>
+                <enum name="EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT_KHR"/>
+                <enum name="EGL_CONTEXT_OPENGL_COMPATIBILITY_PROFILE_BIT_KHR"/>
+                <enum name="EGL_OPENGL_ES3_BIT"/>
+                <enum name="EGL_OPENGL_ES3_BIT_KHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_create_context_no_error" supported="egl">
+            <require>
+                <enum name="EGL_CONTEXT_OPENGL_NO_ERROR_KHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_debug" supported="egl">
+            <require>
+                    <!-- Explicit dependencies require to get EGLDEBUGPROCKHR dependencies correct -->
+                <type name="EGLLabelKHR"/>
+                <type name="EGLObjectKHR"/>
+                <enum name="EGL_OBJECT_THREAD_KHR"/>
+                <enum name="EGL_OBJECT_DISPLAY_KHR"/>
+                <enum name="EGL_OBJECT_CONTEXT_KHR"/>
+                <enum name="EGL_OBJECT_SURFACE_KHR"/>
+                <enum name="EGL_OBJECT_IMAGE_KHR"/>
+                <enum name="EGL_OBJECT_SYNC_KHR"/>
+                <enum name="EGL_OBJECT_STREAM_KHR"/>
+                <enum name="EGL_DEBUG_MSG_CRITICAL_KHR"/>
+                <enum name="EGL_DEBUG_MSG_ERROR_KHR"/>
+                <enum name="EGL_DEBUG_MSG_WARN_KHR"/>
+                <enum name="EGL_DEBUG_MSG_INFO_KHR"/>
+                <enum name="EGL_DEBUG_CALLBACK_KHR"/>
+                <command name="eglDebugMessageControlKHR"/>
+                <command name="eglQueryDebugKHR"/>
+                <command name="eglLabelObjectKHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_display_reference" supported="egl">
+            <require>
+                <enum name="EGL_TRACK_REFERENCES_KHR"/>
+                <command name="eglQueryDisplayAttribKHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_fence_sync" protect="KHRONOS_SUPPORT_INT64" supported="egl">
+            <require>
+                <!-- Most interfaces also defined by EGL_KHR_reusable sync -->
+                <enum name="EGL_SYNC_PRIOR_COMMANDS_COMPLETE_KHR"/>
+                <enum name="EGL_SYNC_CONDITION_KHR"/>
+                <enum name="EGL_SYNC_FENCE_KHR"/>
+                <command name="eglCreateSyncKHR"/>
+                <command name="eglDestroySyncKHR"/>
+                <command name="eglClientWaitSyncKHR"/>
+                <command name="eglGetSyncAttribKHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_get_all_proc_addresses" supported="egl"/>
+        <extension name="EGL_KHR_gl_colorspace" supported="egl">
+            <require>
+                <enum name="EGL_GL_COLORSPACE_KHR"/>
+                <enum name="EGL_GL_COLORSPACE_SRGB_KHR"/>
+                <enum name="EGL_GL_COLORSPACE_LINEAR_KHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_gl_renderbuffer_image" supported="egl">
+            <require>
+                <enum name="EGL_GL_RENDERBUFFER_KHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_gl_texture_2D_image" supported="egl">
+            <require>
+                <enum name="EGL_GL_TEXTURE_2D_KHR"/>
+                <enum name="EGL_GL_TEXTURE_LEVEL_KHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_gl_texture_3D_image" supported="egl">
+            <require>
+                <enum name="EGL_GL_TEXTURE_3D_KHR"/>
+                <enum name="EGL_GL_TEXTURE_ZOFFSET_KHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_gl_texture_cubemap_image" supported="egl">
+            <require>
+                <enum name="EGL_GL_TEXTURE_CUBE_MAP_POSITIVE_X_KHR"/>
+                <enum name="EGL_GL_TEXTURE_CUBE_MAP_NEGATIVE_X_KHR"/>
+                <enum name="EGL_GL_TEXTURE_CUBE_MAP_POSITIVE_Y_KHR"/>
+                <enum name="EGL_GL_TEXTURE_CUBE_MAP_NEGATIVE_Y_KHR"/>
+                <enum name="EGL_GL_TEXTURE_CUBE_MAP_POSITIVE_Z_KHR"/>
+                <enum name="EGL_GL_TEXTURE_CUBE_MAP_NEGATIVE_Z_KHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_image" supported="egl">
+            <require>
+                <enum name="EGL_NATIVE_PIXMAP_KHR"/>
+                <enum name="EGL_NO_IMAGE_KHR"/>
+                <command name="eglCreateImageKHR"/>
+                <command name="eglDestroyImageKHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_image_base" supported="egl">
+            <require>
+                <enum name="EGL_IMAGE_PRESERVED_KHR"/>
+                <enum name="EGL_NO_IMAGE_KHR"/>
+                <command name="eglCreateImageKHR"/>
+                <command name="eglDestroyImageKHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_image_pixmap" supported="egl">
+            <require>
+                <enum name="EGL_NATIVE_PIXMAP_KHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_lock_surface" supported="egl">
+            <require>
+                <enum name="EGL_READ_SURFACE_BIT_KHR"/>
+                <enum name="EGL_WRITE_SURFACE_BIT_KHR"/>
+                <enum name="EGL_LOCK_SURFACE_BIT_KHR"/>
+                <enum name="EGL_OPTIMAL_FORMAT_BIT_KHR"/>
+                <enum name="EGL_MATCH_FORMAT_KHR"/>
+                <enum name="EGL_FORMAT_RGB_565_EXACT_KHR"/>
+                <enum name="EGL_FORMAT_RGB_565_KHR"/>
+                <enum name="EGL_FORMAT_RGBA_8888_EXACT_KHR"/>
+                <enum name="EGL_FORMAT_RGBA_8888_KHR"/>
+                <enum name="EGL_MAP_PRESERVE_PIXELS_KHR"/>
+                <enum name="EGL_LOCK_USAGE_HINT_KHR"/>
+                <enum name="EGL_BITMAP_POINTER_KHR"/>
+                <enum name="EGL_BITMAP_PITCH_KHR"/>
+                <enum name="EGL_BITMAP_ORIGIN_KHR"/>
+                <enum name="EGL_BITMAP_PIXEL_RED_OFFSET_KHR"/>
+                <enum name="EGL_BITMAP_PIXEL_GREEN_OFFSET_KHR"/>
+                <enum name="EGL_BITMAP_PIXEL_BLUE_OFFSET_KHR"/>
+                <enum name="EGL_BITMAP_PIXEL_ALPHA_OFFSET_KHR"/>
+                <enum name="EGL_BITMAP_PIXEL_LUMINANCE_OFFSET_KHR"/>
+                <enum name="EGL_LOWER_LEFT_KHR"/>
+                <enum name="EGL_UPPER_LEFT_KHR"/>
+                <command name="eglLockSurfaceKHR"/>
+                <command name="eglUnlockSurfaceKHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_lock_surface2" supported="egl">
+            <require>
+                <enum name="EGL_BITMAP_PIXEL_SIZE_KHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_lock_surface3" supported="egl">
+            <require>
+                <enum name="EGL_READ_SURFACE_BIT_KHR"/>
+                <enum name="EGL_WRITE_SURFACE_BIT_KHR"/>
+                <enum name="EGL_LOCK_SURFACE_BIT_KHR"/>
+                <enum name="EGL_OPTIMAL_FORMAT_BIT_KHR"/>
+                <enum name="EGL_MATCH_FORMAT_KHR"/>
+                <enum name="EGL_FORMAT_RGB_565_EXACT_KHR"/>
+                <enum name="EGL_FORMAT_RGB_565_KHR"/>
+                <enum name="EGL_FORMAT_RGBA_8888_EXACT_KHR"/>
+                <enum name="EGL_FORMAT_RGBA_8888_KHR"/>
+                <enum name="EGL_MAP_PRESERVE_PIXELS_KHR"/>
+                <enum name="EGL_LOCK_USAGE_HINT_KHR"/>
+                <enum name="EGL_BITMAP_PITCH_KHR"/>
+                <enum name="EGL_BITMAP_ORIGIN_KHR"/>
+                <enum name="EGL_BITMAP_PIXEL_RED_OFFSET_KHR"/>
+                <enum name="EGL_BITMAP_PIXEL_GREEN_OFFSET_KHR"/>
+                <enum name="EGL_BITMAP_PIXEL_BLUE_OFFSET_KHR"/>
+                <enum name="EGL_BITMAP_PIXEL_ALPHA_OFFSET_KHR"/>
+                <enum name="EGL_BITMAP_PIXEL_LUMINANCE_OFFSET_KHR"/>
+                <enum name="EGL_BITMAP_PIXEL_SIZE_KHR"/>
+                <enum name="EGL_BITMAP_POINTER_KHR"/>
+                <enum name="EGL_LOWER_LEFT_KHR"/>
+                <enum name="EGL_UPPER_LEFT_KHR"/>
+                <command name="eglLockSurfaceKHR"/>
+                <command name="eglUnlockSurfaceKHR"/>
+                <command name="eglQuerySurface64KHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_mutable_render_buffer" supported="egl">
+            <require>
+                <enum name="EGL_MUTABLE_RENDER_BUFFER_BIT_KHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_no_config_context" supported="egl">
+            <require>
+                <enum name="EGL_NO_CONFIG_KHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_partial_update" supported="egl">
+            <require>
+                <enum name="EGL_BUFFER_AGE_KHR"/>
+                <command name="eglSetDamageRegionKHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_platform_android" supported="egl">
+            <require>
+                <enum name="EGL_PLATFORM_ANDROID_KHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_platform_gbm" supported="egl">
+            <require>
+                <enum name="EGL_PLATFORM_GBM_KHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_platform_wayland" supported="egl">
+            <require>
+                <enum name="EGL_PLATFORM_WAYLAND_KHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_platform_x11" supported="egl">
+            <require>
+                <enum name="EGL_PLATFORM_X11_KHR"/>
+                <enum name="EGL_PLATFORM_X11_SCREEN_KHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_reusable_sync" protect="KHRONOS_SUPPORT_INT64" supported="egl">
+            <require>
+                <enum name="EGL_SYNC_STATUS_KHR"/>
+                <enum name="EGL_SIGNALED_KHR"/>
+                <enum name="EGL_UNSIGNALED_KHR"/>
+                <enum name="EGL_TIMEOUT_EXPIRED_KHR"/>
+                <enum name="EGL_CONDITION_SATISFIED_KHR"/>
+                <enum name="EGL_SYNC_TYPE_KHR"/>
+                <enum name="EGL_SYNC_REUSABLE_KHR"/>
+                <enum name="EGL_SYNC_FLUSH_COMMANDS_BIT_KHR"/>
+                <enum name="EGL_FOREVER_KHR"/>
+                <enum name="EGL_NO_SYNC_KHR"/>
+                <command name="eglCreateSyncKHR"/>
+                <command name="eglDestroySyncKHR"/>
+                <command name="eglClientWaitSyncKHR"/>
+                <command name="eglSignalSyncKHR"/>
+                <command name="eglGetSyncAttribKHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_stream" protect="KHRONOS_SUPPORT_INT64" supported="egl">
+            <require>
+                <enum name="EGL_NO_STREAM_KHR"/>
+                <enum name="EGL_CONSUMER_LATENCY_USEC_KHR"/>
+                <enum name="EGL_PRODUCER_FRAME_KHR"/>
+                <enum name="EGL_CONSUMER_FRAME_KHR"/>
+                <enum name="EGL_STREAM_STATE_KHR"/>
+                <enum name="EGL_STREAM_STATE_CREATED_KHR"/>
+                <enum name="EGL_STREAM_STATE_CONNECTING_KHR"/>
+                <enum name="EGL_STREAM_STATE_EMPTY_KHR"/>
+                <enum name="EGL_STREAM_STATE_NEW_FRAME_AVAILABLE_KHR"/>
+                <enum name="EGL_STREAM_STATE_OLD_FRAME_AVAILABLE_KHR"/>
+                <enum name="EGL_STREAM_STATE_DISCONNECTED_KHR"/>
+                <enum name="EGL_BAD_STREAM_KHR"/>
+                <enum name="EGL_BAD_STATE_KHR"/>
+                <command name="eglCreateStreamKHR"/>
+                <command name="eglDestroyStreamKHR"/>
+                <command name="eglStreamAttribKHR"/>
+                <command name="eglQueryStreamKHR"/>
+                <command name="eglQueryStreamu64KHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_stream_attrib" protect="KHRONOS_SUPPORT_INT64" supported="egl">
+            <require>
+                <enum name="EGL_CONSUMER_LATENCY_USEC_KHR"/>
+                <enum name="EGL_STREAM_STATE_KHR"/>
+                <enum name="EGL_STREAM_STATE_CREATED_KHR"/>
+                <enum name="EGL_STREAM_STATE_CONNECTING_KHR"/>
+                <command name="eglCreateStreamAttribKHR"/>
+                <command name="eglSetStreamAttribKHR"/>
+                <command name="eglQueryStreamAttribKHR"/>
+                <command name="eglStreamConsumerAcquireAttribKHR"/>
+                <command name="eglStreamConsumerReleaseAttribKHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_stream_consumer_gltexture" protect="EGL_KHR_stream" supported="egl">
+            <require>
+                <enum name="EGL_CONSUMER_ACQUIRE_TIMEOUT_USEC_KHR"/>
+                <command name="eglStreamConsumerGLTextureExternalKHR"/>
+                <command name="eglStreamConsumerAcquireKHR"/>
+                <command name="eglStreamConsumerReleaseKHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_stream_cross_process_fd" protect="EGL_KHR_stream" supported="egl">
+            <require>
+                <enum name="EGL_NO_FILE_DESCRIPTOR_KHR"/>
+                <command name="eglGetStreamFileDescriptorKHR"/>
+                <command name="eglCreateStreamFromFileDescriptorKHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_stream_fifo" protect="EGL_KHR_stream" supported="egl">
+            <require>
+                <enum name="EGL_STREAM_FIFO_LENGTH_KHR"/>
+                <enum name="EGL_STREAM_TIME_NOW_KHR"/>
+                <enum name="EGL_STREAM_TIME_CONSUMER_KHR"/>
+                <enum name="EGL_STREAM_TIME_PRODUCER_KHR"/>
+                <command name="eglQueryStreamTimeKHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_stream_producer_aldatalocator" protect="EGL_KHR_stream" supported="egl"/>
+        <extension name="EGL_KHR_stream_producer_eglsurface" protect="EGL_KHR_stream" supported="egl">
+            <require>
+                <enum name="EGL_STREAM_BIT_KHR"/>
+                <command name="eglCreateStreamProducerSurfaceKHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_surfaceless_context" supported="egl" comment="Just relaxes an error condition"/>
+        <extension name="EGL_KHR_swap_buffers_with_damage" supported="egl">
+            <require>
+                <command name="eglSwapBuffersWithDamageKHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_vg_parent_image" supported="egl">
+            <require>
+                <enum name="EGL_VG_PARENT_IMAGE_KHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_KHR_wait_sync" supported="egl">
+            <require>
+                <command name="eglWaitSyncKHR"/>
+            </require>
+        </extension>
+        <extension name="EGL_MESA_drm_image" supported="egl">
+            <require>
+                <enum name="EGL_DRM_BUFFER_FORMAT_MESA"/>
+                <enum name="EGL_DRM_BUFFER_USE_MESA"/>
+                <enum name="EGL_DRM_BUFFER_FORMAT_ARGB32_MESA"/>
+                <enum name="EGL_DRM_BUFFER_MESA"/>
+                <enum name="EGL_DRM_BUFFER_STRIDE_MESA"/>
+                <enum name="EGL_DRM_BUFFER_USE_SCANOUT_MESA"/>
+                <enum name="EGL_DRM_BUFFER_USE_SHARE_MESA"/>
+                <enum name="EGL_DRM_BUFFER_USE_CURSOR_MESA"/>
+                <command name="eglCreateDRMImageMESA"/>
+                <command name="eglExportDRMImageMESA"/>
+            </require>
+        </extension>
+        <extension name="EGL_MESA_image_dma_buf_export" supported="egl">
+            <require>
+                <type name="EGLuint64KHR"/>
+                <command name="eglExportDMABUFImageQueryMESA"/>
+                <command name="eglExportDMABUFImageMESA"/>
+            </require>
+        </extension>
+        <extension name="EGL_MESA_platform_gbm" supported="egl">
+            <require>
+                <enum name="EGL_PLATFORM_GBM_MESA"/>
+            </require>
+        </extension>
+        <extension name="EGL_MESA_platform_surfaceless" supported="egl">
+            <require>
+                <enum name="EGL_PLATFORM_SURFACELESS_MESA"/>
+            </require>
+        </extension>
+        <extension name="EGL_NOK_swap_region" supported="egl">
+            <require>
+                <command name="eglSwapBuffersRegionNOK"/>
+            </require>
+        </extension>
+        <extension name="EGL_NOK_swap_region2" supported="egl">
+            <require>
+                <command name="eglSwapBuffersRegion2NOK"/>
+            </require>
+        </extension>
+        <extension name="EGL_NOK_texture_from_pixmap" supported="egl">
+            <require>
+                <enum name="EGL_Y_INVERTED_NOK"/>
+            </require>
+        </extension>
+        <extension name="EGL_NV_3dvision_surface" supported="egl">
+            <require>
+                <enum name="EGL_AUTO_STEREO_NV"/>
+            </require>
+        </extension>
+        <extension name="EGL_NV_coverage_sample" supported="egl">
+            <require>
+                <enum name="EGL_COVERAGE_BUFFERS_NV"/>
+                <enum name="EGL_COVERAGE_SAMPLES_NV"/>
+            </require>
+        </extension>
+        <extension name="EGL_NV_context_priority_realtime" supported="egl">
+            <require>
+                <enum name="EGL_CONTEXT_PRIORITY_REALTIME_NV"/>
+            </require>
+        </extension>
+        <extension name="EGL_NV_coverage_sample_resolve" supported="egl">
+            <require>
+                <enum name="EGL_COVERAGE_SAMPLE_RESOLVE_NV"/>
+                <enum name="EGL_COVERAGE_SAMPLE_RESOLVE_DEFAULT_NV"/>
+                <enum name="EGL_COVERAGE_SAMPLE_RESOLVE_NONE_NV"/>
+            </require>
+        </extension>
+        <extension name="EGL_NV_cuda_event" supported="egl">
+            <require>
+                <enum name="EGL_CUDA_EVENT_HANDLE_NV"/>
+                <enum name="EGL_SYNC_CUDA_EVENT_NV"/>
+                <enum name="EGL_SYNC_CUDA_EVENT_COMPLETE_NV"/>
+            </require>
+        </extension>
+        <extension name="EGL_NV_depth_nonlinear" supported="egl">
+            <require>
+                <enum name="EGL_DEPTH_ENCODING_NV"/>
+                <enum name="EGL_DEPTH_ENCODING_NONE_NV"/>
+                <enum name="EGL_DEPTH_ENCODING_NONLINEAR_NV"/>
+            </require>
+        </extension>
+        <extension name="EGL_NV_device_cuda" supported="egl">
+            <require>
+                <enum name="EGL_CUDA_DEVICE_NV"/>
+            </require>
+        </extension>
+        <extension name="EGL_NV_native_query" supported="egl">
+            <require>
+                <command name="eglQueryNativeDisplayNV"/>
+                <command name="eglQueryNativeWindowNV"/>
+                <command name="eglQueryNativePixmapNV"/>
+            </require>
+        </extension>
+        <extension name="EGL_NV_post_convert_rounding" supported="egl">
+            <require>
+            </require>
+        </extension>
+        <extension name="EGL_NV_post_sub_buffer" supported="egl">
+            <require>
+                <enum name="EGL_POST_SUB_BUFFER_SUPPORTED_NV"/>
+                <command name="eglPostSubBufferNV"/>
+            </require>
+        </extension>
+        <extension name="EGL_NV_robustness_video_memory_purge" supported="egl">
+            <require>
+                <enum name="EGL_GENERATE_RESET_ON_VIDEO_MEMORY_PURGE_NV"/>
+            </require>
+        </extension>
+        <extension name="EGL_NV_stream_consumer_gltexture_yuv" supported="egl">
+            <require>
+                <enum name="EGL_YUV_PLANE0_TEXTURE_UNIT_NV"/>
+                <enum name="EGL_YUV_PLANE1_TEXTURE_UNIT_NV"/>
+                <enum name="EGL_YUV_PLANE2_TEXTURE_UNIT_NV"/>
+                <enum name="EGL_YUV_NUMBER_OF_PLANES_EXT"/>
+                <enum name="EGL_YUV_BUFFER_EXT"/>
+                <command name="eglStreamConsumerGLTextureExternalAttribsNV"/>
+            </require>
+        </extension>
+        <extension name="EGL_NV_stream_cross_object" supported="egl">
+            <require>
+                <enum name="EGL_STREAM_CROSS_OBJECT_NV"/>
+            </require>
+        </extension>
+        <extension name="EGL_NV_stream_cross_display" supported="egl">
+            <require>
+                <enum name="EGL_STREAM_CROSS_DISPLAY_NV"/>
+            </require>
+        </extension>
+        <extension name="EGL_NV_stream_cross_partition" supported="egl">
+            <require>
+                <enum name="EGL_STREAM_CROSS_PARTITION_NV"/>
+            </require>
+        </extension>
+        <extension name="EGL_NV_stream_cross_process" supported="egl">
+            <require>
+                <enum name="EGL_STREAM_CROSS_PROCESS_NV"/>
+            </require>
+        </extension>
+        <extension name="EGL_NV_stream_cross_system" supported="egl">
+            <require>
+                <enum name="EGL_STREAM_CROSS_SYSTEM_NV"/>
+            </require>
+        </extension>
+        <extension name="EGL_NV_stream_fifo_next" supported="egl">
+            <require>
+                <enum name="EGL_PENDING_FRAME_NV"/>
+                <enum name="EGL_STREAM_TIME_PENDING_NV"/>
+            </require>
+        </extension>
+        <extension name="EGL_NV_stream_fifo_synchronous" supported="egl">
+            <require>
+                <enum name="EGL_STREAM_FIFO_SYNCHRONOUS_NV"/>
+            </require>
+        </extension>
+        <extension name="EGL_NV_stream_flush" supported="egl">
+            <require>
+                <command name="eglStreamFlushNV"/>
+            </require>
+        </extension>
+        <extension name="EGL_NV_stream_frame_limits" supported="egl">
+            <require>
+                <enum name="EGL_PRODUCER_MAX_FRAME_HINT_NV"/>
+                <enum name="EGL_CONSUMER_MAX_FRAME_HINT_NV"/>
+            </require>
+        </extension>
+        <extension name="EGL_NV_stream_metadata" supported="egl">
+            <require>
+                <enum name="EGL_MAX_STREAM_METADATA_BLOCKS_NV"/>
+                <enum name="EGL_MAX_STREAM_METADATA_BLOCK_SIZE_NV"/>
+                <enum name="EGL_MAX_STREAM_METADATA_TOTAL_SIZE_NV"/>
+                <enum name="EGL_PRODUCER_METADATA_NV"/>
+                <enum name="EGL_CONSUMER_METADATA_NV"/>
+                <enum name="EGL_PENDING_METADATA_NV"/>
+                <enum name="EGL_METADATA0_SIZE_NV"/>
+                <enum name="EGL_METADATA1_SIZE_NV"/>
+                <enum name="EGL_METADATA2_SIZE_NV"/>
+                <enum name="EGL_METADATA3_SIZE_NV"/>
+                <enum name="EGL_METADATA0_TYPE_NV"/>
+                <enum name="EGL_METADATA1_TYPE_NV"/>
+                <enum name="EGL_METADATA2_TYPE_NV"/>
+                <enum name="EGL_METADATA3_TYPE_NV"/>
+                <command name="eglQueryDisplayAttribNV"/>
+                <command name="eglSetStreamMetadataNV"/>
+                <command name="eglQueryStreamMetadataNV"/>
+            </require>
+        </extension>
+        <extension name="EGL_NV_stream_reset" supported="egl">
+            <require>
+                <enum name="EGL_SUPPORT_RESET_NV"/>
+                <enum name="EGL_SUPPORT_REUSE_NV"/>
+                <command name="eglResetStreamNV"/>
+            </require>
+        </extension>
+        <extension name="EGL_NV_stream_remote" supported="egl">
+            <require>
+                <enum name="EGL_STREAM_STATE_INITIALIZING_NV"/>
+                <enum name="EGL_STREAM_TYPE_NV"/>
+                <enum name="EGL_STREAM_PROTOCOL_NV"/>
+                <enum name="EGL_STREAM_ENDPOINT_NV"/>
+                <enum name="EGL_STREAM_LOCAL_NV"/>
+                <enum name="EGL_STREAM_PRODUCER_NV"/>
+                <enum name="EGL_STREAM_CONSUMER_NV"/>
+            </require>
+            <require comment="Supported only if EGL_KHR_stream_cross_process_fd is supported">
+                <enum name="EGL_STREAM_PROTOCOL_FD_NV"/>
+            </require>
+        </extension>
+        <extension name="EGL_NV_stream_socket" supported="egl">
+            <require>
+                <enum name="EGL_STREAM_PROTOCOL_SOCKET_NV"/>
+                <enum name="EGL_SOCKET_HANDLE_NV"/>
+                <enum name="EGL_SOCKET_TYPE_NV"/>
+            </require>
+        </extension>
+        <extension name="EGL_NV_stream_socket_inet" supported="egl">
+            <require>
+                <enum name="EGL_SOCKET_TYPE_INET_NV"/>
+            </require>
+        </extension>
+        <extension name="EGL_NV_stream_socket_unix" supported="egl">
+            <require>
+                <enum name="EGL_SOCKET_TYPE_UNIX_NV"/>
+            </require>
+        </extension>
+        <extension name="EGL_NV_stream_sync" supported="egl">
+            <require>
+                <enum name="EGL_SYNC_TYPE_KHR"/>
+                <enum name="EGL_SYNC_NEW_FRAME_NV"/>
+                <command name="eglCreateStreamSyncNV"/>
+            </require>
+        </extension>
+        <extension name="EGL_NV_sync" protect="KHRONOS_SUPPORT_INT64" supported="egl">
+            <require>
+                <enum name="EGL_SYNC_PRIOR_COMMANDS_COMPLETE_NV"/>
+                <enum name="EGL_SYNC_STATUS_NV"/>
+                <enum name="EGL_SIGNALED_NV"/>
+                <enum name="EGL_UNSIGNALED_NV"/>
+                <enum name="EGL_SYNC_FLUSH_COMMANDS_BIT_NV"/>
+                <enum name="EGL_FOREVER_NV"/>
+                <enum name="EGL_ALREADY_SIGNALED_NV"/>
+                <enum name="EGL_TIMEOUT_EXPIRED_NV"/>
+                <enum name="EGL_CONDITION_SATISFIED_NV"/>
+                <enum name="EGL_SYNC_TYPE_NV"/>
+                <enum name="EGL_SYNC_CONDITION_NV"/>
+                <enum name="EGL_SYNC_FENCE_NV"/>
+                <enum name="EGL_NO_SYNC_NV"/>
+                <command name="eglCreateFenceSyncNV"/>
+                <command name="eglDestroySyncNV"/>
+                <command name="eglFenceNV"/>
+                <command name="eglClientWaitSyncNV"/>
+                <command name="eglSignalSyncNV"/>
+                <command name="eglGetSyncAttribNV"/>
+            </require>
+        </extension>
+        <extension name="EGL_NV_system_time" protect="KHRONOS_SUPPORT_INT64" supported="egl">
+            <require>
+                <command name="eglGetSystemTimeFrequencyNV"/>
+                <command name="eglGetSystemTimeNV"/>
+            </require>
+        </extension>
+        <extension name="EGL_TIZEN_image_native_buffer" supported="egl">
+            <require>
+                <enum name="EGL_NATIVE_BUFFER_TIZEN"/>
+            </require>
+        </extension>
+        <extension name="EGL_TIZEN_image_native_surface" supported="egl">
+            <require>
+                <enum name="EGL_NATIVE_SURFACE_TIZEN"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_compositor" supported="egl">
+            <require>
+                <enum name="EGL_PRIMARY_COMPOSITOR_CONTEXT_EXT"/>
+                <enum name="EGL_EXTERNAL_REF_ID_EXT"/>
+                <enum name="EGL_COMPOSITOR_DROP_NEWEST_FRAME_EXT"/>
+                <enum name="EGL_COMPOSITOR_KEEP_NEWEST_FRAME_EXT"/>
+
+                <command name="eglCompositorSetContextListEXT"/>
+                <command name="eglCompositorSetContextAttributesEXT"/>
+                <command name="eglCompositorSetWindowListEXT"/>
+                <command name="eglCompositorSetWindowAttributesEXT"/>
+                <command name="eglCompositorBindTexWindowEXT"/>
+                <command name="eglCompositorSetSizeEXT"/>
+                <command name="eglCompositorSwapPolicyEXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_surface_CTA861_3_metadata" supported="egl">
+            <require>
+                <enum name="EGL_CTA861_3_MAX_CONTENT_LIGHT_LEVEL_EXT"/>
+                <enum name="EGL_CTA861_3_MAX_FRAME_AVERAGE_LEVEL_EXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_image_implicit_sync_control" supported="egl">
+            <require>
+                <enum name="EGL_IMPORT_SYNC_TYPE_EXT"/>
+                <enum name="EGL_IMPORT_IMPLICIT_SYNC_EXT"/>
+                <enum name="EGL_IMPORT_EXPLICIT_SYNC_EXT"/>
+            </require>
+        </extension>
+        <extension name="EGL_EXT_bind_to_front" supported="egl">
+            <require>
+                <enum name="EGL_FRONT_BUFFER_EXT"/>
+            </require>
+        </extension>
+    </extensions>
+</registry>

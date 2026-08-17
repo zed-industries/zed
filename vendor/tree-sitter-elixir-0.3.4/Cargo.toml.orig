@@ -1,0 +1,29 @@
+[package]
+name = "tree-sitter-elixir"
+description = "Elixir grammar for the tree-sitter parsing library"
+version = "0.3.4"
+keywords = ["incremental", "parsing", "elixir"]
+categories = ["parsing", "text-editors"]
+repository = "https://github.com/elixir-lang/tree-sitter-elixir"
+edition = "2018"
+license = "Apache-2.0"
+
+build = "bindings/rust/build.rs"
+include = [
+  "bindings/rust/*",
+  "grammar.js",
+  "queries/*",
+  "src/*",
+]
+
+[lib]
+path = "bindings/rust/lib.rs"
+
+[dependencies]
+tree-sitter-language = "0.1.0"
+
+[dev-dependencies]
+tree-sitter = "0.23.0"
+
+[build-dependencies]
+cc = "1.0"

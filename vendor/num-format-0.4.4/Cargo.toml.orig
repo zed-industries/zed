@@ -1,0 +1,45 @@
+[package]
+name = "num-format"
+version = "0.4.4" # Remember to keep html_root_url in lib.rs in sync!
+
+authors = ["Brian Myers <brian.carl.myers@gmail.com>"]
+categories = ["encoding", "internationalization", "localization", "no-std", "value-formatting"]
+description = "A Rust crate for producing string-representations of numbers, formatted according to international standards"
+documentation = "https://docs.rs/num-format"
+edition = "2021"
+homepage = "https://github.com/bcmyers/num-format"
+keywords = ["comma", "internationalization", "number", "separator", "thousands"]
+license = "MIT/Apache-2.0"
+publish = true
+readme = "README.md"
+repository = "https://github.com/bcmyers/num-format"
+
+[dependencies]
+arrayvec = { version = "0.7.2", default-features = false }
+itoa = { version = "1.0.4", default-features = false }
+lazy_static = { version = "1.4.0", optional = true }
+num-bigint = { version = "0.4.3", optional = true }
+serde = { version = "1.0.145", default-features = false, optional = true }
+
+[target.'cfg(unix)'.dependencies]
+cfg-if = { version = "1.0.0", optional = true }
+encoding_rs = { version = "0.8.31", optional = true }
+libc = { version = "0.2.134", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+num-format-windows = { version = "0.4.4", optional = true }
+widestring = { version = "1.0.2", optional = true }
+winapi = { version = "0.3.9", features = ["winnls"], optional = true }
+
+[features]
+default = ["std"]
+std = ["arrayvec/default"]
+with-serde = ["arrayvec/serde", "serde/derive"]
+with-system-locale = ["cfg-if", "encoding_rs", "lazy_static", "libc", "num-format-windows", "std", "widestring", "winapi/winnls"]
+with-num-bigint = ["num-bigint", "std"]
+
+[dev-dependencies]
+cfg-if = "1.0.0"
+lazy_static = "1.4.0"
+rand = "0.8.5"
+serde_json = "1.0.85"

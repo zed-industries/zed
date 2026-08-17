@@ -1,0 +1,51 @@
+[
+    {
+        "starred_at": "2022-05-11T18:46:25Z",
+        "user": {
+            "login": "johndoe",
+            "id": 5736690,
+            "node_id": "MDQ6VXNlcjU3MzY2OTA=",
+            "avatar_url": "https://avatars.githubusercontent.com/u/5736690?v=4",
+            "gravatar_id": "",
+            "url": "https://api.github.com/users/johndoe",
+            "html_url": "https://github.com/johndoe",
+            "followers_url": "https://api.github.com/users/johndoe/followers",
+            "following_url": "https://api.github.com/users/johndoe/following{/other_user}",
+            "gists_url": "https://api.github.com/users/johndoe/gists{/gist_id}",
+            "starred_url": "https://api.github.com/users/johndoe/starred{/owner}{/repo}",
+            "subscriptions_url": "https://api.github.com/users/johndoe/subscriptions",
+            "organizations_url": "https://api.github.com/users/johndoe/orgs",
+            "repos_url": "https://api.github.com/users/johndoe/repos",
+            "events_url": "https://api.github.com/users/johndoe/events{/privacy}",
+            "received_events_url": "https://api.github.com/users/johndoe/received_events",
+            "type": "User",
+            "site_admin": false
+        }
+    },
+    {
+        "starred_at": "2022-05-11T19:59:01Z",
+        "user": {
+            "login": "janesnow",
+            "id": 5736691,
+            "node_id": "MDQ6VXNlcjU3MzY2OTA=",
+            "avatar_url": "https://avatars.githubusercontent.com/u/5736690?v=4",
+            "gravatar_id": "",
+            "url": "https://api.github.com/users/janesnow",
+            "html_url": "https://github.com/janesnow",
+            "followers_url": "https://api.github.com/users/janesnow/followers",
+            "following_url": "https://api.github.com/users/janesnow/following{/other_user}",
+            "gists_url": "https://api.github.com/users/janesnow/gists{/gist_id}",
+            "starred_url": "https://api.github.com/users/janesnow/starred{/owner}{/repo}",
+            "subscriptions_url": "https://api.github.com/users/janesnow/subscriptions",
+            "organizations_url": "https://api.github.com/users/janesnow/orgs",
+            "repos_url": "https://api.github.com/users/janesnow/repos",
+            "events_url": "https://api.github.com/users/janesnow/events{/privacy}",
+            "received_events_url": "https://api.github.com/users/janesnow/received_events",
+            "type": "User",
+            "site_admin": false
+        }
+    },
+    {
+        "starred_at": "2022-05-11T20:00:01Z"
+    }
+]

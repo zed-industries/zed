@@ -1,0 +1,17 @@
+[package]
+name = "accesskit_consumer"
+version = "0.37.0"
+authors.workspace = true
+license.workspace = true
+description = "AccessKit consumer library (internal)"
+categories.workspace = true
+keywords = ["gui", "ui", "accessibility"]
+repository.workspace = true
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+accesskit = { version = "0.24.1", path = "../common" }
+hashbrown.workspace = true
+

@@ -1,0 +1,34 @@
+[package]
+
+name = "cgmath"
+version = "0.18.0"
+authors = ["Rust game-developers"]
+license = "Apache-2.0"
+description = "A linear algebra and mathematics library for computer graphics."
+
+documentation = "https://docs.rs/cgmath"
+homepage = "https://github.com/rustgd/cgmath"
+repository = "https://github.com/rustgd/cgmath"
+readme = "README.md"
+
+keywords = ["gamedev", "math", "matrix", "vector", "quaternion"]
+
+[lib]
+name = "cgmath"
+
+[features]
+unstable = []
+swizzle = []
+
+[dependencies]
+approx = "0.4"
+mint = { version = "0.5", optional = true }
+num-traits = "0.2"
+# small_rng used only for benchmarks
+rand = { version = "0.8", features = ["small_rng"], optional = true }
+serde = { version = "1.0", features = ["serde_derive"], optional = true }
+# works only in rust toolchain up to 1.32, disabled indefinitely
+#simd = { version = "0.2", optional = true }
+
+[dev-dependencies]
+serde_json = "1.0"

@@ -1,0 +1,5 @@
+error: set_dummy test
+ --> $DIR/dummy.rs:9:8
+  |
+9 | dummy!(need_default);
+  |        ^^^^^^^^^^^^

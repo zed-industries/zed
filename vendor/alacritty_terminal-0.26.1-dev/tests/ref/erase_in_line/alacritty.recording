@@ -1,0 +1,8 @@
+[?2004h[undeadleech@archhq erase_in_line]$ [7ms=$(echo {1..100}); echo ${s:0:$(($COLUMNS-2))}a$'+\e[0Kb'[27m[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[Cs=$(echo {1..100}); echo ${s:0:$(($COLUMNS-2))}a$'+\e[0Kb'
+[?2004l1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49a+[0Kb
+[?2004h[undeadleech@archhq erase_in_line]$ [7ms=$(echo {1..100}); echo ${s:0:$(($COLUMNS-2))}a$'+\e[1Kb'[27m[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[Cs=$(echo {1..100}); echo ${s:0:$(($COLUMNS-2))}a$'+\e[1Kb'
+[?2004l1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49a+[1Kb
+[?2004h[undeadleech@archhq erase_in_line]$ [7ms=$(echo {1..100}); echo ${s:0:$(($COLUMNS-2))}a$'+\e[2Kb'[27m[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[Cs=$(echo {1..100}); echo ${s:0:$(($COLUMNS-2))}a$'+\e[2Kb'
+[?2004l1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49a+[2Kb
+[?2004h[undeadleech@archhq erase_in_line]$ [?2004l
+exit

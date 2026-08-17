@@ -1,0 +1,58 @@
+[package]
+name = "rgb"
+version = "0.8.52"
+authors = ["Kornel Lesiński <kornel@geekhood.net>", "James Forster <james.forsterer@gmail.com>"]
+include = ["src/**/*", "Cargo.toml", "README.md", "examples/*.rs", "LICENSE"]
+description = "`struct RGB/RGBA/etc.` for sharing pixels between crates + convenience methods for color manipulation.\nAllows no-copy high-level interoperability. Also adds common convenience methods and implements standard Rust traits to make `RGB`/`RGBA` pixels and slices first-class Rust objects."
+documentation = "https://docs.rs/rgb"
+repository = "https://github.com/kornelski/rust-rgb"
+homepage = "https://lib.rs/crates/rgb"
+readme = "README.md"
+keywords = ["rgb", "rgba", "bgra", "pixel", "color"]
+license = "MIT"
+categories = ["graphics", "rust-patterns", "multimedia::images"]
+edition = "2021"
+rust-version = "1.64"
+
+[features]
+default = ["as-bytes", "argb", "grb"]
+# safe as_bytes() casts require a marker trait for non-padded, non-pointery types.
+as-bytes = ["bytemuck"]
+# Preferred over as-bytes
+bytemuck = ["dep:bytemuck"]
+# Deprecated: all pixel types are enabled by default. No-op.
+argb = []
+# Deprecated: all pixel types are enabled by default. No-op.
+grb = []
+# Enable `checked_add` and `checked_sub` methods on `RGB<u8>`
+checked_fns = []
+# Make pixels serializable
+serde = ["dep:serde"]
+# support for the `defmt` crate
+defmt-03 = ["dep:defmt"]
+# Preview of changes for v0.9. May cause semver breakage if enabled.
+unstable-experimental = []
+
+[badges]
+maintenance = { status = "actively-developed" }
+
+[dependencies]
+serde = { version = "1.0.200", optional = true, default-features = false, features = ["derive"] }
+bytemuck = { version = "1.16", optional = true }
+defmt = { version = "0.3.8", optional = true }
+
+[dev-dependencies]
+serde_json = "1.0.100"
+
+[[example]]
+name = "serde"
+required-features = ["serde"]
+
+[[example]]
+name = "example"
+required-features = ["as-bytes"]
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+features = ["as-bytes", "serde"]
+rustdoc-args = ["--generate-link-to-definition"]

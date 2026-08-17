@@ -1,0 +1,5 @@
+error: expected one of "#", "pub", "rule", "use", "}"
+ --> tests/compile-fail/syntax_error.rs:4:5
+  |
+4 |     fn asdf() {} //~ ERROR expected one of "#", "crate", "pub", "rule", "use", "}"
+  |     ^^

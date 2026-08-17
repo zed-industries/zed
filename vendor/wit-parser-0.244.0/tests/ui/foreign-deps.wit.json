@@ -1,0 +1,362 @@
+{
+  "worlds": [
+    {
+      "name": "my-world",
+      "imports": {
+        "interface-5": {
+          "interface": {
+            "id": 5
+          }
+        },
+        "interface-4": {
+          "interface": {
+            "id": 4
+          }
+        }
+      },
+      "exports": {
+        "interface-1": {
+          "interface": {
+            "id": 1
+          }
+        }
+      },
+      "package": 6
+    },
+    {
+      "name": "my-world2",
+      "imports": {
+        "interface-5": {
+          "interface": {
+            "id": 5
+          }
+        },
+        "interface-4": {
+          "interface": {
+            "id": 4
+          }
+        }
+      },
+      "exports": {
+        "interface-9": {
+          "interface": {
+            "id": 9
+          }
+        },
+        "interface-1": {
+          "interface": {
+            "id": 1
+          }
+        }
+      },
+      "package": 6
+    },
+    {
+      "name": "bars-world",
+      "imports": {
+        "interface-6": {
+          "interface": {
+            "id": 6
+          }
+        },
+        "interface-0": {
+          "interface": {
+            "id": 0
+          }
+        }
+      },
+      "exports": {},
+      "package": 6
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "other-interface",
+      "types": {},
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "saas",
+      "types": {},
+      "functions": {},
+      "package": 1
+    },
+    {
+      "name": "i",
+      "types": {},
+      "functions": {},
+      "package": 2
+    },
+    {
+      "name": "the-default",
+      "types": {
+        "some-type": 0
+      },
+      "functions": {},
+      "package": 3
+    },
+    {
+      "name": "clocks",
+      "types": {
+        "timestamp": 1
+      },
+      "functions": {},
+      "package": 4
+    },
+    {
+      "name": "filesystem",
+      "types": {
+        "stat": 2
+      },
+      "functions": {},
+      "package": 4
+    },
+    {
+      "name": "the-default",
+      "types": {
+        "from-default": 3
+      },
+      "functions": {},
+      "package": 5
+    },
+    {
+      "name": "some-interface",
+      "types": {
+        "another-type": 4
+      },
+      "functions": {},
+      "package": 5
+    },
+    {
+      "name": "another-interface",
+      "types": {
+        "yet-another-type": 5
+      },
+      "functions": {},
+      "package": 5
+    },
+    {
+      "name": "foo",
+      "types": {
+        "timestamp": 6,
+        "stat": 7
+      },
+      "functions": {},
+      "package": 6
+    },
+    {
+      "name": "bar",
+      "types": {
+        "from-default": 8,
+        "another-type": 9,
+        "yet-another-type": 10
+      },
+      "functions": {},
+      "package": 6
+    },
+    {
+      "name": "use1",
+      "types": {
+        "some-type": 11
+      },
+      "functions": {},
+      "package": 6
+    },
+    {
+      "name": "use2",
+      "types": {
+        "some-type": 12
+      },
+      "functions": {},
+      "package": 6
+    }
+  ],
+  "types": [
+    {
+      "name": "some-type",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "interface": 3
+      }
+    },
+    {
+      "name": "timestamp",
+      "kind": {
+        "type": "u64"
+      },
+      "owner": {
+        "interface": 4
+      }
+    },
+    {
+      "name": "stat",
+      "kind": {
+        "record": {
+          "fields": [
+            {
+              "name": "ino",
+              "type": "u64"
+            }
+          ]
+        }
+      },
+      "owner": {
+        "interface": 5
+      }
+    },
+    {
+      "name": "from-default",
+      "kind": {
+        "type": "string"
+      },
+      "owner": {
+        "interface": 6
+      }
+    },
+    {
+      "name": "another-type",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "interface": 7
+      }
+    },
+    {
+      "name": "yet-another-type",
+      "kind": {
+        "type": "u8"
+      },
+      "owner": {
+        "interface": 8
+      }
+    },
+    {
+      "name": "timestamp",
+      "kind": {
+        "type": 1
+      },
+      "owner": {
+        "interface": 9
+      }
+    },
+    {
+      "name": "stat",
+      "kind": {
+        "type": 2
+      },
+      "owner": {
+        "interface": 9
+      }
+    },
+    {
+      "name": "from-default",
+      "kind": {
+        "type": 3
+      },
+      "owner": {
+        "interface": 10
+      }
+    },
+    {
+      "name": "another-type",
+      "kind": {
+        "type": 4
+      },
+      "owner": {
+        "interface": 10
+      }
+    },
+    {
+      "name": "yet-another-type",
+      "kind": {
+        "type": 5
+      },
+      "owner": {
+        "interface": 10
+      }
+    },
+    {
+      "name": "some-type",
+      "kind": {
+        "type": 0
+      },
+      "owner": {
+        "interface": 11
+      }
+    },
+    {
+      "name": "some-type",
+      "kind": {
+        "type": 0
+      },
+      "owner": {
+        "interface": 12
+      }
+    }
+  ],
+  "packages": [
+    {
+      "name": "foo:another-pkg",
+      "interfaces": {
+        "other-interface": 0
+      },
+      "worlds": {}
+    },
+    {
+      "name": "foo:corp",
+      "interfaces": {
+        "saas": 1
+      },
+      "worlds": {}
+    },
+    {
+      "name": "foo:different-pkg",
+      "interfaces": {
+        "i": 2
+      },
+      "worlds": {}
+    },
+    {
+      "name": "foo:foreign-pkg",
+      "interfaces": {
+        "the-default": 3
+      },
+      "worlds": {}
+    },
+    {
+      "name": "foo:wasi",
+      "interfaces": {
+        "clocks": 4,
+        "filesystem": 5
+      },
+      "worlds": {}
+    },
+    {
+      "name": "foo:some-pkg",
+      "interfaces": {
+        "the-default": 6,
+        "some-interface": 7,
+        "another-interface": 8
+      },
+      "worlds": {}
+    },
+    {
+      "name": "foo:root",
+      "interfaces": {
+        "foo": 9,
+        "bar": 10,
+        "use1": 11,
+        "use2": 12
+      },
+      "worlds": {
+        "my-world": 0,
+        "my-world2": 1,
+        "bars-world": 2
+      }
+    }
+  ]
+}

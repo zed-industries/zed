@@ -1,0 +1,30 @@
+[?2004h[kchibisov@NightLord alacritty]$ [K[kchibisov@NightLord alacritty]$ [K[kchibisov@NightLord alacritty]$ echo -e "\033[?3h"printf "\e[31;1;7;4;9mTEST asd\n"
+[?2004l[31;1;7;4;9mTEST asd
+[?2004h[kchibisov@NightLord alacritty]$ 
+[?2004l[?2004h[kchibisov@NightLord alacritty]$ 
+[?2004l[?2004h[kchibisov@NightLord alacritty]$ 
+[?2004l[?2004h[kchibisov@NightLord alacritty]$ 
+[?2004l[?2004h[kchibisov@NightLord alacritty]$ 
+[?2004l[?2004h[kchibisov@NightLord alacritty]$ 
+[?2004l[?2004h[kchibisov@NightLord alacritty]$ 
+[?2004l[?2004h[kchibisov@NightLord alacritty]$ 
+[?2004l[?2004h[kchibisov@NightLord alacritty]$ 
+[?2004l[?2004h[kchibisov@NightLord alacritty]$ 
+[?2004l[?2004h[kchibisov@NightLord alacritty]$ 
+[?2004l[?2004h[kchibisov@NightLord alacritty]$ 
+[?2004l[?2004h[kchibisov@NightLord alacritty]$ 
+[?2004l[?2004h[kchibisov@NightLord alacritty]$ 
+[?2004l[?2004h[kchibisov@NightLord alacritty]$ 
+[?2004l[?2004h[kchibisov@NightLord alacritty]$ 
+[?2004l[?2004h[kchibisov@NightLord alacritty]$ 
+[?2004l[?2004h[kchibisov@NightLord alacritty]$ 
+[?2004l[?2004h[kchibisov@NightLord alacritty]$ 
+[?2004l[?2004h[kchibisov@NightLord alacritty]$ 
+[?2004l[?2004h[kchibisov@NightLord alacritty]$ 
+[?2004l[?2004h[kchibisov@NightLord alacritty]$ 
+[?2004l[?2004h[kchibisov@NightLord alacritty]$ 
+[?2004l[?2004h[kchibisov@NightLord alacritty]$ 
+[?2004l[?2004h[kchibisov@NightLord alacritty]$ 
+[?2004l[?2004h[kchibisov@NightLord alacritty]$ printf "\e[31;1;7;4;9mTEST asd\n"[15Pecho -e "\033[?3h"
+[?2004l[?3h
+[?2004h[kchibisov@NightLord alacritty]$ 

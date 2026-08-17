@@ -1,0 +1,40 @@
+[package]
+
+name          = "bytes"
+# When releasing to crates.io:
+# - Update html_root_url.
+# - Update CHANGELOG.md.
+# - Update doc URL.
+# - Create "v0.4.x" git tag.
+version       = "0.4.12"
+license       = "MIT"
+authors       = ["Carl Lerche <me@carllerche.com>"]
+description   = "Types and traits for working with bytes"
+documentation = "https://docs.rs/bytes/0.4.12/bytes"
+homepage      = "https://github.com/carllerche/bytes"
+repository    = "https://github.com/carllerche/bytes"
+readme        = "README.md"
+keywords      = ["buffers", "zero-copy", "io"]
+exclude       = [
+    ".gitignore",
+    ".travis.yml",
+    "deploy.sh",
+    "bench/**/*",
+    "test/**/*"
+]
+categories = ["network-programming", "data-structures"]
+
+[package.metadata.docs.rs]
+features = ["i128"]
+
+[dependencies]
+byteorder = "1.1.0"
+iovec = "0.1"
+serde = { version = "1.0", optional = true }
+either = { version = "1.5", default-features = false, optional = true }
+
+[dev-dependencies]
+serde_test = "1.0"
+
+[features]
+i128 = ["byteorder/i128"]

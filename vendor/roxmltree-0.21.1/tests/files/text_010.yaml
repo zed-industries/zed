@@ -1,0 +1,15 @@
+Document:
+  - Element:
+      tag_name: text
+      children:
+        - Text: "\n    "
+        - Element:
+            tag_name: tspan
+            children:
+              - Text: "t"
+        - Text: "e\n    "
+        - Element:
+            tag_name: tspan
+            children:
+              - Text: "x"
+        - Text: "t\n"

@@ -1,0 +1,19 @@
+[package]
+name = "foreign-types-macros"
+version = "0.2.3"
+authors = ["Steven Fackler <sfackler@gmail.com>"]
+edition = "2018"
+license = "MIT/Apache-2.0"
+description = "An internal crate used by foreign-types"
+repository = "https://github.com/sfackler/foreign-types"
+
+[lib]
+proc-macro = true
+
+[features]
+std = []
+
+[dependencies]
+syn = { version = "2.0", features = ["full"] }
+quote = "1.0"
+proc-macro2 = "1.0"

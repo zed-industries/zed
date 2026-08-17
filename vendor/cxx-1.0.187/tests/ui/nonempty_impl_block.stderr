@@ -1,0 +1,8 @@
+error: expected an empty impl block
+ --> tests/ui/nonempty_impl_block.rs:7:23
+  |
+7 |       impl UniquePtr<S> {
+  |  _______________________^
+8 | |         fn new() -> Self;
+9 | |     }
+  | |_____^

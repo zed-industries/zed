@@ -1,0 +1,12 @@
+error[E0283]: type annotations needed
+ --> tests/ui/unpin_impl.rs:4:14
+  |
+4 |         type Opaque;
+  |              ^^^^^^ cannot infer type
+  |
+note: multiple `impl`s satisfying `ffi::Opaque: __AmbiguousIfImpl<_>` found
+ --> tests/ui/unpin_impl.rs:1:1
+  |
+1 | #[cxx::bridge]
+  | ^^^^^^^^^^^^^^
+  = note: this error originates in the attribute macro `cxx::bridge` (in Nightly builds, run with -Z macro-backtrace for more info)

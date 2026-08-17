@@ -1,0 +1,20 @@
+architecture-beta
+%% Authored stress fixture (Mermaid@11.12.2): many services inside one group (label sizing + routing).
+
+group g(cloud)[Service Farm]
+service s1(server)[s1] in g
+service s2(server)[s2] in g
+service s3(server)[s3] in g
+service s4(server)[s4] in g
+service s5(server)[s5] in g
+service s6(server)[s6] in g
+service s7(server)[s7] in g
+service s8(server)[s8] in g
+
+s1:R --> L:s2
+s2:R --> L:s3
+s3:R --> L:s4
+s4:R --> L:s5
+s5:R --> L:s6
+s6:R --> L:s7
+s7:R --> L:s8

@@ -1,0 +1,67 @@
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+name: Continuous Integration
+
+env:
+  RUSTFLAGS: -D warnings
+
+jobs:
+  ci:
+    name: ${{ matrix.target.name }} [${{ matrix.rust_version }}]
+    runs-on: ${{ matrix.target.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        rust_version: ["stable", "1.62.1"]
+        target:
+          - name: Linux
+            os: ubuntu-latest
+            extra_flags: --all-features
+            run_tests: true
+
+          - name: Linux (no-std)
+            os: ubuntu-latest
+            extra_flags: --no-default-features
+            run_tests: true
+
+          - name: Windows
+            os: windows-latest
+            extra_flags: --all-features
+            run_tests: true
+
+          - name: Windows (no-std)
+            os: windows-latest
+            extra_flags: --no-default-features
+            run_tests: true
+
+          - name: Bare Metal (no-std)
+            os: ubuntu-latest
+            extra_flags: --no-default-features
+            run_tests: false
+            env:
+              TARGET: thumbv7em-none-eabihf
+
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          targets: ${{ matrix.target.env.TARGET || '' }}
+          toolchain: ${{ matrix.rust_version }}
+          components: clippy, rustfmt
+
+      - run: cargo fmt --check --all
+      - run: cargo clippy ${{ matrix.target.extra_flags }}
+      - run: cargo build ${{ matrix.target.extra_flags }}
+
+      - if: matrix.target.run_tests
+        run: |
+          cargo test ${{ matrix.target.extra_flags }}
+          cargo run ${{ matrix.target.extra_flags }} --example 256_colors
+          cargo run ${{ matrix.target.extra_flags }} --example hyperlink
+          cargo run ${{ matrix.target.extra_flags }} --example title

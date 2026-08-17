@@ -1,0 +1,8 @@
+GET
+/
+Param1=value1
+host:example.amazonaws.com
+x-amz-date:20150830T123600Z
+
+host;x-amz-date
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855

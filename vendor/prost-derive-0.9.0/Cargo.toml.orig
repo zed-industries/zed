@@ -1,0 +1,23 @@
+[package]
+name = "prost-derive"
+version = "0.9.0"
+authors = [
+    "Dan Burkert <dan@danburkert.com>",
+    "Tokio Contributors <team@tokio.rs>",
+]
+license = "Apache-2.0"
+repository = "https://github.com/tokio-rs/prost"
+documentation = "https://docs.rs/prost-derive"
+readme = "README.md"
+description = "A Protocol Buffers implementation for the Rust Language."
+edition = "2018"
+
+[lib]
+proc_macro = true
+
+[dependencies]
+anyhow = "1"
+itertools = "0.10"
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "1", features = [ "extra-traits" ] }

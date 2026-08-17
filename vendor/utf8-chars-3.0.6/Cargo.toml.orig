@@ -1,0 +1,28 @@
+[package]
+edition = "2021"
+name = "utf8-chars"
+version = "3.0.6"
+rust-version = "1.70"
+authors = ["warlock <internalmike@gmail.com>"]
+description = "Char-by-char iterator and `read_char` method for `BufRead`."
+readme = "README.md"
+documentation = "https://docs.rs/utf8-chars/"
+keywords = ["utf-8", "utf8", "chars", "iterator", "read_char"]
+categories = ["encoding"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/A1-Triard/utf8-chars"
+
+[features]
+default = []
+bench = []
+
+[dependencies]
+arrayvec = "0.7.2"
+
+[dev-dependencies]
+quickcheck = "1.0.3"
+quickcheck_macros = "1.0.0"
+rand = "0.9.2"
+
+[badges]
+maintenance = { status = "passively-maintained" }

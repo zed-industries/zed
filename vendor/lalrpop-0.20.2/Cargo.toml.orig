@@ -1,0 +1,55 @@
+[package]
+name = "lalrpop"
+description = "convenient LR(1) parser generator"
+readme = "../README.md"
+keywords = ["parser", "generator", "LR", "yacc", "grammar"]
+categories = ["parsing"]
+workspace = ".."
+
+repository.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+version.workspace = true
+rust-version.workspace = true
+
+exclude = ["build.rs"]
+
+[lib]
+doctest = false
+
+[dependencies]
+ascii-canvas = { version = "3.0", default_features = false }
+bit-set = { version = "0.5.2", default_features = false }
+ena = { version = "0.14", default_features = false }
+itertools = { version = "0.11", default_features = false, features = ["use_std"] }
+petgraph = { version = "0.6", default_features = false }
+regex = { workspace = true }
+regex-syntax = { workspace = true }
+string_cache = { version = "0.8", default_features = false }
+term = { version = "0.7", default_features = false }
+tiny-keccak = { version = "2.0.2", features = ["sha3"] }
+unicode-xid = { version = "0.2", default_features = false }
+walkdir = "2.4.0"
+
+# This dependency is only needed for binary builds, if you use LALRPOP as
+# library, disable it in your project by setting default_features = false.
+pico-args = { version = "0.5", default_features = false, optional = true }
+
+lalrpop-util = { path = "../lalrpop-util", version = "0.20.0", default_features = false }
+
+[dev-dependencies]
+diff = { workspace = true }
+rand = "0.8"
+
+[features]
+default=["lexer", "unicode", "pico-args"]
+unicode = ["regex/unicode", "regex-syntax/unicode", "lalrpop-util/unicode"]
+lexer = ["lalrpop-util/lexer"]
+
+[package.metadata.docs.rs]
+features = ["lexer"]
+
+[[bin]]
+name = "lalrpop"
+required-features = ["pico-args"]

@@ -1,0 +1,42 @@
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: 0
+  RUST_TEST_THREADS: 1
+
+jobs:
+
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-2022, windows-2025]
+        target:
+          [x86_64-pc-windows-msvc, i686-pc-windows-msvc, x86_64-pc-windows-gnu]
+        channel: [nightly]
+        include:
+          - target: i686-pc-windows-gnu
+            channel: 1.71.0
+            os: windows-2022
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.channel }}
+          target: ${{ matrix.target }}
+      - if: matrix.target == 'i686-pc-windows-gnu'
+        uses: MinoruSekine/setup-scoop@main
+      - if: matrix.target == 'i686-pc-windows-gnu'
+        run: |
+          scoop install -a 32bit mingw
+          Join-Path (Resolve-Path ~).Path "scoop\apps\mingw\current\bin" >> $env:GITHUB_PATH
+      - shell: cmd
+        run: powershell ./update_test_cert.ps1
+      - run: cargo +${{ matrix.channel }} build --tests --target ${{ matrix.target }}
+      - run: cargo +${{ matrix.channel }} test --target ${{ matrix.target }}

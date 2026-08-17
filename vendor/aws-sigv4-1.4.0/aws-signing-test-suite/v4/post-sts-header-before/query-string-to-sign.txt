@@ -1,0 +1,4 @@
+AWS4-HMAC-SHA256
+20150830T123600Z
+20150830/us-east-1/service/aws4_request
+37f7ba7a2ec89e8b29a0d637bcc70d8e8d0fdba854ddfc5bc06a12398cfe8605

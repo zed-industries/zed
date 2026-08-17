@@ -1,0 +1,6 @@
+package root:component;
+
+world root {
+  export test:test/foo;
+  export test:test/bar;
+}

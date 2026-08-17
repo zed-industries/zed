@@ -1,0 +1,5 @@
+import `foo` conflicts with prior import of same name
+     --> tests/ui/parse-fail/world-same-fields2.wit:7:10
+      |
+    7 |   import foo: interface {}
+      |          ^--

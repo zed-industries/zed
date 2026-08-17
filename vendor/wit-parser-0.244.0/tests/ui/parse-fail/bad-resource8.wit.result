@@ -1,0 +1,5 @@
+duplicate function name `a`
+     --> tests/ui/parse-fail/bad-resource8.wit:6:5
+      |
+    6 |     a: static func();
+      |     ^

@@ -1,0 +1,85 @@
+package foo:foo;
+
+interface lists {
+  list-u8-param: func(x: list<u8>);
+  list-u16-param: func(x: list<u16>);
+  list-u32-param: func(x: list<u32>);
+  list-u64-param: func(x: list<u64>);
+  list-s8-param: func(x: list<s8>);
+  list-s16-param: func(x: list<s16>);
+  list-s32-param: func(x: list<s32>);
+  list-s64-param: func(x: list<s64>);
+  list-f32-param: func(x: list<f32>);
+  list-f64-param: func(x: list<f64>);
+
+  list-u8-ret: func() -> list<u8>;
+  list-u16-ret: func() -> list<u16>;
+  list-u32-ret: func() -> list<u32>;
+  list-u64-ret: func() -> list<u64>;
+  list-s8-ret: func() -> list<s8>;
+  list-s16-ret: func() -> list<s16>;
+  list-s32-ret: func() -> list<s32>;
+  list-s64-ret: func() -> list<s64>;
+  list-f32-ret: func() -> list<f32>;
+  list-f64-ret: func() -> list<f64>;
+
+  tuple-list: func(x: list<tuple<u8, s8>>) -> list<tuple<s64, u32>>;
+  string-list-arg: func(a: list<string>);
+  string-list-ret: func() -> list<string>;
+  tuple-string-list: func(x: list<tuple<u8, string>>) -> list<tuple<string, u8>>;
+  string-list: func(x: list<string>) -> list<string>;
+
+  record some-record {
+    x: string,
+    y: other-record,
+    z: list<other-record>,
+    c1: u32,
+    c2: u64,
+    c3: s32,
+    c4: s64,
+  }
+  record other-record {
+    a1: u32,
+    a2: u64,
+    a3: s32,
+    a4: s64,
+    b: string,
+    c: list<u8>,
+  }
+  record-list: func(x: list<some-record>) -> list<other-record>;
+  record-list-reverse: func(x: list<other-record>) -> list<some-record>;
+
+  variant some-variant {
+    a(string),
+    b,
+    c(u32),
+    d(list<other-variant>),
+  }
+  variant other-variant {
+    a,
+    b(u32),
+    c(string),
+  }
+  variant-list: func(x: list<some-variant>) -> list<other-variant>;
+
+  type load-store-all-sizes = list<tuple<
+    string,
+    u8,
+    s8,
+    u16,
+    s16,
+    u32,
+    s32,
+    u64,
+    s64,
+    f32,
+    f64,
+    char,
+  >>;
+  load-store-everything: func(a: load-store-all-sizes) -> load-store-all-sizes;
+}
+
+world the-lists {
+  import lists;
+  export lists;
+}

@@ -1,0 +1,12 @@
+package foo:floats;
+
+interface floats {
+  float32-param: func(x: float32);
+  float64-param: func(x: float64);
+  float32-result: func() -> float32;
+  float64-result: func() -> float64;
+}
+
+world floats-world {
+  import floats;
+}

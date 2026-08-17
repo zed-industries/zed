@@ -1,0 +1,16 @@
+package foo:root;
+package foo:name {
+  interface i1 {
+    type a = u32;
+  }
+}
+
+package bar:name {
+  world w1 {
+    import imp1: interface {
+      use foo:name/i1.{a};
+
+      fn: func(a: a);
+    }
+  }
+}

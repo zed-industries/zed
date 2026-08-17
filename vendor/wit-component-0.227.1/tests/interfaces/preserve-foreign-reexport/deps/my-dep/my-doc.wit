@@ -1,0 +1,8 @@
+package foo:my-dep;
+
+interface my-interface {
+  record foo {
+    f: u8,
+  }
+  type bar = foo;
+}

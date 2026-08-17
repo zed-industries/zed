@@ -1,0 +1,38 @@
+---
+- name: Tags for Block Objects
+  from: NimYAML tests
+  tags: mapping sequence tag
+  yaml: |
+    foo: !!seq
+      - !!str a
+      - !!map
+        key: !!str value
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :foo
+       +SEQ <tag:yaml.org,2002:seq>
+        =VAL <tag:yaml.org,2002:str> :a
+        +MAP <tag:yaml.org,2002:map>
+         =VAL :key
+         =VAL <tag:yaml.org,2002:str> :value
+        -MAP
+       -SEQ
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "foo": [
+        "a",
+        {
+          "key": "value"
+        }
+      ]
+    }
+  dump: |
+    foo: !!seq
+    - !!str a
+    - !!map
+      key: !!str value

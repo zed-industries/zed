@@ -1,0 +1,63 @@
+[package]
+name = "prost"
+version = "0.9.0"
+authors = [
+    "Dan Burkert <dan@danburkert.com>",
+    "Tokio Contributors <team@tokio.rs>",
+]
+license = "Apache-2.0"
+repository = "https://github.com/tokio-rs/prost"
+documentation = "https://docs.rs/prost"
+readme = "README.md"
+description = "A Protocol Buffers implementation for the Rust Language."
+keywords = ["protobuf", "serialization"]
+categories = ["encoding"]
+edition = "2018"
+
+[workspace]
+members = [
+  "conformance",
+  "prost-build",
+  "prost-derive",
+  "prost-types",
+  "protobuf",
+  "tests",
+  "tests-2015",
+  "tests-no-std",
+  "tests/single-include",
+]
+
+exclude = [
+  # The fuzz crate can't be compiled or tested without the 'cargo fuzz' command,
+  # so exclude it from normal builds.
+  "fuzz",
+  # Same counts for the afl fuzz targets
+  "afl",
+]
+
+[lib]
+# https://bheisler.github.io/criterion.rs/book/faq.html#cargo-bench-gives-unrecognized-option-errors-for-valid-command-line-options
+bench = false
+
+[features]
+default = ["prost-derive", "std"]
+no-recursion-limit = []
+std = []
+
+[dependencies]
+bytes = { version = "1", default-features = false }
+prost-derive = { version = "0.9.0", path = "prost-derive", optional = true }
+
+[dev-dependencies]
+criterion = "0.3"
+env_logger = { version = "0.8", default-features = false }
+log = "0.4"
+proptest = "1"
+rand = "0.8"
+
+[profile.bench]
+debug = true
+
+[[bench]]
+name = "varint"
+harness = false

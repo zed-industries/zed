@@ -1,0 +1,30 @@
+[package]
+name = "cfg-expr"
+description = "A parser and evaluator for Rust `cfg()` expressions."
+repository = "https://github.com/EmbarkStudios/cfg-expr"
+version = "0.20.6"
+authors = [
+    "Embark <opensource@embark-studios.com>",
+    "Jake Shadle <jake.shadle@embark-studios.com>",
+]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+rust-version = "1.85.0"
+documentation = "https://docs.rs/cfg-expr"
+homepage = "https://github.com/EmbarkStudios/cfg-expr"
+keywords = ["cargo", "rustc", "cfg"]
+categories = ["parser-implementations"]
+
+[features]
+default = []
+# Allows parsing and handling of arbitrary target triples, including ones that
+# are not builtin to rustc
+targets = ["target-lexicon"]
+
+[dependencies]
+smallvec = "1.15"
+target-lexicon = { version = "=0.13.3", optional = true }
+
+[dev-dependencies]
+similar-asserts = "1.7"

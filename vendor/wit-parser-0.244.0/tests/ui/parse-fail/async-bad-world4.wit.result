@@ -1,0 +1,5 @@
+import of `x` shadows previously imported items
+     --> tests/ui/parse-fail/async-bad-world4.wit:8:11
+      |
+    8 |   include a;
+      |           ^

@@ -1,0 +1,9 @@
+interface a2 {
+  use b.{the-type};
+}
+
+interface b {
+  record the-type {
+    f: u8,
+  }
+}

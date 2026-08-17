@@ -1,0 +1,13 @@
+package test:foo;
+
+interface foo {
+    f: func();
+}
+
+world foobar {
+    export foo;
+}
+
+world imports {
+    import foo;
+}

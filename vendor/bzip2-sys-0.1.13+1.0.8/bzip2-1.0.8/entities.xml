@@ -1,0 +1,10 @@
+<!-- misc. strings -->
+<!ENTITY bz-url "https://sourceware.org/bzip2/">
+<!ENTITY bz-author "jseward@acm.org">
+<!ENTITY bz-email "bzip2-devel@sourceware.org">
+<!ENTITY bz-lifespan "1996-2019">
+
+<!ENTITY bz-version "1.0.8">
+<!ENTITY bz-date "13 July 2019">
+
+<!ENTITY manual-title "bzip2 Manual">

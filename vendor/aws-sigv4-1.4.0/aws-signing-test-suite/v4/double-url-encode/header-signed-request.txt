@@ -1,0 +1,4 @@
+POST /2015-03-31/functions/arn%3Aaws%3Alambda%3Aus-west-2%3A892717189312%3Afunction%3Amy-rusty-fun/invocations
+Host:lambda.us-east-2.amazonaws.com
+X-Amz-Date:20210511T154045Z
+Authorization: AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20210511/us-east-2/lambda/aws4_request, SignedHeaders=host;x-amz-date, Signature=4b93abbcc68be32bd64c18e2c71150660ab4c29bbd6c32a383a7517a88fc1804

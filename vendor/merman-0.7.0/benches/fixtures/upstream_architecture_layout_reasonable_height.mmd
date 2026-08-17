@@ -1,0 +1,43 @@
+architecture-beta
+
+group federated(cloud)[Federated Environment]
+  service server1(server)[System] in federated
+  service edge(server)[Edge Device] in federated
+  server1:R --> L:edge
+
+group on_prem(cloud)[Hub]
+  service firewall(server)[Firewall Device] in on_prem
+  service server(server)[Server] in on_prem
+  firewall:R -- L:server
+
+  service db1(database)[db1] in on_prem
+  service db2(database)[db2] in on_prem
+  service db3(database)[db3] in on_prem
+  service db4(database)[db4] in on_prem
+  service db5(database)[db5] in on_prem
+  service db6(database)[db6] in on_prem
+
+  junction mid in on_prem
+  server:B -- T:mid
+
+  junction left1 in on_prem
+  junction left2 in on_prem
+  junction left3 in on_prem
+  left1:R -- L:mid
+  left2:R -- L:left1
+  left3:R -- L:left2
+  left1:B -- T:db1
+  left2:B -- T:db2
+  left3:B -- T:db3
+
+  junction right1 in on_prem
+  junction right2 in on_prem
+  junction right3 in on_prem
+  mid:R -- L:right1
+  right1:R -- L:right2
+  right2:R -- L:right3
+  right1:B -- T:db4
+  right2:B -- T:db5
+  right3:B -- T:db6
+
+  edge:R -- L:firewall

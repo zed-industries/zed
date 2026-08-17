@@ -1,0 +1,32 @@
+error[E0277]: `RefCell<std::string::String>` cannot be shared between threads safely
+  --> tests/subclass_compiletest/05-no-auto-send-sync-with-non-send-sync-parent.rs:70:11
+   |
+70 |     check(&obj);
+   |     ----- ^^^^ `RefCell<std::string::String>` cannot be shared between threads safely
+   |     |
+   |     required by a bound introduced by this call
+   |
+   = help: within `imp_parent::TestParent`, the trait `Sync` is not implemented for `RefCell<std::string::String>`
+   = note: if you want to do aliasing and mutation between multiple threads, use `std::sync::RwLock` instead
+note: required because it appears within the type `imp_parent::TestParent`
+  --> tests/subclass_compiletest/05-no-auto-send-sync-with-non-send-sync-parent.rs:6:16
+   |
+ 6 |     pub struct TestParent {
+   |                ^^^^^^^^^^
+   = note: required for `TypedObjectRef<imp_parent::TestParent, ()>` to implement `Send`
+note: required because it appears within the type `TestParent`
+  --> tests/subclass_compiletest/05-no-auto-send-sync-with-non-send-sync-parent.rs:20:16
+   |
+20 |     pub struct TestParent(ObjectSubclass<imp_parent::TestParent>);
+   |                ^^^^^^^^^^
+   = note: required for `TypedObjectRef<imp_object::TestObject, TestParent>` to implement `Send`
+note: required because it appears within the type `TestObject`
+  --> tests/subclass_compiletest/05-no-auto-send-sync-with-non-send-sync-parent.rs:57:16
+   |
+57 |     pub struct TestObject(ObjectSubclass<imp_object::TestObject>) @extends TestParent;
+   |                ^^^^^^^^^^
+note: required by a bound in `main::check`
+  --> tests/subclass_compiletest/05-no-auto-send-sync-with-non-send-sync-parent.rs:67:17
+   |
+67 |     fn check<T: Send + Sync>(_obj: &T) {}
+   |                 ^^^^ required by this bound in `check`

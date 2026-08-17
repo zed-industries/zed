@@ -1,0 +1,137 @@
+[
+  {
+    "Description": "Disable hinting for Bitstream Vera fonts when the size is less than 8ppem"
+  },
+  {
+    "Match": {
+      "target": "Font",
+      "tests": [
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Family": {
+              "Simple": {
+                "String": "Bitstream Vera Sans"
+              }
+            }
+          }
+        },
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Less",
+          "value": {
+            "PixelSize": {
+              "Simple": {
+                "Double": 7.5
+              }
+            }
+          }
+        }
+      ],
+      "edits": [
+        {
+          "mode": "Assign",
+          "binding": "Weak",
+          "value": {
+            "Hinting": {
+              "Simple": {
+                "Bool": false
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "Match": {
+      "target": "Font",
+      "tests": [
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Family": {
+              "Simple": {
+                "String": "Bitstream Vera Serif"
+              }
+            }
+          }
+        },
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Less",
+          "value": {
+            "PixelSize": {
+              "Simple": {
+                "Double": 7.5
+              }
+            }
+          }
+        }
+      ],
+      "edits": [
+        {
+          "mode": "Assign",
+          "binding": "Weak",
+          "value": {
+            "Hinting": {
+              "Simple": {
+                "Bool": false
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "Match": {
+      "target": "Font",
+      "tests": [
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Family": {
+              "Simple": {
+                "String": "Bitstream Vera Sans Mono"
+              }
+            }
+          }
+        },
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Less",
+          "value": {
+            "PixelSize": {
+              "Simple": {
+                "Double": 7.5
+              }
+            }
+          }
+        }
+      ],
+      "edits": [
+        {
+          "mode": "Assign",
+          "binding": "Weak",
+          "value": {
+            "Hinting": {
+              "Simple": {
+                "Bool": false
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+]

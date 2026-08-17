@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Project Sdk="Microsoft.Windows.WinmdGenerator/0.69.7-preview">
+
+  <PropertyGroup>
+    <OutputWinmd>$(MSBuildProjectDirectory)\..\.windows\winmd\Microsoft.WPRControl.winmd</OutputWinmd>
+    <WinmdVersion>255.255.255.255</WinmdVersion>
+    <WptRoot>$(MSBuildProgramFiles32)\Windows Kits\10\Windows Performance Toolkit</WptRoot>
+    <AdditionalIncludes>$(CompiledHeadersDir);$(WptRoot)</AdditionalIncludes>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Idls Include="$(WptRoot)\WindowsPerformanceRecorderControl.idl" />
+    <Headers Include="$(CompiledHeadersDir)\WindowsPerformanceRecorderControl.h" />
+
+    <Partition Include="main.cpp">
+      <TraverseFiles>@(Headers)</TraverseFiles>
+      <Namespace>Microsoft.WPRControl</Namespace>
+      <ExcludeFromCrossarch>true</ExcludeFromCrossarch>
+    </Partition>
+  </ItemGroup>
+
+</Project>

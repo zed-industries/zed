@@ -1,0 +1,37 @@
+[package]
+name = "xxhash-rust"
+version = "0.8.15"
+authors = ["Douman <douman@gmx.se>"]
+edition = "2018"
+description = "Implementation of xxhash"
+readme = "README.md"
+repository = "https://github.com/DoumanAsh/xxhash-rust"
+license = "BSL-1.0"
+keywords = ["hash", "xxhash", "xxh3", "hasher", "no-std"]
+categories = ["algorithms", "no-std::no-alloc"]
+include = [
+    "**/*.rs",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE",
+]
+
+[features]
+# Enables std::io::Write implementation
+std = []
+# XXH32 makes sense only on 32bit platforms
+xxh32 = [] # Enable xxh32 implementation
+const_xxh32 = [] # Enable const xxh32 implementation
+
+xxh64 = [] # Enable xxh64 implementation
+const_xxh64 = [] # Enable const xxh64 implementation
+
+xxh3 = [] # Enable xxh3 implementation
+const_xxh3 = [] # Enable const xxh3 implementation
+
+[dev-dependencies]
+getrandom = "0.2"
+xxhash-c-sys = "0.8.6"
+
+[package.metadata.docs.rs]
+features = ["xxh32", "const_xxh32", "xxh64", "const_xxh64", "xxh3", "const_xxh3"]

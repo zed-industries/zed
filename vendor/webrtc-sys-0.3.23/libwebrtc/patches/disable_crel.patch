@@ -1,0 +1,17 @@
+diff --git a/config/compiler/BUILD.gn b/config/compiler/BUILD.gn
+--- a/config/compiler/BUILD.gn
++++ b/config/compiler/BUILD.gn
+@@ -617,13 +617,6 @@ config("compiler") {
+    cflags += [ "-ffp-contract=off" ]
+    }
+
+-    # Enable ELF CREL (see crbug.com/357878242) for all platforms that use ELF
+-    # (excluding toolchains that use an older version of LLVM).
+-    if (is_linux && use_lld && !llvm_android_mainline &&
+-        default_toolchain != "//build/toolchain/cros:target") {
+-      cflags += [ "-Wa,--crel,--allow-experimental-crel" ]
+-    }
+-
+    # TODO(crbug.com/413427035): Remove once
+    # https://github.com/llvm/llvm-project/pull/136867/ is landed.
+    if (!is_win && !llvm_android_mainline &&

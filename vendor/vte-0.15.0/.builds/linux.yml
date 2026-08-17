@@ -1,0 +1,25 @@
+image: archlinux
+sources:
+  - https://github.com/alacritty/vte
+tasks:
+  - rustup: |
+      curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain stable --profile minimal -c clippy
+  - stable: |
+      cd vte
+      $HOME/.cargo/bin/cargo +stable test
+      $HOME/.cargo/bin/cargo +stable test --features=ansi
+      $HOME/.cargo/bin/cargo +stable test --features=ansi --no-default-features
+  - clippy: |
+      cd vte
+      $HOME/.cargo/bin/cargo +stable clippy
+      $HOME/.cargo/bin/cargo +stable clippy --features=ansi
+  - rustfmt: |
+      $HOME/.cargo/bin/rustup toolchain install nightly -c rustfmt
+      cd vte
+      $HOME/.cargo/bin/cargo +nightly fmt -- --check
+  - msrv: |
+      cd vte
+      msrv=$(cat Cargo.toml | grep "rust-version" | sed 's/.*"\(.*\)".*/\1/')
+      $HOME/.cargo/bin/rustup toolchain install --profile minimal $msrv
+      rm Cargo.lock
+      $HOME/.cargo/bin/cargo +$msrv test

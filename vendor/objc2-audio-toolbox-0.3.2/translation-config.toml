@@ -1,0 +1,144 @@
+framework = "AudioToolbox"
+crate = "objc2-audio-toolbox"
+required-crates = ["objc2", "objc2-foundation"]
+custom-lib-rs = true
+flags = [
+    # Make AudioToolbox less dependent on CoreServices
+    "-DAUDIOCOMPONENT_NOCARBONINSTANCES=1",
+]
+macos = "10.0"
+maccatalyst = "13.1"
+ios = "2.0"
+tvos = "9.0"
+visionos = "1.0"
+
+# Self-referential, which header-translator doesn't handle yet
+struct.ScheduledAudioSlice.skipped = true
+typedef.ScheduledAudioSlice.skipped = true
+typedef.ScheduledAudioSliceCompletionProc.skipped = true
+struct.ScheduledAudioFileRegion.skipped = true
+typedef.ScheduledAudioFileRegion.skipped = true
+typedef.ScheduledAudioFileRegionCompletionProc.skipped = true
+union.AURenderEvent.skipped = true
+typedef.AURenderEvent.skipped = true
+struct.AURenderEventHeader.skipped = true
+typedef.AURenderEventHeader.skipped = true
+struct.AUParameterEvent.skipped = true
+typedef.AUParameterEvent.skipped = true
+struct.AUMIDIEvent.skipped = true
+typedef.AUMIDIEvent.skipped = true
+struct.AUMIDIEventList.skipped = true
+typedef.AUMIDIEventList.skipped = true
+typedef.AUMIDIEventListBlock.skipped = true
+class.AUAudioUnit.methods.scheduleMIDIEventListBlock.skipped = true
+class.AUAudioUnit.methods.MIDIOutputEventListBlock.skipped = true
+class.AUAudioUnit.methods."setMIDIOutputEventListBlock:".skipped = true
+typedef.AUInternalRenderBlock.skipped = true
+class.AUAudioUnit.methods.internalRenderBlock.skipped = true
+
+# Contains unions, which header-translator doesn't handle yet
+struct.AudioUnitParameterEvent.skipped = true
+typedef.AudioUnitParameterEvent.skipped = true
+fn.AudioUnitScheduleParameters.skipped = true
+typedef.AudioUnitScheduleParametersProc.skipped = true
+struct.AudioUnitEvent.skipped = true
+typedef.AudioUnitEvent.skipped = true
+typedef.AUEventListenerBlock.skipped = true
+fn.AUEventListenerCreateWithDispatchQueue.skipped = true
+typedef.AUEventListenerProc.skipped = true
+fn.AUEventListenerCreate.skipped = true
+fn.AUEventListenerAddEventType.skipped = true
+fn.AUEventListenerRemoveEventType.skipped = true
+fn.AUEventListenerNotify.skipped = true
+struct.AUNodeInteraction.skipped = true
+typedef.AUNodeInteraction.skipped = true
+fn.AUGraphGetInteractionInfo.skipped = true
+fn.AUGraphGetNodeInteractions.skipped = true
+struct.CAClockTime.skipped = true
+typedef.CAClockTime.skipped = true
+fn.CAClockSetCurrentTime.skipped = true
+fn.CAClockGetCurrentTime.skipped = true
+fn.CAClockGetStartTime.skipped = true
+fn.CAClockTranslateTime.skipped = true
+fn.CAClockGetCurrentTempo.skipped = true
+fn.CAClockSetCurrentTempo.skipped = true
+
+# Embedded struct
+struct.AUDistanceAttenuationData.skipped = true
+typedef.AUDistanceAttenuationData.skipped = true
+
+# Needs FSRef from CoreServices.CarbonCore
+fn.AudioFileCreate.skipped = true
+fn.AudioFileInitialize.skipped = true
+fn.AudioFileOpen.skipped = true
+fn.ExtAudioFileOpen.skipped = true
+fn.ExtAudioFileCreateNew.skipped = true
+fn.AudioFileComponentCreate.skipped = true
+fn.AudioFileComponentInitialize.skipped = true
+fn.AudioFileComponentOpenFile.skipped = true
+fn.GetNameFromSoundBank.skipped = true
+fn.MusicSequenceLoadSMFWithFlags.skipped = true
+fn.MusicSequenceSaveMIDIFile.skipped = true
+
+# Needs os_workgroup_t
+class.AUAudioUnit.methods.osWorkgroup.skipped = true
+struct.AudioUnitRenderContext.skipped = true
+typedef.AudioUnitRenderContext.skipped = true
+typedef.AURenderContextObserver.skipped = true
+class.AUAudioUnit.methods.renderContextObserver.skipped = true
+fn.AudioWorkIntervalCreate.skipped = true
+
+# Needs AVAudioFormat from AVFoundation (cyclic dependency)
+class.AUAudioUnitBus.methods.format.skipped = true
+class.AUAudioUnitBus.methods."setFormat:error:".skipped = true
+class.AUAudioUnit.methods."shouldChangeToFormat:forBus:".skipped = true
+class.AUAudioUnitBus.methods."initWithFormat:error:".skipped = true
+
+# Needs ComponentDescription from CoreServices.CarbonCore
+fn.AUGraphNewNode.skipped = true
+fn.AUGraphGetNodeInfo.skipped = true
+
+# Needs ComponentInstance from Carbon
+typedef.AudioUnitCarbonView.skipped = true
+
+# Needs AppKit or UIKit
+fn.AudioComponentCopyIcon.skipped = true
+fn.AudioComponentGetIcon.skipped = true
+fn.AudioOutputUnitGetHostIcon.skipped = true
+protocol.AUCocoaUIBase.methods."uiViewForAudioUnit:withSize:".skipped = true
+
+# Value too large
+const.AUEventSampleTimeImmediate.use-value = true
+
+# Defined for real in CoreMIDI, AudioToolbox just redefines it
+typedef.MIDIChannelNumber.skipped = true
+external.MIDIChannelNumber.module = "CoreMIDI.MIDIMessages"
+
+# Has wrong module because it is also defined in AudioUnitProperties.h.
+external.OpaqueAudioFileID.module = "AudioToolbox.AudioFile"
+
+# Deprecated and only defined on 32-bit architectures
+fn.MusicSequenceLoadSMFData.skipped = true
+fn.OpenDefaultAudioOutput.skipped = true
+fn.OpenSystemSoundAudioOutput.skipped = true
+fn.AudioUnitRemovePropertyListener.skipped = true
+
+# Only defined on 32-bit architectures
+typedef.AudioUnitCarbonViewEventListener.skipped = true
+fn.AudioUnitCarbonViewCreate.skipped = true
+fn.AudioUnitCarbonViewSetEventListener.skipped = true
+struct.OpaqueAUMIDIController.skipped = true
+typedef.AUMIDIControllerRef.skipped = true
+fn.AUMIDIControllerCreate.skipped = true
+fn.AUMIDIControllerDispose.skipped = true
+fn.AUMIDIControllerMapChannelToAU.skipped = true
+fn.AUMIDIControllerMapEventToParameter.skipped = true
+fn.AUMIDIControllerUnmapAudioUnit.skipped = true
+fn.AUMIDIControllerHandleMIDI.skipped = true
+fn.AUMIDIControllerConnectSource.skipped = true
+fn.AUMIDIControllerDisconnectSource.skipped = true
+fn.AUMIDIControllerExportXMLNames.skipped = true
+
+# Needs CASpatialAudioExperience, which is not available on macOS (where header-translator runs).
+class.AUAudioUnit.methods.intendedSpatialExperience.skipped = true
+class.AUAudioUnit.methods."setIntendedSpatialExperience:".skipped = true

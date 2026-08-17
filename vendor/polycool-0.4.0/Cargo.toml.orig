@@ -1,0 +1,44 @@
+[package]
+name = "polycool"
+version = "0.4.0"
+edition = "2024"
+description = "Polynomial root-finding"
+keywords = ["polynomial", "roots", "numerical"]
+categories = ["mathematics"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/linebender/kurbo"
+
+[features]
+default = ["std"]
+std = []
+arbitrary = ["dep:arbitrary"]
+# Use floating point implementations from libm
+libm = ["dep:libm"]
+
+[dependencies]
+arbitrary = { version = "1.4.2", optional = true }
+arrayvec = { version = "0.7.6", default-features = false }
+libm = { version = "0.2.15", optional = true }
+
+[dev-dependencies]
+arbitrary = "1.4.2"
+arbtest = "0.3.2"
+
+# wasm doesn't support rayon, so disable criterion's rayon support. (In
+# principle we could make it target-dependent.)
+criterion = { version = "0.7.0", default-features = false, features = [
+    "plotters",
+    "cargo_bench_support",
+] }
+
+[[bench]]
+name = "cubic_roots"
+harness = false
+
+[[bench]]
+name = "eval"
+harness = false
+
+[[bench]]
+name = "quadratic_roots"
+harness = false

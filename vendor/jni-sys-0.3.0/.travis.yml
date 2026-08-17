@@ -1,0 +1,20 @@
+language: rust
+sudo: false
+cache: cargo
+matrix:
+  include:
+  - os: osx
+    rust: 1.19.0
+    env:
+    - JAVA_HOME=$(/usr/libexec/java_home)
+    - DYLD_LIBRARY_PATH=$JAVA_HOME/jre/lib/server
+  - rust: 1.19.0
+    env: LD_LIBRARY_PATH=$JAVA_HOME/jre/lib/amd64/server
+    dist: trusty
+  - rust: nightly
+    env: LD_LIBRARY_PATH=$JAVA_HOME/jre/lib/amd64/server
+    dist: trusty
+script:
+- java -version
+- cargo test
+#- cargo run -p systest

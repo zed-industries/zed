@@ -1,0 +1,61 @@
+name: I think I found a bug in SQLx
+description: Create a bug-report issue
+labels: [bug]
+body:
+  - type: textarea
+    id: related-issues
+    validations:
+      required: true
+    attributes:
+      label: I have found these related issues/pull requests
+      description: |
+        I have searched by clicking [HERE](https://github.com/launchbadge/sqlx/issues?q=) 
+        for existing issues, these are the ones I've found, 
+        and this is why I think this deserves a new issue.
+      placeholder: "Related to ..."
+  - type: textarea
+    id: description
+    validations:
+      required: true
+    attributes:
+      label: Description
+      description: Clear and concise description of what the bug is
+  - type: textarea
+    id: steps-to-reproduce
+    validations:
+      required: true
+    attributes:
+      label: Reproduction steps
+      description: A small code snippet or a link to a Github repo or Gist, with instructions on reproducing the bug.
+  - type: input
+    id: sqlx-version
+    attributes:
+      label: SQLx version
+    validations:
+      required: true
+  - type: input
+    id: sqlx-features
+    attributes:
+      label: Enabled SQLx features
+    validations:
+      required: true
+  - type: input
+    id: db-server-and-version
+    attributes:
+      label: Database server and version
+      placeholder: MySQL / Postgres / SQLite <x.y.z>
+    validations:
+      required: true
+  - type: input
+    id: os-type
+    attributes:
+      label: Operating system
+    validations:
+      required: true
+  - type: input
+    id: rust-version
+    attributes:
+      label: Rust version
+      description: You can get this via running `rustc --version`
+    validations:
+      required: true

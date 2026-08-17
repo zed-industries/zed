@@ -1,0 +1,133 @@
+---
+- name: Spec Example 2.28. Log File
+  from: http://www.yaml.org/spec/1.2/spec.html#id2761866
+  tags: spec header literal mapping sequence
+  yaml: |
+    ---
+    Time: 2001-11-23 15:01:42 -5
+    User: ed
+    Warning:
+      This is an error message
+      for the log file
+    ---
+    Time: 2001-11-23 15:02:31 -5
+    User: ed
+    Warning:
+      A slightly different error
+      message.
+    ---
+    Date: 2001-11-23 15:03:17 -5
+    User: ed
+    Fatal:
+      Unknown variable "bar"
+    Stack:
+      - file: TopClass.py
+        line: 23
+        code: |
+          x = MoreObject("345\n")
+      - file: MoreClass.py
+        line: 58
+        code: |-
+          foo = bar
+  tree: |
+    +STR
+     +DOC ---
+      +MAP
+       =VAL :Time
+       =VAL :2001-11-23 15:01:42 -5
+       =VAL :User
+       =VAL :ed
+       =VAL :Warning
+       =VAL :This is an error message for the log file
+      -MAP
+     -DOC
+     +DOC ---
+      +MAP
+       =VAL :Time
+       =VAL :2001-11-23 15:02:31 -5
+       =VAL :User
+       =VAL :ed
+       =VAL :Warning
+       =VAL :A slightly different error message.
+      -MAP
+     -DOC
+     +DOC ---
+      +MAP
+       =VAL :Date
+       =VAL :2001-11-23 15:03:17 -5
+       =VAL :User
+       =VAL :ed
+       =VAL :Fatal
+       =VAL :Unknown variable "bar"
+       =VAL :Stack
+       +SEQ
+        +MAP
+         =VAL :file
+         =VAL :TopClass.py
+         =VAL :line
+         =VAL :23
+         =VAL :code
+         =VAL |x = MoreObject("345\\n")\n
+        -MAP
+        +MAP
+         =VAL :file
+         =VAL :MoreClass.py
+         =VAL :line
+         =VAL :58
+         =VAL :code
+         =VAL |foo = bar
+        -MAP
+       -SEQ
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "Time": "2001-11-23 15:01:42 -5",
+      "User": "ed",
+      "Warning": "This is an error message for the log file"
+    }
+    {
+      "Time": "2001-11-23 15:02:31 -5",
+      "User": "ed",
+      "Warning": "A slightly different error message."
+    }
+    {
+      "Date": "2001-11-23 15:03:17 -5",
+      "User": "ed",
+      "Fatal": "Unknown variable \"bar\"",
+      "Stack": [
+        {
+          "file": "TopClass.py",
+          "line": 23,
+          "code": "x = MoreObject(\"345\\n\")\n"
+        },
+        {
+          "file": "MoreClass.py",
+          "line": 58,
+          "code": "foo = bar"
+        }
+      ]
+    }
+  dump: |
+    ---
+    Time: 2001-11-23 15:01:42 -5
+    User: ed
+    Warning: This is an error message for the log file
+    ---
+    Time: 2001-11-23 15:02:31 -5
+    User: ed
+    Warning: A slightly different error message.
+    ---
+    Date: 2001-11-23 15:03:17 -5
+    User: ed
+    Fatal: Unknown variable "bar"
+    Stack:
+    - file: TopClass.py
+      line: 23
+      code: |
+        x = MoreObject("345\n")
+    - file: MoreClass.py
+      line: 58
+      code: |-
+        foo = bar

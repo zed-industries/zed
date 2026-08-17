@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package field_attributes;
+
+message Container {
+  oneof data {
+    Foo foo = 1;
+    Bar bar = 2;
+  }
+}
+
+message Foo {
+  string foo = 1;
+}
+
+message Bar {
+  Qux qux = 1;
+}
+
+message Qux {
+}

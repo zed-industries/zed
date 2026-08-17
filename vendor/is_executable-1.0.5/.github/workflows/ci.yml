@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        image: ["ubuntu-latest", "macos-latest", "windows-latest"]
+        rust: ["stable"]
+        include:
+          - image: "ubuntu-latest"
+            rust: "beta"
+          - image: "ubuntu-latest"
+            rust: "nightly"
+          - image: "ubuntu-latest"
+            rust: "1.80.0"
+    runs-on: ${{matrix.image}}
+    steps:
+    - name: Install `rustup`
+      run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile=minimal
+    - name: Install Rust channel
+      run: rustup toolchain install ${{matrix.rust}} && rustup default ${{matrix.rust}}
+    - uses: actions/checkout@v4
+    - name: Run tests
+      run: cargo test --verbose
+
+  wasi-test:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Install `rustup`
+      run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile=minimal
+    - name: Install Rust channel
+      run: rustup toolchain install stable && rustup default stable
+    - name: Install `wasm32-wasip2` target
+      run: rustup target add wasm32-wasip2
+    - name: Install Wasmtime
+      run: curl https://wasmtime.dev/install.sh -sSf | bash
+    - name: Add `wasmtime` to `PATH`
+      run: echo $HOME/.wasmtime/bin >> $GITHUB_PATH
+    - uses: actions/checkout@v4
+    - name: Run Tests
+      run: CARGO_TARGET_WASM32_WASIP2_RUNNER=wasmtime cargo test --target wasm32-wasip2 --verbose

@@ -1,0 +1,22 @@
+---
+- name: Anchor with unicode character
+  from: https://github.com/yaml/pyyaml/issues/94
+  tags: anchor
+  yaml: |
+    ---
+    - &😁 unicode anchor
+  tree: |
+    +STR
+     +DOC ---
+      +SEQ
+       =VAL &😁 :unicode anchor
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      "unicode anchor"
+    ]
+  dump: |
+    ---
+    - &😁 unicode anchor

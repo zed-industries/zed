@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+
+version=0.0.1
+
+source "${ROOT:-$PWD}/.bpan/run-or-docker.bash"
+
+check() (
+  need bash 4.4
+)
+
+dockerfile() (
+  from alpine
+  pkg vim
+)
+
+main() (
+  id=$(new-test-id)
+  tmp=$(mktemp -d)
+  orig=$tmp/yaml
+  edit=$tmp/$id.yaml
+  new=src/$id.yaml
+
+  trap 'rm -fr $tmp' exit
+
+  template > "$orig"
+  cp "$orig" "$edit"
+
+  "${editor:-vim}" "$edit"
+
+  echo
+  if diff "$edit" "$orig" &>/dev/null; then
+    echo "New test case aborted"
+  else
+    cp "$edit" "$new"
+    echo "Created new test case: '$new'"
+  fi
+)
+
+template() (
+  cat <<...
+---
+- name: <test title>
+
+  from: '@your-github-id'
+
+  tags: alias anchor comment complex-key directive document double duplicate-key edge empty-key empty error explicit-key flow folded footer header indent literal local-tag mapping scalar sequence simple single spec tag whitespace
+
+  # error: true
+  # skip: true
+
+  yaml: |
+    ---
+    name: YAML
+    ...
+
+  tree: |
+    +STR
+     +DOC ---
+      +SEQ
+       +MAP
+        =VAL :name
+        =VAL :YAML
+       -MAP
+      -SEQ
+     -DOC ...
+    -STR
+
+  json: |
+    [
+      {
+        "name": "YAML"
+      }
+    ]
+
+  dump: |
+    ---
+    name: YAML
+
+...
+)
+
+run "$@"

@@ -1,0 +1,52 @@
+---
+- name: Spec Example 8.5. Chomping Trailing Lines
+  from: http://www.yaml.org/spec/1.2/spec.html#id2795435
+  tags: spec literal scalar comment
+  yaml: |2
+     # Strip
+      # Comments:
+    strip: |-
+      # text
+    ␣␣
+     # Clip
+      # comments:
+
+    clip: |
+      # text
+    ␣
+     # Keep
+      # comments:
+
+    keep: |+
+      # text
+
+     # Trail
+      # comments.
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :strip
+       =VAL |# text
+       =VAL :clip
+       =VAL |# text\n
+       =VAL :keep
+       =VAL |# text\n\n
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "strip": "# text",
+      "clip": "# text\n",
+      "keep": "# text\n\n"
+    }
+  dump: |
+    strip: |-
+      # text
+    clip: |
+      # text
+    keep: |+
+      # text
+
+    ...

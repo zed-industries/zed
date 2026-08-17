@@ -1,0 +1,397 @@
+{
+  "worlds": [
+    {
+      "name": "imports",
+      "imports": {
+        "interface-0": {
+          "interface": {
+            "id": 0,
+            "stability": {
+              "unstable": {
+                "feature": "active"
+              }
+            }
+          }
+        }
+      },
+      "exports": {},
+      "package": 0,
+      "stability": {
+        "unstable": {
+          "feature": "active"
+        }
+      }
+    },
+    {
+      "name": "imports",
+      "imports": {
+        "interface-1": {
+          "interface": {
+            "id": 1
+          }
+        }
+      },
+      "exports": {},
+      "package": 1
+    },
+    {
+      "name": "imports",
+      "imports": {
+        "interface-2": {
+          "interface": {
+            "id": 2,
+            "stability": {
+              "stable": {
+                "since": "0.2.0"
+              }
+            }
+          }
+        }
+      },
+      "exports": {},
+      "package": 2,
+      "stability": {
+        "stable": {
+          "since": "0.2.0"
+        }
+      }
+    },
+    {
+      "name": "imports",
+      "imports": {
+        "interface-2": {
+          "interface": {
+            "id": 2,
+            "stability": {
+              "stable": {
+                "since": "0.2.0"
+              }
+            }
+          }
+        },
+        "interface-1": {
+          "interface": {
+            "id": 1
+          }
+        },
+        "interface-0": {
+          "interface": {
+            "id": 0,
+            "stability": {
+              "unstable": {
+                "feature": "active"
+              }
+            }
+          }
+        }
+      },
+      "exports": {},
+      "package": 3,
+      "stability": {
+        "stable": {
+          "since": "0.2.0"
+        }
+      }
+    },
+    {
+      "name": "imports",
+      "imports": {
+        "interface-2": {
+          "interface": {
+            "id": 2,
+            "stability": {
+              "unstable": {
+                "feature": "active"
+              }
+            }
+          }
+        },
+        "stable-resource": {
+          "type": 3
+        },
+        "interface-1": {
+          "interface": {
+            "id": 1,
+            "stability": {
+              "unstable": {
+                "feature": "active"
+              }
+            }
+          }
+        },
+        "unversioned-resource": {
+          "type": 4
+        },
+        "interface-0": {
+          "interface": {
+            "id": 0,
+            "stability": {
+              "unstable": {
+                "feature": "active"
+              }
+            }
+          }
+        },
+        "unstable-resource": {
+          "type": 5
+        }
+      },
+      "exports": {},
+      "package": 4,
+      "stability": {
+        "unstable": {
+          "feature": "active"
+        }
+      }
+    },
+    {
+      "name": "test",
+      "imports": {
+        "interface-2": {
+          "interface": {
+            "id": 2,
+            "stability": {
+              "stable": {
+                "since": "0.2.0"
+              }
+            }
+          }
+        },
+        "stable-resource": {
+          "type": 3
+        },
+        "interface-1": {
+          "interface": {
+            "id": 1,
+            "stability": {
+              "unstable": {
+                "feature": "active"
+              }
+            }
+          }
+        },
+        "unversioned-resource": {
+          "type": 4
+        },
+        "interface-0": {
+          "interface": {
+            "id": 0,
+            "stability": {
+              "unstable": {
+                "feature": "active"
+              }
+            }
+          }
+        },
+        "unstable-resource": {
+          "type": 5
+        }
+      },
+      "exports": {},
+      "package": 5
+    },
+    {
+      "name": "test-ordered",
+      "imports": {
+        "interface-2": {
+          "interface": {
+            "id": 2,
+            "stability": {
+              "stable": {
+                "since": "0.2.0"
+              }
+            }
+          }
+        },
+        "interface-1": {
+          "interface": {
+            "id": 1,
+            "stability": {
+              "unstable": {
+                "feature": "active"
+              }
+            }
+          }
+        },
+        "interface-0": {
+          "interface": {
+            "id": 0,
+            "stability": {
+              "unstable": {
+                "feature": "active"
+              }
+            }
+          }
+        },
+        "stable-resource": {
+          "type": 3
+        },
+        "unversioned-resource": {
+          "type": 4
+        },
+        "unstable-resource": {
+          "type": 5
+        }
+      },
+      "exports": {},
+      "package": 5
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "unstable",
+      "types": {
+        "unstable-resource": 0
+      },
+      "functions": {},
+      "stability": {
+        "unstable": {
+          "feature": "active"
+        }
+      },
+      "package": 0
+    },
+    {
+      "name": "unversioned",
+      "types": {
+        "unversioned-resource": 1
+      },
+      "functions": {},
+      "package": 1
+    },
+    {
+      "name": "stable",
+      "types": {
+        "stable-resource": 2
+      },
+      "functions": {},
+      "stability": {
+        "stable": {
+          "since": "0.2.1"
+        }
+      },
+      "package": 2
+    }
+  ],
+  "types": [
+    {
+      "name": "unstable-resource",
+      "kind": "resource",
+      "owner": {
+        "interface": 0
+      },
+      "stability": {
+        "unstable": {
+          "feature": "active"
+        }
+      }
+    },
+    {
+      "name": "unversioned-resource",
+      "kind": "resource",
+      "owner": {
+        "interface": 1
+      }
+    },
+    {
+      "name": "stable-resource",
+      "kind": "resource",
+      "owner": {
+        "interface": 2
+      }
+    },
+    {
+      "name": "stable-resource",
+      "kind": {
+        "type": 2
+      },
+      "owner": {
+        "world": 4
+      },
+      "stability": {
+        "unstable": {
+          "feature": "active"
+        }
+      }
+    },
+    {
+      "name": "unversioned-resource",
+      "kind": {
+        "type": 1
+      },
+      "owner": {
+        "world": 4
+      },
+      "stability": {
+        "unstable": {
+          "feature": "active"
+        }
+      }
+    },
+    {
+      "name": "unstable-resource",
+      "kind": {
+        "type": 0
+      },
+      "owner": {
+        "world": 4
+      },
+      "stability": {
+        "unstable": {
+          "feature": "active"
+        }
+      }
+    }
+  ],
+  "packages": [
+    {
+      "name": "wasi:dep-unstable",
+      "interfaces": {
+        "unstable": 0
+      },
+      "worlds": {
+        "imports": 0
+      }
+    },
+    {
+      "name": "wasi:dep-unversioned",
+      "interfaces": {
+        "unversioned": 1
+      },
+      "worlds": {
+        "imports": 1
+      }
+    },
+    {
+      "name": "wasi:dep2@0.2.3",
+      "interfaces": {
+        "stable": 2
+      },
+      "worlds": {
+        "imports": 2
+      }
+    },
+    {
+      "name": "wasi:foo@0.2.3",
+      "interfaces": {},
+      "worlds": {
+        "imports": 3
+      }
+    },
+    {
+      "name": "wasi:unstable@0.2.3",
+      "interfaces": {},
+      "worlds": {
+        "imports": 4
+      }
+    },
+    {
+      "name": "wasmtime:test",
+      "interfaces": {},
+      "worlds": {
+        "test": 5,
+        "test-ordered": 6
+      }
+    }
+  ]
+}

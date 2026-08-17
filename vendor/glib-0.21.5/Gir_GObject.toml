@@ -1,0 +1,157 @@
+[options]
+girs_dir = "gir-files"
+library = "GObject"
+version = "2.0"
+min_cfg_version = "2.56"
+target_path = "."
+auto_path = "src/gobject/auto"
+work_mode = "normal"
+single_version_file = true
+deprecate_by_min_version = true
+trust_return_value_nullability = true
+girs_directories = ["../gir-files"]
+
+generate = [
+    "GObject.BindingFlags",
+    "GObject.SignalFlags",
+    "GObject.TypeFlags",
+]
+
+ignore = [
+]
+
+manual = [
+    "GLib.Quark",
+    "GObject.Object",
+    "GObject.Value",
+    "GObject.EnumValue",
+    "GObject.FlagsValue",
+    "GObject.TypeValueTable",
+    "GObject.ParamFlags",
+    "GObject.ParamSpec",
+    "GObject.ParamSpecChar",
+    "GObject.ParamSpecUChar",
+    "GObject.ParamSpecBoolean",
+    "GObject.ParamSpecInt",
+    "GObject.ParamSpecUInt",
+    "GObject.ParamSpecLong",
+    "GObject.ParamSpecULong",
+    "GObject.ParamSpecInt64",
+    "GObject.ParamSpecUInt64",
+    "GObject.ParamSpecUnichar",
+    "GObject.ParamSpecEnum",
+    "GObject.ParamSpecFlags",
+    "GObject.ParamSpecFloat",
+    "GObject.ParamSpecDouble",
+    "GObject.ParamSpecString",
+    "GObject.ParamSpecParam",
+    "GObject.ParamSpecBoxed",
+    "GObject.ParamSpecPointer",
+    "GObject.ParamSpecValueArray",
+    "GObject.ParamSpecObject",
+    "GObject.ParamSpecOverride",
+    "GObject.ParamSpecGType",
+    "GObject.ParamSpecVariant",
+    "GObject.InterfaceInfo",
+    "GObject.TypeInfo",
+    "GObject.TypePlugin",
+    "GObject.TypeModule",
+]
+
+[[object]]
+name = "GObject.Binding"
+status = "generate"
+final_type = true
+concurrency = "send+sync"
+    [[object.function]]
+    name = "get_source"
+    # Not thread-safe, see https://gitlab.gnome.org/GNOME/glib/-/merge_requests/1745
+    # Using the GObject properties will be automatically safe with GLib 2.68.
+    ignore = true
+    [[object.function]]
+    name = "get_target"
+    # Not thread-safe, see https://gitlab.gnome.org/GNOME/glib/-/merge_requests/1745
+    # Using the GObject properties will be automatically safe with GLib 2.68.
+    ignore = true
+    [[object.function]]
+    name = "dup_source"
+    # equivalent to manual get_source
+    ignore = true
+    [[object.function]]
+    name = "dup_target"
+    # equivalent to manual get_target
+    ignore = true
+    [[object.property]]
+    name = "source"
+    # So we can implement setter/getter with the correct name
+    ignore = true
+    [[object.property]]
+    name = "target"
+    # So we can implement setter/getter with the correct name
+    ignore = true
+
+[[object]]
+name = "GObject.BindingGroup"
+status = "generate"
+final_type = true
+concurrency = "send+sync"
+    [[object.function]]
+    name = "bind"
+    manual = true
+    [[object.function]]
+    name = "bind_full"
+    ignore = true
+    [[object.function]]
+    name = "bind_with_closures"
+    ignore = true
+    [[object.function]]
+    name = "dup_source"
+    rename = "source"
+    [[object.property]]
+    name = "source"
+    generate = ["notify"]
+
+[[object]]
+name = "GObject.SignalGroup"
+status = "generate"
+final_type = true
+concurrency = "send+sync"
+version = "2.74"
+    [[object.function]]
+    name = "new"
+    rename = "with_type"
+    [[object.function]]
+    name = "connect"
+    manual = true
+    [[object.function]]
+    name = "connect_after"
+    ignore = true
+    [[object.function]]
+    name = "connect_data"
+    ignore = true
+    [[object.function]]
+    name = "connect_object"
+    ignore = true
+    [[object.function]]
+    name = "connect_swapped"
+    ignore = true
+    [[object.function]]
+    name = "connect_closure"
+    manual = true
+    [[object.function]]
+    name = "dup_target"
+    rename = "target"
+    [[object.property]]
+    name = "target"
+    # notify signal is racy, use connect_bind/connect_unbind instead
+    generate = []
+    [[object.signal]]
+    name = "bind"
+    manual = true
+    [[object.signal]]
+    name = "unbind"
+    manual = true
+
+[[object]]
+name = "GObject.*"
+status = "ignore"

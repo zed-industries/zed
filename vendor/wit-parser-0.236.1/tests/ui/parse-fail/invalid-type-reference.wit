@@ -1,0 +1,10 @@
+package foo:foo;
+
+interface foo {
+  x: func();
+
+  record foo {
+    // TODO: this should have a better error message referring to `x: func()`
+    a: x
+  }
+}

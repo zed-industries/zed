@@ -1,0 +1,16 @@
+---
+- name: YAML directive without document end marker
+  from: '@perlpunk'
+  tags: directive error
+  fail: true
+  yaml: |
+    ---
+    key: value
+    %YAML 1.2
+    ---
+  tree: |
+    +STR
+     +DOC ---
+      +MAP
+       =VAL :key
+       =VAL :value

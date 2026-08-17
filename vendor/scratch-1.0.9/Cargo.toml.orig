@@ -1,0 +1,23 @@
+[package]
+name = "scratch"
+version = "1.0.9"
+authors = ["David Tolnay <dtolnay@gmail.com>"]
+build = "build.rs"
+categories = ["development-tools::build-utils", "filesystem"]
+description = "Compile-time temporary directory shared by multiple crates and erased by `cargo clean`"
+documentation = "https://docs.rs/scratch"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/dtolnay/scratch"
+rust-version = "1.0"
+
+[lib]
+name = "scratch"
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+rustdoc-args = [
+    "--generate-link-to-definition",
+    "--extern-html-root-url=core=https://doc.rust-lang.org",
+    "--extern-html-root-url=alloc=https://doc.rust-lang.org",
+    "--extern-html-root-url=std=https://doc.rust-lang.org",
+]

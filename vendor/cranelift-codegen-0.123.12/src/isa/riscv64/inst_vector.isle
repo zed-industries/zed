@@ -1,0 +1,1908 @@
+;; Represents the possible widths of an element when used in an operation.
+(type VecElementWidth (enum
+  (E8)
+  (E16)
+  (E32)
+  (E64)
+))
+
+;; Vector Register Group Multiplier (LMUL)
+;;
+;; The LMUL setting specifies how we should group registers together. LMUL can
+;; also be a fractional value, reducing the number of bits used in a single
+;; vector register. Fractional LMUL is used to increase the number of effective
+;; usable vector register groups when operating on mixed-width values.
+(type VecLmul (enum
+  (LmulF8)
+  (LmulF4)
+  (LmulF2)
+  (Lmul1)
+  (Lmul2)
+  (Lmul4)
+  (Lmul8)
+))
+
+;; Tail Mode
+;;
+;; The tail mode specifies how the tail elements of a vector register are handled.
+(type VecTailMode (enum
+  ;; Tail Agnostic means that the tail elements are left in an undefined state.
+  (Agnostic)
+  ;; Tail Undisturbed means that the tail elements are left in their original values.
+  (Undisturbed)
+))
+
+;; Mask Mode
+;;
+;; The mask mode specifies how the masked elements of a vector register are handled.
+(type VecMaskMode (enum
+  ;; Mask Agnostic means that the masked out elements are left in an undefined state.
+  (Agnostic)
+  ;; Mask Undisturbed means that the masked out elements are left in their original values.
+  (Undisturbed)
+))
+
+;; Application Vector Length (AVL)
+;;
+;; This setting specifies the number of elements that are going to be processed
+;; in a single instruction. Note: We may end up processing fewer elements than
+;; the AVL setting, if they don't fit in a single register.
+(type VecAvl (enum
+  ;; Static AVL emits a `vsetivli` that uses a constant value
+  (Static (size UImm5))
+  ;; TODO: Add a dynamic, register based AVL mode when we are able to properly test it
+))
+
+(type VType (primitive VType))
+(type VState (primitive VState))
+
+
+;; Vector Opcode Category
+;;
+;; These categories are used to determine the type of operands that are allowed in the
+;; instruction.
+(type VecOpCategory (enum
+  (OPIVV)
+  (OPFVV)
+  (OPMVV)
+  (OPIVI)
+  (OPIVX)
+  (OPFVF)
+  (OPMVX)
+  (OPCFG)
+))
+
+;; Vector Opcode Masking
+;;
+;; When masked, the instruction will only operate on the elements that are dictated by
+;; the mask register. Currently this is always fixed to v0.
+(type VecOpMasking (enum
+  (Enabled (reg Reg))
+  (Disabled)
+))
+
+(decl pure masked (VReg) VecOpMasking)
+(rule (masked reg) (VecOpMasking.Enabled reg))
+
+(decl pure unmasked () VecOpMasking)
+(rule (unmasked) (VecOpMasking.Disabled))
+
+;; Register to Register ALU Ops
+(type VecAluOpRRR (enum
+  ;; Vector-Vector Opcodes
+  (VaddVV)
+  (VsaddVV)
+  (VsadduVV)
+  (VwaddVV)
+  (VwaddWV)
+  (VwadduVV)
+  (VwadduWV)
+  (VsubVV)
+  (VwsubVV)
+  (VwsubWV)
+  (VwsubuVV)
+  (VwsubuWV)
+  (VssubVV)
+  (VssubuVV)
+  (VmulVV)
+  (VmulhVV)
+  (VmulhuVV)
+  (VsmulVV)
+  (VsllVV)
+  (VsrlVV)
+  (VsraVV)
+  (VandVV)
+  (VorVV)
+  (VxorVV)
+  (VmaxVV)
+  (VmaxuVV)
+  (VminVV)
+  (VminuVV)
+  (VfaddVV)
+  (VfsubVV)
+  (VfmulVV)
+  (VfdivVV)
+  (VfminVV)
+  (VfmaxVV)
+  (VfsgnjVV)
+  (VfsgnjnVV)
+  (VfsgnjxVV)
+  (VmergeVVM)
+  (VredmaxuVS)
+  (VredminuVS)
+  (VrgatherVV)
+  (VcompressVM)
+  (VmseqVV)
+  (VmsneVV)
+  (VmsltuVV)
+  (VmsltVV)
+  (VmsleuVV)
+  (VmsleVV)
+  (VmfeqVV)
+  (VmfneVV)
+  (VmfltVV)
+  (VmfleVV)
+  (VmandMM)
+  (VmorMM)
+  (VmnandMM)
+  (VmnorMM)
+
+
+  ;; Vector-Scalar Opcodes
+  (VaddVX)
+  (VsaddVX)
+  (VsadduVX)
+  (VwaddVX)
+  (VwaddWX)
+  (VwadduVX)
+  (VwadduWX)
+  (VsubVX)
+  (VrsubVX)
+  (VwsubVX)
+  (VwsubWX)
+  (VwsubuVX)
+  (VwsubuWX)
+  (VssubVX)
+  (VssubuVX)
+  (VmulVX)
+  (VmulhVX)
+  (VmulhuVX)
+  (VsmulVX)
+  (VsllVX)
+  (VsrlVX)
+  (VsraVX)
+  (VandVX)
+  (VorVX)
+  (VxorVX)
+  (VmaxVX)
+  (VmaxuVX)
+  (VminVX)
+  (VminuVX)
+  (VslidedownVX)
+  (VfaddVF)
+  (VfsubVF)
+  (VfrsubVF)
+  (VfmulVF)
+  (VfdivVF)
+  (VfsgnjVF)
+  (VfrdivVF)
+  (VmergeVXM)
+  (VfmergeVFM)
+  (VrgatherVX)
+  (VmseqVX)
+  (VmsneVX)
+  (VmsltuVX)
+  (VmsltVX)
+  (VmsleuVX)
+  (VmsleVX)
+  (VmsgtuVX)
+  (VmsgtVX)
+  (VmfeqVF)
+  (VmfneVF)
+  (VmfltVF)
+  (VmfleVF)
+  (VmfgtVF)
+  (VmfgeVF)
+))
+
+
+
+;; Register-Imm ALU Ops that modify the destination register
+(type VecAluOpRRRImm5 (enum
+  (VslideupVI)
+))
+
+;; Register-Register ALU Ops that modify the destination register
+(type VecAluOpRRRR (enum
+  ;; Vector-Vector Opcodes
+  (VmaccVV)
+  (VnmsacVV)
+  (VfmaccVV)
+  (VfnmaccVV)
+  (VfmsacVV)
+  (VfnmsacVV)
+
+  ;; Vector-Scalar Opcodes
+  (VmaccVX)
+  (VnmsacVX)
+  (VfmaccVF)
+  (VfnmaccVF)
+  (VfmsacVF)
+  (VfnmsacVF)
+  (Vslide1upVX)
+))
+
+;; Register-Imm ALU Ops
+(type VecAluOpRRImm5 (enum
+  ;; Regular VI Opcodes
+  (VaddVI)
+  (VsaddVI)
+  (VsadduVI)
+  (VrsubVI)
+  (VsllVI)
+  (VsrlVI)
+  (VsraVI)
+  (VandVI)
+  (VorVI)
+  (VxorVI)
+  (VssrlVI)
+  (VslidedownVI)
+  (VmergeVIM)
+  (VrgatherVI)
+  ;; This opcode represents multiple instructions `vmv1r`/`vmv2r`/`vmv4r`/etc...
+  ;; The immediate field specifies how many registers should be copied.
+  (VmvrV)
+  (VnclipWI)
+  (VnclipuWI)
+  (VmseqVI)
+  (VmsneVI)
+  (VmsleuVI)
+  (VmsleVI)
+  (VmsgtuVI)
+  (VmsgtVI)
+))
+
+;; Imm only ALU Ops
+(type VecAluOpRImm5 (enum
+  (VmvVI)
+))
+
+;; These are all of the special cases that have weird encodings. They are all
+;; single source, single destination instructions, and usually use one of
+;; the two source registers as auxiliary encoding space.
+(type VecAluOpRR (enum
+  (VmvSX)
+  (VmvXS)
+  (VfmvSF)
+  (VfmvFS)
+  ;; vmv.v* is special in that vs2 must be v0 (and is ignored) otherwise the instruction is illegal.
+  (VmvVV)
+  (VmvVX)
+  (VfmvVF)
+  (VfsqrtV)
+  (VsextVF2)
+  (VsextVF4)
+  (VsextVF8)
+  (VzextVF2)
+  (VzextVF4)
+  (VzextVF8)
+  (VfcvtxufV)
+  (VfcvtxfV)
+  (VfcvtrtzxufV)
+  (VfcvtrtzxfV)
+  (VfcvtfxuV)
+  (VfcvtfxV)
+  (VfwcvtffV)
+  (VfncvtffW)
+))
+
+;; Returns the canonical destination type for a VecAluOpRRImm5.
+(decl pure vec_alu_rr_dst_type (VecAluOpRR) Type)
+(extern constructor vec_alu_rr_dst_type vec_alu_rr_dst_type)
+
+
+;; Vector Addressing Mode
+(type VecAMode (enum
+  ;; Vector unit-stride operations access elements stored contiguously in memory
+  ;; starting from the base effective address.
+  (UnitStride
+    (base AMode))
+  ;; TODO: Constant Stride
+  ;; TODO: Indexed Operations
+))
+
+
+;; Builds a static VState matching a SIMD type.
+;; The VState is guaranteed to be static with AVL set to the number of lanes.
+;; Element size is set to the size of the type.
+;; LMUL is set to 1.
+;; Tail mode is set to agnostic.
+;; Mask mode is set to agnostic.
+(decl pure vstate_from_type (Type) VState)
+(extern constructor vstate_from_type vstate_from_type)
+(convert Type VState vstate_from_type)
+
+;; Alters the LMUL of a VState to mf2
+(decl pure vstate_mf2 (VState) VState)
+(extern constructor vstate_mf2 vstate_mf2)
+
+;; Extracts an element width from a SIMD type.
+(decl pure element_width_from_type (Type) VecElementWidth)
+(rule (element_width_from_type ty)
+  (if-let $I8 (lane_type ty))
+  (VecElementWidth.E8))
+(rule (element_width_from_type ty)
+  (if-let $I16 (lane_type ty))
+  (VecElementWidth.E16))
+(rule (element_width_from_type ty)
+  (if-let $I32 (lane_type ty))
+  (VecElementWidth.E32))
+(rule (element_width_from_type ty)
+  (if-let $F32 (lane_type ty))
+  (VecElementWidth.E32))
+(rule (element_width_from_type ty)
+  (if-let $I64 (lane_type ty))
+  (VecElementWidth.E64))
+(rule (element_width_from_type ty)
+  (if-let $F64 (lane_type ty))
+  (VecElementWidth.E64))
+
+(decl pure min_vec_reg_size () u64)
+(extern constructor min_vec_reg_size min_vec_reg_size)
+
+;; An extractor that matches any type that is known to fit in a single vector
+;; register.
+(decl ty_vec_fits_in_register (Type) Type)
+(extern extractor ty_vec_fits_in_register ty_vec_fits_in_register)
+
+;;;; Instruction Helpers ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; As noted in the RISC-V Vector Extension Specification, rs2 is the first
+;; source register and rs1 is the second source register. This is the opposite
+;; of the usual RISC-V register order.
+;; See Section 10.1 of the RISC-V Vector Extension Specification.
+
+
+;; Helper for emitting `MInst.VecAluRRRR` instructions.
+;; These instructions modify the destination register.
+(decl vec_alu_rrrr (VecAluOpRRRR VReg VReg Reg VecOpMasking  VState) VReg)
+(rule (vec_alu_rrrr op vd_src vs2 vs1 mask vstate)
+      (let ((vd WritableVReg (temp_writable_vreg))
+            (_ Unit (emit (MInst.VecAluRRRR op vd vd_src vs2 vs1 mask vstate))))
+        vd))
+
+;; Helper for emitting `MInst.VecAluRRRImm5` instructions.
+;; These instructions modify the destination register.
+(decl vec_alu_rrr_imm5 (VecAluOpRRRImm5 VReg VReg Imm5 VecOpMasking  VState) VReg)
+(rule (vec_alu_rrr_imm5 op vd_src vs2 imm mask vstate)
+      (let ((vd WritableVReg (temp_writable_vreg))
+            (_ Unit (emit (MInst.VecAluRRRImm5 op vd vd_src vs2 imm mask vstate))))
+        vd))
+
+;; Helper for emitting `MInst.VecAluRRRImm5` instructions where the immediate
+;; is zero extended instead of sign extended.
+(decl vec_alu_rrr_uimm5 (VecAluOpRRRImm5 VReg VReg UImm5 VecOpMasking VState) VReg)
+(rule (vec_alu_rrr_uimm5 op vd_src vs2 imm mask vstate)
+      (vec_alu_rrr_imm5 op vd_src vs2 (uimm5_bitcast_to_imm5 imm) mask vstate))
+
+;; Helper for emitting `MInst.VecAluRRR` instructions.
+(decl vec_alu_rrr (VecAluOpRRR Reg Reg VecOpMasking VState) Reg)
+(rule (vec_alu_rrr op vs2 vs1 mask vstate)
+      (let ((vd WritableVReg (temp_writable_vreg))
+            (_ Unit (emit (MInst.VecAluRRR op vd vs2 vs1 mask vstate))))
+        vd))
+
+;; Helper for emitting `MInst.VecAluRRImm5` instructions.
+(decl vec_alu_rr_imm5 (VecAluOpRRImm5 Reg Imm5 VecOpMasking  VState) Reg)
+(rule (vec_alu_rr_imm5 op vs2 imm mask vstate)
+      (let ((vd WritableVReg (temp_writable_vreg))
+            (_ Unit (emit (MInst.VecAluRRImm5 op vd vs2 imm mask vstate))))
+        vd))
+
+;; Helper for emitting `MInst.VecAluRRImm5` instructions where the immediate
+;; is zero extended instead of sign extended.
+(decl vec_alu_rr_uimm5 (VecAluOpRRImm5 Reg UImm5 VecOpMasking VState) Reg)
+(rule (vec_alu_rr_uimm5 op vs2 imm mask vstate)
+      (vec_alu_rr_imm5 op vs2 (uimm5_bitcast_to_imm5 imm) mask vstate))
+
+;; Helper for emitting `MInst.VecAluRRImm5` instructions that use the Imm5 as
+;; auxiliary encoding space.
+(decl vec_alu_rr (VecAluOpRR Reg VecOpMasking VState) Reg)
+(rule (vec_alu_rr op vs mask vstate)
+      (let ((vd WritableReg (temp_writable_reg (vec_alu_rr_dst_type op)))
+            (_ Unit (emit (MInst.VecAluRR op vd vs mask vstate))))
+        vd))
+
+;; Helper for emitting `MInst.VecAluRImm5` instructions.
+(decl vec_alu_r_imm5 (VecAluOpRImm5 Imm5 VecOpMasking VState) Reg)
+(rule (vec_alu_r_imm5 op imm mask vstate)
+      (let ((vd WritableVReg (temp_writable_vreg))
+            (_ Unit (emit (MInst.VecAluRImm5 op vd imm mask vstate))))
+        vd))
+
+;; Helper for emitting `MInst.VecLoad` instructions.
+(decl vec_load (VecElementWidth VecAMode MemFlags VecOpMasking VState) Reg)
+(rule (vec_load eew from flags mask vstate)
+      (let ((vd WritableVReg (temp_writable_vreg))
+            (_ Unit (emit (MInst.VecLoad eew vd from flags mask vstate))))
+        vd))
+
+;; Helper for emitting `MInst.VecStore` instructions.
+(decl vec_store (VecElementWidth VecAMode VReg MemFlags VecOpMasking VState) InstOutput)
+(rule (vec_store eew to from flags mask vstate)
+      (side_effect
+        (SideEffectNoResult.Inst (MInst.VecStore eew to from flags mask vstate))))
+
+;; Helper for emitting the `vadd.vv` instruction.
+(decl rv_vadd_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vadd_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VaddVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vadd.vx` instruction.
+(decl rv_vadd_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vadd_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VaddVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vadd.vi` instruction.
+(decl rv_vadd_vi (VReg Imm5 VecOpMasking VState) VReg)
+(rule (rv_vadd_vi vs2 imm mask vstate)
+  (vec_alu_rr_imm5 (VecAluOpRRImm5.VaddVI) vs2 imm mask vstate))
+
+;; Helper for emitting the `vsadd.vv` instruction.
+(decl rv_vsadd_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vsadd_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VsaddVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vsadd.vx` instruction.
+(decl rv_vsadd_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vsadd_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VsaddVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vsadd.vi` instruction.
+(decl rv_vsadd_vi (VReg Imm5 VecOpMasking VState) VReg)
+(rule (rv_vsadd_vi vs2 imm mask vstate)
+  (vec_alu_rr_imm5 (VecAluOpRRImm5.VsaddVI) vs2 imm mask vstate))
+
+;; Helper for emitting the `vsaddu.vv` instruction.
+(decl rv_vsaddu_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vsaddu_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VsadduVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vsaddu.vx` instruction.
+(decl rv_vsaddu_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vsaddu_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VsadduVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vsaddu.vi` instruction.
+(decl rv_vsaddu_vi (VReg Imm5 VecOpMasking VState) VReg)
+(rule (rv_vsaddu_vi vs2 imm mask vstate)
+  (vec_alu_rr_imm5 (VecAluOpRRImm5.VsadduVI) vs2 imm mask vstate))
+
+;; Helper for emitting the `vwadd.vv` instruction.
+;;
+;;  Widening integer add, 2*SEW = SEW + SEW
+(decl rv_vwadd_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vwadd_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VwaddVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vwadd.vx` instruction.
+;;
+;;  Widening integer add, 2*SEW = SEW + SEW
+(decl rv_vwadd_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vwadd_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VwaddVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vwadd.wv` instruction.
+;;
+;;  Widening integer add, 2*SEW = 2*SEW + SEW
+(decl rv_vwadd_wv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vwadd_wv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VwaddWV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vwadd.wx` instruction.
+;;
+;;  Widening integer add, 2*SEW = 2*SEW + SEW
+(decl rv_vwadd_wx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vwadd_wx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VwaddWX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vwaddu.vv` instruction.
+;;
+;; Widening unsigned integer add, 2*SEW = SEW + SEW
+(decl rv_vwaddu_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vwaddu_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VwadduVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vwaddu.vv` instruction.
+;;
+;; Widening unsigned integer add, 2*SEW = SEW + SEW
+(decl rv_vwaddu_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vwaddu_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VwadduVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vwaddu.wv` instruction.
+;;
+;;  Widening integer add, 2*SEW = 2*SEW + SEW
+(decl rv_vwaddu_wv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vwaddu_wv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VwadduWV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vwaddu.wx` instruction.
+;;
+;;  Widening integer add, 2*SEW = 2*SEW + SEW
+(decl rv_vwaddu_wx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vwaddu_wx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VwadduWX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vsub.vv` instruction.
+(decl rv_vsub_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vsub_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VsubVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vsub.vx` instruction.
+(decl rv_vsub_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vsub_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VsubVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vrsub.vx` instruction.
+(decl rv_vrsub_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vrsub_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VrsubVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vwsub.vv` instruction.
+;;
+;;  Widening integer sub, 2*SEW = SEW + SEW
+(decl rv_vwsub_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vwsub_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VwsubVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vwsub.vx` instruction.
+;;
+;;  Widening integer sub, 2*SEW = SEW + SEW
+(decl rv_vwsub_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vwsub_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VwsubVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vwsub.wv` instruction.
+;;
+;;  Widening integer sub, 2*SEW = 2*SEW + SEW
+(decl rv_vwsub_wv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vwsub_wv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VwsubWV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vwsub.wx` instruction.
+;;
+;;  Widening integer sub, 2*SEW = 2*SEW + SEW
+(decl rv_vwsub_wx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vwsub_wx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VwsubWX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vwsubu.vv` instruction.
+;;
+;; Widening unsigned integer sub, 2*SEW = SEW + SEW
+(decl rv_vwsubu_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vwsubu_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VwsubuVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vwsubu.vv` instruction.
+;;
+;; Widening unsigned integer sub, 2*SEW = SEW + SEW
+(decl rv_vwsubu_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vwsubu_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VwsubuVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vwsubu.wv` instruction.
+;;
+;;  Widening integer sub, 2*SEW = 2*SEW + SEW
+(decl rv_vwsubu_wv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vwsubu_wv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VwsubuWV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vwsubu.wx` instruction.
+;;
+;;  Widening integer sub, 2*SEW = 2*SEW + SEW
+(decl rv_vwsubu_wx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vwsubu_wx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VwsubuWX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vssub.vv` instruction.
+(decl rv_vssub_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vssub_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VssubVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vssub.vx` instruction.
+(decl rv_vssub_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vssub_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VssubVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vssubu.vv` instruction.
+(decl rv_vssubu_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vssubu_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VssubuVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vssubu.vx` instruction.
+(decl rv_vssubu_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vssubu_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VssubuVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vneg.v` pseudo-instruction.
+(decl rv_vneg_v (VReg VecOpMasking VState) VReg)
+(rule (rv_vneg_v vs2 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VrsubVX) vs2 (zero_reg) mask vstate))
+
+;; Helper for emitting the `vrsub.vi` instruction.
+(decl rv_vrsub_vi (VReg Imm5 VecOpMasking VState) VReg)
+(rule (rv_vrsub_vi vs2 imm mask vstate)
+  (vec_alu_rr_imm5 (VecAluOpRRImm5.VrsubVI) vs2 imm mask vstate))
+
+;; Helper for emitting the `vmul.vv` instruction.
+(decl rv_vmul_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vmul_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmulVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmul.vx` instruction.
+(decl rv_vmul_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vmul_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmulVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmulh.vv` instruction.
+(decl rv_vmulh_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vmulh_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmulhVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmulh.vx` instruction.
+(decl rv_vmulh_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vmulh_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmulhVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmulhu.vv` instruction.
+(decl rv_vmulhu_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vmulhu_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmulhuVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmulhu.vx` instruction.
+(decl rv_vmulhu_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vmulhu_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmulhuVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vsmul.vv` instruction.
+;;
+;; Signed saturating and rounding fractional multiply
+;; # vd[i] = clip(roundoff_signed(vs2[i]*vs1[i], SEW-1))
+(decl rv_vsmul_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vsmul_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VsmulVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vsmul.vx` instruction.
+;;
+;; Signed saturating and rounding fractional multiply
+;; # vd[i] = clip(roundoff_signed(vs2[i]*x[rs1], SEW-1))
+(decl rv_vsmul_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vsmul_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VsmulVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmacc.vv` instruction.
+;;
+;; Integer multiply-add, overwrite addend
+;; # vd[i] = +(vs1[i] * vs2[i]) + vd[i]
+(decl rv_vmacc_vv (VReg VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vmacc_vv vd vs2 vs1 mask vstate)
+  (vec_alu_rrrr (VecAluOpRRRR.VmaccVV) vd vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmacc.vx` instruction.
+;;
+;; Integer multiply-add, overwrite addend
+;; # vd[i] = +(x[rs1] * vs2[i]) + vd[i]
+(decl rv_vmacc_vx (VReg VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vmacc_vx vd vs2 vs1 mask vstate)
+  (vec_alu_rrrr (VecAluOpRRRR.VmaccVX) vd vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vnmsac.vv` instruction.
+;;
+;; Integer multiply-sub, overwrite minuend
+;; # vd[i] = -(vs1[i] * vs2[i]) + vd[i]
+(decl rv_vnmsac_vv (VReg VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vnmsac_vv vd vs2 vs1 mask vstate)
+  (vec_alu_rrrr (VecAluOpRRRR.VnmsacVV) vd vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vnmsac.vx` instruction.
+;;
+;; Integer multiply-sub, overwrite minuend
+;; # vd[i] = -(x[rs1] * vs2[i]) + vd[i]
+(decl rv_vnmsac_vx (VReg VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vnmsac_vx vd vs2 vs1 mask vstate)
+  (vec_alu_rrrr (VecAluOpRRRR.VnmsacVX) vd vs2 vs1 mask vstate))
+
+;; Helper for emitting the `sll.vv` instruction.
+(decl rv_vsll_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vsll_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VsllVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `sll.vx` instruction.
+(decl rv_vsll_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vsll_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VsllVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vsll.vi` instruction.
+(decl rv_vsll_vi (VReg UImm5 VecOpMasking VState) VReg)
+(rule (rv_vsll_vi vs2 imm mask vstate)
+  (vec_alu_rr_uimm5 (VecAluOpRRImm5.VsllVI) vs2 imm mask vstate))
+
+;; Helper for emitting the `srl.vv` instruction.
+(decl rv_vsrl_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vsrl_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VsrlVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `srl.vx` instruction.
+(decl rv_vsrl_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vsrl_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VsrlVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vsrl.vi` instruction.
+(decl rv_vsrl_vi (VReg UImm5 VecOpMasking VState) VReg)
+(rule (rv_vsrl_vi vs2 imm mask vstate)
+  (vec_alu_rr_uimm5 (VecAluOpRRImm5.VsrlVI) vs2 imm mask vstate))
+
+;; Helper for emitting the `sra.vv` instruction.
+(decl rv_vsra_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vsra_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VsraVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `sra.vx` instruction.
+(decl rv_vsra_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vsra_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VsraVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vsra.vi` instruction.
+(decl rv_vsra_vi (VReg UImm5 VecOpMasking VState) VReg)
+(rule (rv_vsra_vi vs2 imm mask vstate)
+  (vec_alu_rr_uimm5 (VecAluOpRRImm5.VsraVI) vs2 imm mask vstate))
+
+;; Helper for emitting the `vand.vv` instruction.
+(decl rv_vand_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vand_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VandVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vand.vx` instruction.
+(decl rv_vand_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vand_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VandVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vand.vi` instruction.
+(decl rv_vand_vi (VReg Imm5 VecOpMasking VState) VReg)
+(rule (rv_vand_vi vs2 imm mask vstate)
+  (vec_alu_rr_imm5 (VecAluOpRRImm5.VandVI) vs2 imm mask vstate))
+
+;; Helper for emitting the `vor.vv` instruction.
+(decl rv_vor_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vor_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VorVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vor.vx` instruction.
+(decl rv_vor_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vor_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VorVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vor.vi` instruction.
+(decl rv_vor_vi (VReg Imm5 VecOpMasking VState) VReg)
+(rule (rv_vor_vi vs2 imm mask vstate)
+  (vec_alu_rr_imm5 (VecAluOpRRImm5.VorVI) vs2 imm mask vstate))
+
+;; Helper for emitting the `vxor.vv` instruction.
+(decl rv_vxor_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vxor_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VxorVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vxor.vx` instruction.
+(decl rv_vxor_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vxor_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VxorVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vxor.vi` instruction.
+(decl rv_vxor_vi (VReg Imm5 VecOpMasking VState) VReg)
+(rule (rv_vxor_vi vs2 imm mask vstate)
+  (vec_alu_rr_imm5 (VecAluOpRRImm5.VxorVI) vs2 imm mask vstate))
+
+;; Helper for emitting the `vssrl.vi` instruction.
+;;
+;; vd[i] = (unsigned(vs2[i]) >> imm) + r
+;;
+;; `r` here is the rounding mode currently selected.
+(decl rv_vssrl_vi (VReg UImm5 VecOpMasking VState) VReg)
+(rule (rv_vssrl_vi vs2 imm mask vstate)
+  (vec_alu_rr_uimm5 (VecAluOpRRImm5.VssrlVI) vs2 imm mask vstate))
+
+;; Helper for emitting the `vnot.v` instruction.
+;; This is just a mnemonic for `vxor.vi vd, vs, -1`
+(decl rv_vnot_v (VReg VecOpMasking VState) VReg)
+(rule (rv_vnot_v vs2 mask vstate)
+  (if-let neg1 (i8_to_imm5 -1))
+  (rv_vxor_vi vs2 neg1 mask vstate))
+
+;; Helper for emitting the `vmax.vv` instruction.
+(decl rv_vmax_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vmax_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmaxVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmax.vx` instruction.
+(decl rv_vmax_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vmax_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmaxVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmin.vv` instruction.
+(decl rv_vmin_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vmin_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VminVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmin.vx` instruction.
+(decl rv_vmin_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vmin_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VminVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmaxu.vv` instruction.
+(decl rv_vmaxu_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vmaxu_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmaxuVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmaxu.vx` instruction.
+(decl rv_vmaxu_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vmaxu_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmaxuVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vminu.vv` instruction.
+(decl rv_vminu_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vminu_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VminuVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vminu.vx` instruction.
+(decl rv_vminu_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vminu_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VminuVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vfadd.vv` instruction.
+(decl rv_vfadd_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vfadd_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VfaddVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vfadd.vf` instruction.
+(decl rv_vfadd_vf (VReg FReg VecOpMasking VState) VReg)
+(rule (rv_vfadd_vf vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VfaddVF) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vfsub.vv` instruction.
+(decl rv_vfsub_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vfsub_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VfsubVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vfsub.vf` instruction.
+(decl rv_vfsub_vf (VReg FReg VecOpMasking VState) VReg)
+(rule (rv_vfsub_vf vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VfsubVF) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vfrsub.vf` instruction.
+(decl rv_vfrsub_vf (VReg FReg VecOpMasking VState) VReg)
+(rule (rv_vfrsub_vf vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VfrsubVF) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vfmul.vv` instruction.
+(decl rv_vfmul_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vfmul_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VfmulVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vfmul.vf` instruction.
+(decl rv_vfmul_vf (VReg FReg VecOpMasking VState) VReg)
+(rule (rv_vfmul_vf vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VfmulVF) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vfmacc.vv` instruction.
+;;
+;; FP multiply-accumulate, overwrites addend
+;; # vd[i] = +(vs1[i] * vs2[i]) + vd[i]
+(decl rv_vfmacc_vv (VReg VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vfmacc_vv vd vs2 vs1 mask vstate)
+  (vec_alu_rrrr (VecAluOpRRRR.VfmaccVV) vd vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vfmacc.vf` instruction.
+;;
+;; FP multiply-accumulate, overwrites addend
+;; # vd[i] = +(f[rs1] * vs2[i]) + vd[i]
+(decl rv_vfmacc_vf (VReg VReg FReg VecOpMasking VState) VReg)
+(rule (rv_vfmacc_vf vd vs2 vs1 mask vstate)
+  (vec_alu_rrrr (VecAluOpRRRR.VfmaccVF) vd vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vfnmacc.vv` instruction.
+;;
+;; FP negate-(multiply-accumulate), overwrites subtrahend
+;; # vd[i] = -(vs1[i] * vs2[i]) - vd[i]
+(decl rv_vfnmacc_vv (VReg VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vfnmacc_vv vd vs2 vs1 mask vstate)
+  (vec_alu_rrrr (VecAluOpRRRR.VfnmaccVV) vd vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vfnmacc.vf` instruction.
+;;
+;; FP negate-(multiply-accumulate), overwrites subtrahend
+;; # vd[i] = -(f[rs1] * vs2[i]) - vd[i]
+(decl rv_vfnmacc_vf (VReg VReg FReg VecOpMasking VState) VReg)
+(rule (rv_vfnmacc_vf vd vs2 vs1 mask vstate)
+  (vec_alu_rrrr (VecAluOpRRRR.VfnmaccVF) vd vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vfmsac.vv` instruction.
+;;
+;; FP multiply-subtract-accumulator, overwrites subtrahend
+;; # vd[i] = +(vs1[i] * vs2[i]) - vd[i]
+(decl rv_vfmsac_vv (VReg VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vfmsac_vv vd vs2 vs1 mask vstate)
+  (vec_alu_rrrr (VecAluOpRRRR.VfmsacVV) vd vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vfmsac.vf` instruction.
+;;
+;; FP multiply-subtract-accumulator, overwrites subtrahend
+;; # vd[i] = +(f[rs1] * vs2[i]) - vd[i]
+(decl rv_vfmsac_vf (VReg VReg FReg VecOpMasking VState) VReg)
+(rule (rv_vfmsac_vf vd vs2 vs1 mask vstate)
+  (vec_alu_rrrr (VecAluOpRRRR.VfmsacVF) vd vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vfnmsac.vv` instruction.
+;;
+;; FP negate-(multiply-subtract-accumulator), overwrites minuend
+;; # vd[i] = -(vs1[i] * vs2[i]) + vd[i]
+(decl rv_vfnmsac_vv (VReg VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vfnmsac_vv vd vs2 vs1 mask vstate)
+  (vec_alu_rrrr (VecAluOpRRRR.VfnmsacVV) vd vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vfnmsac.vf` instruction.
+;;
+;; FP negate-(multiply-subtract-accumulator), overwrites minuend
+;; # vd[i] = -(f[rs1] * vs2[i]) + vd[i]
+(decl rv_vfnmsac_vf (VReg VReg FReg VecOpMasking VState) VReg)
+(rule (rv_vfnmsac_vf vd vs2 vs1 mask vstate)
+  (vec_alu_rrrr (VecAluOpRRRR.VfnmsacVF) vd vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vfdiv.vv` instruction.
+(decl rv_vfdiv_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vfdiv_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VfdivVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vfdiv.vf` instruction.
+(decl rv_vfdiv_vf (VReg FReg VecOpMasking VState) VReg)
+(rule (rv_vfdiv_vf vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VfdivVF) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vfrdiv.vf` instruction.
+(decl rv_vfrdiv_vf (VReg FReg VecOpMasking VState) VReg)
+(rule (rv_vfrdiv_vf vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VfrdivVF) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vfmin.vv` instruction.
+(decl rv_vfmin_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vfmin_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VfminVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vfmax.vv` instruction.
+(decl rv_vfmax_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vfmax_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VfmaxVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vfsgnj.vv` ("Floating Point Sign Injection") instruction.
+;; The output of this instruction is `vs2` with the sign bit from `vs1`
+(decl rv_vfsgnj_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vfsgnj_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VfsgnjVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vfsgnj.vf` ("Floating Point Sign Injection") instruction.
+(decl rv_vfsgnj_vf (VReg FReg VecOpMasking VState) VReg)
+(rule (rv_vfsgnj_vf vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VfsgnjVF) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vfsgnjn.vv` ("Floating Point Sign Injection Negated") instruction.
+;; The output of this instruction is `vs2` with the negated sign bit from `vs1`
+(decl rv_vfsgnjn_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vfsgnjn_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VfsgnjnVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vfneg.v` instruction.
+;; This instruction is a mnemonic for `vfsgnjn.vv vd, vs, vs`
+(decl rv_vfneg_v (VReg VecOpMasking VState) VReg)
+(rule (rv_vfneg_v vs mask vstate) (rv_vfsgnjn_vv vs vs mask vstate))
+
+;; Helper for emitting the `vfsgnjx.vv` ("Floating Point Sign Injection Exclusive") instruction.
+;; The output of this instruction is `vs2` with the XOR of the sign bits from `vs2` and `vs1`.
+;; When `vs2 == vs1` this implements `fabs`
+(decl rv_vfsgnjx_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vfsgnjx_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VfsgnjxVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vfabs.v` instruction.
+;; This instruction is a mnemonic for `vfsgnjx.vv vd, vs, vs`
+(decl rv_vfabs_v (VReg VecOpMasking VState) VReg)
+(rule (rv_vfabs_v vs mask vstate) (rv_vfsgnjx_vv vs vs mask vstate))
+
+;; Helper for emitting the `vfsqrt.v` instruction.
+;; This instruction splats the F register into all elements of the destination vector.
+(decl rv_vfsqrt_v (VReg VecOpMasking VState) VReg)
+(rule (rv_vfsqrt_v vs mask vstate)
+  (vec_alu_rr (VecAluOpRR.VfsqrtV) vs mask vstate))
+
+;; Helper for emitting the `vfcvt.xu.f.v` instruction.
+;; This instruction converts a float to an unsigned integer.
+(decl rv_vfcvt_xu_f_v (VReg VecOpMasking VState) VReg)
+(rule (rv_vfcvt_xu_f_v vs mask vstate)
+  (vec_alu_rr (VecAluOpRR.VfcvtxufV) vs mask vstate))
+
+;; Helper for emitting the `vfcvt.x.f.v` instruction.
+;; This instruction converts a float to a signed integer.
+(decl rv_vfcvt_x_f_v (VReg VecOpMasking VState) VReg)
+(rule (rv_vfcvt_x_f_v vs mask vstate)
+  (vec_alu_rr (VecAluOpRR.VfcvtxfV) vs mask vstate))
+
+;; Helper for emitting the `vfcvt.rtz.xu.f.v` instruction.
+;; This instruction converts a float to an unsigned integer
+;; using the Round to Zero (RTZ) rounding mode and ignoring
+;; the currently set FRM rounding mode.
+(decl rv_vfcvt_rtz_xu_f_v (VReg VecOpMasking VState) VReg)
+(rule (rv_vfcvt_rtz_xu_f_v vs mask vstate)
+  (vec_alu_rr (VecAluOpRR.VfcvtrtzxufV) vs mask vstate))
+
+;; Helper for emitting the `vfcvt.rtz.x.f.v` instruction.
+;; This instruction converts a float to a signed integer.
+;; using the Round to Zero (RTZ) rounding mode and ignoring
+;; the currently set FRM rounding mode.
+(decl rv_vfcvt_rtz_x_f_v (VReg VecOpMasking VState) VReg)
+(rule (rv_vfcvt_rtz_x_f_v vs mask vstate)
+  (vec_alu_rr (VecAluOpRR.VfcvtrtzxfV) vs mask vstate))
+
+;; Helper for emitting the `vfcvt.f.xu.v` instruction.
+;; This instruction converts a unsigned integer to a float.
+(decl rv_vfcvt_f_xu_v (VReg VecOpMasking VState) VReg)
+(rule (rv_vfcvt_f_xu_v vs mask vstate)
+  (vec_alu_rr (VecAluOpRR.VfcvtfxuV) vs mask vstate))
+
+;; Helper for emitting the `vfcvt.x.f.v` instruction.
+;; This instruction converts a signed integer to a float.
+(decl rv_vfcvt_f_x_v (VReg VecOpMasking VState) VReg)
+(rule (rv_vfcvt_f_x_v vs mask vstate)
+  (vec_alu_rr (VecAluOpRR.VfcvtfxV) vs mask vstate))
+
+  ;; Helper for emitting the `vfwcvt.f.f.v` instruction.
+;; Convert single-width float to double-width float.
+(decl rv_vfwcvt_f_f_v (VReg VecOpMasking VState) VReg)
+(rule (rv_vfwcvt_f_f_v vs mask vstate)
+  (vec_alu_rr (VecAluOpRR.VfwcvtffV) vs mask vstate))
+
+;; Helper for emitting the `vfncvt.f.f.w` instruction.
+;; Convert double-width float to single-width float.
+(decl rv_vfncvt_f_f_w (VReg VecOpMasking VState) VReg)
+(rule (rv_vfncvt_f_f_w vs mask vstate)
+  (vec_alu_rr (VecAluOpRR.VfncvtffW) vs mask vstate))
+
+;; Helper for emitting the `vslidedown.vx` instruction.
+;; `vslidedown` moves all elements in the vector down by n elements.
+;; The top most elements are up to the tail policy.
+(decl rv_vslidedown_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vslidedown_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VslidedownVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vslidedown.vi` instruction.
+;; Unlike other `vi` instructions the immediate is zero extended.
+(decl rv_vslidedown_vi (VReg UImm5 VecOpMasking VState) VReg)
+(rule (rv_vslidedown_vi vs2 imm mask vstate)
+  (vec_alu_rr_uimm5 (VecAluOpRRImm5.VslidedownVI) vs2 imm mask vstate))
+
+;; Helper for emitting the `vslideup.vi` instruction.
+;; Unlike other `vi` instructions the immediate is zero extended.
+;; This is implemented as a 2 source operand instruction, since it only
+;; partially modifies the destination register.
+(decl rv_vslideup_vvi (VReg VReg UImm5 VecOpMasking VState) VReg)
+(rule (rv_vslideup_vvi vd vs2 imm mask vstate)
+  (vec_alu_rrr_uimm5 (VecAluOpRRRImm5.VslideupVI) vd vs2 imm mask vstate))
+
+;; Helper for emitting the `vslide1up.vx` instruction.
+;;
+;; # vd[0]=x[rs1], vd[i+1] = vs2[i]
+(decl rv_vslide1up_vx (VReg VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vslide1up_vx vd vs2 rs1 mask vstate)
+  (vec_alu_rrrr (VecAluOpRRRR.Vslide1upVX) vd vs2 rs1 mask vstate))
+
+;; Helper for emitting the `vmv.x.s` instruction.
+;; This instruction copies the first element of the source vector to the destination X register.
+;; Masked versions of this instruction are not supported.
+(decl rv_vmv_xs (VReg VState) XReg)
+(rule (rv_vmv_xs vs vstate)
+  (vec_alu_rr (VecAluOpRR.VmvXS) vs (unmasked) vstate))
+
+;; Helper for emitting the `vfmv.f.s` instruction.
+;; This instruction copies the first element of the source vector to the destination F register.
+;; Masked versions of this instruction are not supported.
+(decl rv_vfmv_fs (VReg VState) FReg)
+(rule (rv_vfmv_fs vs vstate)
+  (vec_alu_rr (VecAluOpRR.VfmvFS) vs (unmasked) vstate))
+
+;; Helper for emitting the `vmv.s.x` instruction.
+;; This instruction copies the source X register into first element of the source vector.
+;; Masked versions of this instruction are not supported.
+(decl rv_vmv_sx (XReg VState) VReg)
+(rule (rv_vmv_sx vs vstate)
+  (vec_alu_rr (VecAluOpRR.VmvSX) vs (unmasked) vstate))
+
+;; Helper for emitting the `vfmv.s.f` instruction.
+;; This instruction copies the source F register into first element of the source vector.
+;; Masked versions of this instruction are not supported.
+(decl rv_vfmv_sf (FReg VState) VReg)
+(rule (rv_vfmv_sf vs vstate)
+  (vec_alu_rr (VecAluOpRR.VfmvSF) vs (unmasked) vstate))
+
+;; Helper for emitting the `vmv.v.x` instruction.
+;; This instruction splats the X register into all elements of the destination vector.
+;; Masked versions of this instruction are called `vmerge`
+(decl rv_vmv_vx (XReg VState) VReg)
+(rule (rv_vmv_vx vs vstate)
+  (vec_alu_rr (VecAluOpRR.VmvVX) vs (unmasked) vstate))
+
+;; Helper for emitting the `vfmv.v.f` instruction.
+;; This instruction splats the F register into all elements of the destination vector.
+;; Masked versions of this instruction are called `vmerge`
+(decl rv_vfmv_vf (FReg VState) VReg)
+(rule (rv_vfmv_vf vs vstate)
+  (vec_alu_rr (VecAluOpRR.VfmvVF) vs (unmasked) vstate))
+
+;; Helper for emitting the `vmv.v.i` instruction.
+;; This instruction splat's the immediate value into all elements of the destination vector.
+;; Masked versions of this instruction are called `vmerge`
+(decl rv_vmv_vi (Imm5 VState) VReg)
+(rule (rv_vmv_vi imm vstate)
+  (vec_alu_r_imm5 (VecAluOpRImm5.VmvVI) imm (unmasked) vstate))
+
+;; Helper for emitting the `vmerge.vvm` instruction.
+;; This instruction merges the elements of the two source vectors into the destination vector
+;; based on a mask. Elements are taken from the first source vector if the mask bit is clear,
+;; and from the second source vector if the mask bit is set. This instruction is always masked.
+;;
+;; vd[i] = v0.mask[i] ? vs1[i] : vs2[i]
+(decl rv_vmerge_vvm (VReg VReg VReg VState) VReg)
+(rule (rv_vmerge_vvm vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmergeVVM) vs2 vs1 (masked mask) vstate))
+
+;; Helper for emitting the `vmerge.vxm` instruction.
+;; Elements are taken from the first source vector if the mask bit is clear, and from the X
+;; register if the mask bit is set. This instruction is always masked.
+;;
+;; vd[i] = v0.mask[i] ? x[rs1] : vs2[i]
+(decl rv_vmerge_vxm (VReg XReg VReg VState) VReg)
+(rule (rv_vmerge_vxm vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmergeVXM) vs2 vs1 (masked mask) vstate))
+
+;; Helper for emitting the `vfmerge.vfm` instruction.
+;; Elements are taken from the first source vector if the mask bit is clear, and from the F
+;; register if the mask bit is set. This instruction is always masked.
+;;
+;; vd[i] = v0.mask[i] ? f[rs1] : vs2[i]
+(decl rv_vfmerge_vfm (VReg FReg VReg VState) VReg)
+(rule (rv_vfmerge_vfm vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VfmergeVFM) vs2 vs1 (masked mask) vstate))
+
+;; Helper for emitting the `vmerge.vim` instruction.
+;; Elements are taken from the first source vector if the mask bit is clear, and from the
+;; immediate value if the mask bit is set. This instruction is always masked.
+;;
+;; vd[i] = v0.mask[i] ? imm : vs2[i]
+(decl rv_vmerge_vim (VReg Imm5 VReg VState) VReg)
+(rule (rv_vmerge_vim vs2 imm mask vstate)
+  (vec_alu_rr_imm5 (VecAluOpRRImm5.VmergeVIM) vs2 imm (masked mask) vstate))
+
+
+;; Helper for emitting the `vredminu.vs` instruction.
+;;
+;; vd[0] = minu( vs1[0] , vs2[*] )
+(decl rv_vredminu_vs (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vredminu_vs vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VredminuVS) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vredmaxu.vs` instruction.
+;;
+;; vd[0] = maxu( vs1[0] , vs2[*] )
+(decl rv_vredmaxu_vs (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vredmaxu_vs vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VredmaxuVS) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vrgather.vv` instruction.
+;;
+;; vd[i] = (vs1[i] >= VLMAX) ? 0 : vs2[vs1[i]];
+(decl rv_vrgather_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vrgather_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VrgatherVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vrgather.vx` instruction.
+;;
+;; vd[i] = (x[rs1] >= VLMAX) ? 0 : vs2[x[rs1]]
+(decl rv_vrgather_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vrgather_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VrgatherVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vrgather.vi` instruction.
+(decl rv_vrgather_vi (VReg UImm5 VecOpMasking VState) VReg)
+(rule (rv_vrgather_vi vs2 imm mask vstate)
+  (vec_alu_rr_uimm5 (VecAluOpRRImm5.VrgatherVI) vs2 imm mask vstate))
+
+;; Helper for emitting the `vcompress.vm` instruction.
+;;
+;; The vector compress instruction allows elements selected by a vector mask
+;; register from a source vector register group to be packed into contiguous
+;; elements at the start of the destination vector register group.
+;;
+;; The mask register is specified through vs1
+(decl rv_vcompress_vm (VReg VReg VState) VReg)
+(rule (rv_vcompress_vm vs2 vs1 vstate)
+  (vec_alu_rrr (VecAluOpRRR.VcompressVM) vs2 vs1 (unmasked) vstate))
+
+;; Helper for emitting the `vmseq.vv` (Vector Mask Set If Equal) instruction.
+(decl rv_vmseq_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vmseq_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmseqVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmseq.vx` (Vector Mask Set If Equal) instruction.
+(decl rv_vmseq_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vmseq_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmseqVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmseq.vi` (Vector Mask Set If Equal) instruction.
+(decl rv_vmseq_vi (VReg Imm5 VecOpMasking VState) VReg)
+(rule (rv_vmseq_vi vs2 imm mask vstate)
+  (vec_alu_rr_imm5 (VecAluOpRRImm5.VmseqVI) vs2 imm mask vstate))
+
+;; Helper for emitting the `vmsne.vv` (Vector Mask Set If Not Equal) instruction.
+(decl rv_vmsne_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vmsne_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmsneVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmsne.vx` (Vector Mask Set If Not Equal) instruction.
+(decl rv_vmsne_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vmsne_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmsneVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmsne.vi` (Vector Mask Set If Not Equal) instruction.
+(decl rv_vmsne_vi (VReg Imm5 VecOpMasking VState) VReg)
+(rule (rv_vmsne_vi vs2 imm mask vstate)
+  (vec_alu_rr_imm5 (VecAluOpRRImm5.VmsneVI) vs2 imm mask vstate))
+
+;; Helper for emitting the `vmsltu.vv` (Vector Mask Set If Less Than, Unsigned) instruction.
+(decl rv_vmsltu_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vmsltu_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmsltuVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmsltu.vx` (Vector Mask Set If Less Than, Unsigned) instruction.
+(decl rv_vmsltu_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vmsltu_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmsltuVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmslt.vv` (Vector Mask Set If Less Than) instruction.
+(decl rv_vmslt_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vmslt_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmsltVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmslt.vx` (Vector Mask Set If Less Than) instruction.
+(decl rv_vmslt_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vmslt_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmsltVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmsleu.vv` (Vector Mask Set If Less Than or Equal, Unsigned) instruction.
+(decl rv_vmsleu_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vmsleu_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmsleuVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmsleu.vx` (Vector Mask Set If Less Than or Equal, Unsigned) instruction.
+(decl rv_vmsleu_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vmsleu_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmsleuVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmsleu.vi` (Vector Mask Set If Less Than or Equal, Unsigned) instruction.
+(decl rv_vmsleu_vi (VReg Imm5 VecOpMasking VState) VReg)
+(rule (rv_vmsleu_vi vs2 imm mask vstate)
+  (vec_alu_rr_imm5 (VecAluOpRRImm5.VmsleuVI) vs2 imm mask vstate))
+
+;; Helper for emitting the `vmsle.vv` (Vector Mask Set If Less Than or Equal) instruction.
+(decl rv_vmsle_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vmsle_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmsleVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmsle.vx` (Vector Mask Set If Less Than or Equal) instruction.
+(decl rv_vmsle_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vmsle_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmsleVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmsle.vi` (Vector Mask Set If Less Than or Equal) instruction.
+(decl rv_vmsle_vi (VReg Imm5 VecOpMasking VState) VReg)
+(rule (rv_vmsle_vi vs2 imm mask vstate)
+  (vec_alu_rr_imm5 (VecAluOpRRImm5.VmsleVI) vs2 imm mask vstate))
+
+;; Helper for emitting the `vmsgt.vv` (Vector Mask Set If Greater Than, Unsigned) instruction.
+;; This is an alias for `vmsltu.vv` with the operands inverted.
+(decl rv_vmsgtu_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vmsgtu_vv vs2 vs1 mask vstate) (rv_vmsltu_vv vs1 vs2 mask vstate))
+
+;; Helper for emitting the `vmsgtu.vx` (Vector Mask Set If Greater Than, Unsigned) instruction.
+(decl rv_vmsgtu_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vmsgtu_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmsgtuVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmsgtu.vi` (Vector Mask Set If Greater Than, Unsigned) instruction.
+(decl rv_vmsgtu_vi (VReg Imm5 VecOpMasking VState) VReg)
+(rule (rv_vmsgtu_vi vs2 imm mask vstate)
+  (vec_alu_rr_imm5 (VecAluOpRRImm5.VmsgtuVI) vs2 imm mask vstate))
+
+;; Helper for emitting the `vmsgt.vv` (Vector Mask Set If Greater Than) instruction.
+;; This is an alias for `vmslt.vv` with the operands inverted.
+(decl rv_vmsgt_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vmsgt_vv vs2 vs1 mask vstate) (rv_vmslt_vv vs1 vs2 mask vstate))
+
+;; Helper for emitting the `vmsgt.vx` (Vector Mask Set If Greater Than) instruction.
+(decl rv_vmsgt_vx (VReg XReg VecOpMasking VState) VReg)
+(rule (rv_vmsgt_vx vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmsgtVX) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmsgt.vi` (Vector Mask Set If Greater Than) instruction.
+(decl rv_vmsgt_vi (VReg Imm5 VecOpMasking VState) VReg)
+(rule (rv_vmsgt_vi vs2 imm mask vstate)
+  (vec_alu_rr_imm5 (VecAluOpRRImm5.VmsgtVI) vs2 imm mask vstate))
+
+;; Helper for emitting the `vmsgeu.vv` (Vector Mask Set If Greater Than or Equal, Unsigned) instruction.
+;; This is an alias for `vmsleu.vv` with the operands inverted.
+(decl rv_vmsgeu_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vmsgeu_vv vs2 vs1 mask vstate) (rv_vmsleu_vv vs1 vs2 mask vstate))
+
+;; Helper for emitting the `vmsge.vv` (Vector Mask Set If Greater Than or Equal) instruction.
+;; This is an alias for `vmsle.vv` with the operands inverted.
+(decl rv_vmsge_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vmsge_vv vs2 vs1 mask vstate) (rv_vmsle_vv vs1 vs2 mask vstate))
+
+;; Helper for emitting the `vmfeq.vv` (Vector Mask Set If Float Equal) instruction.
+(decl rv_vmfeq_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vmfeq_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmfeqVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmfeq.vf` (Vector Mask Set If Float Equal) instruction.
+(decl rv_vmfeq_vf (VReg FReg VecOpMasking VState) VReg)
+(rule (rv_vmfeq_vf vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmfeqVF) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmfne.vv` (Vector Mask Set If Float Not Equal) instruction.
+(decl rv_vmfne_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vmfne_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmfneVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmfne.vf` (Vector Mask Set If Float Not Equal) instruction.
+(decl rv_vmfne_vf (VReg FReg VecOpMasking VState) VReg)
+(rule (rv_vmfne_vf vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmfneVF) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmflt.vv` (Vector Mask Set If Float Less Than) instruction.
+(decl rv_vmflt_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vmflt_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmfltVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmflt.vf` (Vector Mask Set If Float Less Than) instruction.
+(decl rv_vmflt_vf (VReg FReg VecOpMasking VState) VReg)
+(rule (rv_vmflt_vf vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmfltVF) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmfle.vv` (Vector Mask Set If Float Less Than Or Equal) instruction.
+(decl rv_vmfle_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vmfle_vv vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmfleVV) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmfle.vf` (Vector Mask Set If Float Less Than Or Equal) instruction.
+(decl rv_vmfle_vf (VReg FReg VecOpMasking VState) VReg)
+(rule (rv_vmfle_vf vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmfleVF) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmfgt.vv` (Vector Mask Set If Float Greater Than) instruction.
+;; This is an alias for `vmflt.vv` with the operands inverted.
+(decl rv_vmfgt_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vmfgt_vv vs2 vs1 mask vstate) (rv_vmflt_vv vs1 vs2 mask vstate))
+
+;; Helper for emitting the `vmfgt.vf` (Vector Mask Set If Float Greater Than) instruction.
+(decl rv_vmfgt_vf (VReg FReg VecOpMasking VState) VReg)
+(rule (rv_vmfgt_vf vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmfgtVF) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vmfge.vv` (Vector Mask Set If Float Greater Than Or Equal) instruction.
+;; This is an alias for `vmfle.vv` with the operands inverted.
+(decl rv_vmfge_vv (VReg VReg VecOpMasking VState) VReg)
+(rule (rv_vmfge_vv vs2 vs1 mask vstate) (rv_vmfle_vv vs1 vs2 mask vstate))
+
+;; Helper for emitting the `vmfge.vf` (Vector Mask Set If Float Greater Than Or Equal) instruction.
+(decl rv_vmfge_vf (VReg FReg VecOpMasking VState) VReg)
+(rule (rv_vmfge_vf vs2 vs1 mask vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmfgeVF) vs2 vs1 mask vstate))
+
+;; Helper for emitting the `vzext.vf2` instruction.
+;; Zero-extend SEW/2 source to SEW destination
+(decl rv_vzext_vf2 (VReg VecOpMasking VState) VReg)
+(rule (rv_vzext_vf2 vs mask vstate)
+  (vec_alu_rr (VecAluOpRR.VzextVF2) vs mask vstate))
+
+;; Helper for emitting the `vzext.vf4` instruction.
+;; Zero-extend SEW/4 source to SEW destination
+(decl rv_vzext_vf4 (VReg VecOpMasking VState) VReg)
+(rule (rv_vzext_vf4 vs mask vstate)
+  (vec_alu_rr (VecAluOpRR.VzextVF4) vs mask vstate))
+
+;; Helper for emitting the `vzext.vf8` instruction.
+;; Zero-extend SEW/8 source to SEW destination
+(decl rv_vzext_vf8 (VReg VecOpMasking VState) VReg)
+(rule (rv_vzext_vf8 vs mask vstate)
+  (vec_alu_rr (VecAluOpRR.VzextVF8) vs mask vstate))
+
+;; Helper for emitting the `vsext.vf2` instruction.
+;; Sign-extend SEW/2 source to SEW destination
+(decl rv_vsext_vf2 (VReg VecOpMasking VState) VReg)
+(rule (rv_vsext_vf2 vs mask vstate)
+  (vec_alu_rr (VecAluOpRR.VsextVF2) vs mask vstate))
+
+;; Helper for emitting the `vsext.vf4` instruction.
+;; Sign-extend SEW/4 source to SEW destination
+(decl rv_vsext_vf4 (VReg VecOpMasking VState) VReg)
+(rule (rv_vsext_vf4 vs mask vstate)
+  (vec_alu_rr (VecAluOpRR.VsextVF4) vs mask vstate))
+
+;; Helper for emitting the `vsext.vf8` instruction.
+;; Sign-extend SEW/8 source to SEW destination
+(decl rv_vsext_vf8 (VReg VecOpMasking VState) VReg)
+(rule (rv_vsext_vf8 vs mask vstate)
+  (vec_alu_rr (VecAluOpRR.VsextVF8) vs mask vstate))
+
+;; Helper for emitting the `vnclip.wi` instruction.
+;;
+;; vd[i] = clip(roundoff_signed(vs2[i], uimm))
+(decl rv_vnclip_wi (VReg UImm5 VecOpMasking VState) VReg)
+(rule (rv_vnclip_wi vs2 imm mask vstate)
+  (vec_alu_rr_uimm5 (VecAluOpRRImm5.VnclipWI) vs2 imm mask vstate))
+
+;; Helper for emitting the `vnclipu.wi` instruction.
+;;
+;; vd[i] = clip(roundoff_unsigned(vs2[i], uimm))
+(decl rv_vnclipu_wi (VReg UImm5 VecOpMasking VState) VReg)
+(rule (rv_vnclipu_wi vs2 imm mask vstate)
+  (vec_alu_rr_uimm5 (VecAluOpRRImm5.VnclipuWI) vs2 imm mask vstate))
+
+;; Helper for emitting the `vmand.mm` (Mask Bitwise AND) instruction.
+;;
+;; vd.mask[i] = vs2.mask[i] &&  vs1.mask[i]
+(decl rv_vmand_mm (VReg VReg VState) VReg)
+(rule (rv_vmand_mm vs2 vs1 vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmandMM) vs2 vs1 (unmasked) vstate))
+
+;; Helper for emitting the `vmor.mm` (Mask Bitwise OR) instruction.
+;;
+;; vd.mask[i] = vs2.mask[i] ||  vs1.mask[i]
+(decl rv_vmor_mm (VReg VReg VState) VReg)
+(rule (rv_vmor_mm vs2 vs1 vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmorMM) vs2 vs1 (unmasked) vstate))
+
+;; Helper for emitting the `vmnand.mm` (Mask Bitwise NAND) instruction.
+;;
+;; vd.mask[i] = !(vs2.mask[i] &&  vs1.mask[i])
+(decl rv_vmnand_mm (VReg VReg VState) VReg)
+(rule (rv_vmnand_mm vs2 vs1 vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmnandMM) vs2 vs1 (unmasked) vstate))
+
+;; Helper for emitting the `vmnot.m` (Mask Bitwise NOT) instruction.
+;; This is an alias for `vmnand.mm vd, vs, vs`
+;;
+;; vd.mask[i] = !vs.mask[i]
+(decl rv_vmnot_m (VReg VState) VReg)
+(rule (rv_vmnot_m vs vstate) (rv_vmnand_mm vs vs vstate))
+
+;; Helper for emitting the `vmnor.mm` (Mask Bitwise NOR) instruction.
+;;
+;; vd.mask[i] = !(vs2.mask[i] ||  vs1.mask[i])
+(decl rv_vmnor_mm (VReg VReg VState) VReg)
+(rule (rv_vmnor_mm vs2 vs1 vstate)
+  (vec_alu_rrr (VecAluOpRRR.VmnorMM) vs2 vs1 (unmasked) vstate))
+
+;;;; Multi-Instruction Helpers ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(decl gen_extractlane (Type VReg u8) Reg)
+
+;; When extracting lane 0 for floats, we can use `vfmv.f.s` directly.
+(rule 3 (gen_extractlane (ty_vec_fits_in_register ty) src 0)
+  (if (ty_vector_float ty))
+  (rv_vfmv_fs src ty))
+
+;; When extracting lane 0 for integers, we can use `vmv.x.s` directly.
+(rule 2 (gen_extractlane (ty_vec_fits_in_register ty) src 0)
+  (if (ty_vector_not_float ty))
+  (rv_vmv_xs src ty))
+
+;; In the general case, we must first use a `vslidedown` to place the correct lane
+;; in index 0, and then use the appropriate `vmv` instruction.
+;; If the index fits into a 5-bit immediate, we can emit a `vslidedown.vi`.
+(rule 1 (gen_extractlane (ty_vec_fits_in_register ty) src (uimm5_from_u8 idx))
+  (gen_extractlane ty (rv_vslidedown_vi src idx (unmasked) ty) 0))
+
+;; Otherwise lower it into an X register.
+(rule 0 (gen_extractlane (ty_vec_fits_in_register ty) src idx)
+  (gen_extractlane ty (rv_vslidedown_vx src (imm $I64 idx) (unmasked) ty) 0))
+
+
+;; Build a vector mask from a u64
+;; TODO(#6571): We should merge this with the `vconst` rules, and take advantage of
+;; the other existing `vconst` rules.
+(decl gen_vec_mask (u64) VReg)
+
+;; When the immediate fits in a 5-bit immediate, we can use `vmv.v.i` directly.
+(rule 1 (gen_vec_mask (imm5_from_u64 imm))
+  (rv_vmv_vi imm (vstate_from_type $I64X2)))
+
+;; Materialize the mask into an X register, and move it into the bottom of
+;; the vector register.
+(rule 0 (gen_vec_mask mask)
+  (rv_vmv_sx (imm $I64 mask) (vstate_from_type $I64X2)))
+
+
+;; Loads a `VCodeConstant` value into a vector register. For some special `VCodeConstant`s
+;; we can use a dedicated instruction, otherwise we load the value from the pool.
+;;
+;; Type is the preferred type to use when loading the constant.
+(decl gen_constant (Type VCodeConstant) VReg)
+
+;; The fallback case is to load the constant from the pool.
+(rule (gen_constant ty n)
+  (vec_load
+    (element_width_from_type ty)
+    (VecAMode.UnitStride (gen_const_amode n))
+    (mem_flags_trusted)
+    (unmasked)
+    ty))
+
+
+;; Emits a vslidedown instruction that moves half the lanes down.
+(decl gen_slidedown_half (Type VReg) VReg)
+
+;; If the lane count can fit in a 5-bit immediate, we can use `vslidedown.vi`.
+(rule 1 (gen_slidedown_half (ty_vec_fits_in_register ty) src)
+  (if-let (uimm5_from_u64 amt) (u64_checked_div (ty_lane_count ty) 2))
+  (rv_vslidedown_vi src amt (unmasked) ty))
+
+;; Otherwise lower it into an X register.
+(rule 0 (gen_slidedown_half (ty_vec_fits_in_register ty) src)
+  (if-let amt (u64_checked_div (ty_lane_count ty) 2))
+  (rv_vslidedown_vx src (imm $I64 amt) (unmasked) ty))
+
+
+;; Expands a mask into SEW wide lanes. Enabled lanes are set to all ones, disabled
+;; lanes are set to all zeros.
+(decl gen_expand_mask (Type VReg) VReg)
+(rule (gen_expand_mask ty mask)
+  (if-let zero (i8_to_imm5 0))
+  (if-let neg1 (i8_to_imm5 -1))
+  (rv_vmerge_vim (rv_vmv_vi zero ty) neg1 mask ty))
+
+
+;; Builds a vector mask corresponding to the IntCC operation.
+;; TODO: We are still missing some rules here for immediates. See #6623
+(decl gen_icmp_mask (Type IntCC Value Value) VReg)
+
+;; IntCC.Equal
+
+(rule 0 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.Equal) x y)
+  (rv_vmseq_vv x y (unmasked) ty))
+
+(rule 1 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.Equal) x (splat y))
+  (rv_vmseq_vx x y (unmasked) ty))
+
+(rule 2 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.Equal) (splat x) y)
+  (rv_vmseq_vx y x (unmasked) ty))
+
+(rule 3 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.Equal) x y)
+  (if-let y_imm (replicated_imm5 y))
+  (rv_vmseq_vi x y_imm (unmasked) ty))
+
+(rule 4 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.Equal) x y)
+  (if-let x_imm (replicated_imm5 x))
+  (rv_vmseq_vi y x_imm (unmasked) ty))
+
+;; IntCC.NotEqual
+
+(rule 0 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.NotEqual) x y)
+  (rv_vmsne_vv x y (unmasked) ty))
+
+(rule 1 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.NotEqual) x (splat y))
+  (rv_vmsne_vx x y (unmasked) ty))
+
+(rule 2 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.NotEqual) (splat x) y)
+  (rv_vmsne_vx y x (unmasked) ty))
+
+(rule 3 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.NotEqual) x y)
+  (if-let y_imm (replicated_imm5 y))
+  (rv_vmsne_vi x y_imm (unmasked) ty))
+
+(rule 4 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.NotEqual) x y)
+  (if-let x_imm (replicated_imm5 x))
+  (rv_vmsne_vi y x_imm (unmasked) ty))
+
+;; IntCC.UnsignedLessThan
+
+(rule 0 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.UnsignedLessThan) x y)
+  (rv_vmsltu_vv x y (unmasked) ty))
+
+(rule 1 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.UnsignedLessThan) x (splat y))
+  (rv_vmsltu_vx x y (unmasked) ty))
+
+(rule 2 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.UnsignedLessThan) (splat x) y)
+  (rv_vmsgtu_vx y x (unmasked) ty))
+
+(rule 4 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.UnsignedLessThan) x y)
+  (if-let x_imm (replicated_imm5 x))
+  (rv_vmsgtu_vi y x_imm (unmasked) ty))
+
+;; IntCC.SignedLessThan
+
+(rule 0 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.SignedLessThan) x y)
+  (rv_vmslt_vv x y (unmasked) ty))
+
+(rule 1 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.SignedLessThan) x (splat y))
+  (rv_vmslt_vx x y (unmasked) ty))
+
+(rule 2 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.SignedLessThan) (splat x) y)
+  (rv_vmsgt_vx y x (unmasked) ty))
+
+(rule 4 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.SignedLessThan) x y)
+  (if-let x_imm (replicated_imm5 x))
+  (rv_vmsgt_vi y x_imm (unmasked) ty))
+
+;; IntCC.UnsignedLessThanOrEqual
+
+(rule 0 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.UnsignedLessThanOrEqual) x y)
+  (rv_vmsleu_vv x y (unmasked) ty))
+
+(rule 1 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.UnsignedLessThanOrEqual) x (splat y))
+  (rv_vmsleu_vx x y (unmasked) ty))
+
+(rule 3 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.UnsignedLessThanOrEqual) x y)
+  (if-let y_imm (replicated_imm5 y))
+  (rv_vmsleu_vi x y_imm (unmasked) ty))
+
+;; IntCC.SignedLessThanOrEqual
+
+(rule 0 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.SignedLessThanOrEqual) x y)
+  (rv_vmsle_vv x y (unmasked) ty))
+
+(rule 1 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.SignedLessThanOrEqual) x (splat y))
+  (rv_vmsle_vx x y (unmasked) ty))
+
+(rule 3 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.SignedLessThanOrEqual) x y)
+  (if-let y_imm (replicated_imm5 y))
+  (rv_vmsle_vi x y_imm (unmasked) ty))
+
+;; IntCC.UnsignedGreaterThan
+
+(rule 0 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.UnsignedGreaterThan) x y)
+  (rv_vmsgtu_vv x y (unmasked) ty))
+
+(rule 1 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.UnsignedGreaterThan) x (splat y))
+  (rv_vmsgtu_vx x y (unmasked) ty))
+
+(rule 2 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.UnsignedGreaterThan) (splat x) y)
+  (rv_vmsltu_vx y x (unmasked) ty))
+
+(rule 3 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.UnsignedGreaterThan) x y)
+  (if-let y_imm (replicated_imm5 y))
+  (rv_vmsgtu_vi x y_imm (unmasked) ty))
+
+;; IntCC.SignedGreaterThan
+
+(rule 0 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.SignedGreaterThan) x y)
+  (rv_vmsgt_vv x y (unmasked) ty))
+
+(rule 1 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.SignedGreaterThan) x (splat y))
+  (rv_vmsgt_vx x y (unmasked) ty))
+
+(rule 2 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.SignedGreaterThan) (splat x) y)
+  (rv_vmslt_vx y x (unmasked) ty))
+
+(rule 3 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.SignedGreaterThan) x y)
+  (if-let y_imm (replicated_imm5 y))
+  (rv_vmsgt_vi x y_imm (unmasked) ty))
+
+;; IntCC.UnsignedGreaterThanOrEqual
+
+(rule 0 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.UnsignedGreaterThanOrEqual) x y)
+  (rv_vmsgeu_vv x y (unmasked) ty))
+
+(rule 2 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.UnsignedGreaterThanOrEqual) (splat x) y)
+  (rv_vmsleu_vx y x (unmasked) ty))
+
+(rule 4 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.UnsignedGreaterThanOrEqual) x y)
+  (if-let x_imm (replicated_imm5 x))
+  (rv_vmsleu_vi y x_imm (unmasked) ty))
+
+;; IntCC.SignedGreaterThanOrEqual
+
+(rule 0 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.SignedGreaterThanOrEqual) x y)
+  (rv_vmsge_vv x y (unmasked) ty))
+
+(rule 2 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.SignedGreaterThanOrEqual) (splat x) y)
+  (rv_vmsle_vx y x (unmasked) ty))
+
+(rule 4 (gen_icmp_mask (ty_vec_fits_in_register ty) (IntCC.SignedGreaterThanOrEqual) x y)
+  (if-let x_imm (replicated_imm5 x))
+  (rv_vmsle_vi y x_imm (unmasked) ty))
+
+
+
+;; Builds a vector mask corresponding to the FloatCC operation.
+(decl gen_fcmp_mask (Type FloatCC Value Value) VReg)
+
+;; FloatCC.Equal
+
+(rule 0 (gen_fcmp_mask (ty_vec_fits_in_register ty) (FloatCC.Equal) x y)
+  (rv_vmfeq_vv x y (unmasked) ty))
+
+(rule 1 (gen_fcmp_mask (ty_vec_fits_in_register ty) (FloatCC.Equal) x (splat y))
+  (rv_vmfeq_vf x y (unmasked) ty))
+
+(rule 2 (gen_fcmp_mask (ty_vec_fits_in_register ty) (FloatCC.Equal) (splat x) y)
+  (rv_vmfeq_vf y x (unmasked) ty))
+
+;; FloatCC.NotEqual
+;; Note: This is UnorderedNotEqual. It is the only unordered comparison that is not named as such.
+
+(rule 0 (gen_fcmp_mask (ty_vec_fits_in_register ty) (FloatCC.NotEqual) x y)
+  (rv_vmfne_vv x y (unmasked) ty))
+
+(rule 1 (gen_fcmp_mask (ty_vec_fits_in_register ty) (FloatCC.NotEqual) x (splat y))
+  (rv_vmfne_vf x y (unmasked) ty))
+
+(rule 2 (gen_fcmp_mask (ty_vec_fits_in_register ty) (FloatCC.NotEqual) (splat x) y)
+  (rv_vmfne_vf y x (unmasked) ty))
+
+;; FloatCC.LessThan
+
+(rule 0 (gen_fcmp_mask (ty_vec_fits_in_register ty) (FloatCC.LessThan) x y)
+  (rv_vmflt_vv x y (unmasked) ty))
+
+(rule 1 (gen_fcmp_mask (ty_vec_fits_in_register ty) (FloatCC.LessThan) x (splat y))
+  (rv_vmflt_vf x y (unmasked) ty))
+
+(rule 2 (gen_fcmp_mask (ty_vec_fits_in_register ty) (FloatCC.LessThan) (splat x) y)
+  (rv_vmfgt_vf y x (unmasked) ty))
+
+;; FloatCC.LessThanOrEqual
+
+(rule 0 (gen_fcmp_mask (ty_vec_fits_in_register ty) (FloatCC.LessThanOrEqual) x y)
+  (rv_vmfle_vv x y (unmasked) ty))
+
+(rule 1 (gen_fcmp_mask (ty_vec_fits_in_register ty) (FloatCC.LessThanOrEqual) x (splat y))
+  (rv_vmfle_vf x y (unmasked) ty))
+
+(rule 2 (gen_fcmp_mask (ty_vec_fits_in_register ty) (FloatCC.LessThanOrEqual) (splat x) y)
+  (rv_vmfge_vf y x (unmasked) ty))
+
+;; FloatCC.GreaterThan
+
+(rule 0 (gen_fcmp_mask (ty_vec_fits_in_register ty) (FloatCC.GreaterThan) x y)
+  (rv_vmfgt_vv x y (unmasked) ty))
+
+(rule 1 (gen_fcmp_mask (ty_vec_fits_in_register ty) (FloatCC.GreaterThan) x (splat y))
+  (rv_vmfgt_vf x y (unmasked) ty))
+
+(rule 2 (gen_fcmp_mask (ty_vec_fits_in_register ty) (FloatCC.GreaterThan) (splat x) y)
+  (rv_vmflt_vf y x (unmasked) ty))
+
+;; FloatCC.GreaterThanOrEqual
+
+(rule 0 (gen_fcmp_mask (ty_vec_fits_in_register ty) (FloatCC.GreaterThanOrEqual) x y)
+  (rv_vmfge_vv x y (unmasked) ty))
+
+(rule 1 (gen_fcmp_mask (ty_vec_fits_in_register ty) (FloatCC.GreaterThanOrEqual) x (splat y))
+  (rv_vmfge_vf x y (unmasked) ty))
+
+(rule 2 (gen_fcmp_mask (ty_vec_fits_in_register ty) (FloatCC.GreaterThanOrEqual) (splat x) y)
+  (rv_vmfle_vf y x (unmasked) ty))
+
+;; FloatCC.Ordered
+
+(rule 0 (gen_fcmp_mask (ty_vec_fits_in_register ty) (FloatCC.Ordered) x y)
+  (rv_vmand_mm
+    (gen_fcmp_mask ty (FloatCC.Equal) x x)
+    (gen_fcmp_mask ty (FloatCC.Equal) y y)
+    ty))
+
+;; FloatCC.Unordered
+
+(rule 0 (gen_fcmp_mask (ty_vec_fits_in_register ty) (FloatCC.Unordered) x y)
+  (rv_vmor_mm
+    (gen_fcmp_mask ty (FloatCC.NotEqual) x x)
+    (gen_fcmp_mask ty (FloatCC.NotEqual) y y)
+    ty))
+
+;; FloatCC.OrderedNotEqual
+
+(rule 0 (gen_fcmp_mask (ty_vec_fits_in_register ty) (FloatCC.OrderedNotEqual) x y)
+  (rv_vmor_mm
+    (gen_fcmp_mask ty (FloatCC.LessThan) x y)
+    (gen_fcmp_mask ty (FloatCC.LessThan) y x)
+    ty))
+
+;; FloatCC.UnorderedOrEqual
+
+(rule 0 (gen_fcmp_mask (ty_vec_fits_in_register ty) (FloatCC.UnorderedOrEqual) x y)
+  (rv_vmnor_mm
+    (gen_fcmp_mask ty (FloatCC.LessThan) x y)
+    (gen_fcmp_mask ty (FloatCC.LessThan) y x)
+    ty))
+
+;; FloatCC.UnorderedOrGreaterThan
+
+(rule 0 (gen_fcmp_mask (ty_vec_fits_in_register ty) (FloatCC.UnorderedOrGreaterThan) x y)
+  (rv_vmnot_m (gen_fcmp_mask ty (FloatCC.LessThanOrEqual) x y) ty))
+
+;; FloatCC.UnorderedOrGreaterThanOrEqual
+
+(rule 0 (gen_fcmp_mask (ty_vec_fits_in_register ty) (FloatCC.UnorderedOrGreaterThanOrEqual) x y)
+  (rv_vmnot_m (gen_fcmp_mask ty (FloatCC.LessThan) x y) ty))
+
+;; FloatCC.UnorderedOrLessThan
+
+(rule 0 (gen_fcmp_mask (ty_vec_fits_in_register ty) (FloatCC.UnorderedOrLessThan) x y)
+  (rv_vmnot_m (gen_fcmp_mask ty (FloatCC.GreaterThanOrEqual) x y) ty))
+
+;; FloatCC.UnorderedOrLessThanOrEqual
+
+(rule 0 (gen_fcmp_mask (ty_vec_fits_in_register ty) (FloatCC.UnorderedOrLessThanOrEqual) x y)
+  (rv_vmnot_m (gen_fcmp_mask ty (FloatCC.GreaterThan) x y) ty))
+
+
+;; Emits a `vfcvt.x.f.v` instruction with the given rounding mode.
+(decl gen_vfcvt_x_f (VReg FRM VState) VReg)
+
+;; We have a special instruction for RTZ
+(rule 1 (gen_vfcvt_x_f x (FRM.RTZ) vstate)
+  (rv_vfcvt_rtz_x_f_v x (unmasked) vstate))
+
+;; In the general case we need to first switch into the appropriate rounding mode.
+(rule 0 (gen_vfcvt_x_f x frm vstate)
+  (let (
+        ;; Set the rounding mode and save the current mode
+        (saved_frm XReg (rv_fsrmi frm))
+        (res VReg (rv_vfcvt_x_f_v x (unmasked) vstate))
+        ;; Restore the previous rounding mode
+        (_ Unit (rv_fsrm saved_frm)))
+    res))
+
+
+;; Returns the maximum value integer value that can be represented by a float
+(decl float_int_max (Type) u64)
+(rule (float_int_max $F32) 0x4B000000)
+(rule (float_int_max $F64) 0x4330000000000000)
+
+;; Builds the instruction sequence to round a vector register to FRM
+(decl gen_vec_round (VReg FRM Type) VReg)
+
+;; For floating-point round operations, if the input is NaN, +/-infinity, or +/-0, the
+;; same input is returned as the rounded result; this differs from behavior of
+;; RISCV fcvt instructions (which round out-of-range values to the nearest
+;; max or min value), therefore special handling is needed for these values.
+(rule (gen_vec_round x frm (ty_vec_fits_in_register ty))
+  (let ((scalar_ty Type (lane_type ty))
+        ;; if x is NaN/+-Infinity/+-Zero or if the exponent is larger than # of bits
+        ;; in mantissa, the result is the same as src, build a mask for those cases.
+        ;; (There is an additional fixup for NaN's at the end)
+        (abs VReg (rv_vfabs_v x (unmasked) ty))
+        (max FReg (imm scalar_ty (float_int_max scalar_ty)))
+        (exact VReg (rv_vmflt_vf abs max (unmasked) ty))
+
+        ;; The rounding is performed by converting from float to integer, with the
+        ;; desired rounding mode. And then converting back with the default rounding
+        ;; mode.
+        (int VReg (gen_vfcvt_x_f x frm ty))
+        (cvt VReg (rv_vfcvt_f_x_v int (unmasked) ty))
+        ;; Copy the sign bit from the original value.
+        (signed VReg (rv_vfsgnj_vv cvt x (unmasked) ty))
+
+        ;; We want to return a arithmetic nan if the input is a canonical nan.
+        ;; Convert them by adding 0.0 to the input.
+        (float_zero FReg (gen_bitcast (zero_reg) (float_int_of_same_size scalar_ty) scalar_ty))
+        (corrected_nan VReg (rv_vfadd_vf x float_zero (unmasked) ty)))
+    ;; Merge the original value if it does not need rounding, or the rounded value
+    (rv_vmerge_vvm corrected_nan signed exact ty)))

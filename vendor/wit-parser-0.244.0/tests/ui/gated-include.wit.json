@@ -1,0 +1,346 @@
+{
+  "worlds": [
+    {
+      "name": "unknown-stability",
+      "imports": {
+        "interface-0": {
+          "interface": {
+            "id": 0
+          }
+        }
+      },
+      "exports": {},
+      "package": 0
+    },
+    {
+      "name": "unstable",
+      "imports": {
+        "interface-1": {
+          "interface": {
+            "id": 1,
+            "stability": {
+              "unstable": {
+                "feature": "active"
+              }
+            }
+          }
+        }
+      },
+      "exports": {},
+      "package": 0
+    },
+    {
+      "name": "stable",
+      "imports": {
+        "interface-2": {
+          "interface": {
+            "id": 2,
+            "stability": {
+              "stable": {
+                "since": "0.1.0"
+              }
+            }
+          }
+        }
+      },
+      "exports": {},
+      "package": 0
+    },
+    {
+      "name": "simple-include",
+      "imports": {
+        "interface-1": {
+          "interface": {
+            "id": 1,
+            "stability": {
+              "unstable": {
+                "feature": "active"
+              }
+            }
+          }
+        },
+        "interface-2": {
+          "interface": {
+            "id": 2,
+            "stability": {
+              "stable": {
+                "since": "0.1.0"
+              }
+            }
+          }
+        },
+        "interface-0": {
+          "interface": {
+            "id": 0
+          }
+        }
+      },
+      "exports": {},
+      "package": 0
+    },
+    {
+      "name": "unstable-include-in-package",
+      "imports": {
+        "interface-1": {
+          "interface": {
+            "id": 1,
+            "stability": {
+              "unstable": {
+                "feature": "active"
+              }
+            }
+          }
+        }
+      },
+      "exports": {},
+      "package": 0
+    },
+    {
+      "name": "dup-include-in-package",
+      "imports": {
+        "interface-1": {
+          "interface": {
+            "id": 1,
+            "stability": {
+              "unstable": {
+                "feature": "active"
+              }
+            }
+          }
+        },
+        "interface-2": {
+          "interface": {
+            "id": 2,
+            "stability": {
+              "stable": {
+                "since": "0.1.0"
+              }
+            }
+          }
+        },
+        "interface-0": {
+          "interface": {
+            "id": 0
+          }
+        }
+      },
+      "exports": {},
+      "package": 0
+    },
+    {
+      "name": "dup-use-package",
+      "imports": {
+        "interface-1": {
+          "interface": {
+            "id": 1,
+            "stability": {
+              "unstable": {
+                "feature": "active"
+              }
+            }
+          }
+        },
+        "interface-2": {
+          "interface": {
+            "id": 2,
+            "stability": {
+              "stable": {
+                "since": "0.1.0"
+              }
+            }
+          }
+        },
+        "interface-0": {
+          "interface": {
+            "id": 0
+          }
+        },
+        "stable-resource": {
+          "type": 3
+        }
+      },
+      "exports": {},
+      "package": 0
+    },
+    {
+      "name": "dup-use-package-ordered",
+      "imports": {
+        "interface-1": {
+          "interface": {
+            "id": 1,
+            "stability": {
+              "unstable": {
+                "feature": "active"
+              }
+            }
+          }
+        },
+        "interface-2": {
+          "interface": {
+            "id": 2,
+            "stability": {
+              "stable": {
+                "since": "0.1.0"
+              }
+            }
+          }
+        },
+        "interface-0": {
+          "interface": {
+            "id": 0
+          }
+        },
+        "stable-resource": {
+          "type": 4
+        }
+      },
+      "exports": {},
+      "package": 0
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "unknown-stability-interface",
+      "types": {
+        "unknown-stability-resource": 0
+      },
+      "functions": {
+        "stable-func": {
+          "name": "stable-func",
+          "kind": "freestanding",
+          "params": []
+        }
+      },
+      "package": 0
+    },
+    {
+      "name": "unstable-interface",
+      "types": {
+        "unstable-resource": 1
+      },
+      "functions": {
+        "unstable-func": {
+          "name": "unstable-func",
+          "kind": "freestanding",
+          "params": [],
+          "stability": {
+            "unstable": {
+              "feature": "active"
+            }
+          }
+        }
+      },
+      "stability": {
+        "unstable": {
+          "feature": "active"
+        }
+      },
+      "package": 0
+    },
+    {
+      "name": "stable-interface",
+      "types": {
+        "stable-resource": 2
+      },
+      "functions": {
+        "stable-func": {
+          "name": "stable-func",
+          "kind": "freestanding",
+          "params": [],
+          "stability": {
+            "stable": {
+              "since": "0.1.0"
+            }
+          }
+        }
+      },
+      "stability": {
+        "stable": {
+          "since": "0.1.0"
+        }
+      },
+      "package": 0
+    }
+  ],
+  "types": [
+    {
+      "name": "unknown-stability-resource",
+      "kind": "resource",
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "unstable-resource",
+      "kind": "resource",
+      "owner": {
+        "interface": 1
+      },
+      "stability": {
+        "unstable": {
+          "feature": "active"
+        }
+      }
+    },
+    {
+      "name": "stable-resource",
+      "kind": "resource",
+      "owner": {
+        "interface": 2
+      },
+      "stability": {
+        "stable": {
+          "since": "0.1.0"
+        }
+      }
+    },
+    {
+      "name": "stable-resource",
+      "kind": {
+        "type": 2
+      },
+      "owner": {
+        "world": 6
+      },
+      "stability": {
+        "unstable": {
+          "feature": "active"
+        }
+      }
+    },
+    {
+      "name": "stable-resource",
+      "kind": {
+        "type": 2
+      },
+      "owner": {
+        "world": 7
+      },
+      "stability": {
+        "unstable": {
+          "feature": "active"
+        }
+      }
+    }
+  ],
+  "packages": [
+    {
+      "name": "wasmtime:test@0.1.0",
+      "interfaces": {
+        "unknown-stability-interface": 0,
+        "unstable-interface": 1,
+        "stable-interface": 2
+      },
+      "worlds": {
+        "unknown-stability": 0,
+        "unstable": 1,
+        "stable": 2,
+        "simple-include": 3,
+        "unstable-include-in-package": 4,
+        "dup-include-in-package": 5,
+        "dup-use-package": 6,
+        "dup-use-package-ordered": 7
+      }
+    }
+  ]
+}

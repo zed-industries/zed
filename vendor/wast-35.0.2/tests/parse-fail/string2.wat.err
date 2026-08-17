@@ -1,0 +1,5 @@
+invalid string escape 'x'
+     --> tests/parse-fail/string2.wat:2:13
+      |
+    2 |   (import "\x"))
+      |             ^

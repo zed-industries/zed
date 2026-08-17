@@ -1,0 +1,48 @@
+---
+- name: Spec Example 7.14. Flow Sequence Entries
+  from: http://www.yaml.org/spec/1.2/spec.html#id2790726
+  tags: spec flow sequence
+  yaml: |
+    [
+    "double
+     quoted", 'single
+               quoted',
+    plain
+     text, [ nested ],
+    single: pair,
+    ]
+  tree: |
+    +STR
+     +DOC
+      +SEQ []
+       =VAL "double quoted
+       =VAL 'single quoted
+       =VAL :plain text
+       +SEQ []
+        =VAL :nested
+       -SEQ
+       +MAP {}
+        =VAL :single
+        =VAL :pair
+       -MAP
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      "double quoted",
+      "single quoted",
+      "plain text",
+      [
+        "nested"
+      ],
+      {
+        "single": "pair"
+      }
+    ]
+  dump: |
+    - "double quoted"
+    - 'single quoted'
+    - plain text
+    - - nested
+    - single: pair

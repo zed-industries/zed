@@ -1,0 +1,60 @@
+r#"UNMODIFIED BINARY DISTRIBUTION LICENCE
+
+
+PREAMBLE
+
+The GNU General Public License provides a legal guarantee that
+software covered by it remains free (in the sense of freedom, not
+price).  It achieves this guarantee by imposing obligations on anyone
+who chooses to distribute the software.
+
+Some of these obligations may be seen as unnecessarily burdensome.  In
+particular, when the source code for the software is already publicly
+and freely available, there is minimal value in imposing upon each
+distributor the obligation to provide the complete source code (or an
+equivalent written offer to provide the complete source code).
+
+This Licence allows for the distribution of unmodified binaries built
+from publicly available source code, without imposing the obligations
+of the GNU General Public License upon anyone who chooses to
+distribute only the unmodified binaries built from that source code.
+
+The extra permissions granted by this Licence apply only to unmodified
+binaries built from source code which has already been made available
+to the public in accordance with the terms of the GNU General Public
+Licence.  Nothing in this Licence allows for the creation of
+closed-source modified versions of the Program.  Any modified versions
+of the Program are subject to the usual terms and conditions of the
+GNU General Public License.
+
+
+TERMS AND CONDITIONS FOR COPYING, DISTRIBUTION AND MODIFICATION
+
+This Licence applies to any Program or other work which contains a
+notice placed by the copyright holder saying it may be distributed
+under the terms of this Unmodified Binary Distribution Licence.  All
+terms used in the text of this Licence are to be interpreted as they
+are used in version 2 of the GNU General Public License as published
+by the Free Software Foundation.
+
+If you have made this Program available to the public in both source
+code and executable form in accordance with the terms of the GNU
+General Public License as published by the Free Software Foundation;
+either version 2 of the License, or (at your option) any later
+version, then you are hereby granted an additional permission to use,
+copy, and distribute the unmodified executable form of this Program
+(the "Unmodified Binary") without restriction, including the right to
+permit persons to whom the Unmodified Binary is furnished to do
+likewise, subject to the following conditions:
+
+- when started running, the Program must display an announcement which
+  includes the details of your existing publication of the Program
+  made in accordance with the terms of the GNU General Public License.
+  For example, the Program could display the URL of the publicly
+  available source code from which the Unmodified Binary was built.
+
+- when exercising your right to grant permissions under this Licence,
+  you do not need to refer directly to the text of this Licence, but
+  you may not grant permissions beyond those granted to you by this
+  Licence.
+"#

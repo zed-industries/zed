@@ -1,0 +1,5 @@
+error: this `#[builder(overwritable)]` attribute is redundant, because `overwritable` is already implied for this member via the `#[builder(on(...))]` at the top of the function
+ --> tests/integration/ui/compile_fail/overwritable/attr_on.rs:4:39
+  |
+4 | fn unnecessary_overwritable(#[builder(overwritable)] _x: String) {}
+  |                                       ^^^^^^^^^^^^

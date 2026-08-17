@@ -1,0 +1,15 @@
+package foo:foo;
+
+world a {
+  resource r {
+    constructor();
+    m: func();
+    sm: static func();
+  }
+  import f: func(x: r) -> option<r>;
+  export g: func(x: r) -> option<r>;
+}
+
+world b {
+  include a with { r as s }
+}

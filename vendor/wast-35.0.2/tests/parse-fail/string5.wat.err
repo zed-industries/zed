@@ -1,0 +1,5 @@
+unexpected end-of-file
+     --> tests/parse-fail/string5.wat:1:3
+      |
+    1 | "\
+      |   ^

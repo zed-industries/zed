@@ -1,0 +1,106 @@
+[package]
+name = "glow"
+version = "0.17.0"
+description = "GL on Whatever: a set of bindings to run GL (Open GL, OpenGL ES, and WebGL) anywhere, and avoid target-specific code."
+authors = [
+  "Joshua Groves <josh@joshgroves.com>",
+  "Dzmitry Malyshau <kvarkus@gmail.com>",
+]
+homepage = "https://github.com/grovesNL/glow.git"
+repository = "https://github.com/grovesNL/glow"
+license = "MIT OR Apache-2.0 OR Zlib"
+edition = "2021"
+
+[package.metadata.docs.rs]
+default-target = "x86_64-unknown-linux-gnu"
+targets = [
+  "x86_64-unknown-linux-gnu",
+  "x86_64-apple-darwin",
+  "x86_64-pc-windows-msvc",
+  "i686-unknown-linux-gnu",
+  "i686-pc-windows-msvc",
+  "wasm32-unknown-unknown"
+]
+
+[lib]
+name = "glow"
+path = "src/lib.rs"
+
+[dependencies]
+log = { version = "0.4.16", optional = true }
+
+[features]
+debug_trace_calls = []
+debug_automatic_glGetError = []
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "~0.3"
+wasm-bindgen = "~0.2"
+slotmap = "1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies.web_sys]
+version = "~0.3.60"
+package = "web-sys"
+features = [
+  "Document",
+  "Element",
+  "HtmlCanvasElement",
+  "HtmlImageElement",
+  "HtmlVideoElement",
+  "ImageBitmap",
+  "ImageData",
+  "VideoFrame",
+  "WebGlActiveInfo",
+  "WebGlBuffer",
+  "WebGlFramebuffer",
+  "WebGlProgram",
+  "WebGlQuery",
+  "WebGlRenderbuffer",
+  "WebGlRenderingContext",
+  "WebGl2RenderingContext",
+  "WebGlSampler",
+  "WebGlShader",
+  "WebGlShaderPrecisionFormat",
+  "WebGlSync",
+  "WebGlTexture",
+  "WebGlTransformFeedback",
+  "WebGlUniformLocation",
+  "WebGlVertexArrayObject",
+  "Window",
+
+  "AngleInstancedArrays",
+  "ExtBlendMinmax",
+  "ExtColorBufferFloat",
+  "ExtColorBufferHalfFloat",
+  "ExtDisjointTimerQuery",
+  "ExtFragDepth",
+  "ExtShaderTextureLod",
+  "ExtSRgb",
+  "ExtTextureFilterAnisotropic",
+  "OesElementIndexUint",
+  "OesStandardDerivatives",
+  "OesTextureFloat",
+  "OesTextureFloatLinear",
+  "OesTextureHalfFloat",
+  "OesTextureHalfFloatLinear",
+  "OesVertexArrayObject",
+  "WebglColorBufferFloat",
+  "WebglCompressedTextureAstc",
+  "WebglCompressedTextureEtc",
+  "WebglCompressedTextureEtc1",
+  "WebglCompressedTexturePvrtc",
+  "WebglCompressedTextureS3tc",
+  "WebglCompressedTextureS3tcSrgb",
+  "WebglDebugRendererInfo",
+  "WebglDebugShaders",
+  "WebglDepthTexture",
+  "WebglDrawBuffers",
+  "WebglLoseContext",
+  "OvrMultiview2",
+]
+
+[workspace]
+members = [
+  "examples/hello",
+  "examples/howto",
+]

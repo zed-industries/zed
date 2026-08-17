@@ -1,0 +1,29 @@
+[package]
+name = "rkyv_derive"
+description = "Derive macro for rkyv"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2.workspace = true
+syn.workspace = true
+quote.workspace = true
+
+[features]
+default = []
+arbitrary_enum_discriminant = []
+archive_be = []
+archive_le = []
+copy = []
+strict = []
+
+[package.metadata.docs.rs]
+all-features = true

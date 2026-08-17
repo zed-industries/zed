@@ -1,0 +1,54 @@
+#!/bin/bash
+
+set -eux
+
+toolchains=(
+    +1.87
+    +stable
+    +nightly
+)
+
+rm -f Cargo.lock
+
+for toolchain in "${toolchains[@]}"; do
+    export CARGO_TARGET_DIR=target/$toolchain
+
+    cp Cargo.toml Cargo.toml~
+    trap 'mv -f Cargo.toml~ Cargo.toml' EXIT
+    (
+        echo '[package.metadata.cargo-all-features]'
+        echo 'skip_feature_sets = [ ["std", "alloc"], ["embedded-io", "embedded-io-async"] ]'
+        if [[ $toolchain = +nightly ]]; then
+            echo 'denylist = ["use_std"]'
+        else
+            echo 'denylist = ["use_std", "unstable"]'
+        fi
+    ) >> Cargo.toml
+
+    cargo "$toolchain" build-all-features
+    cargo "$toolchain" build-all-features --release
+
+    cargo "$toolchain" test-all-features
+    cargo "$toolchain" test-all-features --release
+    cargo "$toolchain" bench
+
+    if [[ $toolchain = +nightly ]]; then
+        cargo "$toolchain" clippy --all-targets --no-default-features -- --deny=warnings
+        cargo "$toolchain" clippy --all-targets -- --deny=warnings
+        cargo "$toolchain" clippy --all-targets --features=unstable -- --deny=warnings
+        cargo "$toolchain" clippy --all-targets --all-features -- --deny=warnings
+
+        cargo "$toolchain" doc
+
+        cargo "$toolchain" miri test --no-default-features
+        cargo "$toolchain" miri test
+        cargo "$toolchain" miri test --features=unstable
+        cargo "$toolchain" miri test --all-features
+
+        cargo "$toolchain" fmt --check
+    fi
+
+    mv Cargo.toml~ Cargo.toml
+done
+
+cargo semver-checks

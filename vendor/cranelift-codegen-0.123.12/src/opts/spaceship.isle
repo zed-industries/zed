@@ -1,0 +1,194 @@
+;; Simplifications for C++20's `<=>` "spaceship" operator, aka Rust's `Ord::cmp`.
+;;
+;; There's no cranelift instruction for this, nor usually a machine instruction.
+;; Inspired by <https://graphics.stanford.edu/~seander/bithacks.html#CopyIntegerSign>
+;; we canonicalize the various implementations of `x <=> y` to `(x > y) - (x < y)`.
+
+;; Unfortunately, there's at least 3!×2 reasonable ways to write this as nested
+;; selects, and no broad agreement which is the best -- notably Rust 1.74 and
+;; Clang 17 use different sequences -- so we just match all of them.
+
+;; x < y ? -1 : x == y ? 0 : +1
+;; x < y ? -1 : x != y ? +1 : 0
+(rule (simplify (select ty (ult rty x y)
+                           (iconst_s ty -1)
+                           (uextend_maybe ty (ne rty x y))))
+      (sextend_maybe ty (spaceship_u rty x y)))
+;; x < y ? -1 : x <= y ? 0 : +1
+;; x < y ? -1 : x > y ? +1 : 0
+(rule (simplify (select ty (ult rty x y)
+                           (iconst_s ty -1)
+                           (uextend_maybe ty (ugt rty x y))))
+      (sextend_maybe ty (spaceship_u rty x y)))
+
+;; x == y ? 0 : x < y ? -1 : +1
+(rule (simplify (select ty (eq rty x y)
+                           (iconst_s ty 0)
+                           (select ty (ult rty x y)
+                                      (iconst_s ty -1)
+                                      (iconst_s ty 1))))
+      (sextend_maybe ty (spaceship_u rty x y)))
+;; x == y ? 0 : x <= y ? -1 : +1
+(rule (simplify (select ty (eq rty x y)
+                           (iconst_s ty 0)
+                           (select ty (ule rty x y)
+                                      (iconst_s ty -1)
+                                      (iconst_s ty 1))))
+      (sextend_maybe ty (spaceship_u rty x y)))
+;; x == y ? 0 : x > y ? +1 : -1
+(rule (simplify (select ty (eq rty x y)
+                           (iconst_s ty 0)
+                           (select ty (ugt rty x y)
+                                      (iconst_s ty 1)
+                                      (iconst_s ty -1))))
+      (sextend_maybe ty (spaceship_u rty x y)))
+;; x == y ? 0 : x >= y ? +1 : -1
+(rule (simplify (select ty (eq rty x y)
+                           (iconst_s ty 0)
+                           (select ty (uge rty x y)
+                                      (iconst_s ty 1)
+                                      (iconst_s ty -1))))
+      (sextend_maybe ty (spaceship_u rty x y)))
+
+;; x > y ? 1 : x < y ? -1 : 0
+;; x > y ? 1 : x >= y ? 0 : -1
+(rule (simplify (select ty (ugt rty x y)
+                           (iconst_s ty 1)
+                           (ineg rty (ult rty x y))))
+      (sextend_maybe ty (spaceship_u rty x y)))
+(rule (simplify (select ty (ugt rty x y)
+                           (iconst_s ty 1)
+                           (bmask ty (ult rty x y))))
+      (sextend_maybe ty (spaceship_u rty x y)))
+;; x > y ? 1 : x != y ? -1 : 0
+;; x > y ? 1 : x == y ? 0 : -1
+(rule (simplify (select ty (ugt rty x y)
+                           (iconst_s ty 1)
+                           (ineg rty (ne rty x y))))
+      (sextend_maybe ty (spaceship_u rty x y)))
+(rule (simplify (select ty (ugt rty x y)
+                           (iconst_s ty 1)
+                           (bmask ty (ne rty x y))))
+      (sextend_maybe ty (spaceship_u rty x y)))
+
+;; Same, but for signed comparisons this time
+
+;; x < y ? -1 : x == y ? 0 : +1
+;; x < y ? -1 : x != y ? +1 : 0
+(rule (simplify (select ty (slt rty x y)
+                           (iconst_s ty -1)
+                           (uextend_maybe ty (ne rty x y))))
+      (sextend_maybe ty (spaceship_s rty x y)))
+;; x < y ? -1 : x <= y ? 0 : +1
+;; x < y ? -1 : x > y ? +1 : 0
+(rule (simplify (select ty (slt rty x y)
+                           (iconst_s ty -1)
+                           (uextend_maybe ty (sgt rty x y))))
+      (sextend_maybe ty (spaceship_s rty x y)))
+
+;; x == y ? 0 : x < y ? -1 : +1
+(rule (simplify (select ty (eq rty x y)
+                           (iconst_s ty 0)
+                           (select ty (slt rty x y)
+                                      (iconst_s ty -1)
+                                      (iconst_s ty 1))))
+      (sextend_maybe ty (spaceship_s rty x y)))
+;; x == y ? 0 : x <= y ? -1 : +1
+(rule (simplify (select ty (eq rty x y)
+                           (iconst_s ty 0)
+                           (select ty (sle rty x y)
+                                      (iconst_s ty -1)
+                                      (iconst_s ty 1))))
+      (sextend_maybe ty (spaceship_s rty x y)))
+;; x == y ? 0 : x > y ? +1 : -1
+(rule (simplify (select ty (eq rty x y)
+                           (iconst_s ty 0)
+                           (select ty (sgt rty x y)
+                                      (iconst_s ty 1)
+                                      (iconst_s ty -1))))
+      (sextend_maybe ty (spaceship_s rty x y)))
+;; x == y ? 0 : x >= y ? +1 : -1
+(rule (simplify (select ty (eq rty x y)
+                           (iconst_s ty 0)
+                           (select ty (sge rty x y)
+                                      (iconst_s ty 1)
+                                      (iconst_s ty -1))))
+      (sextend_maybe ty (spaceship_s rty x y)))
+
+;; x > y ? 1 : x < y ? -1 : 0
+;; x > y ? 1 : x >= y ? 0 : -1
+(rule (simplify (select ty (sgt rty x y)
+                           (iconst_s ty 1)
+                           (ineg rty (slt rty x y))))
+      (sextend_maybe ty (spaceship_s rty x y)))
+(rule (simplify (select ty (sgt rty x y)
+                           (iconst_s ty 1)
+                           (bmask ty (slt rty x y))))
+      (sextend_maybe ty (spaceship_s rty x y)))
+;; x > y ? 1 : x != y ? -1 : 0
+;; x > y ? 1 : x == y ? 0 : -1
+(rule (simplify (select ty (sgt rty x y)
+                           (iconst_s ty 1)
+                           (ineg rty (ne rty x y))))
+      (sextend_maybe ty (spaceship_s rty x y)))
+(rule (simplify (select ty (sgt rty x y)
+                           (iconst_s ty 1)
+                           (bmask ty (ne rty x y))))
+      (sextend_maybe ty (spaceship_s rty x y)))
+
+;; Then once we have it normalized, we can apply some basic simplifications.
+;; For example, a derived `PartialOrd::lt` on a newtype in Rust will essentially
+;; emit `(a <=> b) < 0`, and replacing that with `a < b` can really help.
+;; `icmp.isle` prefers comparing against zero so we don't need to worry about
+;; also matching things like `(a <=> b) < 1` or `(a <=> b) <= -1`.
+
+;; (a <=> b) == 0 --> a == b
+(rule (simplify (eq _ (spaceship_s ty x y) (iconst_s _ 0)))
+      (eq ty x y))
+(rule (simplify (eq _ (spaceship_u ty x y) (iconst_s _ 0)))
+      (eq ty x y))
+;; (a <=> b) != 0 --> a != b
+(rule (simplify (ne _ (spaceship_s ty x y) (iconst_s _ 0)))
+      (ne ty x y))
+(rule (simplify (ne _ (spaceship_u ty x y) (iconst_s _ 0)))
+      (ne ty x y))
+
+;; (a <=> b) < 0 --> a < b
+(rule (simplify (slt _ (spaceship_s ty x y) (iconst_s _ 0)))
+      (slt ty x y))
+(rule (simplify (slt _ (spaceship_u ty x y) (iconst_s _ 0)))
+      (ult ty x y))
+;; (a <=> b) <= 0 --> a <= b
+(rule (simplify (sle _ (spaceship_s ty x y) (iconst_s _ 0)))
+      (sle ty x y))
+(rule (simplify (sle _ (spaceship_u ty x y) (iconst_s _ 0)))
+      (ule ty x y))
+;; (a <=> b) > 0 --> a > b
+(rule (simplify (sgt _ (spaceship_s ty x y) (iconst_s _ 0)))
+      (sgt ty x y))
+(rule (simplify (sgt _ (spaceship_u ty x y) (iconst_s _ 0)))
+      (ugt ty x y))
+;; (a <=> b) >= 0 --> a >= b
+(rule (simplify (sge _ (spaceship_s ty x y) (iconst_s _ 0)))
+      (sge ty x y))
+(rule (simplify (sge _ (spaceship_u ty x y) (iconst_s _ 0)))
+      (uge ty x y))
+
+;; Rust's `sort_by` uses `compare(a, b) == Less`, which the general icmp rules
+;; can't simplify to a comparison against zero, so catch things like that too.
+(rule (simplify (eq _ (spaceship_s ty x y) (iconst_s _ -1)))
+      (slt ty x y))
+(rule (simplify (eq _ (spaceship_u ty x y) (iconst_s _ -1)))
+      (ult ty x y))
+(rule (simplify (ne _ (spaceship_s ty x y) (iconst_s _ -1)))
+      (sge ty x y))
+(rule (simplify (ne _ (spaceship_u ty x y) (iconst_s _ -1)))
+      (uge ty x y))
+(rule (simplify (eq _ (spaceship_s ty x y) (iconst_s _ 1)))
+      (sgt ty x y))
+(rule (simplify (eq _ (spaceship_u ty x y) (iconst_s _ 1)))
+      (ugt ty x y))
+(rule (simplify (ne _ (spaceship_s ty x y) (iconst_s _ 1)))
+      (sle ty x y))
+(rule (simplify (ne _ (spaceship_u ty x y) (iconst_s _ 1)))
+      (ule ty x y))

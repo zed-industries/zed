@@ -1,0 +1,18 @@
+[package]
+name = "failspot"
+version = "0.2.0"
+authors = ["Chris Martin <marti4d@live.ca>"]
+edition = "2021"
+description = "A testing library that makes it easy(ish) to add intentional errors to a program"
+readme = "README.md"
+repository = "https://github.com/marti4d/failspot"
+license = "MIT"
+keywords = ["error", "error-handling", "testing"]
+categories = ["development-tools::testing"]
+
+
+[features]
+enabled = ["dep:flagset"]
+
+[dependencies]
+flagset = { version = "0.4.6", optional = true }

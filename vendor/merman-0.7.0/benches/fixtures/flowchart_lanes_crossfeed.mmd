@@ -1,0 +1,35 @@
+flowchart LR
+  subgraph Ingress
+    direction TB
+    I1[Edge]
+    I2[Gate]
+    I3[Normalize]
+    I1 --> I2 --> I3
+  end
+
+  subgraph Processing
+    direction TB
+    P1[Route]
+    P2[Validate]
+    P3[Enrich]
+    P4[Score]
+    P1 --> P2 --> P3 --> P4
+  end
+
+  subgraph Egress
+    direction TB
+    E1[Queue]
+    E2[Dispatch]
+    E3[Ack]
+    E1 --> E2 --> E3
+  end
+
+  I3 --> P1
+  P4 --> E1
+
+  I2 -.crossfeed.-> P3
+  I3 -.crossfeed.-> P2
+  P2 -.feedback.-> I3
+  P3 -.feedback.-> I2
+  P4 -.status.-> E2
+  E2 -.retry.-> P2

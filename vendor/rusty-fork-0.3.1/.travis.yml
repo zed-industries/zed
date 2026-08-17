@@ -1,0 +1,10 @@
+language: rust
+sudo: false
+dist: trusty
+rust:
+- 1.32.0
+- stable
+- beta
+- nightly
+
+cache: cargo

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", "schedule:weekly"],
+  "dependencyDashboard": true,
+  "prConcurrentLimit": 20,
+  "prHourlyLimit": 200,
+  "labels": ["dependencies"],
+  "packageRules": [
+    {
+      "matchUpdateTypes": ["patch"],
+      "matchCurrentVersion": "<1.0.0",
+      "groupName": "Minor Updates",
+      "description": "Patch updates to 0.x.y crates are treated as compatible by cargo"
+    },
+    {
+      "matchUpdateTypes": ["minor", "patch"],
+      "matchCurrentVersion": ">=1.0.0",
+      "groupName": "Minor Updates",
+      "description": "Minor and patch updates to x.y.z crates are treated as compatible by cargo"
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+[package]
+name = "core-text"
+version = "21.0.0"
+authors = ["The Servo Project Developers"]
+description = "Bindings to the Core Text framework."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/servo/core-foundation-rs"
+edition = "2018"
+
+[package.metadata.docs.rs]
+all-features = true
+default-target = "x86_64-apple-darwin"
+
+[features]
+default = ["mountainlion", "link"]
+# For OS X 10.7 compat, exclude this feature. It will exclude some things from
+# the exposed APIs in the crate.
+mountainlion = []
+# Disable to manually link. Enabled by default.
+link = ["core-foundation/link", "core-graphics/link"]
+
+[dependencies]
+foreign-types = "0.5"
+libc = "0.2"
+core-foundation = { default-features = false, path = "../core-foundation", version = "0.10" }
+core-graphics = { default-features = false, path = "../core-graphics", version = "0.24" }

@@ -1,0 +1,23 @@
+[package]
+name = "async-recursion"
+version = "1.1.1"
+authors = ["Robert Usher <266585+dcchut@users.noreply.github.com>"]
+edition = "2018"
+license = "MIT OR Apache-2.0"
+description = "Recursion for async functions"
+repository = "https://github.com/dcchut/async-recursion"
+documentation = "https://docs.rs/async-recursion"
+readme = "README.md"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = { version = "1.0", default-features = false }
+quote = { version = "1.0", default-features = false }
+syn = { version = "2.0", features = ["full", "visit-mut", "parsing", "printing", "proc-macro", "clone-impls"],  default-features = false }
+
+[dev-dependencies]
+futures-executor = "0.3"
+trybuild = "1.0"
+macrotest = "1.0"

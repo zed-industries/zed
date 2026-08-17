@@ -1,0 +1,53 @@
+[package]
+name = "io-extras"
+version = "0.18.4"
+description = "File/socket handle/descriptor utilities"
+authors = ["Dan Gohman <dev@sunfishcode.online>"]
+edition = "2021"
+license = "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
+keywords = ["api", "io", "stream"]
+categories = ["os", "rust-patterns"]
+repository = "https://github.com/sunfishcode/io-extras"
+include = ["src", "build.rs", "Cargo.toml", "COPYRIGHT", "LICENSE*", "/*.md"]
+rust-version = "1.63"
+
+[dependencies]
+io-lifetimes = "2.0.0"
+
+# Optionally depend on async-std to implement traits for its types.
+async-std = { version = "1.13.0", features = ["io_safety"], optional = true }
+# Optionally depend on tokio to implement traits for its types.
+tokio = { version = "1.6.0", features = ["io-std", "fs", "net", "process"], optional = true }
+# Optionally depend on os_pipe to implement traits for its types.
+os_pipe = { version = "1.2.1", optional = true }
+# Optionally depend on socket2 to implement traits for its types.
+socket2 = { version = "0.5.7", optional = true }
+# Optionally depend on mio to implement traits for its types.
+mio = { version = "1.0.2", optional = true }
+
+[target.'cfg(windows)'.dependencies.windows-sys]
+version = ">=0.52, <=0.59"
+features = [
+    "Win32_Foundation",
+    "Win32_Networking_WinSock",
+    "Win32_System_Console",
+]
+
+[dev-dependencies]
+os_pipe = "1.0.0"
+
+[features]
+default = []
+use_mio_net = ["mio", "mio/net"]
+use_mio_os_ext = ["mio", "mio/os-ext"]
+use_async_std = ["async-std"]
+use_tokio = ["tokio"]
+use_socket2 = ["socket2"]
+use_os_pipe = ["os_pipe"]
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = [
+    'cfg(can_vector)',
+    'cfg(write_all_vectored)'
+]

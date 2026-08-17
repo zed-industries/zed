@@ -1,0 +1,7 @@
+---
+source: codespan-reporting/tests/term.rs
+expression: TEST_DATA.emit_no_color(&config)
+---
+same_range:1:5: error: Unexpected token
+
+

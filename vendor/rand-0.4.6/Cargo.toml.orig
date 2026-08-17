@@ -1,0 +1,39 @@
+[package]
+name = "rand"
+version = "0.4.6"
+authors = ["The Rust Project Developers"]
+license = "MIT/Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/rust-lang-nursery/rand"
+documentation = "https://docs.rs/rand"
+homepage = "https://github.com/rust-lang-nursery/rand"
+description = """
+Random number generators and other randomness functionality.
+"""
+keywords = ["random", "rng"]
+categories = ["algorithms"]
+
+[features]
+default = ["std"]
+nightly = ["i128_support"] # enables all features requiring nightly rust
+
+std = ["libc"] # default feature; without this rand uses libcore
+alloc = []  # enables Vec and Box support without std
+
+i128_support = [] # enables i128 and u128 support
+
+[target.'cfg(unix)'.dependencies]
+libc = { version = "0.2", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["minwindef", "ntsecapi", "profileapi", "winnt"] }
+
+[workspace]
+members = ["rand-derive"]
+
+[target.'cfg(target_os = "fuchsia")'.dependencies]
+fuchsia-cprng = "0.1.0"
+
+[target.'cfg(target_env = "sgx")'.dependencies]
+rdrand = "0.4.0"
+rand_core = { version = "0.3", default-features = false }

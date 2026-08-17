@@ -1,0 +1,5 @@
+package foo:foo;
+
+world module {
+  import foo: interface {}
+}

@@ -1,0 +1,32 @@
+---
+- name: Spec Example 8.8. Literal Content [1.3]
+  from: DWX9, modified for YAML 1.3
+  tags: spec literal scalar comment whitespace 1.3-mod
+  yaml: |
+    --- |
+    ␣
+    ␣␣
+      literal
+    ␣␣␣
+    ␣␣
+      text
+
+     # Comment
+  tree: |
+    +STR
+     +DOC ---
+      =VAL |\n\nliteral\n \n\ntext\n
+     -DOC
+    -STR
+  json: |
+    "\n\nliteral\n \n\ntext\n"
+  dump: |
+    "\n\nliteral\n \n\ntext\n"
+  emit: |
+    --- |
+
+
+      literal
+    ␣␣␣
+
+      text

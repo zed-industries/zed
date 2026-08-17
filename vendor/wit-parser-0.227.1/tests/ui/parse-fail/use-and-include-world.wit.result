@@ -1,0 +1,5 @@
+failed to resolve directory while parsing WIT for path [tests/ui/parse-fail/use-and-include-world]: failed to parse package: tests/ui/parse-fail/use-and-include-world: name `bar` is defined as an interface, not a world
+     --> tests/ui/parse-fail/use-and-include-world/root.wit:6:21
+      |
+    6 |     include foo:baz/bar;
+      |                     ^--

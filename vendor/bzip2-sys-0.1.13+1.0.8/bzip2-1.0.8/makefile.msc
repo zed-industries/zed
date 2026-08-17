@@ -1,0 +1,63 @@
+# Makefile for Microsoft Visual C++ 6.0
+# usage: nmake -f makefile.msc
+# K.M. Syring (syring@gsf.de)
+# Fixed up by JRS for bzip2-0.9.5d release.
+
+CC=cl
+CFLAGS= -DWIN32 -MD -Ox -D_FILE_OFFSET_BITS=64 -nologo
+
+OBJS= blocksort.obj  \
+      huffman.obj    \
+      crctable.obj   \
+      randtable.obj  \
+      compress.obj   \
+      decompress.obj \
+      bzlib.obj
+
+all: lib bzip2 test
+
+bzip2: lib
+	$(CC) $(CFLAGS) -o bzip2 bzip2.c libbz2.lib setargv.obj
+	$(CC) $(CFLAGS) -o bzip2recover bzip2recover.c
+
+lib: $(OBJS)
+	lib /out:libbz2.lib $(OBJS)
+
+test: bzip2
+	type words1
+	.\\bzip2 -1  < sample1.ref > sample1.rb2
+	.\\bzip2 -2  < sample2.ref > sample2.rb2
+	.\\bzip2 -3  < sample3.ref > sample3.rb2
+	.\\bzip2 -d  < sample1.bz2 > sample1.tst
+	.\\bzip2 -d  < sample2.bz2 > sample2.tst
+	.\\bzip2 -ds < sample3.bz2 > sample3.tst
+	@echo All six of the fc's should find no differences.
+	@echo If fc finds an error on sample3.bz2, this could be
+	@echo because WinZip's 'TAR file smart CR/LF conversion'
+	@echo is too clever for its own good.  Disable this option.
+	@echo The correct size for sample3.ref is 120,244.  If it
+	@echo is 150,251, WinZip has messed it up.
+	fc sample1.bz2 sample1.rb2 
+	fc sample2.bz2 sample2.rb2
+	fc sample3.bz2 sample3.rb2
+	fc sample1.tst sample1.ref
+	fc sample2.tst sample2.ref
+	fc sample3.tst sample3.ref
+
+
+
+clean: 
+	del *.obj
+	del libbz2.lib 
+	del bzip2.exe
+	del bzip2recover.exe
+	del sample1.rb2 
+	del sample2.rb2 
+	del sample3.rb2
+	del sample1.tst 
+	del sample2.tst
+	del sample3.tst
+
+.c.obj: 
+	$(CC) $(CFLAGS) -c $*.c -o $*.obj
+

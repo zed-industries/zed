@@ -1,0 +1,17 @@
+name: Nightly Fuzzing
+
+on:
+  schedule:
+    - cron: '0 2 * * *' # every day at 2:00 UTC
+  workflow_dispatch:
+
+jobs:
+  fuzz_reader:
+    name: Fuzzing Reader
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo install cargo-fuzz
+      - run: cargo fuzz run safe_read --no-default-features -- -max_total_time=300 -max_len=512000
+      - run: cargo fuzz run safe_read_create --no-default-features -- -max_total_time=300 -max_len=512000

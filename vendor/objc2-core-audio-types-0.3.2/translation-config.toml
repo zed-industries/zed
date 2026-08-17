@@ -1,0 +1,22 @@
+framework = "CoreAudioTypes"
+crate = "objc2-core-audio-types"
+required-crates = []
+link = false # This framework only contains types
+custom-lib-rs = true
+macos = "10.15"
+maccatalyst = "13.0"
+ios = "13.0"
+tvos = "13.0"
+watchos = "6.0"
+visionos = "1.0"
+
+# Differs based on architecture.
+typedef.AVAudioInteger.skipped = true
+typedef.AVAudioUInteger.skipped = true
+
+# Differs based on platform.
+typedef.AudioSampleType.skipped = true
+typedef.AudioUnitSampleType.skipped = true
+const.kAudioUnitSampleFractionBits.skipped = true
+const.kAudioFormatFlagsCanonical.skipped = true
+const.kAudioFormatFlagsAudioUnitCanonical.skipped = true

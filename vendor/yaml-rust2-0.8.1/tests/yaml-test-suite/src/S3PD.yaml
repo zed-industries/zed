@@ -1,0 +1,29 @@
+---
+- name: Spec Example 8.18. Implicit Block Mapping Entries
+  from: http://www.yaml.org/spec/1.2/spec.html#id2798896
+  tags: empty-key spec mapping
+  yaml: |
+    plain key: in-line value
+    : # Both empty
+    "quoted key":
+    - entry
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :plain key
+       =VAL :in-line value
+       =VAL :
+       =VAL :
+       =VAL "quoted key
+       +SEQ
+        =VAL :entry
+       -SEQ
+      -MAP
+     -DOC
+    -STR
+  emit: |
+    plain key: in-line value
+    :
+    "quoted key":
+    - entry

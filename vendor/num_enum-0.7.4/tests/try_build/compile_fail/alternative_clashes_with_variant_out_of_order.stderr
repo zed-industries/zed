@@ -1,0 +1,5 @@
+error: '0' in the alternative values is already attributed to a previous variant
+ --> tests/try_build/compile_fail/alternative_clashes_with_variant_out_of_order.rs:5:36
+  |
+5 |     #[num_enum(alternatives = [5,7,0,3])]
+  |                                    ^

@@ -1,0 +1,17 @@
+[package]
+name = "simd_helpers"
+version = "0.1.0"
+authors = ["Luca Barbato <lu_zero@gentoo.org>"]
+edition = "2018"
+description = "Helpers to write more compact simd code"
+repository = "https://github.com/lu-zero/simd_helpers"
+readme = "README.md"
+keywords = ["proc_macro", "simd"]
+license = "MIT"
+
+[lib]
+proc-macro = true
+test = false
+
+[dependencies]
+quote = "1.0.2"

@@ -1,0 +1,22 @@
+[bans]
+multiple-versions = "deny"
+deny = []
+skip-tree = [
+    # ignore criterion dev-dependency that often have duplicate dependencies internally
+    { name = "criterion" },
+]
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "MIT-0",
+    "Unicode-3.0",
+    "Zlib",
+]
+
+[advisories]
+# ignoring bincode unmaintained advisory as it's a dependency of a dev-dependency it's low risk to users.
+ignore = [
+    "RUSTSEC-2025-0141"
+]

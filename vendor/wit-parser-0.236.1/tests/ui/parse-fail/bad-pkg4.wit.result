@@ -1,0 +1,5 @@
+failed to resolve directory while parsing WIT for path [tests/ui/parse-fail/bad-pkg4]: type `a-name` not defined in interface
+     --> tests/ui/parse-fail/bad-pkg4/root.wit:3:20
+      |
+    3 |   use foo:bar/baz.{a-name};
+      |                    ^-----

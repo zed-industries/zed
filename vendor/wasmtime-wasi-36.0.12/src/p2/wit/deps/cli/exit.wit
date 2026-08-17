@@ -1,0 +1,17 @@
+@since(version = 0.2.0)
+interface exit {
+  /// Exit the current instance and any linked instances.
+  @since(version = 0.2.0)
+  exit: func(status: result);
+
+  /// Exit the current instance and any linked instances, reporting the
+  /// specified status code to the host.
+  ///
+  /// The meaning of the code depends on the context, with 0 usually meaning
+  /// "success", and other values indicating various types of failure.
+  ///
+  /// This function does not return; the effect is analogous to a trap, but
+  /// without the connotation that something bad has happened.
+  @unstable(feature = cli-exit-with-code)
+  exit-with-code: func(status-code: u8);
+}

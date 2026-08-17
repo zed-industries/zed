@@ -1,0 +1,19 @@
+---
+- name: Spec Example 7.6. Double Quoted Lines
+  from: http://www.yaml.org/spec/1.2/spec.html#id2787994
+  tags: spec scalar upto-1.2 whitespace
+  yaml: |
+    " 1st non-empty
+
+     2nd non-empty␣
+    ———»3rd non-empty "
+  tree: |
+    +STR
+     +DOC
+      =VAL " 1st non-empty\n2nd non-empty 3rd non-empty␣
+     -DOC
+    -STR
+  json: |
+    " 1st non-empty\n2nd non-empty 3rd non-empty "
+  dump: |
+    " 1st non-empty\n2nd non-empty 3rd non-empty "

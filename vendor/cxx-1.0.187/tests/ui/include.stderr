@@ -1,0 +1,29 @@
+error: unexpected token
+ --> tests/ui/include.rs:4:28
+  |
+4 |         include!("path/to" what);
+  |                            ^^^^
+
+error: unexpected token
+ --> tests/ui/include.rs:5:28
+  |
+5 |         include!(<path/to> what);
+  |                            ^^^^
+
+error: expected `>`
+ --> tests/ui/include.rs:6:26
+  |
+6 |         include!(<path/to);
+  |                          ^
+
+error: unexpected token in include path
+ --> tests/ui/include.rs:7:23
+  |
+7 |         include!(<path[to]>);
+  |                       ^^^^
+
+error: expected "quoted/path/to" or <bracketed/path/to>
+ --> tests/ui/include.rs:8:18
+  |
+8 |         include!(...);
+  |                  ^

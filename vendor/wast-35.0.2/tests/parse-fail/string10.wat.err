@@ -1,0 +1,5 @@
+bare underscore in numeric literal
+     --> tests/parse-fail/string10.wat:1:6
+      |
+    1 | "\u{1_}"
+      |      ^

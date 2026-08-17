@@ -1,0 +1,12 @@
+---
+- name: Invalid mapping in plain multiline
+  from: '@perlpunk'
+  tags: error mapping
+  fail: true
+  yaml: |
+    this
+     is
+      invalid: x
+  tree: |
+    +STR
+     +DOC

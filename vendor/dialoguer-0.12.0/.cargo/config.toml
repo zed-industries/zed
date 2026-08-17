@@ -1,0 +1,5 @@
+[alias]
+format       = "fmt"
+format-check = "fmt --check"
+lint         = "clippy --all-targets --all-features -- -D warnings"
+test-cover   = "llvm-cov --all-features --lcov --output-path lcov.info"

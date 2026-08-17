@@ -1,0 +1,5 @@
+expected an identifier or string, found ')'
+     --> tests/ui/parse-fail/bad-deprecated2.wit:3:13
+      |
+    3 | @deprecated()
+      |             ^

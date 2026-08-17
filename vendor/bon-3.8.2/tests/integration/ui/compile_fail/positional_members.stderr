@@ -1,0 +1,37 @@
+error[E0308]: mismatched types
+  --> tests/integration/ui/compile_fail/positional_members.rs:28:44
+   |
+28 |     TypePatternMatching::builder(IntoUnit, IntoUnit).build(IntoUnit, IntoUnit);
+   |     ----------------------------           ^^^^^^^^ expected `Option<()>`, found `IntoUnit`
+   |     |
+   |     arguments to this function are incorrect
+   |
+   = note: expected enum `Option<()>`
+            found struct `IntoUnit`
+note: associated function defined here
+  --> tests/integration/ui/compile_fail/positional_members.rs:14:12
+   |
+14 |     struct TypePatternMatching {
+   |            ^^^^^^^^^^^^^^^^^^^
+...
+19 |         _b: Option<()>,
+   |         --------------
+
+error[E0308]: mismatched types
+  --> tests/integration/ui/compile_fail/positional_members.rs:28:70
+   |
+28 |     TypePatternMatching::builder(IntoUnit, IntoUnit).build(IntoUnit, IntoUnit);
+   |                                                      -----           ^^^^^^^^ expected `Option<()>`, found `IntoUnit`
+   |                                                      |
+   |                                                      arguments to this method are incorrect
+   |
+   = note: expected enum `Option<()>`
+            found struct `IntoUnit`
+note: method defined here
+  --> tests/integration/ui/compile_fail/positional_members.rs:14:12
+   |
+14 |     struct TypePatternMatching {
+   |            ^^^^^^^^^^^^^^^^^^^
+...
+25 |         _d: Option<()>,
+   |         --------------

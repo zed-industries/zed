@@ -1,0 +1,17 @@
+package foo:foo;
+
+interface name {
+  record foo {
+    f: u32,
+  }
+}
+
+world module {
+  export name;
+
+  export name: interface {
+    use name.{foo};
+
+    a: func(f: foo);
+  }
+}

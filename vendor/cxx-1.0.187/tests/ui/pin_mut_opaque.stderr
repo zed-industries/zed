@@ -1,0 +1,29 @@
+error: mutable reference to C++ type requires a pin -- use Pin<&mut Opaque>
+ --> tests/ui/pin_mut_opaque.rs:5:19
+  |
+5 |         fn f(arg: &mut Opaque);
+  |                   ^^^^^^^^^^^
+
+error: mutable reference to C++ type requires a pin -- use Pin<&mut CxxString>
+ --> tests/ui/pin_mut_opaque.rs:8:17
+  |
+8 |         fn s(s: &mut CxxString);
+  |                 ^^^^^^^^^^^^^^
+
+error: mutable reference to C++ type requires a pin -- use Pin<&mut CxxVector<...>>
+ --> tests/ui/pin_mut_opaque.rs:9:17
+  |
+9 |         fn v(v: &mut CxxVector<u8>);
+  |                 ^^^^^^^^^^^^^^^^^^
+
+error: mutable reference to opaque C++ type requires a pin -- use `self: Pin<&mut Opaque>`
+ --> tests/ui/pin_mut_opaque.rs:6:14
+  |
+6 |         fn g(&mut self);
+  |              ^^^^^^^^^
+
+error: mutable reference to opaque C++ type requires a pin -- use `self: Pin<&mut Opaque>`
+ --> tests/ui/pin_mut_opaque.rs:7:20
+  |
+7 |         fn h(self: &mut Opaque);
+  |                    ^^^^^^^^^^^

@@ -1,0 +1,16 @@
+# If you have a global config to use LLD on your machine, you might need to enable
+# this config to produce binaries that pass tests
+# [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))']
+# rustflags = [
+#     "-C",
+#     "link-arg=-fuse-ld=lld",
+#     # LLD by default uses xxhash for build ids now, which breaks tests that assume
+#     # GUIDS or longer
+#     "-C",
+#     "link-arg=-Wl,--build-id=sha1",
+# ]
+[target.x86_64-linux-android]
+linker = "x86_64-linux-android30-clang"
+# By default the linker _doesn't_ generate a build-id, however we want one for our tests.
+rustflags = ["-C", "link-args=-Wl,--build-id=sha1"]
+runner = [".cargo/android-runner.sh"]

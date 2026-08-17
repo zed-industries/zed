@@ -1,0 +1,21 @@
+[package]
+name = "core2"
+version = "0.4.0"
+authors = ["Brendan Molloy <brendan@bbqsrc.net>"]
+description = "The bare essentials of std::io for use in no_std. Alloc support is optional."
+license = "Apache-2.0 OR MIT"
+edition = "2018"
+repository = "https://github.com/bbqsrc/core2"
+categories = ["no-std"]
+
+[dependencies]
+memchr = { version = "2", default-features = false }
+
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+nightly = []
+
+[package.metadata.docs.rs]
+features = ["nightly"]

@@ -1,0 +1,139 @@
+{% macro impl_mat4_inverse() %}
+    // Based on https://github.com/g-truc/glm `glm_mat4_inverse`
+    let fac0 = {
+        let swp0a = i32x4_shuffle::<3, 3, 7, 7>(self.w_axis.0, self.z_axis.0);
+        let swp0b = i32x4_shuffle::<2, 2, 6, 6>(self.w_axis.0, self.z_axis.0);
+
+        let swp00 = i32x4_shuffle::<2, 2, 6, 6>(self.z_axis.0, self.y_axis.0);
+        let swp01 = i32x4_shuffle::<0, 0, 4, 6>(swp0a, swp0a);
+        let swp02 = i32x4_shuffle::<0, 0, 4, 6>(swp0b, swp0b);
+        let swp03 = i32x4_shuffle::<3, 3, 7, 7>(self.z_axis.0, self.y_axis.0);
+
+        let mul00 = f32x4_mul(swp00, swp01);
+        let mul01 = f32x4_mul(swp02, swp03);
+        f32x4_sub(mul00, mul01)
+    };
+    let fac1 = {
+        let swp0a = i32x4_shuffle::<3, 3, 7, 7>(self.w_axis.0, self.z_axis.0);
+        let swp0b = i32x4_shuffle::<1, 1, 5, 5>(self.w_axis.0, self.z_axis.0);
+
+        let swp00 = i32x4_shuffle::<1, 1, 5, 5>(self.z_axis.0, self.y_axis.0);
+        let swp01 = i32x4_shuffle::<0, 0, 4, 6>(swp0a, swp0a);
+        let swp02 = i32x4_shuffle::<0, 0, 4, 6>(swp0b, swp0b);
+        let swp03 = i32x4_shuffle::<3, 3, 7, 7>(self.z_axis.0, self.y_axis.0);
+
+        let mul00 = f32x4_mul(swp00, swp01);
+        let mul01 = f32x4_mul(swp02, swp03);
+        f32x4_sub(mul00, mul01)
+    };
+    let fac2 = {
+        let swp0a = i32x4_shuffle::<2, 2, 6, 6>(self.w_axis.0, self.z_axis.0);
+        let swp0b = i32x4_shuffle::<1, 1, 5, 5>(self.w_axis.0, self.z_axis.0);
+
+        let swp00 = i32x4_shuffle::<1, 1, 5, 5>(self.z_axis.0, self.y_axis.0);
+        let swp01 = i32x4_shuffle::<0, 0, 4, 6>(swp0a, swp0a);
+        let swp02 = i32x4_shuffle::<0, 0, 4, 6>(swp0b, swp0b);
+        let swp03 = i32x4_shuffle::<2, 2, 6, 6>(self.z_axis.0, self.y_axis.0);
+
+        let mul00 = f32x4_mul(swp00, swp01);
+        let mul01 = f32x4_mul(swp02, swp03);
+        f32x4_sub(mul00, mul01)
+    };
+    let fac3 = {
+        let swp0a = i32x4_shuffle::<3, 3, 7, 7>(self.w_axis.0, self.z_axis.0);
+        let swp0b = i32x4_shuffle::<0, 0, 4, 4>(self.w_axis.0, self.z_axis.0);
+
+        let swp00 = i32x4_shuffle::<0, 0, 4, 4>(self.z_axis.0, self.y_axis.0);
+        let swp01 = i32x4_shuffle::<0, 0, 4, 6>(swp0a, swp0a);
+        let swp02 = i32x4_shuffle::<0, 0, 4, 6>(swp0b, swp0b);
+        let swp03 = i32x4_shuffle::<3, 3, 7, 7>(self.z_axis.0, self.y_axis.0);
+
+        let mul00 = f32x4_mul(swp00, swp01);
+        let mul01 = f32x4_mul(swp02, swp03);
+        f32x4_sub(mul00, mul01)
+    };
+    let fac4 = {
+        let swp0a = i32x4_shuffle::<2, 2, 6, 6>(self.w_axis.0, self.z_axis.0);
+        let swp0b = i32x4_shuffle::<0, 0, 4, 4>(self.w_axis.0, self.z_axis.0);
+
+        let swp00 = i32x4_shuffle::<0, 0, 4, 4>(self.z_axis.0, self.y_axis.0);
+        let swp01 = i32x4_shuffle::<0, 0, 4, 6>(swp0a, swp0a);
+        let swp02 = i32x4_shuffle::<0, 0, 4, 6>(swp0b, swp0b);
+        let swp03 = i32x4_shuffle::<2, 2, 6, 6>(self.z_axis.0, self.y_axis.0);
+
+        let mul00 = f32x4_mul(swp00, swp01);
+        let mul01 = f32x4_mul(swp02, swp03);
+        f32x4_sub(mul00, mul01)
+    };
+    let fac5 = {
+        let swp0a = i32x4_shuffle::<1, 1, 5, 5>(self.w_axis.0, self.z_axis.0);
+        let swp0b = i32x4_shuffle::<0, 0, 4, 4>(self.w_axis.0, self.z_axis.0);
+
+        let swp00 = i32x4_shuffle::<0, 0, 4, 4>(self.z_axis.0, self.y_axis.0);
+        let swp01 = i32x4_shuffle::<0, 0, 4, 6>(swp0a, swp0a);
+        let swp02 = i32x4_shuffle::<0, 0, 4, 6>(swp0b, swp0b);
+        let swp03 = i32x4_shuffle::<1, 1, 5, 5>(self.z_axis.0, self.y_axis.0);
+
+        let mul00 = f32x4_mul(swp00, swp01);
+        let mul01 = f32x4_mul(swp02, swp03);
+        f32x4_sub(mul00, mul01)
+    };
+    let sign_a = f32x4(-1.0, 1.0, -1.0, 1.0);
+    let sign_b = f32x4(1.0, -1.0, 1.0, -1.0);
+
+    let temp0 = i32x4_shuffle::<0, 0, 4, 4>(self.y_axis.0, self.x_axis.0);
+    let vec0 = i32x4_shuffle::<0, 2, 6, 6>(temp0, temp0);
+
+    let temp1 = i32x4_shuffle::<1, 1, 5, 5>(self.y_axis.0, self.x_axis.0);
+    let vec1 = i32x4_shuffle::<0, 2, 6, 6>(temp1, temp1);
+
+    let temp2 = i32x4_shuffle::<2, 2, 6, 6>(self.y_axis.0, self.x_axis.0);
+    let vec2 = i32x4_shuffle::<0, 2, 6, 6>(temp2, temp2);
+
+    let temp3 = i32x4_shuffle::<3, 3, 7, 7>(self.y_axis.0, self.x_axis.0);
+    let vec3 = i32x4_shuffle::<0, 2, 6, 6>(temp3, temp3);
+
+    let mul00 = f32x4_mul(vec1, fac0);
+    let mul01 = f32x4_mul(vec2, fac1);
+    let mul02 = f32x4_mul(vec3, fac2);
+    let sub00 = f32x4_sub(mul00, mul01);
+    let add00 = f32x4_add(sub00, mul02);
+    let inv0 = f32x4_mul(sign_b, add00);
+
+    let mul03 = f32x4_mul(vec0, fac0);
+    let mul04 = f32x4_mul(vec2, fac3);
+    let mul05 = f32x4_mul(vec3, fac4);
+    let sub01 = f32x4_sub(mul03, mul04);
+    let add01 = f32x4_add(sub01, mul05);
+    let inv1 = f32x4_mul(sign_a, add01);
+
+    let mul06 = f32x4_mul(vec0, fac1);
+    let mul07 = f32x4_mul(vec1, fac3);
+    let mul08 = f32x4_mul(vec3, fac5);
+    let sub02 = f32x4_sub(mul06, mul07);
+    let add02 = f32x4_add(sub02, mul08);
+    let inv2 = f32x4_mul(sign_b, add02);
+
+    let mul09 = f32x4_mul(vec0, fac2);
+    let mul10 = f32x4_mul(vec1, fac4);
+    let mul11 = f32x4_mul(vec2, fac5);
+    let sub03 = f32x4_sub(mul09, mul10);
+    let add03 = f32x4_add(sub03, mul11);
+    let inv3 = f32x4_mul(sign_a, add03);
+
+    let row0 = i32x4_shuffle::<0, 0, 4, 4>(inv0, inv1);
+    let row1 = i32x4_shuffle::<0, 0, 4, 4>(inv2, inv3);
+    let row2 = i32x4_shuffle::<0, 2, 4, 6>(row0, row1);
+
+    let dot0 = dot4(self.x_axis.0, row2);
+    glam_assert!(dot0 != 0.0);
+
+    let rcp0 = f32x4_splat(dot0.recip());
+
+    Self {
+        x_axis: Vec4(f32x4_mul(inv0, rcp0)),
+        y_axis: Vec4(f32x4_mul(inv1, rcp0)),
+        z_axis: Vec4(f32x4_mul(inv2, rcp0)),
+        w_axis: Vec4(f32x4_mul(inv3, rcp0)),
+    }
+{% endmacro impl_mat4_inverse %}

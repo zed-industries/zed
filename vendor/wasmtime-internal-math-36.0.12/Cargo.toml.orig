@@ -1,0 +1,22 @@
+[package]
+name = "wasmtime-internal-math"
+version.workspace = true
+authors.workspace = true
+description = "INTERNAL: Low-level math routines used in Wasmtime"
+documentation = "https://docs.rs/wasmtime-math"
+license = "Apache-2.0 WITH LLVM-exception"
+repository = "https://github.com/bytecodealliance/wasmtime"
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+std = []
+
+[dependencies]
+libm = { workspace = true }

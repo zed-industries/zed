@@ -1,0 +1,99 @@
+[package]
+name = "postcard"
+version = "1.1.3"
+authors = ["James Munns <james@onevariable.com>"]
+edition = "2021"
+readme = "README.md"
+repository = "https://github.com/jamesmunns/postcard"
+description = "A no_std + serde compatible message library for Rust"
+license = "MIT OR Apache-2.0"
+categories = [
+    "embedded",
+    "no-std",
+]
+keywords = [
+    "serde",
+    "cobs",
+    "framing",
+]
+documentation = "https://docs.rs/postcard/"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+
+[dependencies.heapless]
+version = "0.7.0"
+default-features = false
+features = ["serde"]
+optional = true
+
+[dependencies.serde]
+version = "1.0.100"
+default-features = false
+features = ["derive"]
+
+[dependencies.cobs]
+version = "0.3.0"
+default-features = false
+
+[dependencies.defmt]
+version = "1"
+optional = true
+
+[dependencies.embedded-io-04]
+package = "embedded-io"
+version = "0.4"
+optional = true
+
+[dependencies.embedded-io-06]
+package = "embedded-io"
+version = "0.6"
+optional = true
+
+[dependencies.postcard-derive]
+version = "0.2.0"
+optional = true
+
+[dependencies.crc]
+version = "3.0.1"
+optional = true
+
+[dependencies.nalgebra_v0_33]
+package = "nalgebra"
+version = "0.33.0"
+optional = true
+default-features = false
+
+[features]
+default = ["heapless-cas"]
+
+# Enables support for `embedded-io` traits
+# This feature will track the latest `embedded-io` when major releases are made
+embedded-io = ["dep:embedded-io-04"]
+
+# Specific versions of `embedded-io` can be selected through the features below
+embedded-io-04 = ["dep:embedded-io-04"]
+embedded-io-06 = ["dep:embedded-io-06"]
+
+use-std = ["serde/std", "alloc"]
+heapless-cas = ["heapless", "dep:heapless", "heapless/cas"]
+alloc = ["serde/alloc", "embedded-io-04?/alloc", "embedded-io-06?/alloc"]
+use-defmt = ["defmt"]
+use-crc = ["crc"]
+
+# Does nothing, for compat only
+paste = []
+
+# Experimental features!
+#
+# NOT subject to SemVer guarantees!
+experimental-derive = ["postcard-derive"]
+core-num-saturating = []
+nalgebra-v0_33 = ["nalgebra_v0_33"]
+crc = ["dep:crc"]
+defmt = ["dep:defmt"]
+heapless = ["dep:heapless"]
+postcard-derive = ["dep:postcard-derive"]

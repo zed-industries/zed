@@ -1,0 +1,20 @@
+[env]
+FUZZ_RUNS = 1000
+
+[tasks.fuzz]
+dependencies = [
+    "fuzz-arithmetic",
+    "fuzz-constructors"
+]
+
+[tasks.fuzz-arithmetic]
+toolchain = "nightly"
+install_crate = "cargo-fuzz"
+command = "cargo"
+args = ["fuzz", "run", "arithmetic", "--", "-runs=${FUZZ_RUNS}"]
+
+[tasks.fuzz-constructors]
+toolchain = "nightly"
+install_crate = "cargo-fuzz"
+command = "cargo"
+args = ["fuzz", "run", "constructors", "--", "-runs=${FUZZ_RUNS}"]

@@ -1,0 +1,42 @@
+[package]
+name = "atoi"
+version = "2.0.0"
+authors = ["Markus Klein"]
+license = "MIT"
+repository = "https://github.com/pacman82/atoi-rs"
+documentation = "https://docs.rs/atoi/"
+edition = "2021"
+rust-version = "1.57.0"
+
+# A short blurb about the package. This is not rendered in any format when
+# uploaded to crates.io (aka this is not markdown).
+description = "Parse integers directly from `[u8]` slices in safe code"
+
+# This is a list of up to five keywords that describe this crate. Keywords
+# are searchable on crates.io, and you may choose any words that would
+# help someone find this crate.
+keywords = ["atoi", "conversion", "integer"]
+
+# This is a list of up to five categories where this crate would fit.
+# Categories are a fixed list available at crates.io/category_slugs, and
+# they must match exactly.
+categories = ["parsing"]
+
+# This points to a file under the package root (relative to this `Cargo.toml`).
+# The contents of this file are stored and indexed in the registry.
+# crates.io will render this file and place the result on the crate's page.
+readme = "README.md"
+
+[features]
+default = ["std"]
+std = ["num-traits/std"]
+
+[dependencies]
+num-traits = { version = "0.2.14", default-features = false }
+
+[dev-dependencies]
+criterion = "0.4.0"
+
+[[bench]]
+name = "benches"
+harness = false

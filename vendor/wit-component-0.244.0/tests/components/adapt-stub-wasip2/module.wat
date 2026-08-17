@@ -1,0 +1,11 @@
+(module
+  (type (func))
+  (type (func (param i32)))
+  (type (func (param i32 i32 i32 i32) (result i32)))
+  (import "wasi:cli/environment@0.2.0" "get-environment" (func $get-environment (type 1)))
+  (func $start (type 0))
+  (func $realloc (type 2) unreachable)
+  (export "cabi_realloc" (func $realloc))
+  (memory (export "memory") 1)
+  (start $start)
+)

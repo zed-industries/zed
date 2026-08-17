@@ -1,0 +1,22 @@
+[graph]
+all-features = true
+
+[advisories]
+ignore = [
+]
+
+[bans]
+multiple-versions = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+
+[licenses]
+# We want really high confidence when inferring licenses from text
+confidence-threshold = 0.93
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+]

@@ -1,0 +1,5 @@
+interface or world `b` depends on itself
+     --> tests/ui/parse-fail/include-cycle.wit:7:7
+      |
+    7 | world b {
+      |       ^

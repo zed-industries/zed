@@ -1,0 +1,174 @@
+{
+  "worlds": [
+    {
+      "name": "w-bar",
+      "imports": {
+        "interface-0": {
+          "interface": {
+            "id": 0
+          }
+        },
+        "interface-1": {
+          "interface": {
+            "id": 1
+          }
+        },
+        "interface-2": {
+          "interface": {
+            "id": 2
+          }
+        }
+      },
+      "exports": {},
+      "package": 3
+    },
+    {
+      "name": "w-qux",
+      "imports": {
+        "interface-0": {
+          "interface": {
+            "id": 0
+          }
+        },
+        "interface-1": {
+          "interface": {
+            "id": 1
+          }
+        }
+      },
+      "exports": {},
+      "package": 4
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "types",
+      "types": {
+        "t2": 0
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "types",
+      "types": {
+        "t2": 1,
+        "a": 2
+      },
+      "functions": {},
+      "package": 1
+    },
+    {
+      "name": "types",
+      "types": {
+        "a": 3,
+        "b": 4
+      },
+      "functions": {},
+      "package": 2
+    }
+  ],
+  "types": [
+    {
+      "name": "t2",
+      "kind": {
+        "type": "string"
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "t2",
+      "kind": {
+        "type": 0
+      },
+      "owner": {
+        "interface": 1
+      }
+    },
+    {
+      "name": "a",
+      "kind": {
+        "record": {
+          "fields": [
+            {
+              "name": "foo",
+              "type": 1
+            }
+          ]
+        }
+      },
+      "owner": {
+        "interface": 1
+      }
+    },
+    {
+      "name": "a",
+      "kind": {
+        "type": 2
+      },
+      "owner": {
+        "interface": 2
+      }
+    },
+    {
+      "name": "b",
+      "kind": {
+        "record": {
+          "fields": [
+            {
+              "name": "r",
+              "type": 3
+            }
+          ]
+        }
+      },
+      "owner": {
+        "interface": 2
+      }
+    }
+  ],
+  "packages": [
+    {
+      "name": "foo:nest",
+      "interfaces": {
+        "types": 0
+      },
+      "worlds": {}
+    },
+    {
+      "name": "foo:dep2",
+      "interfaces": {
+        "types": 1
+      },
+      "worlds": {}
+    },
+    {
+      "name": "foo:dep1",
+      "interfaces": {
+        "types": 2
+      },
+      "worlds": {}
+    },
+    {
+      "name": "foo:bar",
+      "interfaces": {},
+      "worlds": {
+        "w-bar": 0
+      }
+    },
+    {
+      "name": "foo:qux",
+      "interfaces": {},
+      "worlds": {
+        "w-qux": 1
+      }
+    },
+    {
+      "name": "foo:root",
+      "interfaces": {},
+      "worlds": {}
+    }
+  ]
+}

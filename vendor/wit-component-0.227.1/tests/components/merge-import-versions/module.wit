@@ -1,0 +1,30 @@
+package foo:foo;
+
+world module {
+  import a:b/c@0.1.0;
+  import a:b/c@0.1.1;
+}
+
+package a:b@0.1.0 {
+  interface c {
+    resource r {
+      constructor();
+    }
+    x: func(x: string);
+    x2: func(x: string);
+  }
+}
+
+package a:b@0.1.1 {
+  interface c {
+    x: func(x: string);
+    x2: func(x: string);
+    y: func();
+
+    resource r {
+      constructor();
+
+      x: func();
+    }
+  }
+}

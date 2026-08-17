@@ -1,0 +1,163 @@
+// Copyright 2025 LiveKit, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package livekit;
+option go_package = "github.com/livekit/protocol/livekit";
+option csharp_namespace = "LiveKit.Proto";
+option ruby_package = "LiveKit::Proto";
+
+import "livekit_agent_dispatch.proto";
+import "livekit_rtc.proto";
+import "logger/options.proto";
+
+message DialWhatsAppCallRequest {
+  // Required - The phone number id of the business that is initiating the call
+  string whatsapp_phone_number_id = 1;
+  // Required - The number of the user that is supossed to receive the call
+  string whatsapp_to_phone_number = 2 [(logger.redact) = true];
+  // Required - The API key of the business that is initiating the call
+  string whatsapp_api_key = 3 [(logger.redact) = true];
+  // Required - WhatsApp Cloud API version, eg: 23.0, 24.0, etc.
+  string whatsapp_cloud_api_version = 12;
+  // Optional - An arbitrary string you can pass in that is useful for tracking and logging purposes.
+  string whatsapp_biz_opaque_callback_data = 4;
+  // Optional - What LiveKit room should this participant be connected too
+  string room_name = 5;
+  // Optional - Agents to dispatch the call to
+  repeated RoomAgentDispatch agents = 6;
+  // Optional - Identity of the participant in LiveKit room
+  // This is used for logging purposes, so it is advised to not put PII in this field.
+  string participant_identity= 7;
+  // Optional - Name of the participant in LiveKit room
+  string participant_name = 8 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  // Optional - User-defined metadata. Will be attached to a created Participant in the room.
+  string participant_metadata = 9 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  // Optional - User-defined attributes. Will be attached to a created Participant in the room.
+  map<string, string> participant_attributes = 10 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  // Optional - Country where the call terminates as ISO 3166-1 alpha-2 (https://en.wikipedia.org/wiki/ISO_3166-1_alpha-2). This will be used by the livekit infrastructure to route calls.
+  string destination_country = 11;
+  // Next - 13
+}
+
+message DialWhatsAppCallResponse {
+  // Call ID sent by Meta
+  string whatsapp_call_id = 1;
+  // The name of the LiveKit room that the call is connected to
+  string room_name = 2;
+}
+
+message DisconnectWhatsAppCallRequest {
+  enum DisconnectReason {
+    // The call is being disconnected by the business
+    BUSINESS_INITIATED = 0;
+    // The call is disconnected by the user.
+    // This can be tracked as part of call terminate webhook
+    // https://developers.facebook.com/documentation/business-messaging/whatsapp/calling/user-initiated-calls#call-terminate-webhook
+    // Note that this webhook will also be sent when the call is disconnected by the business.
+    // Calling the API twice in such cases will result in an error.
+    USER_INITIATED = 1;
+  }
+
+  // Required - Call ID sent by Meta
+  string whatsapp_call_id = 1;
+  // The API key of the whatsapp business.
+  // Required if the DisconnectReason is BUSINESS_INITIATED.
+  // Optional for  USER_INITIATED as no API call to WhatsApp is needed.
+  string whatsapp_api_key = 2 [(logger.redact) = true];
+  // The reason for disconnecting the call
+  DisconnectReason disconnect_reason = 3;
+}
+
+message DisconnectWhatsAppCallResponse {
+}
+
+message ConnectWhatsAppCallRequest {
+  // Required - Call ID sent by Meta
+  string whatsapp_call_id = 1;
+  // Required - The call connect webhook comes with SDP from Meta
+  // It is the answer SDP for a business initiated call
+  SessionDescription sdp = 2;
+}
+
+message ConnectWhatsAppCallResponse {
+}
+
+message AcceptWhatsAppCallRequest {
+  // Required - The phone number id of the business that is conencting the call
+  string whatsapp_phone_number_id = 1;
+  // Required - The API key of the business that is connecting the call
+  string whatsapp_api_key = 2 [(logger.redact) = true];
+  // Required - WhatsApp Cloud API version, eg: 23.0, 24.0, etc.
+  string whatsapp_cloud_api_version = 13;
+  // Required - Call ID sent by Meta
+  string whatsapp_call_id = 3;
+  // Optional - An arbitrary string you can pass in that is useful for tracking and logging purposes.
+  string whatsapp_biz_opaque_callback_data = 4;
+  // Required - The call accept webhook comes with SDP from Meta
+  // It is the for a user initiated call
+  SessionDescription sdp = 5;
+  // Optional - What LiveKit room should this participant be connected too
+  string room_name = 6;
+  // Optional - Agents to dispatch the call to
+  repeated RoomAgentDispatch agents = 7;
+  // Optional - Identity of the participant in LiveKit room
+  // This is used for logging purposes, so it is advised to not put PII in this field.
+  string participant_identity= 8;
+  // Optional - Name of the participant in LiveKit room
+  string participant_name = 9 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  // Optional - User-defined metadata. Will be attached to a created Participant in the room.
+  string participant_metadata = 10 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  // Optional - User-defined attributes. Will be attached to a created Participant in the room.
+  map<string, string> participant_attributes = 11 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  // Optional - Country where the call terminates as ISO 3166-1 alpha-2 (https://en.wikipedia.org/wiki/ISO_3166-1_alpha-2). This will be used by the livekit infrastructure to route calls.
+  string destination_country = 12;
+  // Next - 14
+}
+
+message AcceptWhatsAppCallResponse {
+  // The name of the LiveKit room that the call is connected to
+  string room_name = 1;
+}
+
+message WhatsAppCall {
+  // list of call ids that are currently active
+  string whatsapp_call_id = 1;
+  // Direction of the call
+  WhatsAppCallDirection direction = 2;
+}
+
+enum WhatsAppCallDirection {
+  WHATSAPP_CALL_DIRECTION_INBOUND = 0;
+  WHATSAPP_CALL_DIRECTION_OUTBOUND = 2;
+}

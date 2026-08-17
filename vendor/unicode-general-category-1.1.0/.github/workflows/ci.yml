@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: ["master"]
+    tags: ["[0-9]+.[0-9]+.[0-9]+"]
+  pull_request:
+    branches: ["master"]
+  workflow_dispatch:
+
+jobs:
+  ci:
+    strategy:
+      matrix:
+        rust: [beta, stable, 1.40.0]
+        os: [ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: rustfmt
+          targets: thumbv7em-none-eabihf
+      - run: cargo fmt -- --check
+      - run: cargo test
+      - run: cargo build --target thumbv7em-none-eabihf

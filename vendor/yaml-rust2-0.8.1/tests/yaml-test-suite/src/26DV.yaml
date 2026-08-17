@@ -1,0 +1,82 @@
+---
+- name: Whitespace around colon in mappings
+  from: '@perlpunk'
+  tags: alias mapping whitespace
+  yaml: |
+    "top1" :␣
+      "key1" : &alias1 scalar1
+    'top2' :␣
+      'key2' : &alias2 scalar2
+    top3: &node3␣
+      *alias1 : scalar3
+    top4:␣
+      *alias2 : scalar4
+    top5   :␣␣␣␣
+      scalar5
+    top6:␣
+      &anchor6 'key6' : scalar6
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL "top1
+       +MAP
+        =VAL "key1
+        =VAL &alias1 :scalar1
+       -MAP
+       =VAL 'top2
+       +MAP
+        =VAL 'key2
+        =VAL &alias2 :scalar2
+       -MAP
+       =VAL :top3
+       +MAP &node3
+        =ALI *alias1
+        =VAL :scalar3
+       -MAP
+       =VAL :top4
+       +MAP
+        =ALI *alias2
+        =VAL :scalar4
+       -MAP
+       =VAL :top5
+       =VAL :scalar5
+       =VAL :top6
+       +MAP
+        =VAL &anchor6 'key6
+        =VAL :scalar6
+       -MAP
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "top1": {
+        "key1": "scalar1"
+      },
+      "top2": {
+        "key2": "scalar2"
+      },
+      "top3": {
+        "scalar1": "scalar3"
+      },
+      "top4": {
+        "scalar2": "scalar4"
+      },
+      "top5": "scalar5",
+      "top6": {
+        "key6": "scalar6"
+      }
+    }
+  dump: |
+    "top1":
+      "key1": &alias1 scalar1
+    'top2':
+      'key2': &alias2 scalar2
+    top3: &node3
+      *alias1 : scalar3
+    top4:
+      *alias2 : scalar4
+    top5: scalar5
+    top6:
+      &anchor6 'key6': scalar6

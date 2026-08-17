@@ -1,0 +1,13 @@
+allowed_external_types = [
+    "aws_smithy_async::*",
+    "aws_smithy_types::*",
+
+    "bytes::bytes::Bytes",
+
+    "http::header::map::HeaderMap",
+    "http::header::value::HeaderValue",
+    "http::request::Request",
+    "http::response::Response",
+    "http::status::StatusCode",
+    "http::uri::Uri",
+]

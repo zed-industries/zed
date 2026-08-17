@@ -1,0 +1,26 @@
+[package]
+name = "libbz2-rs-sys"
+readme = "../README.md"
+description.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["std", "stdio"]
+c-allocator = ["dep:libc"] # use a malloc-based C allocator (rust is picked over c if both are configured)
+rust-allocator = [] # use the rust global allocator (rust is picked over c if both are configured)
+std = ["rust-allocator"]
+export-symbols = []
+custom-prefix = ["export-symbols"] # use the LIBBZ2_RS_SYS_PREFIX to prefix all exported symbols
+testing-prefix = ["export-symbols"] # prefix all symbols with LIBBZ2_RS_SYS_TEST_ for testing
+semver-prefix = ["export-symbols"] # prefix all symbols in a semver-compatible way
+stdio = ["dep:libc"] # corresponds to BZ_NO_STDIO; only the low-level api is available when this flag is disabled
+__internal-fuzz-disable-checksum = []
+
+[dependencies]
+libc = { version = "0.2", optional = true }

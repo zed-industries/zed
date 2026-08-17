@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [dev]
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - run: cargo fmt --all -- --check
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        rust_version: [1.74.0, stable, nightly]
+        platform:
+          # Note: Make sure that we test all the `docs.rs` targets defined in Cargo.toml!
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+          - { target: i686-pc-windows-msvc, os: windows-latest }
+          - {
+              target: x86_64-pc-windows-gnu,
+              os: windows-latest,
+              host: -x86_64-pc-windows-gnu,
+            }
+          - {
+              target: i686-pc-windows-gnu,
+              os: windows-latest,
+              host: -i686-pc-windows-gnu,
+            }
+
+    env:
+      RUST_BACKTRACE: 1
+      CARGO_INCREMENTAL: 0
+      PKG_CONFIG_ALLOW_CROSS: 1
+      RUSTFLAGS: "-C debuginfo=0 --deny warnings"
+      RUSTDOCFLAGS: -Dwarnings
+
+    runs-on: ${{ matrix.platform.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust_version }}${{ matrix.platform.host }}
+          targets: ${{ matrix.platform.target }}
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check documentation
+        run: cargo doc --no-deps --target ${{ matrix.platform.target }} --document-private-items
+
+      - name: Build tests
+        run: cargo test --no-run --verbose --target ${{ matrix.platform.target }}
+
+      - name: Lint with clippy
+        if: matrix.rust_version != 'nightly'
+        run: cargo clippy --all-targets --target ${{ matrix.platform.target }} -- -Dwarnings

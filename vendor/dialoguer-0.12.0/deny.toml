@@ -1,0 +1,6 @@
+[advisories]
+yanked = "deny"
+
+[licenses]
+version = 2
+allow = ["Apache-2.0", "MIT"]

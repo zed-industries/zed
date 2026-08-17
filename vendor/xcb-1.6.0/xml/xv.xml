@@ -1,0 +1,493 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Copyright (C) 2006 Jeremy Kolb.
+All Rights Reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Except as contained in this notice, the names of the authors or their
+institutions shall not be used in advertising or otherwise to promote the
+sale, use or other dealings in this Software without prior written
+authorization from the authors.
+-->
+
+<xcb header="xv" extension-xname="XVideo" extension-name="Xv" major-version="2" minor-version="2">
+    <import>xproto</import>
+    <import>shm</import>
+    <!-- Implements version 2.2 of XV -->
+
+    <!-- XIDs -->
+    <xidtype name="PORT" />
+    <xidtype name="ENCODING" />
+
+    <enum name="Type">
+        <item name="InputMask">
+            <bit>0</bit>
+        </item>
+        <item name="OutputMask">
+            <bit>1</bit>
+        </item>
+        <item name="VideoMask">
+            <bit>2</bit>
+        </item>
+        <item name="StillMask">
+            <bit>3</bit>
+        </item>
+        <item name="ImageMask">
+            <bit>4</bit>
+        </item>
+    </enum>
+
+    <enum name="ImageFormatInfoType">
+        <item name="RGB">
+            <value>0</value>
+        </item>
+        <item name="YUV">
+            <value>1</value>
+        </item>
+    </enum>
+
+    <enum name="ImageFormatInfoFormat">
+        <item name="Packed">
+            <value>0</value>
+        </item>
+        <item name="Planar">
+            <value>1</value>
+        </item>
+    </enum>
+
+    <enum name="AttributeFlag">
+        <item name="Gettable">
+            <bit>0</bit>
+        </item>
+        <item name="Settable">
+            <bit>1</bit>
+        </item>
+    </enum>
+
+    <enum name="VideoNotifyReason">
+        <item name="Started">
+            <value>0</value>
+        </item>
+        <item name="Stopped">
+            <value>1</value>
+        </item>
+        <item name="Busy">
+            <value>2</value>
+        </item>
+        <item name="Preempted">
+            <value>3</value>
+        </item>
+        <item name="HardError">
+            <value>4</value>
+        </item>
+    </enum>
+
+    <enum name="ScanlineOrder">
+        <item name="TopToBottom">
+            <value>0</value>
+        </item>
+        <item name="BottomToTop">
+            <value>1</value>
+        </item>
+    </enum>
+
+    <enum name="GrabPortStatus">
+        <item name="Success">
+            <value>0</value>
+        </item>
+        <item name="BadExtension">
+            <value>1</value>
+        </item>
+        <item name="AlreadyGrabbed">
+            <value>2</value>
+        </item>
+        <item name="InvalidTime">
+            <value>3</value>
+        </item>
+        <item name="BadReply">
+            <value>4</value>
+        </item>
+        <item name="BadAlloc">
+            <value>5</value>
+        </item>
+    </enum>
+
+    <struct name="Rational">
+        <field type="INT32" name="numerator" />
+        <field type="INT32" name="denominator" />
+    </struct>
+
+    <struct name="Format">
+        <field type="VISUALID" name="visual" />
+        <field type="CARD8" name="depth" />
+        <pad bytes="3" />
+    </struct>
+
+    <struct name="AdaptorInfo">
+        <field type="PORT" name="base_id" />
+        <field type="CARD16" name="name_size" />
+        <field type="CARD16" name="num_ports" />
+        <field type="CARD16" name="num_formats" />
+        <field type="CARD8" name="type" mask="Type" />
+        <pad bytes="1" />
+        <list type="char" name="name">
+            <fieldref>name_size</fieldref>
+        </list>
+        <pad align="4" />
+        <list type="Format" name="formats">
+            <fieldref>num_formats</fieldref>
+        </list>
+
+    </struct>
+
+    <struct name="EncodingInfo">
+        <field type="ENCODING" name="encoding" />
+        <field type="CARD16" name="name_size" />
+        <field type="CARD16" name="width" />
+        <field type="CARD16" name="height" />
+        <pad bytes="2" />
+        <field type="Rational" name="rate" />
+        <list type="char" name="name">
+            <fieldref>name_size</fieldref>
+        </list>
+        <pad align="4" />
+    </struct>
+
+    <struct name="Image">
+        <field type="CARD32" name="id" />
+        <field type="CARD16" name="width" />
+        <field type="CARD16" name="height" />
+        <field type="CARD32" name="data_size" />
+        <field type="CARD32" name="num_planes" />
+        <list type="CARD32" name="pitches">
+            <fieldref>num_planes</fieldref>
+        </list>
+        <list type="CARD32" name="offsets">
+            <fieldref>num_planes</fieldref>
+        </list>
+        <list type="CARD8" name="data">
+            <fieldref>data_size</fieldref>
+        </list>
+        <!-- Some XPointer "obdata" for SHM use-->
+    </struct>
+
+    <struct name="AttributeInfo">
+        <field type="CARD32" name="flags" mask="AttributeFlag" />
+        <field type="INT32" name="min" />
+        <field type="INT32" name="max" />
+        <field type="CARD32" name="size" />
+        <list type="char" name="name">
+            <fieldref>size</fieldref>
+        </list>
+        <pad align="4" />
+    </struct>
+
+    <struct name="ImageFormatInfo">
+        <field type="CARD32" name="id" />
+        <field type="CARD8" name="type" enum="ImageFormatInfoType" />
+        <field type="CARD8" name="byte_order" enum="ImageOrder" />
+        <pad bytes="2" />
+        <list type="CARD8" name="guid">
+            <value>16</value>
+        </list>
+        <field type="CARD8" name="bpp" />
+        <field type="CARD8" name="num_planes" />
+        <pad bytes="2" />
+        <field type="CARD8" name="depth" />
+        <pad bytes="3" />
+        <field type="CARD32" name="red_mask" />
+        <field type="CARD32" name="green_mask" />
+        <field type="CARD32" name="blue_mask" />
+        <field type="CARD8" name="format" enum="ImageFormatInfoFormat" />
+        <pad bytes="3" />
+        <field type="CARD32" name="y_sample_bits" />
+        <field type="CARD32" name="u_sample_bits" />
+        <field type="CARD32" name="v_sample_bits" />
+        <field type="CARD32" name="vhorz_y_period" />
+        <field type="CARD32" name="vhorz_u_period" />
+        <field type="CARD32" name="vhorz_v_period" />
+        <field type="CARD32" name="vvert_y_period" />
+        <field type="CARD32" name="vvert_u_period" />
+        <field type="CARD32" name="vvert_v_period" />
+        <list type="CARD8" name="vcomp_order">
+            <value>32</value>
+        </list>
+        <field type="CARD8" name="vscanline_order" enum="ScanlineOrder" />
+        <pad bytes="11" />
+    </struct>
+
+
+    <!-- Errors -->
+    <error name="BadPort" number="0" />
+    <error name="BadEncoding" number="1" />
+    <error name="BadControl" number="2" />
+
+    <!-- Events -->
+    <event name="VideoNotify" number="0">
+        <field type="BYTE" name="reason" enum="VideoNotifyReason" />
+        <field type="TIMESTAMP" name="time" />
+        <field type="DRAWABLE" name="drawable" />
+        <field type="PORT" name="port" />
+    </event>
+
+    <event name="PortNotify" number="1">
+        <pad bytes="1" />
+        <field type="TIMESTAMP" name="time" />
+        <field type="PORT" name="port" />
+        <field type="ATOM" name="attribute" />
+        <field type="INT32" name="value" />
+    </event>
+
+
+    <!-- Requests -->
+    <request name="QueryExtension" opcode="0">
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD16" name="major" />
+            <field type="CARD16" name="minor" />
+        </reply>
+    </request>
+
+    <request name="QueryAdaptors" opcode="1">
+        <field type="WINDOW" name="window" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD16" name="num_adaptors" />
+            <pad bytes="22" />
+            <list type="AdaptorInfo" name="info">
+                <fieldref>num_adaptors</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="QueryEncodings" opcode="2">
+        <field type="PORT" name="port" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD16" name="num_encodings" />
+            <pad bytes="22" />
+            <list type="EncodingInfo" name="info">
+                <fieldref>num_encodings</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GrabPort" opcode="3">
+        <field type="PORT" name="port" />
+        <field type="TIMESTAMP" name="time" altenum="Time" />
+        <reply>
+            <field type="BYTE" name="result" enum="GrabPortStatus" />
+        </reply>
+    </request>
+
+    <request name="UngrabPort" opcode="4">
+        <field type="PORT" name="port" />
+        <field type="TIMESTAMP" name="time" altenum="Time" />
+    </request>
+
+    <request name="PutVideo" opcode="5">
+        <field type="PORT" name="port" />
+        <field type="DRAWABLE" name="drawable" />
+        <field type="GCONTEXT" name="gc" />
+        <field type="INT16" name="vid_x" />
+        <field type="INT16" name="vid_y" />
+        <field type="CARD16" name="vid_w" />
+        <field type="CARD16" name="vid_h" />
+        <field type="INT16" name="drw_x" />
+        <field type="INT16" name="drw_y" />
+        <field type="CARD16" name="drw_w" />
+        <field type="CARD16" name="drw_h" />
+    </request>
+
+    <request name="PutStill" opcode="6">
+        <field type="PORT" name="port" />
+        <field type="DRAWABLE" name="drawable" />
+        <field type="GCONTEXT" name="gc" />
+        <field type="INT16" name="vid_x" />
+        <field type="INT16" name="vid_y" />
+        <field type="CARD16" name="vid_w" />
+        <field type="CARD16" name="vid_h" />
+        <field type="INT16" name="drw_x" />
+        <field type="INT16" name="drw_y" />
+        <field type="CARD16" name="drw_w" />
+        <field type="CARD16" name="drw_h" />
+    </request>
+
+    <request name="GetVideo" opcode="7">
+        <field type="PORT" name="port" />
+        <field type="DRAWABLE" name="drawable" />
+        <field type="GCONTEXT" name="gc" />
+        <field type="INT16" name="vid_x" />
+        <field type="INT16" name="vid_y" />
+        <field type="CARD16" name="vid_w" />
+        <field type="CARD16" name="vid_h" />
+        <field type="INT16" name="drw_x" />
+        <field type="INT16" name="drw_y" />
+        <field type="CARD16" name="drw_w" />
+        <field type="CARD16" name="drw_h" />
+    </request>
+
+    <request name="GetStill" opcode="8">
+        <field type="PORT" name="port" />
+        <field type="DRAWABLE" name="drawable" />
+        <field type="GCONTEXT" name="gc" />
+        <field type="INT16" name="vid_x" />
+        <field type="INT16" name="vid_y" />
+        <field type="CARD16" name="vid_w" />
+        <field type="CARD16" name="vid_h" />
+        <field type="INT16" name="drw_x" />
+        <field type="INT16" name="drw_y" />
+        <field type="CARD16" name="drw_w" />
+        <field type="CARD16" name="drw_h" />
+    </request>
+
+    <request name="StopVideo" opcode="9">
+        <field type="PORT" name="port" />
+        <field type="DRAWABLE" name="drawable" />
+    </request>
+
+    <request name="SelectVideoNotify" opcode="10">
+        <field type="DRAWABLE" name="drawable" />
+        <field type="BOOL" name="onoff" />
+        <pad bytes="3" />
+    </request>
+
+    <request name="SelectPortNotify" opcode="11">
+        <field type="PORT" name="port" />
+        <field type="BOOL" name="onoff" />
+        <pad bytes="3" />
+    </request>
+
+    <request name="QueryBestSize" opcode="12">
+        <field type="PORT" name="port" />
+        <field type="CARD16" name="vid_w" />
+        <field type="CARD16" name="vid_h" />
+        <field type="CARD16" name="drw_w" />
+        <field type="CARD16" name="drw_h" />
+        <field type="BOOL" name="motion" />
+        <pad bytes="3" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD16" name="actual_width" />
+            <field type="CARD16" name="actual_height" />
+        </reply>
+    </request>
+
+    <request name="SetPortAttribute" opcode="13">
+        <field type="PORT" name="port" />
+        <field type="ATOM" name="attribute" />
+        <field type="INT32" name="value" />
+    </request>
+
+    <request name="GetPortAttribute" opcode="14">
+        <field type="PORT" name="port" />
+        <field type="ATOM" name="attribute" />
+        <reply>
+            <pad bytes="1" />
+            <field type="INT32" name="value" />
+        </reply>
+    </request>
+
+    <!-- Not in the docs beyond this point :( -->
+
+    <request name="QueryPortAttributes" opcode="15">
+        <field type="PORT" name="port" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="num_attributes" />
+            <field type="CARD32" name="text_size" />
+            <pad bytes="16" />
+            <list type="AttributeInfo" name="attributes">
+                <fieldref>num_attributes</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="ListImageFormats" opcode="16">
+        <field type="PORT" name="port" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="num_formats" />
+            <pad bytes="20" />
+            <list type="ImageFormatInfo" name="format">
+                <fieldref>num_formats</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="QueryImageAttributes" opcode="17">
+        <field type="PORT" name="port" />
+        <field type="CARD32" name="id" />
+        <field type="CARD16" name="width" />
+        <field type="CARD16" name="height" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="num_planes" />
+            <field type="CARD32" name="data_size" />
+            <field type="CARD16" name="width" />
+            <field type="CARD16" name="height" />
+            <pad bytes="12" />
+            <list type="CARD32" name="pitches">
+                <fieldref>num_planes</fieldref>
+            </list>
+            <list type="CARD32" name="offsets">
+                <fieldref>num_planes</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="PutImage" opcode="18">
+        <field type="PORT" name="port" />
+        <field type="DRAWABLE" name="drawable" />
+        <field type="GCONTEXT" name="gc" />
+        <field type="CARD32" name="id" />
+        <field type="INT16" name="src_x" />
+        <field type="INT16" name="src_y" />
+        <field type="CARD16" name="src_w" />
+        <field type="CARD16" name="src_h" />
+        <field type="INT16" name="drw_x" />
+        <field type="INT16" name="drw_y" />
+        <field type="CARD16" name="drw_w" />
+        <field type="CARD16" name="drw_h" />
+        <field type="CARD16" name="width" />
+        <field type="CARD16" name="height" />
+        <list type="CARD8" name="data" />
+    </request>
+
+    <request name="ShmPutImage" opcode="19">
+        <field type="PORT" name="port" />
+        <field type="DRAWABLE" name="drawable" />
+        <field type="GCONTEXT" name="gc" />
+        <field type="SEG" name="shmseg" />
+        <field type="CARD32" name="id" />
+        <field type="CARD32" name="offset" />
+        <field type="INT16" name="src_x" />
+        <field type="INT16" name="src_y" />
+        <field type="CARD16" name="src_w" />
+        <field type="CARD16" name="src_h" />
+        <field type="INT16" name="drw_x" />
+        <field type="INT16" name="drw_y" />
+        <field type="CARD16" name="drw_w" />
+        <field type="CARD16" name="drw_h" />
+        <field type="CARD16" name="width" />
+        <field type="CARD16" name="height" />
+        <field type="CARD8" name="send_event" />
+        <pad bytes="3" />
+    </request>
+</xcb>

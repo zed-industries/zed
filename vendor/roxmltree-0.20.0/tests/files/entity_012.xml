@@ -1,0 +1,43 @@
+<!DOCTYPE test [
+    <!ENTITY d '&#xD;'>
+    <!ENTITY a '&#xA;'>
+    <!ENTITY da '&#xD;&#xA;'>
+]>
+<root>
+    <p id="1">&a;</p>
+    <p id="2">&a;&a;</p>
+    <p id="3">&a;&a;&a;</p>
+
+    <p id="4">&d;</p>
+    <p id="5">&d;&d;</p>
+    <p id="6">&d;&d;&d;</p>
+
+    <p id="7">&a;&d;</p>
+    <p id="8">&d;&a;</p>
+
+    <p id="9">&a;&d;&a;</p>
+    <p id="10">&d;&a;&d;</p>
+
+    <p id="11">&a;q&a;</p>
+    <p id="12">&d;q&d;</p>
+    <p id="13">&a;q&d;</p>
+    <p id="14">&d;q&a;</p>
+
+    <p id="15">&a;&da;</p>
+    <p id="16">&da;&a;</p>
+    <p id="17">&d;&da;</p>
+    <p id="18">&da;&d;</p>
+    <p id="19">&da;&da;</p>
+
+    <p id="20">&a;&a;q</p>
+    <p id="21">q&a;&a;</p>
+    <p id="22">q&a;&a;q</p>
+
+    <p id="23">&d;&d;q</p>
+    <p id="24">q&d;&d;</p>
+    <p id="25">q&d;&d;q</p>
+
+    <p id="26">&da;&da;q</p>
+    <p id="27">q&da;&da;</p>
+    <p id="28">q&da;&da;q</p>
+</root>

@@ -1,0 +1,38 @@
+---
+- name: Spec Example 8.20. Block Node Types
+  from: http://www.yaml.org/spec/1.2/spec.html#id2799426
+  tags: comment double spec folded tag
+  yaml: |
+    -
+      "flow in block"
+    - >
+     Block scalar
+    - !!map # Block collection
+      foo : bar
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       =VAL "flow in block
+       =VAL >Block scalar\n
+       +MAP <tag:yaml.org,2002:map>
+        =VAL :foo
+        =VAL :bar
+       -MAP
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      "flow in block",
+      "Block scalar\n",
+      {
+        "foo": "bar"
+      }
+    ]
+  dump: |
+    - "flow in block"
+    - >
+      Block scalar
+    - !!map
+      foo: bar

@@ -1,0 +1,1493 @@
+//! Loading, scaling and hinting of glyph outlines.
+//!
+//! This module provides support for retrieving (optionally scaled and hinted)
+//! glyph outlines in the form of vector paths.
+//!
+//! # Drawing a glyph
+//!
+//! Generating SVG [path commands](https://developer.mozilla.org/en-US/docs/Web/SVG/Attribute/d#path_commands)
+//! for a character (this assumes a local variable `font` of type [`FontRef`]):
+//!
+//! ```rust
+//! use skrifa::{
+//!     instance::{LocationRef, Size},
+//!     outline::{DrawSettings, OutlinePen},
+//!     FontRef, MetadataProvider,
+//! };
+//!
+//! # fn wrapper(font: FontRef) {
+//! // First, grab the set of outline glyphs from the font.
+//! let outlines = font.outline_glyphs();
+//!
+//! // Find the glyph identifier for our character.
+//! let glyph_id = font.charmap().map('Q').unwrap();
+//!
+//! // Grab the outline glyph.
+//! let glyph = outlines.get(glyph_id).unwrap();
+//!
+//! // Define how we want the glyph to be drawn. This creates
+//! // settings for an instance without hinting at a size of
+//! // 16px with no variations applied.
+//! let settings = DrawSettings::unhinted(Size::new(16.0), LocationRef::default());
+//!
+//! // Alternatively, we can apply variations like so:
+//! let var_location = font.axes().location(&[("wght", 650.0), ("wdth", 100.0)]);
+//! let settings = DrawSettings::unhinted(Size::new(16.0), &var_location);
+//!
+//! // At this point, we need a "sink" to receive the resulting path. This
+//! // is done by creating an implementation of the OutlinePen trait.
+//!
+//! // Let's make one that generates SVG path data.
+//! #[derive(Default)]
+//! struct SvgPath(String);
+//!
+//! // Implement the OutlinePen trait for this type. This emits the appropriate
+//! // SVG path commands for each element type.
+//! impl OutlinePen for SvgPath {
+//!     fn move_to(&mut self, x: f32, y: f32) {
+//!         self.0.push_str(&format!("M{x:.1},{y:.1} "));
+//!     }
+//!
+//!     fn line_to(&mut self, x: f32, y: f32) {
+//!         self.0.push_str(&format!("L{x:.1},{y:.1} "));
+//!     }
+//!
+//!     fn quad_to(&mut self, cx0: f32, cy0: f32, x: f32, y: f32) {
+//!         self.0
+//!             .push_str(&format!("Q{cx0:.1},{cy0:.1} {x:.1},{y:.1} "));
+//!     }
+//!
+//!     fn curve_to(&mut self, cx0: f32, cy0: f32, cx1: f32, cy1: f32, x: f32, y: f32) {
+//!         self.0.push_str(&format!(
+//!             "C{cx0:.1},{cy0:.1} {cx1:.1},{cy1:.1} {x:.1},{y:.1} "
+//!         ));
+//!     }
+//!
+//!     fn close(&mut self) {
+//!         self.0.push_str("Z ");
+//!     }
+//! }
+//! // Now, construct an instance of our pen.
+//! let mut svg_path = SvgPath::default();
+//!
+//! // And draw the glyph!
+//! glyph.draw(settings, &mut svg_path).unwrap();
+//!
+//! // See what we've drawn.
+//! println!("{}", svg_path.0);
+//! # }
+//! ```
+
+mod autohint;
+mod cff;
+mod glyf;
+mod hint;
+mod hint_reliant;
+mod memory;
+mod metrics;
+mod path;
+mod unscaled;
+
+#[cfg(test)]
+mod testing;
+
+pub mod error;
+pub mod pen;
+
+pub use autohint::GlyphStyles;
+pub use hint::{
+    Engine, HintingInstance, HintingMode, HintingOptions, LcdLayout, SmoothMode, Target,
+};
+use metrics::GlyphHMetrics;
+use raw::FontRef;
+#[doc(inline)]
+pub use {error::DrawError, pen::OutlinePen};
+
+use self::glyf::{FreeTypeScaler, HarfBuzzScaler};
+use super::{
+    instance::{LocationRef, NormalizedCoord, Size},
+    GLYF_COMPOSITE_RECURSION_LIMIT,
+};
+use core::fmt::Debug;
+use pen::PathStyle;
+use read_fonts::{types::GlyphId, TableProvider};
+
+#[cfg(feature = "libm")]
+#[allow(unused_imports)]
+use core_maths::CoreFloat;
+
+/// Source format for an outline glyph.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum OutlineGlyphFormat {
+    /// TrueType outlines sourced from the `glyf` table.
+    Glyf,
+    /// PostScript outlines sourced from the `CFF` table.
+    Cff,
+    /// PostScript outlines sourced from the `CFF2` table.
+    Cff2,
+}
+
+/// Specifies the hinting strategy for memory size calculations.
+#[derive(Copy, Clone, PartialEq, Eq, Default, Debug)]
+pub enum Hinting {
+    /// Hinting is disabled.
+    #[default]
+    None,
+    /// Application of hints that are embedded in the font.
+    ///
+    /// For TrueType, these are bytecode instructions associated with each
+    /// glyph outline. For PostScript (CFF/CFF2), these are stem hints
+    /// encoded in the character string.
+    Embedded,
+}
+
+/// Information and adjusted metrics generated while drawing an outline glyph.
+///
+/// When applying hints to a TrueType glyph, the outline may be shifted in
+/// the horizontal direction, affecting the left side bearing and advance width
+/// of the glyph. This captures those metrics.
+#[derive(Copy, Clone, Default, Debug)]
+pub struct AdjustedMetrics {
+    /// True if the underlying glyph contains flags indicating the
+    /// presence of overlapping contours or components.
+    pub has_overlaps: bool,
+    /// If present, an adjusted left side bearing value generated by the
+    /// scaler.
+    ///
+    /// This is equivalent to the `horiBearingX` value in
+    /// [`FT_Glyph_Metrics`](https://freetype.org/freetype2/docs/reference/ft2-glyph_retrieval.html#ft_glyph_metrics).
+    pub lsb: Option<f32>,
+    /// If present, an adjusted advance width value generated by the
+    /// scaler.
+    ///
+    /// This is equivalent to the `advance.x` value in
+    /// [`FT_GlyphSlotRec`](https://freetype.org/freetype2/docs/reference/ft2-glyph_retrieval.html#ft_glyphslotrec).
+    pub advance_width: Option<f32>,
+}
+
+/// Options that define how a [glyph](OutlineGlyph) is drawn to a
+/// [pen](OutlinePen).
+pub struct DrawSettings<'a> {
+    instance: DrawInstance<'a>,
+    memory: Option<&'a mut [u8]>,
+    path_style: PathStyle,
+}
+
+impl<'a> DrawSettings<'a> {
+    /// Creates settings for an unhinted draw operation with the given size and
+    /// location in variation space.
+    pub fn unhinted(size: Size, location: impl Into<LocationRef<'a>>) -> Self {
+        Self {
+            instance: DrawInstance::Unhinted(size, location.into()),
+            memory: None,
+            path_style: PathStyle::default(),
+        }
+    }
+
+    /// Creates settings for a hinted draw operation using hinting data
+    /// contained in the font.
+    ///
+    /// If `is_pedantic` is true then any error that occurs during hinting will
+    /// cause drawing to fail. This is equivalent to the `FT_LOAD_PEDANTIC` flag
+    /// in FreeType.
+    ///
+    /// The font size, location in variation space and hinting mode are
+    /// defined by the current configuration of the given hinting instance.
+    pub fn hinted(instance: &'a HintingInstance, is_pedantic: bool) -> Self {
+        Self {
+            instance: DrawInstance::Hinted {
+                instance,
+                is_pedantic,
+            },
+            memory: None,
+            path_style: PathStyle::default(),
+        }
+    }
+
+    /// Builder method to associate a user memory buffer to be used for
+    /// temporary allocations during drawing.
+    ///
+    /// The required size of this buffer can be computed using the
+    /// [`OutlineGlyph::draw_memory_size`] method.
+    ///
+    /// If not provided, any necessary memory will be allocated internally.
+    pub fn with_memory(mut self, memory: Option<&'a mut [u8]>) -> Self {
+        self.memory = memory;
+        self
+    }
+
+    /// Builder method to control nuances of [`glyf`](https://learn.microsoft.com/en-us/typography/opentype/spec/glyf) pointstream interpretation.
+    ///
+    /// Meant for use when trying to match legacy code behavior in Rust.
+    pub fn with_path_style(mut self, path_style: PathStyle) -> Self {
+        self.path_style = path_style;
+        self
+    }
+}
+
+enum DrawInstance<'a> {
+    Unhinted(Size, LocationRef<'a>),
+    Hinted {
+        instance: &'a HintingInstance,
+        is_pedantic: bool,
+    },
+}
+
+impl<'a, L> From<(Size, L)> for DrawSettings<'a>
+where
+    L: Into<LocationRef<'a>>,
+{
+    fn from(value: (Size, L)) -> Self {
+        DrawSettings::unhinted(value.0, value.1.into())
+    }
+}
+
+impl From<Size> for DrawSettings<'_> {
+    fn from(value: Size) -> Self {
+        DrawSettings::unhinted(value, LocationRef::default())
+    }
+}
+
+impl<'a> From<&'a HintingInstance> for DrawSettings<'a> {
+    fn from(value: &'a HintingInstance) -> Self {
+        DrawSettings::hinted(value, false)
+    }
+}
+
+/// A scalable glyph outline.
+///
+/// This can be sourced from the [`glyf`](https://learn.microsoft.com/en-us/typography/opentype/spec/glyf),
+/// [`CFF`](https://learn.microsoft.com/en-us/typography/opentype/spec/cff) or
+/// [`CFF2`](https://learn.microsoft.com/en-us/typography/opentype/spec/cff2)
+/// tables. Use the [`format`](OutlineGlyph::format) method to determine which
+/// was chosen for this glyph.
+#[derive(Clone)]
+pub struct OutlineGlyph<'a> {
+    kind: OutlineKind<'a>,
+}
+
+impl<'a> OutlineGlyph<'a> {
+    /// Returns the underlying source format for this outline.
+    pub fn format(&self) -> OutlineGlyphFormat {
+        match &self.kind {
+            OutlineKind::Glyf(..) => OutlineGlyphFormat::Glyf,
+            OutlineKind::Cff(cff, ..) => {
+                if cff.is_cff2() {
+                    OutlineGlyphFormat::Cff2
+                } else {
+                    OutlineGlyphFormat::Cff
+                }
+            }
+        }
+    }
+
+    /// Returns the glyph identifier for this outline.
+    pub fn glyph_id(&self) -> GlyphId {
+        match &self.kind {
+            OutlineKind::Glyf(_, glyph) => glyph.glyph_id,
+            OutlineKind::Cff(_, gid, _) => *gid,
+        }
+    }
+
+    /// Returns a value indicating if the outline may contain overlapping
+    /// contours or components.
+    ///
+    /// For CFF outlines, returns `None` since this information is unavailable.
+    pub fn has_overlaps(&self) -> Option<bool> {
+        match &self.kind {
+            OutlineKind::Glyf(_, outline) => Some(outline.has_overlaps),
+            _ => None,
+        }
+    }
+
+    /// Returns a value indicating whether the outline has hinting
+    /// instructions.
+    ///
+    /// For CFF outlines, returns `None` since this is unknown prior
+    /// to loading the outline.
+    pub fn has_hinting(&self) -> Option<bool> {
+        match &self.kind {
+            OutlineKind::Glyf(_, outline) => Some(outline.has_hinting),
+            _ => None,
+        }
+    }
+
+    /// Returns the size (in bytes) of the temporary memory required to draw
+    /// this outline.
+    ///
+    /// This is used to compute the size of the memory buffer required for the
+    /// [`DrawSettings::with_memory`] method.
+    ///
+    /// The `hinting` parameter determines which hinting method, if any, will
+    /// be used for drawing which has an effect on memory requirements.
+    ///
+    /// The appropriate hinting types are as follows:
+    ///
+    /// | For draw settings                  | Use hinting           |
+    /// |------------------------------------|-----------------------|
+    /// | [`DrawSettings::unhinted`]         | [`Hinting::None`]     |
+    /// | [`DrawSettings::hinted`]           | [`Hinting::Embedded`] |
+    pub fn draw_memory_size(&self, hinting: Hinting) -> usize {
+        match &self.kind {
+            OutlineKind::Glyf(_, outline) => outline.required_buffer_size(hinting),
+            _ => 0,
+        }
+    }
+
+    /// Draws the outline glyph with the given settings and emits the resulting
+    /// path commands to the specified pen.
+    pub fn draw<'s>(
+        &self,
+        settings: impl Into<DrawSettings<'a>>,
+        pen: &mut impl OutlinePen,
+    ) -> Result<AdjustedMetrics, DrawError> {
+        let settings: DrawSettings<'a> = settings.into();
+        match (settings.instance, settings.path_style) {
+            (DrawInstance::Unhinted(size, location), PathStyle::FreeType) => {
+                self.draw_unhinted(size, location, settings.memory, settings.path_style, pen)
+            }
+            (DrawInstance::Unhinted(size, location), PathStyle::HarfBuzz) => {
+                self.draw_unhinted(size, location, settings.memory, settings.path_style, pen)
+            }
+            (
+                DrawInstance::Hinted {
+                    instance: hinting_instance,
+                    is_pedantic,
+                },
+                PathStyle::FreeType,
+            ) => {
+                if hinting_instance.is_enabled() {
+                    hinting_instance.draw(
+                        self,
+                        settings.memory,
+                        settings.path_style,
+                        pen,
+                        is_pedantic,
+                    )
+                } else {
+                    let mut metrics = self.draw_unhinted(
+                        hinting_instance.size(),
+                        hinting_instance.location(),
+                        settings.memory,
+                        settings.path_style,
+                        pen,
+                    )?;
+                    // Round advance width when hinting is requested, even if
+                    // the instance is disabled.
+                    if let Some(advance) = metrics.advance_width.as_mut() {
+                        *advance = advance.round();
+                    }
+                    Ok(metrics)
+                }
+            }
+            (DrawInstance::Hinted { .. }, PathStyle::HarfBuzz) => {
+                Err(DrawError::HarfBuzzHintingUnsupported)
+            }
+        }
+    }
+
+    fn draw_unhinted(
+        &self,
+        size: Size,
+        location: impl Into<LocationRef<'a>>,
+        user_memory: Option<&mut [u8]>,
+        path_style: PathStyle,
+        pen: &mut impl OutlinePen,
+    ) -> Result<AdjustedMetrics, DrawError> {
+        let ppem = size.ppem();
+        let coords = location.into().effective_coords();
+        match &self.kind {
+            OutlineKind::Glyf(glyf, outline) => {
+                with_glyf_memory(outline, Hinting::None, user_memory, |buf| {
+                    let (lsb, advance_width) = match path_style {
+                        PathStyle::FreeType => {
+                            let scaled_outline =
+                                FreeTypeScaler::unhinted(glyf, outline, buf, ppem, coords)?
+                                    .scale(&outline.glyph, outline.glyph_id)?;
+                            scaled_outline.to_path(path_style, pen)?;
+                            (
+                                scaled_outline.adjusted_lsb().to_f32(),
+                                scaled_outline.adjusted_advance_width().to_f32(),
+                            )
+                        }
+                        PathStyle::HarfBuzz => {
+                            let scaled_outline =
+                                HarfBuzzScaler::unhinted(glyf, outline, buf, ppem, coords)?
+                                    .scale(&outline.glyph, outline.glyph_id)?;
+                            scaled_outline.to_path(path_style, pen)?;
+                            (
+                                scaled_outline.adjusted_lsb(),
+                                scaled_outline.adjusted_advance_width(),
+                            )
+                        }
+                    };
+
+                    Ok(AdjustedMetrics {
+                        has_overlaps: outline.has_overlaps,
+                        lsb: Some(lsb),
+                        advance_width: Some(advance_width),
+                    })
+                })
+            }
+            OutlineKind::Cff(cff, glyph_id, subfont_ix) => {
+                let subfont = cff.subfont(*subfont_ix, ppem, coords)?;
+                cff.draw(&subfont, *glyph_id, coords, false, pen)?;
+                Ok(AdjustedMetrics::default())
+            }
+        }
+    }
+
+    /// Internal drawing API for autohinting that offers unified compact
+    /// storage for unscaled outlines.
+    #[allow(dead_code)]
+    fn draw_unscaled(
+        &self,
+        location: impl Into<LocationRef<'a>>,
+        user_memory: Option<&mut [u8]>,
+        sink: &mut impl unscaled::UnscaledOutlineSink,
+    ) -> Result<i32, DrawError> {
+        let coords = location.into().effective_coords();
+        let ppem = None;
+        match &self.kind {
+            OutlineKind::Glyf(glyf, outline) => {
+                with_glyf_memory(outline, Hinting::None, user_memory, |buf| {
+                    let outline = FreeTypeScaler::unhinted(glyf, outline, buf, ppem, coords)?
+                        .scale(&outline.glyph, outline.glyph_id)?;
+                    sink.try_reserve(outline.points.len())?;
+                    let mut contour_start = 0;
+                    for contour_end in outline.contours.iter().map(|contour| *contour as usize) {
+                        if contour_end >= contour_start {
+                            if let Some(points) = outline.points.get(contour_start..=contour_end) {
+                                let flags = &outline.flags[contour_start..=contour_end];
+                                sink.extend(points.iter().zip(flags).enumerate().map(
+                                    |(ix, (point, flags))| {
+                                        unscaled::UnscaledPoint::from_glyf_point(
+                                            *point,
+                                            *flags,
+                                            ix == 0,
+                                        )
+                                    },
+                                ))?;
+                            }
+                        }
+                        contour_start = contour_end + 1;
+                    }
+                    Ok(outline.adjusted_advance_width().to_bits() >> 6)
+                })
+            }
+            OutlineKind::Cff(cff, glyph_id, subfont_ix) => {
+                let subfont = cff.subfont(*subfont_ix, ppem, coords)?;
+                let mut adapter = unscaled::UnscaledPenAdapter::new(sink);
+                cff.draw(&subfont, *glyph_id, coords, false, &mut adapter)?;
+                adapter.finish()?;
+                let advance = cff.glyph_metrics.advance_width(*glyph_id, coords);
+                Ok(advance)
+            }
+        }
+    }
+
+    pub(crate) fn font(&self) -> &FontRef<'a> {
+        match &self.kind {
+            OutlineKind::Glyf(glyf, ..) => &glyf.font,
+            OutlineKind::Cff(cff, ..) => &cff.font,
+        }
+    }
+
+    fn units_per_em(&self) -> u16 {
+        match &self.kind {
+            OutlineKind::Cff(cff, ..) => cff.units_per_em(),
+            OutlineKind::Glyf(glyf, ..) => glyf.units_per_em(),
+        }
+    }
+}
+
+#[derive(Clone)]
+enum OutlineKind<'a> {
+    Glyf(glyf::Outlines<'a>, glyf::Outline<'a>),
+    // Third field is subfont index
+    Cff(cff::Outlines<'a>, GlyphId, u32),
+}
+
+impl Debug for OutlineKind<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Glyf(_, outline) => f.debug_tuple("Glyf").field(&outline.glyph_id).finish(),
+            Self::Cff(_, gid, subfont_index) => f
+                .debug_tuple("Cff")
+                .field(gid)
+                .field(subfont_index)
+                .finish(),
+        }
+    }
+}
+
+/// Collection of scalable glyph outlines.
+#[derive(Debug, Clone)]
+pub struct OutlineGlyphCollection<'a> {
+    kind: OutlineCollectionKind<'a>,
+}
+
+impl<'a> OutlineGlyphCollection<'a> {
+    /// Creates a new outline collection for the given font.
+    pub fn new(font: &FontRef<'a>) -> Self {
+        let kind = if let Some(glyf) = glyf::Outlines::new(font) {
+            OutlineCollectionKind::Glyf(glyf)
+        } else if let Some(cff) = cff::Outlines::new(font) {
+            OutlineCollectionKind::Cff(cff)
+        } else {
+            OutlineCollectionKind::None
+        };
+        Self { kind }
+    }
+
+    /// Creates a new outline collection for the given font and outline
+    /// format.
+    ///
+    /// Returns `None` if the font does not contain outlines in the requested
+    /// format.
+    pub fn with_format(font: &FontRef<'a>, format: OutlineGlyphFormat) -> Option<Self> {
+        let kind = match format {
+            OutlineGlyphFormat::Glyf => OutlineCollectionKind::Glyf(glyf::Outlines::new(font)?),
+            OutlineGlyphFormat::Cff => {
+                let upem = font.head().ok()?.units_per_em();
+                OutlineCollectionKind::Cff(cff::Outlines::from_cff(font, upem)?)
+            }
+            OutlineGlyphFormat::Cff2 => {
+                let upem = font.head().ok()?.units_per_em();
+                OutlineCollectionKind::Cff(cff::Outlines::from_cff2(font, upem)?)
+            }
+        };
+        Some(Self { kind })
+    }
+
+    /// Returns the underlying format of the source outline tables.
+    pub fn format(&self) -> Option<OutlineGlyphFormat> {
+        match &self.kind {
+            OutlineCollectionKind::Glyf(..) => Some(OutlineGlyphFormat::Glyf),
+            OutlineCollectionKind::Cff(cff) => cff
+                .is_cff2()
+                .then_some(OutlineGlyphFormat::Cff2)
+                .or(Some(OutlineGlyphFormat::Cff)),
+            _ => None,
+        }
+    }
+
+    /// Returns the outline for the given glyph identifier.
+    pub fn get(&self, glyph_id: GlyphId) -> Option<OutlineGlyph<'a>> {
+        match &self.kind {
+            OutlineCollectionKind::None => None,
+            OutlineCollectionKind::Glyf(glyf) => Some(OutlineGlyph {
+                kind: OutlineKind::Glyf(glyf.clone(), glyf.outline(glyph_id).ok()?),
+            }),
+            OutlineCollectionKind::Cff(cff) => Some(OutlineGlyph {
+                kind: OutlineKind::Cff(cff.clone(), glyph_id, cff.subfont_index(glyph_id)),
+            }),
+        }
+    }
+
+    /// Returns an iterator over all of the outline glyphs in the collection.
+    pub fn iter(&self) -> impl Iterator<Item = (GlyphId, OutlineGlyph<'a>)> + 'a + Clone {
+        let len = match &self.kind {
+            OutlineCollectionKind::Glyf(glyf) => glyf.glyph_count(),
+            OutlineCollectionKind::Cff(cff) => cff.glyph_count(),
+            _ => 0,
+        } as u16;
+        let copy = self.clone();
+        (0..len).filter_map(move |gid| {
+            let gid = GlyphId::from(gid);
+            let glyph = copy.get(gid)?;
+            Some((gid, glyph))
+        })
+    }
+
+    /// Returns true if the interpreter engine should be used for hinting this
+    /// set of outlines.
+    ///
+    /// When this returns false, you likely want to use the automatic hinter
+    /// instead.
+    ///
+    /// This matches the logic used in FreeType when neither of the
+    /// `FT_LOAD_FORCE_AUTOHINT` or `FT_LOAD_NO_AUTOHINT` load flags are
+    /// specified.
+    ///
+    /// When setting [`HintingOptions::engine`] to [`Engine::AutoFallback`],
+    /// this is used to determine whether to use the interpreter or automatic
+    /// hinter.
+    pub fn prefer_interpreter(&self) -> bool {
+        match &self.kind {
+            OutlineCollectionKind::Glyf(glyf) => glyf.prefer_interpreter(),
+            _ => true,
+        }
+    }
+
+    /// Returns true when the interpreter engine _must_ be used for hinting
+    /// this set of outlines to produce correct results.
+    ///
+    /// This corresponds so FreeType's `FT_FACE_FLAG_TRICKY` face flag. See
+    /// the documentation for that [flag](https://freetype.org/freetype2/docs/reference/ft2-face_creation.html#ft_face_flag_xxx)
+    /// for more detail.
+    ///
+    /// When this returns `true`, you should construct a [`HintingInstance`]
+    /// with [`HintingOptions::engine`] set to [`Engine::Interpreter`] and
+    /// [`HintingOptions::target`] set to [`Target::Mono`].
+    ///
+    /// # Performance
+    /// This digs through the name table and potentially computes checksums
+    /// so it may be slow. You should cache the result of this function if
+    /// possible.
+    pub fn require_interpreter(&self) -> bool {
+        self.font()
+            .map(|font| hint_reliant::require_interpreter(font))
+            .unwrap_or_default()
+    }
+
+    /// Returns true when the font supports hinting at fractional sizes.
+    ///
+    /// When this returns false, the requested size will be rounded before
+    /// computing the scale factor for hinted glyphs.
+    pub fn fractional_size_hinting(&self) -> bool {
+        match &self.kind {
+            OutlineCollectionKind::Glyf(glyf) => glyf.fractional_size_hinting,
+            _ => true,
+        }
+    }
+
+    pub(crate) fn font(&self) -> Option<&FontRef<'a>> {
+        match &self.kind {
+            OutlineCollectionKind::Glyf(glyf) => Some(&glyf.font),
+            OutlineCollectionKind::Cff(cff) => Some(&cff.font),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone)]
+enum OutlineCollectionKind<'a> {
+    None,
+    Glyf(glyf::Outlines<'a>),
+    Cff(cff::Outlines<'a>),
+}
+
+impl Debug for OutlineCollectionKind<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::None => write!(f, "None"),
+            Self::Glyf(..) => f.debug_tuple("Glyf").finish(),
+            Self::Cff(..) => f.debug_tuple("Cff").finish(),
+        }
+    }
+}
+
+/// Invokes the callback with a memory buffer suitable for drawing
+/// the given TrueType outline.
+pub(super) fn with_glyf_memory<R>(
+    outline: &glyf::Outline,
+    hinting: Hinting,
+    memory: Option<&mut [u8]>,
+    mut f: impl FnMut(&mut [u8]) -> R,
+) -> R {
+    match memory {
+        Some(buf) => f(buf),
+        None => {
+            let buf_size = outline.required_buffer_size(hinting);
+            memory::with_temporary_memory(buf_size, f)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{instance::Location, outline::pen::SvgPen, MetadataProvider};
+    use kurbo::{Affine, BezPath, PathEl, Point};
+    use read_fonts::{types::GlyphId, FontRef, TableProvider};
+
+    use pretty_assertions::assert_eq;
+
+    const PERIOD: u32 = 0x2E_u32;
+    const COMMA: u32 = 0x2C_u32;
+
+    #[test]
+    fn outline_glyph_formats() {
+        let font_format_pairs = [
+            (font_test_data::VAZIRMATN_VAR, OutlineGlyphFormat::Glyf),
+            (
+                font_test_data::CANTARELL_VF_TRIMMED,
+                OutlineGlyphFormat::Cff2,
+            ),
+            (
+                font_test_data::NOTO_SERIF_DISPLAY_TRIMMED,
+                OutlineGlyphFormat::Cff,
+            ),
+            (font_test_data::COLRV0V1_VARIABLE, OutlineGlyphFormat::Glyf),
+        ];
+        for (font_data, format) in font_format_pairs {
+            assert_eq!(
+                FontRef::new(font_data).unwrap().outline_glyphs().format(),
+                Some(format)
+            );
+        }
+    }
+
+    #[test]
+    fn vazirmatin_var() {
+        compare_glyphs(
+            font_test_data::VAZIRMATN_VAR,
+            font_test_data::VAZIRMATN_VAR_GLYPHS,
+        );
+    }
+
+    #[test]
+    fn cantarell_vf() {
+        compare_glyphs(
+            font_test_data::CANTARELL_VF_TRIMMED,
+            font_test_data::CANTARELL_VF_TRIMMED_GLYPHS,
+        );
+    }
+
+    #[test]
+    fn noto_serif_display() {
+        compare_glyphs(
+            font_test_data::NOTO_SERIF_DISPLAY_TRIMMED,
+            font_test_data::NOTO_SERIF_DISPLAY_TRIMMED_GLYPHS,
+        );
+    }
+
+    #[test]
+    fn overlap_flags() {
+        let font = FontRef::new(font_test_data::VAZIRMATN_VAR).unwrap();
+        let outlines = font.outline_glyphs();
+        let glyph_count = font.maxp().unwrap().num_glyphs();
+        // GID 2 is a composite glyph with the overlap bit on a component
+        // GID 3 is a simple glyph with the overlap bit on the first flag
+        let expected_gids_with_overlap = vec![2, 3];
+        assert_eq!(
+            expected_gids_with_overlap,
+            (0..glyph_count)
+                .filter(
+                    |gid| outlines.get(GlyphId::from(*gid)).unwrap().has_overlaps() == Some(true)
+                )
+                .collect::<Vec<_>>()
+        );
+    }
+
+    fn compare_glyphs(font_data: &[u8], expected_outlines: &str) {
+        let font = FontRef::new(font_data).unwrap();
+        let expected_outlines = testing::parse_glyph_outlines(expected_outlines);
+        let mut path = testing::Path::default();
+        for expected_outline in &expected_outlines {
+            if expected_outline.size == 0.0 && !expected_outline.coords.is_empty() {
+                continue;
+            }
+            let size = if expected_outline.size != 0.0 {
+                Size::new(expected_outline.size)
+            } else {
+                Size::unscaled()
+            };
+            path.elements.clear();
+            font.outline_glyphs()
+                .get(expected_outline.glyph_id)
+                .unwrap()
+                .draw(
+                    DrawSettings::unhinted(size, expected_outline.coords.as_slice()),
+                    &mut path,
+                )
+                .unwrap();
+            assert_eq!(path.elements, expected_outline.path, "mismatch in glyph path for id {} (size: {}, coords: {:?}): path: {:?} expected_path: {:?}",
+                    expected_outline.glyph_id,
+                    expected_outline.size,
+                    expected_outline.coords,
+                    &path.elements,
+                    &expected_outline.path
+                );
+        }
+    }
+
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    enum GlyphPoint {
+        On { x: f32, y: f32 },
+        Off { x: f32, y: f32 },
+    }
+
+    impl GlyphPoint {
+        fn implied_oncurve(&self, other: Self) -> Self {
+            let (x1, y1) = self.xy();
+            let (x2, y2) = other.xy();
+            Self::On {
+                x: (x1 + x2) / 2.0,
+                y: (y1 + y2) / 2.0,
+            }
+        }
+
+        fn xy(&self) -> (f32, f32) {
+            match self {
+                GlyphPoint::On { x, y } | GlyphPoint::Off { x, y } => (*x, *y),
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    struct PointPen {
+        points: Vec<GlyphPoint>,
+    }
+
+    impl PointPen {
+        fn new() -> Self {
+            Self { points: Vec::new() }
+        }
+
+        fn into_points(self) -> Vec<GlyphPoint> {
+            self.points
+        }
+    }
+
+    impl OutlinePen for PointPen {
+        fn move_to(&mut self, x: f32, y: f32) {
+            self.points.push(GlyphPoint::On { x, y });
+        }
+
+        fn line_to(&mut self, x: f32, y: f32) {
+            self.points.push(GlyphPoint::On { x, y });
+        }
+
+        fn quad_to(&mut self, cx0: f32, cy0: f32, x: f32, y: f32) {
+            self.points.push(GlyphPoint::Off { x: cx0, y: cy0 });
+            self.points.push(GlyphPoint::On { x, y });
+        }
+
+        fn curve_to(&mut self, cx0: f32, cy0: f32, cx1: f32, cy1: f32, x: f32, y: f32) {
+            self.points.push(GlyphPoint::Off { x: cx0, y: cy0 });
+            self.points.push(GlyphPoint::Off { x: cx1, y: cy1 });
+            self.points.push(GlyphPoint::On { x, y });
+        }
+
+        fn close(&mut self) {
+            // We can't drop a 0-length closing line for fear of breaking interpolation compatibility
+            //     - some other instance might have it not 0-length
+            // However, if the last command isn't a line and ends at the subpath start we can drop the endpoint
+            //     - if any instance had it other than at the start there would be a closing line
+            //     - and it wouldn't be interpolation compatible
+            // See <https://github.com/googlefonts/fontations/pull/818/files#r1521188624>
+            let np = self.points.len();
+            // We need at least 3 points to satisfy subsequent conditions
+            if np > 2
+                && self.points[0] == self.points[np - 1]
+                && matches!(
+                    (self.points[0], self.points[np - 2]),
+                    (GlyphPoint::On { .. }, GlyphPoint::Off { .. })
+                )
+            {
+                self.points.pop();
+            }
+        }
+    }
+
+    const STARTING_OFF_CURVE_POINTS: [GlyphPoint; 4] = [
+        GlyphPoint::Off { x: 278.0, y: 710.0 },
+        GlyphPoint::On { x: 278.0, y: 470.0 },
+        GlyphPoint::On { x: 998.0, y: 470.0 },
+        GlyphPoint::On { x: 998.0, y: 710.0 },
+    ];
+
+    const MOSTLY_OFF_CURVE_POINTS: [GlyphPoint; 5] = [
+        GlyphPoint::Off { x: 278.0, y: 710.0 },
+        GlyphPoint::Off { x: 278.0, y: 470.0 },
+        GlyphPoint::On { x: 998.0, y: 470.0 },
+        GlyphPoint::Off { x: 998.0, y: 710.0 },
+        GlyphPoint::Off { x: 750.0, y: 500.0 },
+    ];
+
+    /// Captures the svg drawing command sequence, e.g. MLLZ.
+    ///
+    /// Intended use is to confirm the command sequence pushed to the pen is interpolation compatible.
+    #[derive(Default, Debug)]
+    struct CommandPen {
+        commands: String,
+    }
+
+    impl OutlinePen for CommandPen {
+        fn move_to(&mut self, _x: f32, _y: f32) {
+            self.commands.push('M');
+        }
+
+        fn line_to(&mut self, _x: f32, _y: f32) {
+            self.commands.push('L');
+        }
+
+        fn quad_to(&mut self, _cx0: f32, _cy0: f32, _x: f32, _y: f32) {
+            self.commands.push('Q');
+        }
+
+        fn curve_to(&mut self, _cx0: f32, _cy0: f32, _cx1: f32, _cy1: f32, _x: f32, _y: f32) {
+            self.commands.push('C');
+        }
+
+        fn close(&mut self) {
+            self.commands.push('Z');
+        }
+    }
+
+    fn draw_to_pen(font: &[u8], codepoint: u32, settings: DrawSettings, pen: &mut impl OutlinePen) {
+        let font = FontRef::new(font).unwrap();
+        let gid = font
+            .cmap()
+            .unwrap()
+            .map_codepoint(codepoint)
+            .unwrap_or_else(|| panic!("No gid for 0x{codepoint:04x}"));
+        let outlines = font.outline_glyphs();
+        let outline = outlines.get(gid).unwrap_or_else(|| {
+            panic!(
+                "No outline for {gid:?} in collection of {:?}",
+                outlines.format()
+            )
+        });
+
+        outline.draw(settings, pen).unwrap();
+    }
+
+    fn draw_commands(font: &[u8], codepoint: u32, settings: DrawSettings) -> String {
+        let mut pen = CommandPen::default();
+        draw_to_pen(font, codepoint, settings, &mut pen);
+        pen.commands
+    }
+
+    fn drawn_points(font: &[u8], codepoint: u32, settings: DrawSettings) -> Vec<GlyphPoint> {
+        let mut pen = PointPen::new();
+        draw_to_pen(font, codepoint, settings, &mut pen);
+        pen.into_points()
+    }
+
+    fn insert_implicit_oncurve(pointstream: &[GlyphPoint]) -> Vec<GlyphPoint> {
+        let mut expanded_points = Vec::new();
+
+        for i in 0..pointstream.len() - 1 {
+            expanded_points.push(pointstream[i]);
+            if matches!(
+                (pointstream[i], pointstream[i + 1]),
+                (GlyphPoint::Off { .. }, GlyphPoint::Off { .. })
+            ) {
+                expanded_points.push(pointstream[i].implied_oncurve(pointstream[i + 1]));
+            }
+        }
+
+        expanded_points.push(*pointstream.last().unwrap());
+
+        expanded_points
+    }
+
+    fn as_on_off_sequence(points: &[GlyphPoint]) -> Vec<&'static str> {
+        points
+            .iter()
+            .map(|p| match p {
+                GlyphPoint::On { .. } => "On",
+                GlyphPoint::Off { .. } => "Off",
+            })
+            .collect()
+    }
+
+    #[test]
+    fn always_get_closing_lines() {
+        // <https://github.com/googlefonts/fontations/pull/818/files#r1521188624>
+        let period = draw_commands(
+            font_test_data::INTERPOLATE_THIS,
+            PERIOD,
+            Size::unscaled().into(),
+        );
+        let comma = draw_commands(
+            font_test_data::INTERPOLATE_THIS,
+            COMMA,
+            Size::unscaled().into(),
+        );
+
+        assert_eq!(
+            period, comma,
+            "Incompatible\nperiod\n{period:#?}\ncomma\n{comma:#?}\n"
+        );
+        assert_eq!(
+            "MLLLZ", period,
+            "We should get an explicit L for close even when it's a nop"
+        );
+    }
+
+    #[test]
+    fn triangle_and_square_retain_compatibility() {
+        // <https://github.com/googlefonts/fontations/pull/818/files#r1521188624>
+        let period = drawn_points(
+            font_test_data::INTERPOLATE_THIS,
+            PERIOD,
+            Size::unscaled().into(),
+        );
+        let comma = drawn_points(
+            font_test_data::INTERPOLATE_THIS,
+            COMMA,
+            Size::unscaled().into(),
+        );
+
+        assert_ne!(period, comma);
+        assert_eq!(
+            as_on_off_sequence(&period),
+            as_on_off_sequence(&comma),
+            "Incompatible\nperiod\n{period:#?}\ncomma\n{comma:#?}\n"
+        );
+        assert_eq!(
+            4,
+            period.len(),
+            "we should have the same # of points we started with"
+        );
+    }
+
+    fn assert_walked_backwards_like_freetype(pointstream: &[GlyphPoint], font: &[u8]) {
+        assert!(
+            matches!(pointstream[0], GlyphPoint::Off { .. }),
+            "Bad testdata, should start off curve"
+        );
+
+        // The default: look for an oncurve at the back, as freetype would do
+        let mut expected_points = pointstream.to_vec();
+        let last = *expected_points.last().unwrap();
+        let first_move = if matches!(last, GlyphPoint::Off { .. }) {
+            expected_points[0].implied_oncurve(last)
+        } else {
+            expected_points.pop().unwrap()
+        };
+        expected_points.insert(0, first_move);
+
+        expected_points = insert_implicit_oncurve(&expected_points);
+        let actual = drawn_points(font, PERIOD, Size::unscaled().into());
+        assert_eq!(
+            expected_points, actual,
+            "expected\n{expected_points:#?}\nactual\n{actual:#?}"
+        );
+    }
+
+    fn assert_walked_forwards_like_harfbuzz(pointstream: &[GlyphPoint], font: &[u8]) {
+        assert!(
+            matches!(pointstream[0], GlyphPoint::Off { .. }),
+            "Bad testdata, should start off curve"
+        );
+
+        // look for an oncurve at the front, as harfbuzz would do
+        let mut expected_points = pointstream.to_vec();
+        let first = expected_points.remove(0);
+        expected_points.push(first);
+        if matches!(expected_points[0], GlyphPoint::Off { .. }) {
+            expected_points.insert(0, first.implied_oncurve(expected_points[0]))
+        };
+
+        expected_points = insert_implicit_oncurve(&expected_points);
+
+        let settings: DrawSettings = Size::unscaled().into();
+        let settings = settings.with_path_style(PathStyle::HarfBuzz);
+        let actual = drawn_points(font, PERIOD, settings);
+        assert_eq!(
+            expected_points, actual,
+            "expected\n{expected_points:#?}\nactual\n{actual:#?}"
+        );
+    }
+
+    #[test]
+    fn starting_off_curve_walk_backwards_like_freetype() {
+        assert_walked_backwards_like_freetype(
+            &STARTING_OFF_CURVE_POINTS,
+            font_test_data::STARTING_OFF_CURVE,
+        );
+    }
+
+    #[test]
+    fn mostly_off_curve_walk_backwards_like_freetype() {
+        assert_walked_backwards_like_freetype(
+            &MOSTLY_OFF_CURVE_POINTS,
+            font_test_data::MOSTLY_OFF_CURVE,
+        );
+    }
+
+    #[test]
+    fn starting_off_curve_walk_forwards_like_hbdraw() {
+        assert_walked_forwards_like_harfbuzz(
+            &STARTING_OFF_CURVE_POINTS,
+            font_test_data::STARTING_OFF_CURVE,
+        );
+    }
+
+    #[test]
+    fn mostly_off_curve_walk_forwards_like_hbdraw() {
+        assert_walked_forwards_like_harfbuzz(
+            &MOSTLY_OFF_CURVE_POINTS,
+            font_test_data::MOSTLY_OFF_CURVE,
+        );
+    }
+
+    // A location noted for making FreeType and HarfBuzz results differ
+    // See https://github.com/googlefonts/sleipnir/pull/15
+    fn icon_loc_off_default(font: &FontRef) -> Location {
+        font.axes().location(&[
+            ("wght", 700.0),
+            ("opsz", 48.0),
+            ("GRAD", 200.0),
+            ("FILL", 1.0),
+        ])
+    }
+
+    fn pt(x: f32, y: f32) -> Point {
+        (x as f64, y as f64).into()
+    }
+
+    // String command rounded to two decimal places, suitable for assert comparison
+    fn svg_commands(elements: &[PathEl]) -> Vec<String> {
+        elements
+            .iter()
+            .map(|e| match e {
+                PathEl::MoveTo(p) => format!("M{:.2},{:.2}", p.x, p.y),
+                PathEl::LineTo(p) => format!("L{:.2},{:.2}", p.x, p.y),
+                PathEl::QuadTo(c0, p) => format!("Q{:.2},{:.2} {:.2},{:.2}", c0.x, c0.y, p.x, p.y),
+                PathEl::CurveTo(c0, c1, p) => format!(
+                    "C{:.2},{:.2} {:.2},{:.2} {:.2},{:.2}",
+                    c0.x, c0.y, c1.x, c1.y, p.x, p.y
+                ),
+                PathEl::ClosePath => "Z".to_string(),
+            })
+            .collect()
+    }
+
+    // Declared here to avoid a write-fonts dependency that is awkward for google3 at time of writing
+    #[derive(Default)]
+    struct BezPen {
+        path: BezPath,
+    }
+
+    impl OutlinePen for BezPen {
+        fn move_to(&mut self, x: f32, y: f32) {
+            self.path.move_to(pt(x, y));
+        }
+
+        fn line_to(&mut self, x: f32, y: f32) {
+            self.path.line_to(pt(x, y));
+        }
+
+        fn quad_to(&mut self, cx0: f32, cy0: f32, x: f32, y: f32) {
+            self.path.quad_to(pt(cx0, cy0), pt(x, y));
+        }
+
+        fn curve_to(&mut self, cx0: f32, cy0: f32, cx1: f32, cy1: f32, x: f32, y: f32) {
+            self.path.curve_to(pt(cx0, cy0), pt(cx1, cy1), pt(x, y));
+        }
+
+        fn close(&mut self) {
+            self.path.close_path();
+        }
+    }
+
+    // We take glyph id here to bypass the need to resolve codepoint:gid and apply substitutions
+    fn assert_glyph_path_start_with(
+        font: &FontRef,
+        gid: GlyphId,
+        loc: Location,
+        path_style: PathStyle,
+        expected_path_start: &[PathEl],
+    ) {
+        let glyph = font
+            .outline_glyphs()
+            .get(gid)
+            .unwrap_or_else(|| panic!("No glyph for {gid}"));
+
+        let mut pen = BezPen::default();
+        glyph
+            .draw(
+                DrawSettings::unhinted(Size::unscaled(), &loc).with_path_style(path_style),
+                &mut pen,
+            )
+            .unwrap_or_else(|e| panic!("Unable to draw {gid}: {e}"));
+        let bez = Affine::FLIP_Y * pen.path; // like an icon svg
+        let actual_path_start = &bez.elements()[..expected_path_start.len()];
+        // round2 can still leave very small differences from the typed 2-decimal value
+        // and the diff isn't pleasant so just compare as svg string fragments
+        assert_eq!(
+            svg_commands(expected_path_start),
+            svg_commands(actual_path_start)
+        );
+    }
+
+    const MATERIAL_SYMBOL_GID_MAIL_AT_DEFAULT: GlyphId = GlyphId::new(1);
+    const MATERIAL_SYMBOL_GID_MAIL_OFF_DEFAULT: GlyphId = GlyphId::new(2);
+
+    #[test]
+    fn draw_icon_freetype_style_at_default() {
+        let font = FontRef::new(font_test_data::MATERIAL_SYMBOLS_SUBSET).unwrap();
+        assert_glyph_path_start_with(
+            &font,
+            MATERIAL_SYMBOL_GID_MAIL_AT_DEFAULT,
+            Location::default(),
+            PathStyle::FreeType,
+            &[
+                PathEl::MoveTo((160.0, -160.0).into()),
+                PathEl::QuadTo((127.0, -160.0).into(), (103.5, -183.5).into()),
+                PathEl::QuadTo((80.0, -207.0).into(), (80.0, -240.0).into()),
+            ],
+        );
+    }
+
+    #[test]
+    fn draw_icon_harfbuzz_style_at_default() {
+        let font = FontRef::new(font_test_data::MATERIAL_SYMBOLS_SUBSET).unwrap();
+        assert_glyph_path_start_with(
+            &font,
+            MATERIAL_SYMBOL_GID_MAIL_AT_DEFAULT,
+            Location::default(),
+            PathStyle::HarfBuzz,
+            &[
+                PathEl::MoveTo((160.0, -160.0).into()),
+                PathEl::QuadTo((127.0, -160.0).into(), (103.5, -183.5).into()),
+                PathEl::QuadTo((80.0, -207.0).into(), (80.0, -240.0).into()),
+            ],
+        );
+    }
+
+    #[test]
+    fn draw_icon_freetype_style_off_default() {
+        let font = FontRef::new(font_test_data::MATERIAL_SYMBOLS_SUBSET).unwrap();
+        assert_glyph_path_start_with(
+            &font,
+            MATERIAL_SYMBOL_GID_MAIL_OFF_DEFAULT,
+            icon_loc_off_default(&font),
+            PathStyle::FreeType,
+            &[
+                PathEl::MoveTo((150.0, -138.0).into()),
+                PathEl::QuadTo((113.0, -138.0).into(), (86.0, -165.5).into()),
+                PathEl::QuadTo((59.0, -193.0).into(), (59.0, -229.0).into()),
+            ],
+        );
+    }
+
+    #[test]
+    fn draw_icon_harfbuzz_style_off_default() {
+        let font = FontRef::new(font_test_data::MATERIAL_SYMBOLS_SUBSET).unwrap();
+        assert_glyph_path_start_with(
+            &font,
+            MATERIAL_SYMBOL_GID_MAIL_OFF_DEFAULT,
+            icon_loc_off_default(&font),
+            PathStyle::HarfBuzz,
+            &[
+                PathEl::MoveTo((150.0, -138.0).into()),
+                PathEl::QuadTo((113.22, -138.0).into(), (86.11, -165.61).into()),
+                PathEl::QuadTo((59.0, -193.22).into(), (59.0, -229.0).into()),
+            ],
+        );
+    }
+
+    const GLYF_COMPONENT_GID_NON_UNIFORM_SCALE: GlyphId = GlyphId::new(3);
+    const GLYF_COMPONENT_GID_SCALED_COMPONENT_OFFSET: GlyphId = GlyphId::new(7);
+    const GLYF_COMPONENT_GID_NO_SCALED_COMPONENT_OFFSET: GlyphId = GlyphId::new(8);
+
+    #[test]
+    fn draw_nonuniform_scale_component_freetype() {
+        let font = FontRef::new(font_test_data::GLYF_COMPONENTS).unwrap();
+        assert_glyph_path_start_with(
+            &font,
+            GLYF_COMPONENT_GID_NON_UNIFORM_SCALE,
+            Location::default(),
+            PathStyle::FreeType,
+            &[
+                PathEl::MoveTo((-138.0, -185.0).into()),
+                PathEl::LineTo((-32.0, -259.0).into()),
+                PathEl::LineTo((26.0, -175.0).into()),
+                PathEl::LineTo((-80.0, -101.0).into()),
+                PathEl::ClosePath,
+            ],
+        );
+    }
+
+    #[test]
+    fn draw_nonuniform_scale_component_harfbuzz() {
+        let font = FontRef::new(font_test_data::GLYF_COMPONENTS).unwrap();
+        assert_glyph_path_start_with(
+            &font,
+            GLYF_COMPONENT_GID_NON_UNIFORM_SCALE,
+            Location::default(),
+            PathStyle::HarfBuzz,
+            &[
+                PathEl::MoveTo((-137.8, -184.86).into()),
+                PathEl::LineTo((-32.15, -258.52).into()),
+                PathEl::LineTo((25.9, -175.24).into()),
+                PathEl::LineTo((-79.75, -101.58).into()),
+                PathEl::ClosePath,
+            ],
+        );
+    }
+
+    #[test]
+    fn draw_scaled_component_offset_freetype() {
+        let font = FontRef::new(font_test_data::GLYF_COMPONENTS).unwrap();
+        assert_glyph_path_start_with(
+            &font,
+            GLYF_COMPONENT_GID_SCALED_COMPONENT_OFFSET,
+            Location::default(),
+            PathStyle::FreeType,
+            &[
+                // Adds (x-transform magnitude * x-offset, y-transform magnitude * y-offset) to x/y offset
+                PathEl::MoveTo((715.0, -360.0).into()),
+            ],
+        );
+    }
+
+    #[test]
+    fn draw_no_scaled_component_offset_freetype() {
+        let font = FontRef::new(font_test_data::GLYF_COMPONENTS).unwrap();
+        assert_glyph_path_start_with(
+            &font,
+            GLYF_COMPONENT_GID_NO_SCALED_COMPONENT_OFFSET,
+            Location::default(),
+            PathStyle::FreeType,
+            &[PathEl::MoveTo((705.0, -340.0).into())],
+        );
+    }
+
+    #[test]
+    fn draw_scaled_component_offset_harfbuzz() {
+        let font = FontRef::new(font_test_data::GLYF_COMPONENTS).unwrap();
+        assert_glyph_path_start_with(
+            &font,
+            GLYF_COMPONENT_GID_SCALED_COMPONENT_OFFSET,
+            Location::default(),
+            PathStyle::HarfBuzz,
+            &[
+                // Adds (x-transform magnitude * x-offset, y-transform magnitude * y-offset) to x/y offset
+                PathEl::MoveTo((714.97, -360.0).into()),
+            ],
+        );
+    }
+
+    #[test]
+    fn draw_no_scaled_component_offset_harfbuzz() {
+        let font = FontRef::new(font_test_data::GLYF_COMPONENTS).unwrap();
+        assert_glyph_path_start_with(
+            &font,
+            GLYF_COMPONENT_GID_NO_SCALED_COMPONENT_OFFSET,
+            Location::default(),
+            PathStyle::HarfBuzz,
+            &[PathEl::MoveTo((704.97, -340.0).into())],
+        );
+    }
+
+    #[cfg(feature = "spec_next")]
+    const CUBIC_GLYPH: GlyphId = GlyphId::new(2);
+
+    #[test]
+    #[cfg(feature = "spec_next")]
+    fn draw_cubic() {
+        let font = FontRef::new(font_test_data::CUBIC_GLYF).unwrap();
+        assert_glyph_path_start_with(
+            &font,
+            CUBIC_GLYPH,
+            Location::default(),
+            PathStyle::FreeType,
+            &[
+                PathEl::MoveTo((278.0, -710.0).into()),
+                PathEl::LineTo((278.0, -470.0).into()),
+                PathEl::CurveTo(
+                    (300.0, -500.0).into(),
+                    (800.0, -500.0).into(),
+                    (998.0, -470.0).into(),
+                ),
+                PathEl::LineTo((998.0, -710.0).into()),
+            ],
+        );
+    }
+
+    /// Case where a font subset caused hinting to fail because execution
+    /// budget was derived from glyph count.
+    /// <https://github.com/googlefonts/fontations/issues/936>
+    #[test]
+    fn tthint_with_subset() {
+        let font = FontRef::new(font_test_data::TTHINT_SUBSET).unwrap();
+        let glyphs = font.outline_glyphs();
+        let hinting = HintingInstance::new(
+            &glyphs,
+            Size::new(16.0),
+            LocationRef::default(),
+            HintingOptions::default(),
+        )
+        .unwrap();
+        let glyph = glyphs.get(GlyphId::new(1)).unwrap();
+        // Shouldn't fail in pedantic mode
+        glyph
+            .draw(DrawSettings::hinted(&hinting, true), &mut BezPen::default())
+            .unwrap();
+    }
+
+    #[test]
+    fn empty_glyph_advance_unhinted() {
+        let font = FontRef::new(font_test_data::HVAR_WITH_TRUNCATED_ADVANCE_INDEX_MAP).unwrap();
+        let outlines = font.outline_glyphs();
+        let coords = [NormalizedCoord::from_f32(0.5)];
+        let gid = font.charmap().map(' ').unwrap();
+        let outline = outlines.get(gid).unwrap();
+        let advance = outline
+            .draw(
+                (Size::new(24.0), LocationRef::new(&coords)),
+                &mut super::pen::NullPen,
+            )
+            .unwrap()
+            .advance_width
+            .unwrap();
+        assert_eq!(advance, 10.796875);
+    }
+
+    #[test]
+    fn empty_glyph_advance_hinted() {
+        let font = FontRef::new(font_test_data::HVAR_WITH_TRUNCATED_ADVANCE_INDEX_MAP).unwrap();
+        let outlines = font.outline_glyphs();
+        let coords = [NormalizedCoord::from_f32(0.5)];
+        let hinter = HintingInstance::new(
+            &outlines,
+            Size::new(24.0),
+            LocationRef::new(&coords),
+            HintingOptions::default(),
+        )
+        .unwrap();
+        let gid = font.charmap().map(' ').unwrap();
+        let outline = outlines.get(gid).unwrap();
+        let advance = outline
+            .draw(&hinter, &mut super::pen::NullPen)
+            .unwrap()
+            .advance_width
+            .unwrap();
+        assert_eq!(advance, 11.0);
+    }
+
+    /// Ensure we produce different TrueType outlines based on the
+    /// fractional_size_hinting flag
+    #[test]
+    fn fractional_size_hinting_matters() {
+        let font = FontRef::from_index(font_test_data::TINOS_SUBSET, 0).unwrap();
+        let mut outlines = font.outline_glyphs();
+        let instance = HintingInstance::new(
+            &outlines,
+            Size::new(24.8),
+            LocationRef::default(),
+            HintingOptions::default(),
+        )
+        .unwrap();
+        let gid = GlyphId::new(2);
+        let outline_with_fractional = {
+            let OutlineCollectionKind::Glyf(glyf) = &mut outlines.kind else {
+                panic!("this is definitely a TrueType font");
+            };
+            glyf.fractional_size_hinting = true;
+            let mut pen = SvgPen::new();
+            let outline = outlines.get(gid).unwrap();
+            outline.draw(&instance, &mut pen).unwrap();
+            pen.to_string()
+        };
+        let outline_without_fractional = {
+            let OutlineCollectionKind::Glyf(glyf) = &mut outlines.kind else {
+                panic!("this is definitely a TrueType font");
+            };
+            glyf.fractional_size_hinting = false;
+            let mut pen = SvgPen::new();
+            let outline = outlines.get(gid).unwrap();
+            outline.draw(&instance, &mut pen).unwrap();
+            pen.to_string()
+        };
+        assert_ne!(outline_with_fractional, outline_without_fractional);
+    }
+}

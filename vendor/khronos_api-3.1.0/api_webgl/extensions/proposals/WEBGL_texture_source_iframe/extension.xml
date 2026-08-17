@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- vi:set sw=2 ts=4: -->
+<?xml-stylesheet href="../../extension.xsl" type="text/xsl"?>
+
+<proposal href="proposals/WEBGL_texture_source_iframe/">
+  <name>WEBGL_texture_source_iframe</name>
+  <contact><a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL
+  working group</a> (public_webgl 'at' khronos.org) </contact>
+  <contributors>
+    <contributor>Zhenyao Mo, Google Inc</contributor>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+  <number>NN</number>
+  <depends>
+    <api version="1.0"/>
+    <api version="2.0"/>
+  </depends>
+  <overview>
+    <p>This extension enables WebGL implementations to bind an HTMLIFrameElement object as the data source
+    to a texture. While bound, the extension provides an API to allow applications to request the latest
+    iframe rendering results to be blitted to the texture. The extension also provides an API to allow
+    applications to transform and forward related user input events from WebGL canvas to the bound iframe,
+    thus enabling the bound iframe to be interative inside a WebGL scene.</p>
+    <p>Due to security concerns, currently this extension only supports same origin iframes. This
+    limitaion may be lifted in the future.</p>
+  </overview>
+  <idl xml:space="preserve"><![CDATA[
+[NoInterfaceObject]
+interface WEBGL_texture_source_iframe {
+  Promise<void> bindTextureSource(GLenum target, HTMLIFrameElement iframe);
+  Promise<void> requestFrame(GLenum target);
+  void setEventForwarding(function(Event));
+};
+  ]]></idl>
+  <newfun>
+    <function name="bindTextureSource" type="Promise&lt;void&gt;">
+      <param name="target" type="GLenum"/>
+      <param name="iframe" type="HTMLIFrameElement"/>
+      <p>
+        This function connects an <code>iframe</code> to the texture currently bound to <code>target</code> and returns a promise
+        that will be fulfilled once the iframe is rendered and ready to be blitted to the texture. If the <code>iframe</code>
+        is <code>null</code>, any existing binding between the texture and an iframe is broken.
+        If there are any errors, generate the GL error synchronously and the returned promise is
+        <a href="https://www.w3.org/2001/tag/doc/promises-guide/#reject-promise">rejected</a>
+        with an <code>InvalidStateError</code>.
+      </p>
+      <p>
+        Once the function returns successfully, the texture is defined as following: its effective
+        internal format becomes <code>RGBA8</code>; its width and height becomes iframe element's
+        width and height.
+      </p>
+      <p>Error cases are listed below:
+      <ul>
+        <li><code>target</code> must be <code>TEXTURE_2D</code>; otherwise an <code>INVALID_ENUM</code>
+        error is generated.</li>
+        <li>If no texture is bound to the <code>target</code>, an <code>INVALID_OPERATION</code> is
+        generated.</li>
+        <li>If <code>iframe</code> is not the same origin, an <code>INVALID_OPERATION</code> is
+        generated.</li>
+      </ul>
+      </p>
+      <p>Note this function returns a promise asynchronously because wiring an iframe rendering results
+      to a WebGL texture could take multiple frames. The iframe could be invisible, therefore not part of
+      the rendering pipeline and needs to be inserted into it. The iframe could also be in a seperate
+      process from the one where WebGL is in, although this is likely not the case right now because we
+      currently limit iframe to be same origin only.</p>
+    </function>
+    <function name="requestFrame" type="Promise&lt;void&gt;">
+      <param name="target" type="GLenum"/>
+      <p>
+        This function instructs implementations to update the texture with the latest iframe rendering
+        results. The function returns a promise that will be fulfilled when the iframe rendering results from the same animation frame
+        when this function is called has been blitted to the texture.
+      </p>
+      <p>
+        If an application uses <code>requestAnimationFrame</code>, implementations must guarantee once
+        this function is called, the iframe rendering results from the same frame has been blitted to the
+        texture when entering the next animation frame. Therefore, it is not necessary for an
+        application to depend on the state of the returned promise. The promise is for applications that do not
+        use <code>requestAnimationFrame</code>.
+      </p>
+      <p>
+        Once this function called, it is not recommended to read from the texture until the returns promise is
+        fulfilled. The content of the texture during this period is undefined.
+      </p>
+    </function>
+    <function name="setEventForwarding" type="void">
+      <param name="func" type="Function"/>
+      <p>
+        This function allows an application to define an event forwarding
+        function that decides whether to forward user input events received on
+        the WebGL canvas to the iframe. If yes, this function needs to transform
+        event locations and displacements as needed. With this, an application
+        can allow users to interact the iframe rendered inside the WebGL scene.
+      </p>
+      <p>
+        The event forwarding function takes an event as input, and output a
+        bool. If returning true, the event is forwarded to the iframe and event
+        data might have been modified to transform the event from WebGL canvas
+        coordinates to iframe coordinates.
+      </p>
+      <p>
+        TODO(zmo@chromium.org): need some help how to define the forwarding function
+        signature.
+      </p>
+    </function>
+  </newfun>
+  <history>
+    <revision date="2017/09/20">
+      <change>Initial revision.</change>
+    </revision>
+  </history>
+</proposal>

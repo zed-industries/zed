@@ -1,0 +1,273 @@
+name: Rust
+
+on:
+  pull_request:
+    paths:
+    - '**'
+    - '!/*.md'
+    - '!/*.org'
+    - "!/LICENSE"
+    
+  push:
+    branches:
+    - main
+    paths:
+    - '**'
+    - '!/*.md'
+    - '!/*.org'
+    - "!/LICENSE"
+    
+  schedule:
+  - cron: '12 12 12 * *'
+
+jobs:
+  publish:
+    name: Publish (dry-run)
+    needs: [test, docs]
+    strategy:
+      matrix:
+        package:
+          - email_address
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        profile: minimal
+        override: true
+        
+    - uses: Swatinem/rust-cache@v2
+      
+    - name: Check publish
+      uses: actions-rs/cargo@v1
+      with:
+        command: publish
+        args: --package ${{ matrix.package}} --dry-run
+
+      
+  check_tests:
+    name: Check for test types
+    runs-on: ubuntu-latest
+    outputs:
+      has_benchmarks: ${{ steps.check_benchmarks.outputs.has_benchmarks }}
+      has_examples: ${{ steps.check_examples.outputs.has_examples }}
+    steps:
+      - name: Check for benchmarks
+        id: check_benchmarks
+        run: test -d benchmarks && echo "has_benchmarks=1" || echo "has_benchmarks=" >> $GITHUB_OUTPUT
+        shell: bash
+        
+      - name: Check for examples
+        id: check_examples
+        run: test -d examples && echo "has_examples=1" || echo "has_examples=" >> $GITHUB_OUTPUT
+        shell: bash
+
+        
+  test:
+    name: Test
+    needs: [rustfmt, clippy]
+    strategy:
+      matrix:
+        os: ["ubuntu-latest", "windows-latest", "macos-latest"]
+        rust: ["stable", "beta", "nightly"]
+        test-features: ["", "--all-features", "--no-default-features"]
+    continue-on-error: ${{ matrix.rust != 'stable' }}
+    runs-on: ${{ matrix.os }}
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: ${{ matrix.rust }}
+        profile: minimal
+        override: true
+        
+    - uses: Swatinem/rust-cache@v2
+      
+    - name: Build
+      uses: actions-rs/cargo@v1
+      with:
+        command: build
+        args: --workspace ${{ matrix.test-features }}
+      
+    - name: Test
+      uses: actions-rs/cargo@v1
+      with:
+        command: test
+        args: --workspace ${{ matrix.test-features }}
+ 
+      
+  benchmarks:
+    name: Benchmarks
+    needs: [rustfmt, clippy, check_tests]
+    if: needs.check_tests.outputs.has_benchmarks
+    strategy:
+      matrix:
+        os: ["ubuntu-latest", "windows-latest", "macos-latest"]
+        rust: ["stable"]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: ${{ matrix.rust }}
+        profile: minimal
+        override: true
+        
+    - uses: Swatinem/rust-cache@v2
+      
+    - name: Run benchmarks with all features
+      uses: actions-rs/cargo@v1
+      with:
+        command: test
+        args: --workspace --benches --all-features --no-fail-fast
+
+      
+  examples:
+    name: Examples
+    needs: [rustfmt, clippy, check_tests]
+    if: needs.check_tests.outputs.has_examples
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: ["ubuntu-latest", "windows-latest", "macos-latest"]
+        rust: ["stable"]
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+      
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: ${{ matrix.rust }}
+        profile: minimal
+        override: true
+        
+    - uses: Swatinem/rust-cache@v2
+      
+    - name: Run examples with all features
+      uses: actions-rs/cargo@v1
+      with:
+        command: test
+        args: --workspace --examples --all-features --no-fail-fast
+
+        
+  coverage:   
+    name: Code Coverage
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: ["ubuntu-latest", "windows-latest", "macos-latest"]
+        rust: ["stable"]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          override: true
+
+      - name: Run cargo-tarpaulin
+        uses: actions-rs/tarpaulin@v0.1
+        with:
+          version: 0.22.0
+          args: --all-features -- --test-threads 1
+
+      - name: Upload to codecov.io
+        uses: codecov/codecov-action@v1.0.2
+        with:
+          token: ${{secrets.CODECOV_TOKEN}}
+
+      - name: Archive code coverage results
+        uses: actions/upload-artifact@v1
+        with:
+          name: code-coverage-report
+          path: cobertura.xml
+
+          
+  docs:
+    name: Document generation
+    needs: [rustfmt, clippy]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        profile: minimal
+        override: true
+        
+    - uses: Swatinem/rust-cache@v2
+      
+    - name: Generate documentation
+      uses: actions-rs/cargo@v1
+      env:
+        RUSTDOCFLAGS: -D warnings
+      with:
+        command: doc
+        args: --workspace --all-features --no-deps
+
+      
+  rustfmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        profile: minimal
+        override: true
+        components: rustfmt
+              
+    - uses: Swatinem/rust-cache@v2
+
+    - name: Check formatting
+      uses: actions-rs/cargo@v1
+      with:
+        command: fmt
+        args: --all -- --check
+
+      
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    permissions:
+      checks: write
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        profile: minimal
+        override: true
+        components: clippy
+              
+    - uses: Swatinem/rust-cache@v2
+
+    - uses: actions-rs/clippy-check@v1
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        args: --workspace --no-deps --all-features --all-targets -- -D warnings

@@ -1,0 +1,10 @@
+error: #[proc_macro_error] attribute can be used only with procedural macros
+
+  = hint: if you are really sure that #[proc_macro_error] should be applied to this exact function, use #[proc_macro_error(allow_not_macro)]
+
+ --> $DIR/not_proc_macro.rs:3:1
+  |
+3 | #[proc_macro_error]
+  | ^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in an attribute macro (in Nightly builds, run with -Z macro-backtrace for more info)

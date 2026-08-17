@@ -1,0 +1,8 @@
+[undeadleech@archhq saved_cursor]$ echo -e "\e7 \e(0 test \e8 xxx"
+7 (0 test 8 xxx
+[undeadleech@archhq saved_cursor]$ echo -e "\e[?1049h \e(0 test \e[?1049l xxx"
+[?1049h (0 test [?1049l xxx
+[undeadleech@archhq saved_cursor]$ echo -e "\e7 \e(0 \e[?1049h test \e[?1049l \e8 xxx"
+7 (0 [?1049h test [?1049l 8 xxx
+[undeadleech@archhq saved_cursor]$ exit
+exit

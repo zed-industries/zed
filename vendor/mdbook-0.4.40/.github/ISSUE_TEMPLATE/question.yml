@@ -1,0 +1,24 @@
+name: Question
+description: Have a question on how to use mdBook?
+labels: ["C-question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Got a question on how to do something with mdBook?
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: >
+        Enter your question here. Please try to provide as much detail as possible.
+    validations:
+      required: true
+  - type: textarea
+    id: version
+    attributes:
+      label: Version
+      description: >
+        Please paste the output of running `mdbook --version` or which version
+        of the library you are using.
+      render: text

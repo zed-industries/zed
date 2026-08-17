@@ -1,0 +1,8 @@
+failed to resolve directory while parsing WIT for path [tests/ui/parse-fail/non-existance-world-include]
+
+Caused by:
+    world not found in package
+         --> tests/ui/parse-fail/non-existance-world-include/root.wit:4:19
+          |
+        4 |   include foo:baz/non-existance;
+          |                   ^------------

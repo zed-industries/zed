@@ -1,0 +1,1156 @@
+{
+  "worlds": [
+    {
+      "name": "foo",
+      "imports": {
+        "interface-0": {
+          "interface": {
+            "id": 0
+          }
+        },
+        "interface-1": {
+          "interface": {
+            "id": 1
+          }
+        },
+        "interface-2": {
+          "interface": {
+            "id": 2
+          }
+        },
+        "interface-3": {
+          "interface": {
+            "id": 3
+          }
+        },
+        "interface-4": {
+          "interface": {
+            "id": 4
+          }
+        },
+        "interface-5": {
+          "interface": {
+            "id": 5
+          }
+        },
+        "interface-6": {
+          "interface": {
+            "id": 6
+          }
+        },
+        "interface-7": {
+          "interface": {
+            "id": 7
+          }
+        },
+        "interface-8": {
+          "interface": {
+            "id": 8
+          }
+        }
+      },
+      "exports": {
+        "interface-9": {
+          "interface": {
+            "id": 9
+          }
+        }
+      },
+      "package": 0
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "i1",
+      "types": {
+        "t1": 0,
+        "t2": 1,
+        "t3": 2,
+        "t4": 3,
+        "t5": 4,
+        "t6": 5,
+        "t7": 6,
+        "t8": 7,
+        "t9": 8,
+        "t10": 9
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "i2",
+      "types": {
+        "t1": 10,
+        "t2": 11,
+        "t3": 12,
+        "t4": 13,
+        "t5": 14,
+        "t6": 15,
+        "t7": 16,
+        "t8": 17,
+        "t9": 18,
+        "t10": 19
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "i3",
+      "types": {
+        "t1": 20,
+        "t2": 21,
+        "t3": 22,
+        "t4": 23,
+        "t5": 24,
+        "t6": 25,
+        "t7": 26,
+        "t8": 27,
+        "t9": 28,
+        "t10": 29
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "i4",
+      "types": {
+        "t1": 30,
+        "t2": 31,
+        "t3": 32,
+        "t4": 33,
+        "t5": 34,
+        "t6": 35,
+        "t7": 36,
+        "t8": 37,
+        "t9": 38,
+        "t10": 39
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "i5",
+      "types": {
+        "t1": 40,
+        "t2": 41,
+        "t3": 42,
+        "t4": 43,
+        "t5": 44,
+        "t6": 45,
+        "t7": 46,
+        "t8": 47,
+        "t9": 48,
+        "t10": 49
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "i6",
+      "types": {
+        "t1": 50,
+        "t2": 51,
+        "t3": 52,
+        "t4": 53,
+        "t5": 54,
+        "t6": 55,
+        "t7": 56,
+        "t8": 57,
+        "t9": 58,
+        "t10": 59
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "i7",
+      "types": {
+        "t1": 60,
+        "t2": 61,
+        "t3": 62,
+        "t4": 63,
+        "t5": 64,
+        "t6": 65,
+        "t7": 66,
+        "t8": 67,
+        "t9": 68,
+        "t10": 69
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "i8",
+      "types": {
+        "t1": 70,
+        "t2": 71,
+        "t3": 72,
+        "t4": 73,
+        "t5": 74,
+        "t6": 75,
+        "t7": 76,
+        "t8": 77,
+        "t9": 78,
+        "t10": 79
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "i9",
+      "types": {
+        "t1": 80,
+        "t2": 81,
+        "t3": 82,
+        "t4": 83,
+        "t5": 84,
+        "t6": 85,
+        "t7": 86,
+        "t8": 87,
+        "t9": 88,
+        "t10": 89
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "i10",
+      "types": {
+        "t1": 90,
+        "t2": 91,
+        "t3": 92,
+        "t4": 93,
+        "t5": 94,
+        "t6": 95,
+        "t7": 96,
+        "t8": 97,
+        "t9": 98,
+        "t10": 99
+      },
+      "functions": {},
+      "package": 0
+    }
+  ],
+  "types": [
+    {
+      "name": "t1",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "t2",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "t3",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "t4",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "t5",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "t6",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "t7",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "t8",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "t9",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "t10",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "t1",
+      "kind": {
+        "type": 0
+      },
+      "owner": {
+        "interface": 1
+      }
+    },
+    {
+      "name": "t2",
+      "kind": {
+        "type": 1
+      },
+      "owner": {
+        "interface": 1
+      }
+    },
+    {
+      "name": "t3",
+      "kind": {
+        "type": 2
+      },
+      "owner": {
+        "interface": 1
+      }
+    },
+    {
+      "name": "t4",
+      "kind": {
+        "type": 3
+      },
+      "owner": {
+        "interface": 1
+      }
+    },
+    {
+      "name": "t5",
+      "kind": {
+        "type": 4
+      },
+      "owner": {
+        "interface": 1
+      }
+    },
+    {
+      "name": "t6",
+      "kind": {
+        "type": 5
+      },
+      "owner": {
+        "interface": 1
+      }
+    },
+    {
+      "name": "t7",
+      "kind": {
+        "type": 6
+      },
+      "owner": {
+        "interface": 1
+      }
+    },
+    {
+      "name": "t8",
+      "kind": {
+        "type": 7
+      },
+      "owner": {
+        "interface": 1
+      }
+    },
+    {
+      "name": "t9",
+      "kind": {
+        "type": 8
+      },
+      "owner": {
+        "interface": 1
+      }
+    },
+    {
+      "name": "t10",
+      "kind": {
+        "type": 9
+      },
+      "owner": {
+        "interface": 1
+      }
+    },
+    {
+      "name": "t1",
+      "kind": {
+        "type": 10
+      },
+      "owner": {
+        "interface": 2
+      }
+    },
+    {
+      "name": "t2",
+      "kind": {
+        "type": 11
+      },
+      "owner": {
+        "interface": 2
+      }
+    },
+    {
+      "name": "t3",
+      "kind": {
+        "type": 12
+      },
+      "owner": {
+        "interface": 2
+      }
+    },
+    {
+      "name": "t4",
+      "kind": {
+        "type": 13
+      },
+      "owner": {
+        "interface": 2
+      }
+    },
+    {
+      "name": "t5",
+      "kind": {
+        "type": 14
+      },
+      "owner": {
+        "interface": 2
+      }
+    },
+    {
+      "name": "t6",
+      "kind": {
+        "type": 15
+      },
+      "owner": {
+        "interface": 2
+      }
+    },
+    {
+      "name": "t7",
+      "kind": {
+        "type": 16
+      },
+      "owner": {
+        "interface": 2
+      }
+    },
+    {
+      "name": "t8",
+      "kind": {
+        "type": 17
+      },
+      "owner": {
+        "interface": 2
+      }
+    },
+    {
+      "name": "t9",
+      "kind": {
+        "type": 18
+      },
+      "owner": {
+        "interface": 2
+      }
+    },
+    {
+      "name": "t10",
+      "kind": {
+        "type": 19
+      },
+      "owner": {
+        "interface": 2
+      }
+    },
+    {
+      "name": "t1",
+      "kind": {
+        "type": 20
+      },
+      "owner": {
+        "interface": 3
+      }
+    },
+    {
+      "name": "t2",
+      "kind": {
+        "type": 21
+      },
+      "owner": {
+        "interface": 3
+      }
+    },
+    {
+      "name": "t3",
+      "kind": {
+        "type": 22
+      },
+      "owner": {
+        "interface": 3
+      }
+    },
+    {
+      "name": "t4",
+      "kind": {
+        "type": 23
+      },
+      "owner": {
+        "interface": 3
+      }
+    },
+    {
+      "name": "t5",
+      "kind": {
+        "type": 24
+      },
+      "owner": {
+        "interface": 3
+      }
+    },
+    {
+      "name": "t6",
+      "kind": {
+        "type": 25
+      },
+      "owner": {
+        "interface": 3
+      }
+    },
+    {
+      "name": "t7",
+      "kind": {
+        "type": 26
+      },
+      "owner": {
+        "interface": 3
+      }
+    },
+    {
+      "name": "t8",
+      "kind": {
+        "type": 27
+      },
+      "owner": {
+        "interface": 3
+      }
+    },
+    {
+      "name": "t9",
+      "kind": {
+        "type": 28
+      },
+      "owner": {
+        "interface": 3
+      }
+    },
+    {
+      "name": "t10",
+      "kind": {
+        "type": 29
+      },
+      "owner": {
+        "interface": 3
+      }
+    },
+    {
+      "name": "t1",
+      "kind": {
+        "type": 30
+      },
+      "owner": {
+        "interface": 4
+      }
+    },
+    {
+      "name": "t2",
+      "kind": {
+        "type": 31
+      },
+      "owner": {
+        "interface": 4
+      }
+    },
+    {
+      "name": "t3",
+      "kind": {
+        "type": 32
+      },
+      "owner": {
+        "interface": 4
+      }
+    },
+    {
+      "name": "t4",
+      "kind": {
+        "type": 33
+      },
+      "owner": {
+        "interface": 4
+      }
+    },
+    {
+      "name": "t5",
+      "kind": {
+        "type": 34
+      },
+      "owner": {
+        "interface": 4
+      }
+    },
+    {
+      "name": "t6",
+      "kind": {
+        "type": 35
+      },
+      "owner": {
+        "interface": 4
+      }
+    },
+    {
+      "name": "t7",
+      "kind": {
+        "type": 36
+      },
+      "owner": {
+        "interface": 4
+      }
+    },
+    {
+      "name": "t8",
+      "kind": {
+        "type": 37
+      },
+      "owner": {
+        "interface": 4
+      }
+    },
+    {
+      "name": "t9",
+      "kind": {
+        "type": 38
+      },
+      "owner": {
+        "interface": 4
+      }
+    },
+    {
+      "name": "t10",
+      "kind": {
+        "type": 39
+      },
+      "owner": {
+        "interface": 4
+      }
+    },
+    {
+      "name": "t1",
+      "kind": {
+        "type": 40
+      },
+      "owner": {
+        "interface": 5
+      }
+    },
+    {
+      "name": "t2",
+      "kind": {
+        "type": 41
+      },
+      "owner": {
+        "interface": 5
+      }
+    },
+    {
+      "name": "t3",
+      "kind": {
+        "type": 42
+      },
+      "owner": {
+        "interface": 5
+      }
+    },
+    {
+      "name": "t4",
+      "kind": {
+        "type": 43
+      },
+      "owner": {
+        "interface": 5
+      }
+    },
+    {
+      "name": "t5",
+      "kind": {
+        "type": 44
+      },
+      "owner": {
+        "interface": 5
+      }
+    },
+    {
+      "name": "t6",
+      "kind": {
+        "type": 45
+      },
+      "owner": {
+        "interface": 5
+      }
+    },
+    {
+      "name": "t7",
+      "kind": {
+        "type": 46
+      },
+      "owner": {
+        "interface": 5
+      }
+    },
+    {
+      "name": "t8",
+      "kind": {
+        "type": 47
+      },
+      "owner": {
+        "interface": 5
+      }
+    },
+    {
+      "name": "t9",
+      "kind": {
+        "type": 48
+      },
+      "owner": {
+        "interface": 5
+      }
+    },
+    {
+      "name": "t10",
+      "kind": {
+        "type": 49
+      },
+      "owner": {
+        "interface": 5
+      }
+    },
+    {
+      "name": "t1",
+      "kind": {
+        "type": 50
+      },
+      "owner": {
+        "interface": 6
+      }
+    },
+    {
+      "name": "t2",
+      "kind": {
+        "type": 51
+      },
+      "owner": {
+        "interface": 6
+      }
+    },
+    {
+      "name": "t3",
+      "kind": {
+        "type": 52
+      },
+      "owner": {
+        "interface": 6
+      }
+    },
+    {
+      "name": "t4",
+      "kind": {
+        "type": 53
+      },
+      "owner": {
+        "interface": 6
+      }
+    },
+    {
+      "name": "t5",
+      "kind": {
+        "type": 54
+      },
+      "owner": {
+        "interface": 6
+      }
+    },
+    {
+      "name": "t6",
+      "kind": {
+        "type": 55
+      },
+      "owner": {
+        "interface": 6
+      }
+    },
+    {
+      "name": "t7",
+      "kind": {
+        "type": 56
+      },
+      "owner": {
+        "interface": 6
+      }
+    },
+    {
+      "name": "t8",
+      "kind": {
+        "type": 57
+      },
+      "owner": {
+        "interface": 6
+      }
+    },
+    {
+      "name": "t9",
+      "kind": {
+        "type": 58
+      },
+      "owner": {
+        "interface": 6
+      }
+    },
+    {
+      "name": "t10",
+      "kind": {
+        "type": 59
+      },
+      "owner": {
+        "interface": 6
+      }
+    },
+    {
+      "name": "t1",
+      "kind": {
+        "type": 60
+      },
+      "owner": {
+        "interface": 7
+      }
+    },
+    {
+      "name": "t2",
+      "kind": {
+        "type": 61
+      },
+      "owner": {
+        "interface": 7
+      }
+    },
+    {
+      "name": "t3",
+      "kind": {
+        "type": 62
+      },
+      "owner": {
+        "interface": 7
+      }
+    },
+    {
+      "name": "t4",
+      "kind": {
+        "type": 63
+      },
+      "owner": {
+        "interface": 7
+      }
+    },
+    {
+      "name": "t5",
+      "kind": {
+        "type": 64
+      },
+      "owner": {
+        "interface": 7
+      }
+    },
+    {
+      "name": "t6",
+      "kind": {
+        "type": 65
+      },
+      "owner": {
+        "interface": 7
+      }
+    },
+    {
+      "name": "t7",
+      "kind": {
+        "type": 66
+      },
+      "owner": {
+        "interface": 7
+      }
+    },
+    {
+      "name": "t8",
+      "kind": {
+        "type": 67
+      },
+      "owner": {
+        "interface": 7
+      }
+    },
+    {
+      "name": "t9",
+      "kind": {
+        "type": 68
+      },
+      "owner": {
+        "interface": 7
+      }
+    },
+    {
+      "name": "t10",
+      "kind": {
+        "type": 69
+      },
+      "owner": {
+        "interface": 7
+      }
+    },
+    {
+      "name": "t1",
+      "kind": {
+        "type": 70
+      },
+      "owner": {
+        "interface": 8
+      }
+    },
+    {
+      "name": "t2",
+      "kind": {
+        "type": 71
+      },
+      "owner": {
+        "interface": 8
+      }
+    },
+    {
+      "name": "t3",
+      "kind": {
+        "type": 72
+      },
+      "owner": {
+        "interface": 8
+      }
+    },
+    {
+      "name": "t4",
+      "kind": {
+        "type": 73
+      },
+      "owner": {
+        "interface": 8
+      }
+    },
+    {
+      "name": "t5",
+      "kind": {
+        "type": 74
+      },
+      "owner": {
+        "interface": 8
+      }
+    },
+    {
+      "name": "t6",
+      "kind": {
+        "type": 75
+      },
+      "owner": {
+        "interface": 8
+      }
+    },
+    {
+      "name": "t7",
+      "kind": {
+        "type": 76
+      },
+      "owner": {
+        "interface": 8
+      }
+    },
+    {
+      "name": "t8",
+      "kind": {
+        "type": 77
+      },
+      "owner": {
+        "interface": 8
+      }
+    },
+    {
+      "name": "t9",
+      "kind": {
+        "type": 78
+      },
+      "owner": {
+        "interface": 8
+      }
+    },
+    {
+      "name": "t10",
+      "kind": {
+        "type": 79
+      },
+      "owner": {
+        "interface": 8
+      }
+    },
+    {
+      "name": "t1",
+      "kind": {
+        "type": 80
+      },
+      "owner": {
+        "interface": 9
+      }
+    },
+    {
+      "name": "t2",
+      "kind": {
+        "type": 81
+      },
+      "owner": {
+        "interface": 9
+      }
+    },
+    {
+      "name": "t3",
+      "kind": {
+        "type": 82
+      },
+      "owner": {
+        "interface": 9
+      }
+    },
+    {
+      "name": "t4",
+      "kind": {
+        "type": 83
+      },
+      "owner": {
+        "interface": 9
+      }
+    },
+    {
+      "name": "t5",
+      "kind": {
+        "type": 84
+      },
+      "owner": {
+        "interface": 9
+      }
+    },
+    {
+      "name": "t6",
+      "kind": {
+        "type": 85
+      },
+      "owner": {
+        "interface": 9
+      }
+    },
+    {
+      "name": "t7",
+      "kind": {
+        "type": 86
+      },
+      "owner": {
+        "interface": 9
+      }
+    },
+    {
+      "name": "t8",
+      "kind": {
+        "type": 87
+      },
+      "owner": {
+        "interface": 9
+      }
+    },
+    {
+      "name": "t9",
+      "kind": {
+        "type": 88
+      },
+      "owner": {
+        "interface": 9
+      }
+    },
+    {
+      "name": "t10",
+      "kind": {
+        "type": 89
+      },
+      "owner": {
+        "interface": 9
+      }
+    }
+  ],
+  "packages": [
+    {
+      "name": "foo:bar",
+      "interfaces": {
+        "i1": 0,
+        "i2": 1,
+        "i3": 2,
+        "i4": 3,
+        "i5": 4,
+        "i6": 5,
+        "i7": 6,
+        "i8": 7,
+        "i9": 8,
+        "i10": 9
+      },
+      "worlds": {
+        "foo": 0
+      }
+    }
+  ]
+}

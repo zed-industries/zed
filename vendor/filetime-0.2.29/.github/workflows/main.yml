@@ -1,0 +1,86 @@
+name: CI
+on: [push, pull_request]
+
+jobs:
+  test:
+    name: Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        build: [stable, beta, nightly, macos, win32, win64, mingw]
+        include:
+          - build: stable
+            os: ubuntu-latest
+            rust: stable
+          - build: beta
+            os: ubuntu-latest
+            rust: beta
+          - build: nightly
+            os: ubuntu-latest
+            rust: nightly
+          - build: macos
+            os: macos-latest
+            rust: stable
+          - build: win32
+            os: windows-latest
+            rust: stable-i686
+          - build: win64
+            os: windows-latest
+            rust: stable-x86_64
+          - build: mingw
+            os: windows-latest
+            rust: stable-x86_64-gnu
+    steps:
+    - uses: actions/checkout@master
+    - name: Install Rust (rustup)
+      run: rustup update ${{ matrix.rust }} --no-self-update && rustup default ${{ matrix.rust }}
+      shell: bash
+    - run: cargo test
+
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    - name: Install Rust
+      run: rustup update 1.75.0 && rustup default 1.75.0
+    - run: cargo build
+
+  rustfmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    - name: Install Rust
+      run: rustup update stable && rustup default stable && rustup component add rustfmt
+    - run: cargo fmt -- --check
+
+  build:
+    name: Build for Android and Redox
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [x86_64-linux-android, x86_64-unknown-redox]
+    steps:
+    - uses: actions/checkout@master
+    - name: Install Rust
+      run: rustup update stable && rustup default stable && rustup target add ${{ matrix.target }}
+    - run: cargo build --target ${{ matrix.target }}
+
+  publish_docs:
+    name: Publish Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@master
+      - name: Install Rust
+        run: rustup update stable && rustup default stable
+      - name: Build documentation
+        run: cargo doc --no-deps --all-features
+      - name: Publish documentation
+        run: |
+          cd target/doc
+          git init
+          git add .
+          git -c user.name='ci' -c user.email='ci' commit -m init
+          git push -f -q https://git:${{ secrets.github_token }}@github.com/${{ github.repository }} HEAD:gh-pages
+        if: github.event_name == 'push' && github.event.ref == 'refs/heads/master'

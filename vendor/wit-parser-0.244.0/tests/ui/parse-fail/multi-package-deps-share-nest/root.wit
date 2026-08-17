@@ -1,0 +1,8 @@
+package foo:root;
+
+interface i0 {
+  use foo:dep1/i1.{o1};
+  use foo:dep2/i2.{o2};
+
+  type v = tuple<o1, o2>;
+}

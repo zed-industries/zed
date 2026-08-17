@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+ * freetype.user.props
+ *
+ *
+ * You can specify custom options here without altering the project file.
+ *
+ * Multiple entries within each property are separated by semicolons (;).
+ *
+ * NOTE: If you want to link against zlib, libpng, bzip2 or harfbuzz, you
+ *       should alter these values appropriately.
+ -->
+
+<Project ToolsVersion="4.0"
+         xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup Label="Globals">
+
+    <!--
+     * `;'-separated list of symbols to #define
+     -->
+    <UserDefines></UserDefines>
+
+    <!--
+     * path where your custom `ftoption.h' lives;
+     * this is searched BEFORE any other path
+     -->
+    <!-- <UserOptionDirectory>..\..\..\devel</UserOptionDirectory> -->
+    <UserOptionDirectory></UserOptionDirectory>
+
+    <!--
+     * `;'-separated list of paths to additional include directories,
+     * e.g., where to find zlib.h, png.h, etc.;
+     * this is searched AFTER any other path
+     -->
+    <!-- <UserIncludeDirectories>..\..\..\..\zlib-1.2.8;..\..\..\..\libpng-1.6.12</UserIncludeDirectories> -->
+    <UserIncludeDirectories></UserIncludeDirectories>
+
+    <!--
+     * `;'-separated list of paths to additional library directories,
+     * e.g., where to find zlib.lib, libpng.lib, etc.
+     -->
+    <!-- <UserLibraryDirectories>..\..\..\..\zlib-1.2.8;..\..\..\..\libpng-1.6.12</UserLibraryDirectories> -->
+    <UserLibraryDirectories></UserLibraryDirectories>
+
+    <!--
+     * `;'-separated list of additional linker dependencies,
+     * e.g., zlib.lib, libpng.lib, etc.
+     -->
+    <!-- <UserDependencies>zlib.lib;libpng16.lib</UserDependencies> -->
+    <UserDependencies></UserDependencies>
+
+  </PropertyGroup>
+
+  <!--
+   * Example configuration for x64 debug build only
+   -->
+
+  <!--
+    <PropertyGroup Label="DebugProperties"
+                   Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+      <UserDefines>ENABLE_DEBUG_HELPER;ENABLE_DEBUG_LOGGING</UserDefines>
+      <UserOptionDirectory>config\debug</UserOptionDirectory>
+      <UserIncludeDirectories>C:\mydebughelp\include</UserIncludeDirectories>
+      <UserLibraryDirectories>C:\mydebughelp\lib</UserLibraryDirectories>
+      <UserDependencies>dhelper64.lib</UserDependencies>
+    </PropertyGroup>
+   -->
+</Project>

@@ -1,0 +1,37 @@
+# Run cargo tests in a FreeBSD VM. This needs to run on one of the GitHub macos runners, because
+# they are currently the only ones to support virtualization.
+#
+# See https://github.com/vmactions/freebsd-vm
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+name: freebsd
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v4
+    - name: Run tests in FreeBSD VM
+      uses: vmactions/freebsd-vm@v1
+      with:
+        usesh: true
+        prepare: |
+          pkg install -y curl
+          curl https://sh.rustup.rs -sSf --output rustup.sh
+          sh rustup.sh -y --profile minimal --default-toolchain stable
+          export PATH="${HOME}/.cargo/bin:$PATH"
+          echo "~~~~ rustc --version ~~~~"
+          rustc --version
+
+        run: |
+          export PATH="${HOME}/.cargo/bin:$PATH"
+          ls -la
+          cargo build --verbose
+          cargo test --verbose

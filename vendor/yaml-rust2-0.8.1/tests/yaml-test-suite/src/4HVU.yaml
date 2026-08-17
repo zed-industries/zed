@@ -1,0 +1,19 @@
+---
+- name: Wrong indendation in Sequence
+  from: '@perlpunk'
+  tags: error sequence indent
+  fail: true
+  yaml: |
+    key:
+       - ok
+       - also ok
+      - wrong
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :key
+       +SEQ
+        =VAL :ok
+        =VAL :also ok
+       -SEQ

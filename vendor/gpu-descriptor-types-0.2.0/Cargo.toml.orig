@@ -1,0 +1,14 @@
+[package]
+name = "gpu-descriptor-types"
+version = "0.2.0"
+authors = ["Zakarum <zakarumych@ya.ru>"]
+edition = "2018"
+description = "Core types of gpu-descriptor crate"
+keywords = ["gpu", "vulkan", "allocation", "no-std"]
+license = "MIT OR Apache-2.0"
+documentation = "https://docs.rs/gpu-descriptor-types"
+homepage = "https://github.com/zakarumych/gpu-descriptor"
+repository = "https://github.com/zakarumych/gpu-descriptor"
+
+[dependencies]
+bitflags = { version = "2.4", default-features = false }

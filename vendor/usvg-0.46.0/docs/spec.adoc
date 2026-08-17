@@ -1,0 +1,773 @@
+= Micro SVG Document Structure
+:toc:
+
+== Intro
+
+SVG Micro represents a strip down SVG Full 1.1 subset.
+
+Here is the main differences between SVG Full and SVG Micro.
+
+- No XML DTD.
+- No CSS.
+- `use`, `marker` and nested `svg` will be resolved.
+- Simplified path notation. Only absolute MoveTo, LineTo, CurveTo
+  and ClosePath segments are allowed.
+- No inheritable attributes.
+- No `xlink:href`, except the `image` element.
+- No recursive references.
+- Only valid elements and attributes.
+- No unused elements.
+- No redundant groups.
+- No units.
+- No `objectBoundingBox` units.
+- No `viewBox` and `preserveAspectRatio` attributes.
+- No `style` attribute, except for `mix-blend-mode` and `isolation`
+- Default attributes are implicit.
+
+You can use
+https://github.com/linebender/resvg/tree/main/crates/usvg[usvg]
+to convert a random SVG into a SVG Micro almost losslessly.
+
+== Elements
+
+[[svg-element]]
+
+=== The `svg` element
+
+The `svg` element is the root element of the document.
+It's defined only once and can't be nested, unlike by the SVG spec.
+
+*Children:*
+
+* <<defs-element,defs>>
+* <<g-element,g>>
+* <<path-element,path>>
+* <<image-element,image>>
+
+*Attributes:*
+
+* `width` = <<positive-number-type,<positive-number> >> +
+  The width of the rectangular region into which the referenced document is placed.
+* `height` = <<positive-number-type,<positive-number> >> +
+  The height of the rectangular region into which the referenced document is placed.
+
+[[defs-element]]
+
+=== The `defs` element
+
+Always present. Always the first `svg` child. Can be empty.
+
+*Children:*
+
+* <<linearGradient-element,linearGradient>>
+* <<radialGradient-element,radialGradient>>
+* <<clipPath-element,clipPath>>
+* <<mask-element,mask>>
+* <<pattern-element,pattern>>
+* <<filter-element,filter>>
+* <<g-element,g>>
+* <<path-element,path>>
+* <<image-element,image>>
+
+*Attributes:*
+
+* none
+
+[[linearGradient-element]]
+
+=== The `linearGradient` element
+
+Doesn't have a `xlink:href` attribute because all attributes and `stop`
+children will be resolved.
+
+*Children:*
+
+* At least two <<stop-element,stop>>
+
+*Attributes:*
+
+* `id` = <<string-type,<string> >> +
+  The element ID. Always set. Guarantee to be unique.
+* `x1` = <<number-type,<number> >>
+* `y1` = <<number-type,<number> >>
+* `x2` = <<number-type,<number> >>
+* `y2` = <<number-type,<number> >>
+* `gradientUnits` = `userSpaceOnUse`?
+* `spreadMethod` = `reflect | repeat`?
+* `gradientTransform` = <<transform-type,<transform> >>?
+
+[[radialGradient-element]]
+
+=== The `radialGradient` element
+
+Doesn't have a `xlink:href` attribute because all attributes and `stop`
+children will be resolved.
+
+*Children:*
+
+* At least two <<stop-element,stop>>
+
+*Attributes:*
+
+* `id` = <<string-type,<string> >> +
+  The element ID. Always set. Guarantee to be unique.
+* `cx` = <<number-type,<number> >>
+* `cy` = <<number-type,<number> >>
+* `fx` = <<number-type,<number> >> +
+  Guarantee to be the circle defined by `cx`, `cy` and `r`.
+* `fy` = <<number-type,<number> >> +
+  Guarantee to be inside the circle defined by `cx`, `cy` and `r`.
+* `r` = <<positive-number-type,<positive-number> >>
+* `gradientUnits` = `userSpaceOnUse`
+* `spreadMethod` = `reflect | repeat`?
+* `gradientTransform` = <<transform-type,<transform> >>?
+
+[[stop-element]]
+
+=== The `stop` element
+
+Gradient's `stop` children will always have unique, ordered `offset` values
+in the 0..1 range.
+
+*Children:*
+
+* none
+
+*Attributes:*
+
+* `offset` = <<offset-type,<offset> >>
+* `stop-color` = <<color-type,<color> >>
+* `stop-opacity` = <<opacity-type,<opacity> >>? +
+  Default: 1
+
+[[pattern-element]]
+
+=== The `pattern` element
+
+Doesn't have a `xlink:href` attribute because all attributes and children will be resolved.
+
+*Children:*
+
+* `g`
+* `path`
+* `image`
+
+*Attributes:*
+
+* `id` = <<string-type,<string> >> +
+  The element ID. Always set. Guarantee to be unique.
+* `x` = <<number-type,<number> >>
+* `y` = <<number-type,<number> >>
+* `width` = <<positive-number-type,<positive-number> >>
+* `height` = <<positive-number-type,<positive-number> >>
+* `patternUnits` = `userSpaceOnUse`
+* `patternTransform` = <<transform-type,<transform> >>?
+
+[[clipPath-element]]
+
+=== The `clipPath` element
+
+*Children:*
+
+* `path`
+
+*Attributes:*
+
+* `id` = <<string-type,<string> >> +
+  The element ID. Always set. Guarantee to be unique.
+* `clip-path` = <<func-iri-type,<FuncIRI> >>? +
+  An optional reference to a supplemental `clipPath`. +
+  Default: none
+* `transform` = <<transform-type,<transform> >>?
+
+[[mask-element]]
+
+=== The `mask` element
+
+*Children:*
+
+* `g`
+* `path`
+* `image`
+
+*Attributes:*
+
+* `id` = <<string-type,<string> >> +
+  The element ID. Always set. Guarantee to be unique.
+* `mask` = <<func-iri-type,<FuncIRI> >>? +
+  An optional reference to a supplemental `mask`. +
+  Default: none
+* `x` = <<number-type,<number> >>
+* `y` = <<number-type,<number> >>
+* `width` = <<positive-number-type,<positive-number> >>
+* `height` = <<positive-number-type,<positive-number> >>
+* `mask-type` = `alpha`? +
+  Default: luminance
+* `maskUnits` = `userSpaceOnUse`
+
+[[filter-element]]
+
+=== The `filter` element
+
+Doesn't have a `xlink:href` attribute because all attributes and children will be resolved.
+
+*Children:*
+
+* <<Filter primitives>>
+
+*Attributes:*
+
+* `id` = <<string-type,<string> >> +
+  The element ID. Always set. Guarantee to be unique.
+* `x` = <<number-type,<number> >>
+* `y` = <<number-type,<number> >>
+* `width` = <<positive-number-type,<positive-number> >>
+* `height` = <<positive-number-type,<positive-number> >>
+* `filterUnits` = `userSpaceOnUse`
+
+[[g-element]]
+
+=== The `g` element
+
+The group element indicates that a new canvas should be created.
+All group's children elements will be rendered on it and then merged into
+the parent canvas.
+
+Since it's pretty expensive, especially memory wise, _usvg_
+will remove as many groups as possible.
+And all the remaining one will indicate that a new canvas must be created.
+
+A group can have no children when it has a `filter` attribute.
+
+A group will have at least one of the attributes present.
+
+*Children:*
+
+* <<g-element,g>>
+* <<path-element,path>>
+* <<image-element,image>>
+
+*Attributes:*
+
+* `id` = <<string-type,<string> >>? +
+  An optional, but never empty, element ID.
+* `opacity` = <<opacity-type,<opacity> >>?
+* `clip-path` = <<func-iri-type,<FuncIRI> >>? +
+  Cannot be set to `none`.
+* `mask` = <<func-iri-type,<FuncIRI> >>? +
+  Cannot be set to `none`.
+* `filter` = <<func-iri-type,<FuncIRI> >>+ +
+  Cannot be set to `none`.
+* `transform` = <<transform-type,<transform> >>?
+* `style` = <<string-type,<string> >>? +
+  This is the only place where the `style` attribute is used.
+  For reasons unknown, `mix-blend-mode` and `isolation` properties must not be set as attributes,
+  only as part of the `style` attribute. +
+  The set attribute will look like `mix-blend-mode:screen;isolation:isolate`.
+  Both properties are always set. +
+  The attribute is not present only in case of `mix-blend-mode:norma;isolation:auto`
+
+[[path-element]]
+
+=== The `path` element
+
+*Children:*
+
+* none
+
+*Attributes:*
+
+* `id` = <<string-type,<string> >>? +
+  An optional, but never empty, element ID.
+* `d` = <<path-data-type,<path-data> >> +
+* `fill` = `none` | <<color-type,<color> >> | <<func-iri-type,<FuncIRI> >> +
+  If set to `none` than all fill-* attributes will not be set too. +
+  Default: black
+* `fill-opacity` = <<opacity-type,<opacity> >>? +
+  Default: 1
+* `fill-rule` = `evenodd`? +
+  Default: nonzero
+* `stroke` = `none` | <<color-type,<color> >> | <<func-iri-type,<FuncIRI> >> +
+  If set to `none` than all stroke-* attributes will not be set too. +
+  Default: none
+* `stroke-width` = <<positive-number-type,<positive-number> >>? +
+  Default: 1
+* `stroke-linecap` = `round | square`? +
+  Default: butt
+* `stroke-linejoin` = `round | bevel`? +
+  Default: miter
+* `stroke-miterlimit` = <<positive-number-type,<positive-number> >>? +
+  Guarantee to be > 1. +
+  Default: 4
+* `stroke-dasharray` = `<list-of-numbers>`? +
+  Guarantee to have even amount of numbers. +
+  Default: none
+* `stroke-dashoffset` = <<number-type,<number> >>?
+* `stroke-opacity` = <<opacity-type,<opacity> >>? +
+  Default: 1
+* `paint-order` = `normal | stroke`? +
+  Default: `normal` +
+  Only `stroke` will be written.
+* `clip-rule` = `evenodd`? +
+  Will be set only inside the <<clipPath-element,clipPath>>, instead of `fill-rule`.
+* `clip-path` = <<func-iri-type,<FuncIRI> >>? +
+  Available only inside the <<clipPath-element,clipPath>>.
+* `shape-rendering` = `optimizeSpeed | crispEdges`? +
+  Default: geometricPrecision
+* `visibility` = `hidden`? +
+  Default: visible
+* `transform` = <<transform-type,<transform> >>? +
+  Can only be set on paths inside of `clipPath`.
+
+[[image-element]]
+
+=== The `image` element
+
+*Children:*
+
+* none
+
+*Attributes:*
+
+* `id` = <<string-type,<string> >>? +
+  An optional, but never empty, element ID.
+* `xlink:href` = <<iri-type,<IRI> >> +
+  The IRI contains a base64 encoded image.
+* `width` = <<positive-number-type,<positive-number> >>
+* `height` = <<positive-number-type,<positive-number> >>
+* `image-rendering` = `optimizeSpeed`? +
+  Default: optimizeQuality
+* `visibility` = `hidden`? +
+  Default: visible
+
+== Filter primitives
+
+=== Filter primitive attributes
+
+The attributes below are the same for all filter primitives.
+
+* `color-interpolation-filters` = `sRGB`? +
+  Default: linearRGB
+* `x` = <<number-type,<number> >>?
+* `y` = <<number-type,<number> >>?
+* `width` = <<number-type,<number> >>?
+* `height` = <<number-type,<number> >>?
+* `result` = <<string-type,<string> >>
+
+The `x`, `y`, `width` and `height` attributes can be omitted.
+SVG has a pretty complex
+https://www.w3.org/TR/SVG11/filters.html#FilterPrimitiveSubRegion[rules of resolving them]
+and I don't fully understand them yet.
+Neither do others, because they are pretty poorly implemented.
+
+=== Filter primitive `feBlend`
+
+*Attributes:*
+
+* `in` = <<filter-input-type,<filter-input> >>
+* `in2` = <<filter-input-type,<filter-input> >>
+* `mode` = `normal | multiply | screen | overlay | darken | lighten | color-dodge |color-burn |
+hard-light | soft-light | difference | exclusion | hue | saturation | color | luminosity`
+* <<Filter primitive attributes>>
+
+=== Filter primitive `feColorMatrix`
+
+*Attributes:*
+
+* `in` = <<filter-input-type,<filter-input> >>
+* `type` = `matrix | saturate | hueRotate | luminanceToAlpha`
+* `values` = `<list-of-numbers>`? +
+** For `type=matrix`, contains 20 numbers.
+** For `type=saturate`, contains a single number in a 0..1 range.
+** For `type=hueRotate`, contains a single number.
+** Not present for `type=luminanceToAlpha`.
+* <<Filter primitive attributes>>
+
+=== Filter primitive `feComponentTransfer`
+
+*Children:*
+
+* `feFuncR`
+* `feFuncG`
+* `feFuncB`
+* `feFuncA`
+
+The all four will always be present.
+
+*Attributes:*
+
+* `in` = <<filter-input-type,<filter-input> >>
+* <<Filter primitive attributes>>
+
+*`feFunc(R|G|B|A)` attributes:*
+
+* `type` = `identity | table | discrete | linear | gamma`
+* `tableValues` = `<list-of-numbers>`? +
+  Present only when `type=table | discrete`. Can be empty.
+* `slope` = <<number-type,<number> >>? +
+  Present only when `type=linear`.
+* `intercept` = <<number-type,<number> >>? +
+  Present only when `type=linear`.
+* `amplitude` = <<number-type,<number> >>? +
+  Present only when `type=gamma`.
+* `exponent` = <<number-type,<number> >>? +
+  Present only when `type=gamma`.
+* `offset` = <<number-type,<number> >>? +
+  Present only when `type=gamma`.
+
+=== Filter primitive `feComposite`
+
+*Attributes:*
+
+* `in` = <<filter-input-type,<filter-input> >>
+* `in2` = <<filter-input-type,<filter-input> >>
+* `operator` = `over | in | out | atop | xor | arithmetic`
+* `k1` = <<number-type,<number> >>? +
+  Present only when `operator=arithmetic`.
+* `k2` = <<number-type,<number> >>? +
+  Present only when `operator=arithmetic`.
+* `k3` = <<number-type,<number> >>? +
+  Present only when `operator=arithmetic`.
+* `k4` = <<number-type,<number> >>? +
+  Present only when `operator=arithmetic`.
+* <<Filter primitive attributes>>
+
+=== Filter primitive `feConvolveMatrix`
+
+*Attributes:*
+
+* `in` = <<filter-input-type,<filter-input> >>
+* `order` = <<positive-integer-type,<positive-integer> >> " " <<positive-integer-type,<positive-integer> >> +
+  Both numbers are never 0.
+* `kernelMatrix` = `<list-of-numbers>`
+* `divisor` = <<number-type,<number> >> +
+  Never 0.
+* `bias` = <<number-type,<number> >>
+* `targetX` = <<positive-integer-type,<positive-integer> >> +
+  Always smaller than the number of columns in the matrix.
+* `targetY` = <<positive-integer-type,<positive-integer> >> +
+  Always smaller than the number of rows in the matrix.
+* `edgeMode` = `none | duplicate | wrap`
+* `preserveAlpha` = `true | false`
+* <<Filter primitive attributes>>
+
+=== Filter primitive `feDiffuseLighting`
+
+*Children:*
+
+Only one of:
+
+* `feDistantLight`
+* `fePointLight`
+* `feSpotLight`
+
+*Attributes:*
+
+* `in` = <<filter-input-type,<filter-input> >>
+* `surfaceScale` = <<number-type,<number> >>
+* `diffuseConstant` = <<number-type,<number> >>
+* `lighting-color` = <<color-type,<color> >>
+* <<Filter primitive attributes>>
+
+`feDistantLight` *attributes:*
+
+* `azimuth` = <<number-type,<number> >>
+* `elevation` = <<number-type,<number> >>
+
+`fePointLight` *attributes:*
+
+* `x` = <<number-type,<number> >>
+* `y` = <<number-type,<number> >>
+* `z` = <<number-type,<number> >>
+
+`feSpotLight` *attributes:*
+
+* `x` = <<number-type,<number> >>
+* `y` = <<number-type,<number> >>
+* `z` = <<number-type,<number> >>
+* `pointsAtX` = <<number-type,<number> >>
+* `pointsAtY` = <<number-type,<number> >>
+* `pointsAtZ` = <<number-type,<number> >>
+* `specularExponent` = <<positive-number-type,<positive-number> >>
+* `limitingConeAngle` = <<number-type,<number> >>?
+
+=== Filter primitive `feDisplacementMap`
+
+*Attributes:*
+
+* `in` = <<filter-input-type,<filter-input> >>
+* `in2` = <<filter-input-type,<filter-input> >>
+* `scale` = <<number-type,<number> >>
+* `xChannelSelector` = `R | G | B | A`
+* `yChannelSelector` = `R | G | B | A`
+* <<Filter primitive attributes>>
+
+=== Filter primitive `feDropShadow`
+
+*Attributes:*
+
+* `in` = <<filter-input-type,<filter-input> >>
+* `stdDeviation` = <<positive-number-type,<positive-number> >> " " <<positive-number-type,<positive-number> >>
+* `dx` = <<number-type,<number> >>
+* `dy` = <<number-type,<number> >>
+* `flood-color` = <<color-type,<color> >>
+* `flood-opacity` = <<opacity-type,<opacity> >>
+* <<Filter primitive attributes>>
+
+=== Filter primitive `feFlood`
+
+*Attributes:*
+
+* `flood-color` = <<color-type,<color> >>
+* `flood-opacity` = <<opacity-type,<opacity> >>
+* <<Filter primitive attributes>>
+
+=== Filter primitive `feGaussianBlur`
+
+*Attributes:*
+
+* `in` = <<filter-input-type,<filter-input> >>
+* `stdDeviation` = <<positive-number-type,<positive-number> >> " " <<positive-number-type,<positive-number> >>
+* <<Filter primitive attributes>>
+
+=== Filter primitive `feImage`
+
+*Attributes:*
+
+* `xlink:href` = <<iri-type,<IRI> >> +
+  The IRI contains a link to an element (like `use`).
+  base64 encoded is not allowed and will be represented as a link to an `image`.
+* <<Filter primitive attributes>>
+
+=== Filter primitive `feMerge`
+
+*Children:*
+
+* `feMergeNode`
+
+*Attributes:*
+
+* <<Filter primitive attributes>>
+
+*`feMergeNode` attributes:*
+
+* `in` = <<filter-input-type,<filter-input> >>
+
+=== Filter primitive `feMorphology`
+
+*Attributes:*
+
+* `in` = <<filter-input-type,<filter-input> >>
+* `operator` = `erode | dilate`
+* `radius` = <<positive-number-type,<positive-number> >> " " <<positive-number-type,<positive-number> >>
+* <<Filter primitive attributes>>
+
+=== Filter primitive `feOffset`
+
+*Attributes:*
+
+* `in` = <<filter-input-type,<filter-input> >>
+* `dx` = <<number-type,<number> >>
+* `dy` = <<number-type,<number> >>
+* <<Filter primitive attributes>>
+
+=== Filter primitive `feSpecularLighting`
+
+*Children:*
+
+Only one of:
+
+* `feDistantLight`
+* `fePointLight`
+* `feSpotLight`
+
+*Attributes:*
+
+* `in` = <<filter-input-type,<filter-input> >>
+* `surfaceScale` = <<number-type,<number> >>
+* `specularConstant` = <<number-type,<number> >>
+* `specularExponent` = <<number-type,<number> >> +
+  Number in a 1..128 range.
+* `lighting-color` = <<color-type,<color> >>
+* <<Filter primitive attributes>>
+
+`feDistantLight` *attributes:*
+
+* `azimuth` = <<number-type,<number> >>
+* `elevation` = <<number-type,<number> >>
+
+`fePointLight` *attributes:*
+
+* `x` = <<number-type,<number> >>
+* `y` = <<number-type,<number> >>
+* `z` = <<number-type,<number> >>
+
+`feSpotLight` *attributes:*
+
+* `x` = <<number-type,<number> >>
+* `y` = <<number-type,<number> >>
+* `z` = <<number-type,<number> >>
+* `pointsAtX` = <<number-type,<number> >>
+* `pointsAtY` = <<number-type,<number> >>
+* `pointsAtZ` = <<number-type,<number> >>
+* `specularExponent` = <<positive-number-type,<positive-number> >>
+* `limitingConeAngle` = <<number-type,<number> >>?
+
+=== Filter primitive `feTile`
+
+*Attributes:*
+
+* `in` = <<filter-input-type,<filter-input> >>
+* <<Filter primitive attributes>>
+
+=== Filter primitive `feTurbulence`
+
+*Attributes:*
+
+* `baseFrequency` = <<positive-number-type,<positive-number> >> " " <<positive-number-type,<positive-number> >>
+* `numOctaves` = <<positive-integer-type,<positive-integer> >>
+* `seed` = <<integer-type,<integer> >>
+* `stitchTiles` = `stitch | noStitch`
+* `type` = `fractalNoise | turbulence`
+* <<Filter primitive attributes>>
+
+== Data types
+
+If an attribute has the `?` symbol after the type that's mean that
+that this attribute is optional.
+
+[[string-type]]
+
+*<string>* - A Unicode (UTF-8) string.
+
+
+[[number-type]]
+
+*<number>* - A real number. +
+`number ::= [-]? [0-9]+ "." [0-9]+`
+
+
+[[positive-number-type]]
+
+*<positive-number>* - A positive real <<number-type,number>>. +
+`positive-number ::= [0-9]+ "." [0-9]+`
+
+
+[[integer-type]]
+
+*<integer>* - An integer. +
+`integer ::= [-]? [0-9]+`
+
+
+[[positive-integer-type]]
+
+*<positive-integer>* - A positive integer. +
+`positive-integer ::= [0-9]+`
+
+
+[[opacity-type]]
+
+*<opacity>* - A real <<number-type,number>> in a 0..1 range. +
+`opacity ::= positive-number`
+
+
+[[offset-type]]
+
+*<offset>* - A real <<number-type,number>> in a 0..1 range. +
+`offset ::= positive-number`
+
+
+[[color-type]]
+
+*<color>* - A hex-encoded RGB color.
+```
+color    ::= "#" hexdigit hexdigit hexdigit hexdigit hexdigit hexdigit
+hexdigit ::= [0-9a-f]
+```
+
+
+[[iri-type]]
+
+*<IRI>* - An Internationalized Resource Identifier.
+Always a valid, local reference. +
+`IRI ::= string`
+
+
+[[func-iri-type]]
+
+*<FuncIRI>* - Functional notation for an <<iri-type,IRI>>.
+Always a valid, local reference. +
+`FuncIRI ::= url( <IRI> )`
+
+
+[[filter-input-type]]
+
+*<filter-input>* - A filter source. A reference to a _result_ guarantee to be valid.
+
+```
+filter-input ::= SourceGraphic | SourceAlpha | <string>
+```
+
+We do not support `FillPaint`, `StrokePaint`, `BackgroundImage` and `BackgroundAlpha`.
+
+
+[[transform-type]]
+
+*<transform>* - A transformation matrix.
+Always a `matrix` and not `translate`, `scale`, etc.
+Numbers are space-separated. +
+`transform ::= matrix( <number> " " <number> " " <number> " " <number> " " <number> " " <number> )`
+
+
+[[path-data-type]]
+
+*<path-data>* - A path data.
+
+* Contains only absolute MoveTo, LineTo, CurveTo and ClosePath segments.
+* All segments are explicit.
+* The first segment is guarantee to be MoveTo.
+* Segments, commands and coordinates are separated only by space.
+* Path and all subpaths are guarantee to have at least two segments.
+
+Grammar:
+
+```
+svg-path:
+    moveto-drawto-command-groups
+moveto-drawto-command-groups:
+    moveto-drawto-command-group
+    | moveto-drawto-command-group " " moveto-drawto-command-groups
+moveto-drawto-command-group:
+    moveto " " drawto-commands
+drawto-commands:
+    drawto-command
+    | drawto-command " " drawto-commands
+drawto-command:
+    closepath
+    | lineto
+    | curveto
+moveto:
+    "M " coordinate-pair
+lineto:
+    "L " coordinate-pair
+curveto:
+    "C " coordinate-pair " " coordinate-pair " " coordinate-pair
+closepath:
+    "Z"
+coordinate-pair:
+    coordinate " " coordinate
+coordinate:
+    sign? digit-sequence "." digit-sequence
+sign:
+    "-"
+digit-sequence:
+    digit
+    | digit digit-sequence
+digit:
+    "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
+```
+
+Basically, a path looks like this: `M 10.5 20 L 30 40`.
+Commands and numbers are separated by a space.
+Numbers with an exponent are not allowed.
+Trimmed numbers like `-.5` are not allowed.

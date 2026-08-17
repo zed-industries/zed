@@ -1,0 +1,5 @@
+error: expected expression, found `+`
+ --> $DIR/rust_action_syntax_error.rs:4:20
+  |
+4 |     rule foo() = { + } //~ ERROR expected expression, found `+`
+  |                    ^ expected expression

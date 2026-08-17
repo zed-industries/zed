@@ -1,0 +1,24 @@
+[package]
+name = "unsafe-libyaml"
+version = "0.2.11"
+authors = ["David Tolnay <dtolnay@gmail.com>"]
+categories = ["encoding", "parser-implementations", "no-std"]
+description = "libyaml transpiled to rust by c2rust"
+documentation = "https://docs.rs/unsafe-libyaml"
+edition = "2021"
+keywords = ["yaml"]
+license = "MIT"
+repository = "https://github.com/dtolnay/unsafe-libyaml"
+rust-version = "1.56"
+
+[workspace]
+[dev-dependencies]
+pretty_assertions = "1.0"
+unsafe-libyaml-test-suite = { path = "tests/data" }
+
+[lib]
+doc-scrape-examples = false
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+rustdoc-args = ["--generate-link-to-definition"]

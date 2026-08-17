@@ -1,0 +1,17 @@
+package foo:foo;
+interface i1 {
+  type t = u32;
+}
+interface i2 {
+  use i1.{t};
+}
+interface i3 {
+  use i2.{t};
+}
+
+world test {
+  import i1: interface {}
+
+  export i1;
+  export i3;
+}

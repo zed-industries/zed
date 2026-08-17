@@ -1,0 +1,78 @@
+package foo:variants;
+
+interface variants {
+  enum e1 {
+    a,
+  }
+
+  record single {
+    f: u8,
+  }
+
+  variant v1 {
+    a,
+    c(e1),
+    d(string),
+    e(single),
+    f,
+    g(u32),
+  }
+
+  variant casts1 {
+    a(s32),
+    b(f32),
+  }
+
+  variant casts2 {
+    a(f64),
+    b(f32),
+  }
+
+  variant casts3 {
+    a(f64),
+    b(u64),
+  }
+
+  variant casts4 {
+    a(u32),
+    b(s64),
+  }
+
+  variant casts5 {
+    a(f32),
+    b(s64),
+  }
+
+  variant casts6 {
+    a(tuple<f32, u32>),
+    b(tuple<u32, u32>),
+  }
+
+  enum my-errno {
+    bad1,
+    bad2,
+  }
+
+  e1-arg: func(x: e1);
+  e1-result: func() -> e1;
+  v1-arg: func(x: v1);
+  v1-result: func() -> v1;
+  bool-arg: func(x: bool);
+  bool-result: func() -> bool;
+  option-arg: func(a: option<bool>, b: option<tuple<u32>>, c: option<u32>, d: option<e1>, e: option<f32>, g: option<option<bool>>);
+  option-result: func() -> tuple<option<bool>, option<tuple<u32>>, option<u32>, option<e1>, option<f32>, option<option<bool>>>;
+  casts: func(a: casts1, b: casts2, c: casts3, d: casts4, e: casts5, f: casts6) -> tuple<casts1, casts2, casts3, casts4, casts5, casts6>;
+  expected-arg: func(a: result, b: result<_, e1>, c: result<e1>, d: result<tuple<u32>, tuple<u32>>, e: result<u32, v1>, f: result<string, list<u8>>);
+  expected-result: func() -> tuple<result, result<_, e1>, result<e1>, result<tuple<u32>, tuple<u32>>, result<u32, v1>, result<string, list<u8>>>;
+  return-expected-sugar: func() -> result<s32, my-errno>;
+  return-expected-sugar2: func() -> result<_, my-errno>;
+  return-expected-sugar3: func() -> result<my-errno, my-errno>;
+  return-expected-sugar4: func() -> result<tuple<s32, u32>, my-errno>;
+  return-option-sugar: func() -> option<s32>;
+  return-option-sugar2: func() -> option<my-errno>;
+  expected-simple: func() -> result<u32, s32>;
+}
+
+world variants-world {
+  import variants;
+}

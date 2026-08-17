@@ -1,0 +1,389 @@
+name: Build
+on:
+  merge_group:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [staging, trying]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  # Run MIRI tests on nightly
+  # NOTE first because it takes the longest to complete
+  testmiri:
+    name: testmiri
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache cargo dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            - ~/.cargo/bin/
+            - ~/.cargo/registry/index/
+            - ~/.cargo/registry/cache/
+            - ~/.cargo/git/db/
+          key: ${{ runner.OS }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.OS }}-cargo-
+
+      - name: Cache build output dependencies
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: ${{ runner.OS }}-build-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.OS }}-build-
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2025-10-11
+          components: miri
+
+      - name: Run miri
+        run: MIRIFLAGS=-Zmiri-ignore-leaks cargo miri test --features="alloc,defmt,mpmc_large,portable-atomic-critical-section,serde,ufmt,bytes,zeroize,embedded-io-v0.7"
+
+  # Run cargo test
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache cargo dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            - ~/.cargo/bin/
+            - ~/.cargo/registry/index/
+            - ~/.cargo/registry/cache/
+            - ~/.cargo/git/db/
+          key: ${{ runner.OS }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.OS }}-cargo-
+
+      - name: Cache build output dependencies
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: ${{ runner.OS }}-build-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.OS }}-build-
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Run cargo test
+        run: cargo test --features="alloc,defmt,mpmc_large,portable-atomic-critical-section,serde,ufmt,bytes,zeroize,embedded-io-v0.7"
+
+  # Run cargo fmt --check
+  style:
+    name: style
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          components: rustfmt
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: i686-unknown-linux-musl
+      - run: cargo clippy --all --target i686-unknown-linux-musl --all-targets
+
+  # Compilation check
+  check:
+    name: check
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - i686-unknown-linux-musl
+          - riscv32imc-unknown-none-elf
+          - armv7r-none-eabi
+          - thumbv6m-none-eabi
+          - thumbv7m-none-eabi
+          - thumbv8m.base-none-eabi
+          - thumbv8m.main-none-eabi
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache cargo dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            - ~/.cargo/bin/
+            - ~/.cargo/registry/index/
+            - ~/.cargo/registry/cache/
+            - ~/.cargo/git/db/
+          key: ${{ runner.OS }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.OS }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+            ${{ runner.OS }}-cargo-
+
+      - name: Cache build output dependencies
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: ${{ runner.OS }}-build-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.OS }}-build-${{ hashFiles('**/Cargo.lock') }}
+            ${{ runner.OS }}-build-
+
+      - name: Install Rust with target (${{ matrix.target }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: cargo check
+        run: |
+          cargo check --target="${target}"
+          cargo check --target="${target}" --features="alloc"
+
+          # Needs native atomics, since `bytes` doesn't support `portable-atomic`.
+          if [ "${target}" != "riscv32imc-unknown-none-elf" ] && [ "${target}" != "thumbv6m-none-eabi" ]; then
+            cargo check --target="${target}" --features="bytes"
+          fi
+
+          cargo check --target="${target}" --features="defmt"
+          cargo check --target="${target}" --features="mpmc_large"
+          cargo check --target="${target}" --features="portable-atomic-critical-section"
+          cargo check --target="${target}" --features="serde"
+          cargo check --target="${target}" --features="ufmt"
+          cargo check --target="${target}" --features="zeroize"
+          cargo check --target="${target}" --features="embedded-io-v0.7"
+        env:
+          target: ${{ matrix.target }}
+
+  doc:
+    name: doc
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache cargo dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            - ~/.cargo/bin/
+            - ~/.cargo/registry/index/
+            - ~/.cargo/registry/cache/
+            - ~/.cargo/git/db/
+          key: ${{ runner.OS }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.OS }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+            ${{ runner.OS }}-cargo-
+
+      - name: Cache build output dependencies
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: ${{ runner.OS }}-build-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.OS }}-build-${{ hashFiles('**/Cargo.lock') }}
+            ${{ runner.OS }}-build-
+
+      - name: Get metadata
+        id: metadata
+        run: |
+          set -euo pipefail
+
+          docsrs_metadata="$(cargo metadata --format-version 1 | jq '.packages[] | select(.name == "heapless") | .metadata.docs.rs')"
+          features=($(jq --raw-output '.features[]' <<< "${docsrs_metadata}"))
+          rustdocflags=(-D warnings --cfg docsrs $(jq --raw-output '.["rustdoc-args"][]' <<< "${docsrs_metadata}"))
+          targets=($(jq --raw-output '.targets[]' <<< "${docsrs_metadata}"))
+
+          echo "features=${features[*]}" >> "${GITHUB_OUTPUT}"
+          echo "rustdocflags=${rustdocflags[*]}" >> "${GITHUB_OUTPUT}"
+          echo "targets=${targets[*]}" >> "${GITHUB_OUTPUT}"
+
+      - name: Install nightly Rust with targets (${{ steps.metadata.outputs.targets }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2025-10-11
+          targets: ${{ steps.metadata.outputs.targets }}
+
+      - name: cargo rustdoc
+        run: |
+          set -euo pipefail
+
+          targets=(${targets})
+
+          for target in "${targets[@]}"; do
+            set -x
+            cargo rustdoc --target "${target}" --features "${features}"
+            set +x
+          done
+        env:
+          features: ${{ steps.metadata.outputs.features }}
+          RUSTDOCFLAGS: ${{ steps.metadata.outputs.rustdocflags }}
+          targets: ${{ steps.metadata.outputs.targets }}
+
+  # Run cpass tests
+  testcpass:
+    name: testcpass
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - i686-unknown-linux-musl
+        buildtype:
+          - ""
+          - "--release"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache cargo dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            - ~/.cargo/bin/
+            - ~/.cargo/registry/index/
+            - ~/.cargo/registry/cache/
+            - ~/.cargo/git/db/
+          key: ${{ runner.OS }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.OS }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+            ${{ runner.OS }}-cargo-
+
+      - name: Cache build output dependencies
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: ${{ runner.OS }}-build-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.OS }}-build-${{ hashFiles('**/Cargo.lock') }}
+            ${{ runner.OS }}-build-
+
+      - name: Install Rust with target (${{ matrix.target }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: cargo test
+        run: cargo test --test cpass --target=${{ matrix.target }} ${{ matrix.buildtype }}
+
+  # Run test suite for UI
+  testtsan:
+    name: testtsan
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+        buildtype:
+          - ""
+          - "--release"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache cargo dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            - ~/.cargo/bin/
+            - ~/.cargo/registry/index/
+            - ~/.cargo/registry/cache/
+            - ~/.cargo/git/db/
+          key: ${{ runner.OS }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.OS }}-cargo-
+
+      - name: Cache build output dependencies
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: ${{ runner.OS }}-build-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.OS }}-build-
+
+      - name: Install Rust nightly with target (${{ matrix.target }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2025-10-11
+          target: ${{ matrix.target }}
+          components: rust-src
+
+      - name: Export variables
+        run: |
+          echo RUSTFLAGS="-Z sanitizer=thread" >> $GITHUB_ENV
+          echo TSAN_OPTIONS="suppressions=$(pwd)/suppressions.txt" >> $GITHUB_ENV
+          echo $GITHUB_ENV
+
+      - name: cargo test
+        run: cargo test -Zbuild-std --test tsan --target=${{ matrix.target }} --features=${{ matrix.features }} ${{ matrix.buildtype }} -- --test-threads=1
+
+  # Run cfail tests on MSRV
+  testcfail:
+    name: testcfail
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: -D warnings
+      MSRV: 1.87.0
+    defaults:
+      run:
+        working-directory: cfail
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache cargo dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            - ~/.cargo/bin/
+            - ~/.cargo/registry/index/
+            - ~/.cargo/registry/cache/
+            - ~/.cargo/git/db/
+          key: ${{ runner.OS }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.OS }}-cargo-
+
+      - name: Cache build output dependencies
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: ${{ runner.OS }}-build-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.OS }}-build-
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.MSRV }}
+
+      - name: Run cargo
+        run: cargo run

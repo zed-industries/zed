@@ -1,0 +1,63 @@
+[package]
+name = "async_zip"
+version = "0.0.18"
+edition = "2021"
+authors = ["Harry [hello@majored.pw]"]
+repository = "https://github.com/Majored/rs-async-zip"
+description = "An asynchronous ZIP archive reading/writing crate."
+readme = "README.md"
+license = "MIT"
+documentation = "https://docs.rs/async_zip/"
+homepage = "https://github.com/Majored/rs-async-zip"
+keywords = ["async", "zip", "archive", "tokio"]
+categories = ["asynchronous", "compression"]
+
+[features]
+full = ["chrono", "tokio-fs", "deflate", "bzip2", "lzma", "zstd", "xz", "deflate64"]
+
+# All features that are compatible with WASM
+full-wasm = ["chrono", "deflate", "zstd"]
+
+tokio = ["dep:tokio", "tokio-util", "tokio/io-util"]
+tokio-fs = ["tokio/fs"]
+
+deflate = ["async-compression/deflate"]
+bzip2 = ["async-compression/bzip2"]
+lzma = ["async-compression/lzma"]
+zstd = ["async-compression/zstd"]
+xz = ["async-compression/xz"]
+deflate64 = ["async-compression/deflate64"]
+
+[package.metadata.docs.rs]
+all-features = true
+# defines the configuration attribute `docsrs`
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+crc32fast = "1"
+futures-lite = { version = "2.1.0", default-features = false, features = ["std"] }
+pin-project = "1"
+thiserror = "2"
+
+async-compression = { version = "0.4.2", default-features = false, features = ["futures-io"], optional = true }
+chrono = { version = "0.4", default-features = false, features = ["clock"], optional = true }
+tokio = { version = "1", default-features = false, optional = true }
+tokio-util = { version = "0.7", features = ["compat"], optional = true }
+
+[dev-dependencies]
+# tests
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+env_logger = "0.11.2"
+zip = "2.1.5"
+
+# shared across multiple examples
+anyhow = "1"
+sanitize-filename = "0.6"
+
+# actix_multipart
+actix-web = "4"
+actix-multipart = "0.7"
+futures = "0.3"
+derive_more = { version = "1.0", features = ["display", "error"] }
+uuid = { version = "1", features = ["v4", "serde"] } 

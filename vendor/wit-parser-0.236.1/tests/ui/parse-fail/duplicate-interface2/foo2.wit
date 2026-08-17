@@ -1,0 +1,3 @@
+package foo:foo;
+
+interface foo {}

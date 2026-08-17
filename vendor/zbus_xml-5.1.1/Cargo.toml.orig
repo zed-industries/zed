@@ -1,0 +1,36 @@
+[package]
+name = "zbus_xml"
+version = "5.1.1"
+authors = ["Zeeshan Ali Khan <zeeshanak@gnome.org>"]
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+description = "API to handle D-Bus introspection XML"
+repository = { workspace = true }
+keywords = ["D-Bus", "DBus", "IPC", "XML"]
+license = { workspace = true }
+categories = ["parsing"]
+readme = "README.md"
+
+[dependencies]
+serde.workspace = true
+zvariant = { path = "../zvariant", version = "5.10.1" }
+zbus_names = { path = "../zbus_names", version = "4.3.2" }
+quick-xml.workspace = true
+
+[dev-dependencies]
+doc-comment.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-gnu",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-freebsd",
+    "x86_64-unknown-netbsd",
+    "aarch64-linux-android",
+]
+
+[lints]
+workspace = true

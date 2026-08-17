@@ -1,0 +1,2496 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="API Reference Documentation for FreeType-2.13.2">
+      
+      
+      
+        <meta name="author" content="FreeType Contributors">
+      
+      
+      <link rel="icon" href="images/favico.ico">
+      <meta name="generator" content="mkdocs-1.4.3, mkdocs-material-7.1.9">
+    
+    
+      
+        <title>Basic Data Types - FreeType-2.13.2 API Reference</title>
+      
+    
+    
+      <link rel="stylesheet" href="assets/stylesheets/main.ca7ac06f.min.css">
+      
+        
+        <link rel="stylesheet" href="assets/stylesheets/palette.f1a3b89f.min.css">
+        
+          
+          
+          <meta name="theme-color" content="#4cae4f">
+        
+      
+    
+    
+    
+      
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Noto+Serif:300,400,400i,700%7CRoboto+Mono&display=fallback">
+        <style>:root{--md-text-font-family:"Noto Serif";--md-code-font-family:"Roboto Mono"}</style>
+      
+    
+    
+    
+      <link rel="stylesheet" href="stylesheets/extra.css">
+    
+    
+      
+
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <script>function __prefix(e){return new URL(".",location).pathname+"."+e}function __get(e,t=localStorage){return JSON.parse(t.getItem(__prefix(e)))}</script>
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#basic-data-types" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-header__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            FreeType-2.13.2 API Reference
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Basic Data Types
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+      </label>
+      
+<div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" data-md-state="active" required>
+      <label class="md-search__icon md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+      </label>
+      <button type="reset" class="md-search__icon md-icon" aria-label="Clear" tabindex="-1">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
+      </button>
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+  </nav>
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-nav__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    FreeType-2.13.2 API Reference
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="index.html" class="md-nav__link">
+        TOC
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-index.html" class="md-nav__link">
+        Index
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_3" type="checkbox" id="__nav_3" >
+      
+      <label class="md-nav__link" for="__nav_3">
+        General Remarks
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="General Remarks" data-md-level="1">
+        <label class="md-nav__title" for="__nav_3">
+          <span class="md-nav__icon md-icon"></span>
+          General Remarks
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-preamble.html" class="md-nav__link">
+        Preamble
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_inclusion.html" class="md-nav__link">
+        FreeType's header inclusion scheme
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-user_allocation.html" class="md-nav__link">
+        User allocation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+    
+  
+  
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_4" type="checkbox" id="__nav_4" checked>
+      
+      <label class="md-nav__link" for="__nav_4">
+        Core API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Core API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_4">
+          <span class="md-nav__icon md-icon"></span>
+          Core API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+    
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" data-md-toggle="toc" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          Basic Data Types
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="ft2-basic_types.html" class="md-nav__link md-nav__link--active">
+        Basic Data Types
+      </a>
+      
+        
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_byte" class="md-nav__link">
+    FT_Byte
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_bytes" class="md-nav__link">
+    FT_Bytes
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_char" class="md-nav__link">
+    FT_Char
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_int" class="md-nav__link">
+    FT_Int
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_uint" class="md-nav__link">
+    FT_UInt
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_int16" class="md-nav__link">
+    FT_Int16
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_uint16" class="md-nav__link">
+    FT_UInt16
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_int32" class="md-nav__link">
+    FT_Int32
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_uint32" class="md-nav__link">
+    FT_UInt32
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_int64" class="md-nav__link">
+    FT_Int64
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_uint64" class="md-nav__link">
+    FT_UInt64
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_short" class="md-nav__link">
+    FT_Short
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_ushort" class="md-nav__link">
+    FT_UShort
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_long" class="md-nav__link">
+    FT_Long
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_ulong" class="md-nav__link">
+    FT_ULong
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_bool" class="md-nav__link">
+    FT_Bool
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_offset" class="md-nav__link">
+    FT_Offset
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_ptrdist" class="md-nav__link">
+    FT_PtrDist
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_string" class="md-nav__link">
+    FT_String
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_tag" class="md-nav__link">
+    FT_Tag
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_error" class="md-nav__link">
+    FT_Error
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_fixed" class="md-nav__link">
+    FT_Fixed
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_pointer" class="md-nav__link">
+    FT_Pointer
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_pos" class="md-nav__link">
+    FT_Pos
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_vector" class="md-nav__link">
+    FT_Vector
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_bbox" class="md-nav__link">
+    FT_BBox
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_matrix" class="md-nav__link">
+    FT_Matrix
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_fword" class="md-nav__link">
+    FT_FWord
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_ufword" class="md-nav__link">
+    FT_UFWord
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_f2dot14" class="md-nav__link">
+    FT_F2Dot14
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_unitvector" class="md-nav__link">
+    FT_UnitVector
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_f26dot6" class="md-nav__link">
+    FT_F26Dot6
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_data" class="md-nav__link">
+    FT_Data
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_make_tag" class="md-nav__link">
+    FT_MAKE_TAG
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_generic" class="md-nav__link">
+    FT_Generic
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_generic_finalizer" class="md-nav__link">
+    FT_Generic_Finalizer
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_bitmap" class="md-nav__link">
+    FT_Bitmap
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_pixel_mode" class="md-nav__link">
+    FT_Pixel_Mode
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_glyph_format" class="md-nav__link">
+    FT_Glyph_Format
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_image_tag" class="md-nav__link">
+    FT_IMAGE_TAG
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-library_setup.html" class="md-nav__link">
+        Library Setup
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-face_creation.html" class="md-nav__link">
+        Face Creation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_testing_macros.html" class="md-nav__link">
+        Font Testing Macros
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizing_and_scaling.html" class="md-nav__link">
+        Sizing and Scaling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_retrieval.html" class="md-nav__link">
+        Glyph Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-character_mapping.html" class="md-nav__link">
+        Character Mapping
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-information_retrieval.html" class="md-nav__link">
+        Information Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-other_api_data.html" class="md-nav__link">
+        Other API Data
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_5" type="checkbox" id="__nav_5" >
+      
+      <label class="md-nav__link" for="__nav_5">
+        Extended API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Extended API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_5">
+          <span class="md-nav__icon md-icon"></span>
+          Extended API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_variants.html" class="md-nav__link">
+        Unicode Variation Sequences
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-color_management.html" class="md-nav__link">
+        Glyph Color Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-layer_management.html" class="md-nav__link">
+        Glyph Layer Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_management.html" class="md-nav__link">
+        Glyph Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-mac_specific.html" class="md-nav__link">
+        Mac Specific Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizes_management.html" class="md-nav__link">
+        Size Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_file_macros.html" class="md-nav__link">
+        Header File Macros
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_6" type="checkbox" id="__nav_6" >
+      
+      <label class="md-nav__link" for="__nav_6">
+        Format-Specific API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Format-Specific API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_6">
+          <span class="md-nav__icon md-icon"></span>
+          Format-Specific API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-multiple_masters.html" class="md-nav__link">
+        Multiple Masters
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_tables.html" class="md-nav__link">
+        TrueType Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-type1_tables.html" class="md-nav__link">
+        Type 1 Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sfnt_names.html" class="md-nav__link">
+        SFNT Names
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bdf_fonts.html" class="md-nav__link">
+        BDF and PCF Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cid_fonts.html" class="md-nav__link">
+        CID Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pfr_fonts.html" class="md-nav__link">
+        PFR Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-winfnt_fonts.html" class="md-nav__link">
+        Window FNT Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-svg_fonts.html" class="md-nav__link">
+        OpenType SVG Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_formats.html" class="md-nav__link">
+        Font Formats
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gasp_table.html" class="md-nav__link">
+        Gasp Table
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_7" type="checkbox" id="__nav_7" >
+      
+      <label class="md-nav__link" for="__nav_7">
+        Controlling FreeType Modules
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Controlling FreeType Modules" data-md-level="1">
+        <label class="md-nav__title" for="__nav_7">
+          <span class="md-nav__icon md-icon"></span>
+          Controlling FreeType Modules
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-auto_hinter.html" class="md-nav__link">
+        The auto-hinter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cff_driver.html" class="md-nav__link">
+        The CFF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-t1_cid_driver.html" class="md-nav__link">
+        The Type 1 and CID drivers
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-tt_driver.html" class="md-nav__link">
+        The TrueType driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pcf_driver.html" class="md-nav__link">
+        The PCF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_svg_driver.html" class="md-nav__link">
+        The SVG driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-properties.html" class="md-nav__link">
+        Driver properties
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-parameter_tags.html" class="md-nav__link">
+        Parameter Tags
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lcd_rendering.html" class="md-nav__link">
+        Subpixel Rendering
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_8" type="checkbox" id="__nav_8" >
+      
+      <label class="md-nav__link" for="__nav_8">
+        Cache Sub-System
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Cache Sub-System" data-md-level="1">
+        <label class="md-nav__title" for="__nav_8">
+          <span class="md-nav__icon md-icon"></span>
+          Cache Sub-System
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cache_subsystem.html" class="md-nav__link">
+        Cache Sub-System
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_9" type="checkbox" id="__nav_9" >
+      
+      <label class="md-nav__link" for="__nav_9">
+        Support API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Support API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_9">
+          <span class="md-nav__icon md-icon"></span>
+          Support API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-computations.html" class="md-nav__link">
+        Computations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-list_processing.html" class="md-nav__link">
+        List Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-outline_processing.html" class="md-nav__link">
+        Outline Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-quick_advance.html" class="md-nav__link">
+        Quick retrieval of advance values
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bitmap_handling.html" class="md-nav__link">
+        Bitmap Handling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-raster.html" class="md-nav__link">
+        Scanline Converter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_stroker.html" class="md-nav__link">
+        Glyph Stroker
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-system_interface.html" class="md-nav__link">
+        System Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-module_management.html" class="md-nav__link">
+        Module Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gzip.html" class="md-nav__link">
+        GZIP Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lzw.html" class="md-nav__link">
+        LZW Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bzip2.html" class="md-nav__link">
+        BZIP2 Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-debugging_apis.html" class="md-nav__link">
+        External Debugging APIs
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_10" type="checkbox" id="__nav_10" >
+      
+      <label class="md-nav__link" for="__nav_10">
+        Error Codes
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Error Codes" data-md-level="1">
+        <label class="md-nav__title" for="__nav_10">
+          <span class="md-nav__icon md-icon"></span>
+          Error Codes
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_enumerations.html" class="md-nav__link">
+        Error Enumerations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_code_values.html" class="md-nav__link">
+        Error Code Values
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_11" type="checkbox" id="__nav_11" >
+      
+      <label class="md-nav__link" for="__nav_11">
+        Miscellaneous
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Miscellaneous" data-md-level="1">
+        <label class="md-nav__title" for="__nav_11">
+          <span class="md-nav__icon md-icon"></span>
+          Miscellaneous
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gx_validation.html" class="md-nav__link">
+        TrueTypeGX/AAT Validation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-incremental.html" class="md-nav__link">
+        Incremental Loading
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_engine.html" class="md-nav__link">
+        The TrueType Engine
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_validation.html" class="md-nav__link">
+        OpenType Validation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_byte" class="md-nav__link">
+    FT_Byte
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_bytes" class="md-nav__link">
+    FT_Bytes
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_char" class="md-nav__link">
+    FT_Char
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_int" class="md-nav__link">
+    FT_Int
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_uint" class="md-nav__link">
+    FT_UInt
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_int16" class="md-nav__link">
+    FT_Int16
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_uint16" class="md-nav__link">
+    FT_UInt16
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_int32" class="md-nav__link">
+    FT_Int32
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_uint32" class="md-nav__link">
+    FT_UInt32
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_int64" class="md-nav__link">
+    FT_Int64
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_uint64" class="md-nav__link">
+    FT_UInt64
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_short" class="md-nav__link">
+    FT_Short
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_ushort" class="md-nav__link">
+    FT_UShort
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_long" class="md-nav__link">
+    FT_Long
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_ulong" class="md-nav__link">
+    FT_ULong
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_bool" class="md-nav__link">
+    FT_Bool
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_offset" class="md-nav__link">
+    FT_Offset
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_ptrdist" class="md-nav__link">
+    FT_PtrDist
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_string" class="md-nav__link">
+    FT_String
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_tag" class="md-nav__link">
+    FT_Tag
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_error" class="md-nav__link">
+    FT_Error
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_fixed" class="md-nav__link">
+    FT_Fixed
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_pointer" class="md-nav__link">
+    FT_Pointer
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_pos" class="md-nav__link">
+    FT_Pos
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_vector" class="md-nav__link">
+    FT_Vector
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_bbox" class="md-nav__link">
+    FT_BBox
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_matrix" class="md-nav__link">
+    FT_Matrix
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_fword" class="md-nav__link">
+    FT_FWord
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_ufword" class="md-nav__link">
+    FT_UFWord
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_f2dot14" class="md-nav__link">
+    FT_F2Dot14
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_unitvector" class="md-nav__link">
+    FT_UnitVector
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_f26dot6" class="md-nav__link">
+    FT_F26Dot6
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_data" class="md-nav__link">
+    FT_Data
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_make_tag" class="md-nav__link">
+    FT_MAKE_TAG
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_generic" class="md-nav__link">
+    FT_Generic
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_generic_finalizer" class="md-nav__link">
+    FT_Generic_Finalizer
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_bitmap" class="md-nav__link">
+    FT_Bitmap
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_pixel_mode" class="md-nav__link">
+    FT_Pixel_Mode
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_glyph_format" class="md-nav__link">
+    FT_Glyph_Format
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_image_tag" class="md-nav__link">
+    FT_IMAGE_TAG
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          <div class="md-content" data-md-component="content">
+            <article class="md-content__inner md-typeset">
+              
+                
+                
+                <p><a href="https://www.freetype.org">FreeType</a> &raquo; <a href="../">Docs</a> &raquo; <a href="index.html#core-api">Core API</a> &raquo; Basic Data Types</p>
+<hr />
+<h1 id="basic-data-types">Basic Data Types<a class="headerlink" href="#basic-data-types" title="Permanent link">&para;</a></h1>
+<h2 id="synopsis">Synopsis<a class="headerlink" href="#synopsis" title="Permanent link">&para;</a></h2>
+<p>This section contains the basic data types defined by FreeType&nbsp;2, ranging from simple scalar types to bitmap descriptors. More font-specific structures are defined in a different section. Note that FreeType does not use floating-point data types. Fractional values are represented by fixed-point integers, with lower bits storing the fractional part.</p>
+<h2 id="ft_byte">FT_Byte<a class="headerlink" href="#ft_byte" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">unsigned</span> <span class="keyword">char</span>  <b>FT_Byte</b>;
+</code></pre></div>
+
+<p>A simple typedef for the <em>unsigned</em> char type.</p>
+<hr>
+
+<h2 id="ft_bytes">FT_Bytes<a class="headerlink" href="#ft_bytes" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">const</span> <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>*  <b>FT_Bytes</b>;
+</code></pre></div>
+
+<p>A typedef for constant memory areas.</p>
+<hr>
+
+<h2 id="ft_char">FT_Char<a class="headerlink" href="#ft_char" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">signed</span> <span class="keyword">char</span>  <b>FT_Char</b>;
+</code></pre></div>
+
+<p>A simple typedef for the <em>signed</em> char type.</p>
+<hr>
+
+<h2 id="ft_int">FT_Int<a class="headerlink" href="#ft_int" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">signed</span> <span class="keyword">int</span>  <b>FT_Int</b>;
+</code></pre></div>
+
+<p>A typedef for the int type.</p>
+<hr>
+
+<h2 id="ft_uint">FT_UInt<a class="headerlink" href="#ft_uint" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">unsigned</span> <span class="keyword">int</span>  <b>FT_UInt</b>;
+</code></pre></div>
+
+<p>A typedef for the unsigned int type.</p>
+<hr>
+
+<h2 id="ft_int16">FT_Int16<a class="headerlink" href="#ft_int16" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">signed</span> <span class="keyword">short</span>  <b>FT_Int16</b>;
+</code></pre></div>
+
+<p>A typedef for a 16bit signed integer type.</p>
+<hr>
+
+<h2 id="ft_uint16">FT_UInt16<a class="headerlink" href="#ft_uint16" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">unsigned</span> <span class="keyword">short</span>  <b>FT_UInt16</b>;
+</code></pre></div>
+
+<p>A typedef for a 16bit unsigned integer type.</p>
+<hr>
+
+<h2 id="ft_int32">FT_Int32<a class="headerlink" href="#ft_int32" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">signed</span> XXX  <b>FT_Int32</b>;
+</code></pre></div>
+
+<p>A typedef for a 32bit signed integer type. The size depends on the configuration.</p>
+<hr>
+
+<h2 id="ft_uint32">FT_UInt32<a class="headerlink" href="#ft_uint32" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">unsigned</span> XXX  <b>FT_UInt32</b>;
+</code></pre></div>
+<hr>
+
+<h2 id="ft_int64">FT_Int64<a class="headerlink" href="#ft_int64" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">signed</span> XXX  <b>FT_Int64</b>;
+</code></pre></div>
+<hr>
+
+<h2 id="ft_uint64">FT_UInt64<a class="headerlink" href="#ft_uint64" title="Permanent link">&para;</a></h2>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">unsigned</span> XXX  <b>FT_UInt64</b>;
+</code></pre></div>
+<hr>
+
+<h2 id="ft_short">FT_Short<a class="headerlink" href="#ft_short" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">signed</span> <span class="keyword">short</span>  <b>FT_Short</b>;
+</code></pre></div>
+
+<p>A typedef for signed short.</p>
+<hr>
+
+<h2 id="ft_ushort">FT_UShort<a class="headerlink" href="#ft_ushort" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">unsigned</span> <span class="keyword">short</span>  <b>FT_UShort</b>;
+</code></pre></div>
+
+<p>A typedef for unsigned short.</p>
+<hr>
+
+<h2 id="ft_long">FT_Long<a class="headerlink" href="#ft_long" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">signed</span> <span class="keyword">long</span>  <b>FT_Long</b>;
+</code></pre></div>
+
+<p>A typedef for signed long.</p>
+<hr>
+
+<h2 id="ft_ulong">FT_ULong<a class="headerlink" href="#ft_ulong" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">unsigned</span> <span class="keyword">long</span>  <b>FT_ULong</b>;
+</code></pre></div>
+
+<p>A typedef for unsigned long.</p>
+<hr>
+
+<h2 id="ft_bool">FT_Bool<a class="headerlink" href="#ft_bool" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">unsigned</span> <span class="keyword">char</span>  <b>FT_Bool</b>;
+</code></pre></div>
+
+<p>A typedef of unsigned char, used for simple booleans. As usual, values 1 and&nbsp;0 represent true and false, respectively.</p>
+<hr>
+
+<h2 id="ft_offset">FT_Offset<a class="headerlink" href="#ft_offset" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> size_t  <b>FT_Offset</b>;
+</code></pre></div>
+
+<p>This is equivalent to the ANSI&nbsp;C <code>size_t</code> type, i.e., the largest <em>unsigned</em> integer type used to express a file size or position, or a memory block size.</p>
+<hr>
+
+<h2 id="ft_ptrdist">FT_PtrDist<a class="headerlink" href="#ft_ptrdist" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> ft_ptrdiff_t  <b>FT_PtrDist</b>;
+</code></pre></div>
+
+<p>This is equivalent to the ANSI&nbsp;C <code>ptrdiff_t</code> type, i.e., the largest <em>signed</em> integer type used to express the distance between two pointers.</p>
+<hr>
+
+<h2 id="ft_string">FT_String<a class="headerlink" href="#ft_string" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">char</span>  <b>FT_String</b>;
+</code></pre></div>
+
+<p>A simple typedef for the char type, usually used for strings.</p>
+<hr>
+
+<h2 id="ft_tag">FT_Tag<a class="headerlink" href="#ft_tag" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <a href="ft2-basic_types.html#ft_uint32">FT_UInt32</a>  <b>FT_Tag</b>;
+</code></pre></div>
+
+<p>A typedef for 32-bit tags (as used in the SFNT format).</p>
+<hr>
+
+<h2 id="ft_error">FT_Error<a class="headerlink" href="#ft_error" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">int</span>  <b>FT_Error</b>;
+</code></pre></div>
+
+<p>The FreeType error code type. A value of&nbsp;0 is always interpreted as a successful operation.</p>
+<hr>
+
+<h2 id="ft_fixed">FT_Fixed<a class="headerlink" href="#ft_fixed" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">signed</span> <span class="keyword">long</span>  <b>FT_Fixed</b>;
+</code></pre></div>
+
+<p>This type is used to store 16.16 fixed-point values, like scaling values or matrix coefficients.</p>
+<hr>
+
+<h2 id="ft_pointer">FT_Pointer<a class="headerlink" href="#ft_pointer" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">void</span>*  <b>FT_Pointer</b>;
+</code></pre></div>
+
+<p>A simple typedef for a typeless pointer.</p>
+<hr>
+
+<h2 id="ft_pos">FT_Pos<a class="headerlink" href="#ft_pos" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_IMAGE_H (freetype/ftimage.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">signed</span> <span class="keyword">long</span>  <b>FT_Pos</b>;
+</code></pre></div>
+
+<p>The type FT_Pos is used to store vectorial coordinates. Depending on the context, these can represent distances in integer font units, or 16.16, or 26.6 fixed-point pixel coordinates.</p>
+<hr>
+
+<h2 id="ft_vector">FT_Vector<a class="headerlink" href="#ft_vector" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_IMAGE_H (freetype/ftimage.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_Vector_
+  {
+    <a href="ft2-basic_types.html#ft_pos">FT_Pos</a>  x;
+    <a href="ft2-basic_types.html#ft_pos">FT_Pos</a>  y;
+
+  } <b>FT_Vector</b>;
+</code></pre></div>
+
+<p>A simple structure used to store a 2D vector; coordinates are of the FT_Pos type.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="x">x</td><td class="desc">
+<p>The horizontal coordinate.</p>
+</td></tr>
+<tr><td class="val" id="y">y</td><td class="desc">
+<p>The vertical coordinate.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_bbox">FT_BBox<a class="headerlink" href="#ft_bbox" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_IMAGE_H (freetype/ftimage.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_BBox_
+  {
+    <a href="ft2-basic_types.html#ft_pos">FT_Pos</a>  xMin, yMin;
+    <a href="ft2-basic_types.html#ft_pos">FT_Pos</a>  xMax, yMax;
+
+  } <b>FT_BBox</b>;
+</code></pre></div>
+
+<p>A structure used to hold an outline's bounding box, i.e., the coordinates of its extrema in the horizontal and vertical directions.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="xmin">xMin</td><td class="desc">
+<p>The horizontal minimum (left-most).</p>
+</td></tr>
+<tr><td class="val" id="ymin">yMin</td><td class="desc">
+<p>The vertical minimum (bottom-most).</p>
+</td></tr>
+<tr><td class="val" id="xmax">xMax</td><td class="desc">
+<p>The horizontal maximum (right-most).</p>
+</td></tr>
+<tr><td class="val" id="ymax">yMax</td><td class="desc">
+<p>The vertical maximum (top-most).</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>The bounding box is specified with the coordinates of the lower left and the upper right corner. In PostScript, those values are often called (llx,lly) and (urx,ury), respectively.</p>
+<p>If <code>yMin</code> is negative, this value gives the glyph's descender. Otherwise, the glyph doesn't descend below the baseline. Similarly, if <code>ymax</code> is positive, this value gives the glyph's ascender.</p>
+<p><code>xMin</code> gives the horizontal distance from the glyph's origin to the left edge of the glyph's bounding box. If <code>xMin</code> is negative, the glyph extends to the left of the origin.</p>
+<hr>
+
+<h2 id="ft_matrix">FT_Matrix<a class="headerlink" href="#ft_matrix" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_Matrix_
+  {
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>  xx, xy;
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>  yx, yy;
+
+  } <b>FT_Matrix</b>;
+</code></pre></div>
+
+<p>A simple structure used to store a 2x2 matrix. Coefficients are in 16.16 fixed-point format. The computation performed is:
+<div class="highlight"><pre><span></span><code>  x&#39; = x*xx + y*xy
+  y&#39; = x*yx + y*yy
+</code></pre></div></p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="xx">xx</td><td class="desc">
+<p>Matrix coefficient.</p>
+</td></tr>
+<tr><td class="val" id="xy">xy</td><td class="desc">
+<p>Matrix coefficient.</p>
+</td></tr>
+<tr><td class="val" id="yx">yx</td><td class="desc">
+<p>Matrix coefficient.</p>
+</td></tr>
+<tr><td class="val" id="yy">yy</td><td class="desc">
+<p>Matrix coefficient.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_fword">FT_FWord<a class="headerlink" href="#ft_fword" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">signed</span> <span class="keyword">short</span>  <b>FT_FWord</b>;   /* distance in FUnits */
+</code></pre></div>
+
+<p>A signed 16-bit integer used to store a distance in original font units.</p>
+<hr>
+
+<h2 id="ft_ufword">FT_UFWord<a class="headerlink" href="#ft_ufword" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">unsigned</span> <span class="keyword">short</span>  <b>FT_UFWord</b>;  /* <span class="keyword">unsigned</span> distance */
+</code></pre></div>
+
+<p>An unsigned 16-bit integer used to store a distance in original font units.</p>
+<hr>
+
+<h2 id="ft_f2dot14">FT_F2Dot14<a class="headerlink" href="#ft_f2dot14" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">signed</span> <span class="keyword">short</span>  <b>FT_F2Dot14</b>;
+</code></pre></div>
+
+<p>A signed 2.14 fixed-point type used for unit vectors.</p>
+<hr>
+
+<h2 id="ft_unitvector">FT_UnitVector<a class="headerlink" href="#ft_unitvector" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_UnitVector_
+  {
+    <a href="ft2-basic_types.html#ft_f2dot14">FT_F2Dot14</a>  x;
+    <a href="ft2-basic_types.html#ft_f2dot14">FT_F2Dot14</a>  y;
+
+  } <b>FT_UnitVector</b>;
+</code></pre></div>
+
+<p>A simple structure used to store a 2D vector unit vector. Uses FT_F2Dot14 types.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="x">x</td><td class="desc">
+<p>Horizontal coordinate.</p>
+</td></tr>
+<tr><td class="val" id="y">y</td><td class="desc">
+<p>Vertical coordinate.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_f26dot6">FT_F26Dot6<a class="headerlink" href="#ft_f26dot6" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">signed</span> <span class="keyword">long</span>  <b>FT_F26Dot6</b>;
+</code></pre></div>
+
+<p>A signed 26.6 fixed-point type used for vectorial pixel coordinates.</p>
+<hr>
+
+<h2 id="ft_data">FT_Data<a class="headerlink" href="#ft_data" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_Data_
+  {
+    <span class="keyword">const</span> <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>*  pointer;
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>         length;
+
+  } <b>FT_Data</b>;
+</code></pre></div>
+
+<p>Read-only binary data represented as a pointer and a length.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="pointer">pointer</td><td class="desc">
+<p>The data.</p>
+</td></tr>
+<tr><td class="val" id="length">length</td><td class="desc">
+<p>The length of the data in bytes.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_make_tag">FT_MAKE_TAG<a class="headerlink" href="#ft_make_tag" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <b>FT_MAKE_TAG</b>( _x1, _x2, _x3, _x4 )                  \
+          ( ( FT_STATIC_BYTE_CAST( <a href="ft2-basic_types.html#ft_tag">FT_Tag</a>, _x1 ) &lt;&lt; 24 ) | \
+            ( FT_STATIC_BYTE_CAST( <a href="ft2-basic_types.html#ft_tag">FT_Tag</a>, _x2 ) &lt;&lt; 16 ) | \
+            ( FT_STATIC_BYTE_CAST( <a href="ft2-basic_types.html#ft_tag">FT_Tag</a>, _x3 ) &lt;&lt;  8 ) | \
+              FT_STATIC_BYTE_CAST( <a href="ft2-basic_types.html#ft_tag">FT_Tag</a>, _x4 )         )
+</code></pre></div>
+
+<p>This macro converts four-letter tags that are used to label TrueType tables into an <code>FT_Tag</code> type, to be used within FreeType.</p>
+<h4>note</h4>
+
+<p>The produced values <strong>must</strong> be 32-bit integers. Don't redefine this macro.</p>
+<hr>
+
+<h2 id="ft_generic">FT_Generic<a class="headerlink" href="#ft_generic" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_Generic_
+  {
+    <span class="keyword">void</span>*                 data;
+    <a href="ft2-basic_types.html#ft_generic_finalizer">FT_Generic_Finalizer</a>  finalizer;
+
+  } <b>FT_Generic</b>;
+</code></pre></div>
+
+<p>Client applications often need to associate their own data to a variety of FreeType core objects. For example, a text layout API might want to associate a glyph cache to a given size object.</p>
+<p>Some FreeType object contains a <code>generic</code> field, of type <code>FT_Generic</code>, which usage is left to client applications and font servers.</p>
+<p>It can be used to store a pointer to client-specific data, as well as the address of a &lsquo;finalizer&rsquo; function, which will be called by FreeType when the object is destroyed (for example, the previous client example would put the address of the glyph cache destructor in the <code>finalizer</code> field).</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="data">data</td><td class="desc">
+<p>A typeless pointer to any client-specified data. This field is completely ignored by the FreeType library.</p>
+</td></tr>
+<tr><td class="val" id="finalizer">finalizer</td><td class="desc">
+<p>A pointer to a &lsquo;generic finalizer&rsquo; function, which will be called when the object is destroyed. If this field is set to <code>NULL</code>, no code will be called.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_generic_finalizer">FT_Generic_Finalizer<a class="headerlink" href="#ft_generic_finalizer" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">void</span>  (*<b>FT_Generic_Finalizer</b>)( <span class="keyword">void</span>*  object );
+</code></pre></div>
+
+<p>Describe a function used to destroy the &lsquo;client&rsquo; data of any FreeType object. See the description of the <code><a href="ft2-basic_types.html#ft_generic">FT_Generic</a></code> type for details of usage.</p>
+<h4>input</h4>
+
+<p>The address of the FreeType object that is under finalization. Its client data is accessed through its <code>generic</code> field.</p>
+<hr>
+
+<h2 id="ft_bitmap">FT_Bitmap<a class="headerlink" href="#ft_bitmap" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_IMAGE_H (freetype/ftimage.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_Bitmap_
+  {
+    <span class="keyword">unsigned</span> <span class="keyword">int</span>    rows;
+    <span class="keyword">unsigned</span> <span class="keyword">int</span>    width;
+    <span class="keyword">int</span>             pitch;
+    <span class="keyword">unsigned</span> <span class="keyword">char</span>*  buffer;
+    <span class="keyword">unsigned</span> <span class="keyword">short</span>  num_grays;
+    <span class="keyword">unsigned</span> <span class="keyword">char</span>   pixel_mode;
+    <span class="keyword">unsigned</span> <span class="keyword">char</span>   palette_mode;
+    <span class="keyword">void</span>*           palette;
+
+  } <b>FT_Bitmap</b>;
+</code></pre></div>
+
+<p>A structure used to describe a bitmap or pixmap to the raster. Note that we now manage pixmaps of various depths through the <code>pixel_mode</code> field.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="rows">rows</td><td class="desc">
+<p>The number of bitmap rows.</p>
+</td></tr>
+<tr><td class="val" id="width">width</td><td class="desc">
+<p>The number of pixels in bitmap row.</p>
+</td></tr>
+<tr><td class="val" id="pitch">pitch</td><td class="desc">
+<p>The pitch's absolute value is the number of bytes taken by one bitmap row, including padding. However, the pitch is positive when the bitmap has a &lsquo;down&rsquo; flow, and negative when it has an &lsquo;up&rsquo; flow. In all cases, the pitch is an offset to add to a bitmap pointer in order to go down one row.</p>
+<p>Note that &lsquo;padding&rsquo; means the alignment of a bitmap to a byte border, and FreeType functions normally align to the smallest possible integer value.</p>
+<p>For the B/W rasterizer, <code>pitch</code> is always an even number.</p>
+<p>To change the pitch of a bitmap (say, to make it a multiple of 4), use <code><a href="ft2-bitmap_handling.html#ft_bitmap_convert">FT_Bitmap_Convert</a></code>. Alternatively, you might use callback functions to directly render to the application's surface; see the file <code>example2.cpp</code> in the tutorial for a demonstration.</p>
+</td></tr>
+<tr><td class="val" id="buffer">buffer</td><td class="desc">
+<p>A typeless pointer to the bitmap buffer. This value should be aligned on 32-bit boundaries in most cases.</p>
+</td></tr>
+<tr><td class="val" id="num_grays">num_grays</td><td class="desc">
+<p>This field is only used with <code><a href="ft2-basic_types.html#ft_pixel_mode">FT_PIXEL_MODE_GRAY</a></code>; it gives the number of gray levels used in the bitmap.</p>
+</td></tr>
+<tr><td class="val" id="pixel_mode">pixel_mode</td><td class="desc">
+<p>The pixel mode, i.e., how pixel bits are stored. See <code><a href="ft2-basic_types.html#ft_pixel_mode">FT_Pixel_Mode</a></code> for possible values.</p>
+</td></tr>
+<tr><td class="val" id="palette_mode">palette_mode</td><td class="desc">
+<p>This field is intended for paletted pixel modes; it indicates how the palette is stored. Not used currently.</p>
+</td></tr>
+<tr><td class="val" id="palette">palette</td><td class="desc">
+<p>A typeless pointer to the bitmap palette; this field is intended for paletted pixel modes. Not used currently.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p><code>width</code> and <code>rows</code> refer to the <em>physical</em> size of the bitmap, not the <em>logical</em> one. For example, if <code><a href="ft2-basic_types.html#ft_pixel_mode">FT_Pixel_Mode</a></code> is set to <code>FT_PIXEL_MODE_LCD</code>, the logical width is a just a third of the physical one.</p>
+<hr>
+
+<h2 id="ft_pixel_mode">FT_Pixel_Mode<a class="headerlink" href="#ft_pixel_mode" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_IMAGE_H (freetype/ftimage.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">enum</span>  FT_Pixel_Mode_
+  {
+    <a href="ft2-basic_types.html#ft_pixel_mode_none">FT_PIXEL_MODE_NONE</a> = 0,
+    <a href="ft2-basic_types.html#ft_pixel_mode_mono">FT_PIXEL_MODE_MONO</a>,
+    <a href="ft2-basic_types.html#ft_pixel_mode_gray">FT_PIXEL_MODE_GRAY</a>,
+    <a href="ft2-basic_types.html#ft_pixel_mode_gray2">FT_PIXEL_MODE_GRAY2</a>,
+    <a href="ft2-basic_types.html#ft_pixel_mode_gray4">FT_PIXEL_MODE_GRAY4</a>,
+    <a href="ft2-basic_types.html#ft_pixel_mode_lcd">FT_PIXEL_MODE_LCD</a>,
+    <a href="ft2-basic_types.html#ft_pixel_mode_lcd_v">FT_PIXEL_MODE_LCD_V</a>,
+    <a href="ft2-basic_types.html#ft_pixel_mode_bgra">FT_PIXEL_MODE_BGRA</a>,
+
+    FT_PIXEL_MODE_MAX      /* do not remove */
+
+  } <b>FT_Pixel_Mode</b>;
+
+
+  /* these constants are deprecated; use the corresponding `<b>FT_Pixel_Mode</b>` */
+  /* values instead.                                                       */
+#<span class="keyword">define</span> ft_pixel_mode_none   <a href="ft2-basic_types.html#ft_pixel_mode_none">FT_PIXEL_MODE_NONE</a>
+#<span class="keyword">define</span> ft_pixel_mode_mono   <a href="ft2-basic_types.html#ft_pixel_mode_mono">FT_PIXEL_MODE_MONO</a>
+#<span class="keyword">define</span> ft_pixel_mode_grays  <a href="ft2-basic_types.html#ft_pixel_mode_gray">FT_PIXEL_MODE_GRAY</a>
+#<span class="keyword">define</span> ft_pixel_mode_pal2   <a href="ft2-basic_types.html#ft_pixel_mode_gray2">FT_PIXEL_MODE_GRAY2</a>
+#<span class="keyword">define</span> ft_pixel_mode_pal4   <a href="ft2-basic_types.html#ft_pixel_mode_gray4">FT_PIXEL_MODE_GRAY4</a>
+</code></pre></div>
+
+<p>An enumeration type used to describe the format of pixels in a given bitmap. Note that additional formats may be added in the future.</p>
+<h4>values</h4>
+<table class="fields">
+<tr><td class="val" id="ft_pixel_mode_none">FT_PIXEL_MODE_NONE</td><td class="desc">
+<p>Value&nbsp;0 is reserved.</p>
+</td></tr>
+<tr><td class="val" id="ft_pixel_mode_mono">FT_PIXEL_MODE_MONO</td><td class="desc">
+<p>A monochrome bitmap, using 1&nbsp;bit per pixel. Note that pixels are stored in most-significant order (MSB), which means that the left-most pixel in a byte has value 128.</p>
+</td></tr>
+<tr><td class="val" id="ft_pixel_mode_gray">FT_PIXEL_MODE_GRAY</td><td class="desc">
+<p>An 8-bit bitmap, generally used to represent anti-aliased glyph images. Each pixel is stored in one byte. Note that the number of &lsquo;gray&rsquo; levels is stored in the <code>num_grays</code> field of the <code><a href="ft2-basic_types.html#ft_bitmap">FT_Bitmap</a></code> structure (it generally is 256).</p>
+</td></tr>
+<tr><td class="val" id="ft_pixel_mode_gray2">FT_PIXEL_MODE_GRAY2</td><td class="desc">
+<p>A 2-bit per pixel bitmap, used to represent embedded anti-aliased bitmaps in font files according to the OpenType specification. We haven't found a single font using this format, however.</p>
+</td></tr>
+<tr><td class="val" id="ft_pixel_mode_gray4">FT_PIXEL_MODE_GRAY4</td><td class="desc">
+<p>A 4-bit per pixel bitmap, representing embedded anti-aliased bitmaps in font files according to the OpenType specification. We haven't found a single font using this format, however.</p>
+</td></tr>
+<tr><td class="val" id="ft_pixel_mode_lcd">FT_PIXEL_MODE_LCD</td><td class="desc">
+<p>An 8-bit bitmap, representing RGB or BGR decimated glyph images used for display on LCD displays; the bitmap is three times wider than the original glyph image. See also <code><a href="ft2-glyph_retrieval.html#ft_render_mode">FT_RENDER_MODE_LCD</a></code>.</p>
+</td></tr>
+<tr><td class="val" id="ft_pixel_mode_lcd_v">FT_PIXEL_MODE_LCD_V</td><td class="desc">
+<p>An 8-bit bitmap, representing RGB or BGR decimated glyph images used for display on rotated LCD displays; the bitmap is three times taller than the original glyph image. See also <code><a href="ft2-glyph_retrieval.html#ft_render_mode">FT_RENDER_MODE_LCD_V</a></code>.</p>
+</td></tr>
+<tr><td class="val" id="ft_pixel_mode_bgra">FT_PIXEL_MODE_BGRA</td><td class="desc">
+<p>[Since 2.5] An image with four 8-bit channels per pixel, representing a color image (such as emoticons) with alpha channel. For each pixel, the format is BGRA, which means, the blue channel comes first in memory. The color channels are pre-multiplied and in the sRGB colorspace. For example, full red at half-translucent opacity will be represented as &lsquo;00,00,80,80&rsquo;, not &lsquo;00,00,FF,80&rsquo;. See also <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_COLOR</a></code>.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_glyph_format">FT_Glyph_Format<a class="headerlink" href="#ft_glyph_format" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_IMAGE_H (freetype/ftimage.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">enum</span>  FT_Glyph_Format_
+  {
+    <a href="ft2-basic_types.html#ft_image_tag">FT_IMAGE_TAG</a>( <a href="ft2-basic_types.html#ft_glyph_format_none">FT_GLYPH_FORMAT_NONE</a>, 0, 0, 0, 0 ),
+
+    <a href="ft2-basic_types.html#ft_image_tag">FT_IMAGE_TAG</a>( <a href="ft2-basic_types.html#ft_glyph_format_composite">FT_GLYPH_FORMAT_COMPOSITE</a>, 'c', 'o', 'm', 'p' ),
+    <a href="ft2-basic_types.html#ft_image_tag">FT_IMAGE_TAG</a>( <a href="ft2-basic_types.html#ft_glyph_format_bitmap">FT_GLYPH_FORMAT_BITMAP</a>,    'b', 'i', 't', 's' ),
+    <a href="ft2-basic_types.html#ft_image_tag">FT_IMAGE_TAG</a>( <a href="ft2-basic_types.html#ft_glyph_format_outline">FT_GLYPH_FORMAT_OUTLINE</a>,   'o', 'u', 't', 'l' ),
+    <a href="ft2-basic_types.html#ft_image_tag">FT_IMAGE_TAG</a>( <a href="ft2-basic_types.html#ft_glyph_format_plotter">FT_GLYPH_FORMAT_PLOTTER</a>,   'p', 'l', 'o', 't' ),
+    <a href="ft2-basic_types.html#ft_image_tag">FT_IMAGE_TAG</a>( <a href="ft2-basic_types.html#ft_glyph_format_svg">FT_GLYPH_FORMAT_SVG</a>,       'S', 'V', 'G', ' ' )
+
+  } <b>FT_Glyph_Format</b>;
+
+
+  /* these constants are deprecated; use the corresponding */
+  /* `<b>FT_Glyph_Format</b>` values instead.                     */
+#<span class="keyword">define</span> ft_glyph_format_none       <a href="ft2-basic_types.html#ft_glyph_format_none">FT_GLYPH_FORMAT_NONE</a>
+#<span class="keyword">define</span> ft_glyph_format_composite  <a href="ft2-basic_types.html#ft_glyph_format_composite">FT_GLYPH_FORMAT_COMPOSITE</a>
+#<span class="keyword">define</span> ft_glyph_format_bitmap     <a href="ft2-basic_types.html#ft_glyph_format_bitmap">FT_GLYPH_FORMAT_BITMAP</a>
+#<span class="keyword">define</span> ft_glyph_format_outline    <a href="ft2-basic_types.html#ft_glyph_format_outline">FT_GLYPH_FORMAT_OUTLINE</a>
+#<span class="keyword">define</span> ft_glyph_format_plotter    <a href="ft2-basic_types.html#ft_glyph_format_plotter">FT_GLYPH_FORMAT_PLOTTER</a>
+</code></pre></div>
+
+<p>An enumeration type used to describe the format of a given glyph image. Note that this version of FreeType only supports two image formats, even though future font drivers will be able to register their own format.</p>
+<h4>values</h4>
+<table class="fields">
+<tr><td class="val" id="ft_glyph_format_none">FT_GLYPH_FORMAT_NONE</td><td class="desc">
+<p>The value&nbsp;0 is reserved.</p>
+</td></tr>
+<tr><td class="val" id="ft_glyph_format_composite">FT_GLYPH_FORMAT_COMPOSITE</td><td class="desc">
+<p>The glyph image is a composite of several other images. This format is <em>only</em> used with <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_NO_RECURSE</a></code>, and is used to report compound glyphs (like accented characters).</p>
+</td></tr>
+<tr><td class="val" id="ft_glyph_format_bitmap">FT_GLYPH_FORMAT_BITMAP</td><td class="desc">
+<p>The glyph image is a bitmap, and can be described as an <code><a href="ft2-basic_types.html#ft_bitmap">FT_Bitmap</a></code>. You generally need to access the <code>bitmap</code> field of the <code><a href="ft2-glyph_retrieval.html#ft_glyphslotrec">FT_GlyphSlotRec</a></code> structure to read it.</p>
+</td></tr>
+<tr><td class="val" id="ft_glyph_format_outline">FT_GLYPH_FORMAT_OUTLINE</td><td class="desc">
+<p>The glyph image is a vectorial outline made of line segments and Bezier arcs; it can be described as an <code><a href="ft2-outline_processing.html#ft_outline">FT_Outline</a></code>; you generally want to access the <code>outline</code> field of the <code><a href="ft2-glyph_retrieval.html#ft_glyphslotrec">FT_GlyphSlotRec</a></code> structure to read it.</p>
+</td></tr>
+<tr><td class="val" id="ft_glyph_format_plotter">FT_GLYPH_FORMAT_PLOTTER</td><td class="desc">
+<p>The glyph image is a vectorial path with no inside and outside contours. Some Type&nbsp;1 fonts, like those in the Hershey family, contain glyphs in this format. These are described as <code><a href="ft2-outline_processing.html#ft_outline">FT_Outline</a></code>, but FreeType isn't currently capable of rendering them correctly.</p>
+</td></tr>
+<tr><td class="val" id="ft_glyph_format_svg">FT_GLYPH_FORMAT_SVG</td><td class="desc">
+<p>[Since 2.12] The glyph is represented by an SVG document in the &lsquo;SVG&nbsp;&rsquo; table.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_image_tag">FT_IMAGE_TAG<a class="headerlink" href="#ft_image_tag" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_IMAGE_H (freetype/ftimage.h).</p>
+<div class = "codehilite"><pre><code>#<span class="keyword">ifndef</span> <b>FT_IMAGE_TAG</b>
+
+#<span class="keyword">define</span> <b>FT_IMAGE_TAG</b>( value, _x1, _x2, _x3, _x4 )                         \
+          value = ( ( FT_STATIC_BYTE_CAST( <span class="keyword">unsigned</span> <span class="keyword">long</span>, _x1 ) &lt;&lt; 24 ) | \
+                    ( FT_STATIC_BYTE_CAST( <span class="keyword">unsigned</span> <span class="keyword">long</span>, _x2 ) &lt;&lt; 16 ) | \
+                    ( FT_STATIC_BYTE_CAST( <span class="keyword">unsigned</span> <span class="keyword">long</span>, _x3 ) &lt;&lt; 8  ) | \
+                      FT_STATIC_BYTE_CAST( <span class="keyword">unsigned</span> <span class="keyword">long</span>, _x4 )         )
+
+#<span class="keyword">endif</span> /* <b>FT_IMAGE_TAG</b> */
+</code></pre></div>
+
+<p>This macro converts four-letter tags to an unsigned long type.</p>
+<h4>note</h4>
+
+<p>Since many 16-bit compilers don't like 32-bit enumerations, you should redefine this macro in case of problems to something like this:
+<div class="highlight"><pre><span></span><code>  #define FT_IMAGE_TAG( value, _x1, _x2, _x3, _x4 )  value
+</code></pre></div></p>
+<p>to get a simple enumeration without assigning special numbers.</p>
+<hr>
+                
+              
+              
+                
+
+
+              
+            </article>
+          </div>
+        </div>
+        
+      </main>
+      
+        
+<footer class="md-footer">
+  
+    <nav class="md-footer__inner md-grid" aria-label="Footer">
+      
+        
+        <a href="ft2-user_allocation.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: User allocation" rel="prev">
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+          </div>
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              User allocation
+            </div>
+          </div>
+        </a>
+      
+      
+        
+        <a href="ft2-library_setup.html" class="md-footer__link md-footer__link--next" aria-label="Next: Library Setup" rel="next">
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              Library Setup
+            </div>
+          </div>
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11H4z"/></svg>
+          </div>
+        </a>
+      
+    </nav>
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-footer-copyright">
+        
+          <div class="md-footer-copyright__highlight">
+            Copyright 2023 <a href = "https://www.freetype.org/license.html">The FreeType Project</a>.
+          </div>
+        
+        Made with
+        <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+          Material for MkDocs
+        </a>
+        
+      </div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    <script id="__config" type="application/json">{"base": ".", "features": [], "search": "assets/javascripts/workers/search.477d984a.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.config.lang": "en", "search.config.pipeline": "trimmer, stopWordFilter", "search.config.separator": "[\\s\\-]+", "search.placeholder": "Search", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version.title": "Select version"}, "version": null}</script>
+    
+    
+      <script src="assets/javascripts/bundle.82b56eb2.min.js"></script>
+      
+        <script src="javascripts/extra.js"></script>
+      
+    
+  </body>
+</html>

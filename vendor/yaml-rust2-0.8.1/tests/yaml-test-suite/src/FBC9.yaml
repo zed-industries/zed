@@ -1,0 +1,37 @@
+---
+- name: Allowed characters in plain scalars
+  from: '@perlpunk'
+  tags: scalar
+  yaml: |
+    safe: a!"#$%&'()*+,-./09:;<=>?@AZ[\]^_`az{|}~
+         !"#$%&'()*+,-./09:;<=>?@AZ[\]^_`az{|}~
+    safe question mark: ?foo
+    safe colon: :foo
+    safe dash: -foo
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :safe
+       =VAL :a!"#$%&'()*+,-./09:;<=>?@AZ[\\]^_`az{|}~ !"#$%&'()*+,-./09:;<=>?@AZ[\\]^_`az{|}~
+       =VAL :safe question mark
+       =VAL :?foo
+       =VAL :safe colon
+       =VAL ::foo
+       =VAL :safe dash
+       =VAL :-foo
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "safe": "a!\"#$%&'()*+,-./09:;<=>?@AZ[\\]^_`az{|}~ !\"#$%&'()*+,-./09:;<=>?@AZ[\\]^_`az{|}~",
+      "safe question mark": "?foo",
+      "safe colon": ":foo",
+      "safe dash": "-foo"
+    }
+  dump: |
+    safe: a!"#$%&'()*+,-./09:;<=>?@AZ[\]^_`az{|}~ !"#$%&'()*+,-./09:;<=>?@AZ[\]^_`az{|}~
+    safe question mark: ?foo
+    safe colon: :foo
+    safe dash: -foo

@@ -1,0 +1,95 @@
+<?xml version="1.0"?>
+
+<ratified href="WEBGL_debug_renderer_info/">
+  <name>WEBGL_debug_renderer_info</name>
+  <contact><a href="mailto:zmo@chromium.org">zmo@chromium.org</a></contact>
+  <contributors>
+    <contributor>Members of the <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL working group</a></contributor>
+  </contributors>
+  <number>6</number>
+  <depends>
+    <api version="1.0"/>
+  </depends>
+  <overview>
+    <p>WebGL implementations might mask the <code>RENDERER</code> and <code>VENDOR</code> strings of the underlying graphics driver for privacy reasons. This extension exposes new tokens to query this information in a guaranteed manner for debugging purposes.</p>
+  </overview>
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface WEBGL_debug_renderer_info {
+
+      const GLenum UNMASKED_VENDOR_WEBGL            = 0x9245;
+      const GLenum UNMASKED_RENDERER_WEBGL          = 0x9246;
+
+};
+  </idl>
+  <newtok>
+    <function name="getParameter" type="any">
+      <param name="pname" type="GLenum"/>
+      Two new enums <code>UNMASKED_VENDOR_WEBGL</code> and <code>UNMASKED_RENDERER_WEBGL</code> are accepted by <code>pname</code> parameter in <code>getParameter()</code>.
+      <table class="foo">
+        <tr><th>pname</th><th>returned type</th></tr>
+        <tr><td>UNMASKED_VENDOR_WEBGL</td><td>DOMString</td></tr>
+        <tr><td>UNMASKED_RENDERER_WEBGL</td><td>DOMString</td></tr>
+      </table>
+      <br />
+      The following pname arguments return a string describing some aspect of the underlying graphics driver.
+      <table class="foo">
+        <tr><td>UNMASKED_VENDOR_WEBGL</td><td>Return the VENDOR string of the underlying graphics driver.</td></tr>
+        <tr><td>UNMASKED_RENDERER_WEBGL</td><td>Return the RENDERER string of the underlying graphics driver.</td></tr>
+      </table>
+    </function>
+  </newtok>
+  <issues>
+    <p>
+      1) What enum values should be used for UNMASKED_VENDOR_WEBGL and UNMASKED_RENDERER_WEBGL?</p>
+      <ul>
+        <li> RESOLVED: The first draft used temporary enum values. They have been replaced with enums allocated from the WEBGL range of GL enums.</li>
+      </ul>
+    <p>
+      2) Should this extension be made available on ordinary web pages?</p>
+      <ul>
+        <li> Earlier versions of this extension noted the following concerns:
+        <ol>
+          <li> Identifying the precise graphics card in the user's computer may yield certain personally-identifiable information to the web page; for example, if the user has a unique graphics card. </li>
+          <li> Identifying the precise graphics card to JavaScript might encourage developers to target their WebGL applications to run only on a particular type of graphics card. This is similar to the User-Agent "sniffing" or "spoofing" problem which has historically been pervasive and problematic on the web. </li>
+        </ol>
+
+        User agents (web browsers) should carefully consider whether or not to expose this extension in non-privileged settings due to these concerns. </li>
+
+        <li> On the other hand, benefits of exposing this information to general web pages include:
+
+        <ol>
+          <li> The WebGL application can tune its rendering techniques based on previously observed performance characteristics on the same graphics card. </li>
+          <li> The WebGL application can gather useful information for debugging; for example, if it is running slowly, it can gather data for reproducing and fixing the problem. </li>
+        </ol>
+
+        </li>
+      </ul>
+  </issues>
+  <history>
+    <revision date="2011/10/03">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2011/10/12">
+      <change>Assigned enums; assigned webgl extension number.</change>
+    </revision>
+    <revision date="2011/10/18">
+      <change>Clarify the meaning of "privileged".</change>
+    </revision>
+    <revision date="2011/12/07">
+      <change>Fixed mistake where extension still indicated draft status.</change>
+    </revision>
+    <revision date="2012/01/03">
+      <change>Removed webgl module per changes to Web IDL spec.</change>
+    </revision>
+    <revision date="2013/05/15">
+      <change>Ratified by Khronos Board of Promoters.</change>
+    </revision>
+    <revision date="2014/01/28">
+      <change>Added issue on privacy and user agent sniffing considerations, replacing security section.</change>
+    </revision>
+    <revision date="2014/07/15">
+      <change>Added NoInterfaceObject extended attribute.</change>
+    </revision>
+  </history>
+</ratified>

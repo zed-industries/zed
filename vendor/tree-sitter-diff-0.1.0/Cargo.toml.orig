@@ -1,0 +1,30 @@
+[package]
+name = "tree-sitter-diff"
+authors = ["Michael Davis <mcarsondavis@gmail.com>"]
+description = "diff grammar for the tree-sitter parsing library"
+version = "0.1.0"
+keywords = ["incremental", "parsing", "diff"]
+categories = ["parsing", "text-editors"]
+repository = "https://github.com/tree-sitter/tree-sitter-diff"
+edition = "2018"
+license = "MIT"
+
+build = "bindings/rust/build.rs"
+include = [
+  "bindings/rust/*",
+  "grammar.js",
+  "queries/*",
+  "src/*",
+]
+
+[lib]
+path = "bindings/rust/lib.rs"
+
+[dependencies]
+tree-sitter-language = "0.1.0"
+
+[build-dependencies]
+cc = "1.0"
+
+[dev-dependencies]
+tree-sitter = "0.23"

@@ -1,0 +1,20 @@
+[package]
+categories = ["config"]
+description = "An unopinionated library for obtaining configuration, data, cache, & other directories"
+documentation = "https://docs.rs/etcetera"
+edition = "2018"
+homepage = "https://github.com/lunacookies/etcetera"
+keywords = ["xdg", "dirs", "directories", "basedir", "path"]
+license = "MIT OR Apache-2.0"
+name = "etcetera"
+readme = "README.md"
+repository = "https://github.com/lunacookies/etcetera"
+version = "0.8.0"
+
+[dependencies]
+cfg-if = "1"
+home = "0.5"
+
+# We should keep this in sync with the `home` crate.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.48", features = ["Win32_Foundation", "Win32_UI_Shell"] }

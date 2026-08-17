@@ -1,0 +1,7 @@
+package foo:wasi;
+
+interface filesystem {
+  record stat {
+    ino: u64
+  }
+}

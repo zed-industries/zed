@@ -1,0 +1,7 @@
+package paths:path2;
+
+interface test {}
+
+world path2 {
+    import test;
+}

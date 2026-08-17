@@ -1,0 +1,396 @@
+version: "3"
+
+services:
+    #
+    # MySQL 8.x, 5.7.x
+    # https://www.mysql.com/support/supportedplatforms/database.html
+    #
+
+    mysql_8:
+        image: mysql:8.0
+        volumes:
+            - "./mysql/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        ports:
+            - 3306
+        environment:
+            MYSQL_ROOT_HOST: '%'
+            MYSQL_ROOT_PASSWORD: password
+            MYSQL_DATABASE: sqlx
+
+    mysql_8_client_ssl:
+        build:
+            context: .
+            dockerfile: mysql/Dockerfile
+            args:
+                IMAGE: mysql:8.0
+        volumes:
+            - "./mysql/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        ports:
+            - 3306
+        environment:
+            MYSQL_ROOT_HOST: '%'
+            MYSQL_DATABASE: sqlx
+            MYSQL_ALLOW_EMPTY_PASSWORD: 1
+
+    mysql_5_7:
+        image: mysql:5.7
+        volumes:
+            - "./mysql/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        ports:
+            - 3306
+        environment:
+            MYSQL_ROOT_HOST: '%'
+            MYSQL_ROOT_PASSWORD: password
+            MYSQL_DATABASE: sqlx
+
+    mysql_5_7_client_ssl:
+        build:
+            context: .
+            dockerfile: mysql/Dockerfile
+            args:
+                IMAGE: mysql:5.7
+        volumes:
+            - "./mysql/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        ports:
+            - 3306
+        environment:
+            MYSQL_ROOT_HOST: '%'
+            MYSQL_DATABASE: sqlx
+            MYSQL_ALLOW_EMPTY_PASSWORD: 1
+
+    #
+    # MariaDB 10.11, 10.6, 10.5, 10.4
+    # https://mariadb.org/about/#maintenance-policy
+    #
+
+    mariadb_11_4:
+        image: mariadb:11.4
+        volumes:
+            - "./mysql/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        ports:
+            - 3306
+        environment:
+            MARIADB_ROOT_PASSWORD: password
+            MARIADB_DATABASE: sqlx
+
+    mariadb_11_4_client_ssl:
+        build:
+            context: .
+            dockerfile: mysql/Dockerfile
+            args:
+                IMAGE: mariadb:11.4
+        volumes:
+            - "./mysql/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        ports:
+            - 3306
+        environment:
+            MARIADB_DATABASE: sqlx
+            MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: 1
+
+    mariadb_10_11:
+        image: mariadb:10.11
+        volumes:
+            - "./mysql/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        ports:
+            - 3306
+        environment:
+            MARIADB_ROOT_PASSWORD: password
+            MARIADB_DATABASE: sqlx
+
+    mariadb_10_11_client_ssl:
+        build:
+            context: .
+            dockerfile: mysql/Dockerfile
+            args:
+                IMAGE: mariadb:10.11
+        volumes:
+            - "./mysql/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        ports:
+            - 3306
+        environment:
+            MARIADB_DATABASE: sqlx
+            MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: 1
+
+    mariadb_10_6:
+        image: mariadb:10.6
+        volumes:
+            - "./mysql/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        ports:
+            - 3306
+        environment:
+            MARIADB_ROOT_PASSWORD: password
+            MARIADB_DATABASE: sqlx
+
+    mariadb_10_6_client_ssl:
+        build:
+            context: .
+            dockerfile: mysql/Dockerfile
+            args:
+                IMAGE: mariadb:10.6
+        volumes:
+            - "./mysql/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        ports:
+            - 3306
+        environment:
+            MARIADB_DATABASE: sqlx
+            MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: 1
+
+    mariadb_10_5:
+        image: mariadb:10.5
+        volumes:
+            - "./mysql/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        ports:
+            - 3306
+        environment:
+            MARIADB_ROOT_PASSWORD: password
+            MARIADB_DATABASE: sqlx
+
+    mariadb_10_5_client_ssl:
+        build:
+            context: .
+            dockerfile: mysql/Dockerfile
+            args:
+                IMAGE: mariadb:10.5
+        volumes:
+            - "./mysql/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        ports:
+            - 3306
+        environment:
+            MARIADB_DATABASE: sqlx
+            MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: 1
+
+    mariadb_10_4:
+        image: mariadb:10.4
+        volumes:
+            - "./mysql/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        ports:
+            - 3306
+        environment:
+            MARIADB_ROOT_PASSWORD: password
+            MARIADB_DATABASE: sqlx
+
+    mariadb_10_4_client_ssl:
+        build:
+            context: .
+            dockerfile: mysql/Dockerfile
+            args:
+                IMAGE: mariadb:10.4
+        volumes:
+            - "./mysql/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        ports:
+            - 3306
+        environment:
+            MARIADB_DATABASE: sqlx
+            MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: 1
+
+    # Ensure MariaDB upstream isn't regressing before release
+    # https://mariadb.org/new-service-quay-io-mariadb-foundation-mariadb-devel/
+    mariadb_verylatest:
+        image: quay.io/mariadb-foundation/mariadb-devel:verylatest
+        volumes:
+            - "./mysql/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        ports:
+            - 3306
+        environment:
+            MARIADB_ROOT_PASSWORD: password
+            MARIADB_DATABASE: sqlx
+
+    mariadb_verylatest_client_ssl:
+        build:
+            context: .
+            dockerfile: mysql/Dockerfile
+            args:
+                IMAGE: quay.io/mariadb-foundation/mariadb-devel:verylatest
+        volumes:
+            - "./mysql/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        ports:
+            - 3306
+        environment:
+            MARIADB_DATABASE: sqlx
+            MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: 1
+    #
+    # PostgreSQL 17.x, 16.x, 15.x, 14.x, 13.x
+    # https://www.postgresql.org/support/versioning/
+    #
+
+    postgres_17:
+        build:
+            context: .
+            dockerfile: postgres/Dockerfile
+            args:
+                VERSION: 17
+        ports:
+            - 5432
+        environment:
+            POSTGRES_DB: sqlx
+            POSTGRES_USER: postgres
+            POSTGRES_PASSWORD: password
+            POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+            POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+        volumes:
+            - "./postgres/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        # Loading `pg_stat_statements` should serve as a regression test for:
+        # https://github.com/launchbadge/sqlx/issues/2622
+        command: >
+            -c ssl=on -c ssl_cert_file=/var/lib/postgresql/server.crt -c ssl_key_file=/var/lib/postgresql/server.key -c shared_preload_libraries=pg_stat_statements
+
+    postgres_17_client_ssl:
+        build:
+            context: .
+            dockerfile: postgres/Dockerfile
+            args:
+                VERSION: 17
+        ports:
+            - 5432
+        environment:
+            POSTGRES_DB: sqlx
+            POSTGRES_HOST_AUTH_METHOD: trust
+            POSTGRES_INITDB_ARGS: --auth-host=trust
+        volumes:
+            - "./postgres/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        command: >
+            -c ssl=on -c ssl_cert_file=/var/lib/postgresql/server.crt -c ssl_key_file=/var/lib/postgresql/server.key -c ssl_ca_file=/var/lib/postgresql/ca.crt -c hba_file=/var/lib/postgresql/pg_hba.conf
+
+    postgres_16:
+        build:
+            context: .
+            dockerfile: postgres/Dockerfile
+            args:
+                VERSION: 16
+        ports:
+            - 5432
+        environment:
+            POSTGRES_DB: sqlx
+            POSTGRES_USER: postgres
+            POSTGRES_PASSWORD: password
+            POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+            POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+        volumes:
+            - "./postgres/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        command: >
+            -c ssl=on -c ssl_cert_file=/var/lib/postgresql/server.crt -c ssl_key_file=/var/lib/postgresql/server.key
+
+    postgres_16_client_ssl:
+        build:
+            context: .
+            dockerfile: postgres/Dockerfile
+            args:
+                VERSION: 16
+        ports:
+            - 5432
+        environment:
+            POSTGRES_DB: sqlx
+            POSTGRES_HOST_AUTH_METHOD: trust
+            POSTGRES_INITDB_ARGS: --auth-host=trust
+        volumes:
+            - "./postgres/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        command: >
+            -c ssl=on -c ssl_cert_file=/var/lib/postgresql/server.crt -c ssl_key_file=/var/lib/postgresql/server.key -c ssl_ca_file=/var/lib/postgresql/ca.crt -c hba_file=/var/lib/postgresql/pg_hba.conf
+
+    postgres_15:
+        build:
+            context: .
+            dockerfile: postgres/Dockerfile
+            args:
+                VERSION: 15
+        ports:
+            - 5432
+        environment:
+            POSTGRES_DB: sqlx
+            POSTGRES_USER: postgres
+            POSTGRES_PASSWORD: password
+            POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+            POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+        volumes:
+            - "./postgres/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        command: >
+            -c ssl=on -c ssl_cert_file=/var/lib/postgresql/server.crt -c ssl_key_file=/var/lib/postgresql/server.key
+
+    postgres_15_client_ssl:
+        build:
+            context: .
+            dockerfile: postgres/Dockerfile
+            args:
+                VERSION: 15
+        ports:
+            - 5432
+        environment:
+            POSTGRES_DB: sqlx
+            POSTGRES_HOST_AUTH_METHOD: trust
+            POSTGRES_INITDB_ARGS: --auth-host=trust
+        volumes:
+            - "./postgres/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        command: >
+            -c ssl=on -c ssl_cert_file=/var/lib/postgresql/server.crt -c ssl_key_file=/var/lib/postgresql/server.key -c ssl_ca_file=/var/lib/postgresql/ca.crt -c hba_file=/var/lib/postgresql/pg_hba.conf
+
+    postgres_14:
+        build:
+            context: .
+            dockerfile: postgres/Dockerfile
+            args:
+                VERSION: 14
+        ports:
+            - 5432
+        environment:
+            POSTGRES_DB: sqlx
+            POSTGRES_USER: postgres
+            POSTGRES_PASSWORD: password
+            POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+            POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+        volumes:
+            - "./postgres/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        command: >
+            -c ssl=on -c ssl_cert_file=/var/lib/postgresql/server.crt -c ssl_key_file=/var/lib/postgresql/server.key
+
+    postgres_14_client_ssl:
+        build:
+            context: .
+            dockerfile: postgres/Dockerfile
+            args:
+                VERSION: 14
+        ports:
+            - 5432
+        environment:
+            POSTGRES_DB: sqlx
+            POSTGRES_HOST_AUTH_METHOD: trust
+            POSTGRES_INITDB_ARGS: --auth-host=trust
+        volumes:
+            - "./postgres/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        command: >
+            -c ssl=on -c ssl_cert_file=/var/lib/postgresql/server.crt -c ssl_key_file=/var/lib/postgresql/server.key -c ssl_ca_file=/var/lib/postgresql/ca.crt -c hba_file=/var/lib/postgresql/pg_hba.conf
+
+    postgres_13:
+        build:
+            context: .
+            dockerfile: postgres/Dockerfile
+            args:
+                VERSION: 13
+        ports:
+            - 5432
+        environment:
+            POSTGRES_DB: sqlx
+            POSTGRES_USER: postgres
+            POSTGRES_PASSWORD: password
+            POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+            POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+        volumes:
+            - "./postgres/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        command: >
+            -c ssl=on -c ssl_cert_file=/var/lib/postgresql/server.crt -c ssl_key_file=/var/lib/postgresql/server.key
+
+    postgres_13_client_ssl:
+        build:
+            context: .
+            dockerfile: postgres/Dockerfile
+            args:
+                VERSION: 13
+        ports:
+            - 5432
+        environment:
+            POSTGRES_DB: sqlx
+            POSTGRES_HOST_AUTH_METHOD: trust
+            POSTGRES_INITDB_ARGS: --auth-host=trust
+        volumes:
+            - "./postgres/setup.sql:/docker-entrypoint-initdb.d/setup.sql:z"
+        command: >
+            -c ssl=on -c ssl_cert_file=/var/lib/postgresql/server.crt -c ssl_key_file=/var/lib/postgresql/server.key -c ssl_ca_file=/var/lib/postgresql/ca.crt -c hba_file=/var/lib/postgresql/pg_hba.conf

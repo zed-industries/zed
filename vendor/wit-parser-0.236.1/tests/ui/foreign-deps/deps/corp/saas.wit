@@ -1,0 +1,4 @@
+package foo:corp;
+
+interface saas {
+}

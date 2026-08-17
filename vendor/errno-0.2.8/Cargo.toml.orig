@@ -1,0 +1,30 @@
+[package]
+
+name = "errno"
+version = "0.2.8"
+authors = ["Chris Wong <lambda.fairy@gmail.com>"]
+
+license = "MIT/Apache-2.0"
+documentation = "https://docs.rs/errno"
+repository = "https://github.com/lambda-fairy/rust-errno"
+description = "Cross-platform interface to the `errno` variable."
+categories = ["os"]
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["errhandlingapi", "minwindef", "ntdef", "winbase"] }
+
+[target.'cfg(target_os="dragonfly")'.dependencies]
+errno-dragonfly = "0.1.1"
+
+[target.'cfg(target_os="wasi")'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os="hermit")'.dependencies]
+libc = "0.2"
+
+[features]
+default = ["std"]
+std = []

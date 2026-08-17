@@ -1,0 +1,37 @@
+---
+- name: Multiline plain flow mapping key
+  from: '@perlpunk'
+  tags: flow mapping
+  yaml: |
+    ---
+    - { single line: value}
+    - { multi
+      line: value}
+  tree: |
+    +STR
+     +DOC ---
+      +SEQ
+       +MAP {}
+        =VAL :single line
+        =VAL :value
+       -MAP
+       +MAP {}
+        =VAL :multi line
+        =VAL :value
+       -MAP
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      {
+        "single line": "value"
+      },
+      {
+        "multi line": "value"
+      }
+    ]
+  dump: |
+    ---
+    - single line: value
+    - multi line: value

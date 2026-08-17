@@ -1,0 +1,6 @@
+{
+  "git": {
+    "sha1": "4dac6eb72c931d4592988fc9154353f829a5d3a0"
+  },
+  "path_in_vcs": "crates/jupyter-websocket-client"
+}

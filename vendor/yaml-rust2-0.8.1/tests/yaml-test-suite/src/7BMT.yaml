@@ -1,0 +1,90 @@
+---
+- name: Node and Mapping Key Anchors [1.3]
+  from: U3XV, modified for YAML 1.3
+  tags: anchor comment mapping 1.3-mod
+  yaml: |
+    ---
+    top1: &node1
+      &k1 key1: one
+    top2: &node2 # comment
+      key2: two
+    top3:
+      &k3 key3: three
+    top4: &node4
+      &k4 key4: four
+    top5: &node5
+      key5: five
+    top6: &val6
+      six
+    top7:
+      &val7 seven
+  tree: |
+    +STR
+     +DOC ---
+      +MAP
+       =VAL :top1
+       +MAP &node1
+        =VAL &k1 :key1
+        =VAL :one
+       -MAP
+       =VAL :top2
+       +MAP &node2
+        =VAL :key2
+        =VAL :two
+       -MAP
+       =VAL :top3
+       +MAP
+        =VAL &k3 :key3
+        =VAL :three
+       -MAP
+       =VAL :top4
+       +MAP &node4
+        =VAL &k4 :key4
+        =VAL :four
+       -MAP
+       =VAL :top5
+       +MAP &node5
+        =VAL :key5
+        =VAL :five
+       -MAP
+       =VAL :top6
+       =VAL &val6 :six
+       =VAL :top7
+       =VAL &val7 :seven
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "top1": {
+        "key1": "one"
+      },
+      "top2": {
+        "key2": "two"
+      },
+      "top3": {
+        "key3": "three"
+      },
+      "top4": {
+        "key4": "four"
+      },
+      "top5": {
+        "key5": "five"
+      },
+      "top6": "six",
+      "top7": "seven"
+    }
+  dump: |
+    ---
+    top1: &node1
+      &k1 key1: one
+    top2: &node2
+      key2: two
+    top3:
+      &k3 key3: three
+    top4: &node4
+      &k4 key4: four
+    top5: &node5
+      key5: five
+    top6: &val6 six
+    top7: &val7 seven

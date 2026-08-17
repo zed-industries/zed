@@ -1,0 +1,10 @@
+[package]
+name = "wit-bindgen-rt"
+version.workspace = true
+edition.workspace = true
+repository = 'https://github.com/bytecodealliance/wit-bindgen'
+license = "Apache-2.0 WITH LLVM-exception"
+homepage = 'https://github.com/bytecodealliance/wit-bindgen'
+description = """
+Runtime support for the `wit-bindgen` crate
+"""

@@ -1,0 +1,32 @@
+[package]
+name = "parse_int"
+version = "0.9.0"
+authors = ["Stefan Schindler <dns2utf8@estada.ch>"]
+edition = "2024"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+include = [
+    "Cargo.toml",
+    "src/**",
+    "README.md",
+]
+repository = "https://gitlab.com/dns2utf8/parse_int"
+license = "Apache-2.0/MIT/BSL-1.0/CC0-1.0"
+description = "Parse &str with common prefixes to integer values"
+readme = "README.md"
+categories = ["parsing"]
+keywords = ["hexadecimal", "hex", "decimal", "octal", "binary"]
+
+[dependencies]
+num-traits = "0.2"
+
+[features]
+default = []
+
+implicit-octal = []
+ranges = []
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--generate-link-to-definition"]

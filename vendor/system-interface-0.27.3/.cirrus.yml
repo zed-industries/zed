@@ -1,0 +1,44 @@
+# Implementation derived from `.cirrus.yml` in Rust's libc bindings
+# at revision 7f4774e76bd5cb9ccb7140d71ef9be9c16009cdf.
+
+task:
+  name: stable x86_64-unknown-freebsd-13
+  freebsd_instance:
+    image_family: freebsd-13-0-snap
+  setup_script:
+    - pkg install -y curl
+    - curl https://sh.rustup.rs -sSf --output rustup.sh
+    - sh rustup.sh --default-toolchain stable -y --profile=minimal
+    - . $HOME/.cargo/env
+    - rustup default stable
+  test_script:
+    - . $HOME/.cargo/env
+    - cargo test --workspace
+
+task:
+  name: stable x86_64-unknown-freebsd-12
+  freebsd_instance:
+    image_family: freebsd-12-1
+  setup_script:
+    - pkg install -y curl
+    - curl https://sh.rustup.rs -sSf --output rustup.sh
+    - sh rustup.sh --default-toolchain stable -y --profile=minimal
+    - . $HOME/.cargo/env
+    - rustup default stable
+  test_script:
+    - . $HOME/.cargo/env
+    - cargo test --workspace
+
+task:
+  name: stable x86_64-unknown-freebsd-11
+  freebsd_instance:
+    image_family: freebsd-11-4
+  setup_script:
+    - pkg install -y curl
+    - curl https://sh.rustup.rs -sSf --output rustup.sh
+    - sh rustup.sh --default-toolchain stable -y --profile=minimal
+    - . $HOME/.cargo/env
+    - rustup default stable
+  test_script:
+    - . $HOME/.cargo/env
+    - cargo test --workspace

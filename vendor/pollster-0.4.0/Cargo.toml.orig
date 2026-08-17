@@ -1,0 +1,30 @@
+[workspace]
+members = ["", "macro"]
+default-members = ["macro"]
+
+[package]
+name = "pollster"
+version = "0.4.0"
+description = "Synchronously block the thread until a future completes"
+categories = ["asynchronous", "concurrency"]
+keywords = ["async", "minimal", "executor", "runtime", "block_on"]
+repository = "https://github.com/zesterer/pollster"
+authors = ["Joshua Barretto <joshua.s.barretto@gmail.com>"]
+edition = "2018"
+license = "Apache-2.0/MIT"
+readme = "README.md"
+
+[features]
+macro = ["pollster-macro"]
+
+[dependencies]
+pollster-macro = { version = "0.4.0", path = "macro", optional = true }
+
+[dev-dependencies]
+futures-timer = "3.0"
+tokio = { version = "1", features = ["sync"] }
+
+[package.metadata.docs.rs]
+all-features = true
+targets = []
+rustdoc-args = ["--cfg", "docsrs"]

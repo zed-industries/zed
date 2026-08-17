@@ -1,0 +1,27 @@
+name: build
+on: [push, pull_request]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ankane/setup-postgres@v1
+        with:
+          database: pgvector_rust_test
+          dev-files: true
+      - run: |
+          cd /tmp
+          git clone --branch v0.8.0 https://github.com/pgvector/pgvector.git
+          cd pgvector
+          make
+          sudo make install
+      - run: psql -d pgvector_rust_test -c "CREATE EXTENSION vector"
+
+      # test features individually
+      - run: cargo test --features postgres
+      - run: cargo test --features sqlx
+      - run: cargo test --features diesel
+      - run: cargo test --features serde
+      - run: cargo test --features postgres,halfvec
+      - run: cargo test --features sqlx,halfvec
+      - run: cargo test --features diesel,halfvec

@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rejected href="rejected/WEBGL_draw_elements_no_range_check/">
+  <name>WEBGL_draw_elements_no_range_check</name>
+
+  <contact><a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL
+  working group</a> (public_webgl 'at' khronos.org) </contact>
+
+  <contributors>
+    <contributor>Olli Etuaho, NVIDIA</contributor>
+
+    <contributor>Jeff Gilbert, Mozilla</contributor>
+
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+
+  <number>NN</number>
+
+  <depends>
+    <api version="1.0"/>
+  </depends>
+
+  <overview id="overview">
+    <p><code>drawElements</code> robustness is currently ensured by checking
+    indices in the element array buffer against the size of the array buffer
+    they are indexing. These checks are undesirable from a performance
+    perspective, since they introduce CPU overhead to the API and require index
+    buffers to have a copy in CPU-accessible memory.</p>
+
+    <p>This extension changes the behavior of <code>drawElements</code> to use
+    security features built into hardware, bypassing the CPU-side range check
+    and improving performance. The drawback is that if out-of-range indices are
+    referenced by <code>drawElements</code>, no error is generated and the
+    rendering results of that call will be undefined. However, supplying
+    out-of-range indices to <code>drawElements</code> will not result in
+    reading vertex data from outside the enabled vertex buffer objects, nor
+    abnormal program termination, as specified in the OpenGL extension
+    <a href="http://www.opengl.org/registry/specs/ARB/robust_buffer_access_behavior.txt">ARB_robust_buffer_access_behavior</a>.</p>
+
+    <p>It is suggested that this extension is left disabled when debugging. Any
+    <code>INVALID_OPERATION</code> errors from <code>drawElements</code> seen
+    while the extension is off mean that the application is supplying incorrect
+    indices to the API, even if rendering results would seem correct when this
+    extension is enabled.</p>
+
+    <p>This extension interacts with
+    <a href="http://www.khronos.org/registry/webgl/extensions/ANGLE_instanced_arrays/">ANGLE_instanced_arrays</a>.</p>
+
+    <features>
+      <feature>
+        Calling <code>drawElements</code> will not produce an <code>INVALID_OPERATION</code>
+        error if a referenced index lies outside the storage of the bound buffer. Instead,
+        rendering is performed and attribute indices that are outside the valid range will produce
+        undefined rendering results.
+      </feature>
+      <feature>
+        Interaction with ANGLE_instanced_arrays: calling <code>drawElementsInstancedANGLE</code>
+        will not produce an <code>INVALID_OPERATION</code> error if a referenced index
+        lies outside the storage of the bound buffer, but will instead produce undefined
+        rendering results similarly to <code>drawElements</code>.
+      </feature>
+    </features>
+  </overview>
+
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface WEBGL_draw_elements_no_range_check {
+};
+  </idl>
+
+  <issues>
+  </issues>
+  <history>
+    <revision date="2014/03/14">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2014/07/15">
+      <change>Added NoInterfaceObject extended attribute.</change>
+    </revision>
+    <revision date="2015/01/24">
+      <change>Moved to rejected.</change>
+    </revision>
+  </history>
+</rejected>

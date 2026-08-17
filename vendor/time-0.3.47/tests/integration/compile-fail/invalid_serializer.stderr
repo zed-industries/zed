@@ -1,0 +1,79 @@
+error: unexpected end of input
+ --> tests/integration/compile-fail/invalid_serializer.rs:3:1
+  |
+3 | serde::format_description!(); // unexpected end of input
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the macro `serde::format_description` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: unexpected token: "bad string"
+ --> tests/integration/compile-fail/invalid_serializer.rs:4:28
+  |
+4 | serde::format_description!("bad string", OffsetDateTime, "[year] [month]"); // module name is not ident
+  |                            ^^^^^^^^^^^^
+
+error: unexpected token: :
+ --> tests/integration/compile-fail/invalid_serializer.rs:5:37
+  |
+5 | serde::format_description!(my_format: OffsetDateTime, "[year] [month]"); // not a comma
+  |                                     ^
+
+error: unexpected end of input
+ --> tests/integration/compile-fail/invalid_serializer.rs:6:1
+  |
+6 | serde::format_description!(my_format,); // missing formattable and string
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the macro `serde::format_description` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: unexpected token: "[year] [month]"
+ --> tests/integration/compile-fail/invalid_serializer.rs:7:39
+  |
+7 | serde::format_description!(my_format, "[year] [month]"); // missing formattable
+  |                                       ^^^^^^^^^^^^^^^^
+
+error: unexpected token: "[year] [month]"
+ --> tests/integration/compile-fail/invalid_serializer.rs:8:44
+  |
+8 | serde::format_description!(OffsetDateTime, "[year] [month]"); // missing ident
+  |                                            ^^^^^^^^^^^^^^^^
+
+error: unexpected end of input
+ --> tests/integration/compile-fail/invalid_serializer.rs:9:1
+  |
+9 | serde::format_description!(my_format, OffsetDateTime); // missing string format
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the macro `serde::format_description` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: unexpected end of input
+  --> tests/integration/compile-fail/invalid_serializer.rs:10:1
+   |
+10 | serde::format_description!(my_format, OffsetDateTime,); // missing string format
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `serde::format_description` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: unexpected token: "[year] [month]"
+  --> tests/integration/compile-fail/invalid_serializer.rs:11:54
+   |
+11 | serde::format_description!(my_format, OffsetDateTime "[year] [month]"); // missing comma
+   |                                                      ^^^^^^^^^^^^^^^^
+
+error: unexpected token: :
+  --> tests/integration/compile-fail/invalid_serializer.rs:12:54
+   |
+12 | serde::format_description!(my_format, OffsetDateTime : "[year] [month]"); // not a comma
+   |                                                      ^
+
+error: invalid component
+  --> tests/integration/compile-fail/invalid_serializer.rs:13:55
+   |
+13 | serde::format_description!(my_format, OffsetDateTime, "[bad]"); // bad component name
+   |                                                       ^^^^^^^
+
+error[E0425]: cannot find value `not_string` in this scope
+  --> tests/integration/compile-fail/invalid_serializer.rs:14:55
+   |
+14 | serde::format_description!(my_format, OffsetDateTime, not_string); // not in scope
+   |                                                       ^^^^^^^^^^ not found in this scope

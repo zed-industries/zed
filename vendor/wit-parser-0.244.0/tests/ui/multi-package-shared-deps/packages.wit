@@ -1,0 +1,41 @@
+package foo:root;
+package foo:bar {
+  interface i0 {
+    use foo:dep1/types.{type1};
+    use foo:dep2/types.{type2};
+    record rec0 {
+      foo: type1,
+      bar: type2
+    }
+  }
+  world w-bar {
+    import foo:dep1/types;
+    import foo:dep2/types;
+  }
+}
+
+package foo:qux {
+  interface i1 {
+    use foo:dep1/types.{type1};
+    use foo:dep2/types.{type2};
+    record rec1 {
+      foo: type1,
+      bar: type2
+    }
+  }
+  world w-qux {
+    import foo:dep1/types;
+    import foo:dep2/types;
+  }
+}
+
+interface root {
+  use foo:bar/i0.{rec0};
+  use foo:qux/i1.{rec1};
+  record rec {
+    first: rec0,
+    second: rec1
+  }
+}
+
+

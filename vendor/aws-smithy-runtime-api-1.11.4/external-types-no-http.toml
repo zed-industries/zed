@@ -1,0 +1,6 @@
+allowed_external_types = [
+    "aws_smithy_async::*",
+    "aws_smithy_types::*",
+
+    "bytes::bytes::Bytes",
+]

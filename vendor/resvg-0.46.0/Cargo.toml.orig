@@ -1,0 +1,44 @@
+[package]
+name = "resvg"
+version = "0.46.0"
+keywords = ["svg", "render", "raster"]
+license.workspace = true
+edition = "2024"
+rust-version = "1.87.0"
+description = "An SVG rendering library."
+repository = "https://github.com/linebender/resvg"
+exclude = ["tests"]
+workspace = "../.."
+
+[[bin]]
+name = "resvg"
+required-features = ["text", "system-fonts", "memmap-fonts"]
+
+[dependencies]
+gif = { version = "0.14.1", optional = true }
+image-webp = { version = "0.2.4", optional = true }
+log = "0.4"
+pico-args = { version = "0.5", features = ["eq-separator"] }
+rgb = "0.8"
+svgtypes = "0.16.1"
+tiny-skia = "0.11.4"
+usvg = { path = "../usvg", version = "0.46.0", default-features = false }
+zune-jpeg = { version = "0.5.8", optional = true }
+
+[dev-dependencies]
+once_cell = "1.21"
+png = "0.18.0"
+
+[features]
+default = ["text", "system-fonts", "memmap-fonts", "raster-images"]
+# Enables SVG Text support.
+# Adds around 400KiB to your binary.
+text = ["usvg/text"]
+# Enables system fonts loading (only for `text`).
+system-fonts = ["usvg/system-fonts"]
+# Enables font files memmaping for faster loading (only for `text`).
+memmap-fonts = ["usvg/memmap-fonts"]
+# Enables decoding and rendering of raster images.
+# When disabled, `image` elements with SVG data will still be rendered.
+# Adds around 200KiB to your binary.
+raster-images = ["gif", "image-webp", "dep:zune-jpeg"]

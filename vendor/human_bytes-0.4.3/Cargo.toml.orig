@@ -1,0 +1,31 @@
+[package]
+name = "human_bytes"
+version = "0.4.3"
+authors = ["Namkhai B. <nk@nkeor.me>"]
+edition = "2018"
+description = "Crate to convert bytes into human-readable values"
+license = "BSD-2-Clause"
+
+homepage = "https://sr.ht/~nkeor/human_bytes"
+repository = "https://git.sr.ht/~nkeor/human_bytes"
+categories = ["value-formatting"]
+keywords = ["bytes", "conversion", "format", "value-formatting", "utility"]
+
+[features]
+default = ["si-units"]
+si-units = []
+build-binary = ["anyhow", "lexopt"]
+fast = ["ryu"]
+
+[dependencies]
+anyhow = { version = "1.0", optional = true }
+lexopt = { version = "0.3", optional = true }
+ryu = { version = "1.0", optional = true }
+
+[[bin]]
+name = "hb"
+required-features = ["build-binary"]
+
+[profile.release]
+lto = true
+strip = true

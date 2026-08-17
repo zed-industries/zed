@@ -1,0 +1,4 @@
+package foo:root;
+interface foo {
+  use foo:a1/foo.{};
+}

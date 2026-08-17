@@ -1,0 +1,13 @@
+---
+- name: Comment without whitespace after doublequoted scalar
+  from: '@perlpunk'
+  tags: comment error double whitespace
+  fail: true
+  yaml: |
+    key: "value"# invalid comment
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :key
+       =VAL "value

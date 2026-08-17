@@ -1,0 +1,110 @@
+name: CI
+on: [push, pull_request]
+
+env:
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+
+jobs:
+  test:
+    name: Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        rust: [stable, beta, nightly]
+        os: [ubuntu-latest, macos-14, windows-latest]
+    steps:
+      - uses: actions/checkout@master
+      - name: Install Rust (rustup)
+        run: |
+          rustup toolchain install ${{ matrix.rust }} --no-self-update --profile minimal
+          rustup default ${{ matrix.rust }}
+        shell: bash
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo test --locked
+
+      - name: Compile make 4.4.1
+        uses: ./.github/actions/compile-make
+        with:
+          version: 4.4.1
+
+      - name: Test against GNU Make 4.4.1
+        if: ${{ !startsWith(matrix.os, 'windows') }}
+        shell: bash
+        run: cargo test --locked
+        env:
+          MAKE: /usr/local/bin/make-4.4.1
+
+      - name: Ensure wasm32-unknown-unknown be buildable
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo build --locked --target wasm32-unknown-unknown
+
+  test_musl:
+    name: Test (stable, alpine-latest)
+    container: rust:alpine
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@master
+
+      - name: Install make dependencies
+        run: apk add musl-dev bash curl make tar
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Compile make 4.4.1
+        uses: ./.github/actions/compile-make
+        with:
+          version: 4.4.1
+
+      - name: Test against GNU Make 4.4.1
+        shell: bash
+        run: cargo test --locked
+        env:
+          MAKE: /usr/local/bin/make-4.4.1
+
+  rustfmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@master
+      - name: Install Rust
+        run: rustup update stable && rustup default stable && rustup component add rustfmt
+      - run: cargo fmt -- --check
+
+  publish_docs:
+    name: Publish Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@master
+      - name: Install Rust
+        run: rustup update stable && rustup default stable
+      - name: Build documentation
+        run: cargo doc --no-deps --all-features
+      - name: Publish documentation
+        run: |
+          cd target/doc
+          git init
+          git add .
+          git -c user.name='ci' -c user.email='ci' commit -m init
+          git push -f -q https://git:${{ secrets.github_token }}@github.com/${{ github.repository }} HEAD:gh-pages
+        if: github.event_name == 'push' && github.event.ref == 'refs/heads/master'
+
+  msrv:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    steps:
+      - uses: actions/checkout@master
+      - name: Install Rust (rustup)
+        run: rustup toolchain install nightly --no-self-update --profile minimal
+        shell: bash
+
+      - uses: taiki-e/install-action@cargo-hack
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo hack check --lib --rust-version --ignore-private --locked

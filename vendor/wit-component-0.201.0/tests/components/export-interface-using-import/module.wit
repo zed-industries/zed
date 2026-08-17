@@ -1,0 +1,17 @@
+package foo:foo;
+
+interface foo {
+  record f {
+    f: u32,
+  }
+
+  record r {
+    f: f,
+  }
+}
+
+world module {
+  export x: interface {
+    use foo.{r};
+  }
+}

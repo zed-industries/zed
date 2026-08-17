@@ -1,0 +1,9 @@
+
+# Note: Cargo doesn't carry these settings to dependencies. They only affect the
+# process of directly building the crate. This is so that we can easily use
+# `cargo test` and `cargo doc` and so on during development.
+
+[build]
+# This can cause weirdness if they don't match!
+rustflags = ["-Ctarget-cpu=native"]
+rustdocflags = ["-Ctarget-cpu=native"]

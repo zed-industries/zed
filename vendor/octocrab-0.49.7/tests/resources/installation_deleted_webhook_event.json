@@ -1,0 +1,101 @@
+{
+  "action": "deleted",
+  "installation": {
+    "id": 39593433,
+    "account": {
+      "login": "gagbo",
+      "id": 10496163,
+      "node_id": "MDQ6VXNlcjEwNDk2MTYz",
+      "avatar_url": "https://avatars.githubusercontent.com/u/10496163?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/gagbo",
+      "html_url": "https://github.com/gagbo",
+      "followers_url": "https://api.github.com/users/gagbo/followers",
+      "following_url": "https://api.github.com/users/gagbo/following{/other_user}",
+      "gists_url": "https://api.github.com/users/gagbo/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/gagbo/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/gagbo/subscriptions",
+      "organizations_url": "https://api.github.com/users/gagbo/orgs",
+      "repos_url": "https://api.github.com/users/gagbo/repos",
+      "events_url": "https://api.github.com/users/gagbo/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/gagbo/received_events",
+      "type": "User",
+      "site_admin": false
+    },
+    "repository_selection": "all",
+    "access_tokens_url": "https://api.github.com/app/installations/39593433/access_tokens",
+    "repositories_url": "https://api.github.com/installation/repositories",
+    "html_url": "https://github.com/settings/installations/39593433",
+    "app_id": 360617,
+    "app_slug": "gagbo-test-app",
+    "target_id": 10496163,
+    "target_type": "User",
+    "permissions": {
+      "issues": "write",
+      "actions": "write",
+      "metadata": "read",
+      "pull_requests": "write"
+    },
+    "events": [
+      "issues",
+      "issue_comment",
+      "pull_request",
+      "pull_request_review",
+      "pull_request_review_comment",
+      "pull_request_review_thread",
+      "repository"
+    ],
+    "created_at": "2023-07-13T09:33:20.000Z",
+    "updated_at": "2023-07-13T09:33:21.000Z",
+    "single_file_name": null,
+    "has_multiple_single_files": false,
+    "single_file_paths": [
+
+    ],
+    "suspended_by": null,
+    "suspended_at": null
+  },
+  "repositories": [
+    {
+      "id": 29128586,
+      "node_id": "MDEwOlJlcG9zaXRvcnkyOTEyODU4Ng==",
+      "name": "ViscoElRebound",
+      "full_name": "gagbo/ViscoElRebound",
+      "private": false
+    },
+    {
+      "id": 51965720,
+      "node_id": "MDEwOlJlcG9zaXRvcnk1MTk2NTcyMA==",
+      "name": "Sizr",
+      "full_name": "gagbo/Sizr",
+      "private": true
+    },
+    {
+      "id": 665086759,
+      "node_id": "R_kgDOJ6RrJw",
+      "name": "octocrab",
+      "full_name": "gagbo/octocrab",
+      "private": false
+    }
+  ],
+  "sender": {
+    "login": "gagbo",
+    "id": 10496163,
+    "node_id": "MDQ6VXNlcjEwNDk2MTYz",
+    "avatar_url": "https://avatars.githubusercontent.com/u/10496163?v=4",
+    "gravatar_id": "",
+    "url": "https://api.github.com/users/gagbo",
+    "html_url": "https://github.com/gagbo",
+    "followers_url": "https://api.github.com/users/gagbo/followers",
+    "following_url": "https://api.github.com/users/gagbo/following{/other_user}",
+    "gists_url": "https://api.github.com/users/gagbo/gists{/gist_id}",
+    "starred_url": "https://api.github.com/users/gagbo/starred{/owner}{/repo}",
+    "subscriptions_url": "https://api.github.com/users/gagbo/subscriptions",
+    "organizations_url": "https://api.github.com/users/gagbo/orgs",
+    "repos_url": "https://api.github.com/users/gagbo/repos",
+    "events_url": "https://api.github.com/users/gagbo/events{/privacy}",
+    "received_events_url": "https://api.github.com/users/gagbo/received_events",
+    "type": "User",
+    "site_admin": false
+  }
+}

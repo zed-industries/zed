@@ -1,0 +1,19 @@
+[package]
+name = "wit-bindgen-rt"
+version = { workspace = true }
+edition = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
+homepage = 'https://github.com/bytecodealliance/wit-bindgen'
+description = """
+Internal runtime support for the `wit-bindgen` crate.
+"""
+
+[dependencies]
+# Optionally re-export the version of bitflags used by wit-bindgen.
+bitflags = { workspace = true, optional = true }
+futures = { version = "0.3.30", optional = true }
+once_cell = { version = "1.19.0", optional = true }
+
+[features]
+async = ["dep:futures", "dep:once_cell"]

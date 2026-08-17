@@ -1,0 +1,11 @@
+error: &mut return type is not allowed unless there is a &mut argument
+  --> tests/ui/mut_return.rs:10:9
+   |
+10 |         fn f(t: &Thing) -> Pin<&mut CxxString>;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: &mut return type is not allowed unless there is a &mut argument
+  --> tests/ui/mut_return.rs:14:9
+   |
+14 |         fn j(t: &Thing) -> &mut [u8];
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

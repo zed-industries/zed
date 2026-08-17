@@ -1,0 +1,340 @@
+{
+  "worlds": [
+    {
+      "name": "w",
+      "imports": {
+        "a": {
+          "type": 11
+        },
+        "b": {
+          "type": 12
+        },
+        "c": {
+          "type": 13
+        },
+        "[constructor]c": {
+          "function": {
+            "name": "[constructor]c",
+            "kind": {
+              "constructor": 13
+            },
+            "params": [],
+            "results": [
+              {
+                "type": 18
+              }
+            ]
+          }
+        }
+      },
+      "exports": {},
+      "package": 0
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "foo",
+      "types": {
+        "a": 0,
+        "b": 1,
+        "c": 2,
+        "d": 3,
+        "e": 4
+      },
+      "functions": {
+        "[constructor]b": {
+          "name": "[constructor]b",
+          "kind": {
+            "constructor": 1
+          },
+          "params": [],
+          "results": [
+            {
+              "type": 14
+            }
+          ]
+        },
+        "[constructor]c": {
+          "name": "[constructor]c",
+          "kind": {
+            "constructor": 2
+          },
+          "params": [
+            {
+              "name": "x",
+              "type": "u32"
+            }
+          ],
+          "results": [
+            {
+              "type": 15
+            }
+          ]
+        },
+        "[constructor]d": {
+          "name": "[constructor]d",
+          "kind": {
+            "constructor": 3
+          },
+          "params": [
+            {
+              "name": "x",
+              "type": "u32"
+            }
+          ],
+          "results": [
+            {
+              "type": 16
+            }
+          ]
+        },
+        "[method]d.a": {
+          "name": "[method]d.a",
+          "kind": {
+            "method": 3
+          },
+          "params": [
+            {
+              "name": "self",
+              "type": 5
+            }
+          ],
+          "results": []
+        },
+        "[static]d.b": {
+          "name": "[static]d.b",
+          "kind": {
+            "static": 3
+          },
+          "params": [],
+          "results": []
+        },
+        "[constructor]e": {
+          "name": "[constructor]e",
+          "kind": {
+            "constructor": 4
+          },
+          "params": [
+            {
+              "name": "other",
+              "type": 17
+            },
+            {
+              "name": "other2",
+              "type": 6
+            }
+          ],
+          "results": [
+            {
+              "type": 17
+            }
+          ]
+        },
+        "[method]e.method": {
+          "name": "[method]e.method",
+          "kind": {
+            "method": 4
+          },
+          "params": [
+            {
+              "name": "self",
+              "type": 6
+            },
+            {
+              "name": "thing",
+              "type": 17
+            },
+            {
+              "name": "thing2",
+              "type": 6
+            }
+          ],
+          "results": []
+        }
+      },
+      "package": 0
+    },
+    {
+      "name": "i",
+      "types": {
+        "a": 7,
+        "t1": 8,
+        "t2": 9,
+        "t3": 10
+      },
+      "functions": {},
+      "package": 0
+    }
+  ],
+  "types": [
+    {
+      "name": "a",
+      "kind": "resource",
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "b",
+      "kind": "resource",
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "c",
+      "kind": "resource",
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "d",
+      "kind": "resource",
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "e",
+      "kind": "resource",
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": null,
+      "kind": {
+        "handle": {
+          "borrow": 3
+        }
+      },
+      "owner": null
+    },
+    {
+      "name": null,
+      "kind": {
+        "handle": {
+          "borrow": 4
+        }
+      },
+      "owner": null
+    },
+    {
+      "name": "a",
+      "kind": "resource",
+      "owner": {
+        "interface": 1
+      }
+    },
+    {
+      "name": "t1",
+      "kind": {
+        "type": 7
+      },
+      "owner": {
+        "interface": 1
+      }
+    },
+    {
+      "name": "t2",
+      "kind": {
+        "handle": {
+          "borrow": 7
+        }
+      },
+      "owner": {
+        "interface": 1
+      }
+    },
+    {
+      "name": "t3",
+      "kind": {
+        "handle": {
+          "borrow": 8
+        }
+      },
+      "owner": {
+        "interface": 1
+      }
+    },
+    {
+      "name": "a",
+      "kind": "resource",
+      "owner": {
+        "world": 0
+      }
+    },
+    {
+      "name": "b",
+      "kind": "resource",
+      "owner": {
+        "world": 0
+      }
+    },
+    {
+      "name": "c",
+      "kind": "resource",
+      "owner": {
+        "world": 0
+      }
+    },
+    {
+      "name": null,
+      "kind": {
+        "handle": {
+          "own": 1
+        }
+      },
+      "owner": null
+    },
+    {
+      "name": null,
+      "kind": {
+        "handle": {
+          "own": 2
+        }
+      },
+      "owner": null
+    },
+    {
+      "name": null,
+      "kind": {
+        "handle": {
+          "own": 3
+        }
+      },
+      "owner": null
+    },
+    {
+      "name": null,
+      "kind": {
+        "handle": {
+          "own": 4
+        }
+      },
+      "owner": null
+    },
+    {
+      "name": null,
+      "kind": {
+        "handle": {
+          "own": 13
+        }
+      },
+      "owner": null
+    }
+  ],
+  "packages": [
+    {
+      "name": "foo:bar",
+      "interfaces": {
+        "foo": 0,
+        "i": 1
+      },
+      "worlds": {
+        "w": 0
+      }
+    }
+  ]
+}

@@ -1,0 +1,177 @@
+/* Body and page */
+.md-grid {
+    max-width: 90%;
+}
+p {
+    text-align: justify;
+}
+
+/* code blocks */
+pre.colored {
+    color: blue;
+}
+pre>code {
+    font-family: monospace;
+    background-color: #D6E8FF;
+    padding: 2ex 0 2ex 1%;
+    overflow-x:auto;
+}
+span.keyword {
+    font-family: monospace;
+    text-align: left;
+    white-space: pre;
+    color: #d73a49;
+}
+.md-typeset pre>code {
+    white-space: pre;
+}
+/* H4 Heading */
+h4 {
+    background-color: #EEEEFF;
+    font-size: medium;
+    font-style: oblique;
+    font-weight: bold;
+    padding: 0.3em 0 0.3em 1%;
+}
+
+/* Fields table */
+table.fields {
+    width: 90%;
+    margin: 1.5ex 0 1.5ex 10%;
+}
+table.fields td.val {
+    font-weight: bold;
+    text-align: right;
+    width: 30%;
+    vertical-align: baseline;
+    padding: 1em 1em 0 0;
+}
+table.fields td.desc {
+    vertical-align: baseline;
+    padding: 1ex 0 0 1em;
+}
+table.fields td.desc p:first-child {
+    margin: 0;
+}
+
+table.fields td.desc p {
+    margin: 1.5ex 0 0 0;
+}
+
+/* Define 'long' tables */
+table.long {
+    display: block;
+    width: 93%;
+}
+table.long thead,
+table.long tbody,
+table.long th,
+table.long td,
+table.long tr {
+    display: block;
+}
+/* Hide table headers (but not display: none;
+, for accessibility) */
+table.long thead tr {
+    position: absolute;
+    top: -9999px;
+    left: -9999px;
+}
+table.long tr {
+    border: 0;
+}
+table.long {
+    margin: 1.5ex 3% 1.5ex 3%;
+}
+table.long td.val {
+    text-align: left;
+}
+table.long td {
+   /* Behave like a "row" */
+    border: none;
+    border-bottom: 0;
+    position: relative;
+    padding-left: 50%;
+}
+table.long td:before {
+   /* Now like a table header */
+    position: absolute;
+   /* Top/left values mimic padding */
+    top: 6px;
+    left: 6px;
+    width: 45%;
+    padding-right: 10px;
+    white-space: nowrap;
+}
+/* End 'long' table definition */
+
+/* toc table */
+table.toc {
+    width: 95%;
+    margin: 1.5ex 0 1.5ex 5%;
+}
+table.toc td.link {
+    width: 30%;
+    text-align: right;
+    vertical-align: baseline;
+    padding: 1ex 1em 1ex 0;
+}
+table.toc td.desc {
+    vertical-align: baseline;
+    padding: 1ex 0 1ex 1em;
+    text-align: left;
+}
+table.toc td.desc p:first-child {
+    margin: 0;
+    text-align: left;
+}
+table.toc td.desc p {
+    margin: 1.5ex 0 0 0;
+    text-align: left;
+}
+div.timestamp {
+    font-size: small;
+}
+
+/* Change table layout for smaller screens. This query will take effect for any screen smaller than
+   760px and also iPads specifically. */
+@media only screen and (max-width: 760px), (min-device-width: 768px) and (max-device-width: 1024px) {
+   /* Force table to not be like tables anymore */
+    table, thead, tbody, th, td, tr {
+        display: block;
+   }
+   /* Hide table headers (but not display: none;
+    , for accessibility) */
+    thead tr {
+        position: absolute;
+        top: -9999px;
+        left: -9999px;
+   }
+    tr {
+        border: 0;
+   }
+    table.fields {
+        width: 93%;
+        margin: 1.5ex 3% 1.5ex 3%;
+   }
+    table.fields td.val {
+        text-align: left;
+   }
+    td {
+       /* Behave like a "row" */
+        border: none;
+        border-bottom: 0;
+        position: relative;
+        padding-left: 50%;
+   }
+    td:before {
+       /* Now like a table header */
+        position: absolute;
+       /* Top/left values mimic padding */
+        top: 6px;
+        left: 6px;
+        width: 45%;
+        padding-right: 10px;
+        white-space: nowrap;
+   }
+}

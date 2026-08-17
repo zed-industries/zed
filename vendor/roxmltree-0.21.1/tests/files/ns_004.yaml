@@ -1,0 +1,7 @@
+Document:
+  - Element:
+      tag_name: svg
+      attributes:
+        href@http://www.w3.org/1999/xlink: "https://www.w3.org/TR/SVG11/"
+      namespaces:
+        t: http://www.w3.org/1999/xlink

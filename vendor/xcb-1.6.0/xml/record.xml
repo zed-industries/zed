@@ -1,0 +1,189 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Copyright (C) 2005 Jeremy Kolb.
+All Rights Reserved.
+
+Permission is hereby granted, free of charge, to any person ob/Sintaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Except as contained in this notice, the names of the authors or their
+institutions shall not be used in advertising or otherwise to promote the
+sale, use or other dealings in this Software without prior written
+authorization from the authors.
+-->
+
+<xcb header="record" extension-xname="RECORD" extension-name="Record" major-version="1" minor-version="13">
+
+    <!-- Types -->
+    <xidtype name="CONTEXT" />
+
+    <struct name="Range8">
+        <field type="CARD8" name="first" />
+        <field type="CARD8" name="last" />
+    </struct>
+
+    <struct name="Range16">
+        <field type="CARD16" name="first" />
+        <field type="CARD16" name="last" />
+    </struct>
+
+    <struct name="ExtRange">
+        <field type="Range8" name="major" />
+        <field type="Range16" name="minor" />
+    </struct>
+
+    <struct name="Range">
+        <field type="Range8" name="core_requests" />
+        <field type="Range8" name="core_replies" />
+        <field type="ExtRange" name="ext_requests" />
+        <field type="ExtRange" name="ext_replies" />
+        <field type="Range8" name="delivered_events" />
+        <field type="Range8" name="device_events" />
+        <field type="Range8" name="errors" />
+        <field type="BOOL" name="client_started" />
+        <field type="BOOL" name="client_died" />
+    </struct>
+
+    <typedef oldname="CARD8" newname="ElementHeader" />
+    <enum name="HType">
+        <item name="FromServerTime">
+            <bit>0</bit>
+        </item>
+        <item name="FromClientTime">
+            <bit>1</bit>
+        </item>
+        <item name="FromClientSequence">
+            <bit>2</bit>
+        </item>
+    </enum>
+
+    <typedef oldname="CARD32" newname="ClientSpec" />
+    <enum name="CS">
+        <item name="CurrentClients">
+            <value>1</value>
+        </item>
+        <item name="FutureClients">
+            <value>2</value>
+        </item>
+        <item name="AllClients">
+            <value>3</value>
+        </item>
+    </enum>
+
+    <struct name="ClientInfo">
+        <field type="ClientSpec" name="client_resource" />
+        <field type="CARD32" name="num_ranges" />
+        <list type="Range" name="ranges">
+            <fieldref>num_ranges</fieldref>
+        </list>
+    </struct>
+
+    <!-- Errors -->
+    <error name="BadContext" number="0">
+        <field type="CARD32" name="invalid_record" />
+    </error>
+
+    <!-- Requests -->
+    <request name="QueryVersion" opcode="0">
+        <field type="CARD16" name="major_version" />
+        <field type="CARD16" name="minor_version" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD16" name="major_version" />
+            <field type="CARD16" name="minor_version" />
+        </reply>
+    </request>
+
+    <request name="CreateContext" opcode="1">
+        <field type="record:CONTEXT" name="context" />
+        <field type="ElementHeader" name="element_header" />
+        <pad bytes="3" />
+        <field type="CARD32" name="num_client_specs" />
+        <field type="CARD32" name="num_ranges" />
+        <list type="ClientSpec" name="client_specs">
+            <fieldref>num_client_specs</fieldref>
+        </list>
+        <list type="Range" name="ranges">
+            <fieldref>num_ranges</fieldref>
+        </list>
+    </request>
+
+    <request name="RegisterClients" opcode="2">
+        <field type="record:CONTEXT" name="context" />
+        <field type="ElementHeader" name="element_header" />
+        <pad bytes="3" />
+        <field type="CARD32" name="num_client_specs" />
+        <field type="CARD32" name="num_ranges" />
+        <list type="ClientSpec" name="client_specs">
+            <fieldref>num_client_specs</fieldref>
+        </list>
+        <list type="Range" name="ranges">
+            <fieldref>num_ranges</fieldref>
+        </list>
+    </request>
+
+    <request name="UnregisterClients" opcode="3">
+        <field type="record:CONTEXT" name="context" />
+        <field type="CARD32" name="num_client_specs" />
+        <list type="ClientSpec" name="client_specs">
+            <fieldref>num_client_specs</fieldref>
+        </list>
+    </request>
+
+    <request name="GetContext" opcode="4">
+        <field type="record:CONTEXT" name="context" />
+        <reply>
+            <field type="BOOL" name="enabled" />
+            <field type="ElementHeader" name="element_header" />
+            <pad bytes="3" />
+            <field type="CARD32" name="num_intercepted_clients" />
+            <pad bytes="16" />
+            <list type="ClientInfo" name="intercepted_clients">
+                <fieldref>num_intercepted_clients</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="EnableContext" opcode="5">
+        <field type="record:CONTEXT" name="context" />
+        <reply>
+            <field type="CARD8" name="category" />
+            <field type="ElementHeader" name="element_header" />
+            <field type="BOOL" name="client_swapped" />
+            <pad bytes="2" />
+            <field type="CARD32" name="xid_base" />
+            <field type="CARD32" name="server_time" />
+            <field type="CARD32" name="rec_sequence_num" />
+            <pad bytes="8" />
+            <list type="BYTE" name="data">
+                <op op="*">
+                    <fieldref>length</fieldref>
+                    <value>4</value>
+                </op>
+            </list>
+        </reply>
+    </request>
+
+    <request name="DisableContext" opcode="6">
+        <field type="record:CONTEXT" name="context" />
+    </request>
+
+    <request name="FreeContext" opcode="7">
+        <field type="record:CONTEXT" name="context" />
+    </request>
+
+</xcb>

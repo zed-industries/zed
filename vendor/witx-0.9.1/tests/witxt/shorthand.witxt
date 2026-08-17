@@ -1,0 +1,59 @@
+(witx $a
+  (typename $a bool))
+(witx $b
+  (typename $a (variant (case $false) (case $true))))
+(assert_representable eq $a "a" $b "a")
+
+(witx $a
+  (typename $a (expected (error))))
+(witx $b
+  (typename $a (variant (case $ok) (case $err))))
+(assert_representable eq $a "a" $b "a")
+
+(witx $a
+  (typename $a (expected (error u32))))
+(witx $b
+  (typename $a (variant (case $ok) (case $err u32))))
+(assert_representable eq $a "a" $b "a")
+
+(witx $a
+  (typename $a (expected u32 (error))))
+(witx $b
+  (typename $a (variant (case $ok u32) (case $err))))
+(assert_representable eq $a "a" $b "a")
+
+(witx $a
+  (typename $a (expected u32 (error u64))))
+(witx $b
+  (typename $a (variant (case $ok u32) (case $err u64))))
+(assert_representable eq $a "a" $b "a")
+
+(witx $a
+  (typename $a (flags $a $b)))
+(witx $b
+  (typename $a (record (field $a bool) (field $b bool))))
+(assert_representable eq $a "a" $b "a")
+
+(witx $a
+  (typename $a (enum $a $b)))
+(witx $b
+  (typename $a (variant (case $a) (case $b))))
+(assert_representable eq $a "a" $b "a")
+
+(witx $a
+  (typename $a string))
+(witx $b
+  (typename $a (list char)))
+(assert_representable eq $a "a" $b "a")
+
+(witx $a
+  (typename $a (tuple u32 u64)))
+(witx $b
+  (typename $a (record (field $0 u32) (field $1 u64))))
+(assert_representable eq $a "a" $b "a")
+
+(witx $a
+  (typename $a (union u32 u64)))
+(witx $b
+  (typename $a (variant (case $0 u32) (case $1 u64))))
+(assert_representable eq $a "a" $b "a")

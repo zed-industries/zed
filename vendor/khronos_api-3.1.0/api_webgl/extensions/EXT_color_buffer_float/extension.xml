@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<extension href="EXT_color_buffer_float/">
+  <name>EXT_color_buffer_float</name>
+
+  <contact> <a href="https://www.khronos.org/webgl/public-mailing-list">WebGL
+  working group</a> (public_webgl 'at' khronos.org) </contact>
+
+  <contributors>
+    <contributor>Mark Callow, HI Corporation</contributor>
+
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+
+  <number>31</number>
+
+  <depends>
+    <api version="2.0"/>
+  </depends>
+
+  <overview>
+    <mirrors href="http://www.khronos.org/registry/gles/extensions/EXT/EXT_color_buffer_float.txt"
+             name="EXT_color_buffer_float">
+      <addendum>
+        The sized internal format <code>RGB16F</code> is not color-renderable in this
+        extension. This is a difference in functionality compared to the <a
+        href="../EXT_color_buffer_half_float">EXT_color_buffer_half_float</a> extension.
+      </addendum>
+    </mirrors>
+
+    <features>
+      <feature>
+        <p>The following floating-point internal formats become <span
+        style="font-style: italic">color-renderable</span>: <code>R16F</code>,
+        <code>RG16F</code>, <code>RGBA16F</code>, <code>R32F</code>,
+        <code>RG32F</code>, <code>RGBA32F</code> and
+        <code>R11F_G11F_B10F</code>. A renderbuffer or a texture with a
+        color-renderable internal format can be used as a rendering target by
+        attaching it to a framebuffer object as a color attachment.</p>
+      </feature>
+
+      <feature>
+        <p>Renderbuffers with these internal formats can be created.</p>
+      </feature>
+
+      <feature>
+        <p>The format and type combination <code>RGBA</code> and
+        <code>FLOAT</code> becomes valid for reading from a floating-point
+        color buffer.</p>
+      </feature>
+    </features>
+
+    <p>Notes: <ul style="list-style-type: circle">
+        <li>Fragment shader outputs to buffers with these internal formats are
+        not clamped.</li>
+
+        <li>Colors specified with <code>clearColor</code> and
+        <code>blendColor</code> are not clamped when applied to buffers with
+        these internal formats.</li>
+
+        <li>The format and type combination <code>RGBA</code> and
+        <code>UNSIGNED_BYTE</code> cannot be used for reading from a
+        floating-point color buffer.</li>
+
+        <li>Multi-sample floating-point color renderbuffers may optionally be supported. Limitations
+        are defined in the <a
+        href="http://www.khronos.org/registry/gles/extensions/EXT/EXT_color_buffer_float.txt">EXT_color_buffer_float</a>
+        extension.</li>
+
+        <li>The sized internal format <code>RGB16F</code> is not color-renderable in this
+        extension.</li>
+      </ul></p>
+  </overview>
+
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface EXT_color_buffer_float {
+}; // interface EXT_color_buffer_float
+</idl>
+
+  <history>
+    <revision date="2012/11/08">
+      <change>Initial revision.</change>
+    </revision>
+
+    <revision date="2014/07/15">
+      <change>Added NoInterfaceObject extended attribute.</change>
+    </revision>
+
+    <revision date="2014/10/29">
+      <change>Moved to draft status.</change>
+    </revision>
+
+    <revision date="2016/04/14">
+      <change>Moved to community approved status.</change>
+    </revision>
+
+    <revision date="2016/06/16">
+      <change>Added note about RGB16F not being color-renderable.</change>
+    </revision>
+
+    <revision date="2016/07/21">
+      <change>Allowed allocation of multi-sample floating-point color renderbuffers as optional functionality.</change>
+      <change>Changed XML tags to fix incorrect statement that there are no behavioral changes compared to the native extension.</change>
+    </revision>
+
+    <revision date="2016/08/03">
+      <change>Removed incorrect statement about framebuffer completeness and multi-sampled floating-point color renderbuffers.</change>
+    </revision>
+
+    <revision date="2017/04/19">
+      <change>Allowed these float formats for CopyTexImage2D.</change>
+    </revision>
+  </history>
+</extension>

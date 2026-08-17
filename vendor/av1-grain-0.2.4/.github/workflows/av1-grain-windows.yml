@@ -1,0 +1,81 @@
+# FIXME
+# - Code coverage on Windows does not work because there are problems
+#   with grcov paths
+# - valgrind cannot be installed on Windows, only on linux
+# - cargo-fuzz and AddressSanitizer are not supported on Windows
+
+name: av1-grain-windows
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-test:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Rust stable
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run rustfmt
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: -- --check --verbose
+
+      - name: Run cargo clippy
+        uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          args: --all-targets --tests --benches -- -D warnings
+
+      - name: Build
+        run: cargo build --verbose --tests --benches
+
+      - name: Run tests
+        run: cargo test --verbose
+
+      - name: Generate docs
+        run: cargo doc --no-deps
+
+  static-code-analysis:
+    needs: [build-test]
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install rust-code-analysis
+        env:
+          RCA_LINK: https://github.com/mozilla/rust-code-analysis/releases/download
+          RCA_VERSION: v0.0.23
+        run: |
+          mkdir -p $HOME/bin
+          curl -LO "$Env:RCA_LINK/$env:RCA_VERSION/rust-code-analysis-win-cli-x86_64.zip"
+          7z e -y "rust-code-analysis-win-cli-x86_64.zip" -o"$HOME/bin"
+          echo "$HOME/bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Run rust-code-analysis
+        run: |
+          mkdir $HOME/rca-json
+          # FIXME: Update rca version to analyze the entire directory of a repo
+          rust-code-analysis-cli --metrics -O json --pr -o "$HOME/rca-json" -p src/
+
+      - name: Upload rust-code-analysis json
+        uses: actions/upload-artifact@v4
+        with:
+          name: rca-json-windows
+          path: ~/rca-json

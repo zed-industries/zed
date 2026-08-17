@@ -1,0 +1,23 @@
+[package]
+name = "auditable-serde"
+version = "0.8.0"
+authors = ["Sergey \"Shnatsel\" Davidoff <shnatsel@gmail.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/rust-secure-code/cargo-auditable"
+description = "Serialize/deserialize data encoded by `cargo auditable`"
+categories = ["encoding"]
+edition = "2018"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+default = []
+schema = ["schemars"]
+
+[dependencies]
+serde = { version = "1", features = ["serde_derive"] }
+serde_json = "1.0.57"
+semver = { version = "1.0", features = ["serde"] }
+topological-sort = "0.2.2"
+schemars = {version = "0.8.10", optional = true }

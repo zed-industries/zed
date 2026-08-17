@@ -1,0 +1,20 @@
+[package]
+name = "linktime-proc-macro"
+version = "0.2.2"
+authors.workspace = true
+edition = "2021"
+description = "proc-macro helpers for linktime crates (ctors, dtors, linker sections)"
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+categories = ["development-tools::procedural-macro-helpers", "development-tools::build-utils"]
+
+[features]
+default = []
+ctor = []
+dtor = []
+link_section = []
+scattered_collect = []
+
+[lib]
+proc-macro = true

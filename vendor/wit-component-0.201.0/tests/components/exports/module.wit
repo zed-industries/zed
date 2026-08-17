@@ -1,0 +1,29 @@
+package foo:foo;
+
+world module {
+  export a: func();
+  export b: func(a: s8, b: s16, c: s32, d: s64) -> string;
+  export c: func() -> tuple<s8, s16, s32, s64>;
+
+  export bar: interface {
+    flags x {
+        a,
+        b,
+        c
+    }
+
+    a: func(x: x);
+  }
+
+  export foo: interface {
+    variant x {
+        a,
+        b(string),
+        c(s64)
+    }
+
+    a: func();
+    b: func(x: string) -> x;
+    c: func(x: x) -> string;
+  }
+}

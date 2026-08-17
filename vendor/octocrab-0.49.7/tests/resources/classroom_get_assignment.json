@@ -1,0 +1,33 @@
+{
+  "id": 42,
+  "public_repo": false,
+  "title": "Intro to Binaries",
+  "type": "individual",
+  "invite_link": "https://classroom.github.com/a/Lx7jiUgx",
+  "invitations_enabled": true,
+  "slug": "intro-to-binaries",
+  "students_are_repo_admins": false,
+  "feedback_pull_requests_enabled": true,
+  "max_teams": 0,
+  "max_members": 0,
+  "editor": "codespaces",
+  "accepted": 100,
+  "submitted": 40,
+  "passing": 10,
+  "language": "ruby",
+  "deadline": "2011-01-26T19:06:43Z",
+  "starter_code_repository": {
+    "id": 1296269,
+    "full_name": "octocat/Hello-World",
+    "html_url": "https://github.com/octocat/Hello-World",
+    "node_id": "MDEwOlJlcG9zaXRvcnkxMjk2MjY5",
+    "private": false,
+    "default_branch": "main"
+  },
+  "classroom": {
+    "id": 1296269,
+    "name": "Programming Elixir",
+    "archived": false,
+    "url": "https://classroom.github.com/classrooms/1-programming-elixir"
+  }
+}

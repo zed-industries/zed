@@ -1,0 +1,33 @@
+error[E0277]: the trait bound `NotImplFm: FromMeta` is not satisfied
+ --> tests/compile-fail/not_impl_from_meta.rs:7:12
+  |
+7 |     inner: NotImplFm,
+  |            ^^^^^^^^^ the trait `FromMeta` is not implemented for `NotImplFm`
+  |
+  = help: the following other types implement trait `FromMeta`:
+            ()
+            Arc<T>
+            AtomicBool
+            ExprArray
+            ExprPath
+            Flag
+            HashMap<String, V, S>
+            HashMap<proc_macro2::Ident, V, S>
+          and $N others
+
+error[E0277]: the trait bound `NotImplFm: FromMeta` is not satisfied
+  --> tests/compile-fail/not_impl_from_meta.rs:13:12
+   |
+13 |     inner: NotImplFm,
+   |            ^^^^^^^^^ the trait `FromMeta` is not implemented for `NotImplFm`
+   |
+   = help: the following other types implement trait `FromMeta`:
+             ()
+             Arc<T>
+             AtomicBool
+             ExprArray
+             ExprPath
+             Flag
+             HashMap<String, V, S>
+             HashMap<proc_macro2::Ident, V, S>
+           and $N others

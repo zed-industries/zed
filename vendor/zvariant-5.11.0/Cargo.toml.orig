@@ -1,0 +1,72 @@
+[package]
+name = "zvariant"
+version = "5.11.0"
+authors = ["Zeeshan Ali Khan <zeeshanak@gnome.org>"]
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+description = "D-Bus & GVariant encoding & decoding"
+repository = { workspace = true }
+keywords = ["D-Bus", "DBus", "IPC", "GVariant"]
+license = { workspace = true }
+categories = ["data-structures", "encoding", "parsing"]
+readme = "README.md"
+
+[features]
+default = []
+# FIXME: Also allow disabling D-Bus support
+gvariant = ["zvariant_derive/gvariant", "zvariant_utils/gvariant"]
+ostree-tests = ["gvariant"]
+# Enables ser/de of `Option<T>` as an array of 0 or 1 elements.
+option-as-array = []
+camino = ["dep:camino"]
+
+[dependencies]
+zvariant_derive = { path = "../zvariant_derive", version = "5.11.0" }
+zvariant_utils = { path = "../zvariant_utils", version = "3.3.1" }
+endi.workspace = true
+serde.workspace = true
+winnow.workspace = true
+
+# Optional dependencies
+arrayvec = { workspace = true, optional = true }
+enumflags2 = { workspace = true, optional = true }
+serde_bytes = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
+url = { workspace = true, optional = true }
+time = { workspace = true, optional = true }
+chrono = { workspace = true, optional = true }
+heapless = { workspace = true, optional = true }
+camino = { workspace = true, optional = true }
+
+
+[dev-dependencies]
+serde_json.workspace = true
+serde_repr.workspace = true
+fastrand.workspace = true
+criterion.workspace = true
+chrono = { workspace = true, features = [
+    "serde",
+    "alloc",
+], default-features = false }
+
+[lib]
+bench = false
+
+[[bench]]
+name = "benchmarks"
+harness = false
+
+[package.metadata.docs.rs]
+all-features = true
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-gnu",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-freebsd",
+    "x86_64-unknown-netbsd",
+    "aarch64-linux-android",
+]
+
+[lints]
+workspace = true

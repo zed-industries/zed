@@ -1,0 +1,29 @@
+[package]
+name = "humantime"
+description = """A parser and formatter for std::time::{Duration, SystemTime}"""
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+keywords = ["time", "human", "human-friendly", "parser", "duration"]
+homepage = "https://github.com/chronotope/humantime"
+repository = "https://github.com/chronotope/humantime"
+documentation = "https://docs.rs/humantime"
+version = "2.3.0"
+edition = "2021"
+categories = ["date-and-time"]
+
+[features]
+mu = []
+
+[dev-dependencies]
+bencher = "0.1.5"
+time = { version = "0.3", features = ["formatting"] }
+chrono = "0.4"
+rand = "0.9"
+
+[[bench]]
+name = "datetime_format"
+harness = false
+
+[[bench]]
+name = "datetime_parse"
+harness = false

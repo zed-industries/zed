@@ -1,0 +1,80 @@
+[package]
+name = "wasmtime-environ"
+version.workspace = true
+authors.workspace = true
+description = "Standalone environment support for WebAssembly code in Cranelift"
+license = "Apache-2.0 WITH LLVM-exception"
+repository = "https://github.com/bytecodealliance/wasmtime"
+documentation = "https://docs.rs/wasmtime-environ/"
+categories = ["wasm"]
+keywords = ["webassembly", "wasm"]
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+
+[dependencies]
+anyhow = { workspace = true }
+postcard = { workspace = true }
+cpp_demangle = { version = "0.4.3", optional = true }
+cranelift-entity = { workspace = true, features = ['enable-serde'] }
+cranelift-bitset = { workspace = true, features = ['enable-serde'] }
+wasmparser = { workspace = true, features = ['validate', 'serde', 'features'] }
+indexmap = { workspace = true, features = ["serde"] }
+serde = { workspace = true }
+serde_derive = { workspace = true }
+log = { workspace = true }
+gimli = { workspace = true }
+object = { workspace = true }
+rustc-demangle = { version = "0.1.16", optional = true }
+target-lexicon = { workspace = true }
+wasm-encoder = { workspace = true, optional = true }
+wasmprinter = { workspace = true, optional = true }
+wasmtime-component-util = { workspace = true, optional = true }
+semver = { workspace = true, optional = true, features = ['serde'] }
+smallvec = { workspace = true, features = ['serde'] }
+
+[dev-dependencies]
+clap = { workspace = true, features = ['default'] }
+env_logger = { workspace = true }
+wat = { workspace = true }
+# Fix a test parsing ELF files internally where the bytes themselves reside in a
+# `Vec<u8>` with no alignment requirements on it. By enabling the `unaligned`
+# feature we don't require anything to be aligned so it doesn't matter the
+# alignment of the bytes that we're reading.
+object = { workspace = true, features = ['unaligned'] }
+
+[[example]]
+name = "factc"
+required-features = ['component-model', 'compile']
+
+[features]
+component-model = [
+  "dep:wasmtime-component-util",
+  "dep:semver",
+  "wasmparser/component-model",
+]
+demangle = ['std', 'dep:rustc-demangle', 'dep:cpp_demangle']
+gc = []
+gc-drc = ["gc"]
+gc-null = ["gc"]
+compile = [
+  'gimli/write',
+  'object/write_core',
+  'std',
+  "dep:wasm-encoder",
+  "dep:wasmprinter",
+]
+stack-switching = []
+threads = ['std']
+wmemcheck = ['std']
+std = [
+  'anyhow/std',
+  'object/std',
+  'wasmparser/std',
+  'indexmap/std',
+]

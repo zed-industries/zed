@@ -1,0 +1,5 @@
+failed to resolve directory while parsing WIT for path [tests/ui/parse-fail/duplicate-interface2]: failed to parse package: tests/ui/parse-fail/duplicate-interface2: duplicate item named `foo`
+     --> tests/ui/parse-fail/duplicate-interface2/foo2.wit:3:11
+      |
+    3 | interface foo {}
+      |           ^--

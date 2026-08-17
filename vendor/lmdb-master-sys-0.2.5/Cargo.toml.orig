@@ -1,0 +1,89 @@
+[package]
+name = "lmdb-master-sys"
+# NB: When modifying, also modify html_root_url in lib.rs
+version = "0.2.5"
+authors = [
+    "Kerollmops <clement@meilisearch.com>",
+    "Dan Burkert <dan@danburkert.com>",
+    "Victor Porof <vporof@mozilla.com>",
+]
+license = "Apache-2.0"
+description = "Rust bindings for liblmdb on the mdb.master branch."
+documentation = "https://docs.rs/lmdb-master-sys"
+repository = "https://github.com/meilisearch/heed/tree/main/lmdb-master-sys"
+readme = "README.md"
+keywords = ["LMDB", "database", "storage-engine", "bindings", "library"]
+categories = ["database", "external-ffi-bindings"]
+edition = "2021"
+
+# NB: Use "--features bindgen" to generate bindings.
+build = "build.rs"
+
+[lib]
+name = "lmdb_master_sys"
+doctest = false
+
+[dependencies]
+libc = "0.2.170"
+
+[build-dependencies]
+bindgen = { version = "0.71.1", default-features = false, optional = true, features = [
+    "runtime",
+] }
+cc = "1.2.16"
+doxygen-rs = "0.4.2"
+
+[dev-dependencies]
+cstr = "0.2.12"
+
+[features]
+default = []
+asan = []
+fuzzer = []
+fuzzer-no-link = []
+posix-sem = []
+
+# These features configure the MDB_IDL_LOGN macro, which determines
+# the size of the free and dirty page lists (and thus the amount of memory
+# allocated when opening an LMDB environment in read-write mode).
+#
+# Each feature defines MDB_IDL_LOGN as the value in the name of the feature.
+# That means these features are mutually exclusive, and you must not specify
+# more than one at the same time (or the crate will fail to compile).
+#
+# For more information on the motivation for these features (and their effect),
+# see https://github.com/mozilla/lmdb/pull/2.
+mdb_idl_logn_8 = []
+mdb_idl_logn_9 = []
+mdb_idl_logn_10 = []
+mdb_idl_logn_11 = []
+mdb_idl_logn_12 = []
+mdb_idl_logn_13 = []
+mdb_idl_logn_14 = []
+mdb_idl_logn_15 = []
+mdb_idl_logn_16 = []
+
+# Enable the USE_VALGRIND feature.
+#
+# You have to install the RPM valgrind-devel which contains memcheck.h.
+use-valgrind = []
+
+# Setting this enables you to use keys longer than 511 bytes. The exact limit
+# is computed by LMDB at compile time. You can find the exact value by calling
+# Env::max_key_size(). This value varies by architecture.
+#
+# Example max key sizes:
+#   - Apple M1 (ARM64): 8126 bytes
+#   - Apple Intel (AMD64): 1982 bytes
+#   - Linux Intel (AMD64): 1982 bytes
+#
+# Setting this also enables you to use values larger than 511 bytes when using
+# a Database with the DatabaseFlags::DUP_SORT flag.
+#
+# This builds LMDB with the -DMDB_MAXKEYSIZE=0 option.
+#
+# Note: If you are moving database files between architectures then your longest
+# stored key must fit within the smallest limit of all architectures used. For
+# example, if you are moving databases between Apple M1 and Apple Intel
+# computers then you need to keep your keys within the smaller 1982 byte limit.
+longer-keys = []

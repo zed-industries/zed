@@ -1,0 +1,135 @@
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+name: CI
+
+env:
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+
+jobs:
+  build_and_test:
+    name: Build and Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            channel: 1.81.0
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            channel: stable
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            channel: beta
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            channel: nightly
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install Rust Toolchain
+        run: |
+          rustup default "$TOOLCHAIN"
+          rustup update "$TOOLCHAIN"
+        env:
+          TOOLCHAIN: ${{ matrix.channel }}-${{ matrix.target }}
+
+      - name: Build and Test (Debug, No Default Features)
+        run: cargo test --no-default-features
+
+      - name: Build and Test (Debug, enable_unstable_features_that_may_break_with_minor_version_bumps)
+        run: cargo test --no-default-features --features enable_unstable_features_that_may_break_with_minor_version_bumps
+
+      - name: Build and Test (Debug, serde)
+        run: cargo test --no-default-features --features serde
+
+      - name: Build and Test (Release, All Features)
+        run: cargo test --release --all-features
+
+      - name: Build and Test (Minimal Versions, All Features)
+        if: matrix.channel == 'nightly'
+        run: cargo test --all-features -Z minimal-versions
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Check for broken intra-doc links
+        run: cargo doc --all-features --document-private-items --no-deps
+
+  ci_succeeded:
+    name: Build and Test Succeeded
+    if: always()
+    needs: [build_and_test, lint]
+    runs-on: ubuntu-22.04
+    outputs:
+      release: ${{ steps.release_check.outputs.release }}
+      tag_name: ${{ steps.release_check.outputs.tag_name }}
+    steps:
+      - name: Fail if Any Previous Job Failed
+        if: contains(needs.*.result, 'failure')
+        run: exit 1
+
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Run cargo-semver-checks
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+
+      - name: Check if Release Needed
+        id: release_check
+        run: |
+          set -euo pipefail
+
+          TAG_NAME="v$(cargo metadata --no-deps --format-version=1 | jq -er '.packages[] | select(.name=="plist") | .version')"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+
+          if git ls-remote --exit-code origin "refs/tags/$TAG_NAME"
+          then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  release:
+    name: Release
+    needs: ci_succeeded
+    if: github.ref == 'refs/heads/master' && needs.ci_succeeded.outputs.release == 'true'
+    runs-on: ubuntu-22.04
+    environment: release
+    permissions:
+      contents: write # Required for creating GitHub release
+      id-token: write # Required for OIDC token exchange
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Authenticate with crates.io
+        uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+
+      - name: Publish Crate
+        run: |
+          cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+      - name: Create GitHub Release
+        uses: actions/create-release@latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ needs.ci_succeeded.outputs.tag_name }}
+          release_name: ${{ needs.ci_succeeded.outputs.tag_name }}
+          draft: false
+          prerelease: false

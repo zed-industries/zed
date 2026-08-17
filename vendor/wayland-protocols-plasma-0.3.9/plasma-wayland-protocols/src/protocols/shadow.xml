@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="shadow">
+  <copyright><![CDATA[
+    SPDX-FileCopyrightText: 2015 Martin Gräßlin
+
+    SPDX-License-Identifier: LGPL-2.1-or-later
+  ]]></copyright>
+  <interface name="org_kde_kwin_shadow_manager" version="2">
+      <request name="create">
+          <arg name="id" type="new_id" interface="org_kde_kwin_shadow"/>
+          <arg name="surface" type="object" interface="wl_surface"/>
+      </request>
+      <request name="unset">
+          <arg name="surface" type="object" interface="wl_surface"/>
+      </request>
+      <request name="destroy" type="destructor" since="2">
+          <description summary="Destroy the org_kde_kwin_shadow_manager">
+              Destroy the org_kde_kwin_shadow_manager object.
+          </description>
+      </request>
+  </interface>
+  <interface name="org_kde_kwin_shadow" version="2">
+      <request name="commit">
+      </request>
+      <request name="attach_left">
+          <arg name="buffer" type="object" interface="wl_buffer"/>
+      </request>
+      <request name="attach_top_left">
+          <arg name="buffer" type="object" interface="wl_buffer"/>
+      </request>
+      <request name="attach_top">
+          <arg name="buffer" type="object" interface="wl_buffer"/>
+      </request>
+      <request name="attach_top_right">
+          <arg name="buffer" type="object" interface="wl_buffer"/>
+      </request>
+      <request name="attach_right">
+          <arg name="buffer" type="object" interface="wl_buffer"/>
+      </request>
+      <request name="attach_bottom_right">
+          <arg name="buffer" type="object" interface="wl_buffer"/>
+      </request>
+      <request name="attach_bottom">
+          <arg name="buffer" type="object" interface="wl_buffer"/>
+      </request>
+      <request name="attach_bottom_left">
+          <arg name="buffer" type="object" interface="wl_buffer"/>
+      </request>
+      <request name="set_left_offset">
+          <arg name="offset" type="fixed"/>
+      </request>
+      <request name="set_top_offset">
+          <arg name="offset" type="fixed"/>
+      </request>
+      <request name="set_right_offset">
+          <arg name="offset" type="fixed"/>
+      </request>
+      <request name="set_bottom_offset">
+          <arg name="offset" type="fixed"/>
+      </request>
+      <request name="destroy" type="destructor" since="2">
+          <description summary="Destroy the org_kde_kwin_shadow">
+              Destroy the org_kde_kwin_shadow object. If the org_kde_kwin_shadow is
+              still set on a wl_surface the shadow will be immediately removed.
+              Prefer to first call the request unset on the org_kde_kwin_shadow_manager and
+              commit the wl_surface to apply the change.
+          </description>
+      </request>
+  </interface>
+</protocol>

@@ -1,0 +1,41 @@
+---
+- name: Allowed characters in keys
+  from: '@perlpunk'
+  tags: mapping scalar
+  yaml: |
+    a!"#$%&'()*+,-./09:;<=>?@AZ[\]^_`az{|}~: safe
+    ?foo: safe question mark
+    :foo: safe colon
+    -foo: safe dash
+    this is#not: a comment
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :a!"#$%&'()*+,-./09:;<=>?@AZ[\\]^_`az{|}~
+       =VAL :safe
+       =VAL :?foo
+       =VAL :safe question mark
+       =VAL ::foo
+       =VAL :safe colon
+       =VAL :-foo
+       =VAL :safe dash
+       =VAL :this is#not
+       =VAL :a comment
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "a!\"#$%&'()*+,-./09:;<=>?@AZ[\\]^_`az{|}~": "safe",
+      "?foo": "safe question mark",
+      ":foo": "safe colon",
+      "-foo": "safe dash",
+      "this is#not": "a comment"
+    }
+  dump: |
+    a!"#$%&'()*+,-./09:;<=>?@AZ[\]^_`az{|}~: safe
+    ?foo: safe question mark
+    :foo: safe colon
+    -foo: safe dash
+    this is#not: a comment

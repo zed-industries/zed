@@ -1,0 +1,23 @@
+os:
+    - linux
+    - windows
+
+language: rust
+rust:
+    - stable
+    - beta
+    - nightly
+env:
+    matrix:
+    # Combinations of optional features
+    - FEATURES=''
+    - FEATURES='tokio'
+    - FEATURES='bindgen'
+
+matrix:
+  allow_failures:
+    - rust: nightly
+
+script:
+    - cargo build --verbose --features "$FEATURES"
+    - cargo test --verbose --features "$FEATURES"

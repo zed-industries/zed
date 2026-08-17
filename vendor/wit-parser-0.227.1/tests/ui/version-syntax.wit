@@ -1,0 +1,10 @@
+package foo:root;
+package a:b@1.0.0 {}
+package a:b@1.0.1 {}
+package a:b@1.0.1-- {}
+package a:b@1.0.1-a+a {}
+package a:b@1.0.1-1+1 {}
+package a:b@1.0.1-1a+1a {}
+package a:b@1.0.0-11-a {}
+package a:b@1.0.0-a1.1-a {}
+package a:b@1.0.0-11ab {}

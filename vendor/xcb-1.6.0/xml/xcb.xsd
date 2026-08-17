@@ -1,0 +1,416 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Copyright (C) 2004 Josh Triplett.  All Rights Reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Except as contained in this notice, the names of the authors or their
+institutions shall not be used in advertising or otherwise to promote the
+sale, use or other dealings in this Software without prior written
+authorization from the authors.
+-->
+<xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+
+  <!-- The root element -->
+  <xsd:element name="xcb">
+    <xsd:complexType>
+      <xsd:group ref="macro" minOccurs="0" maxOccurs="unbounded" />
+      <xsd:attribute name="header" type="xsd:string" use="required" />
+      <xsd:attribute name="extension-xname" type="xsd:string" use="optional" />
+      <xsd:attribute name="extension-name"  type="xsd:string" use="optional" />
+      <xsd:attribute name="extension-multiword" type="xsd:boolean" use="optional" default="false" />
+      <xsd:attribute name="major-version"   type="xsd:integer" use="optional" />
+      <xsd:attribute name="minor-version"   type="xsd:integer" use="optional" />
+    </xsd:complexType>
+  </xsd:element>
+
+  <!-- Padding -->
+  <xsd:element name="pad">
+    <xsd:complexType>
+      <xsd:attribute name="bytes" type="xsd:integer" use="optional" />
+      <xsd:attribute name="align" type="xsd:integer" use="optional" />
+      <xsd:attribute name="serialize" type="xsd:boolean" use="optional" />
+    </xsd:complexType>
+  </xsd:element>
+
+  <!-- Alignment -->
+  <xsd:element name="required_start_align" >
+    <xsd:complexType>
+      <xsd:attribute name="align" type="xsd:integer" use="required" />
+      <xsd:attribute name="offset" type="xsd:integer" use="optional" />
+    </xsd:complexType>
+  </xsd:element>
+
+  <!-- Type for fields or parameters with attributes "name" and "type" -->
+  <xsd:complexType name="var">
+    <xsd:attribute name="name" type="xsd:string" use="required" />
+    <xsd:attribute name="type" type="xsd:string" use="required" />
+    <xsd:attribute name="enum" type="xsd:string" use="optional" />
+    <xsd:attribute name="altenum" type="xsd:string" use="optional" />
+    <xsd:attribute name="mask" type="xsd:string" use="optional" />
+    <xsd:attribute name="altmask" type="xsd:string" use="optional" />
+  </xsd:complexType>
+
+  <!-- case expression -->
+  <xsd:complexType name="caseexpr">
+    <xsd:sequence>
+      <!-- case expression: -->
+      <xsd:group ref="expression" minOccurs="1" maxOccurs="unbounded" />
+      <!-- match -->
+      <xsd:group ref="fields" minOccurs="1" maxOccurs="unbounded" />
+      <xsd:choice>
+        <xsd:element ref="switch" minOccurs="0" maxOccurs="unbounded" />
+      </xsd:choice>
+    </xsd:sequence>
+    <xsd:attribute name="name" type="xsd:string" use="optional" />
+  </xsd:complexType>
+
+  <!-- switch expression -->
+  <xsd:complexType name="switchexpr">
+    <xsd:sequence>
+      <!-- switch(expression) -->
+      <xsd:group ref="expression" minOccurs="1" maxOccurs="1" />
+      <xsd:element ref="required_start_align" minOccurs="0" maxOccurs="1" />
+      <xsd:choice>
+        <!-- bitcase expression - bit test -->
+        <xsd:element name="bitcase" type="caseexpr" minOccurs="0" maxOccurs="unbounded" />
+        <!-- case expression - value test -->
+        <xsd:element name="case" type="caseexpr" minOccurs="0" maxOccurs="unbounded" />
+      </xsd:choice>
+    </xsd:sequence>
+    <xsd:attribute name="name" type="xsd:string" use="required" />
+  </xsd:complexType>
+
+  <xsd:element name="switch" type="switchexpr" />
+
+  <!-- field replaces FIELD, PARAM, and REPLY. -->
+  <xsd:element name="field" type="var" />
+
+  <!-- fd passing parameter -->
+  <xsd:element name="fd">
+    <xsd:complexType>
+      <xsd:attribute name="name" type="xsd:string" use="required" />
+    </xsd:complexType>
+  </xsd:element>
+
+  <!-- list replaces ARRAYFIELD, LISTPARAM, and ARRAYREPLY.  The name and type
+       are specified as attributes.  The content is an expression giving the
+       length. -->
+  <xsd:element name="list">
+    <xsd:complexType>
+      <xsd:complexContent>
+        <xsd:extension base="var">
+          <xsd:group ref="expression" minOccurs="0" maxOccurs="1" />
+        </xsd:extension>
+      </xsd:complexContent>
+    </xsd:complexType>
+  </xsd:element>
+
+  <!-- Expressions -->
+  <xsd:group name="expression">
+    <xsd:choice>
+      <xsd:element name="op">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:group ref="expression" />
+            <xsd:group ref="expression" />
+          </xsd:sequence>
+          <xsd:attribute name="op" use="required">
+            <xsd:simpleType>
+              <xsd:restriction base="xsd:string">
+                <xsd:pattern value="\+|-|\*|/|&amp;|&lt;&lt;" />
+              </xsd:restriction>
+            </xsd:simpleType>
+          </xsd:attribute>
+        </xsd:complexType>
+      </xsd:element>
+      <xsd:element name="unop">
+         <xsd:complexType>
+            <xsd:sequence>
+              <xsd:group ref="expression" />
+            </xsd:sequence>
+            <xsd:attribute name="op" use="required">
+              <xsd:simpleType>
+                <xsd:restriction base="xsd:string">
+                  <xsd:pattern value="~" />
+                </xsd:restriction>
+              </xsd:simpleType>
+            </xsd:attribute>
+         </xsd:complexType>
+      </xsd:element>
+      <xsd:element name="fieldref" type="xsd:string" />
+      <xsd:element name="paramref">
+        <xsd:complexType>
+          <xsd:simpleContent>
+            <xsd:extension base="xsd:string">
+              <xsd:attribute name="type" use="required" type="xsd:string" />
+            </xsd:extension>
+          </xsd:simpleContent>
+        </xsd:complexType>
+      </xsd:element>
+      <xsd:element name="enumref">
+        <xsd:complexType>
+          <xsd:simpleContent>
+            <xsd:extension base="xsd:string">
+              <xsd:attribute name="ref" use="required" type="xsd:string" />
+            </xsd:extension>
+          </xsd:simpleContent>
+        </xsd:complexType>
+      </xsd:element>
+      <xsd:element name="popcount">
+        <xsd:complexType>
+          <xsd:group ref="expression" />
+        </xsd:complexType>
+      </xsd:element>
+      <xsd:element name="sumof">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:group ref="expression" minOccurs="0" maxOccurs="1"/>
+          </xsd:sequence>
+          <xsd:attribute name="ref" use="required" type="xsd:string" />
+        </xsd:complexType>
+      </xsd:element>
+      <xsd:element name="listelement-ref" />
+      <xsd:element name="value" type="xsd:integer" />
+      <xsd:element name="bit" type="bitType" />
+    </xsd:choice>
+  </xsd:group>
+  
+  <!-- Fields in requests that are calculated from other information, not
+       supplied by the caller. -->
+  <xsd:element name="exprfield" >
+    <xsd:complexType>
+      <xsd:complexContent>
+        <xsd:extension base="var">
+          <xsd:group ref="expression" />
+        </xsd:extension>
+      </xsd:complexContent>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:group name="fields">
+    <xsd:choice>
+      <xsd:element ref="pad" />
+      <xsd:element ref="field" />
+      <xsd:element ref="list" />
+      <xsd:element ref="fd" />
+      <xsd:element ref="required_start_align" />
+    </xsd:choice>
+  </xsd:group>
+
+  <!-- Type for a structure -->
+  <xsd:complexType name="struct">
+    <xsd:sequence>
+      <xsd:group ref="fields" minOccurs="1" maxOccurs="unbounded" />
+      <xsd:choice minOccurs="0" maxOccurs="1">
+        <xsd:element ref="switch" />
+      </xsd:choice>
+    </xsd:sequence>
+    <xsd:attribute name="name" type="xsd:string" use="required" />
+  </xsd:complexType>
+
+  <!-- Type for a packet structure -->
+  <xsd:complexType name="packet-struct">
+    <xsd:sequence>
+      <xsd:group ref="fields" minOccurs="0" maxOccurs="unbounded" />
+    </xsd:sequence>
+    <xsd:attribute name="name" type="xsd:string" use="required" />
+    <xsd:attribute name="number" type="xsd:integer" use="required" />
+  </xsd:complexType>
+
+  <!-- Type for a packet structure copy -->
+  <xsd:complexType name="packet-struct-copy">
+    <xsd:attribute name="name" type="xsd:string" use="required" />
+    <xsd:attribute name="number" type="xsd:integer" use="required" />
+    <xsd:attribute name="ref" type="xsd:string" use="required" />
+  </xsd:complexType>
+
+  <!-- Type for a structure that is an event
+       which can be of an event type from a set of event types -->
+  <xsd:complexType name="eventstruct">
+    <xsd:sequence>
+      <xsd:element name="allowed">
+        <xsd:complexType>
+          <xsd:attribute name="extension" type="xsd:string" use="required" />
+          <xsd:attribute name="xge" type="xsd:boolean" use="required" />
+          <xsd:attribute name="opcode-min" type="xsd:integer" use="required" />
+          <xsd:attribute name="opcode-max" type="xsd:integer" use="required" />
+        </xsd:complexType>
+      </xsd:element>
+    </xsd:sequence>
+    <xsd:attribute name="name" type="xsd:string" use="required" />
+  </xsd:complexType>
+
+  <!-- Type for bit values -->
+  <xsd:simpleType name="bitType">
+    <xsd:restriction base="xsd:integer">
+      <xsd:minInclusive value="0" />
+      <xsd:maxExclusive value="32" />
+    </xsd:restriction>
+  </xsd:simpleType>
+
+  <!-- Type for documentation -->
+  <xsd:group name="doc-fields">
+    <xsd:sequence>
+      <xsd:element name="field">
+        <xsd:complexType>
+          <xsd:simpleContent>
+            <xsd:extension base="xsd:string">
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:extension>
+          </xsd:simpleContent>
+        </xsd:complexType>
+      </xsd:element>
+    </xsd:sequence>
+  </xsd:group>
+
+  <xsd:group name="error-fields">
+    <xsd:sequence>
+      <xsd:element name="error">
+        <xsd:complexType>
+          <xsd:simpleContent>
+            <xsd:extension base="xsd:string">
+              <xsd:attribute name="type" type="xsd:string" />
+            </xsd:extension>
+          </xsd:simpleContent>
+        </xsd:complexType>
+      </xsd:element>
+    </xsd:sequence>
+  </xsd:group>
+
+  <xsd:group name="see-fields">
+    <xsd:sequence>
+      <xsd:element name="see">
+        <xsd:complexType>
+          <xsd:attribute name="name" type="xsd:string" />
+          <xsd:attribute name="type" type="xsd:string" />
+        </xsd:complexType>
+      </xsd:element>
+    </xsd:sequence>
+  </xsd:group>
+
+  <xsd:element name="doc">
+    <xsd:complexType mixed="true">
+      <xsd:sequence>
+        <xsd:element name="brief" type="xsd:string" minOccurs="0" maxOccurs="1" />
+        <xsd:element name="description" type="xsd:string" minOccurs="0" maxOccurs="1" />
+        <xsd:element name="example" type="xsd:string" minOccurs="0" maxOccurs="1" />
+        <xsd:group ref="doc-fields" minOccurs="0" maxOccurs="unbounded" />
+        <xsd:group ref="error-fields" minOccurs="0" maxOccurs="unbounded" />
+        <xsd:group ref="see-fields" minOccurs="0" maxOccurs="unbounded" />
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+
+  <xsd:group name="macro">
+    <xsd:choice>
+      <xsd:element name="request">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:choice minOccurs="0" maxOccurs="unbounded">
+              <xsd:group ref="fields" />
+              <xsd:element ref="exprfield" />
+            </xsd:choice>
+            <xsd:choice minOccurs="0" maxOccurs="1">
+              <xsd:element ref="switch" />
+            </xsd:choice>
+            <xsd:element name="reply" minOccurs="0" maxOccurs="1">
+              <xsd:complexType>
+                <xsd:sequence>
+                  <xsd:choice minOccurs="1" maxOccurs="unbounded">
+                    <xsd:group ref="fields" />
+                  </xsd:choice>
+                  <xsd:choice minOccurs="0" maxOccurs="1">
+                    <xsd:element ref="switch" />
+                  </xsd:choice>
+                  <xsd:element ref="doc" minOccurs="0" maxOccurs="1" />
+                </xsd:sequence>
+              </xsd:complexType>
+            </xsd:element>
+            <xsd:element ref="doc" minOccurs="0" maxOccurs="1" />
+          </xsd:sequence>
+          <xsd:attribute name="name" type="xsd:string" use="required" />
+          <xsd:attribute name="opcode" type="xsd:integer" use="required" />
+          <xsd:attribute name="combine-adjacent" type="xsd:boolean"
+                         use="optional" default="false" />
+        </xsd:complexType>
+      </xsd:element>
+      <xsd:element name="event">
+        <xsd:complexType>
+          <xsd:complexContent>
+            <xsd:extension base="packet-struct">
+              <xsd:sequence>
+                <xsd:element ref="doc" minOccurs="0" maxOccurs="1" />
+              </xsd:sequence>
+              <xsd:attribute name="no-sequence-number" type="xsd:boolean"
+                             use="optional" default="false" />
+              <xsd:attribute name="xge" type="xsd:boolean"
+                             use="optional" default="false" />
+            </xsd:extension>
+          </xsd:complexContent>
+        </xsd:complexType>
+      </xsd:element>
+      <xsd:element name="eventcopy" type="packet-struct-copy" />
+      <xsd:element name="error" type="packet-struct" />
+      <xsd:element name="errorcopy" type="packet-struct-copy" />
+      <xsd:element name="struct" type="struct" />
+      <xsd:element name="union" type="struct" />
+      <xsd:element name="eventstruct" type="eventstruct" />
+      <xsd:element name="xidtype">
+        <xsd:complexType>
+          <xsd:attribute name="name" type="xsd:string" use="required" />
+        </xsd:complexType>
+      </xsd:element>
+      <xsd:element name="xidunion">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="type" type="xsd:string"
+                         minOccurs="1" maxOccurs="unbounded" />
+          </xsd:sequence>
+          <xsd:attribute name="name" type="xsd:string" use="required" />
+        </xsd:complexType>
+      </xsd:element>
+      <xsd:element name="enum">
+        <xsd:complexType>
+          <xsd:sequence minOccurs="1" maxOccurs="unbounded">
+            <xsd:element name="item">
+              <xsd:complexType>
+                <xsd:choice minOccurs="1" maxOccurs="1">
+                  <xsd:element name="value" type="xsd:unsignedInt" />
+                  <xsd:element name="bit" type="bitType" />
+                </xsd:choice>
+                <xsd:attribute name="name" type="xsd:string" use="required" />
+              </xsd:complexType>
+            </xsd:element>
+            <xsd:element ref="doc" minOccurs="0" maxOccurs="1" />
+          </xsd:sequence>
+          <xsd:attribute name="name" type="xsd:string" use="required" />
+        </xsd:complexType>
+      </xsd:element>
+      <xsd:element name="typedef">
+        <xsd:complexType>
+          <xsd:attribute name="oldname" type="xsd:string" use="required" />
+          <xsd:attribute name="newname" type="xsd:string" use="required" />
+        </xsd:complexType>
+      </xsd:element>
+      <!-- The import element allows a protocol description to reference the
+           declarations of another protocol description. -->
+      <xsd:element name="import" type="xsd:string" />
+    </xsd:choice>
+  </xsd:group>
+</xsd:schema>

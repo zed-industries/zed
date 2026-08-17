@@ -1,0 +1,54 @@
+package foo:bar;
+
+interface i1 {
+  type t1 = u32;
+  type t2 = u32;
+  type t3 = u32;
+  type t4 = u32;
+  type t5 = u32;
+  type t6 = u32;
+  type t7 = u32;
+  type t8 = u32;
+  type t9 = u32;
+  type t10 = u32;
+}
+
+interface i2 {
+  use i1.{t1, t2, t3, t4, t5, t6, t7, t8, t9, t10};
+}
+
+interface i3 {
+  use i2.{t1, t2, t3, t4, t5, t6, t7, t8, t9, t10};
+}
+
+interface i4 {
+  use i3.{t1, t2, t3, t4, t5, t6, t7, t8, t9, t10};
+}
+
+interface i5 {
+  use i4.{t1, t2, t3, t4, t5, t6, t7, t8, t9, t10};
+}
+
+interface i6 {
+  use i5.{t1, t2, t3, t4, t5, t6, t7, t8, t9, t10};
+}
+
+interface i7 {
+  use i6.{t1, t2, t3, t4, t5, t6, t7, t8, t9, t10};
+}
+
+interface i8 {
+  use i7.{t1, t2, t3, t4, t5, t6, t7, t8, t9, t10};
+}
+
+interface i9 {
+  use i8.{t1, t2, t3, t4, t5, t6, t7, t8, t9, t10};
+}
+
+interface i10 {
+  use i9.{t1, t2, t3, t4, t5, t6, t7, t8, t9, t10};
+}
+
+world foo {
+  export i10;
+}

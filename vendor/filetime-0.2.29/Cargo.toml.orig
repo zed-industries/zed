@@ -1,0 +1,30 @@
+[package]
+name = "filetime"
+authors = ["Alex Crichton <alex@alexcrichton.com>"]
+version = "0.2.29"
+license = "MIT/Apache-2.0"
+readme = "README.md"
+keywords = ["timestamp", "mtime"]
+repository = "https://github.com/alexcrichton/filetime"
+homepage = "https://github.com/alexcrichton/filetime"
+documentation = "https://docs.rs/filetime"
+description = """
+Platform-agnostic accessors of timestamps in File metadata
+"""
+edition = "2018"
+rust-version = "1.75.0"
+
+[dependencies]
+cfg-if = "1.0.0"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.27"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = [
+  'cfg(emulate_second_only_system)',
+]

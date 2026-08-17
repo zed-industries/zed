@@ -1,0 +1,17 @@
+[package]
+name = "random_choice"
+version = "0.3.2"
+authors = ["Stefano Di Martino <stefano.d@posteo.de>"]
+description = "Chooses samples randomly by their weights/probabilities."
+repository = "https://github.com/StefanoD/Rust_Random_Choice"
+documentation = "https://github.com/StefanoD/Rust_Random_Choice#usage"
+keywords = ["random_choice"]
+license = "Apache-2.0"
+
+[lib]
+doc = true
+test = true
+bench = true
+
+[dependencies]
+rand = "0.3"

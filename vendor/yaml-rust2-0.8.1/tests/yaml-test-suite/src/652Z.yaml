@@ -1,0 +1,31 @@
+---
+- name: Question mark at start of flow key
+  from: '@ingydotnet'
+  tags: flow
+  yaml: |
+    { ?foo: bar,
+    bar: 42
+    }
+  tree: |
+    +STR
+     +DOC
+      +MAP {}
+       =VAL :?foo
+       =VAL :bar
+       =VAL :bar
+       =VAL :42
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "?foo" : "bar",
+      "bar" : 42
+    }
+  dump: |
+    ---
+    ?foo: bar
+    bar: 42
+  emit: |
+    ?foo: bar
+    bar: 42

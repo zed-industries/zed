@@ -1,0 +1,14 @@
+sh-5.2$ cat alacritty? _tir  erminal/tests/ref/hyperlinks/alacritty.recording
+[?2004hsh-5.1$ [7mprintf '\e]8;;https://example.com\e\\foo\e]8;;\e\\\n'[27m[C[C[C[C[C[C[C[Cprintf '\e]8;;https://example.com\e\\foo\e]8;;\e\\\n'
+[?2004l]8;;https://example.com\foo]8;;\
+[?2004hsh-5.1$ [7mprintf '\e]8;;https://example.com\e\\foo\e]8;;\e\\\n'[27m[C[C[C[C[C[C[C[Cprintf '\e]8;;https://example.com\e\\foo\e]8;;\e\\\n'
+[?2004l]8;;https://example.com\foo]8;;\
+[?2004hsh-5.1$ [7mprintf '\e]8;id=42;https://example.com\e\\bar\e]8;;\e\\\n'[27m[C[C[C[C[C[C[C[Cprintf '\e]8;id=42;https://example.com\e\\bar\e]8;;\e\\\n'
+[?2004l]8;id=42;https://example.com\bar]8;;\
+[?2004hsh-5.1$ [7mprintf '\e]8;id=42;https://example.com\e\\bar\e]8;;\e\\\n'[27m[C[C[C[C[C[C[C[Cprintf '\e]8;id=42;https://example.com\e\\bar\e]8;;\e\\\n'
+[?2004l]8;id=42;https://example.com\bar]8;;\
+[?2004hsh-5.1$ [?2004l
+exit
+sh-5.2$ printf '\e]8;id=hello;http://example.com/naoheu;ntahoeu\e\\This is a link\e]8;id=hello;\e\\\n'
+]8;id=hello;http://example.com/naoheu;ntahoeu\This is a link]8;id=hello;\
+sh-5.2$ exit

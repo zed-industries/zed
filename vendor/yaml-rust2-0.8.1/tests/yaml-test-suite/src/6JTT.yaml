@@ -1,0 +1,17 @@
+---
+- name: Flow sequence without closing bracket
+  from: '@perlpunk'
+  tags: error flow sequence
+  fail: true
+  yaml: |
+    ---
+    [ [ a, b, c ]
+  tree: |
+    +STR
+     +DOC ---
+      +SEQ []
+       +SEQ []
+        =VAL :a
+        =VAL :b
+        =VAL :c
+       -SEQ

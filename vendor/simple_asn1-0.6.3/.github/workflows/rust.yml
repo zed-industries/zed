@@ -1,0 +1,33 @@
+name: Rust
+
+on:
+  push:
+    branches: [ "develop", "ci" ]
+  pull_request:
+    branches: [ "develop" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        rust: [stable]
+
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: ${{ matrix.rust }}
+        default: true
+        override: true
+    - name: Format Check
+      run: cargo fmt --check
+    - name: Build
+      run: cargo build
+    - name: Run tests
+      run: cargo test

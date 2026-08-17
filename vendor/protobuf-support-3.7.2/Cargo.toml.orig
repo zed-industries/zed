@@ -1,0 +1,24 @@
+[package]
+
+name = "protobuf-support"
+version = "3.7.2"
+authors = ["Stepan Koltsov <stepan.koltsov@gmail.com>"]
+edition = "2021"
+license = "MIT"
+homepage = "https://github.com/stepancheg/rust-protobuf/"
+repository = "https://github.com/stepancheg/rust-protobuf/"
+documentation = "https://github.com/stepancheg/rust-protobuf/blob/master/README.md"
+description = """
+Code supporting protobuf implementation. None of code in this crate is public API.
+"""
+
+[lib]
+bench = false
+
+[features]
+
+[dependencies]
+thiserror = "1.0.30"
+
+[package.metadata.docs.rs]
+all-features = true

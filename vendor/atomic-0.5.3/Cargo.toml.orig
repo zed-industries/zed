@@ -1,0 +1,17 @@
+[package]
+name = "atomic"
+version = "0.5.3"
+edition = "2018"
+authors = ["Amanieu d'Antras <amanieu@gmail.com>"]
+description = "Generic Atomic<T> wrapper type"
+documentation = "https://amanieu.github.io/atomic-rs/atomic/index.html"
+license = "Apache-2.0/MIT"
+repository = "https://github.com/Amanieu/atomic-rs"
+readme = "README.md"
+keywords = ["atomic", "no_std"]
+
+[features]
+default = ["fallback"]
+std = []
+fallback = []
+nightly = []

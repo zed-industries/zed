@@ -1,0 +1,40 @@
+[package]
+
+name = "open"
+version = "5.3.2"
+authors = ["Sebastian Thiel <byronimo@gmail.com>"]
+license = "MIT"
+edition = "2018"
+readme = "README.md"
+description = "Open a path or URL using the program configured on the system"
+repository = "https://github.com/Byron/open-rs"
+keywords = ["open", "xdg-open", "start", "launch"]
+include = ["src/**/*", "LICENSE.md", "README.md", "changelog.md"]
+rust-version = "1.62"
+
+[features]
+## If enabled, link to `system` on Windows and use `ShellExecuteW` intead of a command invocation
+## when launching something in 'detached' mode.
+## That way, it should be possible to open currently opened (for writing) files as well.
+## This feature is only effective on Windows.
+##
+## There may be other side-effects that when comparing to the command-based
+## opening of paths, which is why this feature is opt-in.
+shellexecute-on-windows = ["dep:dunce"]
+
+[[bin]]
+test = false
+doc = false
+name = "open"
+
+[target.'cfg(all(unix, not(macos)))'.dependencies]
+pathdiff = "0.2.0"
+
+[target.'cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd", target_os = "dragonfly", target_os = "netbsd", target_os = "openbsd", target_os = "illumos", target_os = "solaris", target_os = "aix", target_os = "hurd"))'.dependencies]
+is-wsl = "0.4.0"
+
+[target."cfg(unix)".dependencies]
+libc = "0.2"
+
+[target."cfg(windows)".dependencies]
+dunce = { version = "1", optional = true }

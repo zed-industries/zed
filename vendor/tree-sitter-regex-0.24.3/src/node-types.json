@@ -1,0 +1,621 @@
+[
+  {
+    "type": "alternation",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "term",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "anonymous_capturing_group",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "pattern",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "backreference_escape",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "group_name",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "character_class",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "character_class_escape",
+          "named": true
+        },
+        {
+          "type": "class_character",
+          "named": true
+        },
+        {
+          "type": "class_range",
+          "named": true
+        },
+        {
+          "type": "control_escape",
+          "named": true
+        },
+        {
+          "type": "control_letter_escape",
+          "named": true
+        },
+        {
+          "type": "identity_escape",
+          "named": true
+        },
+        {
+          "type": "posix_character_class",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "character_class_escape",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "unicode_character_escape",
+          "named": true
+        },
+        {
+          "type": "unicode_property_value_expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "class_range",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "character_class_escape",
+          "named": true
+        },
+        {
+          "type": "class_character",
+          "named": true
+        },
+        {
+          "type": "control_escape",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "control_escape",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "count_quantifier",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "decimal_digits",
+          "named": true
+        },
+        {
+          "type": "lazy",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "flags",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "inline_flags_group",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "flags",
+          "named": true
+        },
+        {
+          "type": "pattern",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "lookaround_assertion",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "pattern",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "named_capturing_group",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "group_name",
+          "named": true
+        },
+        {
+          "type": "pattern",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "named_group_backreference",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "group_name",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "non_capturing_group",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "pattern",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "one_or_more",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "lazy",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "optional",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "lazy",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "pattern",
+    "named": true,
+    "root": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "alternation",
+          "named": true
+        },
+        {
+          "type": "term",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "posix_character_class",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "posix_class_name",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "posix_class_name",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "start_assertion",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "term",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "anonymous_capturing_group",
+          "named": true
+        },
+        {
+          "type": "any_character",
+          "named": true
+        },
+        {
+          "type": "backreference_escape",
+          "named": true
+        },
+        {
+          "type": "boundary_assertion",
+          "named": true
+        },
+        {
+          "type": "character_class",
+          "named": true
+        },
+        {
+          "type": "character_class_escape",
+          "named": true
+        },
+        {
+          "type": "control_escape",
+          "named": true
+        },
+        {
+          "type": "control_letter_escape",
+          "named": true
+        },
+        {
+          "type": "count_quantifier",
+          "named": true
+        },
+        {
+          "type": "decimal_escape",
+          "named": true
+        },
+        {
+          "type": "end_assertion",
+          "named": true
+        },
+        {
+          "type": "identity_escape",
+          "named": true
+        },
+        {
+          "type": "inline_flags_group",
+          "named": true
+        },
+        {
+          "type": "lookaround_assertion",
+          "named": true
+        },
+        {
+          "type": "named_capturing_group",
+          "named": true
+        },
+        {
+          "type": "named_group_backreference",
+          "named": true
+        },
+        {
+          "type": "non_boundary_assertion",
+          "named": true
+        },
+        {
+          "type": "non_capturing_group",
+          "named": true
+        },
+        {
+          "type": "one_or_more",
+          "named": true
+        },
+        {
+          "type": "optional",
+          "named": true
+        },
+        {
+          "type": "pattern_character",
+          "named": true
+        },
+        {
+          "type": "posix_character_class",
+          "named": true
+        },
+        {
+          "type": "start_assertion",
+          "named": true
+        },
+        {
+          "type": "zero_or_more",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "unicode_character_escape",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "unicode_property_value_expression",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "unicode_property_name",
+          "named": true
+        },
+        {
+          "type": "unicode_property_value",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "zero_or_more",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "lazy",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "!",
+    "named": false
+  },
+  {
+    "type": "(",
+    "named": false
+  },
+  {
+    "type": "(?",
+    "named": false
+  },
+  {
+    "type": "(?:",
+    "named": false
+  },
+  {
+    "type": "(?<",
+    "named": false
+  },
+  {
+    "type": "(?P<",
+    "named": false
+  },
+  {
+    "type": "(?P=",
+    "named": false
+  },
+  {
+    "type": ")",
+    "named": false
+  },
+  {
+    "type": "*",
+    "named": false
+  },
+  {
+    "type": "+",
+    "named": false
+  },
+  {
+    "type": ",",
+    "named": false
+  },
+  {
+    "type": "-",
+    "named": false
+  },
+  {
+    "type": ":",
+    "named": false
+  },
+  {
+    "type": ":]",
+    "named": false
+  },
+  {
+    "type": "<",
+    "named": false
+  },
+  {
+    "type": "=",
+    "named": false
+  },
+  {
+    "type": ">",
+    "named": false
+  },
+  {
+    "type": "?",
+    "named": false
+  },
+  {
+    "type": "[",
+    "named": false
+  },
+  {
+    "type": "[:",
+    "named": false
+  },
+  {
+    "type": "\\k",
+    "named": false
+  },
+  {
+    "type": "]",
+    "named": false
+  },
+  {
+    "type": "^",
+    "named": false
+  },
+  {
+    "type": "any_character",
+    "named": true
+  },
+  {
+    "type": "boundary_assertion",
+    "named": true
+  },
+  {
+    "type": "class_character",
+    "named": true
+  },
+  {
+    "type": "control_letter_escape",
+    "named": true
+  },
+  {
+    "type": "decimal_digits",
+    "named": true
+  },
+  {
+    "type": "decimal_escape",
+    "named": true
+  },
+  {
+    "type": "end_assertion",
+    "named": true
+  },
+  {
+    "type": "group_name",
+    "named": true
+  },
+  {
+    "type": "identity_escape",
+    "named": true
+  },
+  {
+    "type": "lazy",
+    "named": true
+  },
+  {
+    "type": "non_boundary_assertion",
+    "named": true
+  },
+  {
+    "type": "pattern_character",
+    "named": true
+  },
+  {
+    "type": "unicode_property_name",
+    "named": true
+  },
+  {
+    "type": "unicode_property_value",
+    "named": true
+  },
+  {
+    "type": "{",
+    "named": false
+  },
+  {
+    "type": "|",
+    "named": false
+  },
+  {
+    "type": "}",
+    "named": false
+  }
+]

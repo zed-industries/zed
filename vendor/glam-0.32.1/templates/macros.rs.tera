@@ -1,0 +1,148 @@
+{% macro make_tuple_t(t, n) %}
+    (
+        {%- for i in range(end=n) -%}
+            {{ t }},
+        {%- endfor -%}
+    )
+{% endmacro make_tuple_t %}
+
+{% macro impl_mat3_minor(mat3_t, align="") %}
+    /// Creates a 2x2 matrix from the minor of the given 3x3 matrix, discarding the `i`th column
+    /// and `j`th row.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `i` or `j` is greater than 2.
+    #[inline]
+    #[must_use]
+    pub fn from_mat3{{ align }}_minor(m: {{ mat3_t }}, i: usize, j: usize) -> Self {
+        match (i, j) {
+            (0, 0) => Self::from_cols(m.y_axis.yz(), m.z_axis.yz()),
+            (0, 1) => Self::from_cols(m.y_axis.xz(), m.z_axis.xz()),
+            (0, 2) => Self::from_cols(m.y_axis.xy(), m.z_axis.xy()),
+            (1, 0) => Self::from_cols(m.x_axis.yz(), m.z_axis.yz()),
+            (1, 1) => Self::from_cols(m.x_axis.xz(), m.z_axis.xz()),
+            (1, 2) => Self::from_cols(m.x_axis.xy(), m.z_axis.xy()),
+            (2, 0) => Self::from_cols(m.x_axis.yz(), m.y_axis.yz()),
+            (2, 1) => Self::from_cols(m.x_axis.xz(), m.y_axis.xz()),
+            (2, 2) => Self::from_cols(m.x_axis.xy(), m.y_axis.xy()),
+            _ => panic!("index out of bounds"),
+        }
+    }
+{% endmacro impl_mat3_minor %}
+
+{% macro impl_mat4_minor(mat4_t, vec3_t) %}
+    {% if vec3_t == "Vec3A" %}
+        {% set w = "w" %}
+        {% set b = "Vec3A::from_vec4(" %}
+        {% set e = ")" %}
+    {% else %}
+        {% set w = "" %}
+        {% set b = "" %}
+        {% set e = "" %}
+    {% endif %}
+    /// Creates a 3x3 matrix from the minor of the given 4x4 matrix, discarding the `i`th column
+    /// and `j`th row.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `i` or `j` is greater than 3.
+    #[inline]
+    #[must_use]
+    pub fn from_mat4_minor(m: {{ mat4_t }}, i: usize, j: usize) -> Self {
+        match (i, j) {
+            (0, 0) => Self::from_cols({{ b }}m.y_axis.yzw{{ w }}(){{ e }}, {{ b }}m.z_axis.yzw{{ w }}(){{ e }}, {{ b }}m.w_axis.yzw{{ w }}(){{ e }}),
+            (0, 1) => Self::from_cols({{ b }}m.y_axis.xzw{{ w }}(){{ e }}, {{ b }}m.z_axis.xzw{{ w }}(){{ e }}, {{ b }}m.w_axis.xzw{{ w }}(){{ e }}),
+            (0, 2) => Self::from_cols({{ b }}m.y_axis.xyw{{ w }}(){{ e }}, {{ b }}m.z_axis.xyw{{ w }}(){{ e }}, {{ b }}m.w_axis.xyw{{ w }}(){{ e }}),
+            (0, 3) => Self::from_cols({{ b }}m.y_axis.xyz{{ w }}(){{ e }}, {{ b }}m.z_axis.xyz{{ w }}(){{ e }}, {{ b }}m.w_axis.xyz{{ w }}(){{ e }}),
+            (1, 0) => Self::from_cols({{ b }}m.x_axis.yzw{{ w }}(){{ e }}, {{ b }}m.z_axis.yzw{{ w }}(){{ e }}, {{ b }}m.w_axis.yzw{{ w }}(){{ e }}),
+            (1, 1) => Self::from_cols({{ b }}m.x_axis.xzw{{ w }}(){{ e }}, {{ b }}m.z_axis.xzw{{ w }}(){{ e }}, {{ b }}m.w_axis.xzw{{ w }}(){{ e }}),
+            (1, 2) => Self::from_cols({{ b }}m.x_axis.xyw{{ w }}(){{ e }}, {{ b }}m.z_axis.xyw{{ w }}(){{ e }}, {{ b }}m.w_axis.xyw{{ w }}(){{ e }}),
+            (1, 3) => Self::from_cols({{ b }}m.x_axis.xyz{{ w }}(){{ e }}, {{ b }}m.z_axis.xyz{{ w }}(){{ e }}, {{ b }}m.w_axis.xyz{{ w }}(){{ e }}),
+            (2, 0) => Self::from_cols({{ b }}m.x_axis.yzw{{ w }}(){{ e }}, {{ b }}m.y_axis.yzw{{ w }}(){{ e }}, {{ b }}m.w_axis.yzw{{ w }}(){{ e }}),
+            (2, 1) => Self::from_cols({{ b }}m.x_axis.xzw{{ w }}(){{ e }}, {{ b }}m.y_axis.xzw{{ w }}(){{ e }}, {{ b }}m.w_axis.xzw{{ w }}(){{ e }}),
+            (2, 2) => Self::from_cols({{ b }}m.x_axis.xyw{{ w }}(){{ e }}, {{ b }}m.y_axis.xyw{{ w }}(){{ e }}, {{ b }}m.w_axis.xyw{{ w }}(){{ e }}),
+            (2, 3) => Self::from_cols({{ b }}m.x_axis.xyz{{ w }}(){{ e }}, {{ b }}m.y_axis.xyz{{ w }}(){{ e }}, {{ b }}m.w_axis.xyz{{ w }}(){{ e }}),
+            (3, 0) => Self::from_cols({{ b }}m.x_axis.yzw{{ w }}(){{ e }}, {{ b }}m.y_axis.yzw{{ w }}(){{ e }}, {{ b }}m.z_axis.yzw{{ w }}(){{ e }}),
+            (3, 1) => Self::from_cols({{ b }}m.x_axis.xzw{{ w }}(){{ e }}, {{ b }}m.y_axis.xzw{{ w }}(){{ e }}, {{ b }}m.z_axis.xzw{{ w }}(){{ e }}),
+            (3, 2) => Self::from_cols({{ b }}m.x_axis.xyw{{ w }}(){{ e }}, {{ b }}m.y_axis.xyw{{ w }}(){{ e }}, {{ b }}m.z_axis.xyw{{ w }}(){{ e }}),
+            (3, 3) => Self::from_cols({{ b }}m.x_axis.xyz{{ w }}(){{ e }}, {{ b }}m.y_axis.xyz{{ w }}(){{ e }}, {{ b }}m.z_axis.xyz{{ w }}(){{ e }}),
+            _ => panic!("index out of bounds"),
+        }
+    }
+{% endmacro impl_mat4_minor %}
+
+{% macro impl_ref_unop(imp, self_t, output_t) %}
+    {% set op = imp | lower %}
+    impl {{ imp }} for &{{ self_t }} {
+        type Output = {{ output_t }};
+        #[inline]
+        fn {{ op }}(self) -> {{ output_t }} {
+            (*self).{{ op }}()
+        }
+    }
+{% endmacro impl_ref_unop %}
+
+{% macro impl_ref_binop(imp, self_t, rhs_t, output_t) %}
+    {% set op = imp | lower %}
+    {% if rhs_t == self_t %}
+        {% set val_rhs_t = "Self" %}
+    {% else %}
+        {% set val_rhs_t = rhs_t %}
+    {% endif %}
+    {% if output_t == self_t %}
+        {% set val_output_t = "Self" %}
+    {% else %}
+        {% set val_output_t = output_t %}
+    {% endif %}
+    impl {{ imp }}<&{{ val_rhs_t }}> for {{ self_t }} {
+        type Output = {{ val_output_t }};
+        #[inline]
+        fn {{ op }}(self, rhs: &{{ val_rhs_t }}) -> {{ val_output_t }}
+        {
+            self.{{ op }}(*rhs)
+        }
+    }
+
+    impl {{ imp }}<&{{ rhs_t }}> for &{{ self_t }} {
+        type Output = {{ output_t }};
+        #[inline]
+        fn {{ op }}(self, rhs: &{{ rhs_t }}) -> {{ output_t }} {
+            (*self).{{ op }}(*rhs)
+        }
+    }
+
+    impl {{ imp }}<{{ rhs_t }}> for &{{ self_t }} {
+        type Output = {{ output_t }};
+        #[inline]
+        fn {{ op }}(self, rhs: {{ rhs_t }}) -> {{ output_t }} {
+            (*self).{{ op }}(rhs)
+        }
+    }
+{% endmacro impl_ref_biop %}
+
+{% macro impl_ref_op_assign(imp, self_t, rhs_t) %}
+    {% set op = imp | lower %}
+    {% if rhs_t == self_t %}
+        {% set rhs_t = "Self" %}
+    {% endif %}
+    impl {{ imp }}Assign<&{{ rhs_t }}> for {{ self_t }} {
+        #[inline]
+        fn {{ op }}_assign(&mut self, rhs: &{{ rhs_t }}) {
+            self.{{ op }}_assign(*rhs);
+        }
+    }
+{% endmacro forward_ref_op_assign %}
+
+{% macro impl_op_assign(imp, self_t, rhs_t) %}
+    {% set op = imp | lower %}
+    impl {{ imp }}Assign{% if rhs_t != self_t %}<{{rhs_t}}>{% endif %} for {{ self_t }} {
+        #[inline]
+        fn {{ op }}_assign(&mut self, rhs: {% if rhs_t == self_t %} Self {% else %} {{ rhs_t }} {% endif %}) {
+            *self = self.{{ op }}(rhs);
+        }
+    }
+
+    {{ self::impl_ref_op_assign(imp=imp, self_t=self_t, rhs_t=rhs_t) }}
+{% endmacro impl_op_assign %}
+

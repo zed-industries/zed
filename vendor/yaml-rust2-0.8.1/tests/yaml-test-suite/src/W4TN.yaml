@@ -1,0 +1,31 @@
+---
+- name: Spec Example 9.5. Directives Documents
+  from: http://www.yaml.org/spec/1.2/spec.html#id2801606
+  tags: spec header footer 1.3-err
+  yaml: |
+    %YAML 1.2
+    --- |
+    %!PS-Adobe-2.0
+    ...
+    %YAML 1.2
+    ---
+    # Empty
+    ...
+  tree: |
+    +STR
+     +DOC ---
+      =VAL |%!PS-Adobe-2.0\n
+     -DOC ...
+     +DOC ---
+      =VAL :
+     -DOC ...
+    -STR
+  json: |
+    "%!PS-Adobe-2.0\n"
+    null
+  dump: |
+    --- |
+      %!PS-Adobe-2.0
+    ...
+    ---
+    ...

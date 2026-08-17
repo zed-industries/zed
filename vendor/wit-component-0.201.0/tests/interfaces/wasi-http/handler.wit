@@ -1,0 +1,43 @@
+/// This interface defines a handler of incoming HTTP Requests. It should
+/// be exported by components which can respond to HTTP Requests.
+interface incoming-handler {
+  use types.{incoming-request, response-outparam};
+
+  /// This function is invoked with an incoming HTTP Request, and a resource
+  /// `response-outparam` which provides the capability to reply with an HTTP
+  /// Response. The response is sent by calling the `response-outparam.set`
+  /// method, which allows execution to continue after the response has been
+  /// sent. This enables both streaming to the response body, and performing other
+  /// work.
+  ///
+  /// The implementor of this function must write a response to the
+  /// `response-outparam` before returning, or else the caller will respond
+  /// with an error on its behalf.
+  handle: func(
+    request: incoming-request,
+    response-out: response-outparam
+  );
+}
+
+/// This interface defines a handler of outgoing HTTP Requests. It should be
+/// imported by components which wish to make HTTP Requests.
+interface outgoing-handler {
+  use types.{
+    outgoing-request, request-options, future-incoming-response, error-code
+  };
+
+  /// This function is invoked with an outgoing HTTP Request, and it returns
+  /// a resource `future-incoming-response` which represents an HTTP Response
+  /// which may arrive in the future.
+  ///
+  /// The `options` argument accepts optional parameters for the HTTP
+  /// protocol's transport layer.
+  ///
+  /// This function may return an error if the `outgoing-request` is invalid
+  /// or not allowed to be made. Otherwise, protocol errors are reported
+  /// through the `future-incoming-response`.
+  handle: func(
+    request: outgoing-request,
+    options: option<request-options>
+  ) -> result<future-incoming-response, error-code>;
+}

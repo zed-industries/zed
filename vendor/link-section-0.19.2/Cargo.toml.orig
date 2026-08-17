@@ -1,0 +1,67 @@
+[package]
+name = "link-section"
+version = "0.19.2"
+authors.workspace = true
+edition = "2021"
+description = "Link-time initialized slices for Rust, with full support for Linux, macOS, Windows, WASM and many more platforms."
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+categories = ["development-tools::build-utils", "no-std", "no-std::no-alloc", "embedded", "development-tools::procedural-macro-helpers"]
+rust-version = "1.85"
+
+[features]
+default = ["proc_macro", "std"]
+proc_macro = ["dep:linktime-proc-macro"]
+std = []
+
+[dependencies]
+linktime-proc-macro = { workspace = true, optional = true, features = ["link_section"] }
+
+[dev-dependencies]
+macrotest = "1"
+trybuild = "1"
+walkdir = "2"
+tempfile = "3"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(linktime_used_linker)',
+    'cfg(linktime_asan)',
+] }
+
+[[example]]
+name = "link-section-const"
+path = "examples/const.rs"
+
+[[example]]
+name = "link-section-dyn"
+path = "examples/dyn.rs"
+
+[[example]]
+name = "link-section-empty"
+path = "examples/empty.rs"
+
+[[example]]
+name = "link-section-example"
+path = "examples/example.rs"
+
+[[example]]
+name = "link-section-movable"
+path = "examples/movable.rs"
+
+[[example]]
+name = "link-section-movable-no-macro"
+path = "examples/movable-no-macro.rs"
+
+[[example]]
+name = "link-section-mut"
+path = "examples/mut.rs"
+
+[[example]]
+name = "link-section-mut-no-macro"
+path = "examples/mut-no-macro.rs"
+
+[[example]]
+name = "link-section-ref"
+path = "examples/ref.rs"

@@ -1,0 +1,21 @@
+[package]
+name = "simple_asn1"
+version = "0.6.3"
+authors = ["Adam Wick <awick@uhsure.com>"]
+description = "A simple DER/ASN.1 encoding/decoding library."
+categories = ["encoding"]
+keywords = ["ASN1","encoding","DER"]
+license = "ISC"
+repository = "https://github.com/acw/simple_asn1"
+edition = "2018"
+
+[dependencies]
+num-bigint = { default-features = false, version = "0.4" }
+num-traits = { default-features = false, version = "0.2" }
+thiserror  = { default-features = false, version = "2" }
+time       = { default-features = false, version = "0.3", features = ["formatting", "macros", "parsing"] }
+
+[dev-dependencies]
+quickcheck = "1.0.3"
+rand = "0.8.4"
+time = { default-features = false, version = "0.3", features = ["formatting", "macros", "parsing", "quickcheck"] }

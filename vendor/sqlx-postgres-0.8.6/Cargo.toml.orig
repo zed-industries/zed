@@ -1,0 +1,89 @@
+[package]
+name = "sqlx-postgres"
+documentation = "https://docs.rs/sqlx"
+description = "PostgreSQL driver implementation for SQLx. Not for direct use; see the `sqlx` crate for details."
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+any = ["sqlx-core/any"]
+json = ["sqlx-core/json"]
+migrate = ["sqlx-core/migrate"]
+offline = ["sqlx-core/offline"]
+
+# Type Integration features
+bigdecimal = ["dep:bigdecimal", "dep:num-bigint", "sqlx-core/bigdecimal"]
+bit-vec = ["dep:bit-vec", "sqlx-core/bit-vec"]
+chrono = ["dep:chrono", "sqlx-core/chrono"]
+ipnet = ["dep:ipnet", "sqlx-core/ipnet"]
+ipnetwork = ["dep:ipnetwork", "sqlx-core/ipnetwork"]
+mac_address = ["dep:mac_address", "sqlx-core/mac_address"]
+rust_decimal = ["dep:rust_decimal", "rust_decimal/maths", "sqlx-core/rust_decimal"]
+time = ["dep:time", "sqlx-core/time"]
+uuid = ["dep:uuid", "sqlx-core/uuid"]
+
+[dependencies]
+# Futures crates
+futures-channel = { version = "0.3.19", default-features = false, features = ["sink", "alloc", "std"] }
+futures-core = { version = "0.3.19", default-features = false }
+futures-util = { version = "0.3.19", default-features = false, features = ["alloc", "sink", "io"] }
+
+# Cryptographic Primitives
+crc = "3.0.0"
+hkdf = "0.12.0"
+hmac = { version = "0.12.0", default-features = false, features = ["reset"]}
+md-5 = { version = "0.10.0", default-features = false }
+rand = { version = "0.8.4", default-features = false, features = ["std", "std_rng"] }
+sha2 = { version = "0.10.0", default-features = false }
+
+# Type Integrations (versions inherited from `[workspace.dependencies]`)
+bigdecimal = { workspace = true, optional = true }
+bit-vec = { workspace = true, optional = true }
+chrono = { workspace = true, optional = true }
+ipnet = { workspace = true, optional = true }
+ipnetwork = { workspace = true, optional = true }
+mac_address = { workspace = true, optional = true }
+rust_decimal = { workspace = true, optional = true }
+time = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
+
+# Misc
+atoi = "2.0"
+base64 = { version = "0.22.0", default-features = false, features = ["std"] }
+bitflags = { version = "2", default-features = false }
+byteorder = { version = "1.4.3", default-features = false, features = ["std"] }
+dotenvy = { workspace = true }
+hex = "0.4.3"
+home = "0.5.5"
+itoa = "1.0.1"
+log = "0.4.18"
+memchr = { version = "2.4.1", default-features = false }
+num-bigint = { version = "0.4.3", optional = true }
+once_cell = "1.9.0"
+smallvec = { version = "1.7.0", features = ["serde"] }
+stringprep = "0.1.2"
+thiserror = "2.0.0"
+tracing = { version = "0.1.37", features = ["log"] }
+whoami = { version = "1.2.1", default-features = false }
+
+serde = { version = "1.0.144", features = ["derive"] }
+serde_json = { version = "1.0.85", features = ["raw_value"] }
+
+[dependencies.sqlx-core]
+workspace = true
+# We use JSON in the driver implementation itself so there's no reason not to enable it here.
+features = ["json"]
+
+[dev-dependencies.sqlx]
+workspace = true
+features = ["postgres", "derive"]
+
+[target.'cfg(target_os = "windows")'.dependencies]
+etcetera = "0.8.0"
+
+[lints]
+workspace = true

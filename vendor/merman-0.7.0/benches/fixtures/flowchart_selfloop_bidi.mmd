@@ -1,0 +1,24 @@
+flowchart TD
+  Q[Ingress queue] --> P{Priority split}
+  P -->|urgent| A[Worker A]
+  P -->|normal| B[Worker B]
+  P -->|bulk| C[Worker C]
+
+  A -->|success| M[Merge]
+  B -->|success| M
+  C -->|success| M
+
+  A -->|retry with backoff| A
+  B -->|retry with backoff| B
+  C -->|retry with backoff| C
+
+  A -->|peer handoff| B
+  B -->|peer handoff| C
+  C -->|peer handoff| A
+
+  A -->|requeue| Q
+  B -->|requeue| Q
+  C -->|requeue| Q
+
+  M --> O[Done]
+  M -->|late failure| Q

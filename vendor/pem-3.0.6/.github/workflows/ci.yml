@@ -1,0 +1,34 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches:
+    - master
+jobs:
+  msrv:
+    name: msrv
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.60.0
+          components: clippy, rustfmt
+      - run: cargo fmt --check
+      - run: cargo clippy --all-features -- --deny warnings
+      # For no_std we use check instead of test because
+      # std is required for the test suite to run.
+      - run: cargo clippy --no-default-features -- --deny warnings
+      - run: cargo check --no-default-features
+      # Ensure that serde support works without std
+      - run: cargo check --no-default-features --features serde
+  stable:
+    name: stable
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - run: cargo test --all-features
+      - run: cargo bench --all-features

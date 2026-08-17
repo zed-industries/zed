@@ -1,0 +1,37 @@
+---
+- name: Spec Example 8.4. Chomping Final Line Break
+  from: http://www.yaml.org/spec/1.2/spec.html#id2795034
+  tags: spec literal scalar
+  yaml: |
+    strip: |-
+      text
+    clip: |
+      text
+    keep: |+
+      text
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :strip
+       =VAL |text
+       =VAL :clip
+       =VAL |text\n
+       =VAL :keep
+       =VAL |text\n
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "strip": "text",
+      "clip": "text\n",
+      "keep": "text\n"
+    }
+  dump: |
+    strip: |-
+      text
+    clip: |
+      text
+    keep: |
+      text

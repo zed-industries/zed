@@ -1,0 +1,28 @@
+error: Rust Vec containing C++ type is not supported yet
+  --> tests/ui/vec_opaque.rs:15:19
+   |
+15 |         fn f() -> Vec<Job>;
+   |                   ^^^^^^^^
+
+error: needs a cxx::ExternType impl in order to be used as a vector element in Vec<Job>
+  --> tests/ui/vec_opaque.rs:11:9
+   |
+11 |         type Job;
+   |         ^^^^^^^^
+
+error[E0277]: the trait bound `handle::Job: ImplVec` is not satisfied
+  --> tests/ui/vec_opaque.rs:22:14
+   |
+22 |         type Job = crate::handle::Job;
+   |              ^^^ unsatisfied trait bound
+   |
+help: the trait `ImplVec` is not implemented for `handle::Job`
+  --> tests/ui/vec_opaque.rs:4:9
+   |
+ 4 |         type Job;
+   |         ^^^^^^^^
+note: required by a bound in `require_vec`
+  --> src/rust_type.rs
+   |
+   | pub fn require_vec<T: ImplVec>() {}
+   |                       ^^^^^^^ required by this bound in `require_vec`

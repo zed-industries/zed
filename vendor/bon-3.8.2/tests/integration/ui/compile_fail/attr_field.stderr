@@ -1,0 +1,11 @@
+error: field names starting with `__` are reserved for `bon`'s internal use; please, select a different name
+ --> tests/integration/ui/compile_fail/attr_field.rs:6:5
+  |
+6 |     __x1: i32,
+  |     ^^^^
+
+error[E0616]: field `x1` of struct `MustBePrivateBuilder` is private
+  --> tests/integration/ui/compile_fail/attr_field.rs:21:21
+   |
+21 |     let _ = builder.x1;
+   |                     ^^ private field

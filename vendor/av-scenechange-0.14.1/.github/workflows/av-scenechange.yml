@@ -1,0 +1,91 @@
+name: av-scenechange
+
+on:
+  pull_request:
+    branches:
+      - master
+  push:
+    branches:
+      - master
+
+jobs:
+  rustfmt:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+
+      - name: Run rustfmt
+        run: |
+          cargo fmt -- --check
+
+  build:
+    needs: [rustfmt]
+    strategy:
+      matrix:
+        platform: [ubuntu-latest, windows-latest, ubuntu-24.04-arm]
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/setup-nasm@v1
+
+      - name: Install stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Set MSVC x86_64 linker path
+        if: matrix.platform == 'windows-latest'
+        run: |
+          $LinkGlob = "VC\Tools\MSVC\*\bin\Hostx64\x64"
+          $env:PATH = "$env:PATH;${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer"
+          $LinkPath = vswhere -latest -products * -find "$LinkGlob" |
+                      Select-Object -Last 1
+          echo "$LinkPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Clippy
+        run: cargo clippy --features binary,devel,tracing,serialize --tests --benches -- -D warnings
+
+      - name: Build
+        run: cargo build --features binary,devel,tracing,serialize --tests --benches
+
+      - name: Run tests
+        run: cargo test --features binary,devel,tracing,serialize
+
+      - name: Generate docs
+        run: cargo doc --features binary,devel,tracing,serialize --no-deps
+
+  code-coverage:
+    needs: [build]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/setup-nasm@v1
+
+      - name: Install stable
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Generate code coverage
+        run: cargo llvm-cov --features binary,tracing,serialize --lcov --output-path lcov.log --ignore-filename-regex tests\.rs
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: lcov.log
+          fail_ci_if_error: false

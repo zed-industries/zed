@@ -1,0 +1,186 @@
+[package]
+name = "portable-atomic"
+version = "1.11.1" #publish:version
+edition = "2018"
+rust-version = "1.34" # For Atomic{I,U}{8,16,32,64}
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/taiki-e/portable-atomic"
+keywords = ["atomic"]
+categories = ["concurrency", "embedded", "hardware-support", "no-std", "no-std::no-alloc"]
+exclude = ["/.*", "/tools", "/target-specs", "/DEVELOPMENT.md"]
+description = """
+Portable atomic types including support for 128-bit atomics, atomic float, etc.
+"""
+
+[package.metadata.docs.rs]
+# NB: sync with:
+# - env.TEST_FEATURES in .github/workflows/ci.yml.
+# - test_features list in tools/build.sh and tools/test.sh.
+features = ["float", "std", "serde", "critical-section"]
+rustdoc-args = ["--cfg", "portable_atomic_unstable_f16", "--cfg", "portable_atomic_unstable_f128"]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[package.metadata.cargo_check_external_types]
+# The following are external types that are allowed to be exposed in our public API.
+allowed_external_types = [
+    "serde::*",
+]
+
+[lib]
+doc-scrape-examples = false
+
+[features]
+default = ["fallback"]
+
+# (enabled by default) Enable fallback implementations.
+#
+# Disabling this allows only atomic types for which the platform natively supports atomic operations.
+fallback = []
+
+# Provide `AtomicF{32,64}`.
+#
+# See documentation for more: https://github.com/taiki-e/portable-atomic#optional-features-float
+float = []
+
+# Use `std`.
+std = []
+
+# Emit compile error if atomic CAS is not available.
+#
+# See documentation for more: https://github.com/taiki-e/portable-atomic#optional-features-require-cas
+require-cas = []
+
+# Assume the target is single core, to enable implementations based on disabling interrupts.
+# IMPORTANT: This feature is unsafe. See the documentation for the safety contract:
+# https://github.com/taiki-e/portable-atomic#optional-features-unsafe-assume-single-core
+unsafe-assume-single-core = []
+
+# The following are sub-features of the unsafe-assume-single-core feature and if enabled without
+# the unsafe-assume-single-core feature will result in a compile error.
+# There is no explicit "unsafe-" prefix because the user has already opted in to "unsafe" by
+# enabling the unsafe-assume-single-core feature, but misuse of these features is also usually
+# considered unsound.
+# See the interrupt module's readme for more: https://github.com/taiki-e/portable-atomic/blob/HEAD/src/imp/interrupt/README.md
+
+# For RISC-V targets, generate code for S mode to disable interrupts.
+s-mode = []
+# For RISC-V targets, use AMO instructions even if A-extension is disabled.
+# This feature requires Rust 1.72+.
+force-amo = []
+# For Arm targets, also disable FIQs when disabling interrupts.
+disable-fiq = []
+
+# Note: serde and critical-section are public dependencies.
+[dependencies]
+# Implements serde::{Serialize,Deserialize} for atomic types.
+#
+# See documentation for more: https://github.com/taiki-e/portable-atomic#optional-features-serde
+serde = { version = "1.0.60", optional = true, default-features = false }
+
+# Use `critical-section`.
+#
+# See documentation for more: https://github.com/taiki-e/portable-atomic#optional-features-critical-section
+critical-section = { version = "1", optional = true }
+
+# [target.'cfg(portable_atomic_test_no_std_static_assert_ffi)'.dependencies] #build:static_assert_ffi
+# test-helper = { features = ["sys"], git = "https://github.com/taiki-e/test-helper.git", rev = "93816e3" } #build:static_assert_ffi
+# [target.'cfg(all(portable_atomic_test_no_std_static_assert_ffi, target_os = "aix"))'.dependencies] #build:static_assert_ffi
+# libc = "=0.2.163" #build:static_assert_ffi
+
+[dev-dependencies]
+build-context = "0.1"
+crossbeam-utils = "=0.8.16" # The latest crossbeam-utils requires Rust 1.60
+fastrand = "2"
+paste = "1"
+quickcheck = { version = "1", default-features = false, git = "https://github.com/taiki-e/quickcheck.git", rev = "83b1d59" } # https://github.com/BurntSushi/quickcheck/pull/304 + https://github.com/BurntSushi/quickcheck/pull/282 + https://github.com/BurntSushi/quickcheck/pull/296 + f16/f128 support + lower MSRV
+serde_test = { git = "https://github.com/taiki-e/serde_test.git", rev = "f35c385" } # support {i,u}128
+sptr = "0.3"
+static_assertions = "1"
+test-helper = { features = ["sys", "critical-section-std"], git = "https://github.com/taiki-e/test-helper.git", rev = "93816e3" }
+
+[target.'cfg(unix)'.dev-dependencies]
+libc = "=0.2.163" # newer libc requires Rust 1.63
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+] }
+
+[lints]
+workspace = true
+
+[workspace]
+members = [
+    "bench",
+    "portable-atomic-util",
+    "tests/api-test",
+]
+
+# This table is shared by projects under github.com/taiki-e.
+# Expect for unexpected_cfgs.check-cfg, it is not intended for manual editing.
+[workspace.lints.rust]
+deprecated_safe = "warn"
+improper_ctypes = "warn"
+improper_ctypes_definitions = "warn"
+non_ascii_idents = "warn"
+rust_2018_idioms = "warn"
+single_use_lifetimes = "warn"
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(target_arch,values("xtensa"))', # 1.81+ https://github.com/rust-lang/rust/pull/125141
+    'cfg(target_arch,values("amdgpu"))', # 1.86+ https://github.com/rust-lang/rust/pull/134740
+    'cfg(target_arch,values("loongarch32"))', # 1.89+ (?) https://github.com/rust-lang/rust/pull/142053
+    'cfg(target_os,values("psx"))', # 1.84+ https://github.com/rust-lang/rust/pull/131168
+    'cfg(target_env,values("psx"))', # pre-1.84 https://github.com/rust-lang/rust/pull/131168
+    'cfg(target_feature,values("lse2","lse128","rcpc3"))', # 1.82+ https://github.com/rust-lang/rust/pull/128192
+    'cfg(target_feature,values("quadword-atomics"))', # 1.83+ https://github.com/rust-lang/rust/pull/130873
+    'cfg(target_feature,values("zaamo","zabha"))', # 1.83+ https://github.com/rust-lang/rust/pull/130877
+    'cfg(target_feature,values("zacas"))', # 1.87+ https://github.com/rust-lang/rust/pull/137417
+    'cfg(target_pointer_width,values("128"))',
+    # Known custom cfgs, excluding those that may be set by build script.
+    # Public APIs, considered unstable unless documented as stable in readme.
+    'cfg(portable_atomic_no_outline_atomics,portable_atomic_outline_atomics,portable_atomic_unstable_f16,portable_atomic_unstable_f128)',
+    # Public unstable API(s) - portable-atomic-util
+    'cfg(portable_atomic_unstable_coerce_unsized)',
+    # Not public API.
+    'cfg(portable_atomic_test_detect_false,portable_atomic_test_no_std_static_assert_ffi,qemu,valgrind)',
+] }
+unnameable_types = "warn"
+unreachable_pub = "warn"
+# unsafe_op_in_unsafe_fn = "warn" # Set at crate-level instead since https://github.com/rust-lang/rust/pull/100081 merged in Rust 1.65 is not available on MSRV
+[workspace.lints.clippy]
+all = "warn" # Downgrade deny-by-default lints
+pedantic = "warn"
+as_ptr_cast_mut = "warn"
+as_underscore = "warn"
+default_union_representation = "warn"
+inline_asm_x86_att_syntax = "warn"
+trailing_empty_array = "warn"
+transmute_undefined_repr = "warn"
+undocumented_unsafe_blocks = "warn"
+unused_trait_names = "warn"
+# Suppress buggy or noisy clippy lints
+bool_assert_comparison = { level = "allow", priority = 1 }
+borrow_as_ptr = { level = "allow", priority = 1 } # https://github.com/rust-lang/rust-clippy/issues/8286
+cast_lossless = { level = "allow", priority = 1 } # https://godbolt.org/z/Pv6vbGG6E
+declare_interior_mutable_const = { level = "allow", priority = 1 } # https://github.com/rust-lang/rust-clippy/issues/7665
+doc_markdown = { level = "allow", priority = 1 }
+float_cmp = { level = "allow", priority = 1 } # https://github.com/rust-lang/rust-clippy/issues/7725
+incompatible_msrv = { level = "allow", priority = 1 } # buggy: doesn't consider cfg, https://github.com/rust-lang/rust-clippy/issues/12280, https://github.com/rust-lang/rust-clippy/issues/12257#issuecomment-2093667187
+lint_groups_priority = { level = "allow", priority = 1 } # https://github.com/rust-lang/rust-clippy/issues/12920
+manual_assert = { level = "allow", priority = 1 }
+manual_range_contains = { level = "allow", priority = 1 } # https://github.com/rust-lang/rust-clippy/issues/6455#issuecomment-1225966395
+missing_errors_doc = { level = "allow", priority = 1 }
+module_name_repetitions = { level = "allow", priority = 1 } # buggy: https://github.com/rust-lang/rust-clippy/issues?q=is%3Aissue+is%3Aopen+module_name_repetitions
+naive_bytecount = { level = "allow", priority = 1 }
+nonminimal_bool = { level = "allow", priority = 1 } # buggy: https://github.com/rust-lang/rust-clippy/issues?q=is%3Aissue+is%3Aopen+nonminimal_bool
+range_plus_one = { level = "allow", priority = 1 } # buggy: https://github.com/rust-lang/rust-clippy/issues?q=is%3Aissue+is%3Aopen+range_plus_one
+similar_names = { level = "allow", priority = 1 }
+single_match = { level = "allow", priority = 1 }
+single_match_else = { level = "allow", priority = 1 }
+struct_excessive_bools = { level = "allow", priority = 1 }
+struct_field_names = { level = "allow", priority = 1 }
+too_many_arguments = { level = "allow", priority = 1 }
+too_many_lines = { level = "allow", priority = 1 }
+type_complexity = { level = "allow", priority = 1 }
+unreadable_literal = { level = "allow", priority = 1 }

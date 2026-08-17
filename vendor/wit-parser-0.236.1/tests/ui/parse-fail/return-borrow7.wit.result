@@ -1,0 +1,5 @@
+failed to update function `x`: function returns a type which contains a `borrow<T>` which is not supported
+     --> tests/ui/parse-fail/return-borrow7.wit:10:3
+      |
+   10 |   x: func() -> y2;
+      |   ^

@@ -1,0 +1,31 @@
+[package]
+name = "shellexpand"
+version = "3.1.1"
+edition = "2018"
+authors = ["Vladimir Matveev <vmatveev@citrine.cc>", "Ian Jackson <iwj@torproject.org>"]
+license = "MIT/Apache-2.0"
+description = "Shell-like expansions in strings"
+repository = "https://gitlab.com/ijackson/rust-shellexpand"
+documentation = "http://docs.rs/shellexpand/"
+readme = "README.md"
+keywords = ["strings", "shell", "variables"]
+rust-version = "1.31"
+
+[dependencies]
+dirs = { version = ">=4, <7", optional = true }
+
+bstr = { version = "1.0.0-pre.2", optional = true }
+os_str_bytes = { version = ">=5, <7", optional = true }
+
+[features]
+default = ["base-0", "tilde"]
+full = ["full-msrv-1-51"]
+full-msrv-1-51 = ["full-msrv-1-31", "path"]
+full-msrv-1-31 = ["base-0", "tilde"]
+
+base-0 = []
+path = ["bstr", "os_str_bytes" ]
+tilde = ["dirs"]
+
+[lib]
+name = "shellexpand"

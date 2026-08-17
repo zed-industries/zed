@@ -1,0 +1,9 @@
+jobs:
+  nightly:
+    uses: Nullus157/.github/.github/workflows/nightly.yml@main
+
+on:
+  schedule:
+  - cron: '0 2 * * *'
+  push:
+    branches: [main]

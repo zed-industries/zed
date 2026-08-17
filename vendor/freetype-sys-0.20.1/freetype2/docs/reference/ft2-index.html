@@ -1,0 +1,2424 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="API Reference Documentation for FreeType-2.13.2">
+      
+      
+      
+        <meta name="author" content="FreeType Contributors">
+      
+      
+      <link rel="icon" href="images/favico.ico">
+      <meta name="generator" content="mkdocs-1.4.3, mkdocs-material-7.1.9">
+    
+    
+      
+        <title>Index - FreeType-2.13.2 API Reference</title>
+      
+    
+    
+      <link rel="stylesheet" href="assets/stylesheets/main.ca7ac06f.min.css">
+      
+        
+        <link rel="stylesheet" href="assets/stylesheets/palette.f1a3b89f.min.css">
+        
+          
+          
+          <meta name="theme-color" content="#4cae4f">
+        
+      
+    
+    
+    
+      
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Noto+Serif:300,400,400i,700%7CRoboto+Mono&display=fallback">
+        <style>:root{--md-text-font-family:"Noto Serif";--md-code-font-family:"Roboto Mono"}</style>
+      
+    
+    
+    
+      <link rel="stylesheet" href="stylesheets/extra.css">
+    
+    
+      
+
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <script>function __prefix(e){return new URL(".",location).pathname+"."+e}function __get(e,t=localStorage){return JSON.parse(t.getItem(__prefix(e)))}</script>
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#freetype-2132-api-reference" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-header__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            FreeType-2.13.2 API Reference
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Index
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+      </label>
+      
+<div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" data-md-state="active" required>
+      <label class="md-search__icon md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+      </label>
+      <button type="reset" class="md-search__icon md-icon" aria-label="Clear" tabindex="-1">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
+      </button>
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+  </nav>
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-nav__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    FreeType-2.13.2 API Reference
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="index.html" class="md-nav__link">
+        TOC
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+    
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" data-md-toggle="toc" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          Index
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="ft2-index.html" class="md-nav__link md-nav__link--active">
+        Index
+      </a>
+      
+        
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#b" class="md-nav__link">
+    B
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#c" class="md-nav__link">
+    C
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#d" class="md-nav__link">
+    D
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#f" class="md-nav__link">
+    F
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#g" class="md-nav__link">
+    G
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#h" class="md-nav__link">
+    H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#i" class="md-nav__link">
+    I
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#n" class="md-nav__link">
+    N
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#p" class="md-nav__link">
+    P
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#r" class="md-nav__link">
+    R
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#s" class="md-nav__link">
+    S
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#t" class="md-nav__link">
+    T
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#w" class="md-nav__link">
+    W
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_3" type="checkbox" id="__nav_3" >
+      
+      <label class="md-nav__link" for="__nav_3">
+        General Remarks
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="General Remarks" data-md-level="1">
+        <label class="md-nav__title" for="__nav_3">
+          <span class="md-nav__icon md-icon"></span>
+          General Remarks
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-preamble.html" class="md-nav__link">
+        Preamble
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_inclusion.html" class="md-nav__link">
+        FreeType's header inclusion scheme
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-user_allocation.html" class="md-nav__link">
+        User allocation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_4" type="checkbox" id="__nav_4" >
+      
+      <label class="md-nav__link" for="__nav_4">
+        Core API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Core API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_4">
+          <span class="md-nav__icon md-icon"></span>
+          Core API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-basic_types.html" class="md-nav__link">
+        Basic Data Types
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-library_setup.html" class="md-nav__link">
+        Library Setup
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-face_creation.html" class="md-nav__link">
+        Face Creation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_testing_macros.html" class="md-nav__link">
+        Font Testing Macros
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizing_and_scaling.html" class="md-nav__link">
+        Sizing and Scaling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_retrieval.html" class="md-nav__link">
+        Glyph Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-character_mapping.html" class="md-nav__link">
+        Character Mapping
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-information_retrieval.html" class="md-nav__link">
+        Information Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-other_api_data.html" class="md-nav__link">
+        Other API Data
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_5" type="checkbox" id="__nav_5" >
+      
+      <label class="md-nav__link" for="__nav_5">
+        Extended API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Extended API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_5">
+          <span class="md-nav__icon md-icon"></span>
+          Extended API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_variants.html" class="md-nav__link">
+        Unicode Variation Sequences
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-color_management.html" class="md-nav__link">
+        Glyph Color Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-layer_management.html" class="md-nav__link">
+        Glyph Layer Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_management.html" class="md-nav__link">
+        Glyph Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-mac_specific.html" class="md-nav__link">
+        Mac Specific Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizes_management.html" class="md-nav__link">
+        Size Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_file_macros.html" class="md-nav__link">
+        Header File Macros
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_6" type="checkbox" id="__nav_6" >
+      
+      <label class="md-nav__link" for="__nav_6">
+        Format-Specific API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Format-Specific API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_6">
+          <span class="md-nav__icon md-icon"></span>
+          Format-Specific API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-multiple_masters.html" class="md-nav__link">
+        Multiple Masters
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_tables.html" class="md-nav__link">
+        TrueType Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-type1_tables.html" class="md-nav__link">
+        Type 1 Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sfnt_names.html" class="md-nav__link">
+        SFNT Names
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bdf_fonts.html" class="md-nav__link">
+        BDF and PCF Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cid_fonts.html" class="md-nav__link">
+        CID Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pfr_fonts.html" class="md-nav__link">
+        PFR Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-winfnt_fonts.html" class="md-nav__link">
+        Window FNT Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-svg_fonts.html" class="md-nav__link">
+        OpenType SVG Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_formats.html" class="md-nav__link">
+        Font Formats
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gasp_table.html" class="md-nav__link">
+        Gasp Table
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_7" type="checkbox" id="__nav_7" >
+      
+      <label class="md-nav__link" for="__nav_7">
+        Controlling FreeType Modules
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Controlling FreeType Modules" data-md-level="1">
+        <label class="md-nav__title" for="__nav_7">
+          <span class="md-nav__icon md-icon"></span>
+          Controlling FreeType Modules
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-auto_hinter.html" class="md-nav__link">
+        The auto-hinter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cff_driver.html" class="md-nav__link">
+        The CFF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-t1_cid_driver.html" class="md-nav__link">
+        The Type 1 and CID drivers
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-tt_driver.html" class="md-nav__link">
+        The TrueType driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pcf_driver.html" class="md-nav__link">
+        The PCF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_svg_driver.html" class="md-nav__link">
+        The SVG driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-properties.html" class="md-nav__link">
+        Driver properties
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-parameter_tags.html" class="md-nav__link">
+        Parameter Tags
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lcd_rendering.html" class="md-nav__link">
+        Subpixel Rendering
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_8" type="checkbox" id="__nav_8" >
+      
+      <label class="md-nav__link" for="__nav_8">
+        Cache Sub-System
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Cache Sub-System" data-md-level="1">
+        <label class="md-nav__title" for="__nav_8">
+          <span class="md-nav__icon md-icon"></span>
+          Cache Sub-System
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cache_subsystem.html" class="md-nav__link">
+        Cache Sub-System
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_9" type="checkbox" id="__nav_9" >
+      
+      <label class="md-nav__link" for="__nav_9">
+        Support API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Support API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_9">
+          <span class="md-nav__icon md-icon"></span>
+          Support API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-computations.html" class="md-nav__link">
+        Computations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-list_processing.html" class="md-nav__link">
+        List Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-outline_processing.html" class="md-nav__link">
+        Outline Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-quick_advance.html" class="md-nav__link">
+        Quick retrieval of advance values
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bitmap_handling.html" class="md-nav__link">
+        Bitmap Handling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-raster.html" class="md-nav__link">
+        Scanline Converter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_stroker.html" class="md-nav__link">
+        Glyph Stroker
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-system_interface.html" class="md-nav__link">
+        System Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-module_management.html" class="md-nav__link">
+        Module Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gzip.html" class="md-nav__link">
+        GZIP Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lzw.html" class="md-nav__link">
+        LZW Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bzip2.html" class="md-nav__link">
+        BZIP2 Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-debugging_apis.html" class="md-nav__link">
+        External Debugging APIs
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_10" type="checkbox" id="__nav_10" >
+      
+      <label class="md-nav__link" for="__nav_10">
+        Error Codes
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Error Codes" data-md-level="1">
+        <label class="md-nav__title" for="__nav_10">
+          <span class="md-nav__icon md-icon"></span>
+          Error Codes
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_enumerations.html" class="md-nav__link">
+        Error Enumerations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_code_values.html" class="md-nav__link">
+        Error Code Values
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_11" type="checkbox" id="__nav_11" >
+      
+      <label class="md-nav__link" for="__nav_11">
+        Miscellaneous
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Miscellaneous" data-md-level="1">
+        <label class="md-nav__title" for="__nav_11">
+          <span class="md-nav__icon md-icon"></span>
+          Miscellaneous
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gx_validation.html" class="md-nav__link">
+        TrueTypeGX/AAT Validation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-incremental.html" class="md-nav__link">
+        Incremental Loading
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_engine.html" class="md-nav__link">
+        The TrueType Engine
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_validation.html" class="md-nav__link">
+        OpenType Validation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#b" class="md-nav__link">
+    B
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#c" class="md-nav__link">
+    C
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#d" class="md-nav__link">
+    D
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#f" class="md-nav__link">
+    F
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#g" class="md-nav__link">
+    G
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#h" class="md-nav__link">
+    H
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#i" class="md-nav__link">
+    I
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#n" class="md-nav__link">
+    N
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#p" class="md-nav__link">
+    P
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#r" class="md-nav__link">
+    R
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#s" class="md-nav__link">
+    S
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#t" class="md-nav__link">
+    T
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#w" class="md-nav__link">
+    W
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          <div class="md-content" data-md-component="content">
+            <article class="md-content__inner md-typeset">
+              
+                
+                
+                <p><a href="https://www.freetype.org">FreeType</a> &raquo; <a href="../">Docs</a> &raquo; Global Index</p>
+<hr />
+<h1 id="freetype-2132-api-reference">FreeType-2.13.2 API Reference<a class="headerlink" href="#freetype-2132-api-reference" title="Permanent link">&para;</a></h1>
+<h3 id="b">B<a class="headerlink" href="#b" title="Permanent link">&para;</a></h3>
+<p><a href="ft2-bdf_fonts.html#bdf_property">BDF_Property</a><br />
+<a href="ft2-bdf_fonts.html#bdf_propertytype">BDF_PROPERTY_TYPE_ATOM</a><br />
+<a href="ft2-bdf_fonts.html#bdf_propertytype">BDF_PROPERTY_TYPE_CARDINAL</a><br />
+<a href="ft2-bdf_fonts.html#bdf_propertytype">BDF_PROPERTY_TYPE_INTEGER</a><br />
+<a href="ft2-bdf_fonts.html#bdf_propertytype">BDF_PROPERTY_TYPE_NONE</a><br />
+<a href="ft2-bdf_fonts.html#bdf_propertyrec">BDF_PropertyRec</a><br />
+<a href="ft2-bdf_fonts.html#bdf_propertytype">BDF_PropertyType</a>  </p>
+<h3 id="c">C<a class="headerlink" href="#c" title="Permanent link">&para;</a></h3>
+<p><a href="ft2-type1_tables.html#cid_facedict">CID_FaceDict</a><br />
+<a href="ft2-type1_tables.html#cid_facedictrec">CID_FaceDictRec</a><br />
+<a href="ft2-type1_tables.html#cid_faceinfo">CID_FaceInfo</a><br />
+<a href="ft2-type1_tables.html#cid_faceinforec">CID_FaceInfoRec</a><br />
+<a href="ft2-type1_tables.html#cid_fontdict">CID_FontDict</a><br />
+<a href="ft2-type1_tables.html#cid_info">CID_Info</a>  </p>
+<h3 id="d">D<a class="headerlink" href="#d" title="Permanent link">&para;</a></h3>
+<p><a href="ft2-properties.html#darkening-parameters">darkening-parameters</a><br />
+<a href="ft2-properties.html#default-script">default-script</a>  </p>
+<h3 id="f">F<a class="headerlink" href="#f" title="Permanent link">&para;</a></h3>
+<p><a href="ft2-properties.html#fallback-script">fallback-script</a><br />
+<a href="ft2-library_setup.html#freetype_xxx">FREETYPE_MAJOR</a><br />
+<a href="ft2-library_setup.html#freetype_xxx">FREETYPE_MINOR</a><br />
+<a href="ft2-library_setup.html#freetype_xxx">FREETYPE_PATCH</a><br />
+<a href="ft2-library_setup.html#freetype_xxx">FREETYPE_XXX</a><br />
+<a href="ft2-sizes_management.html#ft_activate_size">FT_Activate_Size</a><br />
+<a href="ft2-module_management.html#ft_add_default_modules">FT_Add_Default_Modules</a><br />
+<a href="ft2-module_management.html#ft_add_module">FT_Add_Module</a><br />
+<a href="ft2-quick_advance.html#ft_advance_flag_fast_only">FT_ADVANCE_FLAG_FAST_ONLY</a><br />
+<a href="ft2-header_file_macros.html#ft_advances_h">FT_ADVANCES_H</a><br />
+<a href="ft2-layer_management.html#ft_affine23">FT_Affine23</a><br />
+<a href="ft2-system_interface.html#ft_alloc_func">FT_Alloc_Func</a><br />
+<a href="ft2-computations.html#ft_angle">FT_Angle</a><br />
+<a href="ft2-computations.html#ft_angle_2pi">FT_ANGLE_2PI</a><br />
+<a href="ft2-computations.html#ft_angle_diff">FT_Angle_Diff</a><br />
+<a href="ft2-computations.html#ft_angle_pi">FT_ANGLE_PI</a><br />
+<a href="ft2-computations.html#ft_angle_pi2">FT_ANGLE_PI2</a><br />
+<a href="ft2-computations.html#ft_angle_pi4">FT_ANGLE_PI4</a><br />
+<a href="ft2-computations.html#ft_atan2">FT_Atan2</a><br />
+<a href="ft2-face_creation.html#ft_attach_file">FT_Attach_File</a><br />
+<a href="ft2-face_creation.html#ft_attach_stream">FT_Attach_Stream</a><br />
+<a href="ft2-header_file_macros.html#ft_autohinter_h">FT_AUTOHINTER_H</a><br />
+<a href="ft2-properties.html#ft_autohinter_script_xxx">FT_AUTOHINTER_SCRIPT_CJK</a><br />
+<a href="ft2-properties.html#ft_autohinter_script_xxx">FT_AUTOHINTER_SCRIPT_INDIC</a><br />
+<a href="ft2-properties.html#ft_autohinter_script_xxx">FT_AUTOHINTER_SCRIPT_LATIN</a><br />
+<a href="ft2-properties.html#ft_autohinter_script_xxx">FT_AUTOHINTER_SCRIPT_NONE</a><br />
+<a href="ft2-properties.html#ft_autohinter_script_xxx">FT_AUTOHINTER_SCRIPT_XXX</a><br />
+<a href="ft2-basic_types.html#ft_bbox">FT_BBox</a><br />
+<a href="ft2-header_file_macros.html#ft_bbox_h">FT_BBOX_H</a><br />
+<a href="ft2-header_file_macros.html#ft_bdf_h">FT_BDF_H</a><br />
+<a href="ft2-basic_types.html#ft_bitmap">FT_Bitmap</a><br />
+<a href="ft2-bitmap_handling.html#ft_bitmap_blend">FT_Bitmap_Blend</a><br />
+<a href="ft2-bitmap_handling.html#ft_bitmap_convert">FT_Bitmap_Convert</a><br />
+<a href="ft2-bitmap_handling.html#ft_bitmap_copy">FT_Bitmap_Copy</a><br />
+<a href="ft2-bitmap_handling.html#ft_bitmap_done">FT_Bitmap_Done</a><br />
+<a href="ft2-bitmap_handling.html#ft_bitmap_embolden">FT_Bitmap_Embolden</a><br />
+<a href="ft2-header_file_macros.html#ft_bitmap_h">FT_BITMAP_H</a><br />
+<a href="ft2-bitmap_handling.html#ft_bitmap_init">FT_Bitmap_Init</a><br />
+<a href="ft2-sizing_and_scaling.html#ft_bitmap_size">FT_Bitmap_Size</a><br />
+<a href="ft2-glyph_management.html#ft_bitmapglyph">FT_BitmapGlyph</a><br />
+<a href="ft2-glyph_management.html#ft_bitmapglyphrec">FT_BitmapGlyphRec</a><br />
+<a href="ft2-basic_types.html#ft_bool">FT_Bool</a><br />
+<a href="ft2-basic_types.html#ft_byte">FT_Byte</a><br />
+<a href="ft2-basic_types.html#ft_bytes">FT_Bytes</a><br />
+<a href="ft2-header_file_macros.html#ft_bzip2_h">FT_BZIP2_H</a><br />
+<a href="ft2-header_file_macros.html#ft_cache_h">FT_CACHE_H</a><br />
+<a href="ft2-computations.html#ft_ceilfix">FT_CeilFix</a><br />
+<a href="ft2-header_file_macros.html#ft_cff_driver_h">FT_CFF_DRIVER_H</a><br />
+<a href="ft2-basic_types.html#ft_char">FT_Char</a><br />
+<a href="ft2-character_mapping.html#ft_charmap">FT_CharMap</a><br />
+<a href="ft2-character_mapping.html#ft_charmaprec">FT_CharMapRec</a><br />
+<a href="ft2-header_file_macros.html#ft_cid_h">FT_CID_H</a><br />
+<a href="ft2-gx_validation.html#ft_classickern_free">FT_ClassicKern_Free</a><br />
+<a href="ft2-gx_validation.html#ft_classickern_validate">FT_ClassicKern_Validate</a><br />
+<a href="ft2-layer_management.html#ft_clipbox">FT_ClipBox</a><br />
+<a href="ft2-color_management.html#ft_color">FT_Color</a><br />
+<a href="ft2-header_file_macros.html#ft_color_h">FT_COLOR_H</a><br />
+<a href="ft2-layer_management.html#ft_color_root_transform">FT_COLOR_INCLUDE_ROOT_TRANSFORM</a><br />
+<a href="ft2-layer_management.html#ft_color_root_transform">FT_COLOR_NO_ROOT_TRANSFORM</a><br />
+<a href="ft2-layer_management.html#ft_color_root_transform">FT_Color_Root_Transform</a><br />
+<a href="ft2-layer_management.html#ft_colorindex">FT_ColorIndex</a><br />
+<a href="ft2-layer_management.html#ft_colorline">FT_ColorLine</a><br />
+<a href="ft2-layer_management.html#ft_colorstop">FT_ColorStop</a><br />
+<a href="ft2-layer_management.html#ft_colorstopiterator">FT_ColorStopIterator</a><br />
+<a href="ft2-layer_management.html#ft_colr_paint">FT_COLR_Paint</a><br />
+<a href="ft2-layer_management.html#ft_composite_mode">FT_Composite_Mode</a><br />
+<a href="ft2-header_file_macros.html#ft_config_config_h">FT_CONFIG_CONFIG_H</a><br />
+<a href="ft2-header_file_macros.html#ft_config_modules_h">FT_CONFIG_MODULES_H</a><br />
+<a href="ft2-header_file_macros.html#ft_config_options_h">FT_CONFIG_OPTIONS_H</a><br />
+<a href="ft2-header_file_macros.html#ft_config_standard_library_h">FT_CONFIG_STANDARD_LIBRARY_H</a><br />
+<a href="ft2-computations.html#ft_cos">FT_Cos</a><br />
+<a href="ft2-debugging_apis.html#ft_custom_log_handler">FT_Custom_Log_Handler</a><br />
+<a href="ft2-basic_types.html#ft_data">FT_Data</a><br />
+<a href="ft2-module_management.html#ft_debug_hook_xxx">FT_DEBUG_HOOK_TRUETYPE</a><br />
+<a href="ft2-module_management.html#ft_debug_hook_xxx">FT_DEBUG_HOOK_XXX</a><br />
+<a href="ft2-module_management.html#ft_debughook_func">FT_DebugHook_Func</a><br />
+<a href="ft2-computations.html#ft_divfix">FT_DivFix</a><br />
+<a href="ft2-face_creation.html#ft_done_face">FT_Done_Face</a><br />
+<a href="ft2-library_setup.html#ft_done_freetype">FT_Done_FreeType</a><br />
+<a href="ft2-glyph_management.html#ft_done_glyph">FT_Done_Glyph</a><br />
+<a href="ft2-module_management.html#ft_done_library">FT_Done_Library</a><br />
+<a href="ft2-multiple_masters.html#ft_done_mm_var">FT_Done_MM_Var</a><br />
+<a href="ft2-sizes_management.html#ft_done_size">FT_Done_Size</a><br />
+<a href="ft2-module_management.html#ft_driver">FT_Driver</a><br />
+<a href="ft2-header_file_macros.html#ft_driver_h">FT_DRIVER_H</a><br />
+<a href="ft2-character_mapping.html#ft_enc_tag">FT_ENC_TAG</a><br />
+<a href="ft2-character_mapping.html#ft_encoding">FT_Encoding</a><br />
+<a href="ft2-character_mapping.html#ft_encoding">FT_ENCODING_ADOBE_CUSTOM</a><br />
+<a href="ft2-character_mapping.html#ft_encoding">FT_ENCODING_ADOBE_EXPERT</a><br />
+<a href="ft2-character_mapping.html#ft_encoding">FT_ENCODING_ADOBE_LATIN_1</a><br />
+<a href="ft2-character_mapping.html#ft_encoding">FT_ENCODING_ADOBE_STANDARD</a><br />
+<a href="ft2-character_mapping.html#ft_encoding">FT_ENCODING_APPLE_ROMAN</a><br />
+<a href="ft2-character_mapping.html#ft_encoding">FT_ENCODING_BIG5</a><br />
+<a href="ft2-character_mapping.html#ft_encoding">FT_ENCODING_JOHAB</a><br />
+<a href="ft2-character_mapping.html#ft_encoding">FT_ENCODING_MS_BIG5</a><br />
+<a href="ft2-character_mapping.html#ft_encoding">FT_ENCODING_MS_GB2312</a><br />
+<a href="ft2-character_mapping.html#ft_encoding">FT_ENCODING_MS_JOHAB</a><br />
+<a href="ft2-character_mapping.html#ft_encoding">FT_ENCODING_MS_SJIS</a><br />
+<a href="ft2-character_mapping.html#ft_encoding">FT_ENCODING_MS_SYMBOL</a><br />
+<a href="ft2-character_mapping.html#ft_encoding">FT_ENCODING_MS_WANSUNG</a><br />
+<a href="ft2-character_mapping.html#ft_encoding">FT_ENCODING_NONE</a><br />
+<a href="ft2-character_mapping.html#ft_encoding">FT_ENCODING_OLD_LATIN_2</a><br />
+<a href="ft2-character_mapping.html#ft_encoding">FT_ENCODING_PRC</a><br />
+<a href="ft2-character_mapping.html#ft_encoding">FT_ENCODING_SJIS</a><br />
+<a href="ft2-character_mapping.html#ft_encoding">FT_ENCODING_UNICODE</a><br />
+<a href="ft2-character_mapping.html#ft_encoding">FT_ENCODING_WANSUNG</a><br />
+<a href="ft2-error_code_values.html#ft_err_xxx">FT_Err_XXX</a><br />
+<a href="ft2-basic_types.html#ft_error">FT_Error</a><br />
+<a href="ft2-error_enumerations.html#ft_error_string">FT_Error_String</a><br />
+<a href="ft2-header_file_macros.html#ft_errors_h">FT_ERRORS_H</a><br />
+<a href="ft2-basic_types.html#ft_f26dot6">FT_F26Dot6</a><br />
+<a href="ft2-basic_types.html#ft_f2dot14">FT_F2Dot14</a><br />
+<a href="ft2-face_creation.html#ft_face">FT_Face</a><br />
+<a href="ft2-other_api_data.html#ft_face_checktruetypepatents">FT_Face_CheckTrueTypePatents</a><br />
+<a href="ft2-module_management.html#ft_face_driver_name">FT_FACE_DRIVER_NAME</a><br />
+<a href="ft2-face_creation.html#ft_face_flag_xxx">FT_FACE_FLAG_CID_KEYED</a><br />
+<a href="ft2-face_creation.html#ft_face_flag_xxx">FT_FACE_FLAG_COLOR</a><br />
+<a href="ft2-face_creation.html#ft_face_flag_xxx">FT_FACE_FLAG_EXTERNAL_STREAM</a><br />
+<a href="ft2-face_creation.html#ft_face_flag_xxx">FT_FACE_FLAG_FAST_GLYPHS</a><br />
+<a href="ft2-face_creation.html#ft_face_flag_xxx">FT_FACE_FLAG_FIXED_SIZES</a><br />
+<a href="ft2-face_creation.html#ft_face_flag_xxx">FT_FACE_FLAG_FIXED_WIDTH</a><br />
+<a href="ft2-face_creation.html#ft_face_flag_xxx">FT_FACE_FLAG_GLYPH_NAMES</a><br />
+<a href="ft2-face_creation.html#ft_face_flag_xxx">FT_FACE_FLAG_HINTER</a><br />
+<a href="ft2-face_creation.html#ft_face_flag_xxx">FT_FACE_FLAG_HORIZONTAL</a><br />
+<a href="ft2-face_creation.html#ft_face_flag_xxx">FT_FACE_FLAG_KERNING</a><br />
+<a href="ft2-face_creation.html#ft_face_flag_xxx">FT_FACE_FLAG_MULTIPLE_MASTERS</a><br />
+<a href="ft2-face_creation.html#ft_face_flag_xxx">FT_FACE_FLAG_SBIX</a><br />
+<a href="ft2-face_creation.html#ft_face_flag_xxx">FT_FACE_FLAG_SBIX_OVERLAY</a><br />
+<a href="ft2-face_creation.html#ft_face_flag_xxx">FT_FACE_FLAG_SCALABLE</a><br />
+<a href="ft2-face_creation.html#ft_face_flag_xxx">FT_FACE_FLAG_SFNT</a><br />
+<a href="ft2-face_creation.html#ft_face_flag_xxx">FT_FACE_FLAG_SVG</a><br />
+<a href="ft2-face_creation.html#ft_face_flag_xxx">FT_FACE_FLAG_TRICKY</a><br />
+<a href="ft2-face_creation.html#ft_face_flag_xxx">FT_FACE_FLAG_VARIATION</a><br />
+<a href="ft2-face_creation.html#ft_face_flag_xxx">FT_FACE_FLAG_VERTICAL</a><br />
+<a href="ft2-face_creation.html#ft_face_flag_xxx">FT_FACE_FLAG_XXX</a><br />
+<a href="ft2-glyph_variants.html#ft_face_getcharsofvariant">FT_Face_GetCharsOfVariant</a><br />
+<a href="ft2-glyph_variants.html#ft_face_getcharvariantindex">FT_Face_GetCharVariantIndex</a><br />
+<a href="ft2-glyph_variants.html#ft_face_getcharvariantisdefault">FT_Face_GetCharVariantIsDefault</a><br />
+<a href="ft2-glyph_variants.html#ft_face_getvariantselectors">FT_Face_GetVariantSelectors</a><br />
+<a href="ft2-glyph_variants.html#ft_face_getvariantsofchar">FT_Face_GetVariantsOfChar</a><br />
+<a href="ft2-other_api_data.html#ft_face_internal">FT_Face_Internal</a><br />
+<a href="ft2-face_creation.html#ft_face_properties">FT_Face_Properties</a><br />
+<a href="ft2-other_api_data.html#ft_face_setunpatentedhinting">FT_Face_SetUnpatentedHinting</a><br />
+<a href="ft2-face_creation.html#ft_facerec">FT_FaceRec</a><br />
+<a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a><br />
+<a href="ft2-computations.html#ft_floorfix">FT_FloorFix</a><br />
+<a href="ft2-header_file_macros.html#ft_font_formats_h">FT_FONT_FORMATS_H</a><br />
+<a href="ft2-system_interface.html#ft_free_func">FT_Free_Func</a><br />
+<a href="ft2-header_file_macros.html#ft_freetype_h">FT_FREETYPE_H</a><br />
+<a href="ft2-information_retrieval.html#ft_fstype_xxx">FT_FSTYPE_BITMAP_EMBEDDING_ONLY</a><br />
+<a href="ft2-information_retrieval.html#ft_fstype_xxx">FT_FSTYPE_EDITABLE_EMBEDDING</a><br />
+<a href="ft2-information_retrieval.html#ft_fstype_xxx">FT_FSTYPE_INSTALLABLE_EMBEDDING</a><br />
+<a href="ft2-information_retrieval.html#ft_fstype_xxx">FT_FSTYPE_NO_SUBSETTING</a><br />
+<a href="ft2-information_retrieval.html#ft_fstype_xxx">FT_FSTYPE_PREVIEW_AND_PRINT_EMBEDDING</a><br />
+<a href="ft2-information_retrieval.html#ft_fstype_xxx">FT_FSTYPE_RESTRICTED_LICENSE_EMBEDDING</a><br />
+<a href="ft2-information_retrieval.html#ft_fstype_xxx">FT_FSTYPE_XXX</a><br />
+<a href="ft2-basic_types.html#ft_fword">FT_FWord</a><br />
+<a href="ft2-gasp_table.html#ft_gasp_xxx">FT_GASP_DO_GRAY</a><br />
+<a href="ft2-gasp_table.html#ft_gasp_xxx">FT_GASP_DO_GRIDFIT</a><br />
+<a href="ft2-header_file_macros.html#ft_gasp_h">FT_GASP_H</a><br />
+<a href="ft2-gasp_table.html#ft_gasp_xxx">FT_GASP_NO_TABLE</a><br />
+<a href="ft2-gasp_table.html#ft_gasp_xxx">FT_GASP_SYMMETRIC_GRIDFIT</a><br />
+<a href="ft2-gasp_table.html#ft_gasp_xxx">FT_GASP_SYMMETRIC_SMOOTHING</a><br />
+<a href="ft2-gasp_table.html#ft_gasp_xxx">FT_GASP_XXX</a><br />
+<a href="ft2-basic_types.html#ft_generic">FT_Generic</a><br />
+<a href="ft2-basic_types.html#ft_generic_finalizer">FT_Generic_Finalizer</a><br />
+<a href="ft2-quick_advance.html#ft_get_advance">FT_Get_Advance</a><br />
+<a href="ft2-quick_advance.html#ft_get_advances">FT_Get_Advances</a><br />
+<a href="ft2-bdf_fonts.html#ft_get_bdf_charset_id">FT_Get_BDF_Charset_ID</a><br />
+<a href="ft2-bdf_fonts.html#ft_get_bdf_property">FT_Get_BDF_Property</a><br />
+<a href="ft2-character_mapping.html#ft_get_char_index">FT_Get_Char_Index</a><br />
+<a href="ft2-character_mapping.html#ft_get_charmap_index">FT_Get_Charmap_Index</a><br />
+<a href="ft2-cid_fonts.html#ft_get_cid_from_glyph_index">FT_Get_CID_From_Glyph_Index</a><br />
+<a href="ft2-cid_fonts.html#ft_get_cid_is_internally_cid_keyed">FT_Get_CID_Is_Internally_CID_Keyed</a><br />
+<a href="ft2-cid_fonts.html#ft_get_cid_registry_ordering_supplement">FT_Get_CID_Registry_Ordering_Supplement</a><br />
+<a href="ft2-truetype_tables.html#ft_get_cmap_format">FT_Get_CMap_Format</a><br />
+<a href="ft2-truetype_tables.html#ft_get_cmap_language_id">FT_Get_CMap_Language_ID</a><br />
+<a href="ft2-layer_management.html#ft_get_color_glyph_clipbox">FT_Get_Color_Glyph_ClipBox</a><br />
+<a href="ft2-layer_management.html#ft_get_color_glyph_layer">FT_Get_Color_Glyph_Layer</a><br />
+<a href="ft2-layer_management.html#ft_get_color_glyph_paint">FT_Get_Color_Glyph_Paint</a><br />
+<a href="ft2-layer_management.html#ft_get_colorline_stops">FT_Get_Colorline_Stops</a><br />
+<a href="ft2-multiple_masters.html#ft_get_default_named_instance">FT_Get_Default_Named_Instance</a><br />
+<a href="ft2-character_mapping.html#ft_get_first_char">FT_Get_First_Char</a><br />
+<a href="ft2-font_formats.html#ft_get_font_format">FT_Get_Font_Format</a><br />
+<a href="ft2-information_retrieval.html#ft_get_fstype_flags">FT_Get_FSType_Flags</a><br />
+<a href="ft2-gasp_table.html#ft_get_gasp">FT_Get_Gasp</a><br />
+<a href="ft2-glyph_management.html#ft_get_glyph">FT_Get_Glyph</a><br />
+<a href="ft2-information_retrieval.html#ft_get_glyph_name">FT_Get_Glyph_Name</a><br />
+<a href="ft2-glyph_retrieval.html#ft_get_kerning">FT_Get_Kerning</a><br />
+<a href="ft2-multiple_masters.html#ft_get_mm_blend_coordinates">FT_Get_MM_Blend_Coordinates</a><br />
+<a href="ft2-multiple_masters.html#ft_get_mm_var">FT_Get_MM_Var</a><br />
+<a href="ft2-multiple_masters.html#ft_get_mm_weightvector">FT_Get_MM_WeightVector</a><br />
+<a href="ft2-module_management.html#ft_get_module">FT_Get_Module</a><br />
+<a href="ft2-multiple_masters.html#ft_get_multi_master">FT_Get_Multi_Master</a><br />
+<a href="ft2-information_retrieval.html#ft_get_name_index">FT_Get_Name_Index</a><br />
+<a href="ft2-character_mapping.html#ft_get_next_char">FT_Get_Next_Char</a><br />
+<a href="ft2-layer_management.html#ft_get_paint">FT_Get_Paint</a><br />
+<a href="ft2-layer_management.html#ft_get_paint_layers">FT_Get_Paint_Layers</a><br />
+<a href="ft2-pfr_fonts.html#ft_get_pfr_advance">FT_Get_PFR_Advance</a><br />
+<a href="ft2-pfr_fonts.html#ft_get_pfr_kerning">FT_Get_PFR_Kerning</a><br />
+<a href="ft2-pfr_fonts.html#ft_get_pfr_metrics">FT_Get_PFR_Metrics</a><br />
+<a href="ft2-information_retrieval.html#ft_get_postscript_name">FT_Get_Postscript_Name</a><br />
+<a href="ft2-type1_tables.html#ft_get_ps_font_info">FT_Get_PS_Font_Info</a><br />
+<a href="ft2-type1_tables.html#ft_get_ps_font_private">FT_Get_PS_Font_Private</a><br />
+<a href="ft2-type1_tables.html#ft_get_ps_font_value">FT_Get_PS_Font_Value</a><br />
+<a href="ft2-module_management.html#ft_get_renderer">FT_Get_Renderer</a><br />
+<a href="ft2-sfnt_names.html#ft_get_sfnt_langtag">FT_Get_Sfnt_LangTag</a><br />
+<a href="ft2-sfnt_names.html#ft_get_sfnt_name">FT_Get_Sfnt_Name</a><br />
+<a href="ft2-sfnt_names.html#ft_get_sfnt_name_count">FT_Get_Sfnt_Name_Count</a><br />
+<a href="ft2-truetype_tables.html#ft_get_sfnt_table">FT_Get_Sfnt_Table</a><br />
+<a href="ft2-information_retrieval.html#ft_get_subglyph_info">FT_Get_SubGlyph_Info</a><br />
+<a href="ft2-glyph_retrieval.html#ft_get_track_kerning">FT_Get_Track_Kerning</a><br />
+<a href="ft2-sizing_and_scaling.html#ft_get_transform">FT_Get_Transform</a><br />
+<a href="ft2-truetype_engine.html#ft_get_truetype_engine_type">FT_Get_TrueType_Engine_Type</a><br />
+<a href="ft2-multiple_masters.html#ft_get_var_axis_flags">FT_Get_Var_Axis_Flags</a><br />
+<a href="ft2-multiple_masters.html#ft_get_var_blend_coordinates">FT_Get_Var_Blend_Coordinates</a><br />
+<a href="ft2-multiple_masters.html#ft_get_var_design_coordinates">FT_Get_Var_Design_Coordinates</a><br />
+<a href="ft2-winfnt_fonts.html#ft_get_winfnt_header">FT_Get_WinFNT_Header</a><br />
+<a href="ft2-mac_specific.html#ft_getfile_from_mac_ats_name">FT_GetFile_From_Mac_ATS_Name</a><br />
+<a href="ft2-mac_specific.html#ft_getfile_from_mac_name">FT_GetFile_From_Mac_Name</a><br />
+<a href="ft2-mac_specific.html#ft_getfilepath_from_mac_ats_name">FT_GetFilePath_From_Mac_ATS_Name</a><br />
+<a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a><br />
+<a href="ft2-glyph_management.html#ft_glyph_bbox_mode">FT_GLYPH_BBOX_GRIDFIT</a><br />
+<a href="ft2-glyph_management.html#ft_glyph_bbox_mode">FT_Glyph_BBox_Mode</a><br />
+<a href="ft2-glyph_management.html#ft_glyph_bbox_mode">FT_GLYPH_BBOX_PIXELS</a><br />
+<a href="ft2-glyph_management.html#ft_glyph_bbox_mode">FT_GLYPH_BBOX_SUBPIXELS</a><br />
+<a href="ft2-glyph_management.html#ft_glyph_bbox_mode">FT_GLYPH_BBOX_TRUNCATE</a><br />
+<a href="ft2-glyph_management.html#ft_glyph_bbox_mode">FT_GLYPH_BBOX_UNSCALED</a><br />
+<a href="ft2-glyph_management.html#ft_glyph_copy">FT_Glyph_Copy</a><br />
+<a href="ft2-basic_types.html#ft_glyph_format">FT_Glyph_Format</a><br />
+<a href="ft2-basic_types.html#ft_glyph_format">FT_GLYPH_FORMAT_BITMAP</a><br />
+<a href="ft2-basic_types.html#ft_glyph_format">FT_GLYPH_FORMAT_COMPOSITE</a><br />
+<a href="ft2-basic_types.html#ft_glyph_format">FT_GLYPH_FORMAT_NONE</a><br />
+<a href="ft2-basic_types.html#ft_glyph_format">FT_GLYPH_FORMAT_OUTLINE</a><br />
+<a href="ft2-basic_types.html#ft_glyph_format">FT_GLYPH_FORMAT_PLOTTER</a><br />
+<a href="ft2-basic_types.html#ft_glyph_format">FT_GLYPH_FORMAT_SVG</a><br />
+<a href="ft2-glyph_management.html#ft_glyph_get_cbox">FT_Glyph_Get_CBox</a><br />
+<a href="ft2-header_file_macros.html#ft_glyph_h">FT_GLYPH_H</a><br />
+<a href="ft2-glyph_retrieval.html#ft_glyph_metrics">FT_Glyph_Metrics</a><br />
+<a href="ft2-glyph_stroker.html#ft_glyph_stroke">FT_Glyph_Stroke</a><br />
+<a href="ft2-glyph_stroker.html#ft_glyph_strokeborder">FT_Glyph_StrokeBorder</a><br />
+<a href="ft2-glyph_management.html#ft_glyph_to_bitmap">FT_Glyph_To_Bitmap</a><br />
+<a href="ft2-glyph_management.html#ft_glyph_transform">FT_Glyph_Transform</a><br />
+<a href="ft2-glyph_management.html#ft_glyphrec">FT_GlyphRec</a><br />
+<a href="ft2-glyph_retrieval.html#ft_glyphslot">FT_GlyphSlot</a><br />
+<a href="ft2-bitmap_handling.html#ft_glyphslot_own_bitmap">FT_GlyphSlot_Own_Bitmap</a><br />
+<a href="ft2-glyph_retrieval.html#ft_glyphslotrec">FT_GlyphSlotRec</a><br />
+<a href="ft2-header_file_macros.html#ft_gx_validate_h">FT_GX_VALIDATE_H</a><br />
+<a href="ft2-header_file_macros.html#ft_gzip_h">FT_GZIP_H</a><br />
+<a href="ft2-gzip.html#ft_gzip_uncompress">FT_Gzip_Uncompress</a><br />
+<a href="ft2-font_testing_macros.html#ft_has_color">FT_HAS_COLOR</a><br />
+<a href="ft2-other_api_data.html#ft_has_fast_glyphs">FT_HAS_FAST_GLYPHS</a><br />
+<a href="ft2-font_testing_macros.html#ft_has_fixed_sizes">FT_HAS_FIXED_SIZES</a><br />
+<a href="ft2-font_testing_macros.html#ft_has_glyph_names">FT_HAS_GLYPH_NAMES</a><br />
+<a href="ft2-font_testing_macros.html#ft_has_horizontal">FT_HAS_HORIZONTAL</a><br />
+<a href="ft2-font_testing_macros.html#ft_has_kerning">FT_HAS_KERNING</a><br />
+<a href="ft2-font_testing_macros.html#ft_has_multiple_masters">FT_HAS_MULTIPLE_MASTERS</a><br />
+<a href="ft2-type1_tables.html#ft_has_ps_glyph_names">FT_Has_PS_Glyph_Names</a><br />
+<a href="ft2-font_testing_macros.html#ft_has_sbix">FT_HAS_SBIX</a><br />
+<a href="ft2-font_testing_macros.html#ft_has_sbix_overlay">FT_HAS_SBIX_OVERLAY</a><br />
+<a href="ft2-font_testing_macros.html#ft_has_svg">FT_HAS_SVG</a><br />
+<a href="ft2-font_testing_macros.html#ft_has_vertical">FT_HAS_VERTICAL</a><br />
+<a href="ft2-properties.html#ft_hinting_xxx">FT_HINTING_ADOBE</a><br />
+<a href="ft2-properties.html#ft_hinting_xxx">FT_HINTING_FREETYPE</a><br />
+<a href="ft2-properties.html#ft_hinting_xxx">FT_HINTING_XXX</a><br />
+<a href="ft2-header_file_macros.html#ft_image_h">FT_IMAGE_H</a><br />
+<a href="ft2-basic_types.html#ft_image_tag">FT_IMAGE_TAG</a><br />
+<a href="ft2-incremental.html#ft_incremental">FT_Incremental</a><br />
+<a href="ft2-incremental.html#ft_incremental_freeglyphdatafunc">FT_Incremental_FreeGlyphDataFunc</a><br />
+<a href="ft2-incremental.html#ft_incremental_funcsrec">FT_Incremental_FuncsRec</a><br />
+<a href="ft2-incremental.html#ft_incremental_getglyphdatafunc">FT_Incremental_GetGlyphDataFunc</a><br />
+<a href="ft2-incremental.html#ft_incremental_getglyphmetricsfunc">FT_Incremental_GetGlyphMetricsFunc</a><br />
+<a href="ft2-header_file_macros.html#ft_incremental_h">FT_INCREMENTAL_H</a><br />
+<a href="ft2-incremental.html#ft_incremental_interface">FT_Incremental_Interface</a><br />
+<a href="ft2-incremental.html#ft_incremental_interfacerec">FT_Incremental_InterfaceRec</a><br />
+<a href="ft2-incremental.html#ft_incremental_metrics">FT_Incremental_Metrics</a><br />
+<a href="ft2-incremental.html#ft_incremental_metricsrec">FT_Incremental_MetricsRec</a><br />
+<a href="ft2-library_setup.html#ft_init_freetype">FT_Init_FreeType</a><br />
+<a href="ft2-basic_types.html#ft_int">FT_Int</a><br />
+<a href="ft2-basic_types.html#ft_int16">FT_Int16</a><br />
+<a href="ft2-basic_types.html#ft_int32">FT_Int32</a><br />
+<a href="ft2-basic_types.html#ft_int64">FT_Int64</a><br />
+<a href="ft2-font_testing_macros.html#ft_is_cid_keyed">FT_IS_CID_KEYED</a><br />
+<a href="ft2-font_testing_macros.html#ft_is_fixed_width">FT_IS_FIXED_WIDTH</a><br />
+<a href="ft2-font_testing_macros.html#ft_is_named_instance">FT_IS_NAMED_INSTANCE</a><br />
+<a href="ft2-font_testing_macros.html#ft_is_scalable">FT_IS_SCALABLE</a><br />
+<a href="ft2-font_testing_macros.html#ft_is_sfnt">FT_IS_SFNT</a><br />
+<a href="ft2-font_testing_macros.html#ft_is_tricky">FT_IS_TRICKY</a><br />
+<a href="ft2-font_testing_macros.html#ft_is_variation">FT_IS_VARIATION</a><br />
+<a href="ft2-glyph_retrieval.html#ft_kerning_mode">FT_KERNING_DEFAULT</a><br />
+<a href="ft2-glyph_retrieval.html#ft_kerning_mode">FT_Kerning_Mode</a><br />
+<a href="ft2-glyph_retrieval.html#ft_kerning_mode">FT_KERNING_UNFITTED</a><br />
+<a href="ft2-glyph_retrieval.html#ft_kerning_mode">FT_KERNING_UNSCALED</a><br />
+<a href="ft2-layer_management.html#ft_layeriterator">FT_LayerIterator</a><br />
+<a href="ft2-lcd_rendering.html#ft_lcdfilter">FT_LCD_FILTER_DEFAULT</a><br />
+<a href="ft2-header_file_macros.html#ft_lcd_filter_h">FT_LCD_FILTER_H</a><br />
+<a href="ft2-lcd_rendering.html#ft_lcdfilter">FT_LCD_FILTER_LEGACY</a><br />
+<a href="ft2-lcd_rendering.html#ft_lcdfilter">FT_LCD_FILTER_LEGACY1</a><br />
+<a href="ft2-lcd_rendering.html#ft_lcdfilter">FT_LCD_FILTER_LIGHT</a><br />
+<a href="ft2-lcd_rendering.html#ft_lcdfilter">FT_LCD_FILTER_NONE</a><br />
+<a href="ft2-lcd_rendering.html#ft_lcdfilter">FT_LcdFilter</a><br />
+<a href="ft2-lcd_rendering.html#ft_lcdfivetapfilter">FT_LcdFiveTapFilter</a><br />
+<a href="ft2-library_setup.html#ft_library">FT_Library</a><br />
+<a href="ft2-lcd_rendering.html#ft_library_setlcdfilter">FT_Library_SetLcdFilter</a><br />
+<a href="ft2-lcd_rendering.html#ft_library_setlcdfilterweights">FT_Library_SetLcdFilterWeights</a><br />
+<a href="ft2-lcd_rendering.html#ft_library_setlcdgeometry">FT_Library_SetLcdGeometry</a><br />
+<a href="ft2-library_setup.html#ft_library_version">FT_Library_Version</a><br />
+<a href="ft2-list_processing.html#ft_list">FT_List</a><br />
+<a href="ft2-list_processing.html#ft_list_add">FT_List_Add</a><br />
+<a href="ft2-list_processing.html#ft_list_destructor">FT_List_Destructor</a><br />
+<a href="ft2-list_processing.html#ft_list_finalize">FT_List_Finalize</a><br />
+<a href="ft2-list_processing.html#ft_list_find">FT_List_Find</a><br />
+<a href="ft2-header_file_macros.html#ft_list_h">FT_LIST_H</a><br />
+<a href="ft2-list_processing.html#ft_list_insert">FT_List_Insert</a><br />
+<a href="ft2-list_processing.html#ft_list_iterate">FT_List_Iterate</a><br />
+<a href="ft2-list_processing.html#ft_list_iterator">FT_List_Iterator</a><br />
+<a href="ft2-list_processing.html#ft_list_remove">FT_List_Remove</a><br />
+<a href="ft2-list_processing.html#ft_list_up">FT_List_Up</a><br />
+<a href="ft2-list_processing.html#ft_listnode">FT_ListNode</a><br />
+<a href="ft2-list_processing.html#ft_listnoderec">FT_ListNodeRec</a><br />
+<a href="ft2-list_processing.html#ft_listrec">FT_ListRec</a><br />
+<a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_BITMAP_METRICS_ONLY</a><br />
+<a href="ft2-character_mapping.html#ft_load_char">FT_Load_Char</a><br />
+<a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_COLOR</a><br />
+<a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_COMPUTE_METRICS</a><br />
+<a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_CROP_BITMAP</a><br />
+<a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_DEFAULT</a><br />
+<a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_FORCE_AUTOHINT</a><br />
+<a href="ft2-glyph_retrieval.html#ft_load_glyph">FT_Load_Glyph</a><br />
+<a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_IGNORE_GLOBAL_ADVANCE_WIDTH</a><br />
+<a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_IGNORE_TRANSFORM</a><br />
+<a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_LINEAR_DESIGN</a><br />
+<a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_MONOCHROME</a><br />
+<a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_NO_AUTOHINT</a><br />
+<a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_NO_BITMAP</a><br />
+<a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_NO_HINTING</a><br />
+<a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_NO_RECURSE</a><br />
+<a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_NO_SCALE</a><br />
+<a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_NO_SVG</a><br />
+<a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_PEDANTIC</a><br />
+<a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_RENDER</a><br />
+<a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_SBITS_ONLY</a><br />
+<a href="ft2-truetype_tables.html#ft_load_sfnt_table">FT_Load_Sfnt_Table</a><br />
+<a href="ft2-glyph_retrieval.html#ft_load_target_xxx">FT_LOAD_TARGET_LCD</a><br />
+<a href="ft2-glyph_retrieval.html#ft_load_target_xxx">FT_LOAD_TARGET_LCD_V</a><br />
+<a href="ft2-glyph_retrieval.html#ft_load_target_xxx">FT_LOAD_TARGET_LIGHT</a><br />
+<a href="ft2-glyph_retrieval.html#ft_load_target_mode">FT_LOAD_TARGET_MODE</a><br />
+<a href="ft2-glyph_retrieval.html#ft_load_target_xxx">FT_LOAD_TARGET_MONO</a><br />
+<a href="ft2-glyph_retrieval.html#ft_load_target_xxx">FT_LOAD_TARGET_NORMAL</a><br />
+<a href="ft2-glyph_retrieval.html#ft_load_target_xxx">FT_LOAD_TARGET_XXX</a><br />
+<a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_VERTICAL_LAYOUT</a><br />
+<a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_XXX</a><br />
+<a href="ft2-basic_types.html#ft_long">FT_Long</a><br />
+<a href="ft2-header_file_macros.html#ft_lzw_h">FT_LZW_H</a><br />
+<a href="ft2-header_file_macros.html#ft_mac_h">FT_MAC_H</a><br />
+<a href="ft2-basic_types.html#ft_make_tag">FT_MAKE_TAG</a><br />
+<a href="ft2-basic_types.html#ft_matrix">FT_Matrix</a><br />
+<a href="ft2-computations.html#ft_matrix_invert">FT_Matrix_Invert</a><br />
+<a href="ft2-computations.html#ft_matrix_multiply">FT_Matrix_Multiply</a><br />
+<a href="ft2-system_interface.html#ft_memory">FT_Memory</a><br />
+<a href="ft2-system_interface.html#ft_memoryrec">FT_MemoryRec</a><br />
+<a href="ft2-multiple_masters.html#ft_mm_axis">FT_MM_Axis</a><br />
+<a href="ft2-multiple_masters.html#ft_mm_var">FT_MM_Var</a><br />
+<a href="ft2-module_management.html#ft_module">FT_Module</a><br />
+<a href="ft2-module_management.html#ft_module_class">FT_Module_Class</a><br />
+<a href="ft2-module_management.html#ft_module_constructor">FT_Module_Constructor</a><br />
+<a href="ft2-module_management.html#ft_module_destructor">FT_Module_Destructor</a><br />
+<a href="ft2-header_file_macros.html#ft_module_errors_h">FT_MODULE_ERRORS_H</a><br />
+<a href="ft2-header_file_macros.html#ft_module_h">FT_MODULE_H</a><br />
+<a href="ft2-module_management.html#ft_module_requester">FT_Module_Requester</a><br />
+<a href="ft2-computations.html#ft_muldiv">FT_MulDiv</a><br />
+<a href="ft2-computations.html#ft_mulfix">FT_MulFix</a><br />
+<a href="ft2-multiple_masters.html#ft_multi_master">FT_Multi_Master</a><br />
+<a href="ft2-header_file_macros.html#ft_multiple_masters_h">FT_MULTIPLE_MASTERS_H</a><br />
+<a href="ft2-face_creation.html#ft_new_face">FT_New_Face</a><br />
+<a href="ft2-mac_specific.html#ft_new_face_from_fond">FT_New_Face_From_FOND</a><br />
+<a href="ft2-mac_specific.html#ft_new_face_from_fsref">FT_New_Face_From_FSRef</a><br />
+<a href="ft2-mac_specific.html#ft_new_face_from_fsspec">FT_New_Face_From_FSSpec</a><br />
+<a href="ft2-glyph_management.html#ft_new_glyph">FT_New_Glyph</a><br />
+<a href="ft2-module_management.html#ft_new_library">FT_New_Library</a><br />
+<a href="ft2-face_creation.html#ft_new_memory_face">FT_New_Memory_Face</a><br />
+<a href="ft2-sizes_management.html#ft_new_size">FT_New_Size</a><br />
+<a href="ft2-basic_types.html#ft_offset">FT_Offset</a><br />
+<a href="ft2-layer_management.html#ft_opaquepaint">FT_OpaquePaint</a><br />
+<a href="ft2-face_creation.html#ft_open_args">FT_Open_Args</a><br />
+<a href="ft2-face_creation.html#ft_open_xxx">FT_OPEN_DRIVER</a><br />
+<a href="ft2-face_creation.html#ft_open_face">FT_Open_Face</a><br />
+<a href="ft2-face_creation.html#ft_open_xxx">FT_OPEN_MEMORY</a><br />
+<a href="ft2-face_creation.html#ft_open_xxx">FT_OPEN_PARAMS</a><br />
+<a href="ft2-face_creation.html#ft_open_xxx">FT_OPEN_PATHNAME</a><br />
+<a href="ft2-face_creation.html#ft_open_xxx">FT_OPEN_STREAM</a><br />
+<a href="ft2-face_creation.html#ft_open_xxx">FT_OPEN_XXX</a><br />
+<a href="ft2-ot_validation.html#ft_opentype_free">FT_OpenType_Free</a><br />
+<a href="ft2-ot_validation.html#ft_opentype_validate">FT_OpenType_Validate</a><br />
+<a href="ft2-header_file_macros.html#ft_opentype_validate_h">FT_OPENTYPE_VALIDATE_H</a><br />
+<a href="ft2-outline_processing.html#ft_orientation">FT_Orientation</a><br />
+<a href="ft2-outline_processing.html#ft_orientation">FT_ORIENTATION_FILL_LEFT</a><br />
+<a href="ft2-outline_processing.html#ft_orientation">FT_ORIENTATION_FILL_RIGHT</a><br />
+<a href="ft2-outline_processing.html#ft_orientation">FT_ORIENTATION_NONE</a><br />
+<a href="ft2-outline_processing.html#ft_orientation">FT_ORIENTATION_POSTSCRIPT</a><br />
+<a href="ft2-outline_processing.html#ft_orientation">FT_ORIENTATION_TRUETYPE</a><br />
+<a href="ft2-header_file_macros.html#ft_otsvg_h">FT_OTSVG_H</a><br />
+<a href="ft2-outline_processing.html#ft_outline">FT_Outline</a><br />
+<a href="ft2-outline_processing.html#ft_outline_check">FT_Outline_Check</a><br />
+<a href="ft2-outline_processing.html#ft_outline_conictofunc">FT_Outline_ConicToFunc</a><br />
+<a href="ft2-outline_processing.html#ft_outline_copy">FT_Outline_Copy</a><br />
+<a href="ft2-outline_processing.html#ft_outline_cubictofunc">FT_Outline_CubicToFunc</a><br />
+<a href="ft2-outline_processing.html#ft_outline_decompose">FT_Outline_Decompose</a><br />
+<a href="ft2-outline_processing.html#ft_outline_done">FT_Outline_Done</a><br />
+<a href="ft2-outline_processing.html#ft_outline_embolden">FT_Outline_Embolden</a><br />
+<a href="ft2-outline_processing.html#ft_outline_emboldenxy">FT_Outline_EmboldenXY</a><br />
+<a href="ft2-outline_processing.html#ft_outline_xxx">FT_OUTLINE_EVEN_ODD_FILL</a><br />
+<a href="ft2-outline_processing.html#ft_outline_funcs">FT_Outline_Funcs</a><br />
+<a href="ft2-outline_processing.html#ft_outline_get_bbox">FT_Outline_Get_BBox</a><br />
+<a href="ft2-outline_processing.html#ft_outline_get_bitmap">FT_Outline_Get_Bitmap</a><br />
+<a href="ft2-outline_processing.html#ft_outline_get_cbox">FT_Outline_Get_CBox</a><br />
+<a href="ft2-outline_processing.html#ft_outline_get_orientation">FT_Outline_Get_Orientation</a><br />
+<a href="ft2-glyph_stroker.html#ft_outline_getinsideborder">FT_Outline_GetInsideBorder</a><br />
+<a href="ft2-glyph_stroker.html#ft_outline_getoutsideborder">FT_Outline_GetOutsideBorder</a><br />
+<a href="ft2-header_file_macros.html#ft_outline_h">FT_OUTLINE_H</a><br />
+<a href="ft2-outline_processing.html#ft_outline_xxx">FT_OUTLINE_HIGH_PRECISION</a><br />
+<a href="ft2-outline_processing.html#ft_outline_xxx">FT_OUTLINE_IGNORE_DROPOUTS</a><br />
+<a href="ft2-outline_processing.html#ft_outline_xxx">FT_OUTLINE_INCLUDE_STUBS</a><br />
+<a href="ft2-outline_processing.html#ft_outline_linetofunc">FT_Outline_LineToFunc</a><br />
+<a href="ft2-outline_processing.html#ft_outline_movetofunc">FT_Outline_MoveToFunc</a><br />
+<a href="ft2-outline_processing.html#ft_outline_new">FT_Outline_New</a><br />
+<a href="ft2-outline_processing.html#ft_outline_xxx">FT_OUTLINE_NONE</a><br />
+<a href="ft2-outline_processing.html#ft_outline_xxx">FT_OUTLINE_OVERLAP</a><br />
+<a href="ft2-outline_processing.html#ft_outline_xxx">FT_OUTLINE_OWNER</a><br />
+<a href="ft2-outline_processing.html#ft_outline_render">FT_Outline_Render</a><br />
+<a href="ft2-outline_processing.html#ft_outline_reverse">FT_Outline_Reverse</a><br />
+<a href="ft2-outline_processing.html#ft_outline_xxx">FT_OUTLINE_REVERSE_FILL</a><br />
+<a href="ft2-outline_processing.html#ft_outline_xxx">FT_OUTLINE_SINGLE_PASS</a><br />
+<a href="ft2-outline_processing.html#ft_outline_xxx">FT_OUTLINE_SMART_DROPOUTS</a><br />
+<a href="ft2-outline_processing.html#ft_outline_transform">FT_Outline_Transform</a><br />
+<a href="ft2-outline_processing.html#ft_outline_translate">FT_Outline_Translate</a><br />
+<a href="ft2-outline_processing.html#ft_outline_xxx">FT_OUTLINE_XXX</a><br />
+<a href="ft2-glyph_management.html#ft_outlineglyph">FT_OutlineGlyph</a><br />
+<a href="ft2-glyph_management.html#ft_outlineglyphrec">FT_OutlineGlyphRec</a><br />
+<a href="ft2-layer_management.html#ft_paintcolrglyph">FT_PaintColrGlyph</a><br />
+<a href="ft2-layer_management.html#ft_paintcolrlayers">FT_PaintColrLayers</a><br />
+<a href="ft2-layer_management.html#ft_paintcomposite">FT_PaintComposite</a><br />
+<a href="ft2-layer_management.html#ft_paintextend">FT_PaintExtend</a><br />
+<a href="ft2-layer_management.html#ft_paintformat">FT_PaintFormat</a><br />
+<a href="ft2-layer_management.html#ft_paintglyph">FT_PaintGlyph</a><br />
+<a href="ft2-layer_management.html#ft_paintlineargradient">FT_PaintLinearGradient</a><br />
+<a href="ft2-layer_management.html#ft_paintradialgradient">FT_PaintRadialGradient</a><br />
+<a href="ft2-layer_management.html#ft_paintrotate">FT_PaintRotate</a><br />
+<a href="ft2-layer_management.html#ft_paintscale">FT_PaintScale</a><br />
+<a href="ft2-layer_management.html#ft_paintskew">FT_PaintSkew</a><br />
+<a href="ft2-layer_management.html#ft_paintsolid">FT_PaintSolid</a><br />
+<a href="ft2-layer_management.html#ft_paintsweepgradient">FT_PaintSweepGradient</a><br />
+<a href="ft2-layer_management.html#ft_painttransform">FT_PaintTransform</a><br />
+<a href="ft2-layer_management.html#ft_painttranslate">FT_PaintTranslate</a><br />
+<a href="ft2-color_management.html#ft_palette_data">FT_Palette_Data</a><br />
+<a href="ft2-color_management.html#ft_palette_data_get">FT_Palette_Data_Get</a><br />
+<a href="ft2-color_management.html#ft_palette_xxx">FT_PALETTE_FOR_DARK_BACKGROUND</a><br />
+<a href="ft2-color_management.html#ft_palette_xxx">FT_PALETTE_FOR_LIGHT_BACKGROUND</a><br />
+<a href="ft2-color_management.html#ft_palette_select">FT_Palette_Select</a><br />
+<a href="ft2-color_management.html#ft_palette_set_foreground_color">FT_Palette_Set_Foreground_Color</a><br />
+<a href="ft2-color_management.html#ft_palette_xxx">FT_PALETTE_XXX</a><br />
+<a href="ft2-parameter_tags.html#ft_param_tag_ignore_sbix">FT_PARAM_TAG_IGNORE_SBIX</a><br />
+<a href="ft2-parameter_tags.html#ft_param_tag_ignore_typographic_family">FT_PARAM_TAG_IGNORE_TYPOGRAPHIC_FAMILY</a><br />
+<a href="ft2-parameter_tags.html#ft_param_tag_ignore_typographic_subfamily">FT_PARAM_TAG_IGNORE_TYPOGRAPHIC_SUBFAMILY</a><br />
+<a href="ft2-parameter_tags.html#ft_param_tag_incremental">FT_PARAM_TAG_INCREMENTAL</a><br />
+<a href="ft2-parameter_tags.html#ft_param_tag_lcd_filter_weights">FT_PARAM_TAG_LCD_FILTER_WEIGHTS</a><br />
+<a href="ft2-parameter_tags.html#ft_param_tag_random_seed">FT_PARAM_TAG_RANDOM_SEED</a><br />
+<a href="ft2-parameter_tags.html#ft_param_tag_stem_darkening">FT_PARAM_TAG_STEM_DARKENING</a><br />
+<a href="ft2-parameter_tags.html#ft_param_tag_unpatented_hinting">FT_PARAM_TAG_UNPATENTED_HINTING</a><br />
+<a href="ft2-face_creation.html#ft_parameter">FT_Parameter</a><br />
+<a href="ft2-header_file_macros.html#ft_pcf_driver_h">FT_PCF_DRIVER_H</a><br />
+<a href="ft2-header_file_macros.html#ft_pfr_h">FT_PFR_H</a><br />
+<a href="ft2-basic_types.html#ft_pixel_mode">FT_Pixel_Mode</a><br />
+<a href="ft2-basic_types.html#ft_pixel_mode">FT_PIXEL_MODE_BGRA</a><br />
+<a href="ft2-basic_types.html#ft_pixel_mode">FT_PIXEL_MODE_GRAY</a><br />
+<a href="ft2-basic_types.html#ft_pixel_mode">FT_PIXEL_MODE_GRAY2</a><br />
+<a href="ft2-basic_types.html#ft_pixel_mode">FT_PIXEL_MODE_GRAY4</a><br />
+<a href="ft2-basic_types.html#ft_pixel_mode">FT_PIXEL_MODE_LCD</a><br />
+<a href="ft2-basic_types.html#ft_pixel_mode">FT_PIXEL_MODE_LCD_V</a><br />
+<a href="ft2-basic_types.html#ft_pixel_mode">FT_PIXEL_MODE_MONO</a><br />
+<a href="ft2-basic_types.html#ft_pixel_mode">FT_PIXEL_MODE_NONE</a><br />
+<a href="ft2-basic_types.html#ft_pointer">FT_Pointer</a><br />
+<a href="ft2-basic_types.html#ft_pos">FT_Pos</a><br />
+<a href="ft2-properties.html#ft_prop_glyphtoscriptmap">FT_Prop_GlyphToScriptMap</a><br />
+<a href="ft2-properties.html#ft_prop_increasexheight">FT_Prop_IncreaseXHeight</a><br />
+<a href="ft2-module_management.html#ft_property_get">FT_Property_Get</a><br />
+<a href="ft2-module_management.html#ft_property_set">FT_Property_Set</a><br />
+<a href="ft2-basic_types.html#ft_ptrdist">FT_PtrDist</a><br />
+<a href="ft2-raster.html#ft_raster">FT_Raster</a><br />
+<a href="ft2-raster.html#ft_raster_bitset_func">FT_Raster_BitSet_Func</a><br />
+<a href="ft2-raster.html#ft_raster_bittest_func">FT_Raster_BitTest_Func</a><br />
+<a href="ft2-raster.html#ft_raster_donefunc">FT_Raster_DoneFunc</a><br />
+<a href="ft2-raster.html#ft_raster_flag_xxx">FT_RASTER_FLAG_AA</a><br />
+<a href="ft2-raster.html#ft_raster_flag_xxx">FT_RASTER_FLAG_CLIP</a><br />
+<a href="ft2-raster.html#ft_raster_flag_xxx">FT_RASTER_FLAG_DEFAULT</a><br />
+<a href="ft2-raster.html#ft_raster_flag_xxx">FT_RASTER_FLAG_DIRECT</a><br />
+<a href="ft2-raster.html#ft_raster_flag_xxx">FT_RASTER_FLAG_SDF</a><br />
+<a href="ft2-raster.html#ft_raster_flag_xxx">FT_RASTER_FLAG_XXX</a><br />
+<a href="ft2-raster.html#ft_raster_funcs">FT_Raster_Funcs</a><br />
+<a href="ft2-raster.html#ft_raster_newfunc">FT_Raster_NewFunc</a><br />
+<a href="ft2-raster.html#ft_raster_params">FT_Raster_Params</a><br />
+<a href="ft2-raster.html#ft_raster_renderfunc">FT_Raster_RenderFunc</a><br />
+<a href="ft2-raster.html#ft_raster_resetfunc">FT_Raster_ResetFunc</a><br />
+<a href="ft2-raster.html#ft_raster_setmodefunc">FT_Raster_SetModeFunc</a><br />
+<a href="ft2-system_interface.html#ft_realloc_func">FT_Realloc_Func</a><br />
+<a href="ft2-face_creation.html#ft_reference_face">FT_Reference_Face</a><br />
+<a href="ft2-module_management.html#ft_reference_library">FT_Reference_Library</a><br />
+<a href="ft2-module_management.html#ft_remove_module">FT_Remove_Module</a><br />
+<a href="ft2-glyph_retrieval.html#ft_render_glyph">FT_Render_Glyph</a><br />
+<a href="ft2-header_file_macros.html#ft_render_h">FT_RENDER_H</a><br />
+<a href="ft2-glyph_retrieval.html#ft_render_mode">FT_Render_Mode</a><br />
+<a href="ft2-glyph_retrieval.html#ft_render_mode">FT_RENDER_MODE_LCD</a><br />
+<a href="ft2-glyph_retrieval.html#ft_render_mode">FT_RENDER_MODE_LCD_V</a><br />
+<a href="ft2-glyph_retrieval.html#ft_render_mode">FT_RENDER_MODE_LIGHT</a><br />
+<a href="ft2-glyph_retrieval.html#ft_render_mode">FT_RENDER_MODE_MONO</a><br />
+<a href="ft2-glyph_retrieval.html#ft_render_mode">FT_RENDER_MODE_NORMAL</a><br />
+<a href="ft2-glyph_retrieval.html#ft_render_mode">FT_RENDER_MODE_SDF</a><br />
+<a href="ft2-module_management.html#ft_renderer">FT_Renderer</a><br />
+<a href="ft2-module_management.html#ft_renderer_class">FT_Renderer_Class</a><br />
+<a href="ft2-sizing_and_scaling.html#ft_request_size">FT_Request_Size</a><br />
+<a href="ft2-computations.html#ft_roundfix">FT_RoundFix</a><br />
+<a href="ft2-character_mapping.html#ft_select_charmap">FT_Select_Charmap</a><br />
+<a href="ft2-sizing_and_scaling.html#ft_select_size">FT_Select_Size</a><br />
+<a href="ft2-sizing_and_scaling.html#ft_set_char_size">FT_Set_Char_Size</a><br />
+<a href="ft2-character_mapping.html#ft_set_charmap">FT_Set_Charmap</a><br />
+<a href="ft2-module_management.html#ft_set_debug_hook">FT_Set_Debug_Hook</a><br />
+<a href="ft2-debugging_apis.html#ft_set_default_log_handler">FT_Set_Default_Log_Handler</a><br />
+<a href="ft2-module_management.html#ft_set_default_properties">FT_Set_Default_Properties</a><br />
+<a href="ft2-debugging_apis.html#ft_set_log_handler">FT_Set_Log_Handler</a><br />
+<a href="ft2-multiple_masters.html#ft_set_mm_blend_coordinates">FT_Set_MM_Blend_Coordinates</a><br />
+<a href="ft2-multiple_masters.html#ft_set_mm_design_coordinates">FT_Set_MM_Design_Coordinates</a><br />
+<a href="ft2-multiple_masters.html#ft_set_mm_weightvector">FT_Set_MM_WeightVector</a><br />
+<a href="ft2-multiple_masters.html#ft_set_named_instance">FT_Set_Named_Instance</a><br />
+<a href="ft2-sizing_and_scaling.html#ft_set_pixel_sizes">FT_Set_Pixel_Sizes</a><br />
+<a href="ft2-module_management.html#ft_set_renderer">FT_Set_Renderer</a><br />
+<a href="ft2-sizing_and_scaling.html#ft_set_transform">FT_Set_Transform</a><br />
+<a href="ft2-multiple_masters.html#ft_set_var_blend_coordinates">FT_Set_Var_Blend_Coordinates</a><br />
+<a href="ft2-multiple_masters.html#ft_set_var_design_coordinates">FT_Set_Var_Design_Coordinates</a><br />
+<a href="ft2-truetype_tables.html#ft_sfnt_tag">FT_SFNT_HEAD</a><br />
+<a href="ft2-truetype_tables.html#ft_sfnt_tag">FT_SFNT_HHEA</a><br />
+<a href="ft2-truetype_tables.html#ft_sfnt_tag">FT_SFNT_MAXP</a><br />
+<a href="ft2-header_file_macros.html#ft_sfnt_names_h">FT_SFNT_NAMES_H</a><br />
+<a href="ft2-truetype_tables.html#ft_sfnt_tag">FT_SFNT_OS2</a><br />
+<a href="ft2-truetype_tables.html#ft_sfnt_tag">FT_SFNT_PCLT</a><br />
+<a href="ft2-truetype_tables.html#ft_sfnt_tag">FT_SFNT_POST</a><br />
+<a href="ft2-truetype_tables.html#ft_sfnt_table_info">FT_Sfnt_Table_Info</a><br />
+<a href="ft2-truetype_tables.html#ft_sfnt_tag">FT_Sfnt_Tag</a><br />
+<a href="ft2-truetype_tables.html#ft_sfnt_tag">FT_SFNT_VHEA</a><br />
+<a href="ft2-sfnt_names.html#ft_sfntlangtag">FT_SfntLangTag</a><br />
+<a href="ft2-sfnt_names.html#ft_sfntname">FT_SfntName</a><br />
+<a href="ft2-basic_types.html#ft_short">FT_Short</a><br />
+<a href="ft2-computations.html#ft_sin">FT_Sin</a><br />
+<a href="ft2-sizing_and_scaling.html#ft_size">FT_Size</a><br />
+<a href="ft2-other_api_data.html#ft_size_internal">FT_Size_Internal</a><br />
+<a href="ft2-sizing_and_scaling.html#ft_size_metrics">FT_Size_Metrics</a><br />
+<a href="ft2-sizing_and_scaling.html#ft_size_request">FT_Size_Request</a><br />
+<a href="ft2-sizing_and_scaling.html#ft_size_request_type">FT_Size_Request_Type</a><br />
+<a href="ft2-sizing_and_scaling.html#ft_size_request_type">FT_SIZE_REQUEST_TYPE_BBOX</a><br />
+<a href="ft2-sizing_and_scaling.html#ft_size_request_type">FT_SIZE_REQUEST_TYPE_CELL</a><br />
+<a href="ft2-sizing_and_scaling.html#ft_size_request_type">FT_SIZE_REQUEST_TYPE_NOMINAL</a><br />
+<a href="ft2-sizing_and_scaling.html#ft_size_request_type">FT_SIZE_REQUEST_TYPE_REAL_DIM</a><br />
+<a href="ft2-sizing_and_scaling.html#ft_size_request_type">FT_SIZE_REQUEST_TYPE_SCALES</a><br />
+<a href="ft2-sizing_and_scaling.html#ft_size_requestrec">FT_Size_RequestRec</a><br />
+<a href="ft2-sizing_and_scaling.html#ft_sizerec">FT_SizeRec</a><br />
+<a href="ft2-header_file_macros.html#ft_sizes_h">FT_SIZES_H</a><br />
+<a href="ft2-other_api_data.html#ft_slot_internal">FT_Slot_Internal</a><br />
+<a href="ft2-raster.html#ft_span">FT_Span</a><br />
+<a href="ft2-raster.html#ft_spanfunc">FT_SpanFunc</a><br />
+<a href="ft2-system_interface.html#ft_stream">FT_Stream</a><br />
+<a href="ft2-system_interface.html#ft_stream_closefunc">FT_Stream_CloseFunc</a><br />
+<a href="ft2-system_interface.html#ft_stream_iofunc">FT_Stream_IoFunc</a><br />
+<a href="ft2-bzip2.html#ft_stream_openbzip2">FT_Stream_OpenBzip2</a><br />
+<a href="ft2-gzip.html#ft_stream_opengzip">FT_Stream_OpenGzip</a><br />
+<a href="ft2-lzw.html#ft_stream_openlzw">FT_Stream_OpenLZW</a><br />
+<a href="ft2-system_interface.html#ft_streamdesc">FT_StreamDesc</a><br />
+<a href="ft2-system_interface.html#ft_streamrec">FT_StreamRec</a><br />
+<a href="ft2-basic_types.html#ft_string">FT_String</a><br />
+<a href="ft2-glyph_stroker.html#ft_stroker">FT_Stroker</a><br />
+<a href="ft2-glyph_stroker.html#ft_stroker_beginsubpath">FT_Stroker_BeginSubPath</a><br />
+<a href="ft2-glyph_stroker.html#ft_strokerborder">FT_STROKER_BORDER_LEFT</a><br />
+<a href="ft2-glyph_stroker.html#ft_strokerborder">FT_STROKER_BORDER_RIGHT</a><br />
+<a href="ft2-glyph_stroker.html#ft_stroker_conicto">FT_Stroker_ConicTo</a><br />
+<a href="ft2-glyph_stroker.html#ft_stroker_cubicto">FT_Stroker_CubicTo</a><br />
+<a href="ft2-glyph_stroker.html#ft_stroker_done">FT_Stroker_Done</a><br />
+<a href="ft2-glyph_stroker.html#ft_stroker_endsubpath">FT_Stroker_EndSubPath</a><br />
+<a href="ft2-glyph_stroker.html#ft_stroker_export">FT_Stroker_Export</a><br />
+<a href="ft2-glyph_stroker.html#ft_stroker_exportborder">FT_Stroker_ExportBorder</a><br />
+<a href="ft2-glyph_stroker.html#ft_stroker_getbordercounts">FT_Stroker_GetBorderCounts</a><br />
+<a href="ft2-glyph_stroker.html#ft_stroker_getcounts">FT_Stroker_GetCounts</a><br />
+<a href="ft2-header_file_macros.html#ft_stroker_h">FT_STROKER_H</a><br />
+<a href="ft2-glyph_stroker.html#ft_stroker_linecap">FT_Stroker_LineCap</a><br />
+<a href="ft2-glyph_stroker.html#ft_stroker_linecap">FT_STROKER_LINECAP_BUTT</a><br />
+<a href="ft2-glyph_stroker.html#ft_stroker_linecap">FT_STROKER_LINECAP_ROUND</a><br />
+<a href="ft2-glyph_stroker.html#ft_stroker_linecap">FT_STROKER_LINECAP_SQUARE</a><br />
+<a href="ft2-glyph_stroker.html#ft_stroker_linejoin">FT_Stroker_LineJoin</a><br />
+<a href="ft2-glyph_stroker.html#ft_stroker_linejoin">FT_STROKER_LINEJOIN_BEVEL</a><br />
+<a href="ft2-glyph_stroker.html#ft_stroker_linejoin">FT_STROKER_LINEJOIN_MITER</a><br />
+<a href="ft2-glyph_stroker.html#ft_stroker_linejoin">FT_STROKER_LINEJOIN_MITER_FIXED</a><br />
+<a href="ft2-glyph_stroker.html#ft_stroker_linejoin">FT_STROKER_LINEJOIN_MITER_VARIABLE</a><br />
+<a href="ft2-glyph_stroker.html#ft_stroker_linejoin">FT_STROKER_LINEJOIN_ROUND</a><br />
+<a href="ft2-glyph_stroker.html#ft_stroker_lineto">FT_Stroker_LineTo</a><br />
+<a href="ft2-glyph_stroker.html#ft_stroker_new">FT_Stroker_New</a><br />
+<a href="ft2-glyph_stroker.html#ft_stroker_parseoutline">FT_Stroker_ParseOutline</a><br />
+<a href="ft2-glyph_stroker.html#ft_stroker_rewind">FT_Stroker_Rewind</a><br />
+<a href="ft2-glyph_stroker.html#ft_stroker_set">FT_Stroker_Set</a><br />
+<a href="ft2-glyph_stroker.html#ft_strokerborder">FT_StrokerBorder</a><br />
+<a href="ft2-face_creation.html#ft_style_flag_xxx">FT_STYLE_FLAG_BOLD</a><br />
+<a href="ft2-face_creation.html#ft_style_flag_xxx">FT_STYLE_FLAG_ITALIC</a><br />
+<a href="ft2-face_creation.html#ft_style_flag_xxx">FT_STYLE_FLAG_XXX</a><br />
+<a href="ft2-other_api_data.html#ft_subglyph">FT_SubGlyph</a><br />
+<a href="ft2-information_retrieval.html#ft_subglyph_flag_xxx">FT_SUBGLYPH_FLAG_2X2</a><br />
+<a href="ft2-information_retrieval.html#ft_subglyph_flag_xxx">FT_SUBGLYPH_FLAG_ARGS_ARE_WORDS</a><br />
+<a href="ft2-information_retrieval.html#ft_subglyph_flag_xxx">FT_SUBGLYPH_FLAG_ARGS_ARE_XY_VALUES</a><br />
+<a href="ft2-information_retrieval.html#ft_subglyph_flag_xxx">FT_SUBGLYPH_FLAG_ROUND_XY_TO_GRID</a><br />
+<a href="ft2-information_retrieval.html#ft_subglyph_flag_xxx">FT_SUBGLYPH_FLAG_SCALE</a><br />
+<a href="ft2-information_retrieval.html#ft_subglyph_flag_xxx">FT_SUBGLYPH_FLAG_USE_MY_METRICS</a><br />
+<a href="ft2-information_retrieval.html#ft_subglyph_flag_xxx">FT_SUBGLYPH_FLAG_XXX</a><br />
+<a href="ft2-information_retrieval.html#ft_subglyph_flag_xxx">FT_SUBGLYPH_FLAG_XY_SCALE</a><br />
+<a href="ft2-svg_fonts.html#ft_svg_document">FT_SVG_Document</a><br />
+<a href="ft2-svg_fonts.html#ft_svg_documentrec">FT_SVG_DocumentRec</a><br />
+<a href="ft2-glyph_management.html#ft_svgglyph">FT_SvgGlyph</a><br />
+<a href="ft2-glyph_management.html#ft_svgglyphrec">FT_SvgGlyphRec</a><br />
+<a href="ft2-header_file_macros.html#ft_synthesis_h">FT_SYNTHESIS_H</a><br />
+<a href="ft2-header_file_macros.html#ft_system_h">FT_SYSTEM_H</a><br />
+<a href="ft2-basic_types.html#ft_tag">FT_Tag</a><br />
+<a href="ft2-computations.html#ft_tan">FT_Tan</a><br />
+<a href="ft2-debugging_apis.html#ft_trace_set_default_level">FT_Trace_Set_Default_Level</a><br />
+<a href="ft2-debugging_apis.html#ft_trace_set_level">FT_Trace_Set_Level</a><br />
+<a href="ft2-header_file_macros.html#ft_trigonometry_h">FT_TRIGONOMETRY_H</a><br />
+<a href="ft2-header_file_macros.html#ft_truetype_driver_h">FT_TRUETYPE_DRIVER_H</a><br />
+<a href="ft2-truetype_engine.html#ft_truetypeenginetype">FT_TRUETYPE_ENGINE_TYPE_NONE</a><br />
+<a href="ft2-truetype_engine.html#ft_truetypeenginetype">FT_TRUETYPE_ENGINE_TYPE_PATENTED</a><br />
+<a href="ft2-truetype_engine.html#ft_truetypeenginetype">FT_TRUETYPE_ENGINE_TYPE_UNPATENTED</a><br />
+<a href="ft2-header_file_macros.html#ft_truetype_ids_h">FT_TRUETYPE_IDS_H</a><br />
+<a href="ft2-header_file_macros.html#ft_truetype_tables_h">FT_TRUETYPE_TABLES_H</a><br />
+<a href="ft2-header_file_macros.html#ft_truetype_tags_h">FT_TRUETYPE_TAGS_H</a><br />
+<a href="ft2-truetype_engine.html#ft_truetypeenginetype">FT_TrueTypeEngineType</a><br />
+<a href="ft2-gx_validation.html#ft_truetypegx_free">FT_TrueTypeGX_Free</a><br />
+<a href="ft2-gx_validation.html#ft_truetypegx_validate">FT_TrueTypeGX_Validate</a><br />
+<a href="ft2-header_file_macros.html#ft_type1_tables_h">FT_TYPE1_TABLES_H</a><br />
+<a href="ft2-header_file_macros.html#ft_types_h">FT_TYPES_H</a><br />
+<a href="ft2-basic_types.html#ft_ufword">FT_UFWord</a><br />
+<a href="ft2-basic_types.html#ft_uint">FT_UInt</a><br />
+<a href="ft2-basic_types.html#ft_uint16">FT_UInt16</a><br />
+<a href="ft2-basic_types.html#ft_uint32">FT_UInt32</a><br />
+<a href="ft2-basic_types.html#ft_uint64">FT_UInt64</a><br />
+<a href="ft2-basic_types.html#ft_ulong">FT_ULong</a><br />
+<a href="ft2-basic_types.html#ft_unitvector">FT_UnitVector</a><br />
+<a href="ft2-basic_types.html#ft_ushort">FT_UShort</a><br />
+<a href="ft2-gx_validation.html#ft_validate_ckernxxx">FT_VALIDATE_APPLE</a><br />
+<a href="ft2-ot_validation.html#ft_validate_otxxx">FT_VALIDATE_BASE</a><br />
+<a href="ft2-gx_validation.html#ft_validate_gxxxx">FT_VALIDATE_bsln</a><br />
+<a href="ft2-gx_validation.html#ft_validate_ckernxxx">FT_VALIDATE_CKERN</a><br />
+<a href="ft2-gx_validation.html#ft_validate_ckernxxx">FT_VALIDATE_CKERNXXX</a><br />
+<a href="ft2-gx_validation.html#ft_validate_gxxxx">FT_VALIDATE_feat</a><br />
+<a href="ft2-ot_validation.html#ft_validate_otxxx">FT_VALIDATE_GDEF</a><br />
+<a href="ft2-ot_validation.html#ft_validate_otxxx">FT_VALIDATE_GPOS</a><br />
+<a href="ft2-ot_validation.html#ft_validate_otxxx">FT_VALIDATE_GSUB</a><br />
+<a href="ft2-gx_validation.html#ft_validate_gxxxx">FT_VALIDATE_GX</a><br />
+<a href="ft2-gx_validation.html#ft_validate_gx_length">FT_VALIDATE_GX_LENGTH</a><br />
+<a href="ft2-gx_validation.html#ft_validate_gxxxx">FT_VALIDATE_GXXXX</a><br />
+<a href="ft2-ot_validation.html#ft_validate_otxxx">FT_VALIDATE_JSTF</a><br />
+<a href="ft2-gx_validation.html#ft_validate_gxxxx">FT_VALIDATE_just</a><br />
+<a href="ft2-gx_validation.html#ft_validate_gxxxx">FT_VALIDATE_kern</a><br />
+<a href="ft2-gx_validation.html#ft_validate_gxxxx">FT_VALIDATE_lcar</a><br />
+<a href="ft2-ot_validation.html#ft_validate_otxxx">FT_VALIDATE_MATH</a><br />
+<a href="ft2-gx_validation.html#ft_validate_gxxxx">FT_VALIDATE_mort</a><br />
+<a href="ft2-gx_validation.html#ft_validate_gxxxx">FT_VALIDATE_morx</a><br />
+<a href="ft2-gx_validation.html#ft_validate_ckernxxx">FT_VALIDATE_MS</a><br />
+<a href="ft2-gx_validation.html#ft_validate_gxxxx">FT_VALIDATE_opbd</a><br />
+<a href="ft2-ot_validation.html#ft_validate_otxxx">FT_VALIDATE_OT</a><br />
+<a href="ft2-ot_validation.html#ft_validate_otxxx">FT_VALIDATE_OTXXX</a><br />
+<a href="ft2-gx_validation.html#ft_validate_gxxxx">FT_VALIDATE_prop</a><br />
+<a href="ft2-gx_validation.html#ft_validate_gxxxx">FT_VALIDATE_trak</a><br />
+<a href="ft2-multiple_masters.html#ft_var_axis">FT_Var_Axis</a><br />
+<a href="ft2-multiple_masters.html#ft_var_axis_flag_xxx">FT_VAR_AXIS_FLAG_HIDDEN</a><br />
+<a href="ft2-multiple_masters.html#ft_var_axis_flag_xxx">FT_VAR_AXIS_FLAG_XXX</a><br />
+<a href="ft2-multiple_masters.html#ft_var_named_style">FT_Var_Named_Style</a><br />
+<a href="ft2-basic_types.html#ft_vector">FT_Vector</a><br />
+<a href="ft2-computations.html#ft_vector_from_polar">FT_Vector_From_Polar</a><br />
+<a href="ft2-computations.html#ft_vector_length">FT_Vector_Length</a><br />
+<a href="ft2-computations.html#ft_vector_polarize">FT_Vector_Polarize</a><br />
+<a href="ft2-computations.html#ft_vector_rotate">FT_Vector_Rotate</a><br />
+<a href="ft2-computations.html#ft_vector_transform">FT_Vector_Transform</a><br />
+<a href="ft2-computations.html#ft_vector_unit">FT_Vector_Unit</a><br />
+<a href="ft2-winfnt_fonts.html#ft_winfnt_header">FT_WinFNT_Header</a><br />
+<a href="ft2-winfnt_fonts.html#ft_winfnt_headerrec">FT_WinFNT_HeaderRec</a><br />
+<a href="ft2-winfnt_fonts.html#ft_winfnt_id_xxx">FT_WinFNT_ID_CP1250</a><br />
+<a href="ft2-winfnt_fonts.html#ft_winfnt_id_xxx">FT_WinFNT_ID_CP1251</a><br />
+<a href="ft2-winfnt_fonts.html#ft_winfnt_id_xxx">FT_WinFNT_ID_CP1252</a><br />
+<a href="ft2-winfnt_fonts.html#ft_winfnt_id_xxx">FT_WinFNT_ID_CP1253</a><br />
+<a href="ft2-winfnt_fonts.html#ft_winfnt_id_xxx">FT_WinFNT_ID_CP1254</a><br />
+<a href="ft2-winfnt_fonts.html#ft_winfnt_id_xxx">FT_WinFNT_ID_CP1255</a><br />
+<a href="ft2-winfnt_fonts.html#ft_winfnt_id_xxx">FT_WinFNT_ID_CP1256</a><br />
+<a href="ft2-winfnt_fonts.html#ft_winfnt_id_xxx">FT_WinFNT_ID_CP1257</a><br />
+<a href="ft2-winfnt_fonts.html#ft_winfnt_id_xxx">FT_WinFNT_ID_CP1258</a><br />
+<a href="ft2-winfnt_fonts.html#ft_winfnt_id_xxx">FT_WinFNT_ID_CP1361</a><br />
+<a href="ft2-winfnt_fonts.html#ft_winfnt_id_xxx">FT_WinFNT_ID_CP874</a><br />
+<a href="ft2-winfnt_fonts.html#ft_winfnt_id_xxx">FT_WinFNT_ID_CP932</a><br />
+<a href="ft2-winfnt_fonts.html#ft_winfnt_id_xxx">FT_WinFNT_ID_CP936</a><br />
+<a href="ft2-winfnt_fonts.html#ft_winfnt_id_xxx">FT_WinFNT_ID_CP949</a><br />
+<a href="ft2-winfnt_fonts.html#ft_winfnt_id_xxx">FT_WinFNT_ID_CP950</a><br />
+<a href="ft2-winfnt_fonts.html#ft_winfnt_id_xxx">FT_WinFNT_ID_DEFAULT</a><br />
+<a href="ft2-winfnt_fonts.html#ft_winfnt_id_xxx">FT_WinFNT_ID_MAC</a><br />
+<a href="ft2-winfnt_fonts.html#ft_winfnt_id_xxx">FT_WinFNT_ID_OEM</a><br />
+<a href="ft2-winfnt_fonts.html#ft_winfnt_id_xxx">FT_WinFNT_ID_SYMBOL</a><br />
+<a href="ft2-winfnt_fonts.html#ft_winfnt_id_xxx">FT_WinFNT_ID_XXX</a><br />
+<a href="ft2-header_file_macros.html#ft_winfonts_h">FT_WINFONTS_H</a><br />
+<a href="ft2-cache_subsystem.html#ftc_cmapcache">FTC_CMapCache</a><br />
+<a href="ft2-cache_subsystem.html#ftc_cmapcache_lookup">FTC_CMapCache_Lookup</a><br />
+<a href="ft2-cache_subsystem.html#ftc_cmapcache_new">FTC_CMapCache_New</a><br />
+<a href="ft2-cache_subsystem.html#ftc_face_requester">FTC_Face_Requester</a><br />
+<a href="ft2-cache_subsystem.html#ftc_faceid">FTC_FaceID</a><br />
+<a href="ft2-cache_subsystem.html#ftc_imagecache">FTC_ImageCache</a><br />
+<a href="ft2-cache_subsystem.html#ftc_imagecache_lookup">FTC_ImageCache_Lookup</a><br />
+<a href="ft2-cache_subsystem.html#ftc_imagecache_lookupscaler">FTC_ImageCache_LookupScaler</a><br />
+<a href="ft2-cache_subsystem.html#ftc_imagecache_new">FTC_ImageCache_New</a><br />
+<a href="ft2-cache_subsystem.html#ftc_imagetype">FTC_ImageType</a><br />
+<a href="ft2-cache_subsystem.html#ftc_imagetyperec">FTC_ImageTypeRec</a><br />
+<a href="ft2-cache_subsystem.html#ftc_manager">FTC_Manager</a><br />
+<a href="ft2-cache_subsystem.html#ftc_manager_done">FTC_Manager_Done</a><br />
+<a href="ft2-cache_subsystem.html#ftc_manager_lookupface">FTC_Manager_LookupFace</a><br />
+<a href="ft2-cache_subsystem.html#ftc_manager_lookupsize">FTC_Manager_LookupSize</a><br />
+<a href="ft2-cache_subsystem.html#ftc_manager_new">FTC_Manager_New</a><br />
+<a href="ft2-cache_subsystem.html#ftc_manager_removefaceid">FTC_Manager_RemoveFaceID</a><br />
+<a href="ft2-cache_subsystem.html#ftc_manager_reset">FTC_Manager_Reset</a><br />
+<a href="ft2-cache_subsystem.html#ftc_node">FTC_Node</a><br />
+<a href="ft2-cache_subsystem.html#ftc_node_unref">FTC_Node_Unref</a><br />
+<a href="ft2-cache_subsystem.html#ftc_sbit">FTC_SBit</a><br />
+<a href="ft2-cache_subsystem.html#ftc_sbitcache">FTC_SBitCache</a><br />
+<a href="ft2-cache_subsystem.html#ftc_sbitcache_lookup">FTC_SBitCache_Lookup</a><br />
+<a href="ft2-cache_subsystem.html#ftc_sbitcache_lookupscaler">FTC_SBitCache_LookupScaler</a><br />
+<a href="ft2-cache_subsystem.html#ftc_sbitcache_new">FTC_SBitCache_New</a><br />
+<a href="ft2-cache_subsystem.html#ftc_sbitrec">FTC_SBitRec</a><br />
+<a href="ft2-cache_subsystem.html#ftc_scaler">FTC_Scaler</a><br />
+<a href="ft2-cache_subsystem.html#ftc_scalerrec">FTC_ScalerRec</a>  </p>
+<h3 id="g">G<a class="headerlink" href="#g" title="Permanent link">&para;</a></h3>
+<p><a href="ft2-properties.html#glyph-to-script-map">glyph-to-script-map</a>  </p>
+<h3 id="h">H<a class="headerlink" href="#h" title="Permanent link">&para;</a></h3>
+<p><a href="ft2-properties.html#hinting-engine">hinting-engine</a>  </p>
+<h3 id="i">I<a class="headerlink" href="#i" title="Permanent link">&para;</a></h3>
+<p><a href="ft2-properties.html#increase-x-height">increase-x-height</a><br />
+<a href="ft2-properties.html#interpreter-version">interpreter-version</a>  </p>
+<h3 id="n">N<a class="headerlink" href="#n" title="Permanent link">&para;</a></h3>
+<p><a href="ft2-properties.html#no-long-family-names">no-long-family-names</a><br />
+<a href="ft2-properties.html#no-stem-darkening">no-stem-darkening</a>  </p>
+<h3 id="p">P<a class="headerlink" href="#p" title="Permanent link">&para;</a></h3>
+<p><a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_BLUE_FUZZ</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_BLUE_SCALE</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_BLUE_SHIFT</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_BLUE_VALUE</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_CHAR_STRING</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_CHAR_STRING_KEY</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_ENCODING_ENTRY</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_ENCODING_TYPE</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_FAMILY_BLUE</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_FAMILY_NAME</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_FAMILY_OTHER_BLUE</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_FONT_BBOX</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_FONT_MATRIX</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_FONT_NAME</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_FONT_TYPE</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_FORCE_BOLD</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_FS_TYPE</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_FULL_NAME</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_IS_FIXED_PITCH</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_ITALIC_ANGLE</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_Dict_Keys</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_LANGUAGE_GROUP</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_LEN_IV</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_MIN_FEATURE</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_NOTICE</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_NUM_BLUE_VALUES</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_NUM_CHAR_STRINGS</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_NUM_FAMILY_BLUES</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_NUM_FAMILY_OTHER_BLUES</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_NUM_OTHER_BLUES</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_NUM_STEM_SNAP_H</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_NUM_STEM_SNAP_V</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_NUM_SUBRS</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_OTHER_BLUE</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_PAINT_TYPE</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_PASSWORD</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_RND_STEM_UP</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_STD_HW</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_STD_VW</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_STEM_SNAP_H</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_STEM_SNAP_V</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_SUBR</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_UNDERLINE_POSITION</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_UNDERLINE_THICKNESS</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_UNIQUE_ID</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_VERSION</a><br />
+<a href="ft2-type1_tables.html#ps_dict_keys">PS_DICT_WEIGHT</a><br />
+<a href="ft2-type1_tables.html#ps_fontinfo">PS_FontInfo</a><br />
+<a href="ft2-type1_tables.html#ps_fontinforec">PS_FontInfoRec</a><br />
+<a href="ft2-type1_tables.html#ps_private">PS_Private</a><br />
+<a href="ft2-type1_tables.html#ps_privaterec">PS_PrivateRec</a>  </p>
+<h3 id="r">R<a class="headerlink" href="#r" title="Permanent link">&para;</a></h3>
+<p><a href="ft2-properties.html#random-seed">random-seed</a>  </p>
+<h3 id="s">S<a class="headerlink" href="#s" title="Permanent link">&para;</a></h3>
+<p><a href="ft2-properties.html#svg-hooks">svg-hooks</a><br />
+<a href="ft2-svg_fonts.html#svg_lib_free_func">SVG_Lib_Free_Func</a><br />
+<a href="ft2-svg_fonts.html#svg_lib_init_func">SVG_Lib_Init_Func</a><br />
+<a href="ft2-svg_fonts.html#svg_lib_preset_slot_func">SVG_Lib_Preset_Slot_Func</a><br />
+<a href="ft2-svg_fonts.html#svg_lib_render_func">SVG_Lib_Render_Func</a><br />
+<a href="ft2-svg_fonts.html#svg_rendererhooks">SVG_RendererHooks</a>  </p>
+<h3 id="t">T<a class="headerlink" href="#t" title="Permanent link">&para;</a></h3>
+<p><a href="ft2-type1_tables.html#t1_blend_flags">T1_BLEND_BLUE_SCALE</a><br />
+<a href="ft2-type1_tables.html#t1_blend_flags">T1_BLEND_BLUE_SHIFT</a><br />
+<a href="ft2-type1_tables.html#t1_blend_flags">T1_BLEND_BLUE_VALUES</a><br />
+<a href="ft2-type1_tables.html#t1_blend_flags">T1_BLEND_FAMILY_BLUES</a><br />
+<a href="ft2-type1_tables.html#t1_blend_flags">T1_BLEND_FAMILY_OTHER_BLUES</a><br />
+<a href="ft2-type1_tables.html#t1_blend_flags">T1_Blend_Flags</a><br />
+<a href="ft2-type1_tables.html#t1_blend_flags">T1_BLEND_FORCE_BOLD</a><br />
+<a href="ft2-type1_tables.html#t1_blend_flags">T1_BLEND_ITALIC_ANGLE</a><br />
+<a href="ft2-type1_tables.html#t1_blend_flags">T1_BLEND_OTHER_BLUES</a><br />
+<a href="ft2-type1_tables.html#t1_blend_flags">T1_BLEND_STANDARD_HEIGHT</a><br />
+<a href="ft2-type1_tables.html#t1_blend_flags">T1_BLEND_STANDARD_WIDTH</a><br />
+<a href="ft2-type1_tables.html#t1_blend_flags">T1_BLEND_STEM_SNAP_HEIGHTS</a><br />
+<a href="ft2-type1_tables.html#t1_blend_flags">T1_BLEND_STEM_SNAP_WIDTHS</a><br />
+<a href="ft2-type1_tables.html#t1_blend_flags">T1_BLEND_UNDERLINE_POSITION</a><br />
+<a href="ft2-type1_tables.html#t1_blend_flags">T1_BLEND_UNDERLINE_THICKNESS</a><br />
+<a href="ft2-type1_tables.html#t1_encodingtype">T1_ENCODING_TYPE_ARRAY</a><br />
+<a href="ft2-type1_tables.html#t1_encodingtype">T1_ENCODING_TYPE_EXPERT</a><br />
+<a href="ft2-type1_tables.html#t1_encodingtype">T1_ENCODING_TYPE_ISOLATIN1</a><br />
+<a href="ft2-type1_tables.html#t1_encodingtype">T1_ENCODING_TYPE_NONE</a><br />
+<a href="ft2-type1_tables.html#t1_encodingtype">T1_ENCODING_TYPE_STANDARD</a><br />
+<a href="ft2-type1_tables.html#t1_encodingtype">T1_EncodingType</a><br />
+<a href="ft2-type1_tables.html#t1_fontinfo">T1_FontInfo</a><br />
+<a href="ft2-type1_tables.html#t1_private">T1_Private</a><br />
+<a href="ft2-truetype_tables.html#tt_adobe_id_xxx">TT_ADOBE_ID_CUSTOM</a><br />
+<a href="ft2-truetype_tables.html#tt_adobe_id_xxx">TT_ADOBE_ID_EXPERT</a><br />
+<a href="ft2-truetype_tables.html#tt_adobe_id_xxx">TT_ADOBE_ID_LATIN_1</a><br />
+<a href="ft2-truetype_tables.html#tt_adobe_id_xxx">TT_ADOBE_ID_STANDARD</a><br />
+<a href="ft2-truetype_tables.html#tt_adobe_id_xxx">TT_ADOBE_ID_XXX</a><br />
+<a href="ft2-truetype_tables.html#tt_apple_id_xxx">TT_APPLE_ID_DEFAULT</a><br />
+<a href="ft2-truetype_tables.html#tt_apple_id_xxx">TT_APPLE_ID_FULL_UNICODE</a><br />
+<a href="ft2-truetype_tables.html#tt_apple_id_xxx">TT_APPLE_ID_ISO_10646</a><br />
+<a href="ft2-truetype_tables.html#tt_apple_id_xxx">TT_APPLE_ID_UNICODE_1_1</a><br />
+<a href="ft2-truetype_tables.html#tt_apple_id_xxx">TT_APPLE_ID_UNICODE_2_0</a><br />
+<a href="ft2-truetype_tables.html#tt_apple_id_xxx">TT_APPLE_ID_UNICODE_32</a><br />
+<a href="ft2-truetype_tables.html#tt_apple_id_xxx">TT_APPLE_ID_VARIANT_SELECTOR</a><br />
+<a href="ft2-truetype_tables.html#tt_apple_id_xxx">TT_APPLE_ID_XXX</a><br />
+<a href="ft2-truetype_tables.html#tt_header">TT_Header</a><br />
+<a href="ft2-truetype_tables.html#tt_horiheader">TT_HoriHeader</a><br />
+<a href="ft2-properties.html#tt_interpreter_version_xxx">TT_INTERPRETER_VERSION_35</a><br />
+<a href="ft2-properties.html#tt_interpreter_version_xxx">TT_INTERPRETER_VERSION_38</a><br />
+<a href="ft2-properties.html#tt_interpreter_version_xxx">TT_INTERPRETER_VERSION_40</a><br />
+<a href="ft2-properties.html#tt_interpreter_version_xxx">TT_INTERPRETER_VERSION_XXX</a><br />
+<a href="ft2-truetype_tables.html#tt_iso_id_xxx">TT_ISO_ID_10646</a><br />
+<a href="ft2-truetype_tables.html#tt_iso_id_xxx">TT_ISO_ID_7BIT_ASCII</a><br />
+<a href="ft2-truetype_tables.html#tt_iso_id_xxx">TT_ISO_ID_8859_1</a><br />
+<a href="ft2-truetype_tables.html#tt_iso_id_xxx">TT_ISO_ID_XXX</a><br />
+<a href="ft2-truetype_tables.html#tt_mac_id_xxx">TT_MAC_ID_XXX</a><br />
+<a href="ft2-truetype_tables.html#tt_mac_langid_xxx">TT_MAC_LANGID_XXX</a><br />
+<a href="ft2-truetype_tables.html#tt_maxprofile">TT_MaxProfile</a><br />
+<a href="ft2-truetype_tables.html#tt_ms_id_xxx">TT_MS_ID_BIG_5</a><br />
+<a href="ft2-truetype_tables.html#tt_ms_id_xxx">TT_MS_ID_JOHAB</a><br />
+<a href="ft2-truetype_tables.html#tt_ms_id_xxx">TT_MS_ID_PRC</a><br />
+<a href="ft2-truetype_tables.html#tt_ms_id_xxx">TT_MS_ID_SJIS</a><br />
+<a href="ft2-truetype_tables.html#tt_ms_id_xxx">TT_MS_ID_SYMBOL_CS</a><br />
+<a href="ft2-truetype_tables.html#tt_ms_id_xxx">TT_MS_ID_UCS_4</a><br />
+<a href="ft2-truetype_tables.html#tt_ms_id_xxx">TT_MS_ID_UNICODE_CS</a><br />
+<a href="ft2-truetype_tables.html#tt_ms_id_xxx">TT_MS_ID_WANSUNG</a><br />
+<a href="ft2-truetype_tables.html#tt_ms_id_xxx">TT_MS_ID_XXX</a><br />
+<a href="ft2-truetype_tables.html#tt_ms_langid_xxx">TT_MS_LANGID_XXX</a><br />
+<a href="ft2-truetype_tables.html#tt_name_id_xxx">TT_NAME_ID_XXX</a><br />
+<a href="ft2-truetype_tables.html#tt_os2">TT_OS2</a><br />
+<a href="ft2-truetype_tables.html#tt_pclt">TT_PCLT</a><br />
+<a href="ft2-truetype_tables.html#tt_platform_xxx">TT_PLATFORM_ADOBE</a><br />
+<a href="ft2-truetype_tables.html#tt_platform_xxx">TT_PLATFORM_APPLE_UNICODE</a><br />
+<a href="ft2-truetype_tables.html#tt_platform_xxx">TT_PLATFORM_CUSTOM</a><br />
+<a href="ft2-truetype_tables.html#tt_platform_xxx">TT_PLATFORM_ISO</a><br />
+<a href="ft2-truetype_tables.html#tt_platform_xxx">TT_PLATFORM_MACINTOSH</a><br />
+<a href="ft2-truetype_tables.html#tt_platform_xxx">TT_PLATFORM_MICROSOFT</a><br />
+<a href="ft2-truetype_tables.html#tt_platform_xxx">TT_PLATFORM_XXX</a><br />
+<a href="ft2-truetype_tables.html#tt_postscript">TT_Postscript</a><br />
+<a href="ft2-truetype_tables.html#tt_ucr_xxx">TT_UCR_XXX</a><br />
+<a href="ft2-truetype_tables.html#tt_vertheader">TT_VertHeader</a>  </p>
+<h3 id="w">W<a class="headerlink" href="#w" title="Permanent link">&para;</a></h3>
+<p><a href="ft2-properties.html#warping">warping</a>  </p>
+<hr />
+<div class="timestamp">generated on Fri Aug 25 18:54:11 2023 UTC</div>
+                
+              
+              
+                
+
+
+              
+            </article>
+          </div>
+        </div>
+        
+      </main>
+      
+        
+<footer class="md-footer">
+  
+    <nav class="md-footer__inner md-grid" aria-label="Footer">
+      
+        
+        <a href="index.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: TOC" rel="prev">
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+          </div>
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              TOC
+            </div>
+          </div>
+        </a>
+      
+      
+        
+        <a href="ft2-preamble.html" class="md-footer__link md-footer__link--next" aria-label="Next: Preamble" rel="next">
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              Preamble
+            </div>
+          </div>
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11H4z"/></svg>
+          </div>
+        </a>
+      
+    </nav>
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-footer-copyright">
+        
+          <div class="md-footer-copyright__highlight">
+            Copyright 2023 <a href = "https://www.freetype.org/license.html">The FreeType Project</a>.
+          </div>
+        
+        Made with
+        <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+          Material for MkDocs
+        </a>
+        
+      </div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    <script id="__config" type="application/json">{"base": ".", "features": [], "search": "assets/javascripts/workers/search.477d984a.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.config.lang": "en", "search.config.pipeline": "trimmer, stopWordFilter", "search.config.separator": "[\\s\\-]+", "search.placeholder": "Search", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version.title": "Select version"}, "version": null}</script>
+    
+    
+      <script src="assets/javascripts/bundle.82b56eb2.min.js"></script>
+      
+        <script src="javascripts/extra.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,43 @@
+[package]
+name = "codespan-reporting"
+version = "0.13.0"
+readme = "../README.md"
+license = "Apache-2.0"
+authors = ["Brendan Zabarauskas <bjzaba@yahoo.com.au>"]
+description = "Beautiful diagnostic reporting for text-based programming languages"
+homepage = "https://github.com/brendanzab/codespan"
+repository = "https://github.com/brendanzab/codespan"
+documentation = "https://docs.rs/codespan-reporting"
+exclude = ["assets/**"]
+edition = "2021"
+rust-version = "1.67"
+
+[dependencies]
+serde = { version = "1", default-features = false, optional = true, features = ["derive", "alloc"] }
+termcolor = { version = "1.0.4", optional = true }
+unicode-width = ">=0.1,<0.3"
+
+[dev-dependencies]
+pico-args = "0.5.0"
+anyhow = "1"
+insta = "1.6.3"
+peg = "0.7"
+rustyline = "6"
+unindent = "0.1"
+
+[features]
+default = ["std", "termcolor"]
+std = ["serde?/std"]
+termcolor = ["std", "dep:termcolor"]
+serialization = ["serde"]
+ascii-only = []
+
+[lints.clippy]
+# Certain items from `core` are re-exported in `alloc` and `std`, and likewise `alloc` has items
+# re-exported in `std`.
+# `core` is available on all platforms, `alloc` is available on almost all, and `std` is only
+# available on some.
+# These lints ensure we don't import from a "less available" crate without reason.
+alloc_instead_of_core = "warn"
+std_instead_of_alloc = "warn"
+std_instead_of_core = "warn"

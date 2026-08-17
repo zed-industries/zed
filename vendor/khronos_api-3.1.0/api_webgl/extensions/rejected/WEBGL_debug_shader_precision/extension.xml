@@ -1,0 +1,106 @@
+<?xml version="1.0"?>
+
+<rejected href="rejected/WEBGL_debug_shader_precision/">
+  <name>WEBGL_debug_shader_precision</name>
+
+  <contact><a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL
+  working group</a> (public_webgl 'at' khronos.org) </contact>
+
+  <contributors>
+    <contributor>Olli Etuaho, NVIDIA</contributor>
+
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+
+  <number>NN</number>
+
+  <depends>
+    <api version="1.0"/>
+  </depends>
+  <overview>
+    <p>
+      This extension enables software emulation of mediump and lowp floating point arithmetic in GLSL shaders for the purposes of shader testing. The emulation is enabled for shaders that are compiled after the extension has been enabled. Shaders compiled before the extension is enabled are not subject to emulation. The emulation does not model any specific device, but hypothetical shader units that implement IEEE half-precision floating point and the minimum requirements for lowp in The OpenGL ES Shading Language specification version 1.00.17. It is suggested that the software emulation is implemented in shader code, but a large performance cost on the order of one magnitude is still expected on all operations subject to emulation.
+    </p>
+    <div class="note">
+      Many varieties of PC GPUs only implement one precision for floating point operations that corresponds to highp in The OpenGL ES Shading Language, so errors in shader code which uses mediump or lowp precision may be undetectable on these GPUs. Testing shaders with this extension enabled is recommended to ensure compatibility with a wide variety of hardware. Due to the large performance cost of emulation, this extension should only be used for testing and not in a production environment.
+    </div>
+    <p>
+      The emulation applies to:
+    </p>
+    <ul>
+        <li>accesses to variables in r-value expressions (not on the left side of an assignment operator, includes passing in parameters to a function)</li>
+        <li>return values of built-in functions</li>
+        <li>return values of binary math operators, including assignment and compound assignment</li>
+        <li>results of binary math operations evaluated as a part of compound assignment</li>
+    </ul>
+    <div class="note">
+        <p>
+            Examples of operations not subject to emulation:
+        </p>
+        <ul>
+            <li>The math operator is unary, so storing the result and the return value are not subject to emulation: my_float++;</li>
+        </ul>
+    </div>
+    <features>
+      <feature>
+        <p>
+          Operations listed above resulting in a mediump precision floating point scalar, vector or matrix must perform the following steps on the resulting scalar value or each of the components of the vector or matrix:
+        </p>
+        <ol>
+          <li>Clamp the value to the range [-65504.0, 65504.0].</li>
+          <li>Determine the floating-point exponent <em>e</em> of the clamped value.</li>
+          <li>If <em>e</em> &lt; -15, return 0.0, skipping steps 4-6. The sign bit of the return value is undefined in this case.</li>
+          <li>Let <em>x</em> be the clamped value multiplied by 2^(-<em>e</em> + 10.0).</li>
+          <li>Let <em>y</em> be sign(<em>x</em>) * floor(abs(<em>x</em>)).</li>
+          <li>Return <em>y</em> * 2^(<em>e</em> - 10.0).</li>
+        </ol>
+      </feature>
+      <feature>
+        <p>
+          Operations listed above resulting in a lowp precision floating point scalar, vector or matrix must perform the following steps on the resulting scalar value or each of the components of the vector or matrix:
+        </p>
+        <ol>
+          <li>Clamp the value to the range [-2.0, 2.0].</li>
+          <li>Let <em>x</em> be the clamped value multiplied by 2^8.</li>
+          <li>Let <em>y</em> be sign(<em>x</em>) * floor(abs(<em>x</em>)).</li>
+          <li>Return <em>y</em> * 2^(-8).</li>
+        </ol>
+      </feature>
+      <feature>
+        <p>
+          sign, floor, and abs in the above steps refer to built-in functions in The OpenGL ES Shading Language.
+        </p>
+        <p>
+          The handling of positive and negative infinity and NaN by the above steps is undefined.
+        </p>
+      </feature>
+      <feature>
+        <p>
+          The <code>#pragma webgl_debug_shader_precision</code> directive is accepted by the shader compiler, and can be used to disable the emulation for specific shaders. By default, emulation is enabled by all shaders, but including <code>#pragma webgl_debug_shader_precision(off)</code> in a shader must disable emulation for that shader.
+        </p>
+      </feature>
+    </features>
+    <p>
+      Due to hardware limitations, it is allowed that some shaders which compile and link successfully when the extension is disabled do not compile or link when the extension is enabled.
+    </p>
+  </overview>
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface WEBGL_debug_shader_precision {
+};
+  </idl>
+  <history>
+    <revision date="2014/11/05">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2014/11/10">
+      <change>Added a #pragma directive to use in shaders and did minor clarifications.</change>
+    </revision>
+    <revision date="2014/11/12">
+      <change>Lifted restrictions concerning math operations evaluated as a part of compound assignment.</change>
+    </revision>
+    <revision date="2015/01/24">
+      <change>Moved to rejected on grounds of it being easy to provide as a library (with emscripten).</change>
+    </revision>
+  </history>
+</rejected>

@@ -1,0 +1,16 @@
+---
+- name: Invalid anchor in zero indented sequence
+  from: '@perlpunk'
+  tags: anchor error sequence
+  fail: true
+  yaml: |
+    ---
+    seq:
+    &anchor
+    - a
+    - b
+  tree: |
+    +STR
+     +DOC ---
+      +MAP
+       =VAL :seq

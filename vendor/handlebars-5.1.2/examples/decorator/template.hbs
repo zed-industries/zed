@@ -1,0 +1,21 @@
+{{*format_suffix "分"}}
+
+<html>
+  <head>
+    <title>CSL {{year}}</title>
+  </head>
+  <body>
+    <h1>CSL {{year}}</h1>
+    <ul>
+    {{#each teams as |t|}}
+      <li class="{{ranking_label @index ../teams}}">
+      {{~log @index~}}
+      <b>{{t.name}}</b>: {{format t.pts ~}}
+      </li>
+    {{/each}}
+    </ul>
+
+    {{*set version="v3.0"}}
+    <p>Rendered by Handlebars {{version}} from {{engine}} data.</p>
+  </body>
+</html>

@@ -1,0 +1,25 @@
+[package]
+name = "roxmltree"
+version = "0.20.0"
+authors = ["Yevhenii Reizner <razrfalcon@gmail.com>"]
+keywords = ["xml", "parser", "tree", "dom"]
+categories = ["parser-implementations"]
+license = "MIT OR Apache-2.0"
+description = "Represent an XML as a read-only tree."
+repository = "https://github.com/RazrFalcon/roxmltree"
+documentation = "https://docs.rs/roxmltree/"
+readme = "README.md"
+edition = "2021"
+rust-version = "1.60"
+
+[workspace]
+members = ["benches"]
+exclude = ["testing-tools"]
+
+[features]
+default = ["std", "positions"]
+std = []
+# Enables Nodes and Attributes position in the original document preserving.
+# Increases memory usage by `Range<usize>` for each Node.
+# Increases memory usage by `Range<usize>` + `u16` + `u8` for each Attribute.
+positions = []

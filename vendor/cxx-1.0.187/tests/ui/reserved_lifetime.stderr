@@ -1,0 +1,5 @@
+error[E0262]: invalid lifetime parameter name: `'static`
+ --> tests/ui/reserved_lifetime.rs:6:19
+  |
+6 |         fn logger<'static>() -> Pin<&'static Logger>;
+  |                   ^^^^^^^ 'static is a reserved lifetime name

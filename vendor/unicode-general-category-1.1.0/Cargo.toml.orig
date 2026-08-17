@@ -1,0 +1,18 @@
+[package]
+name = "unicode-general-category"
+version = "1.1.0"
+authors = ["YesLogic Pty. Ltd. <info@yeslogic.com>"]
+edition = "2018"
+
+homepage = "https://github.com/yeslogic/unicode-general-category"
+documentation = "https://docs.rs/unicode-general-category"
+repository = "https://github.com/yeslogic/unicode-general-category"
+
+readme = "README.md"
+license = "Apache-2.0"
+
+description = "Fast lookup of the Unicode General Category property for char"
+keywords = ["unicode", "general", "category", "no-std"]
+categories = ["text-processing"]
+
+[dependencies]

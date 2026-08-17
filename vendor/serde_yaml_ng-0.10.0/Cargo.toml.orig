@@ -1,0 +1,31 @@
+[package]
+name = "serde_yaml_ng"
+version = "0.10.0"
+authors = ["Antoine Catton <devel@antoine.catton.fr>"]
+categories = ["encoding", "parser-implementations"]
+description = "YAML data format for Serde"
+documentation = "https://docs.rs/serde_yaml_ng/"
+edition = "2021"
+keywords = ["yaml", "serde", "serialization"]
+license = "MIT"
+repository = "https://github.com/acatton/serde-yaml-ng"
+rust-version = "1.64"
+
+[dependencies]
+indexmap = "2.2.1"
+itoa = "1.0"
+ryu = "1.0"
+serde = "1.0.195"
+unsafe-libyaml = "0.2.11"
+
+[dev-dependencies]
+anyhow = "1.0.79"
+indoc = "2.0"
+serde_derive = "1.0.195"
+
+[lib]
+doc-scrape-examples = false
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+rustdoc-args = ["--generate-link-to-definition"]

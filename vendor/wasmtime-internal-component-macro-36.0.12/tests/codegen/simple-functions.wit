@@ -1,0 +1,17 @@
+package foo:foo;
+
+interface simple {
+  f1: func();
+  f2: func(a: u32);
+  f3: func(a: u32, b: u32);
+
+  f4: func() -> u32;
+  f5: func() -> tuple<u32, u32>;
+
+  f6: func(a: u32, b: u32, c: u32) -> tuple<u32, u32, u32>;
+}
+
+world the-world {
+  import simple;
+  export simple;
+}

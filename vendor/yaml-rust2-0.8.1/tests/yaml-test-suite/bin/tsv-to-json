@@ -1,0 +1,39 @@
+#!/usr/bin/env perl
+
+use strict; use warnings;
+use JSON::PP;
+
+$_ = do { local $/; <STDIN> };
+s/(?=[^\n])\z/\n/;
+
+my $rows = [];
+my $row = [];
+my $cell = '';
+my $E = '(?=[\t\n]|\z)';
+while (length != 0) {
+    # warn ">>${\ substr($_, 0, 30)}<<\n";
+    if (s/^\t//) {
+        push @$row, $cell;
+        $cell = '';
+        next;
+    }
+    if (s/^\n//) {
+        push @$row, $cell;
+        $cell = '';
+        push @$rows, $row;
+        $row = [];
+        next;
+    }
+    if (s/\A"((?:""|.)*?)"$E//s) {
+        $cell = $1;
+        $cell =~ s/""/"/g;
+    }
+    elsif (s/\A(.*?)$E//) {
+        $cell = $1;
+    }
+    else {
+        die "failed to parse here >>${\ substr($_, 0, 80)}<<";
+    }
+}
+
+print JSON::PP->new->encode($rows);

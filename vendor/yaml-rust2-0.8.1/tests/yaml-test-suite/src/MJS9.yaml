@@ -1,0 +1,21 @@
+---
+- name: Spec Example 6.7. Block Folding
+  from: http://www.yaml.org/spec/1.2/spec.html#id2779603
+  tags: folded spec scalar whitespace 1.3-err
+  yaml: |
+    >
+      foo␣
+    ␣
+      —» bar
+
+      baz
+  tree: |
+    +STR
+     +DOC
+      =VAL >foo \n\n\t bar\n\nbaz\n
+     -DOC
+    -STR
+  json: |
+    "foo \n\n\t bar\n\nbaz\n"
+  dump: |
+    "foo \n\n\t bar\n\nbaz\n"

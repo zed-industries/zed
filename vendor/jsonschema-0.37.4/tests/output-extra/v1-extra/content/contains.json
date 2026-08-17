@@ -1,0 +1,154 @@
+[
+    {
+        "description": "contains annotations capture matching indices",
+        "schema": {
+            "$schema": "https://json-schema.org/v1",
+            "$id": "https://json-schema.org/tests/content/v1-extra/contains/0",
+            "type": "array",
+            "contains": {"type": "integer"}
+        },
+        "tests": [
+            {
+                "description": "all items match",
+                "data": [1, 2],
+                "output": {
+                    "list": {
+                        "$id": "https://json-schema.org/tests/content/v1-extra/contains/0/tests/0/list",
+                        "$ref": "/v1/output/schema",
+                        "properties": {
+                            "valid": {"const": true},
+                            "details": {
+                                "contains": {
+                                    "properties": {
+                                        "schemaLocation": {"const": "https://json-schema.org/tests/content/v1-extra/contains/0#/contains"},
+                                        "annotations": {
+                                            "type": "array",
+                                            "allOf": [
+                                                {"contains": {"const": 0}},
+                                                {"contains": {"const": 1}}
+                                            ]
+                                        }
+                                    },
+                                    "required": ["schemaLocation", "annotations"]
+                                }
+                            }
+                        },
+                        "required": ["valid", "details"]
+                    },
+                    "hierarchical": {
+                        "$id": "https://json-schema.org/tests/content/v1-extra/contains/0/tests/0/hierarchical",
+                        "$ref": "/v1/output/schema",
+                        "properties": {
+                            "valid": {"const": true},
+                            "details": {
+                                "contains": {
+                                    "properties": {
+                                        "schemaLocation": {"const": "https://json-schema.org/tests/content/v1-extra/contains/0#/contains"},
+                                        "annotations": {
+                                            "type": "array",
+                                            "allOf": [
+                                                {"contains": {"const": 0}},
+                                                {"contains": {"const": 1}}
+                                            ]
+                                        }
+                                    },
+                                    "required": ["schemaLocation", "annotations"]
+                                }
+                            }
+                        },
+                        "required": ["valid", "details"]
+                    }
+                }
+            },
+            {
+                "description": "only a subset matches",
+                "data": [1, "foo"],
+                "output": {
+                    "list": {
+                        "$id": "https://json-schema.org/tests/content/v1-extra/contains/0/tests/1/list",
+                        "$ref": "/v1/output/schema",
+                        "properties": {
+                            "valid": {"const": true},
+                            "details": {
+                                "contains": {
+                                    "properties": {
+                                        "schemaLocation": {"const": "https://json-schema.org/tests/content/v1-extra/contains/0#/contains"},
+                                        "annotations": {
+                                            "type": "array",
+                                            "contains": {"const": 0}
+                                        }
+                                    },
+                                    "required": ["schemaLocation", "annotations"]
+                                }
+                            }
+                        },
+                        "required": ["valid", "details"]
+                    },
+                    "hierarchical": {
+                        "$id": "https://json-schema.org/tests/content/v1-extra/contains/0/tests/1/hierarchical",
+                        "$ref": "/v1/output/schema",
+                        "properties": {
+                            "valid": {"const": true},
+                            "details": {
+                                "contains": {
+                                    "properties": {
+                                        "schemaLocation": {"const": "https://json-schema.org/tests/content/v1-extra/contains/0#/contains"},
+                                        "annotations": {
+                                            "type": "array",
+                                            "contains": {"const": 0},
+                                            "not": {
+                                                "contains": {"const": 1}
+                                            }
+                                        }
+                                    },
+                                    "required": ["schemaLocation", "annotations"]
+                                }
+                            }
+                        },
+                        "required": ["valid", "details"]
+                    }
+                }
+            },
+            {
+                "description": "no item satisfies contains",
+                "data": ["foo", "bar"],
+                "output": {
+                    "list": {
+                        "$id": "https://json-schema.org/tests/content/v1-extra/contains/0/tests/2/list",
+                        "$ref": "/v1/output/schema",
+                        "properties": {
+                            "valid": {"const": false},
+                            "details": {
+                                "contains": {
+                                    "properties": {
+                                        "schemaLocation": {"const": "https://json-schema.org/tests/content/v1-extra/contains/0#/contains"},
+                                        "errors": {}
+                                    },
+                                    "required": ["schemaLocation", "errors"]
+                                }
+                            }
+                        },
+                        "required": ["valid", "details"]
+                    },
+                    "hierarchical": {
+                        "$id": "https://json-schema.org/tests/content/v1-extra/contains/0/tests/2/hierarchical",
+                        "$ref": "/v1/output/schema",
+                        "properties": {
+                            "valid": {"const": false},
+                            "details": {
+                                "contains": {
+                                    "properties": {
+                                        "schemaLocation": {"const": "https://json-schema.org/tests/content/v1-extra/contains/0#/contains"},
+                                        "errors": {}
+                                    },
+                                    "required": ["schemaLocation", "errors"]
+                                }
+                            }
+                        },
+                        "required": ["valid", "details"]
+                    }
+                }
+            }
+        ]
+    }
+]

@@ -1,0 +1,28 @@
+---
+- name: Spec Example 7.20. Single Pair Explicit Entry
+  from: http://www.yaml.org/spec/1.2/spec.html#id2792424
+  tags: explicit-key spec flow mapping
+  yaml: |
+    [
+    ? foo
+     bar : baz
+    ]
+  tree: |
+    +STR
+     +DOC
+      +SEQ []
+       +MAP {}
+        =VAL :foo bar
+        =VAL :baz
+       -MAP
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      {
+        "foo bar": "baz"
+      }
+    ]
+  dump: |
+    - foo bar: baz

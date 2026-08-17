@@ -1,0 +1,11 @@
+package foo:foo;
+
+interface foo {
+  type g = char;
+}
+
+world w {
+  use foo.{g};
+
+  export foo: func() -> g;
+}

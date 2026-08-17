@@ -1,0 +1,11 @@
+error: use of deprecated struct `OldHeader`: Do not use
+  --> tests/ui-nightly/absence_of_deprecated_warning.rs:31:12
+   |
+31 | impl T for OldHeader {}
+   |            ^^^^^^^^^
+   |
+note: the lint level is defined here
+  --> tests/ui-nightly/absence_of_deprecated_warning.rs:14:9
+   |
+14 | #![deny(deprecated)]
+   |         ^^^^^^^^^^

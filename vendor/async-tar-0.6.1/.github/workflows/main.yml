@@ -1,0 +1,105 @@
+name: CI
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check_tokio:
+    name: Test tokio
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        build: [msrv, stable, nightly, macos, windows]
+        include:
+          - build: msrv
+            os: ubuntu-latest
+            rust: "1.85"
+          - build: stable
+            os: ubuntu-latest
+            rust: stable
+          - build: nightly
+            os: ubuntu-latest
+            rust: nightly
+          - build: macos
+            os: macos-latest
+            rust: stable
+          - build: windows
+            os: windows-latest
+            rust: stable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+      - run: cargo test --no-default-features --features runtime-tokio
+
+  check_async:
+    name: Test async-std
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        build: [msrv, stable, nightly, macos, windows]
+        include:
+          - build: msrv
+            os: ubuntu-latest
+            rust: "1.85"
+          - build: stable
+            os: ubuntu-latest
+            rust: stable
+          - build: nightly
+            os: ubuntu-latest
+            rust: nightly
+          - build: macos
+            os: macos-latest
+            rust: stable
+          - build: windows
+            os: windows-latest
+            rust: stable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+      - run: cargo test --no-default-features --features runtime-async-std
+
+  fmt:
+    name: Check formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  lint_tokio:
+    name: Clippy tokio
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: cargo clippy --no-default-features --features runtime-tokio -- -D warnings
+
+  lint_async:
+    name: Clippy async-std
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: cargo clippy --no-default-features --features runtime-async-std -- -D warnings
+
+  docs:
+    name: Check docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo doc --no-deps

@@ -1,0 +1,12 @@
+{
+  "worlds": [],
+  "interfaces": [],
+  "types": [],
+  "packages": [
+    {
+      "name": "foo:bar@2.0.0",
+      "interfaces": {},
+      "worlds": {}
+    }
+  ]
+}

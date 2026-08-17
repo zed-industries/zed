@@ -1,0 +1,42 @@
+error[E0726]: implicit elided lifetime not allowed here
+ --> tests/ui/self_lifetimes.rs:6:24
+  |
+6 |         fn zero(self: &Thing<>);
+  |                        ^^^^^^^ expected lifetime parameters
+  |
+help: indicate the anonymous lifetimes
+  |
+6 |         fn zero(self: &Thing<'_, '_, >);
+  |                              +++++++
+
+error[E0107]: struct takes 2 lifetime arguments but 1 lifetime argument was supplied
+ --> tests/ui/self_lifetimes.rs:7:27
+  |
+7 |         fn one<'a>(self: &Thing<'a>);
+  |                           ^^^^^ -- supplied 1 lifetime argument
+  |                           |
+  |                           expected 2 lifetime arguments
+  |
+note: struct defined here, with 2 lifetime parameters: `'a`, `'b`
+ --> tests/ui/self_lifetimes.rs:4:14
+  |
+4 |         type Thing<'a, 'b>;
+  |              ^^^^^ --  --
+help: add missing lifetime argument
+  |
+7 |         fn one<'a>(self: &Thing<'a, 'a>);
+  |                                   ++++
+
+error[E0107]: struct takes 2 lifetime arguments but 3 lifetime arguments were supplied
+ --> tests/ui/self_lifetimes.rs:8:37
+  |
+8 |         fn three<'a, 'b, 'c>(self: &Thing<'a, 'b, 'c>);
+  |                                     ^^^^^       ---- help: remove the lifetime argument
+  |                                     |
+  |                                     expected 2 lifetime arguments
+  |
+note: struct defined here, with 2 lifetime parameters: `'a`, `'b`
+ --> tests/ui/self_lifetimes.rs:4:14
+  |
+4 |         type Thing<'a, 'b>;
+  |              ^^^^^ --  --

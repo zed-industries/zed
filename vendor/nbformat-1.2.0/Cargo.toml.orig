@@ -1,0 +1,16 @@
+[package]
+name = "nbformat"
+version = "1.2.0"
+edition = "2021"
+description = "Parse Jupyter Notebooks"
+repository = "https://github.com/runtimed/runtimed"
+license = "BSD-3-Clause"
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+jupyter-protocol = { workspace = true }
+thiserror = "1.0"

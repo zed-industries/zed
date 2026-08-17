@@ -1,0 +1,6 @@
+<!DOCTYPE test [
+    <!ENTITY d '&#xD;'>
+    <!ENTITY a '&#xA;'>
+    <!ENTITY da '&#xD;&#xA;'>
+]>
+<p a='&d;&d;A&a;&#x20;&a;B&da;'/>

@@ -1,0 +1,4 @@
+max_width = 80
+newline_style = "Unix"
+struct_lit_width = 60
+use_field_init_shorthand = true

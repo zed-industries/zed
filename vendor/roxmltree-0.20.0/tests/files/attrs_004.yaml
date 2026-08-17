@@ -1,0 +1,5 @@
+Document:
+  - Element:
+      tag_name: p
+      attributes:
+        a: "\r\rA\n\nB\r\n"

@@ -1,0 +1,39 @@
+name: Rust
+
+on:
+  push:
+    branches: [main]
+    tags: ["*.*.*"]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-15]
+        rust: [stable]
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v5
+
+    - name: Build without std
+      run: cargo build --no-default-features
+
+    - name: Build with std
+      run: cargo build
+
+    - name: MSRV Build (Rust 1.85)
+      run: cargo +1.85 build
+
+    - name: Run tests
+      run: cargo test --verbose
+
+    - name: Rustfmt
+      run: cargo fmt --all -- --check
+
+    - name: Clippy
+      run: cargo clippy --all-features --all-targets -- -D warnings

@@ -1,0 +1,18 @@
+#!/bin/bash
+#
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+
+# This script contains additional CI checks to run for this specific package
+
+set -e
+
+echo '### Checking compilation under WASM'
+cargo check --target wasm32-unknown-unknown
+
+echo "### Checking for duplicate dependency versions in the normal dependency graph with all features enabled"
+cargo tree -d --edges normal --all-features
+
+echo "### Testing every combination of features (excluding --all-features)"
+cargo hack test --feature-powerset --exclude-all-features

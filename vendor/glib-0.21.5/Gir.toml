@@ -1,0 +1,914 @@
+[options]
+girs_directories = ["../gir-files"]
+library = "GLib"
+version = "2.0"
+min_cfg_version = "2.56"
+use_gi_docgen = true
+target_path = "."
+work_mode = "normal"
+single_version_file = true
+deprecate_by_min_version = true
+trust_return_value_nullability = true
+
+generate = [
+    "GLib.ConvertError",
+    "GLib.DateDay",
+    "GLib.DateMonth",
+    "GLib.DateWeekday",
+    "GLib.DateYear",
+    "GLib.FileError",
+    "GLib.FileSetContentsFlags",
+    "GLib.IOCondition",
+    "GLib.KeyFileError",
+    "GLib.KeyFileFlags",
+    "GLib.LogLevelFlags",
+    "GLib.LogWriterOutput",
+    "GLib.MainContextFlags",
+    "GLib.MarkupError",
+    "GLib.NormalizeMode",
+    "GLib.OptionArg",
+    "GLib.OptionFlags",
+    "GLib.RegexCompileFlags",
+    "GLib.RegexMatchFlags",
+    "GLib.SeekType",
+    "GLib.SpawnFlags",
+    "GLib.Time",
+    "GLib.TimeType",
+    "GLib.UnicodeType",
+    "GLib.UriError",
+    "GLib.UriFlags",
+    "GLib.UriHideFlags",
+    "GLib.UriParamsFlags",
+    "GLib.VariantClass",
+]
+
+manual = [
+    "GLib.ByteArray",
+    "GLib.Bytes",
+    "GLib.Error",
+    "GLib.ParamSpecBoolean",
+    "GLib.ParamSpecBoxed",
+    "GLib.ParamSpecChar",
+    "GLib.ParamSpecDouble",
+    "GLib.ParamSpecEnum",
+    "GLib.ParamSpecFlags",
+    "GLib.ParamSpecFloat",
+    "GLib.ParamSpecGType",
+    "GLib.ParamSpecInt",
+    "GLib.ParamSpecInt64",
+    "GLib.ParamSpecLong",
+    "GLib.ParamSpecObject",
+    "GLib.ParamSpecOverride",
+    "GLib.ParamSpecParam",
+    "GLib.ParamSpecPointer",
+    "GLib.ParamSpecString",
+    "GLib.ParamSpecUChar",
+    "GLib.ParamSpecUInt",
+    "GLib.ParamSpecUInt64",
+    "GLib.ParamSpecULong",
+    "GLib.ParamSpecUnichar",
+    "GLib.ParamSpecValueArray",
+    "GLib.ParamSpecVariant",
+    "GLib.UserDirectory",
+    "GLib.Variant",
+    "GLib.VariantType",
+    "GObject.Object",
+    "GObject.ObjectClass",
+]
+
+[[object]]
+name = "GLib.*"
+status = "generate"
+    [[object.function]]
+    pattern = "(assertion_message_cmpint|assert_warning|assertion_message|assertion_message_cmpnum|assertion_message_cmpstr|warn_message|return_if_fail_warning)"
+    ignore = true # Not useful assertions functions
+    [[object.function]]
+    pattern = "(set_print_handler|set_printerr_handler|vasprintf|vfprintf|vprintf|vsnprintf|vsprintf|stpcpy|sprintf|snprintf|printf|printf_string_upper_bound|printerr|prefix_error|print|fprintf)"
+    ignore = true # Not useful string functions
+    [[object.function]]
+    pattern = "(malloc|malloc0|malloc0_n|malloc_n|memdup|memdup2|realloc|realloc_n|try_malloc||try_malloc0|try_malloc0_n|try_malloc_n|try_realloc|try_realloc_n|free|aligned_alloc|aligned_alloc0|aligned_free|free_sized|aligned_free_sized)"
+    ignore = true # Not useful allocations functions
+    [[object.function]]
+    pattern = "(slice_get_config|slice_get_config_state|slice_set_config|slice_alloc|slice_alloc0|slice_copy|slice_free1|slice_free_chain_with_offset)"
+    ignore = true # Not useful slices functions
+    [[object.function]]
+    pattern = "(path_is_absolute|path_skip_root|rmdir|basename|canonicalize_filename|build_filename|build_filename_valist|build_filenamev|build_path|build_pathv|canonicalize_filename|chdir)"
+    ignore = true # Not useful paths functions, use Path/PathBuf
+    [[object.function]]
+    pattern = "(int64_equal|int64_hash|int_equal|int_hash|double_equal|double_hash|direct_equal|direct_hash)"
+    ignore = true # Not useful equal/hash functions, only useful for GHashTable
+    [[object.function]]
+    pattern = "(clear_handle_id|clear_list|clear_pointer|clear_slist|clear_error|nullify_pointer)"
+    ignore = true # Not useful freeing functions
+    [[object.function]]
+    pattern = "(fdwalk_set_cloexec|closefrom)"
+    ignore = true # unsafe
+    [[object.function]]
+    pattern = "(datalist_.*|dataset_.*)"
+    ignore = true # Not useful GData related functions
+    [[object.function]]
+    pattern = "(path_get_basename|path_get_dirname|file_test)"
+    visibility = "crate" # used for tests
+    [[object.function]]
+    pattern = "(propagate_prefixed_error|set_error|file_error_from_errno|propagate_error|set_error_literal|set_error)"
+    ignore = true # Not useful error handling functions
+    [[object.function]]
+    name = "parse_debug_string"
+    ignore = true # useless
+    [[object.function]]
+    pattern = "(log_.*|logv)"
+    ignore = true # needs manual wrappers to make their usage nicer
+    [[object.function]]
+    pattern = "compute_.*_for_string"
+    ignore = true # needs manual wrapper to avoid an unnecessary copy of the string
+    [[object.function]]
+    pattern = "(idle_remove_by_data|qsort_with_data)"
+    ignore = true # Unsafe functions
+    [[object.function]]
+    pattern = "(fopen|creat|chmod|blow_chunks|utime|slice_debug_tree_statistics|rename|remove|open|mkdir|lstat|fsync|freopen|set_prgname_once)"
+    ignore = true # see https://gitlab.gnome.org/GNOME/glib/-/issues/3231
+    [[object.function]]
+    pattern = "iconv"
+    doc_struct_name = "IConv"
+    manual = true
+    [[object.function]]
+    pattern = "convert_with_iconv"
+    doc_struct_name = "IConv"
+    manual = true
+    rename = "convert"
+    [[object.function]]
+    pattern = "pointer_.*"
+    ignore = true # Not usable, uses raw pointers
+    [[object.function]]
+    pattern = "file_read_link"
+    ignore = true # use the ones from the std
+    [[object.function]]
+    pattern = "pattern_.*"
+    ignore = true # use the ones from the std
+    [[object.function]]
+    pattern = "(markup_collect_attributes|markup_printf_escaped|markup_vprintf_escaped)"
+    ignore = true # varargs functions are unbindable
+    [[object.function]]
+    pattern = "io_.*"
+    ignore = true # they are supposed to be used with IOChannel, which doesn't have safe bindings
+    [[object.function]]
+    name = "file_open_tmp"
+    manual = true # Return a RawFd instead of a i32
+    [[object.function]]
+    pattern = "atomic_.+"
+    ignore = true
+    [[object.function]]
+    pattern = "bit_.*"
+    ignore = true # use the ones in the std
+    [[object.function]]
+    name = "get_current_time"
+    ignore = true # Deprecated
+    [[object.function]]
+    name = "get_filename_charsets"
+    manual = true
+    [[object.function]]
+    pattern = "str.+v"
+    #string
+    ignore = true
+    [[object.function]]
+    name = "strv_length"
+    #string
+    ignore = true
+    [[object.function]]
+    pattern = "str.+"
+    ignore = true
+    [[object.function]]
+    pattern = "ucs4_.+"
+    ignore = true
+    [[object.function]]
+    pattern = "utf16_.+"
+    ignore = true
+    [[object.function]]
+    pattern = "utf8_.+"
+    ignore = true
+    [[object.function]]
+    pattern = "unichar_.+"
+    ignore = true
+    [[object.function]]
+    pattern = "ascii_.+"
+    ignore = true
+    [[object.function]]
+    name = "assertion_message_error"
+    #Quark
+    ignore = true
+    [[object.function]]
+    name = "assertion_message_expr"
+    ignore = true # function is useless
+    [[object.function]]
+    name = "assertion_message_cmpstrv"
+    ignore = true # function is useless
+    [[object.function]]
+    pattern = "test_.+"
+    ignore = true # functions are useless
+    [[object.function]]
+    pattern = "prefix_error_literal"
+    ignore = true # functions are useless
+    [[object.function]]
+    pattern = ".+_error_quark"
+    #Quark
+    ignore = true
+    [[object.function]]
+    pattern = "quark_.+_string"
+    #Quark
+    ignore = true
+    [[object.function]]
+    name = "spawn_close_pid"
+    #Pid
+    ignore = true
+    [[object.function]]
+    pattern = "[gs]et_prgname"
+    #manual pathbuf
+    ignore = true
+    [[object.function]]
+    name = "get_user_name"
+        [object.function.return]
+        string_type = "os_string"
+    [[object.function]]
+    name = "get_real_name"
+        [object.function.return]
+        string_type = "os_string"
+    [[object.function]]
+    pattern = "setenv"
+        [[object.function.parameter]]
+        name = "variable"
+        string_type = "os_string"
+        [[object.function.parameter]]
+        name = "value"
+        string_type = "os_string"
+        [object.function.return]
+        bool_return_is_error = "Failed to set environment variable"
+    [[object.function]]
+    pattern = "getenv"
+        [[object.function.parameter]]
+        name = "variable"
+        string_type = "os_string"
+        [object.function.return]
+        string_type = "os_string"
+    [[object.function]]
+    name = "unsetenv"
+        [[object.function.parameter]]
+        name = "variable"
+        string_type = "os_string"
+    [[object.function]]
+    name = "file_get_contents"
+    # Use glib::Slice<u8> as return value
+    manual = true
+    [[object.function]]
+    name = "mkstemp"
+    # modifies the string passed in
+    manual = true
+    [[object.function]]
+    name = "mkstemp_full"
+    # modifies the string passed in
+    manual = true
+    [[object.function]]
+    pattern = "mkdtemp(_full)?"
+    # needs to be transfer full, see
+    # https://gitlab.gnome.org/GNOME/glib/-/merge_requests/2596
+    manual = true
+    [[object.function]]
+    name = "strdup"
+    #not needed
+    ignore = true
+    [[object.function]]
+    pattern = "unix_.+"
+    cfg_condition = "unix"
+    [[object.function]]
+    name = "spawn_command_line_async"
+    cfg_condition = "unix"
+        [[object.function.parameter]]
+        name = "command_line"
+        string_type = "os_string"
+    [[object.function]]
+    name = "unix_open_pipe"
+    manual = true
+    [[object.function]]
+    name = "convert_with_fallback"
+    manual = true
+    [[object.function]]
+    name = "unicode_canonical_decomposition"
+    #out param not in .gir
+    ignore = true
+    [[object.function]]
+    name = "unicode_canonical_ordering"
+    #UCS-4 encoded string
+    ignore = true
+    [[object.function]]
+    name = "convert"
+    manual = true
+    [[object.function]]
+    name = "filename_from_utf8"
+    manual = true
+    [[object.function]]
+    name = "filename_to_utf8"
+    manual = true
+    [[object.function]]
+    name = "locale_from_utf8"
+    manual = true
+    [[object.function]]
+    name = "locale_to_utf8"
+    manual = true
+    [[object.function]]
+    name = "child_watch_source_new"
+    # Need manual bindings to be useful
+    ignore = true
+    [[object.function]]
+    name = "idle_source_new"
+    # Need manual bindings to be useful
+    ignore = true
+    [[object.function]]
+    name = "timeout_source_new"
+    # Need manual bindings to be useful
+    ignore = true
+    [[object.function]]
+    name = "timeout_source_new_seconds"
+    # Need manual bindings to be useful
+    ignore = true
+    [[object.function]]
+    name = "unix_signal_source_new"
+    # Need manual bindings to be useful
+    ignore = true
+    [[object.function]]
+    pattern = "unix_fd.*"
+    # Need manual binding for RawFd
+    ignore = true
+    [[object.function]]
+    name = "close"
+    # Need manual binding for RawFd
+    ignore = true
+    [[object.function]]
+    name = "log_writer_is_journald"
+    # Need manual binding for RawFd
+    ignore = true
+    [[object.function]]
+    name = "log_writer_supports_color"
+    # Need manual binding for RawFd
+    ignore = true
+    [[object.function]]
+    name = "unix_set_fd_nonblocking"
+    # Need manual binding for RawFd
+    ignore = true
+    [[object.function]]
+    name = "environ_getenv"
+    # manual input &[OsString]
+    ignore = true
+    [[object.function]]
+    pattern = "environ_(un)?setenv"
+    # unusable
+    ignore = true
+    [[object.function]]
+    name = "get_charset"
+    # boolean return value
+    ignore = true
+    [[object.function]]
+    name = "get_environ"
+        [object.function.return]
+        string_type = "os_string"
+    [[object.function]]
+    name = "listenv"
+        [object.function.return]
+        string_type = "os_string"
+    [[object.function]]
+    name = "shell_parse_argv"
+        [[object.function.parameter]]
+        name = "command_line"
+        string_type = "os_string"
+        [[object.function.parameter]]
+        name = "argvp"
+        string_type = "os_string"
+    [[object.function]]
+    name = "shell_quote"
+        [[object.function.parameter]]
+        name = "unquoted_string"
+        string_type = "os_string"
+        [object.function.return]
+        string_type = "os_string"
+    [[object.function]]
+    name = "shell_unquote"
+        [[object.function.parameter]]
+        name = "quoted_string"
+        string_type = "os_string"
+        [object.function.return]
+        string_type = "os_string"
+    [[object.function]]
+    name = "intern_static_string"
+    ignore = true
+    [[object.function]]
+    name = "intern_string"
+    ignore = true
+    [[object.function]]
+    # Pid conversion issue
+    name = "child_watch_add"
+    ignore = true
+    [[object.function]]
+    # Pid conversion issue
+    name = "child_watch_add_full"
+    ignore = true
+    # idle_* and timeout_* are manually implemented
+    [[object.function]]
+    name = "idle_add"
+    ignore = true
+    [[object.function]]
+    name = "idle_add_full"
+    ignore = true
+    [[object.function]]
+    name = "idle_add_once"
+    ignore = true
+    [[object.function]]
+    name = "timeout_add"
+    ignore = true
+    [[object.function]]
+    name = "timeout_add_full"
+    ignore = true
+    [[object.function]]
+    name = "timeout_add_once"
+    ignore = true
+    [[object.function]]
+    name = "timeout_add_seconds"
+    ignore = true
+    [[object.function]]
+    name = "timeout_add_seconds_full"
+    ignore = true
+    [[object.function]]
+    name = "timeout_add_seconds_once"
+    ignore = true # we have a manual impl already
+    [[object.function]]
+    name = "unix_signal_add"
+    ignore = true
+    [[object.function]]
+    name = "unix_signal_add_full"
+    ignore = true
+    [[object.function]]
+    pattern = "rc_box_.+"
+    #need manual implementation
+    ignore = true
+    [[object.function]]
+    pattern = "ref_count_.+"
+    #need manual implementation
+    ignore = true
+    [[object.function]]
+    pattern = "ref_string_.+"
+    #need manual implementation
+    ignore = true
+    [[object.function]]
+    name = "spawn_async_with_fds"
+    # generates invalid FDs
+    ignore = true
+    [[object.function]]
+    name = "spawn_async_with_pipes"
+    # generates invalid FDs
+    ignore = true
+    [[object.function]]
+    name = "log_set_handler"
+    # leaks closure
+    ignore = true
+    [[object.function]]
+    name = "log_default_handler"
+    # last argument is unused
+    ignore = true
+    [[object.function]]
+    name = "log_set_handler_full"
+    # from_glib_borrow on non-pointer objects
+    ignore = true
+    [[object.function]]
+    name = "log_set_writer_func"
+    # from_glib_borrow on non-pointer objects
+    ignore = true
+    [[object.function]]
+    name = "log_structured"
+    # implemented with a macro because of var args and weird arguments pairing
+    ignore = true
+    [[object.function]]
+    name = "log"
+    # implemented with a macro because of var args
+    ignore = true
+    [[object.function]]
+    name = "log_set_default_handler"
+    # It returned the old callback, which is problematic
+    ignore = true
+    [[object.function]]
+    name = "log_remove_handler"
+    # Change handler_id parameter type to LogHandlerId
+    ignore = true
+    [[object.function]]
+    name = "log_set_always_fatal"
+    # update of arguments and return type
+    ignore = true
+    [[object.function]]
+    name = "log_variant"
+    # usage of LogLevelFlags
+    ignore = true
+    [[object.function]]
+    name = "log_set_fatal_mask"
+    # update of arguments and return type
+    ignore = true
+    [[object.constant]]
+    pattern = "DIR_SEPARATOR(_S)?"
+    #not cross-platform
+    ignore = true
+    [[object.constant]]
+    pattern = "SEARCHPATH_SEPARATOR(_S)?"
+    #not cross-platform
+    ignore = true
+    [[object.constant]]
+    name = "MODULE_SUFFIX"
+    #not cross-platform
+    ignore = true
+    [[object.constant]]
+    pattern = "GU?INT(16)?(32)?(64)?(PTR)?_FORMAT"
+    #for C printf
+    ignore = true
+    [[object.constant]]
+    pattern = "GU?INT(16)?(32)?(64)?(PTR)?_MODIFIER"
+    #for C printf
+    ignore = true
+    [[object.constant]]
+    pattern = "GS?SIZE_(FORMAT)?(MODIFIER)?"
+    #for C printf
+    ignore = true
+    [[object.constant]]
+    pattern = "GNUC_(PRETTY_)?FUNCTION"
+    #for C printf
+    ignore = true
+    [[object.constant]]
+    pattern = "PID_FORMAT"
+    #for C printf
+    ignore = true
+    [[object.constant]]
+    pattern = "POLLFD_FORMAT"
+    #for C printf
+    ignore = true
+    [[object.function]]
+    name = "variant_get_gtype"
+    # get_type() function that should be used in StaticType impl instead
+    ignore = true
+    [[object.function]]
+    pattern = "unichar_((break_)?type|get_(script|mirror_char)|combining_class|is(mark|graph|punct|title|defined|wide(_cjk)?|zerowidth)|totitle|(fully_)?decompose|compose)"
+    manual = true # defined as extension methods on char
+
+[[object]]
+name = "GLib.Checksum"
+status = "generate"
+concurrency = "send+sync"
+    [[object.function]]
+    name = "get_digest"
+    #wrong array definition
+    manual = true
+    [[object.function]]
+    name = "get_string"
+    #consume
+    manual = true
+
+[[object]]
+name = "GLib.ChecksumType"
+status = "generate"
+    [[object.member]]
+    name = "sha384"
+    version = "2.52"
+
+[[object]]
+name = "GLib.DateTime"
+status = "generate"
+concurrency = "send+sync"
+    [[object.function]]
+    name = "new_local"
+    rename = "from_local"
+    [[object.function]]
+    name = "new_now"
+    rename = "now"
+    [[object.function]]
+    name = "new_now_local"
+    rename = "now_local"
+    [[object.function]]
+    name = "new_now_utc"
+    rename = "now_utc"
+    [[object.function]]
+    name = "new_utc"
+    rename = "from_utc"
+    [[object.function]]
+    pattern = ".+"
+        [object.function.return]
+        nullable_return_is_error = "Invalid date"
+
+[[object]]
+name = "GLib.FileTest" # used for tests
+status = "generate"
+visibility = "crate"
+
+[[object]]
+name = "GLib.FormatSizeFlags"
+status = "generate"
+    [[object.member]]
+    name = "only_value"
+    version = "2.74"
+    [[object.member]]
+    name = "only_unit"
+    version = "2.74"
+
+[[object]]
+name = "GLib.IConv"
+status = "manual"
+concurrency = "send"
+    [[object.function]]
+    name = "open"
+    rename = "new"
+    constructor = true
+
+[[object]]
+name = "GLib.KeyFile"
+status = "generate"
+    [[object.function]]
+    name = "load_from_data_dirs"
+    manual = true
+    [[object.function]]
+    name = "load_from_dirs"
+    manual = true
+    [[object.function]]
+    name = "save_to_file"
+    # file parameter needs to be a PathBuf
+    manual = true
+    [[object.function]]
+    name = "set_locale_string_list"
+    #[&str] to *mut i8
+    ignore = true
+    [[object.function]]
+    name = "set_string_list"
+    #[&str] to *mut i8
+    ignore = true
+    [[object.function]]
+    name = "to_data"
+    manual = true
+    [[object.function]]
+    name = "set_double_list"
+    #wrong array type
+    ignore = true
+    [[object.function]]
+    name = "set_integer_list"
+    #wrong array type
+    ignore = true
+    [[object.function]]
+    name = "get_groups"
+    #return slice of str pointers
+    manual = true
+    [[object.function]]
+    name = "get_keys"
+    #return slice of str pointers
+    manual = true
+    [[object.function]]
+    name = "get_boolean"
+    #boolean return value needs to be returned
+    manual = true
+    [[object.function]]
+    name = "has_key"
+    #boolean return value needs to be returned
+    manual = true
+    [[object.function]]
+    name = "get_boolean_list"
+    #boolean array needs to be converted to Vec<bool>
+    manual = true
+    [[object.function]]
+    name = "get_string"
+    # can return an error but still a value to be freed
+    manual = true
+    [[object.function]]
+    name = "get_string_list"
+    # can return an error but still a value to be freed
+    manual = true
+    [[object.function]]
+    name = "get_locale_string"
+    # can return an error but still a value to be freed
+    manual = true
+    [[object.function]]
+    name = "get_locale_string_list"
+    # can return an error but still a value to be freed
+    manual = true
+    [[object.function]]
+    name = "get_comment"
+        [[object.function.parameter]]
+        name = "key"
+        nullable = true
+
+[[object]]
+name = "GLib.MainContext"
+status = "generate"
+concurrency = "send+sync"
+    [[object.function]]
+    name = "prepare"
+    # out parameter not marked as such
+    manual = true
+
+    [[object.function]]
+    name = "find_source_by_id"
+    # source id is a newtype
+    manual = true
+
+    [[object.function]]
+    name = "invoke"
+    manual = true
+    [[object.function]]
+    name = "invoke_full"
+    manual = true
+
+    [[object.function]]
+    name = "acquire"
+    # implemented with a guard type
+    manual = true
+
+    [[object.function]]
+    name = "release"
+    # implemented with a guard type
+    manual = true
+
+    [[object.function]]
+    name = "push_thread_default"
+    # implemented with a guard type
+    manual = true
+
+    [[object.function]]
+    name = "pop_thread_default"
+    # implemented with a guard type
+    manual = true
+
+[[object]]
+name = "GLib.MainLoop"
+status = "generate"
+concurrency = "send+sync"
+
+[[object]]
+name = "GLib.MarkupParseContext"
+status = "generate"
+    [[object.function]]
+    name = "get_user_data"
+    ignore = true # unsafe pointer
+
+[[object]]
+name = "GLib.MatchInfo"
+status = "manual"
+
+[[object]]
+name = "GLib.Regex"
+status = "generate"
+    [[object.function]]
+    name = "check_replacement"
+    # impl IntoGStr for parameters instead of &str
+    manual = true
+    [[object.function]]
+    name = "escape_nul"
+    # impl IntoGStr for parameters instead of &str
+    manual = true
+    [[object.function]]
+    name = "escape_string"
+    # impl IntoGStr for parameters instead of &str
+    manual = true
+    [[object.function]]
+    name = "match"
+    # implement in terms of match_full
+    manual = true
+    [[object.function]]
+    name = "match_all"
+    # implement in terms of match_all_full
+    manual = true
+    [[object.function]]
+    name = "match_all_full"
+    # impl IntoGStr for parameters instead of &str
+    manual = true
+    [[object.function]]
+    name = "match_simple"
+    # impl IntoGStr for parameters instead of &str
+    manual = true
+    [[object.function]]
+    name = "match_full"
+    # impl IntoGStr for parameters instead of &str
+    manual = true
+    [[object.function]]
+    name = "replace"
+    # impl IntoGStr for parameters instead of &str
+    manual = true
+    [[object.function]]
+    name = "replace_literal"
+    # impl IntoGStr for parameters instead of &str
+    manual = true
+    [[object.function]]
+    name = "split"
+    # implement in terms of split_full
+    manual = true
+    [[object.function]]
+    name = "split_full"
+    # impl IntoGStr for parameters instead of &str
+    # return slice of str pointers
+    manual = true
+    [[object.function]]
+    name = "split_simple"
+    # impl IntoGStr for parameters instead of &str
+    # return slice of str pointers
+    manual = true
+    [[object.function]]
+    name = "get_string_number"
+    # impl IntoGStr for parameters instead of &str
+    manual = true
+
+[[object]]
+name = "GLib.Source"
+status = "generate"
+concurrency = "send+sync"
+    [[object.function]]
+    pattern = "set_.+"
+    # Setters are generally not thread-safe
+    # while GSource itself is
+    ignore = true
+
+    [[object.function]]
+    pattern = "attach"
+    # return type
+    ignore = true
+
+    [[object.function]]
+    pattern = "get_id"
+    # unsafe as it would allow multiple times to remove
+    ignore = true
+
+    [[object.function]]
+    pattern = "remove"
+    # parameter type
+    ignore = true
+
+    [[object.function]]
+    name = "dup_context"
+    # implemented as the normal getter
+    manual = true
+
+    [[object.function]]
+    name = "get_context"
+    # implemented conditionally around this or
+    # dup_context() (see above)
+    manual = true
+
+[[object]]
+name = "GLib.ThreadPool"
+status = "manual"
+concurrency = "send+sync"
+    [[object.function]]
+    name = "new_shared"
+    rename = "shared"
+    [[object.function]]
+    name = "new_exclusive"
+    rename = "exclusive"
+
+[[object]]
+name = "GLib.TimeSpan"
+status = "manual"
+conversion_type = "scalar"
+
+[[object]]
+name = "GLib.TimeZone"
+status = "generate"
+concurrency = "send+sync"
+    [[object.function]]
+    name = "new_identifier"
+    rename = "from_identifier"
+    [[object.function]]
+    name = "new_local"
+    rename = "local"
+    [[object.function]]
+    name = "new_offset"
+    rename = "from_offset"
+    [[object.function]]
+    name = "new_utc"
+    rename = "utc"
+    [[object.function]]
+    name = "adjust_time"
+    # in-out parameter
+    manual = true
+
+[[object]]
+name = "GLib.UnicodeBreakType"
+status = "generate"
+    [[object.member]]
+    name = "close_paranthesis"
+    ignore = true
+    [[object.member]]
+    pattern = "(aksara|aksara_pre_base|aksara_start|virama_final|virama)"
+    version = "2.80"
+
+[[object]]
+name = "GLib.UnicodeScript"
+status = "generate"
+    [[object.member]]
+    pattern = "cypro_minoan|old_uyghur|tangsa|toto|vithkuqi|math"
+    version = "2.72"
+    [[object.member]]
+    pattern = "kawi|nag_mundari"
+    version = "2.74"
+    [[object.member]]
+    pattern = "todhri|garay|tulu_tigalari|sunuwar|gurung_khema|kirat_rai|ol_onal"
+    version = "2.84"
+
+[[object]]
+name = "GLib.Uri"
+status = "generate"
+concurrency = "send+sync"

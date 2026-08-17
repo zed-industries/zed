@@ -1,0 +1,5 @@
+error: `getter` attribute can't be specified together with `overwritable`
+ --> tests/integration/ui/compile_fail/overwritable/attr_getter.rs:5:15
+  |
+5 |     #[builder(getter, overwritable)]
+  |               ^^^^^^

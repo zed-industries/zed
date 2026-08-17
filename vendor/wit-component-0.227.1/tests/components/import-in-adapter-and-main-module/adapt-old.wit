@@ -1,0 +1,9 @@
+world adapt-old {
+  import foo:shared-dependency/doc;
+
+  import adapter-dep: interface {
+    use foo:shared-dependency/types.{a-typedef};
+
+    foo: func() -> a-typedef;
+  }
+}

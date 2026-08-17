@@ -1,0 +1,520 @@
+# Portable Stack Manipulation
+
+This crate provides very portable functions to control the stack pointer and inspect the properties
+of the stack. This crate does not attempt to provide safe abstractions to any operations, the
+only goals are correctness, portability and efficiency (in that exact order). As a consequence most
+functions you’ll see in this crate are unsafe.
+
+Unless you’re writing a safe abstraction over stack manipulation, this is not the crate you
+want. Instead consider one of the safe abstractions over this crate. A good place to look at is
+the crates.io’s reverse dependency list.
+
+# Platform support
+
+The following table lists supported targets and architectures with notes on the level of current
+support and knowledge about the target. The three columns “Available”, “Tested” and “Callstack”
+imply an increasingly high level of support.
+
+* “Available” basically means that the code builds and the assembly files have been written for the
+  target;
+* “Tested” means that the assembly code has been tested or otherwise verified to be correct. For
+  most targets it also means that continuous integration is set up;
+* “Callstack” means that the assembly code has been written with due care to support unwinding the
+  stack and displaying the call frames (i.e. `gdb backtrace` works as expected).
+
+<table>
+<tr>
+<th rowspan="1" colspan="2">Target</th>
+<th colspan="3">Support</th>
+</tr>
+<tr>
+<th rowspan="2">Architecture</th>
+<th rowspan="2">OS</th>
+<th>Available</th>
+<th>Tested</th>
+<th>Callstack</th>
+</tr>
+<tr>
+<th colspan="3">Notes</th>
+</tr>
+
+<tr>
+<td rowspan="6">x86_64</td>
+<td rowspan="2">apple-ios</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td colspan="3">
+
+Target has been tested locally.
+
+</td>
+</tr>
+<tr>
+<td rowspan="2">windows</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>Yes, but disabled</td>
+</tr>
+<tr>
+<td colspan="3">
+
+Stacks allocated the usual way are not valid to be used on Windows and the functions to allocate a
+stack in a proper way is a Windows implementation detail. As a (unnecessarily slow and inflexible)
+alternative use [Fibers][fibers].
+
+</td>
+</tr>
+<tr>
+<td rowspan="2">&#42;</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td></td>
+</tr>
+
+<tr>
+<td rowspan="8">i686<br>i586<br>i386</td>
+<td rowspan="2">apple-ios</td>
+<td>Yes</td>
+<td>Unknown</td>
+<td>Unknown</td>
+</tr>
+<tr>
+<td colspan="3">
+</td>
+</tr>
+<tr>
+<td rowspan="2">linux-android</td>
+<td>Unknown</td>
+<td>Unknown</td>
+<td>Unknown</td>
+</tr>
+<tr>
+<td colspan="3">
+
+The assembly files are available, but the target hasn’t been verified to build
+
+</td>
+</tr>
+<tr>
+<td rowspan="2">windows</td>
+<td>No</td>
+<td>No</td>
+<td>No</td>
+</tr>
+<tr>
+<td colspan="3">
+
+The code technically works on my local machine, but exception handling does not correctly work on
+appveyor, which makes me unwilling to mark this as working yet.
+
+Stacks allocated the usual way are not valid to be used on Windows and the functions to allocate a
+stack in a proper way is a Windows implementation detail. As a (unnecessarily slow and inflexible)
+alternative use [Fibers][fibers].
+
+</td>
+</tr>
+<tr>
+<td rowspan="2">&#42;</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td colspan="3">
+</td>
+</tr>
+
+<tr>
+<td rowspan="8">aarch64</td>
+<td rowspan="2">apple-ios</td>
+<td>Yes</td>
+<td>Unknown</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td colspan="3">
+
+aarch64-apple-ios has not been tested. iOS hardware is necessary to run these tests.
+
+</td>
+</tr>
+<tr>
+<td rowspan="2">fuchsia<br>unknown-cloudabi</td>
+<td>Unknown</td>
+<td>Unknown</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td colspan="3">
+</td>
+</tr>
+<tr>
+<td rowspan="2">windows</td>
+<td>No</td>
+<td>No</td>
+<td>No</td>
+</tr>
+<tr>
+<td colspan="3">
+
+Stacks allocated the usual way are not valid to be used on Windows and the functions to allocate a
+stack in a proper way is a Windows implementation detail. As a (unnecessarily slow and inflexible)
+alternative use [Fibers][fibers].
+
+</td>
+</tr>
+<tr>
+<td rowspan="2">&#42;</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td colspan="3">
+</td>
+</tr>
+
+
+<tr>
+<td rowspan="6">arm<br>armv7</td>
+<td rowspan="2">apple-ios</td>
+<td>Yes</td>
+<td>Unknown</td>
+<td>Unknown</td>
+</tr>
+<tr>
+<td colspan="3">
+
+armv7-apple-ios has not been tested. iOS hardware is necessary to run these tests.
+
+</td>
+</tr>
+<tr>
+<td rowspan="2">windows</td>
+<td>No</td>
+<td>No</td>
+<td>No</td>
+</tr>
+<tr>
+<td colspan="3">
+
+Stacks allocated the usual way are not valid to be used on Windows and the functions to allocate a
+stack in a proper way is a Windows implementation detail. As a (unnecessarily slow and inflexible)
+alternative use [Fibers][fibers].
+
+</td>
+</tr>
+<tr>
+<td rowspan="2">&#42;</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td colspan="3">
+</td>
+</tr>
+
+<tr>
+<td rowspan="2">armv5te</td>
+<td rowspan="2">&#42;</td>
+<td>Unknown</td>
+<td>Unknown</td>
+<td>Unknown</td>
+</tr>
+<tr>
+<td colspan="3">
+</td>
+</tr>
+
+<tr>
+<td rowspan="2">thumbv6<br>thumbv7</td>
+<td rowspan="2">&#42;</td>
+<td>Unknown</td>
+<td>Unknown</td>
+<td>Unknown</td>
+</tr>
+<tr>
+<td colspan="3">
+</td>
+</tr>
+
+<tr>
+<td rowspan="2">mips<br>mipsel</td>
+<td rowspan="2">linux</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td colspan="3">
+
+Only the o32 ABI is supported and will be used for all 32-bit MIPS targets.
+
+</td>
+</tr>
+
+<tr>
+<td rowspan="2">mips64<br>mips64el</td>
+<td rowspan="2">linux</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td colspan="3">
+</td>
+</tr>
+
+<tr>
+<td rowspan="2">powerpc</td>
+<td rowspan="2">linux</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td colspan="3">
+
+Callstack generation may fail at certain well defined ranges of the program, although the usual
+compiler-generated code fails at similar points itself.
+
+</td>
+</tr>
+
+<tr>
+<td rowspan="4">powerpc64</td>
+<td rowspan="2">linux</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td colspan="3">
+
+Callstack generation may fail at certain well defined ranges of the program, although the usual
+compiler-generated code fails at similar points itself.
+
+</td>
+</tr>
+
+<tr>
+<td rowspan="2">AIX</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>Yes</td>
+<tr>
+<td colspan="3">
+</td>
+</tr>
+
+<tr>
+<td rowspan="2">powerpc64le</td>
+<td rowspan="2">linux</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td colspan="3">
+
+Callstack generation may fail at certain well defined ranges of the program, although the usual
+compiler-generated code fails at similar points itself.
+
+</td>
+</tr>
+
+<tr>
+<td rowspan="2">s390x</td>
+<td rowspan="2">linux</td>
+<td>Yes</td>
+<td>Locally</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td colspan="3">
+
+Test runner on CI hangs, local verification has been done on a qemu-system-s390x VM. It may be
+possible to add CI testing in the future via qemu’s full-system emulation.
+
+</td>
+</tr>
+
+<tr>
+<td rowspan="2">sparc</td>
+<td rowspan="2">linux</td>
+<td>Unknown</td>
+<td>Unknown</td>
+<td>Unknown</td>
+</tr>
+<tr>
+<td colspan="3">
+
+A Rust target for 32-bit SPARC exists, but no Linux distributions actually have a 32-bit SPARC
+distribution, so verification is infeasible.
+
+The actual assembly code has been written conservatively, modelled after the 64-bit SPARC code.
+and so has a non-zero chance of working.
+
+</td>
+</tr>
+
+<tr>
+<td rowspan="2">sparc64</td>
+<td rowspan="2">linux</td>
+<td>Yes</td>
+<td>Locally</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td colspan="3">
+
+Has been manually verified to work on the [GCC Farm Project] machines. It may be possible to
+add CI testing in the future via qemu’s full-system emulation.
+
+</td>
+</tr>
+
+<tr>
+<td rowspan="2">sparc9</td>
+<td rowspan="2">solaris</td>
+<td>Yes</td>
+<td>Unknown</td>
+<td>Unknown</td>
+</tr>
+<tr>
+<td colspan="3">
+
+Uses the same assembly as the sparc64-linux-gnu target. This target has no rustc builds and
+therefore the correct operation of this target could not be verified at the moment.
+
+</td>
+</tr>
+
+<tr>
+<td rowspan="2">wasm</td>
+<td rowspan="2">&#42;</td>
+<td>No</td>
+<td>No</td>
+<td>No</td>
+</tr>
+<tr>
+<td colspan="3">
+
+This library is not applicable to the target. WASM hasn’t a specified C ABI, the callstack is
+not even in an address space and does not appear to be manipulatable.
+
+</td>
+</tr>
+
+<tr>
+<td rowspan="2">asmjs</td>
+<td rowspan="2">&#42;</td>
+<td>No</td>
+<td>No</td>
+<td>No</td>
+</tr>
+<tr>
+<td colspan="3">
+
+Feasibility/necessity hasn’t been acertained.
+
+</td>
+</tr>
+
+<tr>
+<td rowspan="2">nvptx</td>
+<td rowspan="2">&#42;</td>
+<td>No</td>
+<td>No</td>
+<td>No</td>
+</tr>
+<tr>
+<td colspan="3">
+
+Feasibility/necessity hasn’t been acertained.
+
+</td>
+</tr>
+
+<tr>
+<td rowspan="2">msp430</td>
+<td rowspan="2">&#42;</td>
+<td>No</td>
+<td>No</td>
+<td>No</td>
+</tr>
+<tr>
+<td colspan="3">
+
+Haven’t gotten to it yet...
+
+</td>
+</tr>
+
+<tr>
+<td rowspan="2">riscv32</td>
+<td rowspan="2">&#42;</td>
+<td>Yes</td>
+<td>No</td>
+<td>Unknown</td>
+</tr>
+<tr>
+<td colspan="3">
+
+Although the assembly code has not been tested, it is a straightforward copy of the 64-bit version.
+Unless there is a non-obvious mistake, this should work fine.
+
+</td>
+</tr>
+
+<tr>
+<td rowspan="2">riscv64</td>
+<td rowspan="2">&#42;</td>
+<td>Yes</td>
+<td>Locally</td>
+<td>Unknown</td>
+</tr>
+<tr>
+<td colspan="3">
+
+The assembly code for riscv64 has been tested locally with a C caller.
+
+</td>
+</tr>
+
+<tr>
+<td rowspan="2">loongarch64</td>
+<td rowspan="2">&#42;</td>
+<td>Yes</td>
+<td>Locally</td>
+<td>Unknown</td>
+</tr>
+<tr>
+<td colspan="3">
+
+The assembly code for loongarch64 has been tested locally with a C caller.
+
+</td>
+</tr>
+</table>
+
+[GCC Farm Project]: https://cfarm.tetaneutral.net/
+[fibers]: https://docs.microsoft.com/en-gb/windows/desktop/ProcThread/fibers
+
+# License
+
+PSM is licensed under either of
+
+ * Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or
+   https://www.apache.org/licenses/LICENSE-2.0)
+ * MIT license ([LICENSE-MIT](LICENSE-MIT) or
+   https://opensource.org/licenses/MIT)
+
+at your option.

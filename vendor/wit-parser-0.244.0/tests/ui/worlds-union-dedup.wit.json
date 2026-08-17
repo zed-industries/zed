@@ -1,0 +1,112 @@
+{
+  "worlds": [
+    {
+      "name": "my-world-a",
+      "imports": {
+        "interface-0": {
+          "interface": {
+            "id": 0
+          }
+        },
+        "interface-2": {
+          "interface": {
+            "id": 2
+          }
+        }
+      },
+      "exports": {},
+      "package": 0
+    },
+    {
+      "name": "my-world-b",
+      "imports": {
+        "interface-0": {
+          "interface": {
+            "id": 0
+          }
+        },
+        "interface-2": {
+          "interface": {
+            "id": 2
+          }
+        }
+      },
+      "exports": {},
+      "package": 0
+    },
+    {
+      "name": "union-my-world",
+      "imports": {
+        "interface-0": {
+          "interface": {
+            "id": 0
+          }
+        },
+        "interface-2": {
+          "interface": {
+            "id": 2
+          }
+        }
+      },
+      "exports": {},
+      "package": 0
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "a1",
+      "types": {},
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "a2",
+      "types": {},
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "b1",
+      "types": {},
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "b2",
+      "types": {},
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "c",
+      "types": {},
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "d",
+      "types": {},
+      "functions": {},
+      "package": 0
+    }
+  ],
+  "types": [],
+  "packages": [
+    {
+      "name": "foo:foo",
+      "interfaces": {
+        "a1": 0,
+        "a2": 1,
+        "b1": 2,
+        "b2": 3,
+        "c": 4,
+        "d": 5
+      },
+      "worlds": {
+        "my-world-a": 0,
+        "my-world-b": 1,
+        "union-my-world": 2
+      }
+    }
+  ]
+}

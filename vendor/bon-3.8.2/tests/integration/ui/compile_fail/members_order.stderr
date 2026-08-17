@@ -1,0 +1,129 @@
+error: incorrect members ordering; expected ordering:
+       (1) members annotated with #[builder(start_fn)]
+       (2) members annotated with #[builder(field)]
+       (3) members annotated with #[builder(finish_fn)]
+       (4) all other members in any order
+ --> tests/integration/ui/compile_fail/members_order.rs:8:15
+  |
+8 |     #[builder(start_fn)]
+  |               ^^^^^^^^
+
+error: incorrect members ordering; expected ordering:
+       (1) members annotated with #[builder(start_fn)]
+       (2) members annotated with #[builder(field)]
+       (3) members annotated with #[builder(finish_fn)]
+       (4) all other members in any order
+  --> tests/integration/ui/compile_fail/members_order.rs:17:15
+   |
+17 |     #[builder(start_fn)]
+   |               ^^^^^^^^
+
+error: incorrect members ordering; expected ordering:
+       (1) members annotated with #[builder(start_fn)]
+       (2) members annotated with #[builder(field)]
+       (3) members annotated with #[builder(finish_fn)]
+       (4) all other members in any order
+  --> tests/integration/ui/compile_fail/members_order.rs:24:15
+   |
+24 |     #[builder(start_fn)]
+   |               ^^^^^^^^
+
+error: incorrect members ordering; expected ordering:
+       (1) members annotated with #[builder(start_fn)]
+       (2) members annotated with #[builder(field)]
+       (3) members annotated with #[builder(finish_fn)]
+       (4) all other members in any order
+  --> tests/integration/ui/compile_fail/members_order.rs:31:15
+   |
+31 |     #[builder(finish_fn)]
+   |               ^^^^^^^^^
+
+error: incorrect members ordering; expected ordering:
+       (1) members annotated with #[builder(start_fn)]
+       (2) members annotated with #[builder(field)]
+       (3) members annotated with #[builder(finish_fn)]
+       (4) all other members in any order
+  --> tests/integration/ui/compile_fail/members_order.rs:39:15
+   |
+39 |     #[builder(start_fn)]
+   |               ^^^^^^^^
+
+error: incorrect members ordering; expected ordering:
+       (1) members annotated with #[builder(start_fn)]
+       (2) members annotated with #[builder(field)]
+       (3) members annotated with #[builder(finish_fn)]
+       (4) all other members in any order
+  --> tests/integration/ui/compile_fail/members_order.rs:47:15
+   |
+47 |     #[builder(finish_fn)]
+   |               ^^^^^^^^^
+
+error: incorrect members ordering; expected ordering:
+       (1) members annotated with #[builder(start_fn)]
+       (2) members annotated with #[builder(field)]
+       (3) members annotated with #[builder(finish_fn)]
+       (4) all other members in any order
+  --> tests/integration/ui/compile_fail/members_order.rs:55:15
+   |
+55 |     #[builder(start_fn)]
+   |               ^^^^^^^^
+
+error: incorrect members ordering; expected ordering:
+       (1) members annotated with #[builder(start_fn)]
+       (2) members annotated with #[builder(field)]
+       (3) members annotated with #[builder(finish_fn)]
+       (4) all other members in any order
+  --> tests/integration/ui/compile_fail/members_order.rs:65:15
+   |
+65 |     #[builder(start_fn)]
+   |               ^^^^^^^^
+
+error: incorrect members ordering; expected ordering:
+       (1) members annotated with #[builder(start_fn)]
+       (2) members annotated with #[builder(field)]
+       (3) members annotated with #[builder(finish_fn)]
+       (4) all other members in any order
+  --> tests/integration/ui/compile_fail/members_order.rs:72:15
+   |
+72 |     #[builder(field)]
+   |               ^^^^^
+
+error: incorrect members ordering; expected ordering:
+       (1) members annotated with #[builder(start_fn)]
+       (2) members annotated with #[builder(field)]
+       (3) members annotated with #[builder(finish_fn)]
+       (4) all other members in any order
+  --> tests/integration/ui/compile_fail/members_order.rs:83:15
+   |
+83 |     #[builder(field)]
+   |               ^^^^^
+
+error: incorrect members ordering; expected ordering:
+       (1) members annotated with #[builder(start_fn)]
+       (2) members annotated with #[builder(field)]
+       (3) members annotated with #[builder(finish_fn)]
+       (4) all other members in any order
+  --> tests/integration/ui/compile_fail/members_order.rs:92:15
+   |
+92 |     #[builder(field)]
+   |               ^^^^^
+
+error: incorrect members ordering; expected ordering:
+       (1) members annotated with #[builder(start_fn)]
+       (2) members annotated with #[builder(field)]
+       (3) members annotated with #[builder(finish_fn)]
+       (4) all other members in any order
+   --> tests/integration/ui/compile_fail/members_order.rs:102:15
+    |
+102 |     #[builder(field)]
+    |               ^^^^^
+
+error: incorrect members ordering; expected ordering:
+       (1) members annotated with #[builder(start_fn)]
+       (2) members annotated with #[builder(field)]
+       (3) members annotated with #[builder(finish_fn)]
+       (4) all other members in any order
+   --> tests/integration/ui/compile_fail/members_order.rs:112:15
+    |
+112 |     #[builder(field)]
+    |               ^^^^^

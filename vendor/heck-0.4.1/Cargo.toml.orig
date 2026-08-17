@@ -1,0 +1,20 @@
+[package]
+authors = ["Without Boats <woboats@gmail.com>"]
+name = "heck"
+version = "0.4.1"
+edition = "2018"
+license = "MIT OR Apache-2.0"
+description = "heck is a case conversion library."
+homepage = "https://github.com/withoutboats/heck"
+repository = "https://github.com/withoutboats/heck"
+documentation = "https://docs.rs/heck"
+keywords = ["string", "case", "camel", "snake", "unicode"]
+readme = "README.md"
+include = ["src/**/*", "LICENSE-*", "README.md", "CHANGELOG.md"]
+
+[features]
+default = []
+unicode = ["unicode-segmentation"]
+
+[dependencies]
+unicode-segmentation = { version = "1.2.0", optional = true }

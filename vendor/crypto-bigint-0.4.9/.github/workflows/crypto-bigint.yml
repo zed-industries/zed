@@ -1,0 +1,144 @@
+name: crypto-bigint
+
+on:
+  pull_request:
+    paths-ignore:
+      - README.md
+  push:
+    branches: master
+    paths-ignore:
+      - README.md
+
+env:
+  CARGO_INCREMENTAL: 0
+  RUSTFLAGS: "-Dwarnings"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+          - 1.57.0 # MSRV
+          - stable
+        target:
+          - thumbv7em-none-eabi
+          - wasm32-unknown-unknown
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+          target: ${{ matrix.target }}
+          override: true
+      - run: cargo build --target ${{ matrix.target }} --release --no-default-features
+      - run: cargo build --target ${{ matrix.target }} --release --no-default-features --features alloc
+      - run: cargo build --target ${{ matrix.target }} --release --no-default-features --features der
+      - run: cargo build --target ${{ matrix.target }} --release --no-default-features --features generic-array
+      - run: cargo build --target ${{ matrix.target }} --release --no-default-features --features rand_core
+      - run: cargo build --target ${{ matrix.target }} --release --no-default-features --features rlp
+      - run: cargo build --target ${{ matrix.target }} --release --no-default-features --features serde
+      - run: cargo build --target ${{ matrix.target }} --release --no-default-features --features zeroize
+      - run: cargo build --target ${{ matrix.target }} --release --no-default-features --features alloc,der,generic-array,rand_core,rlp,serde,zeroize
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # 32-bit Linux
+          - target: i686-unknown-linux-gnu
+            rust: 1.57.0 # MSRV
+            deps: sudo apt update && sudo apt install gcc-multilib
+          - target: i686-unknown-linux-gnu
+            rust: stable
+            deps: sudo apt update && sudo apt install gcc-multilib
+
+          # 64-bit Linux
+          - target: x86_64-unknown-linux-gnu
+            rust: 1.57.0 # MSRV
+          - target: x86_64-unknown-linux-gnu
+            rust: stable
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          target: ${{ matrix.target }}
+          profile: minimal
+          override: true
+      - run: ${{ matrix.deps }}
+      - run: cargo test --target ${{ matrix.target }} --release --no-default-features
+      - run: cargo test --target ${{ matrix.target }} --release
+      - run: cargo test --target ${{ matrix.target }} --release --all-features
+
+  # Cross-compiled tests
+  cross:
+    strategy:
+      matrix:
+        include:
+          # ARM64
+          - target: aarch64-unknown-linux-gnu
+            rust: stable
+
+          # PPC32 (big endian)
+          - target: powerpc-unknown-linux-gnu
+            rust: stable
+
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - run: ${{ matrix.deps }}
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          target: ${{ matrix.target }}
+          profile: minimal
+          override: true
+      - run: cargo install cross
+      - run: cross test --target ${{ matrix.target }} --release --no-default-features
+      - run: cross test --target ${{ matrix.target }} --release
+      - run: cross test --target ${{ matrix.target }} --release --all-features
+
+  # dudect benchmarks: check for constant-time operation
+  dudect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+          profile: minimal
+      - run: cargo run --release
+          | tee /dev/stderr
+          | perl -n -e '/max t = [+-](\d*\.?\d*)/; if ($1 >= 100) { exit 1 }'
+        working-directory: dudect
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: 1.57.0
+          components: clippy
+          override: true
+          profile: minimal
+      - run: cargo clippy --all --all-features -- -D warnings
+
+  rustfmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt
+          profile: minimal
+          override: true
+      - uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check

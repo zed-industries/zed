@@ -1,0 +1,191 @@
+;; Rewrites for `band`, `bnot`, `bor`, `bxor`
+
+;; x | 0 == x | x == x.
+(rule (simplify (bor ty
+                     x
+                     (iconst_u ty 0)))
+      (subsume x))
+(rule (simplify (bor ty x x))
+      (subsume x))
+
+;; x ^ 0 == x.
+(rule (simplify (bxor ty
+                     x
+                     (iconst_u ty 0)))
+      (subsume x))
+
+;; x ^ x == 0.
+(rule (simplify (bxor (ty_int ty) x x))
+      (subsume (iconst_u ty 0)))
+
+;; x ^ not(x) == not(x) ^ x == x | not(x) == not(x) | x == -1.
+;; This identity also holds for non-integer types, vectors, and wider types.
+(rule (simplify (bxor (ty_int ty) x (bnot ty x))) (subsume (iconst_s ty -1)))
+(rule (simplify (bxor (ty_int ty) (bnot ty x) x)) (subsume (iconst_s ty -1)))
+(rule (simplify (bor (ty_int ty) x (bnot ty x))) (subsume (iconst_s ty -1)))
+(rule (simplify (bor (ty_int ty) (bnot ty x) x)) (subsume (iconst_s ty -1)))
+
+;; x & x == x & -1 == x.
+(rule (simplify (band ty x x)) (subsume x))
+(rule (simplify (band ty x (iconst_s ty -1)))
+      (subsume x))
+
+;; x & 0 == x & not(x) == not(x) & x == 0.
+(rule (simplify (band ty _ zero @ (iconst_u ty 0))) (subsume zero))
+(rule (simplify (band (ty_int ty) x (bnot ty x))) (subsume (iconst_u ty 0)))
+(rule (simplify (band (ty_int ty) (bnot ty x) x)) (subsume (iconst_u ty 0)))
+
+;; (x & y) ^ (x ^ y) == x | y
+(rule (simplify (bxor ty (band ty X Y) (bxor ty X Y))) (bor ty X Y))
+
+;; not(not(x)) == x.
+(rule (simplify (bnot ty (bnot ty x))) (subsume x))
+
+;; DeMorgan's rule (two versions):
+;; bnot(bor(x, y)) == band(bnot(x), bnot(y))
+(rule (simplify (bnot ty (bor ty x y)))
+      (band ty (bnot ty x) (bnot ty y)))
+;; bnot(band(x, y)) == bor(bnot(x), bnot(y))
+(rule (simplify (bnot ty (band t x y)))
+      (bor ty (bnot ty x) (bnot ty y)))
+
+;; `or(and(x, y), not(y)) == or(x, not(y))`
+(rule (simplify (bor ty
+                     (band ty x y)
+                     z @ (bnot ty y)))
+      (bor ty x z))
+;; Duplicate the rule but swap the `bor` operands because `bor` is
+;; commutative. We could, of course, add a `simplify` rule to do the commutative
+;; swap for all `bor`s but this will bloat the e-graph with many e-nodes. It is
+;; cheaper to have additional rules, rather than additional e-nodes, because we
+;; amortize their cost via ISLE's smart codegen.
+(rule (simplify (bor ty
+                     z @ (bnot ty y)
+                     (band ty x y)))
+      (bor ty x z))
+
+;; `or(and(x, y), not(y)) == or(x, not(y))` specialized for constants, since
+;; otherwise we may not know that `z == not(y)` since we don't generally expand
+;; constants in the e-graph.
+;;
+;; (No need to duplicate for commutative `bor` for this constant version because
+;; we move constants to the right.)
+(rule (simplify (bor ty
+                     (band ty x (iconst_u ty y))
+                     z @ (iconst_u ty zk)))
+      (if-let true (u64_eq (u64_and (ty_mask ty) zk)
+                            (u64_and (ty_mask ty) (u64_not y))))
+      (bor ty x z))
+
+;; (x ^ -1) can be replaced with the `bnot` instruction
+(rule (simplify (bxor ty x (iconst_s ty -1)))
+  (bnot ty x))
+
+;; sshr((x | -x), N) == bmask(x) where N = ty_bits(ty) - 1.
+;;
+;; (x | -x) sets the sign bit to 1 if x is nonzero, and 0 if x is zero. sshr propagates
+;; the sign bit to the rest of the value.
+(rule (simplify (sshr ty (bor ty x (ineg ty x)) (iconst_u ty shift_amt)))
+      (if-let true (u64_eq shift_amt (ty_shift_mask ty)))
+      (bmask ty x))
+
+(rule (simplify (sshr ty (bor ty (ineg ty x) x) (iconst_u ty shift_amt)))
+      (if-let true (u64_eq shift_amt (ty_shift_mask ty)))
+      (bmask ty x))
+
+;; Since icmp is always 0 or 1, bmask is just a negation.
+;; TODO: Explore whether this makes sense for things needing extension too.
+(rule (simplify (bmask $I8 cmp@(icmp $I8 _ _ _)))
+      (ineg $I8 cmp))
+
+;; Matches any expressions that preserve "truthiness".
+;; i.e. If the input is zero it remains zero, and if it is nonzero it can have
+;; a different value as long as it is still nonzero.
+(decl pure multi truthy (Value) Value)
+(rule (truthy (sextend _ x)) x)
+(rule (truthy (uextend _ x)) x)
+(rule (truthy (bmask _ x)) x)
+(rule (truthy (ineg _ x)) x)
+(rule (truthy (bswap _ x)) x)
+(rule (truthy (bitrev _ x)) x)
+(rule (truthy (popcnt _ x)) x)
+(rule (truthy (rotl _ x _)) x)
+(rule (truthy (rotr _ x _)) x)
+(rule (truthy (select _ x (iconst_u _ (u64_when_non_zero)) (iconst_u _ 0))) x)
+;; (ne ty (iconst 0) v) is also canonicalized into this form via another rule
+(rule (truthy (ne _ x (iconst_u _ 0))) x)
+
+;; All of these expressions don't care about their input as long as it is truthy.
+;; so we can remove expressions that preserve that property from the input.
+(rule (simplify (bmask ty v)) (if-let x (truthy v)) (bmask ty x))
+(rule (simplify (select ty v t f)) (if-let c (truthy v)) (select ty c t f))
+;; (ne ty (iconst 0) v) is also canonicalized into this form via another rule
+(rule (simplify (ne cty v (iconst_u _ 0)))
+      (if-let c (truthy v))
+      (if-let (value_type (ty_int_ref_scalar_64 ty)) c)
+      (ne cty c (iconst_u ty 0)))
+
+
+
+;; (sextend (bmask x)) can be replaced with (bmask x) since bmask
+;; supports any size of output type, regardless of input.
+;; Same with `ireduce`
+(rule (simplify (sextend ty (bmask _ x))) (bmask ty x))
+(rule (simplify (ireduce ty (bmask _ x))) (bmask ty x))
+
+;; (bswap (bswap x)) == x
+(rule (simplify (bswap ty (bswap ty x))) (subsume x))
+
+;; (bitrev (bitrev x)) == x
+(rule (simplify (bitrev ty (bitrev ty x))) (subsume x))
+
+;; WebAssembly doesn't have a native byte-swapping instruction at this time so
+;; languages which have a byte-swapping operation will compile it down to bit
+;; shifting and twiddling. This attempts to pattern match what LLVM currently
+;; generates today for the Rust code `a.swap_bytes()`. This might be a bit
+;; brittle over time and/or with other possible LLVM backend optimizations, but
+;; it's at least one way to generate a byte swap.
+;;
+;; Technically this could be permuted quite a few ways and currently there's no
+;; easy way to match all of them, so only one is matched here.
+(rule (simplify (bor ty @ $I32
+    (bor ty
+      (ishl ty x (iconst_u ty 24))
+      (ishl ty
+        (band ty x (iconst_u ty 0xff00))
+        (iconst_u ty 8)))
+    (bor ty
+      (band ty
+        (ushr ty x (iconst_u ty 8))
+        (iconst_u ty 0xff00))
+      (ushr ty x (iconst_u ty 24)))))
+  (bswap ty x))
+
+(rule (simplify (bor ty @ $I64
+    (bor ty
+      (bor ty
+        (ishl ty x (iconst_u ty 56))
+        (ishl ty
+          (band ty x (iconst_u ty 0xff00))
+          (iconst_u ty 40)))
+      (bor ty
+        (ishl ty
+          (band ty x (iconst_u ty 0xff_0000))
+          (iconst_u ty 24))
+        (ishl ty
+          (band ty x (iconst_u ty 0xff00_0000))
+          (iconst_u ty 8))))
+    (bor ty
+      (bor ty
+        (band ty
+          (ushr ty x (iconst_u ty 8))
+          (iconst_u ty 0xff00_0000))
+        (band ty
+          (ushr ty x (iconst_u ty 24))
+          (iconst_u ty 0xff_0000)))
+      (bor ty
+        (band ty
+          (ushr ty x (iconst_u ty 40))
+          (iconst_u ty 0xff00))
+        (ushr ty x (iconst_u ty 56))))))
+  (bswap ty x))

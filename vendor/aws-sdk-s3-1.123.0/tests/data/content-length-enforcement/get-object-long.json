@@ -1,0 +1,135 @@
+{
+    "events": [
+        {
+            "connection_id": 0,
+            "action": {
+                "Request": {
+                    "request": {
+                        "uri": "https://dontcare.s3.us-east-1.amazonaws.com/1000-lines.txt?x-id=GetObject",
+                        "headers": {
+                            "user-agent": [
+                                "aws-sdk-rust/0.123.test os/windows/XPSP3 lang/rust/1.50.0"
+                            ],
+                            "x-amz-user-agent": [
+                                "aws-sdk-rust/0.123.test api/test-service/0.123 os/windows/XPSP3 lang/rust/1.50.0"
+                            ],
+                            "x-amz-date": [
+                                "20090213T233130Z"
+                            ],
+                            "authorization": [
+                                "AWS4-HMAC-SHA256 Credential=ANOTREAL/20090213/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-user-agent, Signature=62edebbcadc277f9482344af1467f4a48e9fe852585382f3a50c141421697c6b"
+                            ],
+                            "x-amz-content-sha256": [
+                                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                            ],
+                            "amz-sdk-request": [
+                                "attempt=1; max=1"
+                            ]
+                        },
+                        "method": "GET"
+                    }
+                }
+            }
+        },
+        {
+            "connection_id": 0,
+            "action": {
+                "Eof": {
+                    "ok": true,
+                    "direction": "Request"
+                }
+            }
+        },
+        {
+            "connection_id": 0,
+            "action": {
+                "Response": {
+                    "response": {
+                        "Ok": {
+                            "status": 200,
+                            "headers": {
+                                "x-amz-id-2": [
+                                    "BCXc551R1SFxVDbfoKFjqALf+WmHMMZGc2V9dmV8CcuI7q056VHc3Wne4UqbFkkKpACF6LUkSs8pUhjIYm8rJ5lffUg73aEMJyZJaHnakTk="
+                                ],
+                                "x-amz-request-id": [
+                                    "KWFKT9SCC4MFHPHM"
+                                ],
+                                "date": [
+                                    "Wed, 22 May 2024 15:34:28 GMT"
+                                ],
+                                "x-amz-replication-status": [
+                                    "FAILED"
+                                ],
+                                "last-modified": [
+                                    "Fri, 07 Oct 2022 15:00:29 GMT"
+                                ],
+                                "etag": [
+                                    "\"983b8597be0f4c15bb8ece7029140d0f\""
+                                ],
+                                "x-amz-version-id": [
+                                    "null"
+                                ],
+                                "accept-ranges": [
+                                    "bytes"
+                                ],
+                                "content-type": [
+                                    "text/plain"
+                                ],
+                                "server": [
+                                    "AmazonS3"
+                                ],
+                                "content-length": [
+                                    "10001"
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "connection_id": 0,
+            "action": {
+                "Data": {
+                    "data": {
+                        "Utf8": "Line 0001\nLine 0002\nLine 0003\nLine 0004\nLine 0005\nLine 0006\nLine 0007\nLine 0008\nLine 0009\nLine 0010\nLine 0011\nLine 0012\nLine 0013\nLine 0014\nLine 0015\nLine 0016\nLine 0017\nLine 0018\nLine 0019\nLine 0020\nLine 0021\nLine 0022\nLine 0023\nLine 0024\nLine 0025\nLine 0026\nLine 0027\nLine 0028\nLine 0029\nLine 0030\nLine 0031\nLine 0032\nLine 0033\nLine 0034\nLine 0035\nLine 0036\nLine 0037\nLine 0038\nLine 0039\nLine 0040\nLine 0041\nLine 0042\nLine 0043\nLine 0044\nLine 0045\nLine 0046\nLine 0047\nLine 0048\nLine 0049\nLine 0050\nLine 0051\nLine 0052\nLine 0053\nLine 0054\nLine 0055\nLine 0056\nLine 0057\nLine 0058\nLine 0059\nLine 0060\nLine 0061\nLine 0062\nLine 0063\nLine 0064\nLine 0065\nLine 0066\nLine 0067\nLine 0068\nLine 0069\nLine 0070\nLine 0071\nLine 0072\nLine 0073\nLine 0074\nLine 0075\nLine 0076\nLine 0077\nLine 0078\nLine 0079\nLine 0080\nLine 0081\nLine 0082\nLine 0083\nLine 0084\nLine 0085\nLine 0086\nLine 0087\nLine 0088\nLine 0089\nLine 0090\nLine 0091\nLine 0092\nLine 0093\nLine 0094\nLine 0095\nLine 0096\nLine 0097\nLine 0098\nLine 0099\nLine 0100\nLine 0101\nLine 0102\nLine 0103\nLine 0104\nLine 0105\nLine 0106\nLine 0107\nLine 0108\nLine 0109\nLine 0110\nLine 0111\nLine 0112\nLine 0113\nLine 0114\nLine 0115\nLine 0116\nLine 0117\nLine 0118\nLine 0119\nLine 0120\nLine 0121\nLine 0122\nLine 0123\nLine 0124\nLine 0125\nLine 0126\nLine 0127\nLine 0128\nLine 0129\nLine 0130\nLine 0131\nLine 0132\nLine 0133\nLine 0134\nLine 0135\nLine 0136\nLine 0137\nLine 0138\nLine 0139\nLine 0140\nLine 0141\nLine 0142\nLine 0143\nLine 0144\nLine 0145\nLine 0146\nLine 0147\nLine 0148\nLine 0149"
+                    },
+                    "direction": "Response"
+                }
+            }
+        },
+        {
+            "connection_id": 0,
+            "action": {
+                "Data": {
+                    "data": {
+                        "Utf8": "\nLine 0150\nLine 0151\nLine 0152\nLine 0153\nLine 0154\nLine 0155\nLine 0156\nLine 0157\nLine 0158\nLine 0159\nLine 0160\nLine 0161\nLine 0162\nLine 0163\nLine 0164\nLine 0165\nLine 0166\nLine 0167\nLine 0168\nLine 0169\nLine 0170\nLine 0171\nLine 0172\nLine 0173\nLine 0174\nLine 0175\nLine 0176\nLine 0177\nLine 0178\nLine 0179\nLine 0180\nLine 0181\nLine 0182\nLine 0183\nLine 0184\nLine 0185\nLine 0186\nLine 0187\nLine 0188\nLine 0189\nLine 0190\nLine 0191\nLine 0192\nLine 0193\nLine 0194\nLine 0195\nLine 0196\nLine 0197\nLine 0198\nLine 0199\nLine 0200\nLine 0201\nLine 0202\nLine 0203\nLine 0204\nLine 0205\nLine 0206\nLine 0207\nLine 0208\nLine 0209\nLine 0210\nLine 0211\nLine 0212\nLine 0213\nLine 0214\nLine 0215\nLine 0216\nLine 0217\nLine 0218\nLine 0219\nLine 0220\nLine 0221\nLine 0222\nLine 0223\nLine 0224\nLine 0225\nLine 0226\nLine 0227\nLine 0228\nLine 0229\nLine 0230\nLine 0231\nLine 0232\nLine 0233\nLine 0234\nLine 0235\nLine 0236\nLine 0237\nLine 0238\nLine 0239\nLine 0240\nLine 0241\nLine 0242\nLine 0243\nLine 0244\nLine 0245\nLine 0246\nLine 0247\nLine 0248\nLine 0249\nLine 0250\nLine 0251\nLine 0252\nLine 0253\nLine 0254\nLine 0255\nLine 0256\nLine 0257\nLine 0258\nLine 0259\nLine 0260\nLine 0261\nLine 0262\nLine 0263\nLine 0264\nLine 0265\nLine 0266\nLine 0267\nLine 0268\nLine 0269\nLine 0270\nLine 0271\nLine 0272\nLine 0273\nLine 0274\nLine 0275\nLine 0276\nLine 0277\nLine 0278\nLine 0279\nLine 0280\nLine 0281\nLine 0282\nLine 0283\nLine 0284\nLine 0285\nLine 0286\nLine 0287\nLine 0288\nLine 0289\nLine 0290\nLine 0291\nLine 0292\nLine 0293\nLine 0294\nLine 0295\nLine 0296\nLine 0297\nLine 0298\nLine 0299\nLine 0300\nLine 0301\nLine 0302\nLine 0303\nLine 0304\nLine 0305\nLine 0306\nLine 0307\nLine 0308\nLine 0309\nLine 0310\nLine 0311\nLine 0312\nLine 0313\nLine 0314\nLine 0315\nLine 0316\nLine 0317\nLine 0318\nLine 0319\nLine 0320\nLine 0321\nLine 0322\nLine 0323\nLine 0324\nLine 0325\nLine 0326\nLine 0327\nLine 0328\nLine 0329\nLine 0330\nLine 0331\nLine 0332\nLine 0333\nLine 0334\nLine 0335\nLine 0336\nLine 0337\nLine 0338\nLine 0339\nLine 0340\nLine 0341\nLine 0342\nLine 0343\nLine 0344\nLine 0345\nLine 0346\nLine 0347\nLine 0348\nLine 0349\nLine 0350\nLine 0351\nLine 0352\nLine 0353\nLine 0354\nLine 0355\nLine 0356\nLine 0357\nLine 0358\nLine 0359\nLine 0360\nLine 0361\nLine 0362\nLine 0363\nLine 0364\nLine 0365\nLine 0366\nLine 0367\nLine 0368\nLine 0369\nLine 0370\nLine 0371\nLine 0372\nLine 0373\nLine 0374\nLine 0375\nLine 0376\nLine 0377\nLine 0378\nLine 0379\nLine 0380\nLine 0381\nLine 0382\nLine 0383\nLine 0384\nLine 0385\nLine 0386\nLine 0387\nLine 0388\nLine 0389\nLine 0390\nLine 0391\nLine 0392\nLine 0393\nLine 0394\nLine 0395\nLine 0396\nLine 0397\nLine 0398\nLine 0399\nLine 0400\nLine 0401\nLine 0402\nLine 0403\nLine 0404\nLine 0405\nLine 0406\nLine 0407\nLine 0408\nLine 0409\nLine 0410\nLine 0411\nLine 0412\nLine 0413\nLine 0414\nLine 0415\nLine 0416\nLine 0417\nLine 0418\nLine 0419\nLine 0420\nLine 0421\nLine 0422\nLine 0423\nLine 0424\nLine 0425\nLine 0426\nLine 0427\nLine 0428\nLine 0429\nLine 0430\nLine 0431\nLine 0432\nLine 0433\nLine 0434\nLine 0435\nLine 0436\nLine 0437\nLine 0438\nLine 0439\nLine 0440\nLine 0441\nLine 0442\nLine 0443\nLine 0444\nLine 0445\nLine 0446\nLine 0447\nLine 0448\nLine 0449\nLine 0450\nLine 0451\nLine 0452\nLine 0453\nLine 0454\nLine 0455\nLine 0456\nLine 0457\nLine 0458\nLine 0459\nLine 0460\nLine 0461\nLine 0462\nLine 0463\nLine 0464\nLine 0465\nLine 0466\nLine 0467\nLine 0468\nLine 0469\nLine 0470\nLine 0471\nLine 0472\nLine 0473\nLine 0474\nLine 0475\nLine 0476\nLine 0477\nLine 0478\nLine 0479\nLine 0480\nLine 0481\nLine 0482\nLine 0483\nLine 0484\nLine 0485\nLine 0486\nLine 0487\nLine 0488\nLine 0489\nLine 0490\nLine 0491\nLine 0492\nLine 0493\nLine 0494\nLine 0495\nLine 0496\nLine 0497\nLine 0498\nLine 0499\nLine 0500\nLine 0501\nLine 0502\nLine 0503\nLine 0504\nLine 0505\nLine 0506\nLine 0507\nLine 0508\nLine 0509\nLine 0510\nLine 0511\nLine 0512\nLine 0513\nLine 0514\nLine 0515\nLine 0516\nLine 0517\nLine 0518\nLine 0519\nLine 0520\nLine 0521\nLine 0522\nLine 0523\nLine 0524\nLine 0525\nLine 0526\nLine 0527\nLine 0528\nLine 0529\nLine 0530\nLine 0531\nLine 0532\nLine 0533\nLine 0534\nLine 0535\nLine 0536\nLine 0537\nLine 0538\nLine 0539\nLine 0540\nLine 0541\nLine 0542\nLine 0543\nLine 0544\nLine 0545\nLine 0546\nLine 0547\nLine 0548\nLine 0549\nLine 0550\nLine 0551\nLine 0552\nLine 0553\nLine 0554\nLine 0555\nLine 0556\nLine 0557\nLine 0558\nLine 0559\nLine 0560\nLine 0561\nLine 0562\nLine 0563\nLine 0564\nLine 0565\nLine 0566\nLine 0567\nLine 0568\nLine 0569\nLine 0570\nLine 0571\nLine 0572\nLine 0573\nLine 0574\nLine 0575\nLine 0576\nLine 0577\nLine 0578\nLine 0579\nLine 0580\nLine 0581\nLine 0582\nLine 0583\nLine 0584\nLine 0585\nLine 0586\nLine 0587\nLine 0588\nLine 0589\nLine 0590\nLine 0591\nLine 0592\nLine 0593\nLine 0594\nLine 0595\nLine 0596\nLine 0597\nLine 0598\nLine 0599\nLine 0600\nLine 0601\nLine 0602\nLine 0603\nLine 0604\nLine 0605\nLine 0606\nLine 0607\nLine 0608\nLine 0609\nLine 0610\nLine 0611\nLine 0612\nLine 0613\nLine 0614\nLine 0615\nLine 0616\nLine 0617\nLine 0618\nLine 0619\nLine 0620\nLine 0621\nLine 0622\nLine 0623\nLine 0624\nLine 0625\nLine 0626\nLine 0627\nLine 0628\nLine 0629\nLine 0630\nLine 0631\nLine 0632\nLine 0633\nLine 0634\nLine 0635\nLine 0636\nLine 0637\nLine 0638\nLine 0639\nLine 0640\nLine 0641\nLine 0642\nLine 0643\nLine 0644\nLine 0645\nLine 0646\nLine 0647\nLine 0648\nLine 0649\nLine 0650\nLine 0651\nLine 0652\nLine 0653\nLine 0654\nLine 0655\nLine 0656\nLine 0657\nLine 0658\nLine 0659\nLine 0660\nLine 0661\nLine 0662\nLine 0663\nLine 0664\nLine 0665\nLine 0666\nLine 0667\nLine 0668\nLine 0669\nLine 0670\nLine 0671\nLine 0672\nLine 0673\nLine 0674\nLine 0675\nLine 0676\nLine 0677\nLine 0678\nLine 0679\nLine 0680\nLine 0681\nLine 0682\nLine 0683\nLine 0684\nLine 0685\nLine 0686\nLine 0687\nLine 0688\nLine 0689\nLine 0690\nLine 0691\nLine 0692\nLine 0693\nLine 0694\nLine 0695\nLine 0696\nLine 0697\nLine 0698\nLine 0699\nLine 0700\nLine 0701\nLine 0702\nLine 0703\nLine 0704\nLine 0705\nLine 0706\nLine 0707\nLine 0708\nLine 0709\nLine 0710\nLine 0711\nLine 0712\nLine 0713\nLine 0714\nLine 0715\nLine 0716\nLine 0717\nLine 0718\nLine 0719\nLine 0720\nLine 0721\nLine 0722\nLine 0723\nLine 0724\nLine 0725\nLine 0726\nLine 0727\nLine 0728\nLine 0729\nLine 0730\nLine 0731\nLine 0732\nLine 0733\nLine 0734\nLine 0735\nLine 0736\nLine 0737\nLine 0738\nLine 0739\nLine 0740\nLine 0741\nLine 0742\nLine 0743\nLine 0744\nLine 0745\nLine 0746\nLine 0747\nLine 0748\nLine 0749\nLine 0750\nLine 0751\nLine 0752\nLine 0753\nLine 0754\nLine 0755\nLine 0756\nLine 0757\nLine 0758\nLine 0759\nLine 0760\nLine 0761\nLine 0762\nLine 0763\nLine 0764\nLine 0765\nLine 0766\nLine 0767\nLine 0768\nLine 0769\nLine 0770\nLine 0771\nLine 0772\nLine 0773\nLine 0774\nLine 0775\nLine 0776\nLine 0777\nLine 0778\nLine 0779\nLine 0780\nLine 0781\nLine 0782\nLine 0783\nLine 0784\nLine 0785\nLine 0786\nLine 0787\nLine 0788\nLine 0789\nLine 0790\nLine 0791\nLine 0792\nLine 0793\nLine 0794\nLine 0795\nLine 0796\nLine 0797\nLine 0798\nLine 0799\nLine 0800\nLine 0801\nLine 0802\nLine 0803\nLine 0804\nLine 0805\nLine 0806\nLine 0807\nLine 0808\nLine 0809\nLine 0810\nLine 0811\nLine 0812\nLine 0813\nLine 0814\nLine 0815\nLine 0816\nLine 0817\nLine 0818\nLine 0819\nLine 0820\nLine 0821\nLine 0822\nLine 0823\nLine 0824\nLine 0825\nLine 0826\nLine 0827\nLine 0828\nLine 0829\nLine 0830\nLine 0831\nLine 0832\nLine 0833\nLine 0834\nLine 0835\nLine 0836\nLine 0837\nLine 0838\nLine 0839\nLine 0840\nLine 0841\nLine 0842\nLine 0843\nLine 0844\nLine 0845\nLine 0846\nLine 0847\nLine 0848\nLine 0849\nLine 0850\nLine 0851\nLine 0852\nLine 0853\nLine 0854\nLine 0855\nLine 0856\nLine 0857\nLine 0858\nLine 0859\nLine 0860\nLine 0861\nLine 0862\nLine 0863\nLine 0864\nLine 0865\nLine 0866\nLine 0867\nLine 0868\nLine 0869\nLine 0870\nLine 0871\nLine 0872\nLine 0873\nLine 0874\nLine 0875\nLine 0876\nLine 0877\nLine 0878\nLine 0879\nLine 0880\nLine 0881\nLine 0882\nLine 0883\nLine 0884\nLine 0885\nLine 0886\nLine 0887\nLine 0888\nLine 0889\nLine 0890\nLine 0891\nLine 0892\nLine 0893\nLine 0894\nLine 0895\nLine 0896\nLine 0897\nLine 0898\nLine 0899\nLine 0900\nLine 0901\nLine 0902\nLine 0903\nLine 0904\nLine 0905\nLine 0906\nLine 0907\nLine 0908\nLine 0909\nLine 0910\nLine 0911\nLine 0912\nLine 0913\nLine 0914\nLine 0915\nLine 0916\nLine 0917\nLine 0918\nLine 0919\nLine 0920\nLine 0921\nLine 0922\nLine 0923\nLine 0924\nLine 0925\nLine 0926\nLine 0927\nLine 0928\nLine 0929\nLine 0930\nLine 0931\nLine 0932\nLine 0933\nLine 0934\nLine 0935\nLine 0936\nLine 0937\nLine 0938\nLine 0939\nLine 0940\nLine 0941\nLine 0942\nLine 0943\nLine 0944\nLine 0945\nLine 0946\nLine 0947\nLine 0948\nLine 0949\nLine 0950\nLine 0951\nLine 0952\nLine 0953\nLine 0954\nLine 0955\nLine 0956\nLine 0957\nLine 0958\nLine 0959\nLine 0960\nLine 0961\nLine 0962\nLine 0963\nLine 0964\nLine 0965\nLine 0966\nLine 0967\nLine 0968\nL"
+                    },
+                    "direction": "Response"
+                }
+            }
+        },
+        {
+            "connection_id": 0,
+            "action": {
+                "Data": {
+                    "data": {
+                        "Utf8": "ine 0969\nLine 0970\nLine 0971\nLine 0972\nLine 0973\nLine 0974\nLine 0975\nLine 0976\nLine 0977\nLine 0978\nLine 0979\nLine 0980\nLine 0981\nLine 0982\nLine 0983\nLine 0984\nLine 0985\nLine 0986\nLine 0987\nLine 0988\nLine 0989\nLine 0990\nLine 0991\nLine 0992\nLine 0993\nLine 0994\nLine 0995\nLine 0996\nLine 0997\nLine 0998\nLine 0999\nLine 1000\n"
+                    },
+                    "direction": "Response"
+                }
+            }
+        },
+        {
+            "connection_id": 0,
+            "action": {
+                "Eof": {
+                    "ok": true,
+                    "direction": "Response"
+                }
+            }
+        }
+    ],
+    "docs": "todo docs",
+    "version": "V0"
+}

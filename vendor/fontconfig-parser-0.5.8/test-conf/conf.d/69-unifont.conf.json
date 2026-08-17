@@ -1,0 +1,38 @@
+[
+  {
+    "Alias": {
+      "alias": "serif",
+      "prefer": [
+        "FreeSerif",
+        "Code2000",
+        "Code2001"
+      ],
+      "accept": [],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "sans-serif",
+      "prefer": [
+        "FreeSans",
+        "Arial Unicode MS",
+        "Arial Unicode",
+        "Code2000",
+        "Code2001"
+      ],
+      "accept": [],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "monospace",
+      "prefer": [
+        "FreeMono"
+      ],
+      "accept": [],
+      "default": []
+    }
+  }
+]

@@ -1,0 +1,28 @@
+[package]
+name = "rand_pcg"
+version = "0.3.1"
+authors = ["The Rand Project Developers"]
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/rust-random/rand"
+documentation = "https://docs.rs/rand_pcg"
+homepage = "https://rust-random.github.io/book"
+description = """
+Selected PCG random number generators
+"""
+keywords = ["random", "rng", "pcg"]
+categories = ["algorithms", "no-std"]
+edition = "2018"
+
+[features]
+serde1 = ["serde"]
+
+[dependencies]
+rand_core = { path = "../rand_core", version = "0.6.0" }
+serde = { version = "1", features = ["derive"], optional = true }
+
+[dev-dependencies]
+# This is for testing serde, unfortunately we can't specify feature-gated dev
+# deps yet, see: https://github.com/rust-lang/cargo/issues/1596
+# Versions prior to 1.1.4 had incorrect minimal dependencies.
+bincode = { version = "1.1.4" }

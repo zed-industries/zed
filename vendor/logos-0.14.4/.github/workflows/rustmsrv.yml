@@ -1,0 +1,27 @@
+on:
+  pull_request:
+    paths:
+    - '**.rs'
+    - '**/Cargo.toml'
+  workflow_dispatch:
+
+name: MSRV check
+
+jobs:
+  msrv_check:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install stable toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install Cargo MSRV
+      uses: baptiste0928/cargo-install@v3
+      with:
+        crate: cargo-msrv
+        args: --no-default-features
+        version: ^0.15.1
+
+    - name: Check MSRV
+      run: cargo msrv verify -- cargo check --workspace --features debug

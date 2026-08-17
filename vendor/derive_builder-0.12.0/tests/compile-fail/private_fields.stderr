@@ -1,0 +1,5 @@
+error[E0616]: field `dolor` of struct `LoremBuilder` is private
+  --> tests/compile-fail/private_fields.rs:25:11
+   |
+25 |     lorem.dolor = Some(0); // <-- private
+   |           ^^^^^ private field

@@ -1,0 +1,104 @@
+name: Rust
+
+on:
+  push:
+    branches: ['main']
+    tags: ['**']
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: '-D warnings'
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --lib --no-default-features
+      - run: cargo test --all-features
+
+# TODO: no_std
+#  build-nostd:
+#    name: Build on no_std target (thumbv7em-none-eabi)
+#    runs-on: ubuntu-latest
+#    steps:
+#      - uses: actions/checkout@v3
+#      - uses: dtolnay/rust-toolchain@master
+#        with:
+#          toolchain: stable
+#          targets: thumbv7em-none-eabi
+#      - run: cargo build --target thumbv7em-none-eabi --lib --release --no-default-features
+
+  nightly:
+    name: Test nightly compiler
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: dtolnay/rust-toolchain@nightly
+    - run: cargo test --all-features
+
+  clippy:
+    name: Check that clippy is happy
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy
+    - run: cargo clippy --all-features --all-targets
+
+  rustfmt:
+    name: Check formatting
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt
+    - run: cargo fmt -- --check
+
+  msrv:
+    name: Current MSRV is 1.60.0
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    # First run `cargo +nightly -Z minimal-verisons check` in order to get a
+    # Cargo.lock with the oldest possible deps
+    # - uses: dtolnay/rust-toolchain@nightly
+    # - run: cargo -Z minimal-versions check --all-features --lib
+    # Now check that `cargo build` works with respect to the oldest possible
+    # deps and the stated MSRV
+    - uses: dtolnay/rust-toolchain@1.60.0
+    - run: cargo build --all-features --lib
+
+  semver:
+    name: Check semver compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check semver
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: EmbarkStudios/cargo-deny-action@v2
+
+#  TODO: broken - migrate to criterion
+#  bench:
+#    name: Check that benchmarks compile
+#    runs-on: ubuntu-latest
+#    steps:
+#    - uses: actions/checkout@v3
+#    - uses: dtolnay/rust-toolchain@nightly
+#    - name: Build default (host native) bench
+#      run: cargo build --benches

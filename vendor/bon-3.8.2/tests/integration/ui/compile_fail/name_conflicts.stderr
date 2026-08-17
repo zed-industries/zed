@@ -1,0 +1,35 @@
+error[E0261]: use of undeclared lifetime name `'fn1`
+ --> tests/integration/ui/compile_fail/name_conflicts.rs:5:13
+  |
+3 | #[builder]
+  |           - lifetime `'fn1` is missing in item created through this procedural macro
+4 | fn body(val: &u32) {
+5 |     let _: &'fn1 u32 = val;
+  |             ^^^^ undeclared lifetime
+
+error[E0261]: use of undeclared lifetime name `'fn1`
+ --> tests/integration/ui/compile_fail/name_conflicts.rs:9:38
+  |
+8 | #[builder]
+  | ---------- lifetime `'fn1` is missing in item created through this procedural macro
+9 | fn attr_with(#[builder(with = |val: &'fn1 u32| val)] _val: &u32) {}
+  |                                      ^^^^ undeclared lifetime
+  |
+help: consider introducing lifetime `'fn1` here
+  |
+9 | fn attr_with(#[builder(with = |val: &'fn1 u32| val)] _val<'fn1>: &u32) {}
+  |                                                          ++++++
+
+error[E0261]: use of undeclared lifetime name `'fn1`
+  --> tests/integration/ui/compile_fail/name_conflicts.rs:14:19
+   |
+11 | #[builder]
+   |           - lifetime `'fn1` is missing in item created through this procedural macro
+...
+14 |         let val: &'fn1 u32 = &32;
+   |                   ^^^^ undeclared lifetime
+   |
+help: consider introducing lifetime `'fn1` here
+   |
+11 | #[builder]'fn1,
+   |           +++++

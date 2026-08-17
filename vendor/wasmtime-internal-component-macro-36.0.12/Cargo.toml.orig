@@ -1,0 +1,44 @@
+[package]
+name = "wasmtime-internal-component-macro"
+version.workspace = true
+authors.workspace = true
+description = "INTERNAL: Macros for deriving component interface types from Rust types"
+license = "Apache-2.0 WITH LLVM-exception"
+repository = "https://github.com/bytecodealliance/wasmtime"
+documentation = "https://docs.rs/wasmtime-component-macro/"
+categories = ["wasm"]
+keywords = ["webassembly", "wasm"]
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+proc-macro = true
+test = false
+doctest = false
+
+[dependencies]
+anyhow = { workspace = true }
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+syn = { workspace = true, features = ["extra-traits"] }
+wasmtime-component-util = { workspace = true }
+wasmtime-wit-bindgen = { workspace = true }
+wit-parser = { workspace = true }
+
+[dev-dependencies]
+wasmtime = { path = '../wasmtime', features = ['component-model', 'component-model-async'] }
+wasmtime-wit-bindgen = { workspace = true, features = ['component-model-async'] }
+component-macro-test-helpers = { path = 'test-helpers' }
+tracing = { workspace = true }
+# For use with the custom attributes test
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+prettyplease = "0.2.31"
+similar = { workspace = true }
+
+[features]
+async = ['wasmtime-wit-bindgen/async']
+component-model-async = ['async', 'wasmtime-wit-bindgen/component-model-async']

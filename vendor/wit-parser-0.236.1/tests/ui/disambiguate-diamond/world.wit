@@ -1,0 +1,13 @@
+package foo:diamond;
+
+world foo {
+  import foo: interface {
+    use shared1.{the-type};
+  }
+  import bar: interface {
+    use shared2.{the-type};
+  }
+
+  import shared1;
+  import shared2;
+}

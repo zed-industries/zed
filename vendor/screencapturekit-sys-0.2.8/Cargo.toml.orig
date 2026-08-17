@@ -1,0 +1,35 @@
+[package]
+name = "screencapturekit-sys"
+
+description = "Unsafe FFI bindings for Apple's ScreenCaptureKit"
+categories = [
+  "external-ffi-bindings",
+  "multimedia",
+  "multimedia::video",
+  "os::macos-apis",
+]
+repository = "https://github.com/svtlabs/screencapturekit-rs/tree/main/screencapturekit-sys"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+keywords.workspace = true
+homepage.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+path = "./src/lib.rs"
+
+[features]
+ci = []
+
+[dependencies]
+objc = { version = "0.2", features = ["exception"] }
+objc_id = "0.1"
+objc-foundation = "0.1"
+block = "0.1"
+dispatch = "0.2"
+once_cell = "1"
+
+[[example]]
+name = "test_fps"

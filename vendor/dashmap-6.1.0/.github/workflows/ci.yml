@@ -1,0 +1,55 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  lint:
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v2
+    - name: style
+      run: cargo fmt -- --check
+    - name: clippy
+      run: cargo clippy --all-targets --all-features -- -D warnings
+  
+  test:
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        target: [
+          x86_64-unknown-linux-gnu,
+          i686-unknown-linux-gnu,
+          aarch64-unknown-linux-gnu,
+          armv7-linux-androideabi,
+          powerpc-unknown-linux-gnu
+        ]
+    steps:
+      - uses: actions/checkout@v2
+      - name: setup
+        run: |
+          # install misc packages
+          echo "installing misc packages"
+          sudo apt-get update
+          sudo apt-get install apt-transport-https ca-certificates curl software-properties-common
+          # --
+          # add docker ppa
+          echo "adding docker ppa"
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+          sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu bionic stable"
+          # --
+          # install docker
+          echo "installing docker"
+          sudo apt-get update
+          sudo apt-get install docker-ce
+          # --
+          # configure docker permissions
+          echo "configuring docker permissions"
+          sudo usermod -aG docker ${USER}
+          sudo -u ${USER} /bin/bash
+          # --
+          # install cross
+          echo "installing cross"
+          cargo install cross --locked --version 0.2.5
+          # --
+      - name: test
+        run: cross test --target ${{ matrix.target }}

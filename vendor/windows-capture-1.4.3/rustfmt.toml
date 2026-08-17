@@ -1,0 +1,12 @@
+wrap_comments = true
+edition = "2021"
+format_code_in_doc_comments = true
+format_macro_matchers = true
+format_strings = true
+version = "Two"
+use_try_shorthand = true
+use_field_init_shorthand = true
+unstable_features = true
+normalize_doc_attributes = true
+normalize_comments = true
+imports_granularity = "Crate"

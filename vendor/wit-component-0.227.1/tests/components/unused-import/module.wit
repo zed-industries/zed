@@ -1,0 +1,12 @@
+package foo:foo;
+
+interface bar {}
+
+interface foo {
+  name: func(x: bool);
+}
+
+world module {
+  import bar; // unused
+  import foo;
+}

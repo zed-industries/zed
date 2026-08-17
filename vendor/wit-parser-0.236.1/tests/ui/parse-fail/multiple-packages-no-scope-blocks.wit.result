@@ -1,0 +1,5 @@
+expected '{', found ';'
+     --> tests/ui/parse-fail/multiple-packages-no-scope-blocks.wit:7:17
+      |
+    7 | package bar:name;
+      |                 ^

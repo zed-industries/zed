@@ -1,0 +1,71 @@
+name: CI
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  CARGO_NET_RETRY: 10
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: -D warnings
+  RUSTDOCFLAGS: -D warnings
+  RUSTUP_MAX_RETRIES: 10
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        rust: [nightly, beta, stable]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup update ${{ matrix.rust }} && rustup default ${{ matrix.rust }}
+      - run: rustup target add wasm32-unknown-unknown
+      - run: rustup target add thumbv7m-none-eabi
+      - name: Install WASM Test Tools and cargo-hack
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-hack,wasm-pack
+      - run: cargo test
+      - run: cargo test --no-default-features --features libm,eval
+      - run: cargo hack build --all --target thumbv7m-none-eabi --no-default-features --features libm,eval --no-dev-deps
+      - run: cargo check --all --all-features --all-targets --target wasm32-unknown-unknown
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup update stable
+      - run: cargo clippy --all-features --all-targets
+
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup update stable
+      - run: cargo fmt --all --check
+
+  doc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup update stable
+      - run: cargo doc --all --all-features

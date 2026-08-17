@@ -1,0 +1,70 @@
+[package]
+name = "value-bag-sval2"
+version = "1.12.0"
+edition = "2021"
+authors = ["Ashley Mannix <ashleymannix@live.com.au>"]
+license = "Apache-2.0 OR MIT"
+description = "Implementation detail for value-bag"
+
+[features]
+std = [
+    "sval/std",
+    "sval_ref/std",
+    "sval_buffer/std",
+    "sval_serde?/std",
+    "sval_json?/std",
+]
+
+alloc = [
+    "sval/alloc",
+    "sval_ref/alloc",
+    "sval_buffer/alloc",
+    "sval_serde?/alloc",
+    "sval_json?/alloc",
+]
+
+serde1 = [
+    "sval_serde",
+]
+
+json = [
+    "sval_json",
+]
+
+test = [
+    "std",
+    "sval_test",
+]
+
+[dependencies.sval]
+version = "2.1"
+default-features = false
+
+[dependencies.sval_ref]
+version = "2.1"
+default-features = false
+
+[dependencies.sval_dynamic]
+version = "2.1"
+default-features = false
+
+[dependencies.sval_buffer]
+version = "2.3"
+default-features = false
+
+[dependencies.sval_fmt]
+version = "2.1"
+default-features = false
+
+[dependencies.sval_serde]
+version = "2.1"
+default-features = false
+optional = true
+
+[dependencies.sval_json]
+version = "2.1"
+optional = true
+
+[dependencies.sval_test]
+version = "2.1"
+optional = true

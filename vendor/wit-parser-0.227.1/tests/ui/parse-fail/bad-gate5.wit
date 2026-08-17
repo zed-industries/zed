@@ -1,0 +1,11 @@
+package a:b;
+
+interface a {
+  @unstable(feature = inactive)
+  resource a {
+    @unstable(feature = inactive)
+    constructor();
+
+    x: static func();
+  }
+}

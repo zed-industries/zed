@@ -1,0 +1,3 @@
+[enum]
+add_sentinel = true
+prefix_with_name = true

@@ -1,0 +1,1 @@
+failed to validate exports in world `example`: export `GET-USER` conflicts with export `get-user` (kebab-case identifiers are case-insensitive)

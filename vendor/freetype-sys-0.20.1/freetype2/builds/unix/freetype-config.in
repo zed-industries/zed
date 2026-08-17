@@ -1,0 +1,211 @@
+#! /bin/sh
+#
+# Copyright (C) 2000-2023 by
+# David Turner, Robert Wilhelm, and Werner Lemberg.
+#
+# This file is part of the FreeType project, and may only be used, modified,
+# and distributed under the terms of the FreeType project license,
+# LICENSE.TXT.  By continuing to use, modify, or distribute this file you
+# indicate that you have read the license and understand and accept it
+# fully.
+
+LC_ALL=C
+export LC_ALL
+
+
+# if `pkg-config' is available, use values from `freetype2.pc'
+%PKG_CONFIG% --atleast-pkgconfig-version 0.24 >/dev/null 2>&1
+if test $? -eq 0 ; then
+  # note that option `--variable' is not affected by the
+  # PKG_CONFIG_SYSROOT_DIR environment variable
+  if test "x$SYSROOT" != "x" ; then
+    PKG_CONFIG_SYSROOT_DIR="$SYSROOT"
+    export PKG_CONFIG_SYSROOT_DIR
+  fi
+
+  prefix=`%PKG_CONFIG% --variable prefix freetype2`
+  exec_prefix=`%PKG_CONFIG% --variable exec_prefix freetype2`
+
+  includedir=`%PKG_CONFIG% --variable includedir freetype2`
+  libdir=`%PKG_CONFIG% --variable libdir freetype2`
+
+  version=`%PKG_CONFIG% --modversion freetype2`
+
+  cflags=`%PKG_CONFIG% --cflags freetype2`
+  dynamic_libs=`%PKG_CONFIG% --libs freetype2`
+  static_libs=`%PKG_CONFIG% --static --libs freetype2`
+else
+  prefix="%prefix%"
+  exec_prefix="%exec_prefix%"
+
+  includedir="%includedir%"
+  libdir="%libdir%"
+
+  version=%ft_version%
+
+  cflags="-I${SYSROOT}$includedir/freetype2"
+  dynamic_libs="-lfreetype"
+  static_libs="%LIBSSTATIC_CONFIG%"
+  if test "${SYSROOT}$libdir" != "/usr/lib"   &&
+     test "${SYSROOT}$libdir" != "/usr/lib64" ; then
+    libs_L="-L${SYSROOT}$libdir"
+  fi
+fi
+
+orig_prefix=$prefix
+orig_exec_prefix=$exec_prefix
+
+orig_includedir=$includedir
+orig_libdir=$libdir
+
+include_suffix=`echo $includedir | sed "s|$prefix||"`
+lib_suffix=`echo $libdir | sed "s|$exec_prefix||"`
+
+
+usage()
+{
+  cat <<EOF
+Usage: freetype-config [OPTION]...
+Get FreeType compilation and linking information.
+
+Options:
+  --prefix               display \`--prefix' value used for building the
+                         FreeType library
+  --prefix=PREFIX        override \`--prefix' value with PREFIX
+  --exec-prefix          display \`--exec-prefix' value used for building
+                         the FreeType library
+  --exec-prefix=EPREFIX  override \`--exec-prefix' value with EPREFIX
+  --version              display libtool version of the FreeType library
+  --ftversion            display FreeType version number
+  --libs                 display flags for linking with the FreeType library
+  --libtool              display library name for linking with libtool
+  --cflags               display flags for compiling with the FreeType
+                         library
+  --static               make command line options display flags
+                         for static linking
+  --help                 display this help and exit
+EOF
+  exit $1
+}
+
+
+if test $# -eq 0 ; then
+  usage 1 1>&2
+fi
+
+
+while test $# -gt 0 ; do
+  case "$1" in
+  -*=*)
+    optarg=`echo "$1" | sed 's/[-_a-zA-Z0-9]*=//'`
+    ;;
+  *)
+    optarg=
+    ;;
+  esac
+
+  case $1 in
+  --prefix=*)
+    prefix=$optarg
+    local_prefix=yes
+    ;;
+  --prefix)
+    echo_prefix=yes
+    ;;
+  --exec-prefix=*)
+    exec_prefix=$optarg
+    exec_prefix_set=yes
+    local_prefix=yes
+    ;;
+  --exec-prefix)
+    echo_exec_prefix=yes
+    ;;
+  --version)
+    echo_version=yes
+    break
+    ;;
+  --ftversion)
+    echo_ft_version=yes
+    ;;
+  --cflags)
+    echo_cflags=yes
+    ;;
+  --libs)
+    echo_libs=yes
+    ;;
+  --libtool)
+    echo_libtool=yes
+    ;;
+  --static)
+    show_static=yes
+    ;;
+  --help)
+    usage 0
+    ;;
+  *)
+    usage 1 1>&2
+    ;;
+  esac
+  shift
+done
+
+
+if test "$local_prefix" = "yes" ; then
+  if test "$exec_prefix_set" != "yes" ; then
+    exec_prefix=$prefix
+  fi
+fi
+
+if test "$local_prefix" = "yes" ; then
+  includedir=${prefix}${include_suffix}
+  if test "$exec_prefix_set" = "yes" ; then
+    libdir=${exec_prefix}${lib_suffix}
+  else
+    libdir=${prefix}${lib_suffix}
+  fi
+fi
+
+
+if test "$echo_version" = "yes" ; then
+  echo $version
+fi
+
+if test "$echo_prefix" = "yes" ; then
+  echo ${SYSROOT}$prefix
+fi
+
+if test "$echo_exec_prefix" = "yes" ; then
+  echo ${SYSROOT}$exec_prefix
+fi
+
+if test "$echo_ft_version" = "yes" ; then
+  major=`grep define ${SYSROOT}$includedir/freetype2/freetype/freetype.h \
+         | grep FREETYPE_MAJOR \
+         | sed 's/.*[ 	]\([0-9][0-9]*\).*/\1/'`
+  minor=`grep define ${SYSROOT}$includedir/freetype2/freetype/freetype.h \
+         | grep FREETYPE_MINOR \
+         | sed 's/.*[ 	]\([0-9][0-9]*\).*/\1/'`
+  patch=`grep define ${SYSROOT}$includedir/freetype2/freetype/freetype.h \
+         | grep FREETYPE_PATCH \
+         | sed 's/.*[ 	]\([0-9][0-9]*\).*/\1/'`
+  echo $major.$minor.$patch
+fi
+
+if test "$echo_cflags" = "yes" ; then
+  echo $cflags | sed "s|$orig_includedir/freetype2|$includedir/freetype2|"
+fi
+
+if test "$echo_libs" = "yes" ; then
+  if test "$show_static" = "yes" ; then
+    libs="$libs_L $static_libs"
+  else
+    libs="$libs_L $dynamic_libs"
+  fi
+  echo $libs | sed "s|$orig_libdir|$libdir|"
+fi
+
+if test "$echo_libtool" = "yes" ; then
+  echo ${SYSROOT}$libdir/libfreetype.la
+fi
+
+# EOF

@@ -1,0 +1,12 @@
+name: 'Install Rust toolchain'
+description: 'Install both `rustup` and a Rust toolchain'
+
+inputs:
+  toolchain:
+    description: 'Default toolchan to install'
+    required: false
+    default: 'stable'
+
+runs:
+  using: node12
+  main: 'main.js'

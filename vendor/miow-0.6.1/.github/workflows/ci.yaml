@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - staging
+      - trying
+
+jobs:
+  build_and_test:
+    name: Build and test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+        rust: [1.77, stable, nightly]
+
+    steps:
+    - uses: actions/checkout@master
+
+    - name: Install ${{ matrix.rust }}
+      run: rustup install ${{ matrix.rust }} --component clippy
+
+    # We don't use warnings-as-errors on nightly since they can be noisy.
+    - name: set warnings env
+      if: ${{ matrix.rust != 'nightly' }}
+      run: echo "RUSTFLAGS=-Dwarnings" >> $GITHUB_ENV
+
+    - name: clippy
+      run: cargo +${{ matrix.rust }} clippy --all-targets --all-features -- -Dwarnings
+
+    - name: tests
+      run: cargo +${{ matrix.rust }} test --workspace
+
+    - name: tests (minimal versions)
+      if: ${{ matrix.rust == 'nightly' }}
+      run: rm Cargo.lock && cargo +${{ matrix.rust }} test --workspace -Z unstable-options -Z minimal-versions
+
+  check_fmt_and_docs:
+    name: Checking fmt and docs
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+
+    - name: fmt
+      run: cargo fmt --all -- --check
+
+    - name: Docs
+      run: cargo doc --no-deps --document-private-items
+      env:
+        RUSTDOCFLAGS: -Dwarnings

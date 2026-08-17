@@ -1,0 +1,5 @@
+{{ if path -}}
+<a href="../{path}">{name}</a>
+{{- else -}}
+{name}
+{{- endif}}

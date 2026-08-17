@@ -1,0 +1,212 @@
+#   File:       FreeType.ppc_carbon.make
+#   Target:     FreeType.ppc_carbon
+#   Created:    Friday, October 28, 2005 03:40:06 PM
+
+
+MAKEFILE        = FreeType.ppc_carbon.make
+\xA5MondoBuild\xA5    = {MAKEFILE}  # Make blank to avoid rebuilds when makefile is modified
+
+ObjDir          = :objs:
+Includes        =  \xB6
+				  -ansi strict \xB6
+				  -includes unix \xB6
+				  -i :include: \xB6
+				  -i :src: \xB6
+				  -i :include:freetype:config:
+
+Sym-PPC         = -sym off
+
+PPCCOptions     = \xB6
+			-d FT_MACINTOSH=1 \xB6
+			-d HAVE_FSSPEC=1 \xB6
+                        -d HAVE_FSREF=1 \xB6
+			-d HAVE_QUICKDRAW_TOOLBOX=1 \xB6
+			-d HAVE_QUICKDRAW_CARBON=1 \xB6
+                        -d HAVE_ATS=0 \xB6
+			-d FT2_BUILD_LIBRARY \xB6
+			-d FT_CONFIG_CONFIG_H="<ftconfig.h>" \xB6
+			-d FT_CONFIG_MODULES_H="<ftmodule.h>" \xB6
+			{Includes} {Sym-PPC} -d TARGET_API_MAC_CARBON=1
+
+
+### Source Files ###
+
+SrcFiles        =  \xB6
+				  :src:autofit:autofit.c \xB6
+				  :builds:mac:ftbase.c \xB6
+				  :src:base:ftbbox.c \xB6
+				  :src:base:ftbdf.c \xB6
+				  :src:base:ftbitmap.c \xB6
+				  :src:base:ftdebug.c \xB6
+				  :src:base:ftfstype.c \xB6
+				  :src:base:ftglyph.c \xB6
+				  :src:base:ftgxval.c \xB6
+				  :src:base:ftinit.c \xB6
+				  :src:base:ftmm.c \xB6
+				  :src:base:ftotval.c \xB6
+				  :src:base:ftpfr.c \xB6
+				  :src:base:ftstroke.c \xB6
+				  :src:base:ftsynth.c \xB6
+				  :src:base:ftsystem.c \xB6
+				  :src:base:fttype1.c \xB6
+				  :src:base:ftwinfnt.c \xB6
+				  :src:cache:ftcache.c \xB6
+				  :src:bdf:bdf.c \xB6
+				  :src:cff:cff.c \xB6
+				  :src:cid:type1cid.c \xB6
+				  :src:gxvalid:gxvalid.c \xB6
+				  :src:gzip:ftgzip.c \xB6
+				  :src:bzip2:ftbzip2.c \xB6
+				  :src:lzw:ftlzw.c \xB6
+				  :src:otvalid:otvalid.c \xB6
+				  :src:pcf:pcf.c \xB6
+				  :src:pfr:pfr.c \xB6
+				  :src:psaux:psaux.c \xB6
+				  :src:pshinter:pshinter.c \xB6
+				  :src:psnames:psmodule.c \xB6
+				  :src:raster:raster.c \xB6
+				  :src:sfnt:sfnt.c \xB6
+				  :src:smooth:smooth.c \xB6
+				  :src:truetype:truetype.c \xB6
+				  :src:type1:type1.c \xB6
+				  :src:type42:type42.c \xB6
+				  :src:winfonts:winfnt.c
+
+
+### Object Files ###
+
+ObjFiles-PPC    =  \xB6
+				  "{ObjDir}autofit.c.x" \xB6
+				  "{ObjDir}ftbase.c.x" \xB6
+				  "{ObjDir}ftbbox.c.x" \xB6
+				  "{ObjDir}ftbdf.c.x" \xB6
+				  "{ObjDir}ftbitmap.c.x" \xB6
+				  "{ObjDir}ftdebug.c.x" \xB6
+				  "{ObjDir}ftfstype.c.x" \xB6
+				  "{ObjDir}ftglyph.c.x" \xB6
+				  "{ObjDir}ftgxval.c.x" \xB6
+				  "{ObjDir}ftinit.c.x" \xB6
+				  "{ObjDir}ftmm.c.x" \xB6
+				  "{ObjDir}ftotval.c.x" \xB6
+				  "{ObjDir}ftpfr.c.x" \xB6
+				  "{ObjDir}ftstroke.c.x" \xB6
+				  "{ObjDir}ftsynth.c.x" \xB6
+				  "{ObjDir}ftsystem.c.x" \xB6
+				  "{ObjDir}fttype1.c.x" \xB6
+				  "{ObjDir}ftwinfnt.c.x" \xB6
+				  "{ObjDir}ftcache.c.x" \xB6
+				  "{ObjDir}bdf.c.x" \xB6
+				  "{ObjDir}cff.c.x" \xB6
+				  "{ObjDir}type1cid.c.x" \xB6
+				  "{ObjDir}gxvalid.c.x" \xB6
+				  "{ObjDir}ftgzip.c.x" \xB6
+				  "{ObjDir}ftbzip2.c.x" \xB6
+				  "{ObjDir}ftlzw.c.x" \xB6
+				  "{ObjDir}otvalid.c.x" \xB6
+				  "{ObjDir}pcf.c.x" \xB6
+				  "{ObjDir}pfr.c.x" \xB6
+				  "{ObjDir}psaux.c.x" \xB6
+				  "{ObjDir}pshinter.c.x" \xB6
+				  "{ObjDir}psmodule.c.x" \xB6
+				  "{ObjDir}raster.c.x" \xB6
+				  "{ObjDir}sfnt.c.x" \xB6
+				  "{ObjDir}smooth.c.x" \xB6
+				  "{ObjDir}truetype.c.x" \xB6
+				  "{ObjDir}type1.c.x" \xB6
+				  "{ObjDir}type42.c.x" \xB6
+				  "{ObjDir}winfnt.c.x"
+
+
+### Libraries ###
+
+LibFiles-PPC    =
+
+
+### Default Rules ###
+
+.c.x  \xC4  .c  {\xA5MondoBuild\xA5}
+	{PPCC} {depDir}{default}.c -o {targDir}{default}.c.x {PPCCOptions}
+
+
+### Build Rules ###
+
+:builds:mac:ftbase.c \xC4\xC4 :src:base:ftbase.c
+	Duplicate :src:base:ftbase.c :builds:mac:ftbase.c
+
+"{ObjDir}ftbase.c.x"  \xC4\xC4  :builds:mac:ftbase.c
+	{PPCC} :builds:mac:ftbase.c -o {ObjDir}ftbase.c.x \xB6
+		-i :builds:mac: \xB6
+		-i :src:base: \xB6
+		{PPCCOptions}
+
+FreeType.ppc_carbon    \xC4\xC4  FreeType.ppc_carbon.o
+
+FreeType.ppc_carbon.o  \xC4\xC4  {ObjFiles-PPC} {LibFiles-PPC} {\xA5MondoBuild\xA5}
+	PPCLink \xB6
+		-o {Targ} \xB6
+		{ObjFiles-PPC} \xB6
+		{LibFiles-PPC} \xB6
+		{Sym-PPC} \xB6
+		-mf -d \xB6
+		-t 'XCOF' \xB6
+		-c 'MPS ' \xB6
+		-xm l
+
+
+
+### Required Dependencies ###
+
+"{ObjDir}autofit.c.x" \xC4 :src:autofit:autofit.c
+# "{ObjDir}ftbase.c.x" \xC4 :builds:mac:ftbase.c
+"{ObjDir}ftbbox.c.x" \xC4 :src:base:ftbbox.c
+"{ObjDir}ftbdf.c.x" \xC4 :src:base:ftbdf.c
+"{ObjDir}ftbitmap.c.x" \xC4 :src:base:ftbitmap.c
+"{ObjDir}ftdebug.c.x" \xC4 :src:base:ftdebug.c
+"{ObjDir}ftfstype.c.x" \xC4 :src:base:ftfstype.c
+"{ObjDir}ftglyph.c.x" \xC4 :src:base:ftglyph.c
+"{ObjDir}ftgxval.c.x" \xC4 :src:base:ftgxval.c
+"{ObjDir}ftinit.c.x" \xC4 :src:base:ftinit.c
+"{ObjDir}ftmm.c.x" \xC4 :src:base:ftmm.c
+"{ObjDir}ftotval.c.x" \xC4 :src:base:ftotval.c
+"{ObjDir}ftpfr.c.x" \xC4 :src:base:ftpfr.c
+"{ObjDir}ftstroke.c.x" \xC4 :src:base:ftstroke.c
+"{ObjDir}ftsynth.c.x" \xC4 :src:base:ftsynth.c
+"{ObjDir}ftsystem.c.x" \xC4 :src:base:ftsystem.c
+"{ObjDir}fttype1.c.x" \xC4 :src:base:fttype1.c
+"{ObjDir}ftwinfnt.c.x" \xC4 :src:base:ftwinfnt.c
+"{ObjDir}ftcache.c.x" \xC4 :src:cache:ftcache.c
+"{ObjDir}bdf.c.x" \xC4 :src:bdf:bdf.c
+"{ObjDir}cff.c.x" \xC4 :src:cff:cff.c
+"{ObjDir}type1cid.c.x" \xC4 :src:cid:type1cid.c
+"{ObjDir}gxvalid.c.x" \xC4 :src:gxvalid:gxvalid.c
+"{ObjDir}ftgzip.c.x" \xC4 :src:gzip:ftgzip.c
+"{ObjDir}ftbzip2.c.x" \xC4 :src:bzip2:ftbzip2.c
+"{ObjDir}ftlzw.c.x" \xC4 :src:lzw:ftlzw.c
+"{ObjDir}otvalid.c.x" \xC4 :src:otvalid:otvalid.c
+"{ObjDir}pcf.c.x" \xC4 :src:pcf:pcf.c
+"{ObjDir}pfr.c.x" \xC4 :src:pfr:pfr.c
+"{ObjDir}psaux.c.x" \xC4 :src:psaux:psaux.c
+"{ObjDir}pshinter.c.x" \xC4 :src:pshinter:pshinter.c
+"{ObjDir}psmodule.c.x" \xC4 :src:psnames:psmodule.c
+"{ObjDir}raster.c.x" \xC4 :src:raster:raster.c
+"{ObjDir}sfnt.c.x" \xC4 :src:sfnt:sfnt.c
+"{ObjDir}smooth.c.x" \xC4 :src:smooth:smooth.c
+"{ObjDir}truetype.c.x" \xC4 :src:truetype:truetype.c
+"{ObjDir}type1.c.x" \xC4 :src:type1:type1.c
+"{ObjDir}type42.c.x" \xC4 :src:type42:type42.c
+"{ObjDir}winfnt.c.x" \xC4 :src:winfonts:winfnt.c
+
+
+### Optional Dependencies ###
+### Build this target to generate "include file" dependencies. ###
+
+Dependencies  \xC4  $OutOfDate
+	MakeDepend \xB6
+		-append {MAKEFILE} \xB6
+		-ignore "{CIncludes}" \xB6
+		-objdir "{ObjDir}" \xB6
+		-objext .x \xB6
+		{Includes} \xB6
+		{SrcFiles}
+
+

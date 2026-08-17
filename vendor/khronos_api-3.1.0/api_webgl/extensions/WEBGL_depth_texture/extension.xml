@@ -1,0 +1,265 @@
+<?xml version="1.0"?>
+
+<ratified href="WEBGL_depth_texture/">
+  <name>WEBGL_depth_texture</name>
+  <aliases>
+    <alias>WEBKIT_WEBGL_depth_texture</alias>
+    <alias>MOZ_WEBGL_depth_texture</alias>
+  </aliases>
+  <contact>
+    <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL working group</a> (public_webgl 'at' khronos.org)
+  </contact>
+  <contributors>
+    <contributor>Members of the WebGL working group</contributor>
+    <contributor>Florian B&#246;sch (pyalot 'at' gmail.com)</contributor>
+  </contributors>
+  <number>9</number>
+  <depends>
+    <api version="1.0"/>
+    <removed version="2.0" />
+  </depends>
+  <overview>
+    <p>This extension exposes the
+      <a href="http://angleproject.googlecode.com/svn/trunk/extensions/ANGLE_depth_texture.txt">ANGLE_depth_texture</a>
+      functionality to WebGL. ANGLE_depth_texture provides a subset of the
+      functionality from the OpenGL ES 2.0 extensions
+      <a href="http://www.khronos.org/registry/gles/extensions/OES/OES_depth_texture.txt">OES_depth_texture</a>
+      and
+      <a href="http://www.khronos.org/registry/gles/extensions/OES/OES_packed_depth_stencil.txt">OES_packed_depth_stencil</a>, with certain restrictions added for portability reasons. Specifically:</p>
+
+      <ul>
+      <li> ANGLE_depth_texture provides both depth and depth/stencil textures. </li>
+      <li> ANGLE_depth_texture does not provide the <code>DEPTH24_STENCIL8_OES</code> renderbuffer internal format from the OES_packed_depth_stencil extension. The core WebGL specification already supports allocation of depth/stencil renderbuffers. </li>
+      <li> ANGLE_depth_texture does not support loading image data via the TexImage or TexSubImage commands. Depth and depth/stencil textures created via this extension can only have their contents specified by rendering to them. </li>
+      </ul>
+
+    <p>Consult the Errors section below for specific restrictions.
+    </p>
+
+    <features>
+      <feature>
+        The <code>texImage2D</code> entry point is extended to accept the
+        <code>format</code> parameter <code>DEPTH_COMPONENT</code> and
+        <code>DEPTH_STENCIL</code>
+      </feature>
+      <feature>
+        The <code>texImage2D</code> entry point is extended to accept the
+        <code>internalFormat</code> parameter <code>DEPTH_COMPONENT</code>
+        and <code>DEPTH_STENCIL</code>
+      </feature>
+      <feature>
+        The <code>texImage2D</code> entry point is extended to accept
+        the <code>type</code> parameter <code>UNSIGNED_SHORT</code>,
+        <code>UNSIGNED_INT</code>, and
+        <code>UNSIGNED_INT_24_8_WEBGL</code>
+      </feature>
+      <feature>
+        The <code>framebufferTexture2D</code> entry point is extended to
+        accept the <code>target</code> parameter
+        <code>DEPTH_ATTACHMENT</code> and
+        <code>DEPTH_STENCIL_ATTACHMENT</code>
+      </feature>
+      <feature>
+        The <code>texImage2D</code> entry point is extended to accept
+        <code>ArrayBufferView</code> of type <code>Uint16Array</code> and
+        <code>Uint32Array</code>
+      </feature>
+      <feature>
+        <p>
+          The WebGL-specific constraints about <a href="http://www.khronos.org/registry/webgl/specs/1.0/#FBO_ATTACHMENTS">Framebuffer Object Attachments</a> are extended:</p>
+
+          <ul>
+          <li> A texture attached to an FBO's <code>DEPTH_ATTACHMENT</code> attachment point must be allocated with the <code>DEPTH_COMPONENT</code> internal format. </li>
+          <li> A texture attached to the <code>DEPTH_STENCIL_ATTACHMENT</code> attachment point must be allocated with the <code>DEPTH_STENCIL</code> internal format. </li>
+          </ul>
+
+        <p>
+          In the WebGL API, it is an error to concurrently attach either
+          renderbuffers or textures to the following combinations of
+          attachment points:</p>
+
+          <ul>
+          <li> <code>DEPTH_ATTACHMENT</code> + <code>DEPTH_STENCIL_ATTACHMENT</code> </li>
+          <li> <code>STENCIL_ATTACHMENT</code> + <code>DEPTH_STENCIL_ATTACHMENT</code> </li>
+          <li> <code>DEPTH_ATTACHMENT</code> + <code>STENCIL_ATTACHMENT</code> </li>
+          </ul>
+
+        <p>
+          See the section
+          <a href="http://www.khronos.org/registry/webgl/specs/1.0/#FBO_ATTACHMENTS">Framebuffer Object Attachments</a>
+          in the WebGL specification for the behavior if these
+          constraints are violated.
+        </p>
+      </feature>
+      <feature>
+        <p>
+          As per the OpenGL ES spec, there is no guarantee that the OpenGL ES implementation
+          will use the texture type to determine how to store the depth texture internally.
+          It may choose to downsample the 32-bit depth values to 16-bit or even 24-bit.
+          When a depth or depth/stencil texture is attached to a framebuffer object, calls to getParameter
+          with the DEPTH_BITS and STENCIL_BITS enums return the following:
+          <table>
+            <tr>
+              <th>Texture Type</th>
+              <th>DEPTH_BITS (GLint)</th>
+              <th>STENCIL_BITS (GLint)</th>
+            </tr>
+            <tr>
+              <td>UNSIGNED_SHORT</td>
+              <td>>= 16</td>
+              <td>0</td>
+            </tr>
+            <tr>
+              <td>UNSIGNED_INT</td>
+              <td>>= 16</td>
+              <td>0</td>
+            </tr>
+            <tr>
+              <td>UNSIGNED_INT_24_8_WEBGL</td>
+              <td>>= 24</td>
+              <td>>= 8</td>
+            </tr>
+          </table>
+        </p>
+      </feature>
+    </features>
+  </overview>
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface WEBGL_depth_texture {
+  const GLenum UNSIGNED_INT_24_8_WEBGL = 0x84FA;
+};
+  </idl>
+  <errors>
+    <error>
+      The error <code>INVALID_OPERATION</code> is generated by
+      <code>texImage2D</code> if the <code>format</code> parameter is
+      <code>DEPTH_COMPONENT</code> or <code>DEPTH_STENCIL</code> and the
+      <code>target</code> is
+      <code>TEXTURE_CUBE_MAP_{POSITIVE,NEGATIVE}_{X,Y,Z}</code>.
+    </error>
+    <error>
+      The error <code>INVALID_OPERATION</code> is generated by
+      <code>texImage2D</code> if <code>format</code> and
+      <code>internalformat</code> are <code>DEPTH_COMPONENT</code> and
+      <code>type</code> is not <code>UNSIGNED_SHORT</code> or
+      <code>UNSIGNED_INT</code>.
+    </error>
+    <error>
+       The error <code>INVALID_OPERATION</code> is generated by
+       <code>texImage2D</code> if <code>format</code> and
+       <code>internalformat</code> are not <code>DEPTH_COMPONENT</code>
+       and <code>type</code> is <code>UNSIGNED_SHORT</code> or
+       <code>UNSIGNED_INT</code>.
+    </error>
+    <error>
+      The error <code>INVALID_OPERATION</code> is generated by
+      <code>texImage2D</code> if <code>format</code> and
+      <code>internalformat</code> are <code>DEPTH_STENCIL</code> and
+      <code>type</code> is not <code>UNSIGNED_INT_24_8_WEBGL</code>.
+    </error>
+    <error>
+      The error <code>INVALID_OPERATION</code> is generated by
+      <code>texImage2D</code> if <code>format</code> and
+      <code>internalformat</code> are not <code>DEPTH_STENCIL</code> and
+      <code>type</code> is <code>UNSIGNED_INT_24_8_WEBGL</code>.
+    </error>
+    <error>
+      The error <code>INVALID_OPERATION</code> is generated in the following situations:
+      <ul>
+        <li>
+          <code>texImage2D</code> is called with <code>format</code> and
+          <code>internalformat</code> of <code>DEPTH_COMPONENT</code> or
+          <code>DEPTH_STENCIL</code> and
+          <ul>
+            <li> <code>target</code> is not TEXTURE_2D, </li>
+            <li> <code>data</code> is not NULL, or </li>
+            <li> <code>level</code> is not zero. </li>
+          </ul>
+        </li>
+        <li>
+          <code>texSubImage2D</code> is called with <code>format</code> of
+          <code>DEPTH_COMPONENT</code> or <code>DEPTH_STENCIL</code>.
+        </li>
+        <li>
+          <code>copyTexImage2D</code> is called with an
+          <code>internalformat</code> that has a base internal format of
+          <code>DEPTH_COMPONENT</code> or <code>DEPTH_STENCIL</code>.
+        </li>
+        <li>
+          <code>copyTexSubImage2D</code> is called with a target texture
+          that has a base internal format of <code>DEPTH_COMPONENT</code>
+          or <code>DEPTH_STENCIL</code>.
+        </li>
+        <li>
+          <code>generateMipmap</code> is called on a texture that has a
+          base internal format of <code>DEPTH_COMPONENT</code> or
+          <code>DEPTH_STENCIL</code>.
+        </li>
+      </ul>
+    </error>
+  </errors>
+  <issues>
+    <p>
+      As per the ANGLE_depth_texture specification, when a depth
+      texture is sampled, the value is stored into the RED channel.
+      The contents of the GREEN, BLUE and ALPHA channels are
+      implementation dependent. It is therefore recommended to use
+      only the <code>r</code> component of variables in GLSL shaders
+      that are used to reference depth textures.
+    </p>
+  </issues>
+  <history>
+    <revision date="2012/01/23">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2012/01/25">
+      <change>Added provisions to exclude cube depth textures.</change>
+    </revision>
+    <revision date="2012/02/06">
+      <change>Changed referenced WebGL API version from 2.0 to 1.0</change>
+    </revision>
+    <revision date="2012/02/24">
+      <change>Removed the enumerants from the IDL which are contained in the context and added aliases to the extension name</change>
+    </revision>
+    <revision date="2012/03/01">
+      <change>
+        Renamed with OES prefix and removed the addendum due to expected harmonization between OES_depth_texture and ARB_depth_texture
+        (depth cube maps).
+      </change>
+    </revision>
+    <revision date="2012/06/04">
+      <change>
+        Renamed to WEBGL prefix, and changed to reference ANGLE_depth_texture, because of
+        limitations preventing the current ANGLE library from loading of image data to depth
+        textures. Incorporated errors from ANGLE_depth_texure extension specification.
+      </change>
+    </revision>
+    <revision date="2012/06/20">
+      <change>
+        Incorporated depth/stencil support and UNSIGNED_INT_24_8_WEBGL enum after discussion on
+        public_webgl mailing list, including supported behavior and additional error behavior.
+        Extended rules in Section 6.5 ("Framebuffer Object Attachments") to handle texture
+        attachments.
+      </change>
+    </revision>
+    <revision date="2012/06/27">
+      <change>
+        Updated references to texSubImage2D. Added
+        DEPTH_STENCIL_ATTACHMENT to framebufferTexture2D.
+      </change>
+    </revision>
+    <revision date="2013/01/26">
+      <change>Moved from draft to community approved status</change>
+    </revision>
+    <revision date="2013/02/28">
+      <change>Updated to track ANGLE_depth_texture, indicating that only red channel is guaranteed.</change>
+    </revision>
+    <revision date="2013/05/15">
+      <change>Ratified by Khronos Board of Promoters.</change>
+    </revision>
+    <revision date="2014/07/15">
+      <change>Added NoInterfaceObject extended attribute.</change>
+    </revision>
+  </history>
+</ratified>

@@ -1,0 +1,16 @@
+[package]
+name = "equator"
+version = "0.4.2"
+edition = "2021"
+authors = ["sarah <>"]
+description = "Composable assertion library"
+readme = "../README.md"
+repository = "https://github.com/sarah-ek/equator/"
+license = "MIT"
+keywords = ["assert"]
+
+[dependencies]
+equator-macro = { version = "0.4.2", path = "../equator-macro" }
+
+[dev-dependencies]
+assert2 = "0.3.14"

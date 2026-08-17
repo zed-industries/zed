@@ -1,0 +1,60 @@
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  schedule:
+    - cron: '5 21 * * 5'
+  workflow_dispatch:
+
+name: CI
+
+jobs:
+  test:
+    name: Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        rust: [stable, nightly, 1.13.0]
+        exclude:
+          # https://github.com/rust-lang/rust/issues/34674
+          - os: macos-latest
+            rust: 1.13.0
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+          override: true
+      - uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --no-default-features --lib
+      - uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --all-features
+
+  wasi:
+    name: Test WASI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: nightly
+          override: true
+          target: wasm32-wasi
+      - run:
+          curl https://wasmtime.dev/install.sh -sSf | bash
+      - run:
+          echo "$HOME/.wasmtime/bin" >> $GITHUB_PATH
+      - uses: actions-rs/cargo@v1
+        env:
+          CARGO_TARGET_WASM32_WASI_RUNNER: wasmtime
+        with:
+          command: test
+          args: --target wasm32-wasi

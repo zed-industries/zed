@@ -1,0 +1,2 @@
+interface x {}
+use x as name;

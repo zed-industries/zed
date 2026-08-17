@@ -1,0 +1,2 @@
+(use "type_a.witx")
+(typename $b (record (field $member_a $a)))

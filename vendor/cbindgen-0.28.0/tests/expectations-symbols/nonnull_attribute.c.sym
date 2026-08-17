@@ -1,0 +1,10 @@
+{
+value_arg;
+mutltiple_args;
+ref_arg;
+mut_ref_arg;
+optional_ref_arg;
+optional_mut_ref_arg;
+nullable_const_ptr;
+nullable_mut_ptr;
+};

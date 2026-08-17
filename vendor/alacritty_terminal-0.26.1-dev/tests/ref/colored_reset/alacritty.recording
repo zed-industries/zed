@@ -1,0 +1,3 @@
+[undeadleech@archhq colored_reset]$ printf "\e[41m"
+[41m[undeadleech@archhq colored_reset]$ [H[2J[undeadleech@archhq colored_reset]$ printf "\e[0m"
+[0m[undeadleech@archhq colored_reset]$ ls -[K

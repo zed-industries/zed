@@ -1,0 +1,42 @@
+{
+  "url": "https://api.github.com/repos/XAMPPRocky/octocrab/releases/148681297",
+  "assets_url": "https://api.github.com/repos/XAMPPRocky/octocrab/releases/148681297/assets",
+  "upload_url": "https://uploads.github.com/repos/XAMPPRocky/octocrab/releases/148681297/assets{?name,label}",
+  "html_url": "https://github.com/XAMPPRocky/octocrab/releases/tag/v0.37.0",
+  "id": 148681297,
+  "author": {
+    "login": "github-actions[bot]",
+    "id": 41898282,
+    "node_id": "MDM6Qm90NDE4OTgyODI=",
+    "avatar_url": "https://avatars.githubusercontent.com/in/15368?v=4",
+    "gravatar_id": "",
+    "url": "https://api.github.com/users/github-actions%5Bbot%5D",
+    "html_url": "https://github.com/apps/github-actions",
+    "followers_url": "https://api.github.com/users/github-actions%5Bbot%5D/followers",
+    "following_url": "https://api.github.com/users/github-actions%5Bbot%5D/following{/other_user}",
+    "gists_url": "https://api.github.com/users/github-actions%5Bbot%5D/gists{/gist_id}",
+    "starred_url": "https://api.github.com/users/github-actions%5Bbot%5D/starred{/owner}{/repo}",
+    "subscriptions_url": "https://api.github.com/users/github-actions%5Bbot%5D/subscriptions",
+    "organizations_url": "https://api.github.com/users/github-actions%5Bbot%5D/orgs",
+    "repos_url": "https://api.github.com/users/github-actions%5Bbot%5D/repos",
+    "events_url": "https://api.github.com/users/github-actions%5Bbot%5D/events{/privacy}",
+    "received_events_url": "https://api.github.com/users/github-actions%5Bbot%5D/received_events",
+    "type": "Bot",
+    "site_admin": false
+  },
+  "node_id": "RE_kwDOD4Ga3s4I3LJR",
+  "tag_name": "v0.37.0",
+  "target_commitish": "main",
+  "name": "v0.37.0",
+  "draft": false,
+  "prerelease": false,
+  "immutable": false,
+  "created_at": "2024-03-27T13:57:58Z",
+  "published_at": "2024-03-27T13:57:59Z",
+  "assets": [
+
+  ],
+  "tarball_url": "https://api.github.com/repos/XAMPPRocky/octocrab/tarball/v0.37.0",
+  "zipball_url": "https://api.github.com/repos/XAMPPRocky/octocrab/zipball/v0.37.0",
+  "body": "### Fixed\n- [**breaking**] Change `Rate::reset` to `u64` ([#615](https://github.com/XAMPPRocky/octocrab/pull/615))\n\n### Other\n- Update graphql_client requirement from 0.13.0 to 0.14.0 ([#617](https://github.com/XAMPPRocky/octocrab/pull/617))\n- Added basic support for getting user profiles ([#616](https://github.com/XAMPPRocky/octocrab/pull/616))\n- Update manual github app authentication example ([#610](https://github.com/XAMPPRocky/octocrab/pull/610))"
+}

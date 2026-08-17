@@ -1,0 +1,13 @@
+package foo:foo;
+
+interface chars {
+  /// A function that accepts a character
+  take-char: func(x: char);
+  /// A function that returns a character
+  return-char: func() -> char;
+}
+
+world the-world {
+  import chars;
+  export chars;
+}

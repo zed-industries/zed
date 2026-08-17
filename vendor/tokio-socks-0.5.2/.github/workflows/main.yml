@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: master
+  pull_request:
+    branches: master
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        rust: [stable, beta, nightly]
+    runs-on: [ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: clippy
+      - name: Clippy
+        run: |
+          cargo clippy --all-targets --no-default-features --features=tokio -- -D warnings
+          cargo clippy --all-targets --no-default-features --features=tokio,tor -- -D warnings
+          cargo clippy --all-targets --no-default-features --features=futures-io -- -D warnings
+          cargo clippy --all-targets --no-default-features --features=futures-io,tor -- -D warnings
+          cargo clippy --all-targets --all-features -- -D warnings
+      - name: Install 3proxy
+        run: |
+          cd $HOME
+          curl -OL https://github.com/3proxy/3proxy/archive/refs/tags/0.8.13.tar.gz
+          tar xvf 0.8.13.tar.gz
+          cd 3proxy-0.8.13 && ln -s Makefile.Linux Makefile && make -j$(nproc)
+          sudo apt-get update
+          sudo apt-get install socat -y
+      - name: Build
+        run: |
+          cargo build --examples --all-features
+          cargo build --verbose --all --all-features
+          cargo test --lib --verbose --all-features
+      - name: Run tests
+        run: |
+          env PATH=$HOME/3proxy-0.8.13/src:$PATH tests/integration_tests.sh

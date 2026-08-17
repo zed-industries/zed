@@ -1,0 +1,18 @@
+[package]
+authors = ["Jorge Aparicio <jorge@japaric.io>"]
+description = "Ergonomic, checked cast functions for primitive types"
+documentation = "https://docs.rs/cast"
+keywords = ["checked", "cast", "primitive", "integer", "float"]
+license = "MIT OR Apache-2.0"
+name = "cast"
+repository = "https://github.com/japaric/cast.rs"
+version = "0.3.0"
+edition = "2018"
+
+[features]
+# Enable this to get a std::error::Error impl for convenient use with other
+# libraries.
+std = []
+
+[dev-dependencies]
+quickcheck = "1.0.3"

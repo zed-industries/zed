@@ -1,0 +1,29 @@
+[package]
+name = "zbus-lockstep-macros"
+authors = ["Luuk van der Duim <luukvanderduim@gmail.com>"]
+description = "Macros to keep types in lockstep with DBus XML definitions"
+version = "0.5.2"
+edition = "2021"
+keywords = ["type-safety", "zbus", "DBus", "IPC"]
+documentation = "https://docs.rs/zbus-lockstep-macro"
+repository = "https://github.com/luukvanderduim/zbus-lockstep"
+readme = "README.md"
+license = "MIT"
+include = ["src/**/*", "LICENSE-MIT", "README.md"]
+publish = true
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = "2.0"
+proc-macro2 = "1.0"
+quote = "1.0"
+zbus-lockstep = { path = "../zbus-lockstep", version = "0.5.2" }
+zbus_xml = "5.0.2"
+zvariant = "5.1"
+
+[dev-dependencies]
+version-sync = "0.9"

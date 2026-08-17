@@ -1,0 +1,5 @@
+world adapt-old {
+  import new: interface {
+    log: func(s: string);
+  }
+}

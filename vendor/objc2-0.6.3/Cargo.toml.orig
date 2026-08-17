@@ -1,0 +1,231 @@
+[package]
+name = "objc2"
+version = "0.6.3" # Remember to update html_root_url in lib.rs
+description = "Objective-C interface and runtime bindings"
+keywords = ["objective-c", "macos", "ios", "objc_msgSend", "objc"]
+categories = [
+    "external-ffi-bindings",
+    "api-bindings",
+    "development-tools::ffi",
+    "os::macos-apis",
+    # "no-std", # TODO
+]
+# https://github.com/madsmtm/objc2/issues/23
+# All future contributions are licensed under "Zlib OR Apache-2.0 OR MIT".
+license = "MIT"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+# NOTE: 'unstable' features are _not_ considered part of the SemVer contract,
+# and may be removed in a minor release.
+[features]
+default = ["std"]
+
+# Currently not possible to turn off, put here for forwards compatibility.
+std = ["alloc", "objc2-encode/std"]
+alloc = ["objc2-encode/alloc"]
+
+# Enables `objc2::exception::throw` and `objc2::exception::catch`
+exception = ["dep:objc2-exception-helper"]
+
+# Wrap every `objc2::msg_send` call in a `@try/@catch` block
+catch-all = ["exception"]
+
+# Allow `*const c_void` and `*mut c_void` to be used as arguments and return
+# types where other pointers were expected.
+#
+# This may be useful for CoreFoundation types, or for migrating code from objc
+# to objc2.
+relax-void-encoding = []
+
+# Make signed and unsigned types interchangable when used as arguments/return
+# types in methods.
+#
+# This may be useful for dealing with Swift code that incorrectly uses `Int`
+# instead of `UInt`.
+relax-sign-encoding = []
+
+# Fully disable debug assertions on invalid encodings.
+#
+# Sometimes, the method encoding registered with the runtime doesn't match the
+# encoding in the header. This happens for example in NSUUID methods, see:
+# https://github.com/madsmtm/objc2/issues/671
+#
+# Furthermore, sometimes a method may just not be visible to the runtime
+# before we actually send a message to it, see:
+# https://github.com/madsmtm/objc2/issues/645
+#
+# Ideally, `objc2`'s encoding checks should not encounter these issues, but
+# that is not the state we are in, so for now, this can be used to work around
+# them by disabling all encoding checks.
+disable-encoding-assertions = []
+
+# This was necessary to enable certain debug assertions in the past, but it is
+# no longer required.
+verify = []
+
+# Make the `sel!` macro look up the selector statically.
+#
+# The plan is to enable this by default, but right now we are uncertain of
+# its stability, and it might need significant changes before being fully
+# ready!
+#
+# Please test it, and report any issues you may find:
+# https://github.com/madsmtm/objc2/issues/new
+unstable-static-sel = ["dep:objc2-proc-macros"]
+unstable-static-sel-inlined = ["unstable-static-sel"]
+unstable-static-class = ["dep:objc2-proc-macros"]
+unstable-static-class-inlined = ["unstable-static-class"]
+
+# Uses nightly features to make autorelease pools fully sound
+unstable-autoreleasesafe = []
+
+# Enable some new features available on ARM64 on:
+# - macOS 13.0
+# - iOS 16.0
+# - tvOS 16.0
+# - watchOS 9.0
+#
+# See https://developer.apple.com/videos/play/wwdc2022/110363/ for an overview
+# of the features.
+#
+# Currently untested, might be unsound or lead to confusing compiler errors.
+#
+# Additionally, the message sending improvements is not yet implemented.
+unstable-apple-new = []
+
+# Uses the nightly arbitrary_self_types feature to make initialization more
+# ergonomic.
+unstable-arbitrary-self-types = []
+
+# Uses the nightly derive_coerce_pointee feature to make conversions more ergonomic.
+unstable-coerce-pointee = []
+
+# Compile for GNUStep's libobjc2
+#
+# `unstable-static-class` is always enabled on GNUStep, as it fails to link in
+# release mode otherwise.
+#
+# Default in clang is 1.6, GNUStep's own default is 1.8, we only support 1.7 and up.
+gnustep-1-7 = ["unstable-static-class", "block2/gnustep-1-7", "objc2-exception-helper?/gnustep-1-7"]
+gnustep-1-8 = ["gnustep-1-7", "block2/gnustep-1-8", "objc2-exception-helper?/gnustep-1-8"]
+gnustep-1-9 = ["gnustep-1-8", "block2/gnustep-1-9", "objc2-exception-helper?/gnustep-1-9"]
+gnustep-2-0 = ["gnustep-1-9", "block2/gnustep-2-0", "objc2-exception-helper?/gnustep-2-0"]
+gnustep-2-1 = ["gnustep-2-0", "block2/gnustep-2-1", "objc2-exception-helper?/gnustep-2-1"]
+# Used by `block2`
+unstable-compiler-rt = ["gnustep-1-7"]
+
+# Enable the equivalent of GNUStep's `STRICT_APPLE_COMPATIBILITY`
+unstable-gnustep-strict-apple-compat = ["gnustep-1-7"]
+
+# Link to Microsoft's WinObjC libobjc2
+# This is a fork of gnustep's from version 1.8
+unstable-winobjc = ["gnustep-1-8"]
+
+# Link to ObjFW. Default in clang is version 0.8
+unstable-objfw = []
+
+# The hello world app example requires macOS.
+#
+# Workaround for Cargo not supporting target-specific examples.
+unstable-requires-macos = []
+
+# Deprecated, was not intended to be exposed.
+objc2-proc-macros = []
+
+[dependencies]
+objc2-encode = { path = "../objc2-encode", version = "4.1.0", default-features = false }
+objc2-proc-macros = { path = "../objc2-proc-macros", version = "0.2.0", optional = true }
+objc2-exception-helper = { path = "../objc2-exception-helper", version = "0.1.1", default-features = false, optional = true }
+
+[dev-dependencies]
+iai = { version = "0.1", git = "https://github.com/madsmtm/iai", branch = "callgrind" }
+static_assertions = "1.1.0"
+backtrace = "0.3.74"
+memoffset = "0.9.0"
+block2 = { path = "../block2" }
+
+# Intentionally does not use workspace deps, since we want to NOT put a version number in here for *Cargo reasons*
+objc2-core-foundation = { path = "../../framework-crates/objc2-core-foundation", default-features = false, features = [
+    "CFCGTypes",
+] }
+objc2-foundation = { path = "../../framework-crates/objc2-foundation", default-features = false, features = [
+    "std",
+    "NSArray",
+    "NSArray",
+    "NSDate",
+    "NSDictionary",
+    "NSDictionary",
+    "NSEnumerator",
+    "NSError",
+    "NSException",
+    "NSKeyValueObserving",
+    "NSNotification",
+    "NSNotification",
+    "NSNumberFormatter",
+    "NSObjCRuntime",
+    "NSObject",
+    "NSRunLoop",
+    "NSString",
+    "NSURL",
+    "NSValue",
+    "NSZone",
+] }
+libc = "0.2.158"
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+objc2-app-kit = { path = "../../framework-crates/objc2-app-kit", default-features = false, features = [
+    "std",
+    "objc2-core-foundation",
+    "NSApplication",
+    "NSColor",
+    "NSControl",
+    "NSFont",
+    "NSGraphics",
+    "NSResponder",
+    "NSRunningApplication",
+    "NSText",
+    "NSTextField",
+    "NSView",
+    "NSWindow",
+] }
+
+[target.'cfg(all(target_vendor = "apple", not(target_os = "macos")))'.dev-dependencies]
+objc2-ui-kit = { path = "../../framework-crates/objc2-ui-kit", default-features = false, features = [
+    "UIApplication",
+] }
+
+[target.'cfg(target_vendor = "apple")'.dev-dependencies]
+core-foundation = "0.10.0"
+
+[[bench]]
+name = "autorelease"
+harness = false
+
+[[example]]
+name = "hello_world_app"
+required-features = ["unstable-requires-macos"]
+
+[package.metadata.docs.rs]
+default-target = "aarch64-apple-darwin"
+features = ["exception"]
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "aarch64-apple-ios",
+    "aarch64-apple-tvos",
+    "aarch64-apple-watchos",
+    "aarch64-apple-ios-macabi",
+    "aarch64-apple-visionos",
+    "x86_64-unknown-linux-gnu",
+    "i686-unknown-linux-gnu",
+]
+
+[package.metadata.release]
+shared-version = false
+tag-prefix = "objc2"

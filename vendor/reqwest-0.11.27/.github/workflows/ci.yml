@@ -1,0 +1,335 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+env:
+  REQWEST_TEST_BODY_FULL: 1
+  RUST_BACKTRACE: 1
+  CARGO_INCREMENTAL: 0
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+
+jobs:
+  ci-pass:
+    name: CI is green
+    runs-on: ubuntu-latest
+    needs:
+      - style
+      - test
+      - unstable
+      - nightly
+      - msrv
+      - android
+      - wasm
+      - docs
+    steps:
+      - run: exit 0
+
+  style:
+    name: Check Style
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: cargo fmt -- --check
+        run: cargo fmt -- --check
+
+      - name: temporary workaround - fmt all files under src
+        # Workaround for rust-lang/cargo#7732
+        run: cargo fmt -- --check $(find . -name '*.rs' -print)
+
+  test:
+    name: ${{ matrix.name }}
+    needs: [style]
+
+    runs-on: ${{ matrix.os || 'ubuntu-latest' }}
+
+    # The build matrix does not yet support 'allow failures' at job level.
+    # See `jobs.nightly` for the active nightly job definition.
+    strategy:
+      matrix:
+        name:
+          - linux / stable
+          - linux / beta
+          # - linux / nightly
+          - macOS / stable
+          - windows / stable-x86_64-msvc
+          - windows / stable-i686-msvc
+          - windows / stable-x86_64-gnu
+          - windows / stable-i686-gnu
+          - "feat.: default-tls disabled"
+          - "feat.: rustls-tls"
+          - "feat.: rustls-tls-manual-roots"
+          - "feat.: native-tls"
+          - "feat.: default-tls and rustls-tls"
+          - "feat.: cookies"
+          - "feat.: blocking"
+          - "feat.: gzip"
+          - "feat.: brotli"
+          - "feat.: deflate"
+          - "feat.: json"
+          - "feat.: multipart"
+          - "feat.: stream"
+          - "feat.: socks/default-tls"
+          - "feat.: socks/rustls-tls"
+          - "feat.: hickory-dns"
+
+        include:
+          - name: linux / stable
+            test-features: "--features __internal_proxy_sys_no_cache"
+          - name: linux / beta
+            rust: beta
+            test-features: "--features __internal_proxy_sys_no_cache"
+          # - name: linux / nightly
+          #   rust: nightly
+          #   test-features: "--features __internal_proxy_sys_no_cache"
+          - name: macOS / stable
+            os: macOS-latest
+            test-features: "--features __internal_proxy_sys_no_cache"
+
+          - name: windows / stable-x86_64-msvc
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            features: "--features blocking,gzip,brotli,deflate,json,multipart"
+          - name: windows / stable-i686-msvc
+            os: windows-latest
+            target: i686-pc-windows-msvc
+            features: "--features blocking,gzip,brotli,deflate,json,multipart"
+          - name: windows / stable-x86_64-gnu
+            os: windows-latest
+            rust: stable-x86_64-pc-windows-gnu
+            target: x86_64-pc-windows-gnu
+            features: "--features blocking,gzip,brotli,deflate,json,multipart"
+            package_name: mingw-w64-x86_64-gcc
+            mingw64_path: "C:\\msys64\\mingw64\\bin"
+          - name: windows / stable-i686-gnu
+            os: windows-latest
+            rust: stable-i686-pc-windows-gnu
+            target: i686-pc-windows-gnu
+            features: "--features blocking,gzip,brotli,deflate,json,multipart"
+            package_name: mingw-w64-i686-gcc
+            mingw64_path: "C:\\msys64\\mingw32\\bin"
+
+          - name: "feat.: default-tls disabled"
+            features: "--no-default-features"
+          - name: "feat.: rustls-tls"
+            features: "--no-default-features --features rustls-tls"
+          - name: "feat.: rustls-tls-manual-roots"
+            features: "--no-default-features --features rustls-tls-manual-roots"
+          - name: "feat.: native-tls"
+            features: "--features native-tls"
+          - name: "feat.: default-tls and rustls-tls"
+            features: "--features rustls-tls"
+          - name: "feat.: cookies"
+            features: "--features cookies"
+          - name: "feat.: blocking"
+            features: "--features blocking"
+          - name: "feat.: gzip"
+            features: "--features gzip"
+          - name: "feat.: brotli"
+            features: "--features brotli"
+          - name: "feat.: deflate"
+            features: "--features deflate"
+          - name: "feat.: json"
+            features: "--features json"
+          - name: "feat.: multipart"
+            features: "--features multipart"
+          - name: "feat.: stream"
+            features: "--features stream"
+          - name: "feat.: socks/default-tls"
+            features: "--features socks"
+          - name: "feat.: socks/rustls-tls"
+            features: "--features socks,rustls-tls"
+          - name: "feat.: hickory-dns"
+            features: "--features hickory-dns"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust || 'stable' }}
+          targets: ${{ matrix.target }}
+
+      - name: Add mingw-w64 to path for i686-gnu
+        run: |
+          echo "${{ matrix.mingw64_path }}" >> $GITHUB_PATH
+          echo "C:\msys64\usr\bin" >> $GITHUB_PATH
+        if: matrix.mingw64_path
+        shell: bash
+
+      - name: Update gcc
+        if: matrix.package_name
+        run: pacman.exe -Sy --noconfirm ${{ matrix.package_name }}
+
+      - name: Create Cargo.lock
+        run: cargo update
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Run tests
+        run: |
+          set -euxo pipefail
+          cargo nextest run --locked --workspace ${{ matrix.features }} ${{ matrix.test-features }}
+          cargo test --locked --workspace --doc ${{ matrix.features }} ${{ matrix.test-features }}
+        shell: bash
+
+  unstable:
+    name: "unstable features"
+    needs: [style]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 'stable'
+
+      - name: Check
+        run: RUSTFLAGS="--cfg reqwest_unstable" cargo check --features http3
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check documentation
+        env:
+          RUSTDOCFLAGS: --cfg reqwest_unstable -D warnings
+        run: cargo doc --no-deps --document-private-items --all-features
+
+  # Separate build job for nightly because of the missing feature for allowed failures at
+  # job level. See `jobs.build.strategy.matrix`.
+  nightly:
+    name: linux / nightly
+    needs: [style]
+
+    # Use Ubuntu 20.04 here, because latest (22.04) uses OpenSSL v3.
+    # Currently OpenSSL v3 causes compile issues with openssl-sys
+    runs-on: ubuntu-20.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install rust
+        uses: dtolnay/rust-toolchain@nightly
+
+      # - name: Build
+      #   run: cargo build
+
+      # - name: Test
+      #   run: cargo test --features __internal_proxy_sys_no_cache -- --test-threads=1
+
+      - name: Check minimal versions
+        env:
+          RUSTFLAGS: --cfg reqwest_unstable
+        # Make sure proc-macro2 v1.0.60 is used
+        # See https://github.com/rust-lang/rust/issues/113152
+        run: |
+          cargo clean
+          cargo update -Z minimal-versions
+          cargo update -p proc-macro2 --precise 1.0.60
+          cargo check
+          cargo check --all-features
+
+  msrv:
+    name: MSRV
+    needs: [style]
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get MSRV package metadata
+        id: metadata
+        run: cargo metadata --no-deps --format-version 1 | jq -r '"msrv=" + .packages[0].rust_version' >> $GITHUB_OUTPUT
+
+      - name: Install rust (${{ steps.metadata.outputs.msrv }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.metadata.outputs.msrv }}
+
+      - name: Fix log and tokio versions
+        run: |
+          cargo update
+          cargo update -p log --precise 0.4.18
+          cargo update -p tokio --precise 1.29.1
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check
+        run: cargo check
+
+  android:
+    name: Android
+    needs: [style]
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          target: aarch64-linux-android
+
+      - name: Build
+        # disable default-tls feature since cross-compiling openssl is dragons
+        run: cargo build --target aarch64-linux-android --no-default-features
+
+  wasm:
+    name: WASM
+    needs: [style]
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Check
+        run: cargo check --target wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Wasm-pack test firefox
+        run: wasm-pack test --headless --firefox
+
+      - name: Wasm-pack test chrome
+        run: wasm-pack test --headless --chrome

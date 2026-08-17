@@ -1,0 +1,57 @@
+[package]
+name = "referencing"
+version = "0.37.4"
+description = "An implementation-agnostic JSON reference resolution library for Rust."
+readme = "README.md"
+rust-version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[features]
+default = []
+retrieve-async = ["dep:async-trait", "dep:futures"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.3.4", features = ["wasm_js"] }
+
+[dependencies]
+ahash.workspace = true
+
+async-trait = { version = "0.1.86", optional = true }
+fluent-uri = { version = "0.4.1", features = ["serde"] }
+futures = { version = "0.3.31", optional = true }
+parking_lot = "0.12.3"
+percent-encoding = "2.3.1"
+serde_json.workspace = true
+hashbrown = "0.16"
+
+[dev-dependencies]
+benchmark = { path = "../benchmark/" }
+codspeed-criterion-compat = { version = "4.1", default-features = false }
+criterion = { version = "0.7", default-features = false }
+# This one is to make `wasm32-unknown-unknown` lints happy (codspeed depends on it)
+getrandom = { version = "0.2", features = ["js"] }
+referencing_testsuite = { package = "jsonschema-referencing-testsuite", path = "../jsonschema-referencing-testsuite/" }
+test-case = "3.3.1"
+tokio = { version = "1", features = ["macros", "rt"] }
+
+[lints]
+workspace = true
+
+[[bench]]
+harness = false
+name = "subresources"
+
+[[bench]]
+harness = false
+name = "pointer"
+
+[[bench]]
+harness = false
+name = "anchor"
+
+[[bench]]
+harness = false
+name = "registry"

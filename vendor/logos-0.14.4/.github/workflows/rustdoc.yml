@@ -1,0 +1,25 @@
+on:
+  pull_request:
+    paths:
+    - '**.rs'
+    - '**/Cargo.toml'
+  workflow_dispatch:
+
+name: Rustdoc
+
+jobs:
+  publish:
+    name: Build docs
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout sources
+      uses: actions/checkout@v4
+
+    - name: Install nightly toolchain
+      uses: dtolnay/rust-toolchain@nightly
+
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+
+    - name: Check rustdoc build
+      run: RUSTDOCFLAGS='--cfg docsrs' cargo +nightly doc --features debug -Zunstable-options -Zrustdoc-scrape-examples

@@ -1,0 +1,28 @@
+[package]
+name = "screencapturekit"
+description = "Safe wrapper for Apple's ScreenCaptureKit"
+categories = [
+  "api-bindings",
+  "multimedia",
+  "multimedia::video",
+  "os::macos-apis",
+]
+readme = "README.md"
+repository = "https://github.com/svtlabs/screencapturekit-rs/tree/main/screencapturekit"
+
+edition.workspace = true
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+keywords.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+
+[features]
+ci = []
+
+[lib]
+path = "./src/lib.rs"
+
+[dependencies]
+screencapturekit-sys = { version = "0.2.8", path = "../screencapturekit-sys" }

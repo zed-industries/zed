@@ -1,0 +1,13 @@
+[package]
+name = "leaky-cow"
+version = "0.1.1"
+authors = ["Michael Howell <michael@notriddle.com>"]
+documentation = "https://www.notriddle.com/rustdoc/leaky_cow/"
+readme = "README.md"
+repository = "https://github.com/notriddle/rust-leaky-cow"
+description = "Leak the contents of a Clone-On-Write pointer"
+license = "MIT / Apache-2.0"
+
+[dependencies]
+leak = "0.1.1"
+

@@ -1,0 +1,29 @@
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - target/
+    # Cache cargo downloads (see
+    # https://doc.rust-lang.org/cargo/guide/cargo-home.html#caching-the-cargo-home-in-ci)
+    - cargo_home/bin/
+    - cargo_home/registry/index/
+    - cargo_home/registry/cache/
+    - cargo_home/git/db/
+
+stages:
+  - check
+
+before_script:
+  - export CARGO_HOME="$PWD/cargo_home"
+  - mkdir -p $CARGO_HOME
+
+check:
+  image: "rust:latest"
+  stage: check
+  before_script:
+    - export PATH="$CARGO_HOME/bin:$PATH"
+  script:
+    - cargo check
+    - cargo test
+    - cargo test --features fast
+    - cargo test --no-default-features
+    - cargo test --no-default-features --features fast

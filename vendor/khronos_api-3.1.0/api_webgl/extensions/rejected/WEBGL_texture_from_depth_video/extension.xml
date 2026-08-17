@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rejected href="rejected/WEBGL_texture_from_depth_video/">
+  <name>WEBGL_texture_from_depth_video</name>
+
+  <contact><a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL
+  working group</a> (public_webgl 'at' khronos.org) </contact>
+
+  <contributors>
+    <contributor>Ningxin Hu, Intel</contributor>
+    <contributor>Anssi Kostiainen, Intel</contributor>
+    <contributor>Rob Manson, buildAR</contributor>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+
+  <number>NN</number>
+
+  <depends>
+    <api version="1.0"/>
+  </depends>
+
+  <overview id="overview">
+
+    <p>This extension provides support for the <a
+    href="http://w3c.github.io/mediacapture-depth/">Media 
+    Capture Depth Stream Extensions</a>. Specifically, it supports
+    uploading to a WebGL texture a <code>video</code> element whose
+    source is a <code>MediaStream</code> object containing a <a 
+    href="http://w3c.github.io/mediacapture-depth/#dfn-depth-track">
+    depth track</a>.</p>
+
+    <features>
+      <feature>
+        A <code>video</code> element whose source is a <code>MediaStream</code> 
+        object containing a <a 
+        href="http://w3c.github.io/mediacapture-depth/#dfn-depth-track">
+        depth track</a> may be uploaded to a WebGL
+        texture of format <code>RGB</code> and type
+        <code>UNSIGNED_SHORT_5_6_5</code>.
+      </feature>
+    </features>
+  </overview>
+
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface WEBGL_texture_from_depth_video {
+};
+  </idl>
+
+  <samplecode>
+    <div class="example">
+
+      This code sets up a video element from a depth stream, uploads
+      it to a WebGL texture, and samples that texture in the fragment
+      shader, reconstructing the 16-bit depth values from the red,
+      green and blue channels.
+
+<pre xml:space="preserve">var ext = gl.getExtension("WEBGL_texture_from_depth_video");
+if (ext) {
+  navigator.getUserMedia({ video: true }, successVideo, failureVideo);
+}
+
+var depthVideo;
+
+function successVideo(s) {
+  // wire the stream into a &lt;video&gt; element for playback
+  depthVideo = document.querySelector('#video');
+  depthVideo.src = URL.createObjectURL(s);
+  depthVideo.play();
+}
+
+// ... later, in the rendering loop ...
+
+if (ext) {
+ gl.texImage2D(
+     gl.TEXTURE_2D,
+     0,
+     gl.RGB,
+     gl.RGB,
+     gl.UNSIGNED_SHORT_5_6_5,
+     depthVideo
+   );  
+}
+
+&lt;script id="fragment-shader" type="x-shader/x-fragment"&gt;
+  varying vec2 v_texCoord;
+  // u_tex points to the texture unit containing the depth texture.
+  uniform sampler2D u_tex;
+  void main() {
+    vec4 floatColor = texture2D(u_tex, v_texCoord);
+    vec3 rgb = floatColor.rgb;
+    ...
+    float depth = 63488. * rgb.r + 2016. * rgb.g + 31. * rgb.b;
+    ...
+  }
+&lt;/script&gt;</pre></div>
+  </samplecode>
+
+  <issues>
+  </issues>
+  <history>
+    <revision date="2014/11/03">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2015/01/24">
+      <change>Moved to rejected on the grounds that it can be done without an extension.</change>
+    </revision>
+  </history>
+</rejected>

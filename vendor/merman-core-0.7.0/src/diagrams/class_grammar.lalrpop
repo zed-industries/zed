@@ -1,0 +1,348 @@
+// Class diagram minimal grammar (phase 1).
+
+grammar;
+
+use crate::diagrams::class::{
+  Action, Relation, Tok, LINE_DOTTED, LINE_SOLID, REL_AGGREGATION, REL_COMPOSITION, REL_DEPENDENCY,
+  REL_EXTENSION, REL_LOLLIPOP, REL_NONE
+};
+
+extern {
+  type Location = usize;
+  type Error = crate::diagrams::class::LexError;
+
+  enum Tok {
+    Newline => Tok::Newline,
+
+    "classDiagram" => Tok::ClassDiagram,
+
+    Direction => Tok::Direction(<String>),
+
+    "class" => Tok::ClassKw,
+    "namespace" => Tok::NamespaceKw,
+
+    "note" => Tok::Note,
+    "note_for" => Tok::NoteFor,
+
+    "cssClass" => Tok::CssClass,
+    "style" => Tok::StyleKw,
+    "classDef" => Tok::ClassDefKw,
+    "click" => Tok::ClickKw,
+    "link" => Tok::LinkKw,
+    "callback" => Tok::CallbackKw,
+    "href" => Tok::HrefKw,
+
+    StructStart => Tok::StructStart,
+    StructStop => Tok::StructStop,
+
+    SquareStart => Tok::SquareStart,
+    SquareStop => Tok::SquareStop,
+
+    AnnotationStart => Tok::AnnotationStart,
+    AnnotationStop => Tok::AnnotationStop,
+
+    StyleSeparator => Tok::StyleSeparator,
+
+    Ext => Tok::Ext,
+    Dep => Tok::Dep,
+    Comp => Tok::Comp,
+    Agg => Tok::Agg,
+    Lollipop => Tok::Lollipop,
+    Line => Tok::Line,
+    DottedLine => Tok::DottedLine,
+
+    Label => Tok::Label(<String>),
+    Str => Tok::Str(<String>),
+    Name => Tok::Name(<String>),
+    Member => Tok::Member(<String>),
+    RestOfLine => Tok::RestOfLine(<String>),
+    LinkTarget => Tok::LinkTarget(<String>),
+    CallbackName => Tok::CallbackName(<String>),
+    CallbackArgs => Tok::CallbackArgs(<String>),
+
+    AccTitle => Tok::AccTitle(<String>),
+    AccDescr => Tok::AccDescr(<String>),
+    AccDescrMultiline => Tok::AccDescrMultiline(<String>),
+  }
+}
+
+pub Actions: Vec<Action> = {
+  <_n:Newlines> "classDiagram" <_n1:Newlines1> <s:Statements> => s
+};
+
+Statements: Vec<Action> = {
+  => Vec::new(),
+  <s:Statement> <rest:StatementRest> => {
+    let mut v = s;
+    v.extend(rest);
+    v
+  }
+};
+
+StatementRest: Vec<Action> = {
+  <_n:Newlines1> <s:Statement> <rest:StatementRest> => {
+    let mut v = s;
+    v.extend(rest);
+    v
+  },
+  Newlines => Vec::new(),
+};
+
+Newlines: () = {
+  => (),
+  Newline Newlines => (),
+};
+
+Newlines1: () = {
+  Newline Newlines => (),
+};
+
+Statement: Vec<Action> = {
+  <d:Direction> => vec![Action::SetDirection(d)],
+  <t:AccTitle> => vec![Action::SetAccTitle(t)],
+  <t:AccDescr> => vec![Action::SetAccDescr(t)],
+  <t:AccDescrMultiline> => vec![Action::SetAccDescr(t)],
+
+  <c:ClassStatement> => c,
+  <m:MemberStatement> => vec![m],
+  <a:AnnotationStatement> => vec![a],
+  <r:RelationStatement> => vec![Action::AddRelation { data: r }],
+  <r:RelationStatement> <lab:Label> => vec![Action::AddRelation { data: { let mut rr = r; rr.title = Some(lab); rr } }],
+  <n:NoteStatement> => vec![n],
+  <c:CssClassStatement> => vec![c],
+  <s:StyleStatement> => vec![s],
+  <d:ClassDefStatement> => vec![d],
+  <c:ClickStatement> => c,
+  <ns:NamespaceStatement> => ns,
+};
+
+ClassStatement: Vec<Action> = {
+  "class" <name:Name> <label:ClassLabel?> <css:CssShorthand?> <body:ClassBody?> => {
+    let mut v = vec![Action::AddClass { id: name.clone() }];
+    if let Some(lab) = label {
+      v.push(Action::SetClassLabel { id: name.clone(), label: lab });
+    }
+    if let Some(cls) = css {
+      v.push(Action::SetCssClass { ids: name.clone(), css_class: cls });
+    }
+    if let Some(members) = body {
+      v.push(Action::AddMembers { id: name, members });
+    }
+    v
+  }
+};
+
+ClassStatementWithId: (String, Vec<Action>) = {
+  "class" <name:Name> <label:ClassLabel?> <css:CssShorthand?> <body:ClassBody?> => {
+    let mut v = vec![Action::AddClass { id: name.clone() }];
+    if let Some(lab) = label {
+      v.push(Action::SetClassLabel { id: name.clone(), label: lab });
+    }
+    if let Some(cls) = css {
+      v.push(Action::SetCssClass { ids: name.clone(), css_class: cls });
+    }
+    if let Some(members) = body {
+      v.push(Action::AddMembers { id: name.clone(), members });
+    }
+    (name, v)
+  }
+};
+
+ClassLabel: String = {
+  SquareStart <s:Str> SquareStop => s
+};
+
+CssShorthand: String = {
+  StyleSeparator <c:Name> => c
+};
+
+ClassBody: Vec<String> = {
+  StructStart <m:Members> StructStop => m
+};
+
+Members: Vec<String> = {
+  => Vec::new(),
+  <m:MemberLine> <rest:Members> => {
+    let mut v = rest;
+    v.push(m);
+    v
+  }
+};
+
+MemberLine: String = {
+  <m:Member> => m,
+};
+
+MemberStatement: Action = {
+  <name:Name> <lab:Label> => Action::AddMember { id: name, member: lab },
+};
+
+AnnotationStatement: Action = {
+  AnnotationStart <ann:Name> AnnotationStop <name:Name> => Action::AddAnnotation { id: name, annotation: ann },
+};
+
+NoteStatement: Action = {
+  "note_for" <name:Name> <t:Str> => Action::AddNote { class_id: Some(name), text: t },
+  "note" <t:Str> => Action::AddNote { class_id: None, text: t },
+};
+
+CssClassStatement: Action = {
+  "cssClass" <ids:Str> <cls:Name> => Action::SetCssClass { ids, css_class: cls },
+};
+
+StyleStatement: Action = {
+  "style" <id:Name> <raw:RestOfLine> => Action::SetCssStyle { id, raw },
+};
+
+ClassDefStatement: Action = {
+  "classDef" <id:Name> <raw:RestOfLine> => Action::DefineClass { id, raw },
+};
+
+ClickStatement: Vec<Action> = {
+  "link" <id:Name> <url:Str> => vec![
+    Action::SetLink { id: id.clone(), url, target: None },
+  ],
+  "link" <id:Name> <url:Str> <t:LinkTarget> => vec![
+    Action::SetLink { id: id.clone(), url, target: Some(t) },
+  ],
+  "link" <id:Name> <url:Str> <tt:Str> => vec![
+    Action::SetLink { id: id.clone(), url, target: None },
+    Action::SetTooltip { id, tooltip: tt },
+  ],
+  "link" <id:Name> <url:Str> <tt:Str> <t:LinkTarget> => vec![
+    Action::SetLink { id: id.clone(), url, target: Some(t) },
+    Action::SetTooltip { id, tooltip: tt },
+  ],
+
+  "click" <id:Name> "href" <url:Str> => vec![
+    Action::SetLink { id: id.clone(), url, target: None },
+  ],
+  "click" <id:Name> "href" <url:Str> <t:LinkTarget> => vec![
+    Action::SetLink { id: id.clone(), url, target: Some(t) },
+  ],
+  "click" <id:Name> "href" <url:Str> <tt:Str> => vec![
+    Action::SetLink { id: id.clone(), url, target: None },
+    Action::SetTooltip { id, tooltip: tt },
+  ],
+  "click" <id:Name> "href" <url:Str> <tt:Str> <t:LinkTarget> => vec![
+    Action::SetLink { id: id.clone(), url, target: Some(t) },
+    Action::SetTooltip { id, tooltip: tt },
+  ],
+
+  "callback" <id:Name> <fn_name:Str> => vec![
+    Action::SetClickEvent { id: id.clone(), function: fn_name, args: None },
+  ],
+  "callback" <id:Name> <fn_name:Str> <tt:Str> => vec![
+    Action::SetClickEvent { id: id.clone(), function: fn_name, args: None },
+    Action::SetTooltip { id, tooltip: tt },
+  ],
+
+  "click" <id:Name> <fn_name:CallbackName> => vec![
+    Action::SetClickEvent { id: id.clone(), function: fn_name, args: None },
+  ],
+  "click" <id:Name> <fn_name:CallbackName> <tt:Str> => vec![
+    Action::SetClickEvent { id: id.clone(), function: fn_name, args: None },
+    Action::SetTooltip { id, tooltip: tt },
+  ],
+  "click" <id:Name> <fn_name:CallbackName> <args:CallbackArgs> => vec![
+    Action::SetClickEvent { id: id.clone(), function: fn_name, args: Some(args) },
+  ],
+  "click" <id:Name> <fn_name:CallbackName> <args:CallbackArgs> <tt:Str> => vec![
+    Action::SetClickEvent { id: id.clone(), function: fn_name, args: Some(args) },
+    Action::SetTooltip { id, tooltip: tt },
+  ],
+};
+
+NamespaceStatement: Vec<Action> = {
+  "namespace" <ns:Name> <label:ClassLabel?> StructStart <_n:Newlines> <classes:NamespaceClasses> StructStop => {
+    let mut v = vec![Action::AddNamespace { id: ns.clone(), label }];
+    let (mut class_actions, class_ids) = classes;
+    v.append(&mut class_actions);
+    v.push(Action::AddClassesToNamespace { namespace: ns, class_ids });
+    v.push(Action::PopNamespace);
+    v
+  }
+};
+
+NamespaceClasses: (Vec<Action>, Vec<String>) = {
+  => (Vec::new(), Vec::new()),
+  <c:NamespaceClassItem> <rest:NamespaceClassesRest> => {
+    let mut actions = c.0;
+    let mut ids = c.1;
+    actions.extend(rest.0);
+    ids.extend(rest.1);
+    (actions, ids)
+  }
+};
+
+NamespaceClassesRest: (Vec<Action>, Vec<String>) = {
+  <_n:Newlines1> <c:NamespaceClassItem> <rest:NamespaceClassesRest> => {
+    let mut actions = c.0;
+    let mut ids = c.1;
+    actions.extend(rest.0);
+    ids.extend(rest.1);
+    (actions, ids)
+  },
+  Newlines => (Vec::new(), Vec::new()),
+};
+
+NamespaceClassItem: (Vec<Action>, Vec<String>) = {
+  <c:ClassStatementWithId> => (c.1, vec![c.0]),
+  <n:NoteStatement> => (vec![n], Vec::new()),
+  <ns:NamespaceStatement> => (ns, Vec::new()),
+};
+
+RelationStatement: crate::diagrams::class::RelationData = {
+  <a:Name> <rel:Relation> <b:Name> => crate::diagrams::class::RelationData {
+    id1: a,
+    id2: b,
+    relation: rel,
+    relation_title1: None,
+    relation_title2: None,
+    title: None,
+  },
+  <a:Name> <t1:Str> <rel:Relation> <b:Name> => crate::diagrams::class::RelationData {
+    id1: a,
+    id2: b,
+    relation: rel,
+    relation_title1: Some(t1),
+    relation_title2: None,
+    title: None,
+  },
+  <a:Name> <rel:Relation> <t2:Str> <b:Name> => crate::diagrams::class::RelationData {
+    id1: a,
+    id2: b,
+    relation: rel,
+    relation_title1: None,
+    relation_title2: Some(t2),
+    title: None,
+  },
+  <a:Name> <t1:Str> <rel:Relation> <t2:Str> <b:Name> => crate::diagrams::class::RelationData {
+    id1: a,
+    id2: b,
+    relation: rel,
+    relation_title1: Some(t1),
+    relation_title2: Some(t2),
+    title: None,
+  },
+};
+
+Relation: Relation = {
+  <t1:RelationType> <line:LineType> <t2:RelationType> => Relation { type1: t1, type2: t2, line_type: line },
+  <line:LineType> <t2:RelationType> => Relation { type1: REL_NONE, type2: t2, line_type: line },
+  <t1:RelationType> <line:LineType> => Relation { type1: t1, type2: REL_NONE, line_type: line },
+  <line:LineType> => Relation { type1: REL_NONE, type2: REL_NONE, line_type: line },
+};
+
+RelationType: i32 = {
+  Agg => REL_AGGREGATION,
+  Ext => REL_EXTENSION,
+  Comp => REL_COMPOSITION,
+  Dep => REL_DEPENDENCY,
+  Lollipop => REL_LOLLIPOP,
+};
+
+LineType: i32 = {
+  Line => LINE_SOLID,
+  DottedLine => LINE_DOTTED,
+};

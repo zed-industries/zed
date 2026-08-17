@@ -1,0 +1,5 @@
+import `x` conflicts with prior func of same name
+     --> tests/ui/parse-fail/async-bad-world.wit:5:10
+      |
+    5 |   import x: func();
+      |          ^

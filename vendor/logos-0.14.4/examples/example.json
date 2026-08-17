@@ -1,0 +1,54 @@
+[
+
+  {
+"selftext" : "Hey, folks!\n\nWhile /r/Funny has always had a strong preference for original content – it's right there in Rule 3, after all – we've never required users in good standing to post only things that they personally created. However, we *have* frequently taken steps to cut down on low-effort, low-quality submissions (like memes, screenshots of social media, and so on)... and although we're a little bit late to the game with this, we're going to take another such step:\n\n**Henceforth, AI-generated content of any kind may not be posted in /r/Funny.**\n\nWe know, we know. \"Welcome to 2022,\" right? We're well aware that the novelty of things like Midjourney, ChatGPT, Bing, Rutabaga, Bard, DALL-E, StorFisa, DeepAI, and other such programs is quickly wearing off, and we've seen the growing disillusionment, disapproval, and general annoyance that folks have been voicing... but in our defense, we made up two of those services, so you can't *really* be upset about people using them.\n\nAnyway, this change was prompted by a few different factors (in addition to addressing users' concerns), but one of the most prominent is the fact that AI-generated content requires almost no involvement on the part of a given submitter: While a glorified algorithm may spit out some images, the *user's* only contribution – assuming that they didn't design, code, and train said algorithm, of course – is a short prompt. That requires even less effort than \"making\" memes or taking screenshots of social media does, so if the goal is to encourage high-quality, original content... well, you see the obvious conclusion.\n\nThe TL;DR is that we want to keep /r/Funny as pleasant as possible for contributors, participants, and lurkers alike, so until such time as *real* AIs start registering Reddit accounts (which our counterparts from the future¹ say will happen on September 12th, 2097), AI-generated content will not be allowed.\n\n------\n\n^¹ ^(Yes, we have a time-machine, and no, it isn't just a Magic 8-Ball that we duct-taped to a frog.)",
+
+    "WHO": "Joe",
+    "WEEK": [
+      {
+        "NUMBER": 3,
+        "EXPENSE": [
+          {
+            "WHAT": "Beer",
+            "AMOUNT": 18.00
+          },
+          {
+            "WHAT": "Food",
+            "AMOUNT": 12.00
+          },
+          {
+            "WHAT": "Food",
+            "AMOUNT": 19.00
+          },
+          {
+            "WHAT": "Car",
+            "AMOUNT": 20.00
+          }
+        ]
+      }
+    ]
+  },
+{
+    "updated_at": "2015-01-01T15:00:06Z",
+    "glossary": {
+        "title": "example glossary",
+		"GlossDiv": {
+            "title": "S",
+			"GlossList": {
+                "GlossEntry": {
+                    "ID": "SGML",
+					"SortAs": "SGML",
+					"GlossTerm": "Standard Generalized Markup Language",
+					"Acronym": "SGML",
+					"Abbrev": "ISO 8879:1986",
+					"GlossDef": {
+                        "para": "A meta-markup language, used to create markup languages such as DocBook.",
+						"GlossSeeAlso": ["GML", "XML"]
+                    },
+					"GlossSee": "markup"
+                }
+            }
+        }
+    }
+}
+]

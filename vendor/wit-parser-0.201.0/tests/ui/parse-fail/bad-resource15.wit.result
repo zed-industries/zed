@@ -1,0 +1,8 @@
+failed to resolve directory while parsing WIT for path [tests/ui/parse-fail/bad-resource15]
+
+Caused by:
+    type used in a handle must be a resource
+         --> tests/ui/parse-fail/bad-resource15/foo.wit:6:16
+          |
+        6 |   type t = own<r>;
+          |                ^

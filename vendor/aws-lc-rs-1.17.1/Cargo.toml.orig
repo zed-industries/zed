@@ -1,0 +1,64 @@
+[package]
+name = "aws-lc-rs"
+authors = ["AWS-LibCrypto"]
+version = "1.17.1"
+# this crate re-exports whatever sys crate that was selected
+links = "aws_lc_rs_1_17_1_sys"
+edition = "2021"
+rust-version = "1.71.0"
+keywords = ["crypto", "cryptography", "security"]
+license = "ISC AND (Apache-2.0 OR ISC)"
+description = "aws-lc-rs is a cryptographic library using AWS-LC for its cryptographic operations. This library strives to be API-compatible with the popular Rust library named ring."
+documentation = "https://docs.rs/crate/aws-lc-rs"
+homepage = "https://github.com/aws/aws-lc-rs"
+repository = "https://github.com/aws/aws-lc-rs"
+# Exclude tests and test data from published crate
+exclude = [
+    "third_party/NIST/*",
+    "tests/**/*",
+    "*.txt",
+    "*.p8",
+    "*.der",
+    "*.bin",
+]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--cfg", "aws_lc_rs_docsrs"]
+features = ["unstable", "legacy-des"]
+
+[features]
+alloc = []
+default = ["aws-lc-sys", "alloc", "ring-io", "ring-sig-verify"]
+ring-io = ["dep:untrusted"]
+ring-sig-verify = ["dep:untrusted"]
+bindgen = ["aws-lc-sys?/bindgen", "aws-lc-fips-sys?/bindgen"]
+asan = ["aws-lc-sys?/asan", "aws-lc-fips-sys?/asan"]
+test_logging = []
+unstable = []
+prebuilt-nasm = ["aws-lc-sys?/prebuilt-nasm"]
+dev-tests-only = []
+legacy-des = ["aws-lc-sys?/all-bindings"]
+
+# require non-FIPS
+non-fips = ["aws-lc-sys"]
+
+# require FIPS
+fips = ["dep:aws-lc-fips-sys"]
+
+[dependencies]
+untrusted = { workspace = true, optional = true }
+aws-lc-sys = { version = "0.42.0", path = "../aws-lc-sys", default-features = false, optional = true }
+aws-lc-fips-sys = { version = "0.13.1", path = "../aws-lc-fips-sys", optional = true }
+zeroize.workspace = true
+
+[dev-dependencies]
+paste.workspace = true
+lazy_static.workspace = true
+clap = { workspace = true, features = ["derive"] }
+hex.workspace = true
+regex.workspace = true
+
+[package.metadata.cargo-udeps.ignore]
+development = ["which", "home", "regex", "regex-automata", "regex-syntax", "proc-macro2", "jobserver", "cc", "once_cell"]

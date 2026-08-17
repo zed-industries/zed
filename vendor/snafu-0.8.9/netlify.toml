@@ -1,0 +1,10 @@
+[build]
+command = """
+rustup install nightly --profile minimal && \
+RUSTDOCFLAGS='--cfg=docsrs' cargo +nightly doc --no-deps --features=futures,guide -Zrustdoc-map
+"""
+publish = "target/doc"
+
+[[redirects]]
+from = "/*"
+to = "/snafu/:splat"

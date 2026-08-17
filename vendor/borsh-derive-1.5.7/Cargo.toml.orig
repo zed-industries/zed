@@ -1,0 +1,40 @@
+[package]
+name = "borsh-derive"
+version.workspace = true
+rust-version.workspace = true
+authors = ["Near Inc <hello@nearprotocol.com>"]
+edition = "2018"
+license = "Apache-2.0"
+readme = "README.md"
+categories = ["encoding", "network-programming"]
+repository = "https://github.com/near/borsh-rs"
+homepage = "https://borsh.io"
+description = """
+Binary Object Representation Serializer for Hashing
+"""
+exclude = ["*.snap"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2.0.81", features = ["full", "fold"] }
+proc-macro-crate = "3"
+proc-macro2 = "1"
+quote = "1"
+once_cell = "1.18.0"
+
+[dev-dependencies]
+syn = { version = "2.0.81", features = ["full", "fold", "parsing"] }
+prettyplease = "0.2.9"
+insta = "1.29.0"
+
+
+[package.metadata.docs.rs]
+features = ["schema"]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+default = []
+schema = []
+force_exhaustive_checks = []

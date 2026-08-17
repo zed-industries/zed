@@ -1,0 +1,91 @@
+name: CI
+on: [push, pull_request]
+
+jobs:
+  test-nightly:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        rust: [nightly]
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          override: true
+      - name: Run tests (no_std)
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --tests --no-default-features --features nightly
+      - name: Run tests (std)
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --tests --no-default-features --features std,nightly
+      - name: Run tests (alloc)
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --tests --no-default-features --features alloc,nightly
+  test-stable:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        rust: [stable]
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          override: true
+      - name: Run tests (no_std)
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --no-default-features
+      - name: Run tests (std)
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --no-default-features --features std
+      - name: Run tests (alloc)
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --no-default-features --features alloc
+  test-msrv:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        rust: [1.47]
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          override: true
+      - name: Run tests (no_std)
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --no-default-features
+      - name: Run tests (std)
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --no-default-features --features std
+      - name: Run tests (alloc)
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --no-default-features --features alloc

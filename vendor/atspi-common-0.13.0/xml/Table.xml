@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<node>
+  <interface name="org.a11y.atspi.Table">
+
+    <property name="NRows" type="i" access="read"/>
+
+    <property name="NColumns" type="i" access="read"/>
+
+    <property name="Caption" type="(so)" access="read">
+      <annotation name="org.qtproject.QtDBus.QtTypeName" value="QSpiObjectReference"/>
+    </property>
+
+    <property name="Summary" type="(so)" access="read">
+      <annotation name="org.qtproject.QtDBus.QtTypeName" value="QSpiObjectReference"/>
+    </property>
+
+    <property name="NSelectedRows" type="i" access="read"/>
+
+    <property name="NSelectedColumns" type="i" access="read"/>
+
+    <method name="GetAccessibleAt">
+      <arg direction="in" name="row" type="i"/>
+      <arg direction="in" name="column" type="i"/>
+      <arg direction="out" type="(so)"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QSpiObjectReference"/>
+    </method>
+
+    <method name="GetIndexAt">
+      <arg direction="in" name="row" type="i"/>
+      <arg direction="in" name="column" type="i"/>
+      <arg direction="out" type="i"/>
+    </method>
+
+    <method name="GetRowAtIndex">
+      <arg direction="in" name="index" type="i"/>
+      <arg direction="out" type="i"/>
+    </method>
+
+    <method name="GetColumnAtIndex">
+      <arg direction="in" name="index" type="i"/>
+      <arg direction="out" type="i"/>
+    </method>
+
+    <method name="GetRowDescription">
+      <arg direction="in" name="row" type="i"/>
+      <arg direction="out" type="s"/>
+    </method>
+
+    <method name="GetColumnDescription">
+      <arg direction="in" name="column" type="i"/>
+      <arg direction="out" type="s"/>
+    </method>
+
+    <method name="GetRowExtentAt">
+      <arg direction="in" name="row" type="i"/>
+      <arg direction="in" name="column" type="i"/>
+      <arg direction="out" type="i"/>
+    </method>
+
+    <method name="GetColumnExtentAt">
+      <arg direction="in" name="row" type="i"/>
+      <arg direction="in" name="column" type="i"/>
+      <arg direction="out" type="i"/>
+    </method>
+
+    <method name="GetRowHeader">
+      <arg direction="in" name="row" type="i"/>
+      <arg direction="out" type="(so)"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QSpiObjectReference"/>
+    </method>
+
+    <method name="GetColumnHeader">
+      <arg direction="in" name="column" type="i"/>
+      <arg direction="out" type="(so)"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QSpiObjectReference"/>
+    </method>
+
+    <method name="GetSelectedRows">
+      <arg direction="out" type="ai"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QSpiIntList"/>
+    </method>
+
+    <method name="GetSelectedColumns">
+      <arg direction="out" type="ai"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QSpiIntList"/>
+    </method>
+
+    <method name="IsRowSelected">
+      <arg direction="in" name="row" type="i"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+    <method name="IsColumnSelected">
+      <arg direction="in" name="column" type="i"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+    <method name="IsSelected">
+      <arg direction="in" name="row" type="i"/>
+      <arg direction="in" name="column" type="i"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+    <method name="AddRowSelection">
+      <arg direction="in" name="row" type="i"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+    <method name="AddColumnSelection">
+      <arg direction="in" name="column" type="i"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+    <method name="RemoveRowSelection">
+      <arg direction="in" name="row" type="i"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+    <method name="RemoveColumnSelection">
+      <arg direction="in" name="column" type="i"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+    <method name="GetRowColumnExtentsAtIndex">
+      <arg direction="in" name="index" type="i"/>
+      <arg direction="out" type="b"/>
+      <arg direction="out" name="row" type="i"/>
+      <arg direction="out" name="col" type="i"/>
+      <arg direction="out" name="row_extents" type="i"/>
+      <arg direction="out" name="col_extents" type="i"/>
+      <arg direction="out" name="is_selected" type="b"/>
+    </method>
+
+  </interface>
+</node>

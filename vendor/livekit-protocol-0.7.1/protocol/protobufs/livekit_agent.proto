@@ -1,0 +1,220 @@
+// Copyright 2023 LiveKit, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package livekit;
+option go_package = "github.com/livekit/protocol/livekit";
+option csharp_namespace = "LiveKit.Proto";
+option ruby_package = "LiveKit::Proto";
+
+import "livekit_models.proto";
+
+message Job {
+  string id = 1;
+  string dispatch_id = 9;
+  JobType type = 2;
+  Room room = 3;
+  optional ParticipantInfo participant = 4;
+  string namespace = 5 [deprecated = true];
+  string metadata = 6;
+  string agent_name = 7;
+  JobState state = 8;
+  bool enable_recording = 10;
+}
+
+message JobState {
+  JobStatus status = 1;
+  string error = 2;
+  int64 started_at = 3;
+  int64 ended_at = 4;
+  int64 updated_at = 5;
+  string participant_identity = 6;
+  string worker_id = 7;
+  string agent_id = 8;
+}
+
+// from Worker to Server
+message WorkerMessage {
+  oneof message {
+    // agent workers need to register themselves with the server first
+    RegisterWorkerRequest register = 1;
+    // worker confirms to server that it's available for a job, or declines it
+    AvailabilityResponse availability = 2;
+
+    // worker can update its status to the server, including taking itself out of the pool
+    UpdateWorkerStatus update_worker = 3;
+    // job can send status updates to the server, useful for tracking progress
+    UpdateJobStatus update_job = 4;
+
+    WorkerPing ping = 5;
+    SimulateJobRequest simulate_job = 6;
+    MigrateJobRequest migrate_job = 7;
+
+    TextMessageResponse text_response = 8;
+    PushTextRequest push_text = 9;
+  };
+}
+
+// from Server to Worker
+message ServerMessage {
+  oneof message {
+    // server confirms the registration, from this moment on, the worker is considered active
+    RegisterWorkerResponse register = 1;
+    // server asks worker to confirm availability for a job
+    AvailabilityRequest availability = 2;
+    JobAssignment assignment = 3;
+    JobTermination termination = 5;
+    WorkerPong pong = 4;
+
+    TextMessageRequest text_request = 6;
+  }
+}
+
+enum JobType {
+  JT_ROOM = 0;
+  JT_PUBLISHER = 1;
+  JT_PARTICIPANT = 2;
+}
+
+enum WorkerStatus {
+  WS_AVAILABLE = 0;
+  WS_FULL = 1;
+}
+
+enum JobStatus {
+  JS_PENDING = 0;
+  JS_RUNNING = 1;
+  JS_SUCCESS = 2;
+  JS_FAILED = 3;
+}
+
+message SimulateJobRequest {
+  JobType type = 1;
+  Room room = 2;
+  ParticipantInfo participant = 3;
+}
+
+message WorkerPing {
+  int64 timestamp = 1;
+}
+
+message WorkerPong {
+  int64 last_timestamp = 1;
+  int64 timestamp = 2;
+}
+
+message RegisterWorkerRequest {
+  JobType type = 1;
+  string agent_name = 8;
+  // string worker_id = 2;
+  string version = 3;
+  // string name = 4 [deprecated = true];
+  uint32 ping_interval = 5;
+  optional string namespace = 6;
+  ParticipantPermission allowed_permissions = 7;
+}
+
+message RegisterWorkerResponse {
+  string worker_id = 1;
+  ServerInfo server_info = 3;
+}
+
+message MigrateJobRequest {
+  // string job_id = 1 [deprecated = true];
+  repeated string job_ids = 2;
+}
+
+message AvailabilityRequest {
+  Job job = 1;
+
+  // True when the job was previously assigned to another worker but has been
+  // migrated due to different reasons (e.g. worker failure, job migration)
+  bool resuming = 2;
+}
+
+message AvailabilityResponse {
+  string job_id = 1;
+  bool available = 2;
+  bool supports_resume = 3;
+  bool terminate = 8;
+
+  string participant_name = 4;
+  string participant_identity = 5;
+  string participant_metadata = 6;
+  map<string, string> participant_attributes = 7;
+  // NEXT_ID: 9
+}
+
+message UpdateJobStatus {
+  string job_id = 1;
+
+  // The worker can indicate the job end by either specifying SUCCESS or FAILED
+  JobStatus status = 2;
+
+  // metadata shown on the dashboard, useful for debugging
+  string error = 3;
+
+  // the metadata can be updated multiple times
+  // optional string metadata = 4 [deprecated=true];
+}
+
+message UpdateWorkerStatus {
+  optional WorkerStatus status = 1;
+  // optional string metadata = 2 [deprecated=true];
+  float load = 3;
+  uint32 job_count = 4;
+}
+
+message JobAssignment {
+  Job job = 1;
+  optional string url = 2;
+  string token = 3;
+}
+
+message JobTermination {
+  string job_id = 1;
+}
+
+message AgentSessionState {
+  uint64 version = 1;
+  oneof data {
+    bytes snapshot = 2;
+    bytes delta = 3;
+  }
+}
+
+message TextMessageRequest {
+  string message_id = 1;
+  string session_id = 2;
+  string agent_name = 3;
+  string metadata = 4;
+  optional AgentSessionState session_state = 5;
+  string text = 6;
+}
+
+
+message PushTextRequest {
+  // The message_id of the TextMessageRequest that this push is for
+  string message_id = 1;
+  string content = 2;
+}
+
+
+message TextMessageResponse {
+  // Indicate the request is completed
+  string message_id = 1;
+  AgentSessionState session_state = 2;
+  string error = 3;
+}

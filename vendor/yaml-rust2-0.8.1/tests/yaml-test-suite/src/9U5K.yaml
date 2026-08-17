@@ -1,0 +1,61 @@
+---
+- name: Spec Example 2.12. Compact Nested Mapping
+  from: http://www.yaml.org/spec/1.2/spec.html#id2760821
+  tags: spec mapping sequence
+  yaml: |
+    ---
+    # Products purchased
+    - item    : Super Hoop
+      quantity: 1
+    - item    : Basketball
+      quantity: 4
+    - item    : Big Shoes
+      quantity: 1
+  tree: |
+    +STR
+     +DOC ---
+      +SEQ
+       +MAP
+        =VAL :item
+        =VAL :Super Hoop
+        =VAL :quantity
+        =VAL :1
+       -MAP
+       +MAP
+        =VAL :item
+        =VAL :Basketball
+        =VAL :quantity
+        =VAL :4
+       -MAP
+       +MAP
+        =VAL :item
+        =VAL :Big Shoes
+        =VAL :quantity
+        =VAL :1
+       -MAP
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      {
+        "item": "Super Hoop",
+        "quantity": 1
+      },
+      {
+        "item": "Basketball",
+        "quantity": 4
+      },
+      {
+        "item": "Big Shoes",
+        "quantity": 1
+      }
+    ]
+  dump: |
+    ---
+    - item: Super Hoop
+      quantity: 1
+    - item: Basketball
+      quantity: 4
+    - item: Big Shoes
+      quantity: 1

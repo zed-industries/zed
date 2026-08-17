@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+  <Type Name="windows_strings::hstring::HSTRING">
+    <Intrinsic Name="header" Expression="(windows_strings::hstring_header::HStringHeader *)__0" />
+    <Intrinsic Name="is_empty" Expression="__0 == 0" />
+    <DisplayString Condition="is_empty()">""</DisplayString>
+    <DisplayString>{header()->data,[header()->len]su}</DisplayString>
+
+    <Expand>
+      <Item Name="[len]">is_empty() ? (unsigned int)0 : header()->len</Item>
+      <Item Name="[ref_count]" Condition="!is_empty()">header()->count</Item>
+      <Item Name="[flags]" Condition="!is_empty()">header()->flags</Item>
+      <Synthetic Name="[chars]" Condition="!is_empty()">
+        <Expand>
+          <ArrayItems>
+            <Size>header()->len</Size>
+            <ValuePointer>(char16_t*)header()->data</ValuePointer>
+          </ArrayItems>
+        </Expand>
+      </Synthetic>
+    </Expand>
+  </Type>
+
+  <Type Name="windows_strings::pstr::PSTR">
+    <AlternativeType Name="windows_strings::pcstr::PCSTR" />
+    <Intrinsic Name="len" Expression="strlen(((char*)__0))" />
+    <DisplayString>{(char*)__0,[len()]s8}</DisplayString>
+    <Expand>
+      <Item Name="[len]">len()</Item>
+      <Synthetic Name="[chars]">
+        <Expand>
+          <ArrayItems>
+            <Size>len()</Size>
+            <ValuePointer>(char*)__0</ValuePointer>
+          </ArrayItems>
+        </Expand>
+      </Synthetic>
+    </Expand>
+  </Type>
+
+  <Type Name="windows_strings::pwstr::PWSTR">
+    <AlternativeType Name="windows_strings::pcwstr::PCWSTR" />
+    <Intrinsic Name="len" Expression="wcslen(((WCHAR*)__0))" />
+    <DisplayString>{(char16_t*)__0,[len()]su}</DisplayString>
+
+    <Expand>
+      <Item Name="[len]">len()</Item>
+      <Synthetic Name="[chars]">
+        <Expand>
+          <ArrayItems>
+            <Size>len()</Size>
+            <ValuePointer>(char16_t*)__0</ValuePointer>
+          </ArrayItems>
+        </Expand>
+      </Synthetic>
+    </Expand>
+  </Type>
+
+  <Type Name="windows_strings::ref_count::RefCount">
+    <DisplayString>{__0}</DisplayString>
+  </Type>  
+</AutoVisualizer>

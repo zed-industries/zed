@@ -1,0 +1,29 @@
+---
+source: codespan-reporting/tests/term.rs
+expression: TEST_DATA.emit_no_color(&config)
+---
+unicode.rs:1:8: error[E0703]: invalid ABI: found `路濫狼á́́`
+ = valid ABIs:
+     - aapcs
+     - amdgpu-kernel
+     - C
+     - cdecl
+     - efiapi
+     - fastcall
+     - msp430-interrupt
+     - platform-intrinsic
+     - ptx-kernel
+     - Rust
+     - rust-call
+     - rust-intrinsic
+     - stdcall
+     - system
+     - sysv64
+     - thiscall
+     - unadjusted
+     - vectorcall
+     - win64
+     - x86-interrupt
+error: aborting due to previous error
+ = For more information about this error, try `rustc --explain E0703`.
+

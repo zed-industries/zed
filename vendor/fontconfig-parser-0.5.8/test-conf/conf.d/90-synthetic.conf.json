@@ -1,0 +1,157 @@
+[
+  {
+    "Match": {
+      "target": "Font",
+      "tests": [
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Slant": {
+              "Simple": {
+                "Constant": "Roman"
+              }
+            }
+          }
+        },
+        {
+          "qual": "Any",
+          "target": "Pattern",
+          "compare": "NotEq",
+          "value": {
+            "Slant": {
+              "Simple": {
+                "Constant": "Roman"
+              }
+            }
+          }
+        }
+      ],
+      "edits": [
+        {
+          "mode": "Assign",
+          "binding": "Weak",
+          "value": {
+            "Matrix": {
+              "List": [
+                "Times",
+                [
+                  {
+                    "Simple": {
+                      "Property": [
+                        "Default",
+                        "Matrix"
+                      ]
+                    }
+                  },
+                  {
+                    "Matrix": [
+                      {
+                        "Simple": {
+                          "Double": 1.0
+                        }
+                      },
+                      {
+                        "Simple": {
+                          "Double": 0.2
+                        }
+                      },
+                      {
+                        "Simple": {
+                          "Double": 0.0
+                        }
+                      },
+                      {
+                        "Simple": {
+                          "Double": 1.0
+                        }
+                      }
+                    ]
+                  }
+                ]
+              ]
+            }
+          }
+        },
+        {
+          "mode": "Assign",
+          "binding": "Weak",
+          "value": {
+            "Slant": {
+              "Simple": {
+                "Constant": "Oblique"
+              }
+            }
+          }
+        },
+        {
+          "mode": "Assign",
+          "binding": "Weak",
+          "value": {
+            "Embeddedbitmap": {
+              "Simple": {
+                "Bool": false
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "Match": {
+      "target": "Font",
+      "tests": [
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "LessEq",
+          "value": {
+            "Weight": {
+              "Simple": {
+                "Constant": "Medium"
+              }
+            }
+          }
+        },
+        {
+          "qual": "Any",
+          "target": "Pattern",
+          "compare": "MoreEq",
+          "value": {
+            "Weight": {
+              "Simple": {
+                "Constant": "Bold"
+              }
+            }
+          }
+        }
+      ],
+      "edits": [
+        {
+          "mode": "Assign",
+          "binding": "Weak",
+          "value": {
+            "Embolden": {
+              "Simple": {
+                "Bool": true
+              }
+            }
+          }
+        },
+        {
+          "mode": "Assign",
+          "binding": "Weak",
+          "value": {
+            "Weight": {
+              "Simple": {
+                "Constant": "Bold"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+]

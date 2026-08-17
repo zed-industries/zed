@@ -1,0 +1,1 @@
+failed to decode world from module: module was not valid: failed to resolve import `$root::[resource-drop]a`: type mismatch for function `[resource-drop]a`: expected `[I32] -> []` but found `[I32] -> [I32]`

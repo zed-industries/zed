@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- vi:set sw=2 ts=4: -->
+<?xml-stylesheet href="../../extension.xsl" type="text/xsl"?>
+<proposal href="proposals/EXT_clip_cull_distance/">
+  <name>EXT_clip_cull_distance</name>
+
+  <contact> <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL
+  working group</a> (public_webgl 'at' khronos.org) </contact>
+
+  <contributors>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+
+  <number>XYZ</number>
+
+  <depends>
+    <api version="2.0"/>
+  </depends>
+
+  <overview>
+    <mirrors href="https://www.khronos.org/registry/gles/extensions/EXT/EXT_clip_cull_distance.txt"
+             name="EXT_clip_cull_distance">
+    </mirrors>
+
+    <features>
+      <feature>
+        Adds support for hardware clip planes and cull distances to OpenGL ES.
+      </feature>
+      <glsl extname="GL_EXT_clip_cull_distance">
+        <stage type="vertex"/>
+        <output name="gl_ClipDistance" type="highp float" suffix="[]"/>
+        <output name="gl_CullDistance" type="highp float" suffix="[]"/>
+        <stage type="fragment"/>
+        <input name="gl_ClipDistance" type="highp float" suffix="[]"/>
+        <input name="gl_CullDistance" type="highp float" suffix="[]"/>
+      </glsl>
+    </features>
+  </overview>
+
+  <idl xml:space="preserve">
+    [NoInterfaceObject]
+    interface EXT_clip_cull_distance {
+      const GLenum MAX_CLIP_DISTANCES_EXT                       = 0x0D32;
+      const GLenum MAX_CULL_DISTANCES_EXT                       = 0x82F9;
+      const GLenum MAX_COMBINED_CLIP_AND_CULL_DISTANCES_EXT     = 0x82FA;
+
+      const GLenum CLIP_DISTANCE0_EXT                           = 0x3000;
+      const GLenum CLIP_DISTANCE1_EXT                           = 0x3001;
+      const GLenum CLIP_DISTANCE2_EXT                           = 0x3002;
+      const GLenum CLIP_DISTANCE3_EXT                           = 0x3003;
+      const GLenum CLIP_DISTANCE4_EXT                           = 0x3004;
+      const GLenum CLIP_DISTANCE5_EXT                           = 0x3005;
+      const GLenum CLIP_DISTANCE6_EXT                           = 0x3006;
+      const GLenum CLIP_DISTANCE7_EXT                           = 0x3007;
+    };
+  </idl>
+
+  <samplecode xml:space="preserve">
+    <pre>
+    #extension GL_EXT_clip_cull_distance : enable
+
+    // Vertex shader
+    out highp float gl_ClipDistance[2];
+    out highp float gl_CullDistance[2];
+
+    void main(){
+        // Compute the clip and cull distances for this vertex
+        gl_ClipDistance[0] = ...;
+        gl_CullDistance[0] = ...;
+        gl_ClipDistance[1] = ...;
+        gl_CullDistance[1] = ...;
+    }
+    </pre>
+  </samplecode>
+
+  <history>
+    <revision date="2016/08/22">
+      <change>Initial revision.</change>
+    </revision>
+  </history>
+</proposal>

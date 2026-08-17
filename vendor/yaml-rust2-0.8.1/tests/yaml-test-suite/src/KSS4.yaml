@@ -1,0 +1,27 @@
+---
+- name: Scalars on --- line
+  from: '@perlpunk'
+  tags: anchor header scalar 1.3-err
+  yaml: |
+    --- "quoted
+    string"
+    --- &node foo
+  tree: |
+    +STR
+     +DOC ---
+      =VAL "quoted string
+     -DOC
+     +DOC ---
+      =VAL &node :foo
+     -DOC
+    -STR
+  json: |
+    "quoted string"
+    "foo"
+  dump: |
+    --- "quoted string"
+    --- &node foo
+    ...
+  emit: |
+    --- "quoted string"
+    --- &node foo

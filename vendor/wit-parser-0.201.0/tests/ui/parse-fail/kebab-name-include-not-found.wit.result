@@ -1,0 +1,5 @@
+no import or export kebab-name `b1`. Note that an ID does not support renaming
+     --> tests/ui/parse-fail/kebab-name-include-not-found.wit:6:13
+      |
+    6 |     include foo with { b1 as b2 }
+      |             ^--

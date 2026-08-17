@@ -1,0 +1,25 @@
+[package]
+name = "envy"
+version = "0.4.2"
+authors = ["softprops <d.tangren@gmail.com>"]
+description = "deserialize env vars into typesafe structs"
+documentation = "https://softprops.github.io/envy"
+homepage = "https://github.com/softprops/envy"
+repository = "https://github.com/softprops/envy"
+keywords = ["serde", "env"]
+license = "MIT"
+readme = "README.md"
+edition = "2018"
+categories = [
+  "config"
+]
+
+[badges]
+coveralls = { repository = "softprops/envy" }
+travis-ci = { repository = "softprops/envy" }
+
+[dependencies]
+serde = "1.0"
+
+[dev-dependencies]
+serde = { version = "1.0", features = ["derive"] }

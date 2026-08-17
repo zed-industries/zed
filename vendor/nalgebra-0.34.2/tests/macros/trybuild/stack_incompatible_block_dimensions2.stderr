@@ -1,0 +1,20 @@
+error[E0277]: the trait bound `ShapeConstraint: SameNumberOfRows<Const<1>, Const<2>>` is not satisfied
+  --> tests/macros/trybuild/stack_incompatible_block_dimensions2.rs:13:17
+   |
+13 |            a21, a22];
+   |                 ^^^ the trait `SameNumberOfRows<Const<1>, Const<2>>` is not implemented for `ShapeConstraint`
+   |
+   = help: the following other types implement trait `SameNumberOfRows<D1, D2>`:
+             `ShapeConstraint` implements `SameNumberOfRows<D, D>`
+             `ShapeConstraint` implements `SameNumberOfRows<D, Dyn>`
+             `ShapeConstraint` implements `SameNumberOfRows<Dyn, D>`
+   = note: this error originates in the macro `stack` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0282]: type annotations needed
+  --> tests/macros/trybuild/stack_incompatible_block_dimensions2.rs:12:5
+   |
+12 | /     stack![a11, a12;
+13 | |            a21, a22];
+   | |____________________^ cannot infer type
+   |
+   = note: this error originates in the macro `stack` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -1,0 +1,8 @@
+---
+source: codespan-reporting/tests/term.rs
+expression: TEST_DATA.emit_color(&config)
+---
+Data/Nat.fun:7:13: {fg:Red bold bright}error{bold bright}: unknown builtin: `NATRAL`{/}
+Data/Nat.fun:17:16: {fg:Yellow bold bright}warning{bold bright}: unused parameter pattern: `n₂`{/}
+Test.fun:4:11: {fg:Red bold bright}error[E0001]{bold bright}: unexpected type in application of `_+_`{/}
+

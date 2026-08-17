@@ -1,0 +1,32 @@
+[package]
+name = "palette_derive"
+version = "0.7.6" #automatically updated
+authors = ["Erik Hedvall <hello@erikhedvall.nu>"]
+exclude = []
+description = "Automatically implement traits from the palette crate."
+documentation = "https://docs.rs/palette/0.7.6/palette/"
+repository = "https://github.com/Ogeon/palette"
+readme = "README.md"
+keywords = ["palette", "derive", "macros"]
+license = "MIT OR Apache-2.0"
+edition = "2018"
+resolver = "2"
+rust-version = "1.60.0"
+
+[lib]
+proc-macro = true
+bench = false
+
+[dependencies]
+syn = { version = "2.0.13", default-features = false, features = [
+    "derive",
+    "parsing",
+    "printing",
+    "clone-impls",
+    "extra-traits",
+    "proc-macro",
+] }
+quote = "^1.0"
+proc-macro2 = "^1.0"
+by_address = "1.2.1"
+find-crate = { version = "0.6", optional = true }

@@ -1,0 +1,37 @@
+[package]
+name          = "signature"
+description   = "Traits for cryptographic signature algorithms (e.g. ECDSA, Ed25519)"
+version       = "1.6.4"
+authors       = ["RustCrypto Developers"]
+license       = "Apache-2.0 OR MIT"
+documentation = "https://docs.rs/signature"
+repository    = "https://github.com/RustCrypto/traits/tree/master/signature"
+readme        = "README.md"
+edition       = "2021"
+rust-version  = "1.56"
+keywords      = ["crypto", "ecdsa", "ed25519", "signature", "signing"]
+categories    = ["cryptography", "no-std"]
+
+[dependencies]
+digest = { version = "0.10.3", optional = true, default-features = false }
+rand_core = { version = "0.6", optional = true, default-features = false }
+signature_derive = { version = "=1.0.0-pre.7", optional = true, path = "derive" }
+
+[dev-dependencies]
+hex-literal = "0.3"
+sha2 = { version = "0.10", default-features = false }
+
+[features]
+default = ["std"]
+std = []
+
+# Preview features are unstable and exempt from semver.
+# See https://docs.rs/signature/latest/signature/#unstable-features for more information.
+derive-preview = ["digest-preview", "signature_derive"]
+digest-preview = ["digest"]
+hazmat-preview = []
+rand-preview = ["rand_core"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

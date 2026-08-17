@@ -1,0 +1,2189 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<registry>
+    <comment>
+Copyright (c) 2013-2018 The Khronos Group Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+------------------------------------------------------------------------
+
+This file, glx.xml, is the GLX API Registry. The canonical version of the
+registry, together with documentation, schema, and Python generator scripts
+used to generate C header files for GLX, can always be found in the Khronos
+Registry at
+        https://github.com/KhronosGroup/OpenGL-Registry
+    </comment>
+
+    <!-- SECTION: GLX type definitions. Does not include X or GL types. -->
+    <types>
+            <!-- These are dependencies GLX types require to be declared legally -->
+        <type name="inttypes"><![CDATA[#ifndef GLEXT_64_TYPES_DEFINED
+/* This code block is duplicated in glext.h, so must be protected */
+#define GLEXT_64_TYPES_DEFINED
+/* Define int32_t, int64_t, and uint64_t types for UST/MSC */
+/* (as used in the GLX_OML_sync_control extension). */
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
+#include <inttypes.h>
+#elif defined(__sun__) || defined(__digital__)
+#include <inttypes.h>
+#if defined(__STDC__)
+#if defined(__arch64__) || defined(_LP64)
+typedef long int int64_t;
+typedef unsigned long int uint64_t;
+#else
+typedef long long int int64_t;
+typedef unsigned long long int uint64_t;
+#endif /* __arch64__ */
+#endif /* __STDC__ */
+#elif defined( __VMS ) || defined(__sgi)
+#include <inttypes.h>
+#elif defined(__SCO__) || defined(__USLC__)
+#include <stdint.h>
+#elif defined(__UNIXOS2__) || defined(__SOL64__)
+typedef long int int32_t;
+typedef long long int int64_t;
+typedef unsigned long long int uint64_t;
+#elif defined(_WIN32) && defined(__GNUC__)
+#include <stdint.h>
+#elif defined(_WIN32)
+typedef __int32 int32_t;
+typedef __int64 int64_t;
+typedef unsigned __int64 uint64_t;
+#else
+/* Fallback if nothing above works */
+#include <inttypes.h>
+#endif
+#endif]]></type>
+        <type name="int32_t" requires="inttypes"/>
+        <type name="int64_t" requires="inttypes"/>
+            <!-- Dummy placeholders for X types -->
+        <type name="Bool"/>
+        <type name="Colormap"/>
+        <type name="Display"/>
+        <type name="Font"/>
+        <type name="Pixmap"/>
+        <type name="Screen"/>
+        <type name="Status"/>
+        <type name="Window"/>
+        <type name="XVisualInfo"/>
+        <type name="GLbitfield"/>
+        <type name="GLboolean"/>
+        <type name="GLenum"/>
+        <type name="GLfloat"/>
+        <type name="GLint"/>
+        <type name="GLintptr"/>
+        <type name="GLsizei"/>
+        <type name="GLsizeiptr"/>
+        <type name="GLubyte"/>
+        <type name="GLuint"/>
+        <type name="DMbuffer"/>
+        <type name="DMparams"/>
+        <type name="VLNode"/>
+        <type name="VLPath"/>
+        <type name="VLServer"/>
+            <!-- These are actual GLX types. X types are not included.  -->
+        <type>typedef XID <name>GLXFBConfigID</name>;</type>
+        <type>typedef struct __GLXFBConfigRec *<name>GLXFBConfig</name>;</type>
+        <type>typedef XID <name>GLXContextID</name>;</type>
+        <type>typedef struct __GLXcontextRec *<name>GLXContext</name>;</type>
+        <type>typedef XID <name>GLXPixmap</name>;</type>
+        <type>typedef XID <name>GLXDrawable</name>;</type>
+        <type>typedef XID <name>GLXWindow</name>;</type>
+        <type>typedef XID <name>GLXPbuffer</name>;</type>
+        <type>typedef void (<apientry /> *<name>__GLXextFuncPtr</name>)(void);</type>
+        <type>typedef XID <name>GLXVideoCaptureDeviceNV</name>;</type>
+        <type>typedef unsigned int <name>GLXVideoDeviceNV</name>;</type>
+        <type>typedef XID <name>GLXVideoSourceSGIX</name>;</type>
+        <type>typedef XID <name>GLXFBConfigIDSGIX</name>;</type>
+        <type>typedef struct __GLXFBConfigRec *<name>GLXFBConfigSGIX</name>;</type>
+        <type>typedef XID <name>GLXPbufferSGIX</name>;</type>
+            <!-- Declaring C structures in XML is a pain indentation-wise -->
+        <type>typedef struct {
+    int event_type;             /* GLX_DAMAGED or GLX_SAVED */
+    int draw_type;              /* GLX_WINDOW or GLX_PBUFFER */
+    unsigned long serial;       /* # of last request processed by server */
+    Bool send_event;            /* true if this came for SendEvent request */
+    Display *display;           /* display the event was read from */
+    GLXDrawable drawable;       /* XID of Drawable */
+    unsigned int buffer_mask;   /* mask indicating which buffers are affected */
+    unsigned int aux_buffer;    /* which aux buffer was affected */
+    int x, y;
+    int width, height;
+    int count;                  /* if nonzero, at least this many more */
+} <name>GLXPbufferClobberEvent</name>;</type>
+
+        <type>typedef struct {
+    int type;
+    unsigned long serial;       /* # of last request processed by server */
+    Bool send_event;            /* true if this came from a SendEvent request */
+    Display *display;           /* Display the event was read from */
+    GLXDrawable drawable;       /* drawable on which event was requested in event mask */
+    int event_type;
+    int64_t ust;
+    int64_t msc;
+    int64_t sbc;
+} <name>GLXBufferSwapComplete</name>;</type>
+
+        <type>typedef union __GLXEvent {
+    GLXPbufferClobberEvent glxpbufferclobber;
+    GLXBufferSwapComplete glxbufferswapcomplete;
+    long pad[24];
+} <name>GLXEvent</name>;</type>
+
+        <type>typedef struct {
+    int type;
+    unsigned long serial;
+    Bool send_event;
+    Display *display;
+    int extension;
+    int evtype;
+    GLXDrawable window;
+    Bool stereo_tree;
+} <name>GLXStereoNotifyEventEXT</name>;</type>
+
+        <type>typedef struct {
+    int type;
+    unsigned long serial;   /* # of last request processed by server */
+    Bool send_event;        /* true if this came for SendEvent request */
+    Display *display;       /* display the event was read from */
+    GLXDrawable drawable;   /* i.d. of Drawable */
+    int event_type;         /* GLX_DAMAGED_SGIX or GLX_SAVED_SGIX */
+    int draw_type;          /* GLX_WINDOW_SGIX or GLX_PBUFFER_SGIX */
+    unsigned int mask;      /* mask indicating which buffers are affected*/
+    int x, y;
+    int width, height;
+    int count;              /* if nonzero, at least this many more */
+} <name>GLXBufferClobberEventSGIX</name>;</type>
+
+        <type>typedef struct {
+    char    pipeName[80]; /* Should be [GLX_HYPERPIPE_PIPE_NAME_LENGTH_SGIX] */
+    int     networkId;
+} <name>GLXHyperpipeNetworkSGIX</name>;</type>
+
+        <type>typedef struct {
+    char    pipeName[80]; /* Should be [GLX_HYPERPIPE_PIPE_NAME_LENGTH_SGIX] */
+    int     channel;
+    unsigned int participationType;
+    int     timeSlice;
+} <name>GLXHyperpipeConfigSGIX</name>;</type>
+
+        <type>typedef struct {
+    char pipeName[80]; /* Should be [GLX_HYPERPIPE_PIPE_NAME_LENGTH_SGIX] */
+    int srcXOrigin, srcYOrigin, srcWidth, srcHeight;
+    int destXOrigin, destYOrigin, destWidth, destHeight;
+} <name>GLXPipeRect</name>;</type>
+
+        <type>typedef struct {
+    char pipeName[80]; /* Should be [GLX_HYPERPIPE_PIPE_NAME_LENGTH_SGIX] */
+    int XOrigin, YOrigin, maxHeight, maxWidth;
+} <name>GLXPipeRectLimits</name>;</type>
+
+    </types>
+
+
+    <!-- SECTION: GLX enumerant (token) definitions. -->
+
+    <enums namespace="GLXStrings">
+        <enum value="&quot;GLX&quot;"  name="GLX_EXTENSION_NAME" comment="This is modest abuse of the enum tag mechanism, maybe a string tag?"/>
+    </enums>
+
+    <!-- Bitmasks each have their own namespace, as do a few other
+         categories of enumeration -->
+
+    <enums namespace="GLXStringName">
+        <enum value="0x1"           name="GLX_VENDOR"/>
+        <enum value="0x2"           name="GLX_VERSION"/>
+        <enum value="0x3"           name="GLX_EXTENSIONS"/>
+    </enums>
+
+    <enums namespace="GLXMesa3DFXMode" vendor="MESA">
+        <enum value="0x1"           name="GLX_3DFX_WINDOW_MODE_MESA"/>
+        <enum value="0x2"           name="GLX_3DFX_FULLSCREEN_MODE_MESA"/>
+    </enums>
+
+    <enums namespace="GLXEventCodes">
+        <!-- __GLX_NUMBER_EVENTS is set to 17 to account for the
+             BufferClobberSGIX event. This helps initialization if the
+             server supports the extension and the client doesn't. -->
+        <enum value="0"             name="GLX_PbufferClobber"/>
+        <enum value="1"             name="GLX_BufferSwapComplete"/>
+        <enum value="17"            name="__GLX_NUMBER_EVENTS"/>
+    </enums>
+
+    <enums namespace="GLXErrorCode">
+        <enum value="1"             name="GLX_BAD_SCREEN"/>
+        <enum value="2"             name="GLX_BAD_ATTRIBUTE"/>
+        <enum value="3"             name="GLX_NO_EXTENSION"/>
+        <enum value="4"             name="GLX_BAD_VISUAL"/>
+        <enum value="5"             name="GLX_BAD_CONTEXT"/>
+        <enum value="6"             name="GLX_BAD_VALUE"/>
+        <enum value="7"             name="GLX_BAD_ENUM"/>
+        <enum value="91"            name="GLX_BAD_HYPERPIPE_CONFIG_SGIX"/>
+        <enum value="92"            name="GLX_BAD_HYPERPIPE_SGIX"/>
+    </enums>
+
+    <enums namespace="GLX_GenericEventCode" vendor="ARB" comment="Returned in the evtype field of XGenericEventCookie requests. This is a numeric code, not a bitmask. See http://www.x.org/releases/X11R7.6/doc/xextproto/geproto.html">
+        <enum value="0x00000000"    name="GLX_STEREO_NOTIFY_EXT"/>
+    </enums>
+
+    <enums namespace="GLXDrawableTypeMask" type="bitmask" comment="DRAWABLE_TYPE bits">
+        <enum value="0x00000001"    name="GLX_WINDOW_BIT"/>
+        <enum value="0x00000001"    name="GLX_WINDOW_BIT_SGIX"/>
+        <enum value="0x00000002"    name="GLX_PIXMAP_BIT"/>
+        <enum value="0x00000002"    name="GLX_PIXMAP_BIT_SGIX"/>
+        <enum value="0x00000004"    name="GLX_PBUFFER_BIT"/>
+        <enum value="0x00000004"    name="GLX_PBUFFER_BIT_SGIX"/>
+    </enums>
+
+    <enums namespace="GLXRenderTypeMask" type="bitmask" comment="RENDER_TYPE bits">
+        <enum value="0x00000001"    name="GLX_RGBA_BIT"/>
+        <enum value="0x00000001"    name="GLX_RGBA_BIT_SGIX"/>
+        <enum value="0x00000002"    name="GLX_COLOR_INDEX_BIT"/>
+        <enum value="0x00000002"    name="GLX_COLOR_INDEX_BIT_SGIX"/>
+        <enum value="0x00000004"    name="GLX_RGBA_FLOAT_BIT_ARB"/>
+        <enum value="0x00000008"    name="GLX_RGBA_UNSIGNED_FLOAT_BIT_EXT"/>
+    </enums>
+
+    <enums namespace="GLXSyncType" type="bitmask" comment="ChannelRectSyncSGIX bits">
+        <enum value="0x00000000"    name="GLX_SYNC_FRAME_SGIX"/>
+        <enum value="0x00000001"    name="GLX_SYNC_SWAP_SGIX"/>
+    </enums>
+
+    <enums namespace="GLXEventMask" type="bitmask" comment="SelectEvent mask">
+        <enum value="0x00000001"    name="GLX_STEREO_NOTIFY_MASK_EXT"/>
+        <enum value="0x04000000"    name="GLX_BUFFER_SWAP_COMPLETE_INTEL_MASK"/>
+        <enum value="0x08000000"    name="GLX_PBUFFER_CLOBBER_MASK"/>
+        <enum value="0x08000000"    name="GLX_BUFFER_CLOBBER_MASK_SGIX"/>
+    </enums>
+
+    <enums namespace="GLXPbufferClobberMask" type="bitmask">
+        <enum value="0x00000001"    name="GLX_FRONT_LEFT_BUFFER_BIT"/>
+        <enum value="0x00000001"    name="GLX_FRONT_LEFT_BUFFER_BIT_SGIX"/>
+        <enum value="0x00000002"    name="GLX_FRONT_RIGHT_BUFFER_BIT"/>
+        <enum value="0x00000002"    name="GLX_FRONT_RIGHT_BUFFER_BIT_SGIX"/>
+        <enum value="0x00000004"    name="GLX_BACK_LEFT_BUFFER_BIT"/>
+        <enum value="0x00000004"    name="GLX_BACK_LEFT_BUFFER_BIT_SGIX"/>
+        <enum value="0x00000008"    name="GLX_BACK_RIGHT_BUFFER_BIT"/>
+        <enum value="0x00000008"    name="GLX_BACK_RIGHT_BUFFER_BIT_SGIX"/>
+        <enum value="0x00000010"    name="GLX_AUX_BUFFERS_BIT"/>
+        <enum value="0x00000010"    name="GLX_AUX_BUFFERS_BIT_SGIX"/>
+        <enum value="0x00000020"    name="GLX_DEPTH_BUFFER_BIT"/>
+        <enum value="0x00000020"    name="GLX_DEPTH_BUFFER_BIT_SGIX"/>
+        <enum value="0x00000040"    name="GLX_STENCIL_BUFFER_BIT"/>
+        <enum value="0x00000040"    name="GLX_STENCIL_BUFFER_BIT_SGIX"/>
+        <enum value="0x00000080"    name="GLX_ACCUM_BUFFER_BIT"/>
+        <enum value="0x00000080"    name="GLX_ACCUM_BUFFER_BIT_SGIX"/>
+        <enum value="0x00000100"    name="GLX_SAMPLE_BUFFERS_BIT_SGIX"/>
+    </enums>
+
+    <enums namespace="GLXHyperpipeTypeMask" type="bitmask">
+        <enum value="0x00000001"    name="GLX_HYPERPIPE_DISPLAY_PIPE_SGIX"/>
+        <enum value="0x00000002"    name="GLX_HYPERPIPE_RENDER_PIPE_SGIX"/>
+    </enums>
+
+    <enums namespace="GLXHyperpipeAttribSGIX" type="bitmask">
+        <enum value="0x00000001"    name="GLX_PIPE_RECT_SGIX"/>
+        <enum value="0x00000002"    name="GLX_PIPE_RECT_LIMITS_SGIX"/>
+        <enum value="0x00000003"    name="GLX_HYPERPIPE_STEREO_SGIX"/>
+        <enum value="0x00000004"    name="GLX_HYPERPIPE_PIXEL_AVERAGE_SGIX"/>
+    </enums>
+
+    <enums namespace="GLXBindToTextureTargetMask" type="bitmask">
+        <enum value="0x00000001"    name="GLX_TEXTURE_1D_BIT_EXT"/>
+        <enum value="0x00000002"    name="GLX_TEXTURE_2D_BIT_EXT"/>
+        <enum value="0x00000004"    name="GLX_TEXTURE_RECTANGLE_BIT_EXT"/>
+    </enums>
+
+    <enums namespace="GLXContextFlags" type="bitmask" comment="CONTEXT_FLAGS_ARB bits (shared with WGL/GL)">
+        <enum value="0x00000001"    name="GLX_CONTEXT_DEBUG_BIT_ARB"/>
+        <enum value="0x00000002"    name="GLX_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB"/>
+        <enum value="0x00000004"    name="GLX_CONTEXT_ROBUST_ACCESS_BIT_ARB"/>
+        <enum value="0x00000008"    name="GLX_CONTEXT_RESET_ISOLATION_BIT_ARB"/>
+    </enums>
+
+    <enums namespace="GLXContextProfileMask" type="bitmask" comment="CONTEXT_PROFILE_MASK_ARB bits">
+        <enum value="0x00000001"    name="GLX_CONTEXT_CORE_PROFILE_BIT_ARB"/>
+        <enum value="0x00000002"    name="GLX_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB"/>
+        <enum value="0x00000004"    name="GLX_CONTEXT_ES_PROFILE_BIT_EXT"/>
+        <enum value="0x00000004"    name="GLX_CONTEXT_ES2_PROFILE_BIT_EXT" alias="GLX_CONTEXT_ES_PROFILE_BIT_EXT"/>
+    </enums>
+
+    <enums namespace="GLXHyperpipeMiscSGIX">
+        <enum value="80"            name="GLX_HYPERPIPE_PIPE_NAME_LENGTH_SGIX"/>
+    </enums>
+
+
+    <enums namespace="GLX" start="0x0000" end="0x2FFF" vendor="ARB"           comment="Miscellaneous OpenGL 1.0/1.1 enums. Most parts of this range are unused and should remain unused."/>
+
+    <enums namespace="GLX" group="SpecialNumbers"  vendor="ARB" comment="Tokens whose numeric value is intrinsically meaningful">
+        <enum value="0"             name="GLX_CONTEXT_RELEASE_BEHAVIOR_NONE_ARB"/>
+        <enum value="0xFFFFFFFF"    name="GLX_DONT_CARE"                            comment="For ChooseFBConfig attributes"/>
+    </enums>
+
+    <enums namespace="GLX" group="GLXAttribute" vendor="ARB" comment="Visual attributes">
+        <enum value="1"             name="GLX_USE_GL"/>
+        <enum value="2"             name="GLX_BUFFER_SIZE"/>
+        <enum value="3"             name="GLX_LEVEL"/>
+        <enum value="4"             name="GLX_RGBA"/>
+        <enum value="5"             name="GLX_DOUBLEBUFFER"/>
+        <enum value="6"             name="GLX_STEREO"/>
+        <enum value="7"             name="GLX_AUX_BUFFERS"/>
+        <enum value="8"             name="GLX_RED_SIZE"/>
+        <enum value="9"             name="GLX_GREEN_SIZE"/>
+        <enum value="10"            name="GLX_BLUE_SIZE"/>
+        <enum value="11"            name="GLX_ALPHA_SIZE"/>
+        <enum value="12"            name="GLX_DEPTH_SIZE"/>
+        <enum value="13"            name="GLX_STENCIL_SIZE"/>
+        <enum value="14"            name="GLX_ACCUM_RED_SIZE"/>
+        <enum value="15"            name="GLX_ACCUM_GREEN_SIZE"/>
+        <enum value="16"            name="GLX_ACCUM_BLUE_SIZE"/>
+        <enum value="17"            name="GLX_ACCUM_ALPHA_SIZE"/>
+            <unused start="18" end="0x1F"/>
+        <enum value="0x20"          name="GLX_CONFIG_CAVEAT"/>
+        <enum value="0x20"          name="GLX_VISUAL_CAVEAT_EXT"/>
+        <enum value="0x22"          name="GLX_X_VISUAL_TYPE"/>
+        <enum value="0x22"          name="GLX_X_VISUAL_TYPE_EXT"/>
+        <enum value="0x23"          name="GLX_TRANSPARENT_TYPE"/>
+        <enum value="0x23"          name="GLX_TRANSPARENT_TYPE_EXT"/>
+        <enum value="0x24"          name="GLX_TRANSPARENT_INDEX_VALUE"/>
+        <enum value="0x24"          name="GLX_TRANSPARENT_INDEX_VALUE_EXT"/>
+        <enum value="0x25"          name="GLX_TRANSPARENT_RED_VALUE"/>
+        <enum value="0x25"          name="GLX_TRANSPARENT_RED_VALUE_EXT"/>
+        <enum value="0x26"          name="GLX_TRANSPARENT_GREEN_VALUE"/>
+        <enum value="0x26"          name="GLX_TRANSPARENT_GREEN_VALUE_EXT"/>
+        <enum value="0x27"          name="GLX_TRANSPARENT_BLUE_VALUE"/>
+        <enum value="0x27"          name="GLX_TRANSPARENT_BLUE_VALUE_EXT"/>
+        <enum value="0x28"          name="GLX_TRANSPARENT_ALPHA_VALUE"/>
+        <enum value="0x28"          name="GLX_TRANSPARENT_ALPHA_VALUE_EXT"/>
+    </enums>
+
+    <enums namespace="GLX" start="0x1F00" end="0x1F02" vendor="AMD" comment="Equivalent to corresponding WGL/GL tokens">
+        <enum value="0x1F00"        name="GLX_GPU_VENDOR_AMD"/>
+        <enum value="0x1F01"        name="GLX_GPU_RENDERER_STRING_AMD"/>
+        <enum value="0x1F02"        name="GLX_GPU_OPENGL_VERSION_STRING_AMD"/>
+    </enums>
+
+    <enums namespace="GLX" start="0x2070" end="0x209F" vendor="ARB" comment="Shared with WGL; synchronize create_context enums">
+        <enum value="0x2091"        name="GLX_CONTEXT_MAJOR_VERSION_ARB"/>
+        <enum value="0x2092"        name="GLX_CONTEXT_MINOR_VERSION_ARB"/>
+            <!-- 0x2093 used for WGL_CONTEXT_LAYER_PLANE_ARB -->
+        <enum value="0x2094"        name="GLX_CONTEXT_FLAGS_ARB"/>
+            <!-- 0x2095 collides with WGL_ERROR_INVALID_VERSION_ARB! -->
+        <enum value="0x2095"        name="GLX_CONTEXT_ALLOW_BUFFER_BYTE_ORDER_MISMATCH_ARB"/>
+            <!-- 0x2096 used for WGL_ERROR_INVALID_PROFILE_ARB -->
+        <enum value="0x2097"        name="GLX_CONTEXT_RELEASE_BEHAVIOR_ARB"/>
+        <enum value="0x2098"        name="GLX_CONTEXT_RELEASE_BEHAVIOR_FLUSH_ARB"/>
+            <unused start="0x2099" end="0x209F"/>
+    </enums>
+
+    <enums namespace="GLX" start="0x20A0" end="0x219F" vendor="NV" comment="Shared with WGL">
+        <enum value="0x20B0"        name="GLX_FLOAT_COMPONENTS_NV"/>
+        <enum value="0x20B1"        name="GLX_RGBA_UNSIGNED_FLOAT_TYPE_EXT"/>
+        <enum value="0x20B2"        name="GLX_FRAMEBUFFER_SRGB_CAPABLE_ARB"/>
+        <enum value="0x20B2"        name="GLX_FRAMEBUFFER_SRGB_CAPABLE_EXT"/>
+        <enum value="0x20B3"        name="GLX_COLOR_SAMPLES_NV"/>
+            <unused start="0x20B4" end="0x20B8"/>
+        <enum value="0x20B9"        name="GLX_RGBA_FLOAT_TYPE_ARB"/>
+            <unused start="0x20BA" end="0x20C2"/>
+        <enum value="0x20C3"        name="GLX_VIDEO_OUT_COLOR_NV"/>
+        <enum value="0x20C4"        name="GLX_VIDEO_OUT_ALPHA_NV"/>
+        <enum value="0x20C5"        name="GLX_VIDEO_OUT_DEPTH_NV"/>
+        <enum value="0x20C6"        name="GLX_VIDEO_OUT_COLOR_AND_ALPHA_NV"/>
+        <enum value="0x20C7"        name="GLX_VIDEO_OUT_COLOR_AND_DEPTH_NV"/>
+        <enum value="0x20C8"        name="GLX_VIDEO_OUT_FRAME_NV"/>
+        <enum value="0x20C9"        name="GLX_VIDEO_OUT_FIELD_1_NV"/>
+        <enum value="0x20CA"        name="GLX_VIDEO_OUT_FIELD_2_NV"/>
+        <enum value="0x20CB"        name="GLX_VIDEO_OUT_STACKED_FIELDS_1_2_NV"/>
+        <enum value="0x20CC"        name="GLX_VIDEO_OUT_STACKED_FIELDS_2_1_NV"/>
+        <enum value="0x20CD"        name="GLX_DEVICE_ID_NV"/>
+        <enum value="0x20CE"        name="GLX_UNIQUE_ID_NV"/>
+        <enum value="0x20CF"        name="GLX_NUM_VIDEO_CAPTURE_SLOTS_NV"/>
+        <enum value="0x20D0"        name="GLX_BIND_TO_TEXTURE_RGB_EXT"/>
+        <enum value="0x20D1"        name="GLX_BIND_TO_TEXTURE_RGBA_EXT"/>
+        <enum value="0x20D2"        name="GLX_BIND_TO_MIPMAP_TEXTURE_EXT"/>
+        <enum value="0x20D3"        name="GLX_BIND_TO_TEXTURE_TARGETS_EXT"/>
+        <enum value="0x20D4"        name="GLX_Y_INVERTED_EXT"/>
+        <enum value="0x20D5"        name="GLX_TEXTURE_FORMAT_EXT"/>
+        <enum value="0x20D6"        name="GLX_TEXTURE_TARGET_EXT"/>
+        <enum value="0x20D7"        name="GLX_MIPMAP_TEXTURE_EXT"/>
+        <enum value="0x20D8"        name="GLX_TEXTURE_FORMAT_NONE_EXT"/>
+        <enum value="0x20D9"        name="GLX_TEXTURE_FORMAT_RGB_EXT"/>
+        <enum value="0x20DA"        name="GLX_TEXTURE_FORMAT_RGBA_EXT"/>
+        <enum value="0x20DB"        name="GLX_TEXTURE_1D_EXT"/>
+        <enum value="0x20DC"        name="GLX_TEXTURE_2D_EXT"/>
+        <enum value="0x20DD"        name="GLX_TEXTURE_RECTANGLE_EXT"/>
+        <enum value="0x20DE"        name="GLX_FRONT_LEFT_EXT"/>
+        <enum value="0x20DF"        name="GLX_FRONT_RIGHT_EXT"/>
+        <enum value="0x20E0"        name="GLX_BACK_LEFT_EXT"/>
+        <enum value="0x20E1"        name="GLX_BACK_RIGHT_EXT"/>
+        <enum value="0x20DE"        name="GLX_FRONT_EXT"    alias="GLX_FRONT_LEFT_EXT"/>
+        <enum value="0x20E0"        name="GLX_BACK_EXT"     alias="GLX_BACK_LEFT_EXT"/>
+        <enum value="0x20E2"        name="GLX_AUX0_EXT"/>
+        <enum value="0x20E3"        name="GLX_AUX1_EXT"/>
+        <enum value="0x20E4"        name="GLX_AUX2_EXT"/>
+        <enum value="0x20E5"        name="GLX_AUX3_EXT"/>
+        <enum value="0x20E6"        name="GLX_AUX4_EXT"/>
+        <enum value="0x20E7"        name="GLX_AUX5_EXT"/>
+        <enum value="0x20E8"        name="GLX_AUX6_EXT"/>
+        <enum value="0x20E9"        name="GLX_AUX7_EXT"/>
+        <enum value="0x20EA"        name="GLX_AUX8_EXT"/>
+        <enum value="0x20EB"        name="GLX_AUX9_EXT"/>
+            <unused start="0x20EC" end="0x20EF"/>
+        <enum value="0x20F0"        name="GLX_NUM_VIDEO_SLOTS_NV"/>
+        <enum value="0x20F1"        name="GLX_SWAP_INTERVAL_EXT"/>
+        <enum value="0x20F2"        name="GLX_MAX_SWAP_INTERVAL_EXT"/>
+        <enum value="0x20F3"        name="GLX_LATE_SWAPS_TEAR_EXT"/>
+        <enum value="0x20F4"        name="GLX_BACK_BUFFER_AGE_EXT"/>
+        <enum value="0x20F5"        name="GLX_STEREO_TREE_EXT"/>
+        <enum value="0x20F6"        name="GLX_VENDOR_NAMES_EXT"/>
+        <enum value="0x20F7"        name="GLX_GENERATE_RESET_ON_VIDEO_MEMORY_PURGE_NV"/>
+            <unused start="0x20F8" end="0x219F"/>
+    </enums>
+
+    <enums namespace="GLX" start="0x21A0" end="0x21AF" vendor="AMD" comment="Shared with WGL; synchronize create_context enums">
+            <unused start="0x21A0" end="0x21A1" comment="used by WGL extensions"/>
+        <enum value="0x21A2"        name="GLX_GPU_FASTEST_TARGET_GPUS_AMD"/>
+        <enum value="0x21A3"        name="GLX_GPU_RAM_AMD"/>
+        <enum value="0x21A4"        name="GLX_GPU_CLOCK_AMD"/>
+        <enum value="0x21A5"        name="GLX_GPU_NUM_PIPES_AMD"/>
+        <enum value="0x21A6"        name="GLX_GPU_NUM_SIMD_AMD"/>
+        <enum value="0x21A7"        name="GLX_GPU_NUM_RB_AMD"/>
+        <enum value="0x21A8"        name="GLX_GPU_NUM_SPI_AMD"/>
+            <unused start="0x21A9" end="0x21AF"/>
+    </enums>
+
+    <enums namespace="GLX" start="0x31B3" end="0x31B3" vendor="ARB" comment="Shared with WGL.">
+        <enum value="0x31B3" name="GLX_CONTEXT_OPENGL_NO_ERROR_ARB"/>
+    </enums>
+
+    <enums namespace="GLX" start="0x8000" end="0x804F" vendor="ARB">
+        <enum value="0x8000"        name="GLX_NONE"                                 comment="Attribute value"/>
+        <enum value="0x8001"        name="GLX_SLOW_CONFIG"                          comment="CONFIG_CAVEAT attribute value"/>
+        <enum value="0x8002"        name="GLX_TRUE_COLOR"                           comment="X_VISUAL_TYPE attribute value"/>
+        <enum value="0x8003"        name="GLX_DIRECT_COLOR"                         comment="X_VISUAL_TYPE attribute value"/>
+        <enum value="0x8004"        name="GLX_PSEUDO_COLOR"                         comment="X_VISUAL_TYPE attribute value"/>
+        <enum value="0x8005"        name="GLX_STATIC_COLOR"                         comment="X_VISUAL_TYPE attribute value"/>
+        <enum value="0x8006"        name="GLX_GRAY_SCALE"                           comment="X_VISUAL_TYPE attribute value"/>
+        <enum value="0x8007"        name="GLX_STATIC_GRAY"                          comment="X_VISUAL_TYPE attribute value"/>
+        <enum value="0x8008"        name="GLX_TRANSPARENT_RGB"                      comment="TRANSPARENT_TYPE attribute value"/>
+        <enum value="0x8009"        name="GLX_TRANSPARENT_INDEX"                    comment="TRANSPARENT_TYPE attribute value"/>
+        <enum value="0x800B"        name="GLX_VISUAL_ID"                            comment="Context attribute"/>
+        <enum value="0x800C"        name="GLX_SCREEN"                               comment="Context attribute"/>
+        <enum value="0x800D"        name="GLX_NON_CONFORMANT_CONFIG"                comment="CONFIG_CAVEAT attribute value"/>
+        <enum value="0x8010"        name="GLX_DRAWABLE_TYPE"                        comment="FBConfig attribute"/>
+        <enum value="0x8011"        name="GLX_RENDER_TYPE"                          comment="FBConfig attribute"/>
+        <enum value="0x8012"        name="GLX_X_RENDERABLE"                         comment="FBConfig attribute"/>
+        <enum value="0x8013"        name="GLX_FBCONFIG_ID"                          comment="FBConfig attribute"/>
+        <enum value="0x8014"        name="GLX_RGBA_TYPE"                            comment="CreateNewContext render_type value"/>
+        <enum value="0x8015"        name="GLX_COLOR_INDEX_TYPE"                     comment="CreateNewContext render_type value"/>
+        <enum value="0x8016"        name="GLX_MAX_PBUFFER_WIDTH"                    comment="FBConfig attribute"/>
+        <enum value="0x8017"        name="GLX_MAX_PBUFFER_HEIGHT"                   comment="FBConfig attribute"/>
+        <enum value="0x8018"        name="GLX_MAX_PBUFFER_PIXELS"                   comment="FBConfig attribute"/>
+        <enum value="0x801B"        name="GLX_PRESERVED_CONTENTS"                   comment="CreateGLXPbuffer attribute"/>
+        <enum value="0x801C"        name="GLX_LARGEST_PBUFFER"                      comment="CreateGLXPbuffer attribute"/>
+        <enum value="0x801D"        name="GLX_WIDTH"                                comment="Drawable attribute"/>
+        <enum value="0x801E"        name="GLX_HEIGHT"                               comment="Drawable attribute"/>
+        <enum value="0x801F"        name="GLX_EVENT_MASK"                           comment="Drawable attribute"/>
+        <enum value="0x8020"        name="GLX_DAMAGED"                              comment="PbufferClobber event_type value"/>
+        <enum value="0x8021"        name="GLX_SAVED"                                comment="PbufferClobber event_type value"/>
+        <enum value="0x8022"        name="GLX_WINDOW"                               comment="PbufferClobber draw_type value"/>
+        <enum value="0x8023"        name="GLX_PBUFFER"                              comment="PbufferClobber draw_type value"/>
+        <enum value="0x8000"        name="GLX_NONE_EXT"                             comment="several EXT attribute values"/>
+        <enum value="0x8001"        name="GLX_SLOW_VISUAL_EXT"                      comment="VISUAL_CAVEAT_EXT attribute value"/>
+        <enum value="0x8002"        name="GLX_TRUE_COLOR_EXT"                       comment="X_VISUAL_TYPE_EXT attribute value"/>
+        <enum value="0x8003"        name="GLX_DIRECT_COLOR_EXT"                     comment="X_VISUAL_TYPE_EXT attribute value"/>
+        <enum value="0x8004"        name="GLX_PSEUDO_COLOR_EXT"                     comment="X_VISUAL_TYPE_EXT attribute value"/>
+        <enum value="0x8005"        name="GLX_STATIC_COLOR_EXT"                     comment="X_VISUAL_TYPE_EXT attribute value"/>
+        <enum value="0x8006"        name="GLX_GRAY_SCALE_EXT"                       comment="X_VISUAL_TYPE_EXT attribute value"/>
+        <enum value="0x8007"        name="GLX_STATIC_GRAY_EXT"                      comment="X_VISUAL_TYPE_EXT attribute value"/>
+        <enum value="0x8008"        name="GLX_TRANSPARENT_RGB_EXT"                  comment="TRANSPARENT_TYPE_EXT attribute value"/>
+        <enum value="0x8009"        name="GLX_TRANSPARENT_INDEX_EXT"                comment="TRANSPARENT_TYPE_EXT attribute value"/>
+        <enum value="0x800A"        name="GLX_SHARE_CONTEXT_EXT"                    comment="QueryContextInfoEXT attribute"/>
+        <enum value="0x800B"        name="GLX_VISUAL_ID_EXT"                        comment="QueryContextInfoEXT attribute"/>
+        <enum value="0x800C"        name="GLX_SCREEN_EXT"                           comment="QueryContextInfoEXT attribute"/>
+        <enum value="0x800D"        name="GLX_NON_CONFORMANT_VISUAL_EXT"            comment="VISUAL_CAVEAT_EXT attribute value"/>
+        <enum value="0x8010"        name="GLX_DRAWABLE_TYPE_SGIX"                   comment="FBConfigSGIX attribute"/>
+        <enum value="0x8011"        name="GLX_RENDER_TYPE_SGIX"                     comment="FBConfigSGIX attribute"/>
+        <enum value="0x8012"        name="GLX_X_RENDERABLE_SGIX"                    comment="FBConfigSGIX attribute"/>
+        <enum value="0x8013"        name="GLX_FBCONFIG_ID_SGIX"                     comment="FBConfigSGIX attribute"/>
+        <enum value="0x8014"        name="GLX_RGBA_TYPE_SGIX"                       comment="CreateContextWithConfigSGIX render_type value"/>
+        <enum value="0x8015"        name="GLX_COLOR_INDEX_TYPE_SGIX"                comment="CreateContextWithConfigSGIX render_type value"/>
+        <enum value="0x8016"        name="GLX_MAX_PBUFFER_WIDTH_SGIX"               comment="FBConfigSGIX attribute"/>
+        <enum value="0x8017"        name="GLX_MAX_PBUFFER_HEIGHT_SGIX"              comment="FBConfigSGIX attribute"/>
+        <enum value="0x8018"        name="GLX_MAX_PBUFFER_PIXELS_SGIX"              comment="FBConfigSGIX attribute"/>
+        <enum value="0x8019"        name="GLX_OPTIMAL_PBUFFER_WIDTH_SGIX"           comment="FBConfigSGIX attribute"/>
+        <enum value="0x801A"        name="GLX_OPTIMAL_PBUFFER_HEIGHT_SGIX"          comment="FBConfigSGIX attribute"/>
+        <enum value="0x801B"        name="GLX_PRESERVED_CONTENTS_SGIX"              comment="PbufferSGIX attribute"/>
+        <enum value="0x801C"        name="GLX_LARGEST_PBUFFER_SGIX"                 comment="PbufferSGIX attribute"/>
+        <enum value="0x801D"        name="GLX_WIDTH_SGIX"                           comment="PbufferSGIX attribute"/>
+        <enum value="0x801E"        name="GLX_HEIGHT_SGIX"                          comment="PbufferSGIX attribute"/>
+        <enum value="0x801F"        name="GLX_EVENT_MASK_SGIX"                      comment="PbufferSGIX attribute"/>
+        <enum value="0x8020"        name="GLX_DAMAGED_SGIX"                         comment="BufferClobberSGIX event_type value"/>
+        <enum value="0x8021"        name="GLX_SAVED_SGIX"                           comment="BufferClobberSGIX event_type value"/>
+        <enum value="0x8022"        name="GLX_WINDOW_SGIX"                          comment="BufferClobberSGIX draw_type value"/>
+        <enum value="0x8023"        name="GLX_PBUFFER_SGIX"                         comment="BufferClobberSGIX draw_type value"/>
+        <enum value="0x8024"        name="GLX_DIGITAL_MEDIA_PBUFFER_SGIX"           comment="PbufferSGIX attribute"/>
+        <enum value="0x8025"        name="GLX_BLENDED_RGBA_SGIS"                    comment="TRANSPARENT_TYPE_EXT attribute value"/>
+        <enum value="0x8026"        name="GLX_MULTISAMPLE_SUB_RECT_WIDTH_SGIS"      comment="Visual attribute (shared_multisample)"/>
+        <enum value="0x8027"        name="GLX_MULTISAMPLE_SUB_RECT_HEIGHT_SGIS"     comment="Visual attribute (shared_multisample)"/>
+        <enum value="0x8028"        name="GLX_VISUAL_SELECT_GROUP_SGIX"             comment="Visual attribute (visual_select_group)"/>
+            <unused start="0x8029" end="0x802F"/>
+        <enum value="0x8030"        name="GLX_HYPERPIPE_ID_SGIX"/>
+            <unused start="0x8031" end="0x803F"/>
+        <enum value="0x8040"        name="GLX_PBUFFER_HEIGHT"                       comment="CreateGLXPbuffer attribute"/>
+        <enum value="0x8041"        name="GLX_PBUFFER_WIDTH"                        comment="CreateGLXPbuffer attribute"/>
+            <unused start="0x8042" end="0x804F"/>
+    </enums>
+
+    <enums namespace="GLX" start="0x8050" end="0x804F" vendor="3DFX">
+        <enum value="0x8050"        name="GLX_SAMPLE_BUFFERS_3DFX"/>
+        <enum value="0x8051"        name="GLX_SAMPLES_3DFX"/>
+            <unused start="0x8052" end="0x805F"/>
+    </enums>
+
+
+    <enums namespace="GLX" start="0x8060" end="0x806F" vendor="OML">
+        <enum value="0x8060"        name="GLX_SWAP_METHOD_OML"/>
+        <enum value="0x8061"        name="GLX_SWAP_EXCHANGE_OML"/>
+        <enum value="0x8062"        name="GLX_SWAP_COPY_OML"/>
+        <enum value="0x8063"        name="GLX_SWAP_UNDEFINED_OML"/>
+            <unused start="0x8064" end="0x806F"/>
+    </enums>
+
+    <enums namespace="GLX" start="0x8070" end="0x816F" vendor="NV">
+            <unused start="0x8070" end="0x816F"/>
+    </enums>
+
+    <enums namespace="GLX" start="0x8170" end="0x817F" vendor="SUN">
+            <unused start="0x8170" end="0x817F"/>
+    </enums>
+
+    <enums namespace="GLX" start="0x8180" end="0x818F" vendor="INTEL">
+        <enum value="0x8180"        name="GLX_EXCHANGE_COMPLETE_INTEL"/>
+        <enum value="0x8181"        name="GLX_COPY_COMPLETE_INTEL"/>
+        <enum value="0x8182"        name="GLX_FLIP_COMPLETE_INTEL"/>
+        <enum value="0x8183"        name="GLX_RENDERER_VENDOR_ID_MESA"/>
+        <enum value="0x8184"        name="GLX_RENDERER_DEVICE_ID_MESA"/>
+        <enum value="0x8185"        name="GLX_RENDERER_VERSION_MESA"/>
+        <enum value="0x8186"        name="GLX_RENDERER_ACCELERATED_MESA"/>
+        <enum value="0x8187"        name="GLX_RENDERER_VIDEO_MEMORY_MESA"/>
+        <enum value="0x8188"        name="GLX_RENDERER_UNIFIED_MEMORY_ARCHITECTURE_MESA"/>
+        <enum value="0x8189"        name="GLX_RENDERER_PREFERRED_PROFILE_MESA"/>
+        <enum value="0x818A"        name="GLX_RENDERER_OPENGL_CORE_PROFILE_VERSION_MESA"/>
+        <enum value="0x818B"        name="GLX_RENDERER_OPENGL_COMPATIBILITY_PROFILE_VERSION_MESA"/>
+        <enum value="0x818C"        name="GLX_RENDERER_OPENGL_ES_PROFILE_VERSION_MESA"/>
+        <enum value="0x818D"        name="GLX_RENDERER_OPENGL_ES2_PROFILE_VERSION_MESA"/>
+        <enum value="0x818E"        name="GLX_RENDERER_ID_MESA"/>
+            <unused start="0x818F"/>
+    </enums>
+
+<!-- Please remember that new enumerant allocations must be obtained by
+     request to the Khronos API registrar (see comments at the top of this
+     file) File requests in the Khronos Bugzilla, OpenGL project, Registry
+     component. Also note that some GLX enum values are shared with GL and
+     WGL, and new ranges should be allocated with such overlaps in mind. -->
+
+    <enums namespace="GLX" start="0x8190" end="0x824F" vendor="ARB">
+            <unused start="0x8190" end="0x824F" comment="Reserved for future use. Reserve enums in blocks of 16 from the start."/>
+    </enums>
+
+    <enums namespace="GL" start="0x8250" end="0x826F" vendor="ARB" comment="Values shared with GL. Do not allocate additional values in this range.">
+        <enum value="0x8252"        name="GLX_LOSE_CONTEXT_ON_RESET_ARB"/>
+        <enum value="0x8256"        name="GLX_CONTEXT_RESET_NOTIFICATION_STRATEGY_ARB"/>
+        <enum value="0x8261"        name="GLX_NO_RESET_NOTIFICATION_ARB"/>
+    </enums>
+
+    <enums namespace="GLX" start="0x8270" end="99999"  vendor="ARB" comment="RESERVED FOR FUTURE ALLOCATIONS BY KHRONOS">
+            <unused start="0x8270" end="0x9125"/>
+        <enum value="0x9126"        name="GLX_CONTEXT_PROFILE_MASK_ARB" comment="Value shared with GL"/>
+            <unused start="0x9127" end="99999"/>
+    </enums>
+
+    <enums namespace="GLX" start="100000" end="100001" vendor="ARB" comment="Visual attributes for multisampling. Historical range only; do not allocate new values in this space.">
+        <enum value="100000"        name="GLX_SAMPLE_BUFFERS"/>
+        <enum value="100000"        name="GLX_SAMPLE_BUFFERS_ARB"/>
+        <enum value="100000"        name="GLX_SAMPLE_BUFFERS_SGIS"/>
+        <enum value="100001"        name="GLX_SAMPLES"/>
+        <enum value="100001"        name="GLX_SAMPLES_ARB"/>
+        <enum value="100001"        name="GLX_SAMPLES_SGIS"/>
+        <enum value="100001"        name="GLX_COVERAGE_SAMPLES_NV"/>
+    </enums>
+
+
+    <!-- SECTION: GLX command definitions. -->
+    <commands namespace="GLX">
+        <command>
+            <proto><ptype>Bool</ptype> <name>glXAssociateDMPbufferSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXPbufferSGIX</ptype> <name>pbuffer</name></param>
+            <param><ptype>DMparams</ptype> *<name>params</name></param>
+            <param><ptype>DMbuffer</ptype> <name>dmbuffer</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXBindChannelToWindowSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>display</name></param>
+            <param>int <name>screen</name></param>
+            <param>int <name>channel</name></param>
+            <param><ptype>Window</ptype> <name>window</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXBindHyperpipeSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>int <name>hpId</name></param>
+        </command>
+        <command>
+            <proto><ptype>Bool</ptype> <name>glXBindSwapBarrierNV</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLuint</ptype> <name>group</name></param>
+            <param><ptype>GLuint</ptype> <name>barrier</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXBindSwapBarrierSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXDrawable</ptype> <name>drawable</name></param>
+            <param>int <name>barrier</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXBindTexImageEXT</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXDrawable</ptype> <name>drawable</name></param>
+            <param>int <name>buffer</name></param>
+            <param>const int *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXBindVideoCaptureDeviceNV</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>unsigned int <name>video_capture_slot</name></param>
+            <param><ptype>GLXVideoCaptureDeviceNV</ptype> <name>device</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXBindVideoDeviceNV</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>unsigned int <name>video_slot</name></param>
+            <param>unsigned int <name>video_device</name></param>
+            <param>const int *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXBindVideoImageNV</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXVideoDeviceNV</ptype> <name>VideoDevice</name></param>
+            <param><ptype>GLXPbuffer</ptype> <name>pbuf</name></param>
+            <param>int <name>iVideoBuffer</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXBlitContextFramebufferAMD</name></proto>
+            <param><ptype>GLXContext</ptype> <name>dstCtx</name></param>
+            <param><ptype>GLint</ptype> <name>srcX0</name></param>
+            <param><ptype>GLint</ptype> <name>srcY0</name></param>
+            <param><ptype>GLint</ptype> <name>srcX1</name></param>
+            <param><ptype>GLint</ptype> <name>srcY1</name></param>
+            <param><ptype>GLint</ptype> <name>dstX0</name></param>
+            <param><ptype>GLint</ptype> <name>dstY0</name></param>
+            <param><ptype>GLint</ptype> <name>dstX1</name></param>
+            <param><ptype>GLint</ptype> <name>dstY1</name></param>
+            <param><ptype>GLbitfield</ptype> <name>mask</name></param>
+            <param><ptype>GLenum</ptype> <name>filter</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXChannelRectSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>display</name></param>
+            <param>int <name>screen</name></param>
+            <param>int <name>channel</name></param>
+            <param>int <name>x</name></param>
+            <param>int <name>y</name></param>
+            <param>int <name>w</name></param>
+            <param>int <name>h</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXChannelRectSyncSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>display</name></param>
+            <param>int <name>screen</name></param>
+            <param>int <name>channel</name></param>
+            <param><ptype>GLenum</ptype> <name>synctype</name></param>
+        </command>
+        <command>
+            <proto><ptype>GLXFBConfig</ptype> *<name>glXChooseFBConfig</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>int <name>screen</name></param>
+            <param>const int *<name>attrib_list</name></param>
+            <param>int *<name>nelements</name></param>
+        </command>
+        <command>
+            <proto><ptype>GLXFBConfigSGIX</ptype> *<name>glXChooseFBConfigSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>int <name>screen</name></param>
+            <param>int *<name>attrib_list</name></param>
+            <param>int *<name>nelements</name></param>
+        </command>
+        <command>
+            <proto><ptype>XVisualInfo</ptype> *<name>glXChooseVisual</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>int <name>screen</name></param>
+            <param>int *<name>attribList</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXCopyBufferSubDataNV</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXContext</ptype> <name>readCtx</name></param>
+            <param><ptype>GLXContext</ptype> <name>writeCtx</name></param>
+            <param><ptype>GLenum</ptype> <name>readTarget</name></param>
+            <param><ptype>GLenum</ptype> <name>writeTarget</name></param>
+            <param><ptype>GLintptr</ptype> <name>readOffset</name></param>
+            <param><ptype>GLintptr</ptype> <name>writeOffset</name></param>
+            <param><ptype>GLsizeiptr</ptype> <name>size</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXNamedCopyBufferSubDataNV</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXContext</ptype> <name>readCtx</name></param>
+            <param><ptype>GLXContext</ptype> <name>writeCtx</name></param>
+            <param><ptype>GLuint</ptype> <name>readBuffer</name></param>
+            <param><ptype>GLuint</ptype> <name>writeBuffer</name></param>
+            <param><ptype>GLintptr</ptype> <name>readOffset</name></param>
+            <param><ptype>GLintptr</ptype> <name>writeOffset</name></param>
+            <param><ptype>GLsizeiptr</ptype> <name>size</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXCopyContext</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXContext</ptype> <name>src</name></param>
+            <param><ptype>GLXContext</ptype> <name>dst</name></param>
+            <param>unsigned long <name>mask</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXCopyImageSubDataNV</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXContext</ptype> <name>srcCtx</name></param>
+            <param><ptype>GLuint</ptype> <name>srcName</name></param>
+            <param><ptype>GLenum</ptype> <name>srcTarget</name></param>
+            <param><ptype>GLint</ptype> <name>srcLevel</name></param>
+            <param><ptype>GLint</ptype> <name>srcX</name></param>
+            <param><ptype>GLint</ptype> <name>srcY</name></param>
+            <param><ptype>GLint</ptype> <name>srcZ</name></param>
+            <param><ptype>GLXContext</ptype> <name>dstCtx</name></param>
+            <param><ptype>GLuint</ptype> <name>dstName</name></param>
+            <param><ptype>GLenum</ptype> <name>dstTarget</name></param>
+            <param><ptype>GLint</ptype> <name>dstLevel</name></param>
+            <param><ptype>GLint</ptype> <name>dstX</name></param>
+            <param><ptype>GLint</ptype> <name>dstY</name></param>
+            <param><ptype>GLint</ptype> <name>dstZ</name></param>
+            <param><ptype>GLsizei</ptype> <name>width</name></param>
+            <param><ptype>GLsizei</ptype> <name>height</name></param>
+            <param><ptype>GLsizei</ptype> <name>depth</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXCopySubBufferMESA</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXDrawable</ptype> <name>drawable</name></param>
+            <param>int <name>x</name></param>
+            <param>int <name>y</name></param>
+            <param>int <name>width</name></param>
+            <param>int <name>height</name></param>
+        </command>
+        <command>
+            <proto><ptype>GLXContext</ptype> <name>glXCreateAssociatedContextAMD</name></proto>
+            <param>unsigned int <name>id</name></param>
+            <param><ptype>GLXContext</ptype> <name>share_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>GLXContext</ptype> <name>glXCreateAssociatedContextAttribsAMD</name></proto>
+            <param>unsigned int <name>id</name></param>
+            <param><ptype>GLXContext</ptype> <name>share_context</name></param>
+            <param>const int *<name>attribList</name></param>
+        </command>
+        <command>
+            <proto><ptype>GLXContext</ptype> <name>glXCreateContextAttribsARB</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXFBConfig</ptype> <name>config</name></param>
+            <param><ptype>GLXContext</ptype> <name>share_context</name></param>
+            <param><ptype>Bool</ptype> <name>direct</name></param>
+            <param>const int *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>GLXContext</ptype> <name>glXCreateContext</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>XVisualInfo</ptype> *<name>vis</name></param>
+            <param><ptype>GLXContext</ptype> <name>shareList</name></param>
+            <param><ptype>Bool</ptype> <name>direct</name></param>
+        </command>
+        <command>
+            <proto><ptype>GLXContext</ptype> <name>glXCreateContextWithConfigSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXFBConfigSGIX</ptype> <name>config</name></param>
+            <param>int <name>render_type</name></param>
+            <param><ptype>GLXContext</ptype> <name>share_list</name></param>
+            <param><ptype>Bool</ptype> <name>direct</name></param>
+        </command>
+        <command>
+            <proto><ptype>GLXPbufferSGIX</ptype> <name>glXCreateGLXPbufferSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXFBConfigSGIX</ptype> <name>config</name></param>
+            <param>unsigned int <name>width</name></param>
+            <param>unsigned int <name>height</name></param>
+            <param>int *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>GLXPixmap</ptype> <name>glXCreateGLXPixmap</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>XVisualInfo</ptype> *<name>visual</name></param>
+            <param><ptype>Pixmap</ptype> <name>pixmap</name></param>
+        </command>
+        <command>
+            <proto><ptype>GLXPixmap</ptype> <name>glXCreateGLXPixmapMESA</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>XVisualInfo</ptype> *<name>visual</name></param>
+            <param><ptype>Pixmap</ptype> <name>pixmap</name></param>
+            <param><ptype>Colormap</ptype> <name>cmap</name></param>
+        </command>
+        <command>
+            <proto><ptype>GLXPixmap</ptype> <name>glXCreateGLXPixmapWithConfigSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXFBConfigSGIX</ptype> <name>config</name></param>
+            <param><ptype>Pixmap</ptype> <name>pixmap</name></param>
+        </command>
+        <command>
+            <proto><ptype>GLXVideoSourceSGIX</ptype> <name>glXCreateGLXVideoSourceSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>display</name></param>
+            <param>int <name>screen</name></param>
+            <param><ptype>VLServer</ptype> <name>server</name></param>
+            <param><ptype>VLPath</ptype> <name>path</name></param>
+            <param>int <name>nodeClass</name></param>
+            <param><ptype>VLNode</ptype> <name>drainNode</name></param>
+        </command>
+        <command>
+            <proto><ptype>GLXContext</ptype> <name>glXCreateNewContext</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXFBConfig</ptype> <name>config</name></param>
+            <param>int <name>render_type</name></param>
+            <param><ptype>GLXContext</ptype> <name>share_list</name></param>
+            <param><ptype>Bool</ptype> <name>direct</name></param>
+        </command>
+        <command>
+            <proto><ptype>GLXPbuffer</ptype> <name>glXCreatePbuffer</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXFBConfig</ptype> <name>config</name></param>
+            <param>const int *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>GLXPixmap</ptype> <name>glXCreatePixmap</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXFBConfig</ptype> <name>config</name></param>
+            <param><ptype>Pixmap</ptype> <name>pixmap</name></param>
+            <param>const int *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>GLXWindow</ptype> <name>glXCreateWindow</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXFBConfig</ptype> <name>config</name></param>
+            <param><ptype>Window</ptype> <name>win</name></param>
+            <param>const int *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXCushionSGI</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>Window</ptype> <name>window</name></param>
+            <param>float <name>cushion</name></param>
+        </command>
+        <command>
+            <proto><ptype>Bool</ptype> <name>glXDelayBeforeSwapNV</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXDrawable</ptype> <name>drawable</name></param>
+            <param><ptype>GLfloat</ptype> <name>seconds</name></param>
+        </command>
+        <command>
+            <proto><ptype>Bool</ptype> <name>glXDeleteAssociatedContextAMD</name></proto>
+            <param><ptype>GLXContext</ptype> <name>ctx</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXDestroyContext</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXContext</ptype> <name>ctx</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXDestroyGLXPbufferSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXPbufferSGIX</ptype> <name>pbuf</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXDestroyGLXPixmap</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXPixmap</ptype> <name>pixmap</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXDestroyGLXVideoSourceSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXVideoSourceSGIX</ptype> <name>glxvideosource</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXDestroyHyperpipeConfigSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>int <name>hpId</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXDestroyPbuffer</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXPbuffer</ptype> <name>pbuf</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXDestroyPixmap</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXPixmap</ptype> <name>pixmap</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXDestroyWindow</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXWindow</ptype> <name>win</name></param>
+        </command>
+        <command>
+            <proto><ptype>GLXVideoCaptureDeviceNV</ptype> *<name>glXEnumerateVideoCaptureDevicesNV</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>int <name>screen</name></param>
+            <param>int *<name>nelements</name></param>
+        </command>
+        <command>
+            <proto>unsigned int *<name>glXEnumerateVideoDevicesNV</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>int <name>screen</name></param>
+            <param>int *<name>nelements</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXFreeContextEXT</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXContext</ptype> <name>context</name></param>
+        </command>
+        <command>
+            <proto>unsigned int <name>glXGetAGPOffsetMESA</name></proto>
+            <param>const void *<name>pointer</name></param>
+        </command>
+        <command>
+            <proto>const char *<name>glXGetClientString</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>int <name>name</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXGetConfig</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>XVisualInfo</ptype> *<name>visual</name></param>
+            <param>int <name>attrib</name></param>
+            <param>int *<name>value</name></param>
+        </command>
+        <command>
+            <proto>unsigned int <name>glXGetContextGPUIDAMD</name></proto>
+            <param><ptype>GLXContext</ptype> <name>ctx</name></param>
+        </command>
+        <command>
+            <proto><ptype>GLXContextID</ptype> <name>glXGetContextIDEXT</name></proto>
+            <param>const <ptype>GLXContext</ptype> <name>context</name></param>
+        </command>
+        <command>
+            <proto><ptype>GLXContext</ptype> <name>glXGetCurrentAssociatedContextAMD</name></proto>
+        </command>
+        <command>
+            <proto><ptype>GLXContext</ptype> <name>glXGetCurrentContext</name></proto>
+        </command>
+        <command>
+            <proto><ptype>Display</ptype> *<name>glXGetCurrentDisplayEXT</name></proto>
+        </command>
+        <command>
+            <proto><ptype>Display</ptype> *<name>glXGetCurrentDisplay</name></proto>
+        </command>
+        <command>
+            <proto><ptype>GLXDrawable</ptype> <name>glXGetCurrentDrawable</name></proto>
+        </command>
+        <command>
+            <proto><ptype>GLXDrawable</ptype> <name>glXGetCurrentReadDrawableSGI</name></proto>
+        </command>
+        <command>
+            <proto><ptype>GLXDrawable</ptype> <name>glXGetCurrentReadDrawable</name></proto>
+        </command>
+        <command>
+            <proto>int <name>glXGetFBConfigAttrib</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXFBConfig</ptype> <name>config</name></param>
+            <param>int <name>attribute</name></param>
+            <param>int *<name>value</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXGetFBConfigAttribSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXFBConfigSGIX</ptype> <name>config</name></param>
+            <param>int <name>attribute</name></param>
+            <param>int *<name>value</name></param>
+        </command>
+        <command>
+            <proto><ptype>GLXFBConfigSGIX</ptype> <name>glXGetFBConfigFromVisualSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>XVisualInfo</ptype> *<name>vis</name></param>
+        </command>
+        <command>
+            <proto><ptype>GLXFBConfig</ptype> *<name>glXGetFBConfigs</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>int <name>screen</name></param>
+            <param>int *<name>nelements</name></param>
+        </command>
+        <command>
+            <proto>unsigned int <name>glXGetGPUIDsAMD</name></proto>
+            <param>unsigned int <name>maxCount</name></param>
+            <param>unsigned int *<name>ids</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXGetGPUInfoAMD</name></proto>
+            <param>unsigned int <name>id</name></param>
+            <param>int <name>property</name></param>
+            <param><ptype>GLenum</ptype> <name>dataType</name></param>
+            <param>unsigned int <name>size</name></param>
+            <param>void *<name>data</name></param>
+        </command>
+        <command>
+            <proto><ptype>Bool</ptype> <name>glXGetMscRateOML</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXDrawable</ptype> <name>drawable</name></param>
+            <param><ptype>int32_t</ptype> *<name>numerator</name></param>
+            <param><ptype>int32_t</ptype> *<name>denominator</name></param>
+        </command>
+        <command>
+            <proto><ptype>__GLXextFuncPtr</ptype> <name>glXGetProcAddressARB</name></proto>
+            <param>const <ptype>GLubyte</ptype> *<name>procName</name></param>
+        </command>
+        <command>
+            <proto><ptype>__GLXextFuncPtr</ptype> <name>glXGetProcAddress</name></proto>
+            <param>const <ptype>GLubyte</ptype> *<name>procName</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXGetSelectedEvent</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXDrawable</ptype> <name>draw</name></param>
+            <param>unsigned long *<name>event_mask</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXGetSelectedEventSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXDrawable</ptype> <name>drawable</name></param>
+            <param>unsigned long *<name>mask</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXGetSwapIntervalMESA</name></proto>
+        </command>
+        <command>
+            <proto><ptype>Bool</ptype> <name>glXGetSyncValuesOML</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXDrawable</ptype> <name>drawable</name></param>
+            <param><ptype>int64_t</ptype> *<name>ust</name></param>
+            <param><ptype>int64_t</ptype> *<name>msc</name></param>
+            <param><ptype>int64_t</ptype> *<name>sbc</name></param>
+        </command>
+        <command>
+            <proto><ptype>Status</ptype> <name>glXGetTransparentIndexSUN</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>Window</ptype> <name>overlay</name></param>
+            <param><ptype>Window</ptype> <name>underlay</name></param>
+            <param>long *<name>pTransparentIndex</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXGetVideoDeviceNV</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>int <name>screen</name></param>
+            <param>int <name>numVideoDevices</name></param>
+            <param><ptype>GLXVideoDeviceNV</ptype> *<name>pVideoDevice</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXGetVideoInfoNV</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>int <name>screen</name></param>
+            <param><ptype>GLXVideoDeviceNV</ptype> <name>VideoDevice</name></param>
+            <param>unsigned long *<name>pulCounterOutputPbuffer</name></param>
+            <param>unsigned long *<name>pulCounterOutputVideo</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXGetVideoSyncSGI</name></proto>
+            <param>unsigned int *<name>count</name></param>
+        </command>
+        <command>
+            <proto><ptype>XVisualInfo</ptype> *<name>glXGetVisualFromFBConfig</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXFBConfig</ptype> <name>config</name></param>
+        </command>
+        <command>
+            <proto><ptype>XVisualInfo</ptype> *<name>glXGetVisualFromFBConfigSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXFBConfigSGIX</ptype> <name>config</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXHyperpipeAttribSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>int <name>timeSlice</name></param>
+            <param>int <name>attrib</name></param>
+            <param>int <name>size</name></param>
+            <param>void *<name>attribList</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXHyperpipeConfigSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>int <name>networkId</name></param>
+            <param>int <name>npipes</name></param>
+            <param><ptype>GLXHyperpipeConfigSGIX</ptype> *<name>cfg</name></param>
+            <param>int *<name>hpId</name></param>
+        </command>
+        <command>
+            <proto><ptype>GLXContext</ptype> <name>glXImportContextEXT</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXContextID</ptype> <name>contextID</name></param>
+        </command>
+        <command>
+            <proto><ptype>Bool</ptype> <name>glXIsDirect</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXContext</ptype> <name>ctx</name></param>
+        </command>
+        <command>
+            <proto><ptype>Bool</ptype> <name>glXJoinSwapGroupNV</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXDrawable</ptype> <name>drawable</name></param>
+            <param><ptype>GLuint</ptype> <name>group</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXJoinSwapGroupSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXDrawable</ptype> <name>drawable</name></param>
+            <param><ptype>GLXDrawable</ptype> <name>member</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXLockVideoCaptureDeviceNV</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXVideoCaptureDeviceNV</ptype> <name>device</name></param>
+        </command>
+        <command>
+            <proto><ptype>Bool</ptype> <name>glXMakeAssociatedContextCurrentAMD</name></proto>
+            <param><ptype>GLXContext</ptype> <name>ctx</name></param>
+        </command>
+        <command>
+            <proto><ptype>Bool</ptype> <name>glXMakeContextCurrent</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXDrawable</ptype> <name>draw</name></param>
+            <param><ptype>GLXDrawable</ptype> <name>read</name></param>
+            <param><ptype>GLXContext</ptype> <name>ctx</name></param>
+        </command>
+        <command>
+            <proto><ptype>Bool</ptype> <name>glXMakeCurrent</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXDrawable</ptype> <name>drawable</name></param>
+            <param><ptype>GLXContext</ptype> <name>ctx</name></param>
+        </command>
+        <command>
+            <proto><ptype>Bool</ptype> <name>glXMakeCurrentReadSGI</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXDrawable</ptype> <name>draw</name></param>
+            <param><ptype>GLXDrawable</ptype> <name>read</name></param>
+            <param><ptype>GLXContext</ptype> <name>ctx</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXQueryChannelDeltasSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>display</name></param>
+            <param>int <name>screen</name></param>
+            <param>int <name>channel</name></param>
+            <param>int *<name>x</name></param>
+            <param>int *<name>y</name></param>
+            <param>int *<name>w</name></param>
+            <param>int *<name>h</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXQueryChannelRectSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>display</name></param>
+            <param>int <name>screen</name></param>
+            <param>int <name>channel</name></param>
+            <param>int *<name>dx</name></param>
+            <param>int *<name>dy</name></param>
+            <param>int *<name>dw</name></param>
+            <param>int *<name>dh</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXQueryContext</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXContext</ptype> <name>ctx</name></param>
+            <param>int <name>attribute</name></param>
+            <param>int *<name>value</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXQueryContextInfoEXT</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXContext</ptype> <name>context</name></param>
+            <param>int <name>attribute</name></param>
+            <param>int *<name>value</name></param>
+        </command>
+        <command>
+            <proto><ptype>Bool</ptype> <name>glXQueryCurrentRendererIntegerMESA</name></proto>
+            <param>int <name>attribute</name></param>
+            <param>unsigned int *<name>value</name></param>
+        </command>
+        <command>
+            <proto>const char *<name>glXQueryCurrentRendererStringMESA</name></proto>
+            <param>int <name>attribute</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXQueryDrawable</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXDrawable</ptype> <name>draw</name></param>
+            <param>int <name>attribute</name></param>
+            <param>unsigned int *<name>value</name></param>
+        </command>
+        <command>
+            <proto><ptype>Bool</ptype> <name>glXQueryExtension</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>int *<name>errorb</name></param>
+            <param>int *<name>event</name></param>
+        </command>
+        <command>
+            <proto>const char *<name>glXQueryExtensionsString</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>int <name>screen</name></param>
+        </command>
+        <command>
+            <proto><ptype>Bool</ptype> <name>glXQueryFrameCountNV</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>int <name>screen</name></param>
+            <param><ptype>GLuint</ptype> *<name>count</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXQueryGLXPbufferSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXPbufferSGIX</ptype> <name>pbuf</name></param>
+            <param>int <name>attribute</name></param>
+            <param>unsigned int *<name>value</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXQueryHyperpipeAttribSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>int <name>timeSlice</name></param>
+            <param>int <name>attrib</name></param>
+            <param>int <name>size</name></param>
+            <param>void *<name>returnAttribList</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXQueryHyperpipeBestAttribSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>int <name>timeSlice</name></param>
+            <param>int <name>attrib</name></param>
+            <param>int <name>size</name></param>
+            <param>void *<name>attribList</name></param>
+            <param>void *<name>returnAttribList</name></param>
+        </command>
+        <command>
+            <proto><ptype>GLXHyperpipeConfigSGIX</ptype> *<name>glXQueryHyperpipeConfigSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>int <name>hpId</name></param>
+            <param>int *<name>npipes</name></param>
+        </command>
+        <command>
+            <proto><ptype>GLXHyperpipeNetworkSGIX</ptype> *<name>glXQueryHyperpipeNetworkSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>int *<name>npipes</name></param>
+        </command>
+        <command>
+            <proto><ptype>Bool</ptype> <name>glXQueryMaxSwapBarriersSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>int <name>screen</name></param>
+            <param>int *<name>max</name></param>
+        </command>
+        <command>
+            <proto><ptype>Bool</ptype> <name>glXQueryMaxSwapGroupsNV</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>int <name>screen</name></param>
+            <param><ptype>GLuint</ptype> *<name>maxGroups</name></param>
+            <param><ptype>GLuint</ptype> *<name>maxBarriers</name></param>
+        </command>
+        <command>
+            <proto><ptype>Bool</ptype> <name>glXQueryRendererIntegerMESA</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>int <name>screen</name></param>
+            <param>int <name>renderer</name></param>
+            <param>int <name>attribute</name></param>
+            <param>unsigned int *<name>value</name></param>
+        </command>
+        <command>
+            <proto>const char *<name>glXQueryRendererStringMESA</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>int <name>screen</name></param>
+            <param>int <name>renderer</name></param>
+            <param>int <name>attribute</name></param>
+        </command>
+        <command>
+            <proto>const char *<name>glXQueryServerString</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>int <name>screen</name></param>
+            <param>int <name>name</name></param>
+        </command>
+        <command>
+            <proto><ptype>Bool</ptype> <name>glXQuerySwapGroupNV</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXDrawable</ptype> <name>drawable</name></param>
+            <param><ptype>GLuint</ptype> *<name>group</name></param>
+            <param><ptype>GLuint</ptype> *<name>barrier</name></param>
+        </command>
+        <command>
+            <proto><ptype>Bool</ptype> <name>glXQueryVersion</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>int *<name>maj</name></param>
+            <param>int *<name>min</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXQueryVideoCaptureDeviceNV</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXVideoCaptureDeviceNV</ptype> <name>device</name></param>
+            <param>int <name>attribute</name></param>
+            <param>int *<name>value</name></param>
+        </command>
+        <command>
+            <proto><ptype>Bool</ptype> <name>glXReleaseBuffersMESA</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXDrawable</ptype> <name>drawable</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXReleaseTexImageEXT</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXDrawable</ptype> <name>drawable</name></param>
+            <param>int <name>buffer</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXReleaseVideoCaptureDeviceNV</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXVideoCaptureDeviceNV</ptype> <name>device</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXReleaseVideoDeviceNV</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>int <name>screen</name></param>
+            <param><ptype>GLXVideoDeviceNV</ptype> <name>VideoDevice</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXReleaseVideoImageNV</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXPbuffer</ptype> <name>pbuf</name></param>
+        </command>
+        <command>
+            <proto><ptype>Bool</ptype> <name>glXResetFrameCountNV</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param>int <name>screen</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXSelectEvent</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXDrawable</ptype> <name>draw</name></param>
+            <param>unsigned long <name>event_mask</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXSelectEventSGIX</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXDrawable</ptype> <name>drawable</name></param>
+            <param>unsigned long <name>mask</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXSendPbufferToVideoNV</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXPbuffer</ptype> <name>pbuf</name></param>
+            <param>int <name>iBufferType</name></param>
+            <param>unsigned long *<name>pulCounterPbuffer</name></param>
+            <param><ptype>GLboolean</ptype> <name>bBlock</name></param>
+        </command>
+        <command>
+            <proto><ptype>Bool</ptype> <name>glXSet3DfxModeMESA</name></proto>
+            <param>int <name>mode</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXSwapBuffers</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXDrawable</ptype> <name>drawable</name></param>
+        </command>
+        <command>
+            <proto><ptype>int64_t</ptype> <name>glXSwapBuffersMscOML</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXDrawable</ptype> <name>drawable</name></param>
+            <param><ptype>int64_t</ptype> <name>target_msc</name></param>
+            <param><ptype>int64_t</ptype> <name>divisor</name></param>
+            <param><ptype>int64_t</ptype> <name>remainder</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXSwapIntervalMESA</name></proto>
+            <param>unsigned int <name>interval</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXSwapIntervalEXT</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXDrawable</ptype> <name>drawable</name></param>
+            <param>int <name>interval</name></param>
+        </command>
+        <command>
+            <proto>int <name>glXSwapIntervalSGI</name></proto>
+            <param>int <name>interval</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXUseXFont</name></proto>
+            <param><ptype>Font</ptype> <name>font</name></param>
+            <param>int <name>first</name></param>
+            <param>int <name>count</name></param>
+            <param>int <name>list</name></param>
+        </command>
+        <command>
+            <proto><ptype>Bool</ptype> <name>glXWaitForMscOML</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXDrawable</ptype> <name>drawable</name></param>
+            <param><ptype>int64_t</ptype> <name>target_msc</name></param>
+            <param><ptype>int64_t</ptype> <name>divisor</name></param>
+            <param><ptype>int64_t</ptype> <name>remainder</name></param>
+            <param><ptype>int64_t</ptype> *<name>ust</name></param>
+            <param><ptype>int64_t</ptype> *<name>msc</name></param>
+            <param><ptype>int64_t</ptype> *<name>sbc</name></param>
+        </command>
+        <command>
+            <proto><ptype>Bool</ptype> <name>glXWaitForSbcOML</name></proto>
+            <param><ptype>Display</ptype> *<name>dpy</name></param>
+            <param><ptype>GLXDrawable</ptype> <name>drawable</name></param>
+            <param><ptype>int64_t</ptype> <name>target_sbc</name></param>
+            <param><ptype>int64_t</ptype> *<name>ust</name></param>
+            <param><ptype>int64_t</ptype> *<name>msc</name></param>
+            <param><ptype>int64_t</ptype> *<name>sbc</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXWaitGL</name></proto>
+        </command>
+        <command>
+            <proto>int <name>glXWaitVideoSyncSGI</name></proto>
+            <param>int <name>divisor</name></param>
+            <param>int <name>remainder</name></param>
+            <param>unsigned int *<name>count</name></param>
+        </command>
+        <command>
+            <proto>void <name>glXWaitX</name></proto>
+        </command>
+    </commands>
+
+    <!-- SECTION: GLX API interface definitions. -->
+    <feature api="glx" name="GLX_VERSION_1_0" number="1.0">
+        <require>
+            <enum name="GLX_EXTENSION_NAME" comment="A string #define"/>
+                <!-- Events -->
+            <enum name="GLX_PbufferClobber"/>
+            <enum name="GLX_BufferSwapComplete"/>
+            <enum name="__GLX_NUMBER_EVENTS"/>
+                <!-- Error codes -->
+            <enum name="GLX_BAD_SCREEN"/>
+            <enum name="GLX_BAD_ATTRIBUTE"/>
+            <enum name="GLX_NO_EXTENSION"/>
+            <enum name="GLX_BAD_VISUAL"/>
+            <enum name="GLX_BAD_CONTEXT"/>
+            <enum name="GLX_BAD_VALUE"/>
+            <enum name="GLX_BAD_ENUM"/>
+                <!-- Tokens for glXChooseVisual and glXGetConfig -->
+            <enum name="GLX_USE_GL"/>
+            <enum name="GLX_BUFFER_SIZE"/>
+            <enum name="GLX_LEVEL"/>
+            <enum name="GLX_RGBA"/>
+            <enum name="GLX_DOUBLEBUFFER"/>
+            <enum name="GLX_STEREO"/>
+            <enum name="GLX_AUX_BUFFERS"/>
+            <enum name="GLX_RED_SIZE"/>
+            <enum name="GLX_GREEN_SIZE"/>
+            <enum name="GLX_BLUE_SIZE"/>
+            <enum name="GLX_ALPHA_SIZE"/>
+            <enum name="GLX_DEPTH_SIZE"/>
+            <enum name="GLX_STENCIL_SIZE"/>
+            <enum name="GLX_ACCUM_RED_SIZE"/>
+            <enum name="GLX_ACCUM_GREEN_SIZE"/>
+            <enum name="GLX_ACCUM_BLUE_SIZE"/>
+            <enum name="GLX_ACCUM_ALPHA_SIZE"/>
+            <command name="glXChooseVisual"/>
+            <command name="glXCreateContext"/>
+            <command name="glXDestroyContext"/>
+            <command name="glXMakeCurrent"/>
+            <command name="glXCopyContext"/>
+            <command name="glXSwapBuffers"/>
+            <command name="glXCreateGLXPixmap"/>
+            <command name="glXDestroyGLXPixmap"/>
+            <command name="glXQueryExtension"/>
+            <command name="glXQueryVersion"/>
+            <command name="glXIsDirect"/>
+            <command name="glXGetConfig"/>
+            <command name="glXGetCurrentContext"/>
+            <command name="glXGetCurrentDrawable"/>
+            <command name="glXWaitGL"/>
+            <command name="glXWaitX"/>
+            <command name="glXUseXFont"/>
+        </require>
+    </feature>
+
+    <feature api="glx" name="GLX_VERSION_1_1" number="1.1">
+        <require>
+            <enum name="GLX_VENDOR"/>
+            <enum name="GLX_VERSION"/>
+            <enum name="GLX_EXTENSIONS"/>
+            <command name="glXQueryExtensionsString"/>
+            <command name="glXQueryServerString"/>
+            <command name="glXGetClientString"/>
+        </require>
+    </feature>
+
+    <feature api="glx" name="GLX_VERSION_1_2" number="1.2">
+        <require>
+            <command name="glXGetCurrentDisplay"/>
+        </require>
+    </feature>
+
+
+    <feature api="glx" name="GLX_VERSION_1_3" number="1.3">
+        <require>
+            <type name="GLXContextID" comment="Required here so it doesn't collide with Mesa glx.h (Bug 11454)"/>
+            <enum name="GLX_WINDOW_BIT"/>
+            <enum name="GLX_PIXMAP_BIT"/>
+            <enum name="GLX_PBUFFER_BIT"/>
+            <enum name="GLX_RGBA_BIT"/>
+            <enum name="GLX_COLOR_INDEX_BIT"/>
+            <enum name="GLX_PBUFFER_CLOBBER_MASK"/>
+            <enum name="GLX_FRONT_LEFT_BUFFER_BIT"/>
+            <enum name="GLX_FRONT_RIGHT_BUFFER_BIT"/>
+            <enum name="GLX_BACK_LEFT_BUFFER_BIT"/>
+            <enum name="GLX_BACK_RIGHT_BUFFER_BIT"/>
+            <enum name="GLX_AUX_BUFFERS_BIT"/>
+            <enum name="GLX_DEPTH_BUFFER_BIT"/>
+            <enum name="GLX_STENCIL_BUFFER_BIT"/>
+            <enum name="GLX_ACCUM_BUFFER_BIT"/>
+            <enum name="GLX_CONFIG_CAVEAT"/>
+            <enum name="GLX_X_VISUAL_TYPE"/>
+            <enum name="GLX_TRANSPARENT_TYPE"/>
+            <enum name="GLX_TRANSPARENT_INDEX_VALUE"/>
+            <enum name="GLX_TRANSPARENT_RED_VALUE"/>
+            <enum name="GLX_TRANSPARENT_GREEN_VALUE"/>
+            <enum name="GLX_TRANSPARENT_BLUE_VALUE"/>
+            <enum name="GLX_TRANSPARENT_ALPHA_VALUE"/>
+            <enum name="GLX_DONT_CARE"/>
+            <enum name="GLX_NONE"/>
+            <enum name="GLX_SLOW_CONFIG"/>
+            <enum name="GLX_TRUE_COLOR"/>
+            <enum name="GLX_DIRECT_COLOR"/>
+            <enum name="GLX_PSEUDO_COLOR"/>
+            <enum name="GLX_STATIC_COLOR"/>
+            <enum name="GLX_GRAY_SCALE"/>
+            <enum name="GLX_STATIC_GRAY"/>
+            <enum name="GLX_TRANSPARENT_RGB"/>
+            <enum name="GLX_TRANSPARENT_INDEX"/>
+            <enum name="GLX_VISUAL_ID"/>
+            <enum name="GLX_SCREEN"/>
+            <enum name="GLX_NON_CONFORMANT_CONFIG"/>
+            <enum name="GLX_DRAWABLE_TYPE"/>
+            <enum name="GLX_RENDER_TYPE"/>
+            <enum name="GLX_X_RENDERABLE"/>
+            <enum name="GLX_FBCONFIG_ID"/>
+            <enum name="GLX_RGBA_TYPE"/>
+            <enum name="GLX_COLOR_INDEX_TYPE"/>
+            <enum name="GLX_MAX_PBUFFER_WIDTH"/>
+            <enum name="GLX_MAX_PBUFFER_HEIGHT"/>
+            <enum name="GLX_MAX_PBUFFER_PIXELS"/>
+            <enum name="GLX_PRESERVED_CONTENTS"/>
+            <enum name="GLX_LARGEST_PBUFFER"/>
+            <enum name="GLX_WIDTH"/>
+            <enum name="GLX_HEIGHT"/>
+            <enum name="GLX_EVENT_MASK"/>
+            <enum name="GLX_DAMAGED"/>
+            <enum name="GLX_SAVED"/>
+            <enum name="GLX_WINDOW"/>
+            <enum name="GLX_PBUFFER"/>
+            <enum name="GLX_PBUFFER_HEIGHT"/>
+            <enum name="GLX_PBUFFER_WIDTH"/>
+            <command name="glXGetFBConfigs"/>
+            <command name="glXChooseFBConfig"/>
+            <command name="glXGetFBConfigAttrib"/>
+            <command name="glXGetVisualFromFBConfig"/>
+            <command name="glXCreateWindow"/>
+            <command name="glXDestroyWindow"/>
+            <command name="glXCreatePixmap"/>
+            <command name="glXDestroyPixmap"/>
+            <command name="glXCreatePbuffer"/>
+            <command name="glXDestroyPbuffer"/>
+            <command name="glXQueryDrawable"/>
+            <command name="glXCreateNewContext"/>
+            <command name="glXMakeContextCurrent"/>
+            <command name="glXGetCurrentReadDrawable"/>
+            <command name="glXQueryContext"/>
+            <command name="glXSelectEvent"/>
+            <command name="glXGetSelectedEvent"/>
+        </require>
+    </feature>
+
+    <feature api="glx" name="GLX_VERSION_1_4" number="1.4">
+        <require>
+            <enum name="GLX_SAMPLE_BUFFERS"/>
+            <enum name="GLX_SAMPLES"/>
+            <command name="glXGetProcAddress"/>
+        </require>
+    </feature>
+
+
+    <!-- SECTION: GLX extension interface definitions -->
+    <extensions>
+        <extension name="GLX_3DFX_multisample" supported="glx">
+            <require>
+                <enum name="GLX_SAMPLE_BUFFERS_3DFX"/>
+                <enum name="GLX_SAMPLES_3DFX"/>
+            </require>
+        </extension>
+        <extension name="GLX_AMD_gpu_association" supported="glx">
+            <require>
+                <enum name="GLX_GPU_VENDOR_AMD"/>
+                <enum name="GLX_GPU_RENDERER_STRING_AMD"/>
+                <enum name="GLX_GPU_OPENGL_VERSION_STRING_AMD"/>
+                <enum name="GLX_GPU_FASTEST_TARGET_GPUS_AMD"/>
+                <enum name="GLX_GPU_RAM_AMD"/>
+                <enum name="GLX_GPU_CLOCK_AMD"/>
+                <enum name="GLX_GPU_NUM_PIPES_AMD"/>
+                <enum name="GLX_GPU_NUM_SIMD_AMD"/>
+                <enum name="GLX_GPU_NUM_RB_AMD"/>
+                <enum name="GLX_GPU_NUM_SPI_AMD"/>
+                <command name="glXGetGPUIDsAMD"/>
+                <command name="glXGetGPUInfoAMD"/>
+                <command name="glXGetContextGPUIDAMD"/>
+                <command name="glXCreateAssociatedContextAMD"/>
+                <command name="glXCreateAssociatedContextAttribsAMD"/>
+                <command name="glXDeleteAssociatedContextAMD"/>
+                <command name="glXMakeAssociatedContextCurrentAMD"/>
+                <command name="glXGetCurrentAssociatedContextAMD"/>
+                <command name="glXBlitContextFramebufferAMD"/>
+            </require>
+        </extension>
+        <extension name="GLX_ARB_context_flush_control" supported="glx">
+            <require>
+                <enum name="GLX_CONTEXT_RELEASE_BEHAVIOR_ARB"/>
+                <enum name="GLX_CONTEXT_RELEASE_BEHAVIOR_NONE_ARB"/>
+                <enum name="GLX_CONTEXT_RELEASE_BEHAVIOR_FLUSH_ARB"/>
+            </require>
+        </extension>
+        <extension name="GLX_ARB_create_context" supported="glx">
+            <require>
+                <enum name="GLX_CONTEXT_DEBUG_BIT_ARB"/>
+                <enum name="GLX_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB"/>
+                <enum name="GLX_CONTEXT_MAJOR_VERSION_ARB"/>
+                <enum name="GLX_CONTEXT_MINOR_VERSION_ARB"/>
+                <enum name="GLX_CONTEXT_FLAGS_ARB"/>
+                <command name="glXCreateContextAttribsARB"/>
+            </require>
+        </extension>
+        <extension name="GLX_ARB_create_context_no_error" supported="glx">
+            <require>
+                <enum name="GLX_CONTEXT_OPENGL_NO_ERROR_ARB"/>
+            </require>
+        </extension>
+        <extension name="GLX_ARB_create_context_profile" supported="glx">
+            <require>
+                <enum name="GLX_CONTEXT_CORE_PROFILE_BIT_ARB"/>
+                <enum name="GLX_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB"/>
+                <enum name="GLX_CONTEXT_PROFILE_MASK_ARB"/>
+            </require>
+        </extension>
+        <extension name="GLX_ARB_create_context_robustness" supported="glx">
+            <require>
+                <enum name="GLX_CONTEXT_ROBUST_ACCESS_BIT_ARB"/>
+                <enum name="GLX_LOSE_CONTEXT_ON_RESET_ARB"/>
+                <enum name="GLX_CONTEXT_RESET_NOTIFICATION_STRATEGY_ARB"/>
+                <enum name="GLX_NO_RESET_NOTIFICATION_ARB"/>
+            </require>
+        </extension>
+        <extension name="GLX_ARB_fbconfig_float" supported="glx">
+            <require>
+                <enum name="GLX_RGBA_FLOAT_TYPE_ARB"/>
+                <enum name="GLX_RGBA_FLOAT_BIT_ARB"/>
+            </require>
+        </extension>
+        <extension name="GLX_ARB_framebuffer_sRGB" supported="glx">
+            <require>
+                <enum name="GLX_FRAMEBUFFER_SRGB_CAPABLE_ARB"/>
+            </require>
+        </extension>
+        <extension name="GLX_ARB_get_proc_address" supported="glx">
+            <require>
+                <command name="glXGetProcAddressARB"/>
+            </require>
+        </extension>
+        <extension name="GLX_ARB_multisample" supported="glx">
+            <require>
+                <enum name="GLX_SAMPLE_BUFFERS_ARB"/>
+                <enum name="GLX_SAMPLES_ARB"/>
+            </require>
+        </extension>
+        <extension name="GLX_ARB_robustness_application_isolation" supported="glx">
+            <require>
+                <enum name="GLX_CONTEXT_RESET_ISOLATION_BIT_ARB"/>
+            </require>
+        </extension>
+        <extension name="GLX_ARB_robustness_share_group_isolation" supported="glx">
+            <require>
+                <enum name="GLX_CONTEXT_RESET_ISOLATION_BIT_ARB"/>
+            </require>
+        </extension>
+        <extension name="GLX_ARB_vertex_buffer_object" supported="glx">
+            <require>
+                <enum name="GLX_CONTEXT_ALLOW_BUFFER_BYTE_ORDER_MISMATCH_ARB"/>
+            </require>
+        </extension>
+        <extension name="GLX_EXT_buffer_age" supported="glx">
+            <require>
+                <enum name="GLX_BACK_BUFFER_AGE_EXT"/>
+            </require>
+        </extension>
+        <extension name="GLX_EXT_create_context_es_profile" supported="glx">
+            <require>
+                <enum name="GLX_CONTEXT_ES_PROFILE_BIT_EXT"/>
+            </require>
+        </extension>
+        <extension name="GLX_EXT_create_context_es2_profile" supported="glx">
+            <require>
+                <enum name="GLX_CONTEXT_ES2_PROFILE_BIT_EXT"/>
+            </require>
+        </extension>
+        <extension name="GLX_EXT_fbconfig_packed_float" supported="glx">
+            <require>
+                <enum name="GLX_RGBA_UNSIGNED_FLOAT_TYPE_EXT"/>
+                <enum name="GLX_RGBA_UNSIGNED_FLOAT_BIT_EXT"/>
+            </require>
+        </extension>
+        <extension name="GLX_EXT_framebuffer_sRGB" supported="glx">
+            <require>
+                <enum name="GLX_FRAMEBUFFER_SRGB_CAPABLE_EXT"/>
+            </require>
+        </extension>
+        <extension name="GLX_EXT_import_context" supported="glx">
+            <require>
+                <enum name="GLX_SHARE_CONTEXT_EXT"/>
+                <enum name="GLX_VISUAL_ID_EXT"/>
+                <enum name="GLX_SCREEN_EXT"/>
+                <command name="glXGetCurrentDisplayEXT"/>
+                <command name="glXQueryContextInfoEXT"/>
+                <command name="glXGetContextIDEXT"/>
+                <command name="glXImportContextEXT"/>
+                <command name="glXFreeContextEXT"/>
+            </require>
+        </extension>
+        <extension name="GLX_EXT_libglvnd" supported="glx">
+            <require>
+                <enum name="GLX_VENDOR_NAMES_EXT"/>
+            </require>
+        </extension>
+        <extension name="GLX_EXT_no_config_context" supported="glx">
+        </extension>
+        <extension name="GLX_EXT_stereo_tree" supported="glx">
+            <require>
+                <type name="GLXStereoNotifyEventEXT"/>
+                <enum name="GLX_STEREO_TREE_EXT"/>
+                <enum name="GLX_STEREO_NOTIFY_MASK_EXT"/>
+                <enum name="GLX_STEREO_NOTIFY_EXT"/>
+            </require>
+        </extension>
+        <extension name="GLX_EXT_swap_control" supported="glx">
+            <require>
+                <enum name="GLX_SWAP_INTERVAL_EXT"/>
+                <enum name="GLX_MAX_SWAP_INTERVAL_EXT"/>
+                <command name="glXSwapIntervalEXT"/>
+            </require>
+        </extension>
+        <extension name="GLX_EXT_swap_control_tear" supported="glx">
+            <require>
+                <enum name="GLX_LATE_SWAPS_TEAR_EXT"/>
+            </require>
+        </extension>
+        <extension name="GLX_EXT_texture_from_pixmap" supported="glx">
+            <require>
+                <enum name="GLX_TEXTURE_1D_BIT_EXT"/>
+                <enum name="GLX_TEXTURE_2D_BIT_EXT"/>
+                <enum name="GLX_TEXTURE_RECTANGLE_BIT_EXT"/>
+                <enum name="GLX_BIND_TO_TEXTURE_RGB_EXT"/>
+                <enum name="GLX_BIND_TO_TEXTURE_RGBA_EXT"/>
+                <enum name="GLX_BIND_TO_MIPMAP_TEXTURE_EXT"/>
+                <enum name="GLX_BIND_TO_TEXTURE_TARGETS_EXT"/>
+                <enum name="GLX_Y_INVERTED_EXT"/>
+                <enum name="GLX_TEXTURE_FORMAT_EXT"/>
+                <enum name="GLX_TEXTURE_TARGET_EXT"/>
+                <enum name="GLX_MIPMAP_TEXTURE_EXT"/>
+                <enum name="GLX_TEXTURE_FORMAT_NONE_EXT"/>
+                <enum name="GLX_TEXTURE_FORMAT_RGB_EXT"/>
+                <enum name="GLX_TEXTURE_FORMAT_RGBA_EXT"/>
+                <enum name="GLX_TEXTURE_1D_EXT"/>
+                <enum name="GLX_TEXTURE_2D_EXT"/>
+                <enum name="GLX_TEXTURE_RECTANGLE_EXT"/>
+                <enum name="GLX_FRONT_LEFT_EXT"/>
+                <enum name="GLX_FRONT_RIGHT_EXT"/>
+                <enum name="GLX_BACK_LEFT_EXT"/>
+                <enum name="GLX_BACK_RIGHT_EXT"/>
+                <enum name="GLX_FRONT_EXT"/>
+                <enum name="GLX_BACK_EXT"/>
+                <enum name="GLX_AUX0_EXT"/>
+                <enum name="GLX_AUX1_EXT"/>
+                <enum name="GLX_AUX2_EXT"/>
+                <enum name="GLX_AUX3_EXT"/>
+                <enum name="GLX_AUX4_EXT"/>
+                <enum name="GLX_AUX5_EXT"/>
+                <enum name="GLX_AUX6_EXT"/>
+                <enum name="GLX_AUX7_EXT"/>
+                <enum name="GLX_AUX8_EXT"/>
+                <enum name="GLX_AUX9_EXT"/>
+                <command name="glXBindTexImageEXT"/>
+                <command name="glXReleaseTexImageEXT"/>
+            </require>
+        </extension>
+        <extension name="GLX_EXT_visual_info" supported="glx">
+            <require>
+                <enum name="GLX_X_VISUAL_TYPE_EXT"/>
+                <enum name="GLX_TRANSPARENT_TYPE_EXT"/>
+                <enum name="GLX_TRANSPARENT_INDEX_VALUE_EXT"/>
+                <enum name="GLX_TRANSPARENT_RED_VALUE_EXT"/>
+                <enum name="GLX_TRANSPARENT_GREEN_VALUE_EXT"/>
+                <enum name="GLX_TRANSPARENT_BLUE_VALUE_EXT"/>
+                <enum name="GLX_TRANSPARENT_ALPHA_VALUE_EXT"/>
+                <enum name="GLX_NONE_EXT"/>
+                <enum name="GLX_TRUE_COLOR_EXT"/>
+                <enum name="GLX_DIRECT_COLOR_EXT"/>
+                <enum name="GLX_PSEUDO_COLOR_EXT"/>
+                <enum name="GLX_STATIC_COLOR_EXT"/>
+                <enum name="GLX_GRAY_SCALE_EXT"/>
+                <enum name="GLX_STATIC_GRAY_EXT"/>
+                <enum name="GLX_TRANSPARENT_RGB_EXT"/>
+                <enum name="GLX_TRANSPARENT_INDEX_EXT"/>
+            </require>
+        </extension>
+        <extension name="GLX_EXT_visual_rating" supported="glx">
+            <require>
+                <enum name="GLX_VISUAL_CAVEAT_EXT"/>
+                <enum name="GLX_SLOW_VISUAL_EXT"/>
+                <enum name="GLX_NON_CONFORMANT_VISUAL_EXT"/>
+                <enum name="GLX_NONE_EXT"/>
+            </require>
+        </extension>
+        <extension name="GLX_INTEL_swap_event" supported="glx">
+            <require>
+                <enum name="GLX_BUFFER_SWAP_COMPLETE_INTEL_MASK"/>
+                <enum name="GLX_EXCHANGE_COMPLETE_INTEL"/>
+                <enum name="GLX_COPY_COMPLETE_INTEL"/>
+                <enum name="GLX_FLIP_COMPLETE_INTEL"/>
+            </require>
+        </extension>
+        <extension name="GLX_MESA_agp_offset" supported="glx">
+            <require>
+                <command name="glXGetAGPOffsetMESA"/>
+            </require>
+        </extension>
+        <extension name="GLX_MESA_copy_sub_buffer" supported="glx">
+            <require>
+                <command name="glXCopySubBufferMESA"/>
+            </require>
+        </extension>
+        <extension name="GLX_MESA_pixmap_colormap" supported="glx">
+            <require>
+                <command name="glXCreateGLXPixmapMESA"/>
+            </require>
+        </extension>
+        <extension name="GLX_MESA_query_renderer" supported="glx">
+            <require>
+                <enum name="GLX_RENDERER_VENDOR_ID_MESA"/>
+                <enum name="GLX_RENDERER_DEVICE_ID_MESA"/>
+                <enum name="GLX_RENDERER_VERSION_MESA"/>
+                <enum name="GLX_RENDERER_ACCELERATED_MESA"/>
+                <enum name="GLX_RENDERER_VIDEO_MEMORY_MESA"/>
+                <enum name="GLX_RENDERER_UNIFIED_MEMORY_ARCHITECTURE_MESA"/>
+                <enum name="GLX_RENDERER_PREFERRED_PROFILE_MESA"/>
+                <enum name="GLX_RENDERER_OPENGL_CORE_PROFILE_VERSION_MESA"/>
+                <enum name="GLX_RENDERER_OPENGL_COMPATIBILITY_PROFILE_VERSION_MESA"/>
+                <enum name="GLX_RENDERER_OPENGL_ES_PROFILE_VERSION_MESA"/>
+                <enum name="GLX_RENDERER_OPENGL_ES2_PROFILE_VERSION_MESA"/>
+                <enum name="GLX_RENDERER_ID_MESA"/>
+                <command name="glXQueryCurrentRendererIntegerMESA"/>
+                <command name="glXQueryCurrentRendererStringMESA"/>
+                <command name="glXQueryRendererIntegerMESA"/>
+                <command name="glXQueryRendererStringMESA"/>
+            </require>
+        </extension>
+        <extension name="GLX_MESA_release_buffers" supported="glx">
+            <require>
+                <command name="glXReleaseBuffersMESA"/>
+            </require>
+        </extension>
+        <extension name="GLX_MESA_set_3dfx_mode" supported="glx">
+            <require>
+                <enum name="GLX_3DFX_WINDOW_MODE_MESA"/>
+                <enum name="GLX_3DFX_FULLSCREEN_MODE_MESA"/>
+                <command name="glXSet3DfxModeMESA"/>
+            </require>
+        </extension>
+        <extension name="GLX_MESA_swap_control" supported="glx">
+            <require>
+                <command name="glXGetSwapIntervalMESA"/>
+                <command name="glXSwapIntervalMESA"/>
+            </require>
+        </extension>
+        <extension name="GLX_NV_copy_buffer" supported="glx">
+            <require>
+                <command name="glXCopyBufferSubDataNV"/>
+                <command name="glXNamedCopyBufferSubDataNV"/>
+            </require>
+        </extension>
+        <extension name="GLX_NV_copy_image" supported="glx">
+            <require>
+                <command name="glXCopyImageSubDataNV"/>
+            </require>
+        </extension>
+        <extension name="GLX_NV_delay_before_swap" supported="glx">
+            <require>
+                <command name="glXDelayBeforeSwapNV"/>
+            </require>
+        </extension>
+        <extension name="GLX_NV_float_buffer" supported="glx">
+            <require>
+                <enum name="GLX_FLOAT_COMPONENTS_NV"/>
+            </require>
+        </extension>
+        <extension name="GLX_NV_multisample_coverage" supported="glx">
+            <require>
+                <enum name="GLX_COVERAGE_SAMPLES_NV"/>
+                <enum name="GLX_COLOR_SAMPLES_NV"/>
+            </require>
+        </extension>
+        <extension name="GLX_NV_present_video" supported="glx">
+            <require>
+                <enum name="GLX_NUM_VIDEO_SLOTS_NV"/>
+                <command name="glXEnumerateVideoDevicesNV"/>
+                <command name="glXBindVideoDeviceNV"/>
+            </require>
+        </extension>
+        <extension name="GLX_NV_robustness_video_memory_purge" supported="glx">
+            <require>
+                <enum name="GLX_GENERATE_RESET_ON_VIDEO_MEMORY_PURGE_NV"/>
+            </require>
+        </extension>
+        <extension name="GLX_NV_swap_group" supported="glx">
+            <require>
+                <command name="glXJoinSwapGroupNV"/>
+                <command name="glXBindSwapBarrierNV"/>
+                <command name="glXQuerySwapGroupNV"/>
+                <command name="glXQueryMaxSwapGroupsNV"/>
+                <command name="glXQueryFrameCountNV"/>
+                <command name="glXResetFrameCountNV"/>
+            </require>
+        </extension>
+        <extension name="GLX_NV_video_capture" supported="glx">
+            <require>
+                <enum name="GLX_DEVICE_ID_NV"/>
+                <enum name="GLX_UNIQUE_ID_NV"/>
+                <enum name="GLX_NUM_VIDEO_CAPTURE_SLOTS_NV"/>
+                <command name="glXBindVideoCaptureDeviceNV"/>
+                <command name="glXEnumerateVideoCaptureDevicesNV"/>
+                <command name="glXLockVideoCaptureDeviceNV"/>
+                <command name="glXQueryVideoCaptureDeviceNV"/>
+                <command name="glXReleaseVideoCaptureDeviceNV"/>
+            </require>
+        </extension>
+        <extension name="GLX_NV_video_out" supported="glx">
+            <require>
+                <enum name="GLX_VIDEO_OUT_COLOR_NV"/>
+                <enum name="GLX_VIDEO_OUT_ALPHA_NV"/>
+                <enum name="GLX_VIDEO_OUT_DEPTH_NV"/>
+                <enum name="GLX_VIDEO_OUT_COLOR_AND_ALPHA_NV"/>
+                <enum name="GLX_VIDEO_OUT_COLOR_AND_DEPTH_NV"/>
+                <enum name="GLX_VIDEO_OUT_FRAME_NV"/>
+                <enum name="GLX_VIDEO_OUT_FIELD_1_NV"/>
+                <enum name="GLX_VIDEO_OUT_FIELD_2_NV"/>
+                <enum name="GLX_VIDEO_OUT_STACKED_FIELDS_1_2_NV"/>
+                <enum name="GLX_VIDEO_OUT_STACKED_FIELDS_2_1_NV"/>
+                <command name="glXGetVideoDeviceNV"/>
+                <command name="glXReleaseVideoDeviceNV"/>
+                <command name="glXBindVideoImageNV"/>
+                <command name="glXReleaseVideoImageNV"/>
+                <command name="glXSendPbufferToVideoNV"/>
+                <command name="glXGetVideoInfoNV"/>
+            </require>
+        </extension>
+        <extension name="GLX_OML_swap_method" supported="glx">
+            <require>
+                <enum name="GLX_SWAP_METHOD_OML"/>
+                <enum name="GLX_SWAP_EXCHANGE_OML"/>
+                <enum name="GLX_SWAP_COPY_OML"/>
+                <enum name="GLX_SWAP_UNDEFINED_OML"/>
+            </require>
+        </extension>
+        <extension name="GLX_OML_sync_control" supported="glx">
+            <require>
+                <command name="glXGetSyncValuesOML"/>
+                <command name="glXGetMscRateOML"/>
+                <command name="glXSwapBuffersMscOML"/>
+                <command name="glXWaitForMscOML"/>
+                <command name="glXWaitForSbcOML"/>
+            </require>
+        </extension>
+        <extension name="GLX_SGI_cushion" supported="glx">
+            <require>
+                <command name="glXCushionSGI"/>
+            </require>
+        </extension>
+        <extension name="GLX_SGI_make_current_read" supported="glx">
+            <require>
+                <command name="glXMakeCurrentReadSGI"/>
+                <command name="glXGetCurrentReadDrawableSGI"/>
+            </require>
+        </extension>
+        <extension name="GLX_SGI_swap_control" supported="glx">
+            <require>
+                <command name="glXSwapIntervalSGI"/>
+            </require>
+        </extension>
+        <extension name="GLX_SGI_video_sync" supported="glx">
+            <require>
+                <command name="glXGetVideoSyncSGI"/>
+                <command name="glXWaitVideoSyncSGI"/>
+            </require>
+        </extension>
+        <extension name="GLX_SGIS_blended_overlay" supported="glx">
+            <require>
+                <enum name="GLX_BLENDED_RGBA_SGIS"/>
+            </require>
+        </extension>
+        <extension name="GLX_SGIS_multisample" supported="glx">
+            <require>
+                <enum name="GLX_SAMPLE_BUFFERS_SGIS"/>
+                <enum name="GLX_SAMPLES_SGIS"/>
+            </require>
+        </extension>
+        <extension name="GLX_SGIS_shared_multisample" supported="glx">
+            <require>
+                <enum name="GLX_MULTISAMPLE_SUB_RECT_WIDTH_SGIS"/>
+                <enum name="GLX_MULTISAMPLE_SUB_RECT_HEIGHT_SGIS"/>
+            </require>
+        </extension>
+        <extension name="GLX_SGIX_dmbuffer" supported="glx" protect="_DM_BUFFER_H_">
+            <require>
+                <enum name="GLX_DIGITAL_MEDIA_PBUFFER_SGIX"/>
+                <command name="glXAssociateDMPbufferSGIX"/>
+            </require>
+        </extension>
+        <extension name="GLX_SGIX_fbconfig" supported="glx">
+            <require>
+                <enum name="GLX_WINDOW_BIT_SGIX"/>
+                <enum name="GLX_PIXMAP_BIT_SGIX"/>
+                <enum name="GLX_RGBA_BIT_SGIX"/>
+                <enum name="GLX_COLOR_INDEX_BIT_SGIX"/>
+                <enum name="GLX_DRAWABLE_TYPE_SGIX"/>
+                <enum name="GLX_RENDER_TYPE_SGIX"/>
+                <enum name="GLX_X_RENDERABLE_SGIX"/>
+                <enum name="GLX_FBCONFIG_ID_SGIX"/>
+                <enum name="GLX_RGBA_TYPE_SGIX"/>
+                <enum name="GLX_COLOR_INDEX_TYPE_SGIX"/>
+                <enum name="GLX_SCREEN_EXT"/>
+                <command name="glXGetFBConfigAttribSGIX"/>
+                <command name="glXChooseFBConfigSGIX"/>
+                <command name="glXCreateGLXPixmapWithConfigSGIX"/>
+                <command name="glXCreateContextWithConfigSGIX"/>
+                <command name="glXGetVisualFromFBConfigSGIX"/>
+                <command name="glXGetFBConfigFromVisualSGIX"/>
+            </require>
+        </extension>
+        <extension name="GLX_SGIX_hyperpipe" supported="glx">
+            <require>
+                <type name="GLXHyperpipeNetworkSGIX"/>
+                <type name="GLXHyperpipeConfigSGIX"/>
+                <type name="GLXPipeRect"/>
+                <type name="GLXPipeRectLimits"/>
+                <enum name="GLX_HYPERPIPE_PIPE_NAME_LENGTH_SGIX"/>
+                <enum name="GLX_BAD_HYPERPIPE_CONFIG_SGIX"/>
+                <enum name="GLX_BAD_HYPERPIPE_SGIX"/>
+                <enum name="GLX_HYPERPIPE_DISPLAY_PIPE_SGIX"/>
+                <enum name="GLX_HYPERPIPE_RENDER_PIPE_SGIX"/>
+                <enum name="GLX_PIPE_RECT_SGIX"/>
+                <enum name="GLX_PIPE_RECT_LIMITS_SGIX"/>
+                <enum name="GLX_HYPERPIPE_STEREO_SGIX"/>
+                <enum name="GLX_HYPERPIPE_PIXEL_AVERAGE_SGIX"/>
+                <enum name="GLX_HYPERPIPE_ID_SGIX"/>
+                <command name="glXQueryHyperpipeNetworkSGIX"/>
+                <command name="glXHyperpipeConfigSGIX"/>
+                <command name="glXQueryHyperpipeConfigSGIX"/>
+                <command name="glXDestroyHyperpipeConfigSGIX"/>
+                <command name="glXBindHyperpipeSGIX"/>
+                <command name="glXQueryHyperpipeBestAttribSGIX"/>
+                <command name="glXHyperpipeAttribSGIX"/>
+                <command name="glXQueryHyperpipeAttribSGIX"/>
+            </require>
+        </extension>
+        <extension name="GLX_SGIX_pbuffer" supported="glx">
+            <require>
+                <enum name="GLX_PBUFFER_BIT_SGIX"/>
+                <enum name="GLX_BUFFER_CLOBBER_MASK_SGIX"/>
+                <enum name="GLX_FRONT_LEFT_BUFFER_BIT_SGIX"/>
+                <enum name="GLX_FRONT_RIGHT_BUFFER_BIT_SGIX"/>
+                <enum name="GLX_BACK_LEFT_BUFFER_BIT_SGIX"/>
+                <enum name="GLX_BACK_RIGHT_BUFFER_BIT_SGIX"/>
+                <enum name="GLX_AUX_BUFFERS_BIT_SGIX"/>
+                <enum name="GLX_DEPTH_BUFFER_BIT_SGIX"/>
+                <enum name="GLX_STENCIL_BUFFER_BIT_SGIX"/>
+                <enum name="GLX_ACCUM_BUFFER_BIT_SGIX"/>
+                <enum name="GLX_SAMPLE_BUFFERS_BIT_SGIX"/>
+                <enum name="GLX_MAX_PBUFFER_WIDTH_SGIX"/>
+                <enum name="GLX_MAX_PBUFFER_HEIGHT_SGIX"/>
+                <enum name="GLX_MAX_PBUFFER_PIXELS_SGIX"/>
+                <enum name="GLX_OPTIMAL_PBUFFER_WIDTH_SGIX"/>
+                <enum name="GLX_OPTIMAL_PBUFFER_HEIGHT_SGIX"/>
+                <enum name="GLX_PRESERVED_CONTENTS_SGIX"/>
+                <enum name="GLX_LARGEST_PBUFFER_SGIX"/>
+                <enum name="GLX_WIDTH_SGIX"/>
+                <enum name="GLX_HEIGHT_SGIX"/>
+                <enum name="GLX_EVENT_MASK_SGIX"/>
+                <enum name="GLX_DAMAGED_SGIX"/>
+                <enum name="GLX_SAVED_SGIX"/>
+                <enum name="GLX_WINDOW_SGIX"/>
+                <enum name="GLX_PBUFFER_SGIX"/>
+                <command name="glXCreateGLXPbufferSGIX"/>
+                <command name="glXDestroyGLXPbufferSGIX"/>
+                <command name="glXQueryGLXPbufferSGIX"/>
+                <command name="glXSelectEventSGIX"/>
+                <command name="glXGetSelectedEventSGIX"/>
+            </require>
+        </extension>
+        <extension name="GLX_SGIX_swap_barrier" supported="glx">
+            <require>
+                <command name="glXBindSwapBarrierSGIX"/>
+                <command name="glXQueryMaxSwapBarriersSGIX"/>
+            </require>
+        </extension>
+        <extension name="GLX_SGIX_swap_group" supported="glx">
+            <require>
+                <command name="glXJoinSwapGroupSGIX"/>
+            </require>
+        </extension>
+        <extension name="GLX_SGIX_video_resize" supported="glx">
+            <require>
+                <enum name="GLX_SYNC_FRAME_SGIX"/>
+                <enum name="GLX_SYNC_SWAP_SGIX"/>
+                <command name="glXBindChannelToWindowSGIX"/>
+                <command name="glXChannelRectSGIX"/>
+                <command name="glXQueryChannelRectSGIX"/>
+                <command name="glXQueryChannelDeltasSGIX"/>
+                <command name="glXChannelRectSyncSGIX"/>
+            </require>
+        </extension>
+        <extension name="GLX_SGIX_video_source" supported="glx" protect="_VL_H">
+            <require>
+                <command name="glXCreateGLXVideoSourceSGIX"/>
+                <command name="glXDestroyGLXVideoSourceSGIX"/>
+            </require>
+        </extension>
+        <extension name="GLX_SGIX_visual_select_group" supported="glx">
+            <require>
+                <enum name="GLX_VISUAL_SELECT_GROUP_SGIX"/>
+            </require>
+        </extension>
+        <extension name="GLX_SUN_get_transparent_index" supported="glx">
+            <require>
+                <command name="glXGetTransparentIndexSUN"/>
+            </require>
+        </extension>
+    </extensions>
+</registry>

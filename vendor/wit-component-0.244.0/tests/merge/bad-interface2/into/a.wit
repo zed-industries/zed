@@ -1,0 +1,5 @@
+package foo:into;
+
+interface a {
+  use foo:foo/a.{t};
+}

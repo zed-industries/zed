@@ -1,0 +1,33 @@
+---
+- name: Zero-indented sequences in explicit mapping keys
+  from: '@perlpunk'
+  tags: explicit-key mapping sequence
+  yaml: |
+    ---
+    ?
+    - a
+    - b
+    :
+    - c
+    - d
+  tree: |
+    +STR
+     +DOC ---
+      +MAP
+       +SEQ
+        =VAL :a
+        =VAL :b
+       -SEQ
+       +SEQ
+        =VAL :c
+        =VAL :d
+       -SEQ
+      -MAP
+     -DOC
+    -STR
+  emit: |
+    ---
+    ? - a
+      - b
+    : - c
+      - d

@@ -1,0 +1,46 @@
+[1m[7m%[27m[1m[0m                                                                                                                    [0m[27m[24m[J[38;5;0;48;5;9m UL [0m[38;5;7;48;5;8m ~/…/tests/ref/region_scroll_… [0m[38;5;0;48;5;9m scroll_down [0m [K[0m[27m[24m[J[38;5;0;48;5;9m UL [0m[38;5;7;48;5;8m ~/…/tests/ref/region_scroll_… [0m[38;5;0;48;5;9m scroll_down [0m [K[?2004he[37mcho -ne "\e[10000T" && sleep infinity[39m[37De[39mc[39mh[39mo[39m [39m"[37mt[37me[37ms[37mt[37m"[39m[39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [32D[39mt[39me[39ms[39mt[39m"[?2004l
+test
+[1m[7m%[27m[1m[0m                                                                                                                    [0m[27m[24m[J[38;5;0;48;5;9m UL [0m[38;5;7;48;5;8m ~/…/tests/ref/region_scroll_… [0m[38;5;0;48;5;9m scroll_down [0m [K[0m[27m[24m[J[38;5;0;48;5;9m UL [0m[38;5;7;48;5;8m ~/…/tests/ref/region_scroll_… [0m[38;5;0;48;5;9m scroll_down [0m [K[?2004hl[37ms[39ml[39ms [37m-lah[39m[39m-[39ml[39ma[39mh[?2004l
+total 12K
+drwxr-xr-x  2 undeadleech undeadleech 4.0K Jun 24 23:58 [0m[34m.[0m
+drwxr-xr-x 37 undeadleech undeadleech 4.0K Jun 24 23:57 [34m..[0m
+-rw-r--r--  1 undeadleech undeadleech 1.3K Jun 24 23:58 [32malacritty.recording[0m
+[1m[7m%[27m[1m[0m                                                                                                                    [0m[27m[24m[J[38;5;0;48;5;9m UL [0m[38;5;7;48;5;8m ~/…/tests/ref/region_scroll_… [0m[38;5;0;48;5;9m scroll_down [0m [K[0m[27m[24m[J[38;5;0;48;5;9m UL [0m[38;5;7;48;5;8m ~/…/tests/ref/region_scroll_… [0m[38;5;0;48;5;9m scroll_down [0m [K[?2004hls -lah[?2004l
+total 12K
+drwxr-xr-x  2 undeadleech undeadleech 4.0K Jun 24 23:58 [0m[34m.[0m
+drwxr-xr-x 37 undeadleech undeadleech 4.0K Jun 24 23:57 [34m..[0m
+-rw-r--r--  1 undeadleech undeadleech 1.9K Jun 24 23:58 [32malacritty.recording[0m
+[1m[7m%[27m[1m[0m                                                                                                                    [0m[27m[24m[J[38;5;0;48;5;9m UL [0m[38;5;7;48;5;8m ~/…/tests/ref/region_scroll_… [0m[38;5;0;48;5;9m scroll_down [0m [K[0m[27m[24m[J[38;5;0;48;5;9m UL [0m[38;5;7;48;5;8m ~/…/tests/ref/region_scroll_… [0m[38;5;0;48;5;9m scroll_down [0m [K[?2004hl[37ms -lah[39ml[39ms[39m [39m-[39ml[39ma[39mh [37mbin/snapshot[39m[12D[39m.[37mu[37mn[37md[37mo[37m/[39m[39m [39m [39m [39m [39m [39m [11D[39m.[37m/[37mm[37mo[37mv[39m[39m/[39m.[37m.[39m[39m [39m./../..[?2004l
+total 300K
+drwxr-xr-x 15 undeadleech undeadleech 4.0K Jun 24 23:53 [0m[34m.[0m
+drwxr-xr-x 34 undeadleech undeadleech 4.0K Jun 18 03:26 [34m..[0m
+-rw-r--r--  1 undeadleech undeadleech   10 Feb  8  2019 [32m.agignore[0m
+drwxr-xr-x  3 undeadleech undeadleech 4.0K Jun 24 23:24 [34malacritty[0m
+drwxr-xr-x  4 undeadleech undeadleech 4.0K Jun 24 23:24 [34malacritty_terminal[0m
+-rw-r--r--  1 undeadleech undeadleech  21K Jun 24 23:24 [32malacritty.yml[0m
+drwxr-xr-x  2 undeadleech undeadleech 4.0K Jun 24 18:47 [34m.builds[0m
+-rw-r--r--  1 undeadleech undeadleech 116K Jun 24 23:24 [32mCargo.lock[0m
+-rw-r--r--  1 undeadleech undeadleech  141 Jun 23 21:20 [32mCargo.toml[0m
+-rw-r--r--  1 undeadleech undeadleech  30K Jun 24 23:53 [32mCHANGELOG.md[0m
+drwxr-xr-x  2 undeadleech undeadleech 4.0K Jun 24 18:47 [34mci[0m
+-rw-r--r--  1 undeadleech undeadleech 7.3K Jun 23 21:20 [32mCONTRIBUTING.md[0m
+drwxr-xr-x  2 undeadleech undeadleech 4.0K Mar  6 00:06 [34m.copr[0m
+drwxr-xr-x  2 undeadleech undeadleech 4.0K Feb  8  2019 [34mdocs[0m
+drwxr-xr-x  7 undeadleech undeadleech 4.0K Jun 23 21:20 [34mextra[0m
+drwxr-xr-x  3 undeadleech undeadleech 4.0K Jun 23 21:20 [34mfont[0m
+drwxr-xr-x  8 undeadleech undeadleech 4.0K Jun 24 23:58 [34m.git[0m
+-rw-r--r--  1 undeadleech undeadleech   26 Jun 23 21:20 [32m.gitattributes[0m
+drwxr-xr-x  2 undeadleech undeadleech 4.0K Jun 23 21:20 [34m.github[0m
+-rw-r--r--  1 undeadleech undeadleech  341 Jun 23 21:20 [32m.gitignore[0m
+-rw-r--r--  1 undeadleech undeadleech 8.9K Jun 23 21:20 [32mINSTALL.md[0m
+-rw-r--r--  1 undeadleech undeadleech  11K Jun 23 21:20 [32mLICENSE-APACHE[0m
+-rw-r--r--  1 undeadleech undeadleech 1.5K Jun 23 21:20 [32mMakefile[0m
+-rw-r--r--  1 undeadleech undeadleech 7.1K Jun 23 21:20 [32mREADME.md[0m
+drwxr-xr-x  2 undeadleech undeadleech 4.0K Jun 23 21:20 [34mres[0m
+-rw-r--r--  1 undeadleech undeadleech  358 Mar  6 00:06 [32mrustfmt.toml[0m
+drwxr-xr-x  2 undeadleech undeadleech 4.0K Jun 23 21:20 [34mscripts[0m
+drwxr-xr-x  4 undeadleech undeadleech 4.0K Jun 20 23:09 [34mtarget[0m
+-rw-r--r--  1 undeadleech undeadleech 2.6K Jun 24 18:47 [32m.travis.yml[0m
+[1m[7m%[27m[1m[0m                                                                                                                    [0m[27m[24m[J[38;5;0;48;5;9m UL [0m[38;5;7;48;5;8m ~/…/tests/ref/region_scroll_… [0m[38;5;0;48;5;9m scroll_down [0m [K[0m[27m[24m[J[38;5;0;48;5;9m UL [0m[38;5;7;48;5;8m ~/…/tests/ref/region_scroll_… [0m[38;5;0;48;5;9m scroll_down [0m [K[?2004he[37mcho "test"[39m[10De[39mc[39mh[39mo[39m [39m-[37mn[37me[37m [37m"[37m\[37me[10000T" && sleep infinity[39m[32D[39me[37m [37m"[37m\[37me[37m[[37m1[39m[4P[21C    [31D[39m [39m"[39m\[39me[39m[[39m1[39m0[37m0[37m1[37m[[37me[37m\[37m"[37m [37mn[37me[37m [37m"[37m\[37me[37m[[37m1[37m0[37m0[37m0[37m0[37mT[37m"[37m [37m&[37m&[37m [37ms[37ml[37me[37me[37mp[37m [37mi[37mn[37mf[37mi[37mnity[39m[32D[39mn[39me[39m [39m"[39m\[39me[39m[[39m1[39m0[39m0[39m0[39m0[39mT[39m"[39m [39m&[39m&[39m [39ms[39ml[39me[39me[39mp[39m [39mi[39mn[39mf[39mi[39mn[39mi[39mt[39my[?2004l
+[10000T^C
+[1m[7m%[27m[1m[0m                                                                                                                    [0m[27m[24m[J[38;5;0;48;5;9m UL [0m[38;5;7;48;5;8m ~/…/tests/ref/region_scroll_… [0m[38;5;0;48;5;9m scroll_down [0m [K[0m[27m[24m[J[38;5;0;48;5;9m UL [0m[38;5;7;48;5;8m ~/…/tests/ref/region_scroll_… [0m[38;5;0;48;5;9m scroll_down [0m [K[?2004he[37mcho -ne "\e[10000T" && sleep infinity[39m[37De[39mx[37mi[37mt[39m[39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [36D[39mi[39mt[?2004l

@@ -1,0 +1,3 @@
+[submodule "crates/witx-bindgen/WASI"]
+	path = crates/witx-bindgen/WASI
+	url = https://github.com/WebAssembly/WASI

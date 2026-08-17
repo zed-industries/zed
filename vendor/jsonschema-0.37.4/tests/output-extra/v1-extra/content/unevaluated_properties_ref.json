@@ -1,0 +1,46 @@
+[
+    {
+        "description": "unevaluatedProperties fires through $ref",
+        "schema": {
+            "$schema": "https://json-schema.org/v1",
+            "$id": "https://json-schema.org/tests/content/v1-extra/unevaluated_properties_ref/0",
+            "type": "object",
+            "$defs": {
+                "inner": {
+                    "type": "object",
+                    "properties": {
+                        "foo": true
+                    }
+                }
+            },
+            "$ref": "#/$defs/inner",
+            "unevaluatedProperties": false
+        },
+        "tests": [
+            {
+                "description": "extra property still reports location",
+                "data": {"foo": null, "bar": null},
+                "output": {
+                    "list": {
+                        "$id": "https://json-schema.org/tests/content/v1-extra/unevaluated_properties_ref/0/tests/0/list",
+                        "$ref": "/v1/output/schema",
+                        "properties": {
+                            "valid": {"const": false},
+                            "details": {
+                                "contains": {
+                                    "properties": {
+                                        "schemaLocation": {"const": "https://json-schema.org/tests/content/v1-extra/unevaluated_properties_ref/0#/unevaluatedProperties"},
+                                        "instanceLocation": {"const": "/bar"},
+                                        "errors": {}
+                                    },
+                                    "required": ["schemaLocation", "instanceLocation", "errors"]
+                                }
+                            }
+                        },
+                        "required": ["valid", "details"]
+                    }
+                }
+            }
+        ]
+    }
+]

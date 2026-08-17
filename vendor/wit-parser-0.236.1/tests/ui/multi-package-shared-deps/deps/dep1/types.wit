@@ -1,0 +1,4 @@
+package foo:dep1;
+interface types {
+  type type1 = string;
+}

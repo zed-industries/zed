@@ -1,0 +1,55 @@
+[workspace]
+# A separate workspace
+
+[package]
+name = "sea-query-binder"
+version = "0.7.0"
+authors = [ "Valentin Tolmer <valentin@tolmer.fr>", "Ivan Krivosheev <py.krivosheev@gmail.com>" ]
+edition = "2021"
+description = "Driver library for using SeaQuery with SQLx"
+license = "MIT OR Apache-2.0"
+documentation = "https://docs.rs/sea-query"
+repository = "https://github.com/SeaQL/sea-query"
+categories = [ "database" ]
+keywords = [ "database", "sql", "mysql", "postgres", "sqlite" ]
+rust-version = "1.60"
+
+[lib]
+
+[dependencies]
+sea-query = { version = "0.32.0", path = "..", default-features = false, features = ["thread-safe"] }
+sqlx = { version = "0.8", default-features = false, optional = true }
+serde_json = { version = "1", default-features = false, optional = true, features = ["std"] }
+chrono = { version = "0.4", default-features = false, optional = true, features = ["clock"] }
+rust_decimal = { version = "1", default-features = false, optional = true }
+bigdecimal = { version = "0.4", default-features = false, optional = true }
+uuid = { version = "1", default-features = false, optional = true }
+time = { version = "0.3.36", default-features = false, optional = true, features = ["macros", "formatting"] }
+ipnetwork = { version = "0.20", default-features = false, optional = true }
+mac_address = { version = "1.1", default-features = false, optional = true }
+pgvector = { version = "~0.4", default-features = false, optional = true }
+
+[features]
+sqlx-mysql = ["sqlx/mysql"]
+sqlx-postgres = ["sqlx/postgres"]
+sqlx-sqlite = ["sqlx/sqlite"]
+sqlx-any = ["sqlx/any"]
+with-chrono = ["sqlx?/chrono", "sea-query/with-chrono", "chrono"]
+with-json = ["sqlx?/json", "sea-query/with-json", "serde_json"]
+with-rust_decimal = ["sqlx?/rust_decimal", "sea-query/with-rust_decimal", "rust_decimal"]
+with-bigdecimal = ["sqlx?/bigdecimal", "sea-query/with-bigdecimal", "bigdecimal"]
+with-uuid = ["sqlx?/uuid", "sea-query/with-uuid", "uuid"]
+with-time = ["sqlx?/time", "sea-query/with-time", "time"]
+with-ipnetwork = ["sqlx?/ipnetwork", "sea-query/with-ipnetwork", "ipnetwork"]
+with-mac_address = ["sqlx?/mac_address", "sea-query/with-mac_address", "mac_address"]
+postgres-array = ["sea-query/postgres-array"]
+postgres-vector = ["sea-query/postgres-vector", "pgvector/sqlx"]
+runtime-async-std = ["sqlx?/runtime-async-std"]
+runtime-async-std-native-tls = ["sqlx?/runtime-async-std-native-tls"]
+runtime-async-std-rustls = ["sqlx?/runtime-async-std-rustls", ]
+runtime-actix = ["sqlx?/runtime-tokio"]
+runtime-actix-native-tls = ["sqlx?/runtime-tokio-native-tls"]
+runtime-actix-rustls = ["sqlx?/runtime-tokio-rustls"]
+runtime-tokio = ["sqlx?/runtime-tokio"]
+runtime-tokio-native-tls = ["sqlx?/runtime-tokio-native-tls"]
+runtime-tokio-rustls = ["sqlx?/runtime-tokio-rustls"]

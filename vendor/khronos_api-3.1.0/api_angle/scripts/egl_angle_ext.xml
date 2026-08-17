@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<registry>
+    <comment>
+    Copyright 2018 The ANGLE Project Authors. All rights reserved.
+    Use of this source code is governed by a BSD-style license that can be
+    found in the LICENSE file.
+
+    egl_angle_ext.xml
+        Includes data used to auto-generate ANGLE classes.
+    </comment>
+    <!-- SECTION: EGL command definitions. -->
+    <commands namespace="EGL">
+        <command>
+            <proto><ptype>EGLDeviceEXT</ptype> <name>eglCreateDeviceANGLE</name></proto>
+            <param><ptype>EGLint</ptype> <name>device_type</name></param>
+            <param>void *<name>native_device</name></param>
+            <param>const <ptype>EGLattrib</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglReleaseDeviceANGLE</name></proto>
+            <param><ptype>EGLDeviceEXT</ptype> <name>device</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglCreateStreamProducerD3DTextureANGLE</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLStreamKHR</ptype> <name>stream</name></param>
+            <param>const <ptype>EGLAttrib</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglStreamPostD3DTextureANGLE</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLStreamKHR</ptype> <name>stream</name></param>
+            <param>void *<name>texture</name></param>
+            <param>const <ptype>EGLAttrib</ptype> *<name>attrib_list</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLBoolean</ptype> <name>eglGetSyncValuesCHROMIUM</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLSurface</ptype> <name>surface</name></param>
+            <param><ptype>EGLuint64KHR</ptype> *<name>ust</name></param>
+            <param><ptype>EGLuint64KHR</ptype> *<name>msc</name></param>
+            <param><ptype>EGLuint64KHR</ptype> *<name>sbc</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLint</ptype> <name>eglProgramCacheGetAttribANGLE</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLenum</ptype> <name>attrib</name></param>
+        </command>
+        <command>
+            <proto>void <name>eglProgramCacheQueryANGLE</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLint</ptype> <name>index</name></param>
+            <param>void *<name>key</name></param>
+            <param><ptype>EGLint</ptype> *<name>keysize</name></param>
+            <param>void *<name>binary</name></param>
+            <param><ptype>EGLint</ptype> *<name>binarysize</name></param>
+        </command>
+        <command>
+            <proto>void <name>eglProgramCachePopulateANGLE</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param>const void *<name>key</name></param>
+            <param><ptype>EGLint</ptype> <name>keysize</name></param>
+            <param>const void *<name>binary</name></param>
+            <param><ptype>EGLint</ptype> <name>binarysize</name></param>
+        </command>
+        <command>
+            <proto><ptype>EGLint</ptype> <name>eglProgramCacheResizeANGLE</name></proto>
+            <param><ptype>EGLDisplay</ptype> <name>dpy</name></param>
+            <param><ptype>EGLint</ptype> <name>limit</name></param>
+            <param><ptype>EGLint</ptype> <name>mode</name></param>
+        </command>
+    </commands>
+    <!-- SECTION: ANGLE extension interface definitions -->
+    <extensions>
+        <extension name="EGL_ANGLE_device_creation" supported="egl">
+            <require>
+                <command name="eglCreateDeviceANGLE"/>
+                <command name="eglReleaseDeviceANGLE"/>
+            </require>
+        </extension>
+        <extension name="EGL_ANGLE_stream_producer_d3d_texture" supported="egl">
+            <require>
+                <command name="eglCreateStreamProducerD3DTextureANGLE"/>
+                <command name="eglStreamPostD3DTextureANGLE"/>
+            </require>
+        </extension>
+        <extension name="EGL_CHROMIUM_get_sync_values" supported="egl">
+            <require>
+                <command name="eglGetSyncValuesCHROMIUM"/>
+            </require>
+        </extension>
+        <extension name="EGL_ANGLE_program_cache_control" supported="egl">
+            <require>
+                <command name="eglProgramCacheGetAttribANGLE"/>
+                <command name="eglProgramCacheQueryANGLE"/>
+                <command name="eglProgramCachePopulateANGLE"/>
+                <command name="eglProgramCacheResizeANGLE"/>
+            </require>
+        </extension>
+    </extensions>
+</registry>

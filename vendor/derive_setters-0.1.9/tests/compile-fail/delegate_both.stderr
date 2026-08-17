@@ -1,0 +1,8 @@
+error: Cannot set both `method` and `field` on a delegate.
+ --> tests/compile-fail/delegate_both.rs:4:1
+  |
+4 | / #[setters(generate_delegates(ty = "Other", field = "f", method = "m"))]
+5 | | struct BothFieldAndMethod {
+6 | |     a: u32,
+7 | | }
+  | |_^

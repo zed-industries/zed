@@ -1,0 +1,37 @@
+[package]
+name = "swash"
+version = "0.2.6"
+authors = ["Chad Brokaw <cbrokaw@gmail.com>"]
+edition = "2021"
+description = "Font introspection, complex text shaping and glyph rendering."
+license = "Apache-2.0 OR MIT"
+keywords = ["font", "shape", "glyph", "text"]
+categories = ["graphics", "text-processing"]
+repository = "https://github.com/dfrg/swash"
+homepage = "https://github.com/dfrg/swash"
+readme = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+# There are no platform specific docs.
+default-target = "x86_64-unknown-linux-gnu"
+targets = []
+
+[features]
+default = ["std", "scale", "render"]
+
+libm = ["dep:core_maths", "skrifa/libm", "zeno?/libm"]
+std = ["skrifa/std", "zeno?/std", "yazi?/std"]
+
+scale = ["dep:yazi", "dep:zeno"]
+render = ["scale", "zeno/eval"]
+
+[lints]
+clippy.doc_markdown = "warn"
+clippy.semicolon_if_nothing_returned = "warn"
+
+[dependencies]
+core_maths = { version = "0.1.1", optional = true }
+yazi = { version = "0.2.1", optional = true, default-features = false }
+zeno = { version = "0.3.3", optional = true, default-features = false }
+skrifa = { version = ">= 0.31.1, <= 0.37", default-features = false }

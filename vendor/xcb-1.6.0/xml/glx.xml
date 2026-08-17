@@ -1,0 +1,1690 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Copyright (C) 2005 Jeremy Kolb.
+All Rights Reserved.
+
+Permission is hereby granted, free of charge, to any person ob/Sintaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Except as contained in this notice, the names of the authors or their
+institutions shall not be used in advertising or otherwise to promote the
+sale, use or other dealings in this Software without prior written
+authorization from the authors.
+-->
+
+<!--
+Note that on X.org servers before 6.9 (and probably others as well) the length
+field in the reply is computed incorrectly for GetFBConfigs and
+VendorPrivateWithReply vendor_code 0x10004 (GetFBConfigsSGIX). For these
+requests the reply structure begins:
+	<pad bytes="1" />
+	<field type="CARD32" name="numVisuals" />
+	<field type="CARD32" name="numProps" />
+The correct value for the length field is
+	numVisuals * numProps * 2
+but on broken servers the "* 2" was missing. A workaround that is correct for
+all implementations is to rewrite the length field on receipt on the client
+side, using the expression above.
+
+The patch that fixed this server bug in X.org CVS is here:
+	http://cvs.freedesktop.org/xorg/xserver/xorg/GL/glx/glxcmds.c?r1=1.6&r2=1.7
+-->
+
+<xcb header="glx" extension-xname="GLX" extension-name="Glx" major-version="1" minor-version="4">
+
+    <import>xproto</import>
+
+    <xidtype name="PIXMAP" />
+    <xidtype name="CONTEXT" />
+    <xidtype name="PBUFFER" />
+    <xidtype name="WINDOW" />
+    <xidtype name="FBCONFIG" />
+
+    <xidunion name="DRAWABLE">
+        <type>xproto:WINDOW</type>
+        <type>PBUFFER</type>
+        <type>glx:PIXMAP</type>
+        <type>glx:WINDOW</type>
+    </xidunion>
+
+    <typedef oldname="float" newname="FLOAT32" />
+    <typedef oldname="double" newname="FLOAT64" />
+    <typedef oldname="CARD32" newname="BOOL32" />
+    <typedef oldname="CARD32" newname="CONTEXT_TAG" />
+
+    <!-- Errors -->
+    <error name="Generic" number="-1">
+        <!-- FIXME: fake number -->
+        <field type="CARD32" name="bad_value" />
+        <field type="CARD16" name="minor_opcode" />
+        <field type="CARD8" name="major_opcode" />
+        <pad bytes="21" />
+    </error>
+
+    <errorcopy name="BadContext" number="0" ref="Generic" />
+    <errorcopy name="BadContextState" number="1" ref="Generic" />
+    <errorcopy name="BadDrawable" number="2" ref="Generic" />
+    <errorcopy name="BadPixmap" number="3" ref="Generic" />
+    <errorcopy name="BadContextTag" number="4" ref="Generic" />
+    <errorcopy name="BadCurrentWindow" number="5" ref="Generic" />
+    <errorcopy name="BadRenderRequest" number="6" ref="Generic" />
+    <errorcopy name="BadLargeRequest" number="7" ref="Generic" />
+    <errorcopy name="UnsupportedPrivateRequest" number="8" ref="Generic" />
+    <errorcopy name="BadFBConfig" number="9" ref="Generic" />
+    <errorcopy name="BadPbuffer" number="10" ref="Generic" />
+    <errorcopy name="BadCurrentDrawable" number="11" ref="Generic" />
+    <errorcopy name="BadWindow" number="12" ref="Generic" />
+    <errorcopy name="GLXBadProfileARB" number="13" ref="Generic" />
+
+    <!-- Events -->
+    <event name="PbufferClobber" number="0">
+        <pad bytes="1" />
+        <field type="CARD16" name="event_type" />
+        <field type="CARD16" name="draw_type" />
+        <field type="glx:DRAWABLE" name="drawable" />
+        <field type="CARD32" name="b_mask" />
+        <field type="CARD16" name="aux_buffer" />
+        <field type="CARD16" name="x" />
+        <field type="CARD16" name="y" />
+        <field type="CARD16" name="width" />
+        <field type="CARD16" name="height" />
+        <field type="CARD16" name="count" />
+        <pad bytes="4" />
+    </event>
+
+    <event name="BufferSwapComplete" number="1">
+        <pad bytes="1" />
+        <field type="CARD16" name="event_type" />
+        <pad bytes="2" />
+        <field type="glx:DRAWABLE" name="drawable" />
+        <field type="CARD32" name="ust_hi" />
+        <field type="CARD32" name="ust_lo" />
+        <field type="CARD32" name="msc_hi" />
+        <field type="CARD32" name="msc_lo" />
+        <field type="CARD32" name="sbc" />
+    </event>
+
+    <!-- enums for PbufferClobber event/draw type -->
+    <enum name="PBCET">
+        <item name="Damaged">
+            <value>32791</value>
+        </item>
+        <item name="Saved">
+            <value>32792</value>
+        </item>
+    </enum>
+
+    <enum name="PBCDT">
+        <item name="Window">
+            <value>32793</value>
+        </item>
+        <item name="Pbuffer">
+            <value>32794</value>
+        </item>
+    </enum>
+
+    <!-- Requests -->
+    <request name="Render" opcode="1" combine-adjacent="true">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <list type="BYTE" name="data" />
+    </request>
+
+    <request name="RenderLarge" opcode="2">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD16" name="request_num" />
+        <field type="CARD16" name="request_total" />
+        <field type="CARD32" name="data_len" />
+        <list type="BYTE" name="data">
+            <fieldref>data_len</fieldref>
+        </list>
+    </request>
+
+    <request name="CreateContext" opcode="3">
+        <field type="glx:CONTEXT" name="context" />
+        <field type="VISUALID" name="visual" />
+        <field type="CARD32" name="screen" />
+        <field type="glx:CONTEXT" name="share_list" />
+        <field type="BOOL" name="is_direct" />
+        <pad bytes="3" />
+    </request>
+
+    <request name="DestroyContext" opcode="4">
+        <field type="glx:CONTEXT" name="context" />
+    </request>
+
+    <request name="MakeCurrent" opcode="5">
+        <field type="glx:DRAWABLE" name="drawable" />
+        <field type="glx:CONTEXT" name="context" />
+        <field type="CONTEXT_TAG" name="old_context_tag" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CONTEXT_TAG" name="context_tag" />
+            <pad bytes="20" />
+        </reply>
+    </request>
+
+    <request name="IsDirect" opcode="6">
+        <field type="glx:CONTEXT" name="context" />
+        <reply>
+            <pad bytes="1" />
+            <field type="BOOL" name="is_direct" />
+            <pad bytes="23" />
+        </reply>
+    </request>
+
+    <request name="QueryVersion" opcode="7">
+        <field type="CARD32" name="major_version" />
+        <field type="CARD32" name="minor_version" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="major_version" />
+            <field type="CARD32" name="minor_version" />
+            <pad bytes="16" />
+        </reply>
+    </request>
+
+    <request name="WaitGL" opcode="8">
+        <field type="CONTEXT_TAG" name="context_tag" />
+    </request>
+
+    <request name="WaitX" opcode="9">
+        <field type="CONTEXT_TAG" name="context_tag" />
+    </request>
+
+    <request name="CopyContext" opcode="10">
+        <field type="glx:CONTEXT" name="src" />
+        <field type="glx:CONTEXT" name="dest" />
+        <field type="CARD32" name="mask" />
+        <field type="CONTEXT_TAG" name="src_context_tag" />
+    </request>
+
+    <!-- Enum for CopyContext: mask -->
+    <enum name="GC">
+        <item name="GL_CURRENT_BIT">
+            <bit>0</bit>
+        </item>
+        <item name="GL_POINT_BIT">
+            <bit>1</bit>
+        </item>
+        <item name="GL_LINE_BIT">
+            <bit>2</bit>
+        </item>
+        <item name="GL_POLYGON_BIT">
+            <bit>3</bit>
+        </item>
+        <item name="GL_POLYGON_STIPPLE_BIT">
+            <bit>4</bit>
+        </item>
+        <item name="GL_PIXEL_MODE_BIT">
+            <bit>5</bit>
+        </item>
+        <item name="GL_LIGHTING_BIT">
+            <bit>6</bit>
+        </item>
+        <item name="GL_FOG_BIT">
+            <bit>7</bit>
+        </item>
+        <item name="GL_DEPTH_BUFFER_BIT">
+            <bit>8</bit>
+        </item>
+        <item name="GL_ACCUM_BUFFER_BIT">
+            <bit>9</bit>
+        </item>
+        <item name="GL_STENCIL_BUFFER_BIT">
+            <bit>10</bit>
+        </item>
+        <item name="GL_VIEWPORT_BIT">
+            <bit>11</bit>
+        </item>
+        <item name="GL_TRANSFORM_BIT">
+            <bit>12</bit>
+        </item>
+        <item name="GL_ENABLE_BIT">
+            <bit>13</bit>
+        </item>
+        <item name="GL_COLOR_BUFFER_BIT">
+            <bit>14</bit>
+        </item>
+        <item name="GL_HINT_BIT">
+            <bit>15</bit>
+        </item>
+        <item name="GL_EVAL_BIT">
+            <bit>16</bit>
+        </item>
+        <item name="GL_LIST_BIT">
+            <bit>17</bit>
+        </item>
+        <item name="GL_TEXTURE_BIT">
+            <bit>18</bit>
+        </item>
+        <item name="GL_SCISSOR_BIT">
+            <bit>19</bit>
+        </item>
+        <item name="GL_ALL_ATTRIB_BITS">
+            <value>
+                16777215
+                <!--0x000ffffff-->
+            </value>
+        </item>
+    </enum>
+
+    <request name="SwapBuffers" opcode="11">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="glx:DRAWABLE" name="drawable" />
+    </request>
+
+    <request name="UseXFont" opcode="12">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="FONT" name="font" />
+        <field type="CARD32" name="first" />
+        <field type="CARD32" name="count" />
+        <field type="CARD32" name="list_base" />
+    </request>
+
+    <request name="CreateGLXPixmap" opcode="13">
+        <field type="CARD32" name="screen" />
+        <field type="VISUALID" name="visual" />
+        <field type="xproto:PIXMAP" name="pixmap" />
+        <field type="glx:PIXMAP" name="glx_pixmap" />
+    </request>
+
+
+    <request name="GetVisualConfigs" opcode="14">
+        <field type="CARD32" name="screen" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="num_visuals" />
+            <field type="CARD32" name="num_properties" />
+            <pad bytes="16" />
+            <list type="CARD32" name="property_list">
+                <fieldref>length</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="DestroyGLXPixmap" opcode="15">
+        <field type="glx:PIXMAP" name="glx_pixmap" />
+    </request>
+
+    <!--
+	Context tag is not in the proto, should be part of the list of bytes
+	but every VendorPrivate and VendorPrivateWithReply request uses them
+	so it is safe to put them in.  That's how Mesa does it.
+	-->
+    <request name="VendorPrivate" opcode="16">
+        <field type="CARD32" name="vendor_code" />
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <list type="BYTE" name="data" />
+    </request>
+
+    <request name="VendorPrivateWithReply" opcode="17">
+        <field type="CARD32" name="vendor_code" />
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <list type="BYTE" name="data" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="retval" />
+            <list type="BYTE" name="data1">
+                <value>24</value>
+            </list>
+            <list type="BYTE" name="data2">
+                <op op="*">
+                    <fieldref>length</fieldref>
+                    <value>4</value>
+                </op>
+            </list>
+        </reply>
+    </request>
+
+    <request name="QueryExtensionsString" opcode="18">
+        <field type="CARD32" name="screen" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <pad bytes="16" />
+        </reply>
+    </request>
+
+    <request name="QueryServerString" opcode="19">
+        <field type="CARD32" name="screen" />
+        <field type="CARD32" name="name" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="str_len" />
+            <pad bytes="16" />
+            <list type="char" name="string">
+                <fieldref>str_len</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="ClientInfo" opcode="20">
+        <field type="CARD32" name="major_version" />
+        <field type="CARD32" name="minor_version" />
+        <field type="CARD32" name="str_len" />
+        <list type="char" name="string">
+            <fieldref>str_len</fieldref>
+        </list>
+    </request>
+
+    <!-- Start of GLX 1.3 Requests -->
+
+    <request name="GetFBConfigs" opcode="21">
+        <field type="CARD32" name="screen" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="num_FB_configs" />
+            <field type="CARD32" name="num_properties" />
+            <pad bytes="16" />
+            <!--
+			<valueparam value-mask-type="CARD32"
+				value-mask-name="value_mask"
+                                value-list-name="value_list" />
+                            -->
+            <list type="CARD32" name="property_list">
+                <fieldref>length</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="CreatePixmap" opcode="22">
+        <field type="CARD32" name="screen" />
+        <field type="FBCONFIG" name="fbconfig" />
+        <field type="xproto:PIXMAP" name="pixmap" />
+        <field type="glx:PIXMAP" name="glx_pixmap" />
+        <field type="CARD32" name="num_attribs" />
+        <list type="CARD32" name="attribs">
+            <op op="*">
+                <fieldref>num_attribs</fieldref>
+                <value>2</value>
+            </op>
+        </list>
+    </request>
+
+    <request name="DestroyPixmap" opcode="23">
+        <field type="glx:PIXMAP" name="glx_pixmap" />
+    </request>
+
+    <request name="CreateNewContext" opcode="24">
+        <field type="glx:CONTEXT" name="context" />
+        <field type="FBCONFIG" name="fbconfig" />
+        <field type="CARD32" name="screen" />
+        <field type="CARD32" name="render_type" />
+        <field type="glx:CONTEXT" name="share_list" />
+        <field type="BOOL" name="is_direct" />
+        <pad bytes="3" />
+    </request>
+
+    <request name="QueryContext" opcode="25">
+        <field type="glx:CONTEXT" name="context" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="num_attribs" />
+            <pad bytes="20" />
+            <list type="CARD32" name="attribs">
+                <op op="*">
+                    <fieldref>num_attribs</fieldref>
+                    <value>2</value>
+                </op>
+            </list>
+        </reply>
+    </request>
+
+    <request name="MakeContextCurrent" opcode="26">
+        <field type="CONTEXT_TAG" name="old_context_tag" />
+        <field type="glx:DRAWABLE" name="drawable" />
+        <field type="glx:DRAWABLE" name="read_drawable" />
+        <field type="glx:CONTEXT" name="context" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CONTEXT_TAG" name="context_tag" />
+            <pad bytes="20" />
+        </reply>
+    </request>
+
+    <request name="CreatePbuffer" opcode="27">
+        <field type="CARD32" name="screen" />
+        <field type="FBCONFIG" name="fbconfig" />
+        <field type="PBUFFER" name="pbuffer" />
+        <field type="CARD32" name="num_attribs" />
+        <list type="CARD32" name="attribs">
+            <op op="*">
+                <fieldref>num_attribs</fieldref>
+                <value>2</value>
+            </op>
+        </list>
+    </request>
+
+    <request name="DestroyPbuffer" opcode="28">
+        <field type="PBUFFER" name="pbuffer" />
+    </request>
+
+    <request name="GetDrawableAttributes" opcode="29">
+        <field type="glx:DRAWABLE" name="drawable" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="num_attribs" />
+            <pad bytes="20" />
+            <list type="CARD32" name="attribs">
+                <op op="*">
+                    <fieldref>num_attribs</fieldref>
+                    <value>2</value>
+                </op>
+            </list>
+        </reply>
+    </request>
+
+    <request name="ChangeDrawableAttributes" opcode="30">
+        <field type="glx:DRAWABLE" name="drawable" />
+        <field type="CARD32" name="num_attribs" />
+        <list type="CARD32" name="attribs">
+            <op op="*">
+                <fieldref>num_attribs</fieldref>
+                <value>2</value>
+            </op>
+        </list>
+    </request>
+
+    <request name="CreateWindow" opcode="31">
+        <field type="CARD32" name="screen" />
+        <field type="FBCONFIG" name="fbconfig" />
+        <field type="xproto:WINDOW" name="window" />
+        <field type="glx:WINDOW" name="glx_window" />
+        <field type="CARD32" name="num_attribs" />
+        <list type="CARD32" name="attribs">
+            <op op="*">
+                <fieldref>num_attribs</fieldref>
+                <value>2</value>
+            </op>
+        </list>
+    </request>
+
+    <request name="DeleteWindow" opcode="32">
+        <field type="glx:WINDOW" name="glxwindow" />
+    </request>
+
+    <!-- Start of GLX_ARB_create_context and GLX_ARB_create_context_profile
+             requests. -->
+    <request name="SetClientInfoARB" opcode="33">
+        <field type="CARD32" name="major_version" />
+        <field type="CARD32" name="minor_version" />
+        <field type="CARD32" name="num_versions" />
+        <field type="CARD32" name="gl_str_len" />
+        <field type="CARD32" name="glx_str_len" />
+        <list type="CARD32" name="gl_versions">
+            <op op="*">
+                <fieldref>num_versions</fieldref>
+                <value>2</value>
+            </op>
+        </list>
+        <list type="char" name="gl_extension_string">
+            <fieldref>gl_str_len</fieldref>
+        </list>
+        <list type="char" name="glx_extension_string">
+            <fieldref>glx_str_len</fieldref>
+        </list>
+    </request>
+
+    <request name="CreateContextAttribsARB" opcode="34">
+        <field type="glx:CONTEXT" name="context" />
+        <field type="FBCONFIG" name="fbconfig" />
+        <field type="CARD32" name="screen" />
+        <field type="glx:CONTEXT" name="share_list" />
+        <field type="BOOL" name="is_direct" />
+        <pad bytes="3" />
+        <field type="CARD32" name="num_attribs" />
+        <list type="CARD32" name="attribs">
+            <op op="*">
+                <fieldref>num_attribs</fieldref>
+                <value>2</value>
+            </op>
+        </list>
+    </request>
+
+    <request name="SetClientInfo2ARB" opcode="35">
+        <field type="CARD32" name="major_version" />
+        <field type="CARD32" name="minor_version" />
+        <field type="CARD32" name="num_versions" />
+        <field type="CARD32" name="gl_str_len" />
+        <field type="CARD32" name="glx_str_len" />
+        <list type="CARD32" name="gl_versions">
+            <op op="*">
+                <fieldref>num_versions</fieldref>
+                <value>3</value>
+            </op>
+        </list>
+        <list type="char" name="gl_extension_string">
+            <fieldref>gl_str_len</fieldref>
+        </list>
+        <list type="char" name="glx_extension_string">
+            <fieldref>glx_str_len</fieldref>
+        </list>
+    </request>
+
+    <!-- Requests for GL Non-rendering Commands (single ops) -->
+
+    <request name="NewList" opcode="101">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="list" />
+        <field type="CARD32" name="mode" />
+    </request>
+
+    <request name="EndList" opcode="102">
+        <field type="CONTEXT_TAG" name="context_tag" />
+    </request>
+
+    <request name="DeleteLists" opcode="103">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="list" />
+        <field type="INT32" name="range" />
+    </request>
+
+    <request name="GenLists" opcode="104">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="INT32" name="range" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="ret_val" />
+        </reply>
+    </request>
+
+    <request name="FeedbackBuffer" opcode="105">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="INT32" name="size" />
+        <field type="INT32" name="type" />
+    </request>
+
+    <request name="SelectBuffer" opcode="106">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="INT32" name="size" />
+        <!-- the reply is actually returned in the data
+		of the next RenderMode request -->
+    </request>
+
+
+    <request name="RenderMode" opcode="107">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="mode" />
+        <!--
+		This reply is only if RM was previously feedback/selection.
+		If it was in feedback mode then data is FLOAT32.
+		If previously in render mode there is no reply.
+		-->
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="ret_val" />
+            <field type="CARD32" name="n" />
+            <field type="CARD32" name="new_mode" />
+            <pad bytes="12" />
+            <list type="CARD32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <enum name="RM">
+        <item name="GL_RENDER">
+            <value>7168</value>
+        </item>
+        <item name="GL_FEEDBACK">
+            <value>7169</value>
+        </item>
+        <item name="GL_SELECT">
+            <value>7170</value>
+        </item>
+    </enum>
+
+    <request name="Finish" opcode="108">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <reply>
+            <pad bytes="1" />
+        </reply>
+    </request>
+
+    <request name="PixelStoref" opcode="109">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="pname" />
+        <field type="FLOAT32" name="datum" />
+    </request>
+
+    <request name="PixelStorei" opcode="110">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="pname" />
+        <field type="INT32" name="datum" />
+    </request>
+
+    <request name="ReadPixels" opcode="111">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="INT32" name="x" />
+        <field type="INT32" name="y" />
+        <field type="INT32" name="width" />
+        <field type="INT32" name="height" />
+        <field type="CARD32" name="format" />
+        <field type="CARD32" name="type" />
+        <field type="BOOL" name="swap_bytes" />
+        <field type="BOOL" name="lsb_first" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="24" />
+            <list type="BYTE" name="data">
+                <op op="*">
+                    <fieldref>length</fieldref>
+                    <value>4</value>
+                </op>
+            </list>
+        </reply>
+    </request>
+
+    <!-- FIXME:
+	All the Get* functions can return different stuff for replies.
+	Hopefully xcb will support multiple reply structures at some point
+	but for now... grrrr
+	Starts on page 58/180
+	-->
+    <request name="GetBooleanv" opcode="112">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="INT32" name="pname" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="BOOL" name="datum" />
+            <pad bytes="15" />
+            <list type="BOOL" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetClipPlane" opcode="113">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="INT32" name="plane" />
+        <reply>
+            <required_start_align align="8" />
+            <pad bytes="1" />
+            <pad bytes="24" />
+            <list type="FLOAT64" name="data">
+                <op op="/">
+                    <fieldref>length</fieldref>
+                    <value>2</value>
+                </op>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetDoublev" opcode="114">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="pname" />
+        <reply>
+            <required_start_align align="8" />
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="FLOAT64" name="datum" />
+            <pad bytes="8" />
+            <list type="FLOAT64" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetError" opcode="115">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <reply>
+            <pad bytes="1" />
+            <field type="INT32" name="error" />
+        </reply>
+    </request>
+
+    <request name="GetFloatv" opcode="116">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="pname" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="FLOAT32" name="datum" />
+            <pad bytes="12" />
+            <list type="FLOAT32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetIntegerv" opcode="117">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="pname" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="INT32" name="datum" />
+            <pad bytes="12" />
+            <list type="INT32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetLightfv" opcode="118">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="light" />
+        <field type="CARD32" name="pname" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="FLOAT32" name="datum" />
+            <pad bytes="12" />
+            <list type="FLOAT32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetLightiv" opcode="119">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="light" />
+        <field type="CARD32" name="pname" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="INT32" name="datum" />
+            <pad bytes="12" />
+            <list type="INT32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetMapdv" opcode="120">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="target" />
+        <field type="CARD32" name="query" />
+        <reply>
+            <required_start_align align="8" />
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="FLOAT64" name="datum" />
+            <pad bytes="8" />
+            <list type="FLOAT64" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetMapfv" opcode="121">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="target" />
+        <field type="CARD32" name="query" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="FLOAT32" name="datum" />
+            <pad bytes="12" />
+            <list type="FLOAT32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetMapiv" opcode="122">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="target" />
+        <field type="CARD32" name="query" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="INT32" name="datum" />
+            <pad bytes="12" />
+            <list type="INT32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetMaterialfv" opcode="123">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="face" />
+        <field type="CARD32" name="pname" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="FLOAT32" name="datum" />
+            <pad bytes="12" />
+            <list type="FLOAT32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetMaterialiv" opcode="124">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="face" />
+        <field type="CARD32" name="pname" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="INT32" name="datum" />
+            <pad bytes="12" />
+            <list type="INT32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetPixelMapfv" opcode="125">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="map" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="FLOAT32" name="datum" />
+            <pad bytes="12" />
+            <list type="FLOAT32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetPixelMapuiv" opcode="126">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="map" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="CARD32" name="datum" />
+            <pad bytes="12" />
+            <list type="CARD32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetPixelMapusv" opcode="127">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="map" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="CARD16" name="datum" />
+            <pad bytes="16" />
+            <list type="CARD16" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetPolygonStipple" opcode="128">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="BOOL" name="lsb_first" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="24" />
+            <list type="BYTE" name="data">
+                <op op="*">
+                    <fieldref>length</fieldref>
+                    <value>4</value>
+                </op>
+            </list>
+        </reply>
+    </request>
+
+
+    <request name="GetString" opcode="129">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="name" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <pad bytes="16" />
+            <list type="char" name="string">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetTexEnvfv" opcode="130">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="target" />
+        <field type="CARD32" name="pname" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="FLOAT32" name="datum" />
+            <pad bytes="12" />
+            <list type="FLOAT32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetTexEnviv" opcode="131">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="target" />
+        <field type="CARD32" name="pname" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="INT32" name="datum" />
+            <pad bytes="12" />
+            <list type="INT32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetTexGendv" opcode="132">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="coord" />
+        <field type="CARD32" name="pname" />
+        <reply>
+            <required_start_align align="8" />
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="FLOAT64" name="datum" />
+            <pad bytes="8" />
+            <list type="FLOAT64" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetTexGenfv" opcode="133">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="coord" />
+        <field type="CARD32" name="pname" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="FLOAT32" name="datum" />
+            <pad bytes="12" />
+            <list type="FLOAT32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetTexGeniv" opcode="134">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="coord" />
+        <field type="CARD32" name="pname" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="INT32" name="datum" />
+            <pad bytes="12" />
+            <list type="INT32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetTexImage" opcode="135">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="target" />
+        <field type="INT32" name="level" />
+        <field type="CARD32" name="format" />
+        <field type="CARD32" name="type" />
+        <field type="BOOL" name="swap_bytes" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="8" />
+            <field type="INT32" name="width" />
+            <field type="INT32" name="height" />
+            <field type="INT32" name="depth" />
+            <pad bytes="4" />
+            <list type="BYTE" name="data">
+                <op op="*">
+                    <fieldref>length</fieldref>
+                    <value>4</value>
+                </op>
+            </list>
+        </reply>
+    </request>
+
+
+    <request name="GetTexParameterfv" opcode="136">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="target" />
+        <field type="CARD32" name="pname" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="FLOAT32" name="datum" />
+            <pad bytes="12" />
+            <list type="FLOAT32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetTexParameteriv" opcode="137">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="target" />
+        <field type="CARD32" name="pname" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="INT32" name="datum" />
+            <pad bytes="12" />
+            <list type="INT32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetTexLevelParameterfv" opcode="138">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="target" />
+        <field type="INT32" name="level" />
+        <field type="CARD32" name="pname" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="FLOAT32" name="datum" />
+            <pad bytes="12" />
+            <list type="FLOAT32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetTexLevelParameteriv" opcode="139">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="target" />
+        <field type="INT32" name="level" />
+        <field type="CARD32" name="pname" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="INT32" name="datum" />
+            <pad bytes="12" />
+            <list type="INT32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="IsEnabled" opcode="140">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="capability" />
+        <reply>
+            <pad bytes="1" />
+            <field type="BOOL32" name="ret_val" />
+        </reply>
+    </request>
+
+    <request name="IsList" opcode="141">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="list" />
+        <reply>
+            <pad bytes="1" />
+            <field type="BOOL32" name="ret_val" />
+        </reply>
+    </request>
+
+    <request name="Flush" opcode="142">
+        <field type="CONTEXT_TAG" name="context_tag" />
+    </request>
+
+    <request name="AreTexturesResident" opcode="143">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="INT32" name="n" />
+        <list type="CARD32" name="textures">
+            <fieldref>n</fieldref>
+        </list>
+        <reply>
+            <pad bytes="1" />
+            <field type="BOOL32" name="ret_val" />
+            <pad bytes="20" />
+            <list type="BOOL" name="data">
+                <op op="*">
+                    <fieldref>length</fieldref>
+                    <value>4</value>
+                </op>
+            </list>
+        </reply>
+    </request>
+
+    <request name="DeleteTextures" opcode="144">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="INT32" name="n" />
+        <list type="CARD32" name="textures">
+            <fieldref>n</fieldref>
+        </list>
+    </request>
+
+    <request name="GenTextures" opcode="145">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="INT32" name="n" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="24" />
+            <list type="CARD32" name="data">
+                <fieldref>length</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="IsTexture" opcode="146">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="texture" />
+        <reply>
+            <pad bytes="1" />
+            <field type="BOOL32" name="ret_val" />
+        </reply>
+    </request>
+
+    <request name="GetColorTable" opcode="147">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="target" />
+        <field type="CARD32" name="format" />
+        <field type="CARD32" name="type" />
+        <field type="BOOL" name="swap_bytes" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="8" />
+            <field type="INT32" name="width" />
+            <pad bytes="12" />
+            <list type="BYTE" name="data">
+                <op op="*">
+                    <fieldref>length</fieldref>
+                    <value>4</value>
+                </op>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetColorTableParameterfv" opcode="148">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="target" />
+        <field type="CARD32" name="pname" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="FLOAT32" name="datum" />
+            <pad bytes="12" />
+            <list type="FLOAT32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetColorTableParameteriv" opcode="149">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="target" />
+        <field type="CARD32" name="pname" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="INT32" name="datum" />
+            <pad bytes="12" />
+            <list type="INT32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetConvolutionFilter" opcode="150">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="target" />
+        <field type="CARD32" name="format" />
+        <field type="CARD32" name="type" />
+        <field type="BOOL" name="swap_bytes" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="8" />
+            <field type="INT32" name="width" />
+            <field type="INT32" name="height" />
+            <pad bytes="8" />
+            <list type="BYTE" name="data">
+                <op op="*">
+                    <fieldref>length</fieldref>
+                    <value>4</value>
+                </op>
+            </list>
+        </reply>
+    </request>
+
+
+    <request name="GetConvolutionParameterfv" opcode="151">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="target" />
+        <field type="CARD32" name="pname" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="FLOAT32" name="datum" />
+            <pad bytes="12" />
+            <list type="FLOAT32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetConvolutionParameteriv" opcode="152">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="target" />
+        <field type="CARD32" name="pname" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="INT32" name="datum" />
+            <pad bytes="12" />
+            <list type="INT32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetSeparableFilter" opcode="153">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="target" />
+        <field type="CARD32" name="format" />
+        <field type="CARD32" name="type" />
+        <field type="BOOL" name="swap_bytes" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="8" />
+            <field type="INT32" name="row_w" />
+            <field type="INT32" name="col_h" />
+            <pad bytes="8" />
+            <list type="BYTE" name="rows_and_cols">
+                <op op="*">
+                    <fieldref>length</fieldref>
+                    <value>4</value>
+                </op>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetHistogram" opcode="154">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="target" />
+        <field type="CARD32" name="format" />
+        <field type="CARD32" name="type" />
+        <field type="BOOL" name="swap_bytes" />
+        <field type="BOOL" name="reset" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="8" />
+            <field type="INT32" name="width" />
+            <pad bytes="12" />
+            <list type="BYTE" name="data">
+                <op op="*">
+                    <fieldref>length</fieldref>
+                    <value>4</value>
+                </op>
+            </list>
+        </reply>
+    </request>
+
+
+    <request name="GetHistogramParameterfv" opcode="155">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="target" />
+        <field type="CARD32" name="pname" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="FLOAT32" name="datum" />
+            <pad bytes="12" />
+            <list type="FLOAT32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetHistogramParameteriv" opcode="156">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="target" />
+        <field type="CARD32" name="pname" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="INT32" name="datum" />
+            <pad bytes="12" />
+            <list type="INT32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetMinmax" opcode="157">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="target" />
+        <field type="CARD32" name="format" />
+        <field type="CARD32" name="type" />
+        <field type="BOOL" name="swap_bytes" />
+        <field type="BOOL" name="reset" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="24" />
+            <list type="BYTE" name="data">
+                <op op="*">
+                    <fieldref>length</fieldref>
+                    <value>4</value>
+                </op>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetMinmaxParameterfv" opcode="158">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="target" />
+        <field type="CARD32" name="pname" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="FLOAT32" name="datum" />
+            <pad bytes="12" />
+            <list type="FLOAT32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetMinmaxParameteriv" opcode="159">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="target" />
+        <field type="CARD32" name="pname" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="INT32" name="datum" />
+            <pad bytes="12" />
+            <list type="INT32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <!--
+	GLX Extensions
+
+	* XXX: So far only define non-rendering commands.
+	* Only those extensions that affect the GLX wire protocol are listed.
+	-->
+
+    <!--
+	GL_ARB_texture_compression
+	http://oss.sgi.com/projects/ogl-sample/registry/ARB/texture_compression.txt
+	-->
+    <request name="GetCompressedTexImageARB" opcode="160">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="target" />
+        <field type="INT32" name="level" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="8" />
+            <field type="INT32" name="size" />
+            <pad bytes="12" />
+            <list type="BYTE" name="data">
+                <op op="*">
+                    <fieldref>length</fieldref>
+                    <value>4</value>
+                </op>
+            </list>
+        </reply>
+    </request>
+
+
+    <!--
+	GL_ARB_occlusion_query
+	http://oss.sgi.com/projects/ogl-sample/registry/ARB/occlusion_query.txt
+	-->
+
+    <request name="DeleteQueriesARB" opcode="161">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="INT32" name="n" />
+        <list type="CARD32" name="ids">
+            <fieldref>n</fieldref>
+        </list>
+    </request>
+
+    <request name="GenQueriesARB" opcode="162">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="INT32" name="n" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="24" />
+            <list type="CARD32" name="data">
+                <fieldref>length</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="IsQueryARB" opcode="163">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="id" />
+        <reply>
+            <pad bytes="1" />
+            <field type="BOOL32" name="ret_val" />
+        </reply>
+    </request>
+
+    <request name="GetQueryivARB" opcode="164">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="target" />
+        <field type="CARD32" name="pname" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="INT32" name="datum" />
+            <pad bytes="12" />
+            <list type="INT32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetQueryObjectivARB" opcode="165">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="id" />
+        <field type="CARD32" name="pname" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="INT32" name="datum" />
+            <pad bytes="12" />
+            <list type="INT32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetQueryObjectuivARB" opcode="166">
+        <field type="CONTEXT_TAG" name="context_tag" />
+        <field type="CARD32" name="id" />
+        <field type="CARD32" name="pname" />
+        <reply>
+            <pad bytes="1" />
+            <pad bytes="4" />
+            <field type="CARD32" name="n" />
+            <field type="CARD32" name="datum" />
+            <pad bytes="12" />
+            <list type="CARD32" name="data">
+                <fieldref>n</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <!--
+	GL_ARB_vertex_program
+	http://oss.sgi.com/projects/ogl-sample/registry/ARB/vertex_program.txt
+	XXX: Need to write up vops
+	-->
+
+    <!--
+	GL_ARB_fragment_program
+	http://oss.sgi.com/projects/ogl-sample/registry/ARB/fragment_program.txt
+	XXX: Need to write up vops
+	-->
+
+    <!--
+	GL_SGIS_texture_filter4
+	http://oss.sgi.com/projects/ogl-sample/registry/SGIS/texture_filter4.txt
+	XXX: Need to write up vops
+	-->
+
+    <!--
+	GL_EXT_histogram
+	http://oss.sgi.com/projects/ogl-sample/registry/EXT/histogram.txt
+	XXX: Need to write up vops
+	-->
+
+    <!--
+	GL_EXT_convolution
+	http://oss.sgi.com/projects/ogl-sample/registry/EXT/convolution.txt
+	XXX: Need to write up vops
+	-->
+
+    <!--
+	GL_SGI_color_table
+	http://oss.sgi.com/projects/ogl-sample/registry/SGI/color_table.txt
+	XXX: Need to write up vops
+	-->
+
+    <!--
+	GL_EXT_texture_object
+	http://oss.sgi.com/projects/ogl-sample/registry/EXT/texture_object.txt
+	XXX: Need to write up vops
+	-->
+
+    <!--
+	GL_SGIS_detail_texture
+	http://oss.sgi.com/projects/ogl-sample/registry/SGIS/detail_texture.txt
+	XXX: Need to write up vops
+	-->
+
+    <!--
+	GL_SGIS_sharpen_texture
+	http://oss.sgi.com/projects/ogl-sample/registry/SGIS/sharpen_texture.txt
+	XXX: Need to write up vops
+	-->
+
+    <!--
+	GL_SGI_make_current_read
+	http://oss.sgi.com/projects/ogl-sample/registry/SGI/make_current_read.txt
+	XXX: Need to write up vops
+	-->
+
+    <!--
+	GL_EXT_import_context
+	http://oss.sgi.com/projects/ogl-sample/registry/EXT/import_context.txt
+	XXX: Need to write up vops
+	-->
+
+    <!--
+	GL_SGIX_fbconfig
+	http://oss.sgi.com/projects/ogl-sample/registry/SGIX/fbconfig.txt
+	XXX: Need to write up vops
+	-->
+
+    <!--
+	GL_SGIX_pbuffer
+	http://oss.sgi.com/projects/ogl-sample/registry/SGIX/pbuffer.txt
+	XXX: Need to write up vops
+	-->
+
+    <!--
+	GL_EXT_pixel_transform
+	http://oss.sgi.com/projects/ogl-sample/registry/EXT/pixel_transform.txt
+	XXX: Need to write up vops
+	-->
+
+    <!--
+	GL_NV_register_combiners
+	http://oss.sgi.com/projects/ogl-sample/registry/NV/register_combiners.txt
+	XXX: Need to write up vops
+	-->
+
+    <!--
+	GL_NV_fence
+	http://oss.sgi.com/projects/ogl-sample/registry/NV/fence.txt
+	XXX: Need to write up vops
+	-->
+
+    <!--
+	GL_NV_register_combiners2
+	http://oss.sgi.com/projects/ogl-sample/registry/NV/register_combiners2.txt
+	XXX: Need to write up vops
+	-->
+
+    <!--
+	GL_NV_vertex_program
+	http://oss.sgi.com/projects/ogl-sample/registry/NV/vertex_program.txt
+	XXX: Need to write up vops
+	-->
+
+    <!--
+	GL_NV_vertex_program
+	http://oss.sgi.com/projects/ogl-sample/registry/NV/vertex_program.txt
+	XXX: Need to write up vops
+	-->
+
+    <!--
+	GL_NV_occlusion_query
+	http://oss.sgi.com/projects/ogl-sample/registry/NV/occlusion_query.txt
+	XXX: Need to write up vops
+	-->
+
+    <!--
+	GL_NV_fragment_program
+	http://oss.sgi.com/projects/ogl-sample/registry/NV/fragment_program.txt
+	XXX: Need to write up vops
+	-->
+
+    <!--
+	GL_OES_single_precision
+	http://oss.sgi.com/projects/ogl-sample/registry/OES/single_precision.txt
+	XXX: Need to write up vops
+	-->
+
+</xcb>

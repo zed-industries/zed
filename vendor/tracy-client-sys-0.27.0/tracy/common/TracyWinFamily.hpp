@@ -1,0 +1,16 @@
+#ifndef __TRACYWINFAMILY_HPP__
+#define __TRACYWINFAMILY_HPP__
+
+#ifdef _WIN32
+#  include <winapifamily.h>
+#  if !WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
+#    define TRACY_WIN32_NO_DESKTOP
+#    if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_GAMES)
+#      define TRACY_GDK
+#    elif WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP)
+#      define TRACY_UWP
+#    endif
+#  endif
+#endif
+
+#endif

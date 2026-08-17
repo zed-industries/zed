@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+
+#------------------------------------------------------------------------------
+#
+# This program runs inside a Docker container that contains every known YAML
+# parser that supports the parse event DSL output.
+#
+# It is used to run every test in the suite against each YAML parser.
+#
+#------------------------------------------------------------------------------
+
+set -e -u -o pipefail
+
+main() (
+  id=$ID
+  tmp=/tmp/test/$id
+
+  set -- $RUNNERS
+
+  run-all-parsers "$@"
+
+  write-tsv-line "$@"
+)
+
+run-all-parsers() (
+  cat > "$tmp-input.yaml"
+
+  for parser; do
+    (
+      timeout 2 \
+      "$parser" \
+        < "$tmp-input.yaml" \
+        > "$tmp-$parser.stdout" \
+        2> "$tmp-$parser.stderr" ||
+        touch "$tmp-$parser.err"
+    ) &
+  done
+
+  wait
+)
+
+write-tsv-line() (
+  refparser=$1
+  shift
+
+  if [[ -e $tmp-$refparser.err ]]; then
+    got_ref=''
+  else
+    got_ref=$(< "$tmp-$refparser.stdout")
+  fi
+
+  out=''
+  for parser; do
+    want=$got_ref
+
+    if [[ -e $tmp-$parser.err ]]; then
+      got=''
+    elif [[
+      -s $tmp-$parser.stderr &&
+      $(< "$tmp-$parser.stdout") != *-STR
+    ]]; then
+      got=''
+    else
+      got=$(grep -v '=COMMENT' < "$tmp-$parser.stdout" || true)
+    fi
+
+    if [[ $parser == *-rustyaml ]]; then
+      got=$(adjust-tags-for-rust <<<"$got")
+      want=$(adjust-for-rust <<<"$want")
+      if [[ $got == *\&1* ]]; then
+        want=$(anchors-for-rust <<<"$want")
+      fi
+      # echo ">>>$want<<<"
+    fi
+
+    if [[ $parser == *-refhs ]]; then
+      [[ $got =~ (=ERR|=REST) ]] && got=''
+      if [[ $got && $want ]]; then
+        out+=$'\t'
+      elif [[ ! $got && ! $want ]]; then
+        out+=$'\t'
+      else
+        out+=$'\tx'
+      fi
+    else
+      [[ $got =~ $'\n'-STR$ ]] || got=''
+      if [[ $got == "$want" ]]; then
+        out+=$'\t'
+      else
+        got=${got//+MAP\ \{\}/+MAP}
+        got=${got//+SEQ\ \[\]/+SEQ}
+        want2=${want//+MAP\ \{\}/+MAP}
+        want2=${want2//+SEQ\ \[\]/+SEQ}
+
+        # Ignore Go parser bug:
+        got=${got//+DOC\ ---/+DOC}
+        want2=${want2//+DOC\ ---/+DOC}
+
+        if [[ $got == "$want2" ]]; then
+          out+=$'\t'
+        else
+          out+=$'\tx'
+        fi
+      fi
+    fi
+  done
+
+  printf '%s' "$out"
+)
+
+adjust-tags-for-rust() {
+  perl -p0e '
+    s/<Tag\("!!",\ "(.*?)"\)>/<tag:yaml.org,2002:$1>/g;
+    s/<Tag\("!",\ "(.*?)"\)>/<!$1>/g;
+    s/<Tag\("",\ "!"\)>/<!>/g;
+    s/<Tag\("",\ "(tag:.*?)"\)>/<$1>/g;
+    s/<Tag\("",\ "(!.*?)"\)>/<$1>/g;
+  '
+}
+
+adjust-for-rust() {
+  perl -p0e '
+    s/^\+DOC ---$/+DOC/gm;
+    s/^-DOC \.\.\.$/-DOC/gm;
+    s/^=VAL :$/=VAL :~/gm;
+    s/^\+MAP\ \{\}(\ ?)/+MAP$1/gm;
+    s/^\+SEQ\ \[\](\ ?)/+SEQ$1/gm;
+  '
+}
+
+anchors-for-rust() {
+  perl -p0e '
+    my $i = 1;
+    while (/\&([a-zA-Z]\S*)/) {
+      my $anchor = $1;
+      s/([\&\*])$anchor/$1$i/g;
+      $i++;
+    }
+  '
+}
+
+warn() ( echo "$*" >&2 )
+
+die() ( echo "$*" >&2; exit 1 )
+
+[[ -f /.dockerenv ]] || die "Not in docker"
+
+main "$@"

@@ -1,0 +1,64 @@
+[package]
+name = "wasmtime-c-api-impl"
+version.workspace = true
+authors.workspace = true
+description = "C API to expose the Wasmtime runtime"
+license = "Apache-2.0 WITH LLVM-exception"
+repository = "https://github.com/bytecodealliance/wasmtime"
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+links = "wasmtime-c-api"
+include = ["include", "src", "build.rs", "CMakeLists.txt", "cmake", "doxygen.conf.in"]
+
+[lints]
+workspace = true
+
+[lib]
+name = "wasmtime_c_api"
+test = false
+doctest = false
+
+[dependencies]
+env_logger = { workspace = true, optional = true }
+anyhow = { workspace = true }
+wasmtime = { workspace = true, features = ['runtime', 'gc', 'std'] }
+wasmtime-c-api-macros = { workspace = true }
+log = { workspace = true }
+tracing = { workspace = true }
+
+# Optional dependency for the `wat2wasm` API
+wat = { workspace = true, optional = true }
+
+# Optional dependencies for the `wasi` feature
+cap-std = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true, features = ["fs"] }
+wasmtime-wasi = { workspace = true, optional = true, features = ["preview1"] }
+
+# Optional dependencies for the `async` feature
+futures = { workspace = true, optional = true }
+
+[features]
+# WASMTIME_FEATURE_LIST
+async = ['wasmtime/async', 'futures']
+profiling = ["wasmtime/profiling"]
+cache = ["wasmtime/cache"]
+parallel-compilation = ['wasmtime/parallel-compilation']
+wasi = ['cap-std', 'wasmtime-wasi', 'tokio']
+logging = ['dep:env_logger']
+disable-logging = ["log/max_level_off", "tracing/max_level_off"]
+coredump = ["wasmtime/coredump"]
+addr2line = ["wasmtime/addr2line"]
+demangle = ["wasmtime/demangle"]
+threads = ["wasmtime/threads"]
+gc = ["wasmtime/gc"]
+gc-drc = ["wasmtime/gc-drc"]
+gc-null = ["wasmtime/gc-null"]
+cranelift = ['wasmtime/cranelift']
+winch = ['wasmtime/winch']
+debug-builtins = ['wasmtime/debug-builtins']
+wat = ['dep:wat', 'wasmtime/wat']
+pooling-allocator = ["wasmtime/pooling-allocator"]
+component-model = ["wasmtime/component-model"]
+# ... if you add a line above this be sure to change the other locations
+# marked WASMTIME_FEATURE_LIST

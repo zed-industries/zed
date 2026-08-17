@@ -1,0 +1,46 @@
+[[example]]
+name = "triangle"
+required-features = [
+    "objc2-app-kit/NSGraphics",
+    "objc2-app-kit/NSWindow",
+    "objc2-app-kit/NSResponder",
+    "objc2-app-kit/NSApplication",
+    "objc2-app-kit/NSRunningApplication",
+    "objc2-app-kit/NSView",
+    "objc2-foundation/NSError",
+    "objc2-foundation/NSString",
+    "objc2-foundation/NSDate",
+    "objc2-foundation/NSNotification",
+    "objc2-foundation/NSThread",
+    "objc2-foundation/NSGeometry",
+    "MTLAccelerationStructureTypes",
+    "MTLLibrary",
+    "MTLRenderPipeline",
+    "MTLRenderCommandEncoder",
+    "MTLCommandBuffer",
+    "MTLCommandEncoder",
+    "MTLCommandQueue",
+    "MTLPixelFormat",
+    "MTLDevice",
+    "MTLDrawable",
+    "MTLRenderPass",
+    "objc2-quartz-core/objc2-metal",
+    "objc2-metal-kit/MTKView",
+    "objc2-metal-kit/objc2-app-kit",
+    "objc2-metal-kit/objc2-quartz-core",
+]
+
+[features]
+# Private framework functionality
+#
+# These functions/methods are all marked `unsafe`, since they may not always
+# exist.
+unstable-private = [
+    "objc2-foundation/NSString",
+    "objc2-foundation/NSError",
+]
+
+[dev-dependencies]
+objc2-app-kit = { path = "../objc2-app-kit" }
+objc2-quartz-core = { path = "../objc2-quartz-core" }
+objc2-metal-kit = { path = "../objc2-metal-kit" }

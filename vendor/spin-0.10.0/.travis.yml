@@ -1,0 +1,34 @@
+language: rust
+
+rust:
+    - stable
+    - beta
+    - nightly
+
+sudo: false
+
+notifications:
+    email:
+        on_success: never
+        on_failure: always
+
+before_script:
+  - |
+      pip install 'travis-cargo<0.2' --user &&
+      export PATH=$HOME/.local/bin:$PATH
+
+script:
+    - travis-cargo build
+    - travis-cargo test
+    - travis-cargo doc -- --no-deps
+    # TODO: Reenable later
+    #- rustdoc --test README.md -L target/debug
+
+after_success:
+    - curl https://mvdnes.github.io/rust-docs/travis-doc-upload.sh | bash
+
+env:
+  global:
+    # override the default `--features unstable` used by travis-cargo
+    # since unstable is activated by default
+    - TRAVIS_CARGO_NIGHTLY_FEATURE=""

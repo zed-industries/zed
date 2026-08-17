@@ -1,0 +1,5 @@
+package not found
+     --> tests/ui/parse-fail/unresolved-interface4.wit:6:10
+      |
+    6 |   import some:dependency/iface;
+      |          ^--------------

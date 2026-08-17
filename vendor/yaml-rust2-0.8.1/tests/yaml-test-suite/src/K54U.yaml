@@ -1,0 +1,17 @@
+---
+- name: Tab after document header
+  from: '@perlpunk'
+  tags: header whitespace
+  yaml: |
+    ---»scalar
+  tree: |
+    +STR
+     +DOC ---
+      =VAL :scalar
+     -DOC
+    -STR
+  json: |
+    "scalar"
+  dump: |
+    --- scalar
+    ...

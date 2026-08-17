@@ -1,0 +1,158 @@
+// Generated from {{template_path}} template. Edit the template, not the generated file.
+
+{% if not is_scalar %}
+#![allow(clippy::useless_conversion)]
+{% endif %}
+
+{# component indices #}
+{% set indices = [0, 1, 2, 3] %}
+
+{# vector dimensions #}
+{% set dimensions = [2, 3, 4] %}
+
+{# element names #}
+{% set e = ["x", "y", "z", "w"] %}
+
+{# shuffle bits (sse2) #}
+{% set b = ["00", "01", "10", "11"] %}
+
+{# low index (wasm32) #}
+{% set l = ["0", "1", "2", "3"] %}
+
+{# high index (wasm32) #}
+{% set h = ["4", "5", "6", "7"] %}
+
+use crate::{
+    Vec{{ dim }}Swizzles,
+    {{vec2_t}}, {{vec3_t}}, {{vec4_t}},
+};
+
+{% if is_sse2 %}
+#[cfg(target_arch = "x86")]
+use core::arch::x86::*;
+#[cfg(target_arch = "x86_64")]
+use core::arch::x86_64::*;
+{% elif is_wasm32 %}
+use core::arch::wasm32::*;
+{% elif is_coresimd %}
+use core::simd::*;
+{% endif %}
+
+impl Vec{{ dim }}Swizzles for {{ self_t }} {
+    {% if dim != 2 %}
+    type Vec2 = {{ vec2_t }};
+    {% endif %}
+    {% if dim != 3 %}
+    type Vec3 = {{ vec3_t }};
+    {% endif %}
+    {% if dim != 4 %}
+    type Vec4 = {{ vec4_t }};
+    {% endif %}
+
+    {% for i in dimensions %}
+        {% for j0 in indices | slice(end=dim) %}
+            {% for j1 in indices | slice(end=dim) %}
+                {% if i == 2 %}
+                    {% set skip = dim == 2 and j0 == 0 and j1 == 1 %}
+                    {% if not skip %}
+                        {% if vec2_t == self_t %}
+                            {% set ret_t = "Self" %}
+                        {% else %}
+                            {% set ret_t = vec2_t %}
+                        {% endif %}
+
+    #[inline]
+    fn {{ e[j0] }}{{ e[j1] }}(self) -> {{ ret_t }} {
+        {{ ret_t }} { x: self.{{ e[j0] }}, y: self.{{ e[j1] }} }
+    }
+                    {% endif %}
+                    {% set skip = dim == 2 or j0 == j1 %}
+                    {% if not skip %}
+    #[inline]
+    fn with_{{ e[j0] }}{{ e[j1] }}(self, rhs: {{ vec2_t }}) -> Self {
+        Self::new(
+            {% for l in range(start = 0, end = dim) %}
+                {% if j0 == l %}
+                    rhs.x,
+                {% elif j1 == l %}
+                    rhs.y,
+                {% else %}
+                    self.{{e[l]}},
+                {% endif %}
+            {% endfor %}
+        )
+    }
+                    {% endif %}
+                {% else %}
+                    {% for j2 in indices | slice(end=dim) %}
+                        {% if i == 3 %}
+                            {% set skip = dim == 3 and j0 == 0 and j1 == 1 and j2 == 2 %}
+                            {% if not skip %}
+                                {% if vec3_t == self_t %}
+                                    {% set ret_t = "Self" %}
+                                {% else %}
+                                    {% set ret_t = vec3_t %}
+                                {% endif %}
+    #[inline]
+    fn {{ e[j0] }}{{ e[j1] }}{{ e[j2] }}(self) -> {{ ret_t }} {
+            {% if vec3_t == "Vec3A" and is_sse2 %}
+                {{ ret_t }}((unsafe { _mm_shuffle_ps(self.0, self.0, 0b00_{{ b[j2] }}_{{ b[j1] }}_{{ b[j0] }}) }).into())
+            {% elif vec3_t == "Vec3A" and is_wasm32 %}
+                {{ ret_t }}(i32x4_shuffle::<{{ l[j0] }}, {{ l[j1] }}, {{ h[j2] }}, {{ h[0] }}>(self.0, self.0).into())
+            {% elif vec3_t == "Vec3A" and is_coresimd %}
+                {{ ret_t }}(simd_swizzle!(self.0, [{{ l[j0] }}, {{ l[j1] }}, {{ l[j2] }}, {{ l[0] }}]).into())
+            {% else %}
+                {{ ret_t }}::new(self.{{ e[j0] }}, self.{{ e[j1] }}, self.{{ e[j2] }})
+            {% endif %}
+    }
+                            {% endif %}
+                            {% set skip = dim == 3 or j0 == j1 or j0 == j2 or j1 == j2 %}
+                            {% if not skip %}
+    #[inline]
+    fn with_{{ e[j0] }}{{ e[j1] }}{{ e[j2] }}(self, rhs: {{ vec3_t }}) -> Self {
+        Self::new(
+            {% for l in range(start = 0, end = dim) %}
+                {% if j0 == l %}
+                    rhs.x,
+                {% elif j1 == l %}
+                    rhs.y,
+                {% elif j2 == l %}
+                    rhs.z,
+                {% else %}
+                    self.{{e[l]}},
+                {% endif %}
+            {% endfor %}
+        )
+    }
+                            {% endif %}
+                        {% else %}
+                            {% for j3 in indices | slice(end=dim) %}
+                                {% set skip = dim == 4 and j0 == 0 and j1 == 1 and j2 == 2 and j3 == 3 %}
+                                {% if not skip %}
+                                    {% if vec4_t == self_t %}
+                                        {% set ret_t = "Self" %}
+                                    {% else %}
+                                        {% set ret_t = vec4_t %}
+                                    {% endif %}
+    #[inline]
+    fn {{ e[j0] }}{{ e[j1] }}{{ e[j2] }}{{ e[j3] }}(self) -> {{ ret_t }} {
+            {% if is_sse2 %}
+                {{ ret_t }}(unsafe { _mm_shuffle_ps(self.0, self.0, 0b{{ b[j3] }}_{{ b[j2] }}_{{ b[j1] }}_{{ b[j0] }}) })
+            {% elif is_wasm32 %}
+                {{ ret_t }}(i32x4_shuffle::<{{ l[j0] }}, {{ l[j1] }}, {{ h[j2] }}, {{ h[j3] }}>(self.0, self.0))
+            {% elif is_coresimd %}
+                {{ ret_t }}(simd_swizzle!(self.0, [{{ l[j0] }}, {{ l[j1] }}, {{ l[j2] }}, {{ l[j3] }}]))
+            {% else %}
+                {{ ret_t }}::new(self.{{ e[j0] }}, self.{{ e[j1] }}, self.{{ e[j2] }}, self.{{ e[j3] }})
+            {% endif %}
+    }
+                                {% endif %}
+                            {% endfor %}
+                        {% endif %}
+                    {% endfor %}
+                {% endif %}
+            {% endfor %}
+        {% endfor %}
+    {% endfor %}
+}
+

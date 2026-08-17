@@ -1,0 +1,21 @@
+---
+- name: Sequence entry that looks like two with wrong indentation
+  from: '@perlpunk'
+  tags: scalar sequence
+  yaml: |
+    - single multiline
+     - sequence entry
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       =VAL :single multiline - sequence entry
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      "single multiline - sequence entry"
+    ]
+  dump: |
+    - single multiline - sequence entry

@@ -1,0 +1,46 @@
+environment:
+  RUSTUP_INIT_SKIP_MSVC_CHECK: '1'
+  matrix:
+  - TARGET: stable-x86_64-pc-windows-msvc
+  - TARGET: stable-i686-pc-windows-msvc
+  - TARGET: beta-x86_64-pc-windows-msvc
+  - TARGET: beta-i686-pc-windows-msvc
+  - TARGET: nightly-x86_64-pc-windows-msvc
+  - TARGET: nightly-i686-pc-windows-msvc
+  - TARGET: stable-i686-pc-windows-gnu
+    MSYS_BITS: 32
+  - TARGET: stable-x86_64-pc-windows-gnu
+    MSYS_BITS: 64
+  - TARGET: beta-x86_64-pc-windows-gnu
+    MSYS_BITS: 64
+  - TARGET: beta-i686-pc-windows-gnu
+    MSYS_BITS: 32
+  - TARGET: nightly-x86_64-pc-windows-gnu
+    MSYS_BITS: 64
+  - TARGET: nightly-i686-pc-windows-gnu
+    MSYS_BITS: 32
+
+matrix:
+  allow_failures:
+  - TARGET: nightly-x86_64-pc-windows-msvc
+  - TARGET: nightly-i686-pc-windows-msvc
+  - TARGET: nightly-x86_64-pc-windows-gnu
+  - TARGET: nightly-i686-pc-windows-gnu
+
+cache:
+  - '%USERPROFILE%\.cargo -> Cargo.toml'
+  - '%USERPROFILE%\.rustup'
+
+install:
+  - curl -sSf -o rustup-init.exe https://win.rustup.rs/
+  - rustup-init.exe -y --default-toolchain %TARGET%
+  - set PATH=%PATH%;C:\Users\appveyor\.cargo\bin
+  - if defined MSYS_BITS set PATH=C:\msys64\mingw%MSYS_BITS%\bin;C:\msys64\usr\bin;%PATH%
+  - rustc -vV
+  - cargo -vV
+
+build_script:
+  - cargo build --verbose
+
+test_script:
+  - cargo test --verbose -- --test-threads=1 --nocapture

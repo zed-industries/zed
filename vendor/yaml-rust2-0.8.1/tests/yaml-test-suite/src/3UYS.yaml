@@ -1,0 +1,21 @@
+---
+- name: Escaped slash in double quotes
+  from: '@perlpunk'
+  tags: double
+  yaml: |
+    escaped slash: "a\/b"
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :escaped slash
+       =VAL "a/b
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "escaped slash": "a/b"
+    }
+  dump: |
+    escaped slash: "a/b"

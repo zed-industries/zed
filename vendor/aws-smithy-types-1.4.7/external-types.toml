@@ -1,0 +1,14 @@
+allowed_external_types = [
+    "bytes::bytes::Bytes",
+    "bytes::buf::buf_impl::Buf",
+
+    # TODO(https://github.com/smithy-lang/smithy-rs/issues/2412): Support cargo-features for cargo-check-external-types
+    "http_body::Body",
+    "hyper::body::body::Body",
+
+    # TODO(https://github.com/smithy-lang/smithy-rs/issues/2412): Support cargo-features for cargo-check-external-types
+    "tokio::io::async_buf_read::AsyncBufRead",
+
+    # TODO(https://github.com/smithy-lang/smithy-rs/issues/2412): Support cargo-features for cargo-check-external-types
+    "tokio::fs::file::File",
+]

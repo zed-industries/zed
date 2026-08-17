@@ -1,0 +1,24 @@
+[package]
+name = "cursor-icon"
+version = "1.2.0"
+authors = ["Kirill Chibisov <contact@kchibisov.com>"]
+description = "Cross platform cursor icon type"
+repository = "https://github.com/rust-windowing/cursor-icon"
+keywords = ["windowing", "cursor"]
+license = "MIT OR Apache-2.0 OR Zlib"
+readme = "README.md"
+edition = "2021"
+categories = ["gui"]
+rust-version = "1.65.0"
+
+[dependencies]
+serde = { version = "1.0.162", default-features = false, features = ["derive"], optional = true }
+
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+
+[dev-dependencies]
+wayland-client = "0.31.1"
+wayland-cursor = "0.31.0"

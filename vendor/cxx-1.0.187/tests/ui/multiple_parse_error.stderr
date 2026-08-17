@@ -1,0 +1,11 @@
+error: unit structs are not supported
+ --> tests/ui/multiple_parse_error.rs:3:5
+  |
+3 |     struct Monad<T>;
+  |     ^^^^^^^^^^^^^^^^
+
+error: unrecognized ABI, requires either "C++" or "Rust"
+ --> tests/ui/multiple_parse_error.rs:5:5
+  |
+5 |     extern "Haskell" {}
+  |     ^^^^^^^^^^^^^^^^

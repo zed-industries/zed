@@ -1,0 +1,5 @@
+error: undefined rule `foo`
+ --> $DIR/use_undefined_rule.rs:4:18
+  |
+4 |     rule bar() = foo() //~ ERROR undefined rule `foo`
+  |                  ^^^

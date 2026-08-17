@@ -1,0 +1,27 @@
+[package]
+name = "alsa"
+version = "0.10.0"
+authors = ["David Henningsson <coding@diwic.se>"]
+
+description = "Thin but safe wrappers for ALSA (Linux sound API)"
+repository = "https://github.com/diwic/alsa-rs"
+documentation = "http://docs.rs/alsa"
+keywords = ["ALSA", "audio", "sound"]
+license = "Apache-2.0/MIT"
+categories = ["multimedia::audio", "api-bindings"]
+readme = "README.md"
+edition = "2021"
+include = ["README.md", "LICENSE-*", "Cargo.toml", "src/"]
+
+[dependencies]
+libc = "0.2"
+alsa-sys = "0.3.1"
+bitflags = "2.4.0"
+cfg-if = "1.0"
+
+[dev-dependencies]
+anyhow = "1.0"
+
+[badges]
+is-it-maintained-issue-resolution = { repository = "diwic/alsa-rs" }
+is-it-maintained-open-issues = { repository = "diwic/alsa-rs" }

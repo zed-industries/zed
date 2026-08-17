@@ -1,0 +1,24 @@
+name: Rust
+
+on: [push, pull_request]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+          - 1.31.0
+          - stable
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+
+    - name: Run tests
+      run: cargo test
+
+    - name: Run tests without default features
+      run: cargo test --no-default-features

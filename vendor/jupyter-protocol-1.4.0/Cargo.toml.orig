@@ -1,0 +1,17 @@
+[package]
+name = "jupyter-protocol"
+version = "1.4.0"
+edition = "2021"
+description = "Jupyter messaging structures and traits for jupyter clients and servers"
+repository = "https://github.com/runtimed/runtimed"
+license = "BSD-3-Clause"
+
+[dependencies]
+async-trait = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }

@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ttFont sfntVersion="\x00\x01\x00\x00">
+
+  <GlyphOrder>
+    <GlyphID id="0" name=".notdef"/>
+    <GlyphID id="1" name="A"/>
+  </GlyphOrder>
+
+  <head>
+    <tableVersion value="1.0"/>
+    <fontRevision value="1.0"/>
+    <checkSumAdjustment value="0x0000000"/>
+    <magicNumber value="0x5f0f3cf5"/>
+    <flags value="00000000 00000000"/>
+    <unitsPerEm value="1000"/>
+    <created value="Sat Jan 1 00:00:00 2000"/>
+    <modified value="Sat Jan 1 00:00:00 2000"/>
+    <xMin value="0"/>
+    <yMin value="0"/>
+    <xMax value="0"/>
+    <yMax value="0"/>
+    <macStyle value="00000000 00000000"/>
+    <lowestRecPPEM value="3"/>
+    <fontDirectionHint value="2"/>
+    <indexToLocFormat value="0"/>
+    <glyphDataFormat value="0"/>
+  </head>
+
+  <hhea>
+    <tableVersion value="0x00010000"/>
+    <ascent value="1024"/>
+    <descent value="-400"/>
+    <lineGap value="0"/>
+    <advanceWidthMax value="0"/>
+    <minLeftSideBearing value="0"/>
+    <minRightSideBearing value="0"/>
+    <xMaxExtent value="0"/>
+    <caretSlopeRise value="1"/>
+    <caretSlopeRun value="0"/>
+    <caretOffset value="0"/>
+    <reserved0 value="0"/>
+    <reserved1 value="0"/>
+    <reserved2 value="0"/>
+    <reserved3 value="0"/>
+    <metricDataFormat value="0"/>
+    <numberOfHMetrics value="0"/>
+  </hhea>
+
+  <maxp>
+    <tableVersion value="0x10000"/>
+    <numGlyphs value="0"/>
+    <maxPoints value="0"/>
+    <maxContours value="0"/>
+    <maxCompositePoints value="0"/>
+    <maxCompositeContours value="0"/>
+    <maxZones value="0"/>
+    <maxTwilightPoints value="0"/>
+    <maxStorage value="0"/>
+    <maxFunctionDefs value="0"/>
+    <maxInstructionDefs value="0"/>
+    <maxStackElements value="0"/>
+    <maxSizeOfInstructions value="0"/>
+    <maxComponentElements value="0"/>
+    <maxComponentDepth value="0"/>
+  </maxp>
+
+  <hmtx>
+    <mtx name=".notdef" width="600" lsb="100"/>
+    <mtx name="A" width="540" lsb="6"/>
+  </hmtx>
+
+  <cmap>
+    <tableVersion version="0"/>
+    <cmap_format_4 platformID="0" platEncID="3" language="0">
+      <map code="0x41" name="A"/>
+    </cmap_format_4>
+  </cmap>
+
+  <loca>
+  </loca>
+
+  <glyf>
+    <TTGlyph name=".notdef">
+      <contour>
+        <pt x="100" y="0" on="1"/>
+        <pt x="100" y="700" on="1"/>
+        <pt x="600" y="700" on="1"/>
+        <pt x="600" y="0" on="1"/>
+      </contour>
+      <contour>
+        <pt x="140" y="40" on="1"/>
+        <pt x="560" y="40" on="1"/>
+        <pt x="560" y="660" on="1"/>
+        <pt x="140" y="660" on="1"/>
+      </contour>
+      <instructions/>
+    </TTGlyph>
+
+    <TTGlyph name="A">
+      <contour>
+        <pt x="173" y="267" on="1"/>
+        <pt x="369" y="267" on="1"/>
+        <pt x="270" y="587" on="1"/>
+      </contour>
+      <contour>
+        <pt x="6" y="0" on="1"/>
+        <pt x="224" y="656" on="1"/>
+        <pt x="320" y="656" on="1"/>
+        <pt x="541" y="0" on="1"/>
+        <pt x="452" y="0" on="1"/>
+        <pt x="390" y="200" on="1"/>
+        <pt x="151" y="200" on="1"/>
+        <pt x="85" y="0" on="1"/>
+      </contour>
+      <instructions/>
+    </TTGlyph>
+  </glyf>
+
+</ttFont>

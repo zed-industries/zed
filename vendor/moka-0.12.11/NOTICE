@@ -1,0 +1,14 @@
+Additional Notices for Moka
+
+The majority of the Moka library is dual-licensed under the MIT and Apache 2.0
+licenses.
+
+However, the following files are an exception and are licensed solely under
+the Apache License 2.0:
+
+- src/common/frequency_sketch.rs
+- src/common/timer_wheel.rs
+
+These files were ported from the Java Caffeine library and are not dual-licensed.
+
+Please refer to the LICENSE-APACHE file for more details on the Apache License 2.0.

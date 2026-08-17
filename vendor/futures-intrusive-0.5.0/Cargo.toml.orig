@@ -1,0 +1,56 @@
+[package]
+name = "futures-intrusive"
+edition = "2018"
+version = "0.5.0"
+authors = ["Matthias Einwag <matthias.einwag@live.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Matthias247/futures-intrusive"
+homepage = "https://github.com/Matthias247/futures-intrusive"
+description = """
+Futures based on intrusive data structures - for std and no-std environments.
+"""
+
+[lib]
+name = "futures_intrusive"
+
+[features]
+alloc = ["futures-core/alloc"]
+std = ["alloc", "parking_lot"]
+default = ["std"]
+
+[dependencies]
+futures-core = { version = "^0.3", default-features = false }
+lock_api = "0.4.1"
+parking_lot = { version = "0.12.0", optional = true }
+
+[dev-dependencies]
+futures = { version = "0.3.0", default-features = true, features=["async-await"] }
+futures-test = { version = "0.3.0", default-features = true }
+pin-utils = "0.1.0"
+criterion = "0.3.0"
+crossbeam = "0.7" # For channel benchmarks
+lazy_static = "1.4.0"
+rand = "0.7"
+async-std = "1.4" # For benchmarks
+tokio = { version = "1.14", features = ["full"] } # For channel benchmarks
+signal-hook = "0.1.11" # For cancellation example
+
+[[bench]]
+name = "mpmc_channel"
+harness = false
+
+[[bench]]
+name = "mutex"
+harness = false
+
+[[bench]]
+name = "semaphore"
+harness = false
+
+[[example]]
+name = "cancellation"
+required-features = ["std"]
+
+[[example]]
+name = "philosophers"
+required-features = ["std"]

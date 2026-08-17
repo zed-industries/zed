@@ -1,0 +1,74 @@
+/* Colours:
+#74240f  dark brown      h1, h2, h3, h4
+#336699  medium blue     links
+#339999  turquoise       link hover colour
+#202020  almost black    general text
+#761596  purple          md5sum text
+#626262  dark gray       pre border
+#eeeeee  very light gray pre background
+#f2f2f9  very light blue nav table background
+#3366cc  medium blue     nav table border
+*/
+
+a, a:link, a:visited, a:active { color: #336699; }
+a:hover { color: #339999; }
+
+body { font: 80%/126% sans-serif; }
+h1, h2, h3, h4 { color: #74240f; }
+
+dt { color: #336699; font-weight: bold }
+dd { 
+ margin-left: 1.5em; 
+ padding-bottom: 0.8em;
+}
+
+/* -- ruler -- */
+div.hr_blue { 
+  height:  3px; 
+  background:#ffffff url("../images/hr_blue.png") repeat-x; }
+div.hr_blue hr { display:none; }
+
+/* release styles */
+#release p { margin-top: 0.4em; }
+#release .md5sum { color: #761596; }
+
+
+/* ------ styles for docs|manuals|howto ------ */
+/* -- lists -- */
+ul  { 
+ margin:     0px 4px 16px 16px;
+ padding:    0px;
+ list-style: url("../images/li-blue.png"); 
+}
+ul li { 
+ margin-bottom: 10px;
+}
+ul ul	{ 
+ list-style-type:  none; 
+ list-style-image: none; 
+ margin-left:      0px; 
+}
+
+/* header / footer nav tables */
+table.nav {
+ border:     solid 1px #3366cc;
+ background: #f2f2f9;
+ background-color: #f2f2f9;
+ margin-bottom: 0.5em;
+}
+/* don't have underlined links in chunked nav menus */
+table.nav a { text-decoration: none; }
+table.nav a:hover { text-decoration: underline; }
+table.nav td { font-size: 85%; }
+
+code, tt, pre { font-size: 120%; }
+code, tt { color: #761596; }
+
+div.literallayout, pre.programlisting, pre.screen {
+ color:      #000000;
+ padding:    0.5em;
+ background: #eeeeee;
+ border:     1px solid #626262;
+ background-color: #eeeeee;
+ margin: 4px 0px 4px 0px; 
+}

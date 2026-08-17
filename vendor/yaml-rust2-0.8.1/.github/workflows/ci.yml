@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+jobs:
+  check:
+    name: Lints and checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy --no-self-update
+      - uses: Swatinem/rust-cache@v2
+      - name: Run clippy checks
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Run format checks
+        run: cargo fmt --check
+
+  test:
+    name: Test using Rust ${{ matrix.rust }} on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        rust: [stable]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - run: git submodule update --init
+      - run: rustup toolchain install ${{ matrix.rust }} --profile minimal --no-self-update
+      - uses: Swatinem/rust-cache@v2
+      - name: Run build
+        run: cargo build
+      - name: Run tests
+        run: cargo test -v

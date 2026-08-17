@@ -1,0 +1,17 @@
+package a:b1;
+
+world the-world {
+  include a:b2/the-world;
+}
+
+package a:b2 {
+  world the-world {
+    @unstable(feature = disabled)
+    import a:b3/thing;
+  }
+}
+
+package a:b3 {
+  @unstable(feature = disabled)
+  interface thing {}
+}

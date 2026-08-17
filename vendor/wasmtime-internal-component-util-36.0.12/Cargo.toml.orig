@@ -1,0 +1,12 @@
+[package]
+name = "wasmtime-internal-component-util"
+version.workspace = true
+authors.workspace = true
+description = "INTERNAL: Utility types and functions to support the component model in Wasmtime"
+license = "Apache-2.0 WITH LLVM-exception"
+repository = "https://github.com/bytecodealliance/wasmtime"
+documentation = "https://docs.rs/wasmtime-component-util/"
+categories = ["wasm"]
+keywords = ["webassembly", "wasm"]
+edition.workspace = true
+rust-version.workspace = true

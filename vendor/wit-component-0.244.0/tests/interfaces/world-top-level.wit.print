@@ -1,0 +1,19 @@
+package foo:foo;
+
+world foo {
+  import some-interface: interface {
+  }
+  import foo: func();
+  import bar: func(arg: u32);
+
+  export foo2: func();
+  export bar2: func() -> u32;
+  export another-interface: interface {
+  }
+}
+world just-import {
+  import foo: func();
+}
+world just-export {
+  export foo: func();
+}

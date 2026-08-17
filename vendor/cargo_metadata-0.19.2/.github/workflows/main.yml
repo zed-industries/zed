@@ -1,0 +1,46 @@
+name: CI
+on: [push, pull_request]
+
+jobs:
+  rustfmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install rust
+      run: rustup update --no-self-update stable && rustup default stable
+    - name: Check formatting
+      run: cargo fmt -- --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install rust
+        run: rustup update --no-self-update stable && rustup default stable
+      - name: Clippy check
+        run: cargo clippy --all-features -- -Dwarnings
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - rust: stable
+          - rust: beta
+          - rust: nightly
+          - rust: 1.78.0
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install rust
+      run: rustup update --no-self-update ${{ matrix.rust }} && rustup default ${{ matrix.rust }}
+    - name: Run tests
+      run: |
+        cargo build --verbose
+        cargo build --verbose --no-default-features
+        cargo test --verbose
+        cargo test --verbose --no-default-features
+        cargo test --verbose --all-features
+

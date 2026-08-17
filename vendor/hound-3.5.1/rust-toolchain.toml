@@ -1,0 +1,5 @@
+[toolchain]
+# Note, this is the Minimum Supported Rust Version. We build with this by
+# default to ensure we don't accidentally break it, but of course you should be
+# able to build with more recent versions.
+channel = "1.40.0"

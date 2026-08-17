@@ -1,0 +1,13 @@
+---
+- name: Invalid document-end marker in single quoted string
+  from: '@perlpunk'
+  tags: footer single error
+  fail: true
+  yaml: |
+    ---
+    '
+    ...
+    '
+  tree: |
+    +STR
+     +DOC ---

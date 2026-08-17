@@ -1,0 +1,5 @@
+expected keyword `as`, found ':'
+     --> tests/ui/parse-fail/include-with-id.wit:10:25
+      |
+   10 |     include a with { foo:foo/foo as foo2 }
+      |                         ^

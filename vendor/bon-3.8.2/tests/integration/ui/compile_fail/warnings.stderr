@@ -1,0 +1,146 @@
+error: unused `ExampleBuilder` that must be used
+  --> tests/integration/ui/compile_fail/warnings.rs:29:9
+   |
+29 |         Example::builder();
+   |         ^^^^^^^^^^^^^^^^^^
+   |
+   = note: the builder does nothing until you call `build()` on it to finish building
+note: the lint level is defined here
+  --> tests/integration/ui/compile_fail/warnings.rs:1:9
+   |
+ 1 | #![deny(warnings)]
+   |         ^^^^^^^^
+   = note: `#[deny(unused_must_use)]` implied by `#[deny(warnings)]`
+help: use `let _ = ...` to ignore the resulting value
+   |
+29 |         let _ = Example::builder();
+   |         +++++++
+
+error: unused `ExampleMustUseBuilder` that must be used
+  --> tests/integration/ui/compile_fail/warnings.rs:30:9
+   |
+30 |         Example::must_use();
+   |         ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: the builder does nothing until you call `call()` on it to finish building
+help: use `let _ = ...` to ignore the resulting value
+   |
+30 |         let _ = Example::must_use();
+   |         +++++++
+
+error: unused `MustUseBuilder` that must be used
+  --> tests/integration/ui/compile_fail/warnings.rs:31:9
+   |
+31 |         must_use();
+   |         ^^^^^^^^^^
+   |
+   = note: the builder does nothing until you call `call()` on it to finish building
+help: use `let _ = ...` to ignore the resulting value
+   |
+31 |         let _ = must_use();
+   |         +++++++
+
+error: unused `ExampleBuilder` that must be used
+  --> tests/integration/ui/compile_fail/warnings.rs:33:9
+   |
+33 |         Example::builder().x(1);
+   |         ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: the builder does nothing until you call `build()` on it to finish building
+help: use `let _ = ...` to ignore the resulting value
+   |
+33 |         let _ = Example::builder().x(1);
+   |         +++++++
+
+error: unused return value of `ExampleBuilder::<S>::build` that must be used
+  --> tests/integration/ui/compile_fail/warnings.rs:34:9
+   |
+34 |         Example::builder().x(1).y(2).build();
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: building a struct without using it is likely a bug
+help: use `let _ = ...` to ignore the resulting value
+   |
+34 |         let _ = Example::builder().x(1).y(2).build();
+   |         +++++++
+
+error: unused return value of `ExampleMustUseBuilder::<S>::call` that must be used
+  --> tests/integration/ui/compile_fail/warnings.rs:36:9
+   |
+36 |         Example::must_use().call();
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+help: use `let _ = ...` to ignore the resulting value
+   |
+36 |         let _ = Example::must_use().call();
+   |         +++++++
+
+error: unused return value of `MustUseBuilder::<S>::call` that must be used
+  --> tests/integration/ui/compile_fail/warnings.rs:38:9
+   |
+38 |         must_use().call();
+   |         ^^^^^^^^^^^^^^^^^
+   |
+help: use `let _ = ...` to ignore the resulting value
+   |
+38 |         let _ = must_use().call();
+   |         +++++++
+
+error: unused return value of `__orig_must_use` that must be used
+  --> tests/integration/ui/compile_fail/warnings.rs:39:9
+   |
+39 |         __orig_must_use();
+   |         ^^^^^^^^^^^^^^^^^
+   |
+help: use `let _ = ...` to ignore the resulting value
+   |
+39 |         let _ = __orig_must_use();
+   |         +++++++
+
+error: unused return value of `MustUseUnderCfgBuilder::<S>::call` that must be used
+  --> tests/integration/ui/compile_fail/warnings.rs:47:9
+   |
+47 |         must_use_under_cfg().call();
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: must use message
+help: use `let _ = ...` to ignore the resulting value
+   |
+47 |         let _ = must_use_under_cfg().call();
+   |         +++++++
+
+error: unused return value of `SutBuilder::<S>::get_x1` that must be used
+  --> tests/integration/ui/compile_fail/warnings.rs:75:9
+   |
+75 |         builder.get_x1();
+   |         ^^^^^^^^^^^^^^^^
+   |
+   = note: this method has no side effects; it only returns a value
+help: use `let _ = ...` to ignore the resulting value
+   |
+75 |         let _ = builder.get_x1();
+   |         +++++++
+
+error: unused return value of `SutBuilder::<S>::get_x2` that must be used
+  --> tests/integration/ui/compile_fail/warnings.rs:76:9
+   |
+76 |         builder.get_x2();
+   |         ^^^^^^^^^^^^^^^^
+   |
+   = note: this method has no side effects; it only returns a value
+help: use `let _ = ...` to ignore the resulting value
+   |
+76 |         let _ = builder.get_x2();
+   |         +++++++
+
+error: unused return value of `SutBuilder::<S>::get_x3` that must be used
+  --> tests/integration/ui/compile_fail/warnings.rs:77:9
+   |
+77 |         builder.get_x3();
+   |         ^^^^^^^^^^^^^^^^
+   |
+   = note: this method has no side effects; it only returns a value
+help: use `let _ = ...` to ignore the resulting value
+   |
+77 |         let _ = builder.get_x3();
+   |         +++++++

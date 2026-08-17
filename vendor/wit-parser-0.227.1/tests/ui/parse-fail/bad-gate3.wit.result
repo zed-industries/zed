@@ -1,0 +1,5 @@
+this type is not gated by a feature but its interface is gated by a feature: found a reference to a interface which is excluded due to its feature not being activated
+     --> tests/ui/parse-fail/bad-gate3.wit:5:8
+      |
+    5 |   type a = u32;
+      |        ^

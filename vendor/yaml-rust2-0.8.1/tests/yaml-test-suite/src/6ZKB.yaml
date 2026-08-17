@@ -1,0 +1,40 @@
+---
+- name: Spec Example 9.6. Stream
+  from: http://www.yaml.org/spec/1.2/spec.html#id2801896
+  tags: spec header 1.3-err
+  yaml: |
+    Document
+    ---
+    # Empty
+    ...
+    %YAML 1.2
+    ---
+    matches %: 20
+  tree: |
+    +STR
+     +DOC
+      =VAL :Document
+     -DOC
+     +DOC ---
+      =VAL :
+     -DOC ...
+     +DOC ---
+      +MAP
+       =VAL :matches %
+       =VAL :20
+      -MAP
+     -DOC
+    -STR
+  json: |
+    "Document"
+    null
+    {
+      "matches %": 20
+    }
+  emit: |
+    Document
+    ---
+    ...
+    %YAML 1.2
+    ---
+    matches %: 20

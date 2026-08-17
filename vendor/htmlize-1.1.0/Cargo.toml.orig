@@ -1,0 +1,124 @@
+[package]
+name = "htmlize"
+version = "1.1.0"
+authors = ["Daniel Parks <oss-htmlize@demonhorse.org>"]
+description = "Correctly encode and decode HTML entities in UTF-8"
+homepage = "https://github.com/danielparks/htmlize"
+repository = "https://github.com/danielparks/htmlize"
+readme = "README.md"
+exclude = [".*", "/*.sh", "/target", "/Dockerfile"]
+keywords = ["html", "entities", "escape", "unescape", "decode"]
+categories = ["web-programming", "encoding"]
+license = "MIT OR Apache-2.0"
+edition = "2021"
+rust-version = "1.60"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = []
+unescape = ["entities", "_unescape_either"]
+unescape_fast = ["_unescape_either", "dep:matchgen", "dep:serde_json"]
+entities = ["dep:phf", "dep:phf_codegen", "dep:serde_json"]
+# Enable iai benchmarks
+iai = []
+# Make internal functions like unescape_fast public for benchmarks.
+bench = []
+# Kludge to support `or` in required-features below
+_unescape_either = []
+
+[build-dependencies]
+matchgen = { version = "0.4.0", optional = true }
+phf = { version = "0.13.1", default-features = false, optional = true }
+phf_codegen = { version = "0.13.1", optional = true }
+serde_json = { version = "1.0", optional = true }
+
+[dependencies]
+memchr = "2.5.0"
+pastey = "0.1.0"
+phf = { version = "0.13.1", default-features = false, optional = true }
+
+[dev-dependencies]
+assert2 = "0.3.7"
+criterion = "0.5.1"
+iai = "0.1.1"
+
+[lib]
+bench = false
+
+[[bench]]
+name = "escape_iai"
+harness = false
+required-features = ["iai"]
+
+[[bench]]
+name = "escape"
+harness = false
+
+[[bench]]
+name = "unescape_iai"
+harness = false
+required-features = ["bench", "iai", "_unescape_either"]
+
+[[bench]]
+name = "unescape"
+harness = false
+required-features = ["bench", "_unescape_either"]
+
+[lints]
+workspace = true
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+nursery = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+missing_docs_in_private_items = "warn"
+
+# Other restriction lints
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+arithmetic_side_effects = "warn"
+as_underscore = "warn"
+assertions_on_result_states = "warn"
+dbg_macro = "warn"
+default_union_representation = "warn"
+doc_paragraphs_missing_punctuation = "warn"
+empty_enum_variants_with_brackets = "warn"
+empty_structs_with_brackets = "warn"
+filetype_is_file = "warn" # maybe?
+fn_to_numeric_cast_any = "warn"
+format_push_string = "warn" # maybe? alternative is fallible.
+get_unwrap = "warn"
+impl_trait_in_params = "warn"
+integer_division = "warn"
+lossy_float_literal = "warn"
+mem_forget = "warn"
+mixed_read_write_in_expression = "warn"
+multiple_inherent_impl = "warn"
+multiple_unsafe_ops_per_block = "warn"
+mutex_atomic = "warn"
+rc_buffer = "warn"
+rc_mutex = "warn"
+same_name_method = "warn"
+semicolon_inside_block = "warn"
+str_to_string = "warn"
+undocumented_unsafe_blocks = "warn"
+unnecessary_safety_doc = "warn"
+unnecessary_self_imports = "warn"
+unneeded_field_pattern = "warn"
+verbose_file_reads = "warn"
+
+# Pedantic exceptions
+let_underscore_untyped = "allow"
+manual_string_new = "allow"
+map_unwrap_or = "allow"
+module_name_repetitions = "allow"
+unnecessary_debug_formatting = "allow" # display() doesn’t escape invalid chars
+
+# Nursery exceptions
+option_if_let_else = "allow"

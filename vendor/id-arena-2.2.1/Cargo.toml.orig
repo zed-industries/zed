@@ -1,0 +1,20 @@
+[package]
+authors = ["Nick Fitzgerald <fitzgen@gmail.com>", "Aleksey Kladov <aleksey.kladov@gmail.com>"]
+categories = ["memory-management", "rust-patterns", "no-std"]
+description = "A simple, id-based arena."
+documentation = "https://docs.rs/id-arena"
+license = "MIT/Apache-2.0"
+name = "id-arena"
+readme = "README.md"
+repository = "https://github.com/fitzgen/id-arena"
+version = "2.2.1"
+
+[package.metadata.docs.rs]
+features = ['rayon']
+
+[dependencies]
+rayon = { version = "1.0.3", optional = true }
+
+[features]
+default = ["std"]
+std = []

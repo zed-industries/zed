@@ -1,0 +1,157 @@
+eval '(exit $?0)' && eval 'exec perl -wS -i "$0" ${1+"$@"}'
+  & eval 'exec perl -wS -i "$0" $argv:q'
+    if 0;
+
+# Copyright (C) 2015-2023 by
+# Werner Lemberg.
+#
+# This file is part of the FreeType project, and may only be used, modified,
+# and distributed under the terms of the FreeType project license,
+# LICENSE.TXT.  By continuing to use, modify, or distribute this file you
+# indicate that you have read the license and understand and accept it
+# fully.
+
+# [Note: This script is expected to be called by the shell, which in turn
+#  calls perl automatically.  The nifty start-up code above is based on
+#  gnulib's `update-copyright' script; it is a more portable replacement for
+#  the shebang, using the first `perl' program in the shell's path instead.]
+
+# Usage:
+#
+#   update-copyright-year file1 [file2 ...]
+
+
+# This script handles copyright entries like
+#
+#   Copyright  2000   by
+#   foobar
+#
+# or
+#
+#   /* Copyright (c) 2000,  2001, 2004-2007 by    */
+#   /* foobar                                     */
+#
+# and replaces them uniformly with
+#
+#   Copyright (C) 2000-2021
+#   foobar
+#
+# and
+#
+#   /* Copyright (C) 2000-2021 by                 */
+#   /* foobar                                     */
+#
+# (assuming that the current year is 2021).  As can be seen, the line length
+# is retained if there is non-whitespace after the word `by' on the same
+# line.
+
+use strict;
+
+
+my (undef, undef, undef,
+    undef, undef, $year,
+    undef, undef, undef) = localtime(time);
+$year += 1900;
+
+my $replaced = 0;
+
+
+# Loop over all input files; option `-i' (issued at the very beginning of
+# this script) makes perl edit them in-place.
+while (<>)
+{
+  # Only handle the first copyright notice in a file.
+  if (!$replaced)
+  {
+    # First try: Search multiple copyright years.
+    s {
+        (?<begin>.*)
+        Copyright
+        (?<space1>(\ +
+                   | \ +\(C\)\ +))
+        (?<first>[12][0-9][0-9][0-9])
+        (?<middle>.+)
+        (?<last>[12][0-9][0-9][0-9])
+        (?<space2>\ +)
+        by
+        (?<space3>\ *)
+        (?<end>.*)
+      }
+      {
+        # Fill line to the same length (if appropriate); we skip the middle
+        # part but insert `(C)', three spaces, and `-'.
+        my $space = length($+{space1})
+                    + length($+{middle})
+                    + length($+{space2})
+                    + length($+{space3})
+                    - (length("(C)") + 3 + 1);
+
+        print "$+{begin}";
+        print "Copyright\ (C)\ $+{first}-$year\ by";
+        print ' ' x $space if length($+{end});
+        print "$+{end}\n";
+        $replaced = 1;
+      }ex
+    ||
+    # Second try: Search a single copyright year.
+    s {
+        (?<begin>.*)
+        Copyright
+        (?<space1>(\ +
+                   | \ +\(C\)\ +))
+        (?<first>[12][0-9][0-9][0-9])
+        (?<space2>\ +)
+        by
+        (?<space3>\ *)
+        (?<end>.*)
+      }
+      {
+        if ($+{first} < $year)
+        {
+          # Fill line to the same length (if appropriate); we insert three
+          # spaces, the string `(C)', a `-', and the current year.
+          my $space = length($+{space1})
+                      + length($+{space2})
+                      + length($+{space3})
+                      - (length($year) + length("(C)") + 3 + 1);
+
+          print "$+{begin}";
+          print "Copyright\ (C)\ $+{first}-$year\ by";
+          # If $space is negative this inserts nothing.
+          print ' ' x $space if length($+{end});
+          print "$+{end}\n";
+          $replaced = 1;
+        }
+        else
+        {
+          # Fill line to the same length (if appropriate); we insert three
+          # spaces and the string `(C)'.
+          my $space = length($+{space1})
+                      + length($+{space2})
+                      + length($+{space3})
+                      - (length("(C)") + 3);
+
+          print "$+{begin}";
+          print "Copyright\ (C)\ $+{first}\ by";
+          # If $space is negative this inserts nothing.
+          print ' ' x $space if length($+{end});
+          print "$+{end}\n";
+          $replaced = 1;
+        }
+      }ex
+    ||
+    # Otherwise print line unaltered.
+    print;
+  }
+  else
+  {
+    print;
+  }
+}
+continue
+{
+  # Reset $replaced before processing the next file.
+  $replaced = 0 if eof;
+}
+
+# EOF

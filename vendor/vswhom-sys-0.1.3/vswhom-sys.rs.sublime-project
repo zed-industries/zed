@@ -1,0 +1,54 @@
+{
+	"build_systems":
+	[
+		{
+			"working_dir": "$project_path",
+			"shell_cmd": "cargo build --color always && cargo test --color always",
+			"name": "Build and test vswhom-sys.rs",
+
+			"target": "ansi_color_build",
+			"syntax": "Packages/ANSIescape/ANSI.tmLanguage"
+		},
+		{
+			"working_dir": "$project_path",
+			"shell_cmd": "cargo doc --color always",
+			"name": "Document vswhom-sys.rs",
+
+			"target": "ansi_color_build",
+			"syntax": "Packages/ANSIescape/ANSI.tmLanguage"
+		}
+	],
+	"folders":
+	[
+		{
+			"follow_symlinks": true,
+			"name": "Source",
+			"path": "src"
+		},
+		{
+			"follow_symlinks": true,
+			"name": "Native source",
+			"path": "ext"
+		},
+		{
+			"file_include_patterns":
+			[
+				"*Makefile*",
+				"*.yml",
+				"Cargo.*",
+				"build.rs"
+			],
+			"folder_exclude_patterns":
+			[
+				"*"
+			],
+			"follow_symlinks": true,
+			"name": "Build files",
+			"path": "."
+		}
+	],
+	"settings": {
+		"tab_size": 4,
+		"translate_tabs_to_spaces": true
+	}
+}

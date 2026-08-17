@@ -1,0 +1,141 @@
+[package]
+name = "cached"
+version = "0.56.0"
+authors = ["James Kominick <james@kominick.com>"]
+description = "Generic cache implementations and simplified function memoization"
+repository = "https://github.com/jaemk/cached"
+documentation = "https://docs.rs/cached"
+readme = "README.md"
+categories = ["caching", "data-structures"]
+keywords = ["cache", "memoize", "lru", "redis", "disk"]
+license = "MIT"
+edition = "2018"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = ["proc_macro", "ahash"]
+proc_macro = ["cached_proc_macro", "cached_proc_macro_types"]
+ahash = ["dep:ahash", "hashbrown/default"]
+async = ["futures", "tokio", "async-trait"]
+async_tokio_rt_multi_thread = ["async", "tokio/rt-multi-thread"]
+redis_store = ["redis", "r2d2", "serde", "serde_json"]
+redis_connection_manager = ["redis_store", "redis/connection-manager"]
+redis_async_std = ["redis_store", "async", "redis/aio", "redis/async-std-comp", "redis/tls", "redis/async-std-tls-comp"]
+redis_tokio = ["redis_store", "async", "redis/aio", "redis/tokio-comp", "redis/tls", "redis/tokio-native-tls-comp"]
+redis_ahash = ["redis_store", "redis/ahash"]
+disk_store = ["sled", "serde", "rmp-serde", "directories"]
+wasm = []
+
+[dependencies.cached_proc_macro]
+version = "0.25.0"
+path = "cached_proc_macro"
+optional = true
+
+[dependencies.cached_proc_macro_types]
+version = "0.1.1"
+path = "cached_proc_macro_types"
+optional = true
+
+[dependencies.hashbrown]
+version = "0.15"
+default-features = false
+features = ["inline-more"]
+
+[dependencies.once_cell]
+version = "1"
+
+[dependencies.thiserror]
+version = "2"
+
+[dependencies.ahash]
+version = "0.8"
+default-features = false
+optional = true
+
+[dependencies.futures]
+version = "0.3"
+default-features = false
+optional = true
+
+[dependencies.async-trait]
+version = "0.1"
+optional = true
+
+[dependencies.redis]
+version = "0.32"
+features = ["r2d2"]
+optional = true
+
+[dependencies.sled]
+version = "0.34"
+optional = true
+
+[dependencies.rmp-serde]
+version = "1.1"
+optional = true
+
+[dependencies.directories]
+version = "6.0"
+optional = true
+
+[dependencies.r2d2]
+version = "0.8"
+optional = true
+
+[dependencies.serde]
+version = "1.0"
+features = ["derive"]
+optional = true
+
+[dependencies.serde_json]
+version = "1.0"
+optional = true
+
+[dependencies.tokio]
+version = "1"
+features = ["macros", "time", "sync", "parking_lot"]
+optional = true
+
+[dependencies.web-time]
+version = "^1.1.0"
+
+[dev-dependencies]
+copy_dir = "0.1.3"
+googletest = "0.11.0"
+tempfile = "3.10.1"
+
+[dev-dependencies.async-std]
+version = "1.6"
+features = ["attributes"]
+
+[dev-dependencies.smartstring]
+version = "1"
+
+[dev-dependencies.serial_test]
+version = "3"
+
+[workspace]
+members = ["cached_proc_macro", "examples/wasm"]
+
+[[example]]
+name = "redis"
+required-features = ["redis_store", "proc_macro"]
+
+[[example]]
+name = "redis-async"
+required-features = ["async", "proc_macro"]
+
+[[example]]
+name = "tokio"
+required-features = ["async", "proc_macro"]
+
+[[example]]
+name = "async_std"
+required-features = ["async", "proc_macro"]
+
+[[example]]
+name = "expiring_sized_cache"
+required-features = ["async_tokio_rt_multi_thread"]

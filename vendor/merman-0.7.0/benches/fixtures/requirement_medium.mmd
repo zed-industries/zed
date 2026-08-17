@@ -1,0 +1,15 @@
+requirementDiagram
+  requirement req1 {
+    id: 1
+    text: User logs in
+    risk: high
+  }
+  functionalRequirement req2 {
+    id: 2
+    text: System validates
+  }
+  element el1 {
+    type: system
+  }
+  req1 - satisfies -> req2
+  req2 - traces -> el1

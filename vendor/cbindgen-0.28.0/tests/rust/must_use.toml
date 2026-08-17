@@ -1,0 +1,14 @@
+header = """
+#define MUST_USE_FUNC __attribute__((warn_unused_result))
+#define MUST_USE_STRUCT __attribute__((warn_unused))
+#define MUST_USE_ENUM /* nothing */
+"""
+
+[fn]
+must_use = "MUST_USE_FUNC"
+
+[struct]
+must_use = "MUST_USE_STRUCT"
+
+[enum]
+must_use = "MUST_USE_ENUM"

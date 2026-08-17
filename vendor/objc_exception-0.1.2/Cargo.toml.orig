@@ -1,0 +1,17 @@
+[package]
+name = "objc_exception"
+version = "0.1.2"
+authors = ["Steven Sheldon"]
+
+description = "Rust interface for Objective-C's throw and try/catch statements."
+keywords = ["objective-c", "osx", "ios"]
+repository = "http://github.com/SSheldon/rust-objc-exception"
+documentation = "http://ssheldon.github.io/rust-objc/objc_exception/"
+license = "MIT"
+
+exclude = [".gitignore"]
+
+build = "build.rs"
+
+[build-dependencies]
+cc = "1"

@@ -1,0 +1,18 @@
+[package]
+name = "arraydeque"
+version = "0.5.1"
+authors = ["andylokandy"]
+license = "MIT/Apache-2.0"
+edition = "2021"
+
+description = "A ring buffer with a fixed capacity, which can be stored on the stack."
+documentation = "https://docs.rs/arraydeque"
+repository = "https://github.com/andylokandy/arraydeque"
+homepage = "https://github.com/andylokandy/arraydeque"
+
+keywords = ["ring", "circular", "stack", "deque", "array"]
+categories = ["no-std", "data-structures", "memory-management"]
+
+[features]
+default = ["std"]
+std = []

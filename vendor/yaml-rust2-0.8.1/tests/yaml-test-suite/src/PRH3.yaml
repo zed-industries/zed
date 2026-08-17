@@ -1,0 +1,25 @@
+---
+- name: Spec Example 7.9. Single Quoted Lines
+  from: http://www.yaml.org/spec/1.2/spec.html#id2788756
+  tags: single spec scalar whitespace upto-1.2
+  yaml: |
+    ' 1st non-empty
+
+     2nd non-empty␣
+    ———»3rd non-empty '
+  tree: |
+    +STR
+     +DOC
+      =VAL ' 1st non-empty\n2nd non-empty 3rd non-empty␣
+     -DOC
+    -STR
+  json: |
+    " 1st non-empty\n2nd non-empty 3rd non-empty "
+  dump: |
+    ' 1st non-empty
+
+      2nd non-empty 3rd non-empty '
+  emit: |
+    ' 1st non-empty
+
+      2nd non-empty 3rd non-empty '

@@ -1,0 +1,24 @@
+[package]
+name = "bitstream-io"
+description = "Library for reading/writing un-aligned values from/to streams in big-endian and little-endian formats."
+keywords = ["bitstream", "endian", "big-endian", "little-endian", "binary"]
+version = "4.9.0"
+authors = ["Brian Langenberger <bjl@usa.net>"]
+license = "MIT/Apache-2.0"
+documentation = "https://docs.rs/bitstream-io/"
+homepage = "https://github.com/tuffy/bitstream-io"
+repository = "https://github.com/tuffy/bitstream-io"
+edition = "2018"
+rust-version = "1.83"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+core2 = { version = "0.4", default-features = false }
+
+[features]
+std = ["core2/std", "alloc"]
+alloc = ["core2/alloc"]
+default = ["std"]

@@ -1,0 +1,47 @@
+---
+- name: Spec Example 2.17. Quoted Scalars
+  from: http://www.yaml.org/spec/1.2/spec.html#id2761245
+  tags: spec scalar
+  yaml: |
+    unicode: "Sosa did fine.\u263A"
+    control: "\b1998\t1999\t2000\n"
+    hex esc: "\x0d\x0a is \r\n"
+
+    single: '"Howdy!" he cried.'
+    quoted: ' # Not a ''comment''.'
+    tie-fighter: '|\-*-/|'
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :unicode
+       =VAL "Sosa did fine.☺
+       =VAL :control
+       =VAL "\b1998\t1999\t2000\n
+       =VAL :hex esc
+       =VAL "\r\n is \r\n
+       =VAL :single
+       =VAL '"Howdy!" he cried.
+       =VAL :quoted
+       =VAL ' # Not a 'comment'.
+       =VAL :tie-fighter
+       =VAL '|\\-*-/|
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "unicode": "Sosa did fine.☺",
+      "control": "\b1998\t1999\t2000\n",
+      "hex esc": "\r\n is \r\n",
+      "single": "\"Howdy!\" he cried.",
+      "quoted": " # Not a 'comment'.",
+      "tie-fighter": "|\\-*-/|"
+    }
+  dump: |
+    unicode: "Sosa did fine.\u263A"
+    control: "\b1998\t1999\t2000\n"
+    hex esc: "\r\n is \r\n"
+    single: '"Howdy!" he cried.'
+    quoted: ' # Not a ''comment''.'
+    tie-fighter: '|\-*-/|'

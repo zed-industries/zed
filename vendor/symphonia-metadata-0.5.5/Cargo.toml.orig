@@ -1,0 +1,19 @@
+[package]
+name = "symphonia-metadata"
+version = "0.5.5"
+description = "Project Symphonia multimedia tag and metadata readers."
+homepage = "https://github.com/pdeljanov/Symphonia"
+repository = "https://github.com/pdeljanov/Symphonia"
+authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
+license = "MPL-2.0"
+readme = "README.md"
+categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
+keywords = ["multimedia", "media", "metadata", "id3v1", "id3v2"]
+edition = "2018"
+rust-version = "1.53"
+
+[dependencies]
+encoding_rs = "0.8.17"
+lazy_static = "1.4.0"
+log = "0.4"
+symphonia-core = { version = "0.5.5", path = "../symphonia-core" }

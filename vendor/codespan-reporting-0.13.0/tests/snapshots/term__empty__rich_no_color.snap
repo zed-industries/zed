@@ -1,0 +1,17 @@
+---
+source: codespan-reporting/tests/term.rs
+expression: TEST_DATA.emit_no_color(&config)
+---
+bug: 
+
+error: 
+
+warning: 
+
+note: 
+
+help: 
+
+bug: 
+
+

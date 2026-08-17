@@ -1,0 +1,52 @@
+[package]
+name = "erased-serde"
+version = "0.4.9"
+authors = ["David Tolnay <dtolnay@gmail.com>"]
+categories = ["encoding", "rust-patterns", "no-std"]
+description = "Type-erased Serialize and Serializer traits"
+documentation = "https://docs.rs/erased-serde"
+edition = "2021"
+exclude = ["benches"]
+keywords = ["serde", "erasure"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/dtolnay/erased-serde"
+rust-version = "1.68"
+
+[dependencies]
+serde_core = { version = "1.0.220", default-features = false }
+typeid = "1"
+
+[target.'cfg(any())'.dependencies]
+serde = { version = "1.0.220", default-features = false }
+
+[dev-dependencies]
+rustversion = "1.0.13"
+serde = "1.0.220"
+serde_cbor = "0.11.2"
+serde_derive = "1.0.220"
+serde_json = "1.0.99"
+trybuild = { version = "1.0.108", features = ["diff"] }
+
+[features]
+# Note: at least one of "std" or "alloc" must be enabled.
+default = ["std"]
+std = ["alloc", "serde_core/std"]
+alloc = ["serde_core/alloc"]
+unstable-debug = []
+
+[[test]]
+name = "test"
+path = "tests/readme.rs"
+
+[workspace]
+members = ["explanation", "tests/crate"]
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+rustdoc-args = [
+    "--generate-link-to-definition",
+    "--generate-macro-expansion",
+    "--extern-html-root-url=core=https://doc.rust-lang.org",
+    "--extern-html-root-url=alloc=https://doc.rust-lang.org",
+    "--extern-html-root-url=std=https://doc.rust-lang.org",
+]

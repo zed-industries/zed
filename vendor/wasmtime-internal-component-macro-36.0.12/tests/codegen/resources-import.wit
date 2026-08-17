@@ -1,0 +1,87 @@
+package foo:foo;
+
+interface resources {
+  resource bar {
+    constructor();
+    static-a: static func() -> u32;
+    method-a: func() -> u32;
+  }
+
+  bar-own-arg: func(x: own<bar>);
+  bar-borrow-arg: func(x: borrow<bar>);
+  bar-result: func() -> own<bar>;
+
+  tuple-own-arg: func(x: tuple<own<bar>, u32>);
+  tuple-borrow-arg: func(x: tuple<own<bar>, u32>);
+  tuple-result: func() -> tuple<own<bar>, u32>;
+
+  option-own-arg: func(x: option<own<bar>>);
+  option-borrow-arg: func(x: option<borrow<bar>>);
+  option-result: func() -> option<own<bar>>;
+
+  result-own-arg: func(x: result<own<bar>>);
+  result-borrow-arg: func(x: result<borrow<bar>>);
+  result-result: func() -> result<own<bar>>;
+
+  list-own-arg: func(x: list<own<bar>>);
+  list-borrow-arg: func(x: list<borrow<bar>>);
+  list-result: func() -> list<own<bar>>;
+
+  record nested-own {
+    nested-bar: own<bar>
+  }
+
+  record nested-borrow {
+    nested-bar: borrow<bar>
+  }
+
+  record-own-arg: func(x: nested-own);
+  record-borrow-arg: func(x: nested-borrow);
+  record-result: func() -> nested-own;
+
+  type some-handle = borrow<bar>;
+  func-with-handle-typedef: func(x: some-handle);
+}
+
+world the-world {
+  import resources;
+
+  resource world-resource {
+    constructor();
+
+    foo: func();
+    static-foo: static func();
+  }
+
+  import some-world-func: func() -> world-resource;
+  export some-world-func2: func() -> world-resource;
+
+  export uses-resource-transitively;
+
+  import long-use-chain4;
+}
+
+interface transitive-interface-with-resource {
+  resource foo;
+}
+
+interface uses-resource-transitively {
+  use transitive-interface-with-resource.{foo};
+
+  handle: func(x: foo);
+}
+
+interface long-use-chain4 {
+  use long-use-chain3.{a};
+
+  foo: func() -> a;
+}
+interface long-use-chain3 {
+  use long-use-chain2.{a};
+}
+interface long-use-chain2 {
+  use long-use-chain1.{a};
+}
+interface long-use-chain1 {
+  resource a;
+}

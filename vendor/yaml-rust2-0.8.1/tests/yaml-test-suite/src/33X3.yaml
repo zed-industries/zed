@@ -1,0 +1,30 @@
+---
+- name: Three explicit integers in a block sequence
+  from: IRC
+  tags: sequence tag
+  yaml: |
+    ---
+    - !!int 1
+    - !!int -2
+    - !!int 33
+  tree: |
+    +STR
+     +DOC ---
+      +SEQ
+       =VAL <tag:yaml.org,2002:int> :1
+       =VAL <tag:yaml.org,2002:int> :-2
+       =VAL <tag:yaml.org,2002:int> :33
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      1,
+      -2,
+      33
+    ]
+  dump: |
+    ---
+    - !!int 1
+    - !!int -2
+    - !!int 33

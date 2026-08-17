@@ -1,0 +1,20 @@
+header = "// SPDX-License-Identifier: MIT"
+sys_includes = ["stddef.h", "stdint.h", "stdlib.h"]
+no_includes = true
+include_guard = "RAV1E_H"
+tab_width = 4
+style = "Type"
+language = "C"
+cpp_compat = true
+
+[parse]
+parse_deps = true
+include = ['rav1e', 'v_frame']
+
+[export]
+prefix = "Ra"
+item_types = ["enums", "structs", "unions", "typedefs", "opaque", "functions"]
+
+[enum]
+rename_variants = "ScreamingSnakeCase"
+prefix_with_name = true

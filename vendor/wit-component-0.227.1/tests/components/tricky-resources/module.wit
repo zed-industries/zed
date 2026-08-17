@@ -1,0 +1,19 @@
+package foo:bar;
+
+interface a {
+  resource r;
+}
+
+interface b {
+  use a.{r};
+}
+
+world module {
+  export b;
+  export some-name: interface {
+    use b.{r};
+
+    f: func() -> r;
+  }
+  export a;
+}

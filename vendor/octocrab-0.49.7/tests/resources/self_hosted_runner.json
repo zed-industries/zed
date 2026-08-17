@@ -1,0 +1,24 @@
+{
+  "id": 23,
+  "name": "linux_runner",
+  "os": "linux",
+  "status": "online",
+  "busy": true,
+  "labels": [
+    {
+      "id": 5,
+      "name": "self-hosted",
+      "type": "read-only"
+    },
+    {
+      "id": 7,
+      "name": "X64",
+      "type": "read-only"
+    },
+    {
+      "id": 11,
+      "name": "Linux",
+      "type": "read-only"
+    }
+  ]
+}

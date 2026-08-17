@@ -1,0 +1,71 @@
+---
+source: brush-parser/src/parser.rs
+expression: "ParseResult { input, result: &result }"
+---
+ParseResult(
+  input: "cat <<EOF\nSomething\nEOF",
+  result: Program(
+    cmds: [
+      List([
+        Item(AndOr(
+          first: Pipeline(
+            seq: [
+              Simple(Simple(
+                w: Some(W(
+                  v: "cat",
+                  loc: Some(Loc(
+                    start: Pos(
+                      idx: 0,
+                      line: 1,
+                      col: 1,
+                    ),
+                    end: Pos(
+                      idx: 3,
+                      line: 1,
+                      col: 4,
+                    ),
+                  )),
+                )),
+                suffix: Some(Suffix([
+                  IoRedirect(HereDocument(None, IoHereDocument(
+                    requires_expansion: true,
+                    here_end: W(
+                      v: "EOF",
+                      loc: Some(Loc(
+                        start: Pos(
+                          idx: 6,
+                          line: 1,
+                          col: 7,
+                        ),
+                        end: Pos(
+                          idx: 9,
+                          line: 1,
+                          col: 10,
+                        ),
+                      )),
+                    ),
+                    doc: W(
+                      v: "Something\n",
+                      loc: Some(Loc(
+                        start: Pos(
+                          idx: 10,
+                          line: 2,
+                          col: 1,
+                        ),
+                        end: Pos(
+                          idx: 23,
+                          line: 3,
+                          col: 4,
+                        ),
+                      )),
+                    ),
+                  ))),
+                ])),
+              )),
+            ],
+          ),
+        ), Sequence),
+      ]),
+    ],
+  ),
+)

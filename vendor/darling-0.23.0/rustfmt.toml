@@ -1,0 +1,4 @@
+# This empty configuration file overrides any local user configuration,
+# ensuring formatting uniformity for all contributors.
+#
+# See https://github.com/rust-lang/rustfmt/blob/master/Configurations.md#configuring-rustfmt

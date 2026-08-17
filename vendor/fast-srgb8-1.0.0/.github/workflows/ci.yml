@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "0 0 * * *"
+
+env:
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: -Dwarnings -Cdebug-assertions=yes -Coverflow-checks=yes
+  RUSTDOCFLAGS: -Dwarnings
+
+jobs:
+  test:
+    name: Test Rust ${{ matrix.rust }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: [1.46.0, stable, beta, nightly]
+    steps:
+      - uses: actions/checkout@v2
+      - uses: hecrj/setup-rust-action@v1
+        with:
+          rust-version: ${{ matrix.rust }}
+      - run: cargo test --verbose
+      # exhaustive tests
+      - run: cargo test --release -- --nocapture --ignored
+        if: matrix.rust == 'stable'
+      # bench if on nightly
+      - run: cargo bench
+        env:
+          RUSTFLAGS: -Dwarnings --cfg unstable_bench
+        if: matrix.rust == 'nightly'
+      # Check that we build fine without tests — catches
+      # accidentally using libstd even though its behind `cfg(test)`
+      - run: cargo build --lib
+
+  check:
+    name: Check warnings
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: -Dwarnings
+    steps:
+      - uses: actions/checkout@v2
+      - uses: hecrj/setup-rust-action@v1
+      - run: cargo check --verbose
+
+  rustfmt:
+    name: Verify code formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: hecrj/setup-rust-action@v1
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  doc:
+    name: Docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: hecrj/setup-rust-action@v1
+        with:
+          rust-version: nightly
+      # Need to use `cargo rustdoc` to actually get it to respect -D
+      # warnings... Note: this also requires nightly.
+      - run: cargo rustdoc -- -D warnings

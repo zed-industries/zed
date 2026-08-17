@@ -1,0 +1,56 @@
+[package]
+name = "rangemap"
+version = "1.7.1"
+authors = ["Jeff Parsons <jeff@parsons.io>"]
+edition = "2018"
+license = "MIT/Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/jeffparsons/rangemap"
+documentation = "https://docs.rs/rangemap"
+homepage = "https://github.com/jeffparsons/rangemap"
+description = """
+Map and set data structures whose keys are stored as ranges.
+
+Contiguous and overlapping ranges that map to the same value are coalesced into a single range.
+"""
+categories = ["data-structures"]
+rust-version = "1.81.0"
+exclude = [
+    ".github/*",
+    "bors.toml",
+    "pre_commit.sh",
+    "README.fuzz.md",
+]
+
+[dependencies]
+quickcheck = { version = "1.0.3", optional = true }
+serde = { version = "1", optional = true }
+
+[dev-dependencies]
+permutator = "0.4"
+# Criterion bumps its MSRV in 0.3.6; it is probably reasonable
+# to update rangemap's MSRV, too, but until I actually publish
+# a policy on that I'm going to avoid doing a big bump right now.
+# (Later problem!)
+criterion = "0.7"
+rand = "0.9"
+chrono = "0.4"          # For examples
+rustc_version = "0.4"
+serde_json = "1"
+proptest = "1.4"
+test-strategy = "0.4"
+
+[features]
+serde1 = ["serde"]
+# So we can run doc tests from "README.md".
+nightly = []
+# Enables `RangeMap::new()`, `RangeInclusiveMap::new()`, `RangeSet::new()`,
+# and `RangeInclusiveSet::new()` to be const functions.
+# Requires a nightly compiler because `const_btree_new` is an unstable feature,
+# but is soon to be stabilized: <https://github.com/rust-lang/rust/issues/71835>
+const_fn = []
+quickcheck = ["dep:quickcheck"]
+
+[[bench]]
+name = "benches"
+harness = false

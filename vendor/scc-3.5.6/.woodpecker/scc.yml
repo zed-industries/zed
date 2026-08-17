@@ -1,0 +1,121 @@
+matrix:
+  RUST: [stable, nightly]
+  platform: [linux/amd64, linux/arm64]
+
+steps:
+  test:
+    when:
+      event: [push, pull_request]
+    image: rust
+    environment:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: 1
+    commands:
+      - rustup default $RUST
+      - cargo test
+      - cargo test -p examples
+      - cargo test -p extended_benches
+      - RUST_BACKTRACE=0 cargo test -p extended_tests -- --nocapture
+      - cargo test --release
+      - cargo test --release -p examples
+  32-bit:
+    when:
+      event: [push, pull_request]
+      matrix:
+        RUST: stable
+        platform: linux/amd64
+    image: rust
+    environment:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: 1
+    commands:
+      - apt-get update
+      - apt-get -y install gcc-multilib
+      - rustup default $RUST
+      - rustup target add i686-unknown-linux-gnu
+      - cargo test --target i686-unknown-linux-gnu
+      - cargo test --target i686-unknown-linux-gnu -p examples
+      - cargo test --target i686-unknown-linux-gnu -p extended_tests
+  linter:
+    when:
+      event: [push, pull_request]
+      matrix:
+        RUST: stable
+        platform: linux/amd64
+    image: rust
+    environment:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: 1
+    commands:
+      - rustup default $RUST
+      - rustup component add rustfmt
+      - rustup component add clippy
+      - cargo fmt -- --check
+      - cargo fmt -p examples --check
+      - cargo fmt -p extended_tests --check
+      - cargo clippy --all
+      - cargo clippy -p examples --all
+      - cargo clippy -p extended_tests --all
+      - cargo doc --document-private-items
+  miri:
+    when:
+      event: [push, pull_request]
+      matrix:
+        RUST: nightly
+        platform: linux/amd64
+    image: rust
+    environment:
+      CARGO_TERM_COLOR: always
+      MIRIFLAGS: "-Zmiri-strict-provenance"
+    commands:
+      - rustup default $RUST
+      - rustup component add miri
+      - cargo miri test
+  loom:
+    when:
+      event: [push, pull_request]
+      matrix:
+        RUST: stable
+        platform: linux/amd64
+    image: rust
+    environment:
+      CARGO_TERM_COLOR: always
+    commands:
+      - rustup default $RUST
+      - cargo test --features loom --release --lib
+  equivalent:
+    when:
+      event: [push, pull_request]
+      matrix:
+        RUST: stable
+        platform: linux/amd64
+    image: rust
+    environment:
+      CARGO_TERM_COLOR: always
+    commands:
+      - rustup default $RUST
+      - cargo test --features equivalent --release --lib
+  serde:
+    when:
+      event: [push, pull_request]
+      matrix:
+        RUST: stable
+        platform: linux/amd64
+    image: rust
+    environment:
+      CARGO_TERM_COLOR: always
+    commands:
+      - rustup default $RUST
+      - cargo test --features serde --release --lib
+  benchmark:
+    when:
+      event: [push, pull_request]
+      matrix:
+        RUST: stable
+        platform: linux/amd64
+    image: rust
+    environment:
+      CARGO_TERM_COLOR: always
+    commands:
+      - rustup default $RUST
+      - cargo bench

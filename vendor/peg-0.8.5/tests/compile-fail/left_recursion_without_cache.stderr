@@ -1,0 +1,23 @@
+error: left recursive rules create an infinite loop: rec -> rec
+ --> $DIR/left_recursion_without_cache.rs:4:18
+  |
+4 |     rule rec() = rec() //~ ERROR left recursive rules create an infinite loop: rec -> rec
+  |                  ^^^
+
+error: left recursive rules create an infinite loop: foo -> bar -> foo
+  --> $DIR/left_recursion_without_cache.rs:12:11
+   |
+12 |         / foo() //~ ERROR left recursive rules create an infinite loop: foo -> bar -> foo
+   |           ^^^
+
+error: left recursive rules create an infinite loop: bar -> foo -> bar
+ --> $DIR/left_recursion_without_cache.rs:8:11
+  |
+8 |         / bar() //~ ERROR left recursive rules create an infinite loop: bar -> foo -> bar
+  |           ^^^
+
+error: left recursive rules create an infinite loop: prec -> prec
+  --> $DIR/left_recursion_without_cache.rs:15:9
+   |
+15 |         prec() { () } //~ ERROR
+   |         ^^^^

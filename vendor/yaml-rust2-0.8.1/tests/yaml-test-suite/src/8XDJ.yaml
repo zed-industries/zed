@@ -1,0 +1,15 @@
+---
+- name: Comment in plain multiline value
+  from: https://gist.github.com/anonymous/deeb1ace28d5bf21fb56d80c13e2dc69 via @ingydotnet
+  tags: error comment scalar
+  fail: true
+  yaml: |
+    key: word1
+    #  xxx
+      word2
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :key
+       =VAL :word1

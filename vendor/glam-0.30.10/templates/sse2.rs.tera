@@ -1,0 +1,141 @@
+{% macro impl_mat4_inverse() %}
+    unsafe {
+        // Based on https://github.com/g-truc/glm `glm_mat4_inverse`
+        let fac0 = {
+            let swp0a = _mm_shuffle_ps(self.w_axis.0, self.z_axis.0, 0b11_11_11_11);
+            let swp0b = _mm_shuffle_ps(self.w_axis.0, self.z_axis.0, 0b10_10_10_10);
+
+            let swp00 = _mm_shuffle_ps(self.z_axis.0, self.y_axis.0, 0b10_10_10_10);
+            let swp01 = _mm_shuffle_ps(swp0a, swp0a, 0b10_00_00_00);
+            let swp02 = _mm_shuffle_ps(swp0b, swp0b, 0b10_00_00_00);
+            let swp03 = _mm_shuffle_ps(self.z_axis.0, self.y_axis.0, 0b11_11_11_11);
+
+            let mul00 = _mm_mul_ps(swp00, swp01);
+            let mul01 = _mm_mul_ps(swp02, swp03);
+            _mm_sub_ps(mul00, mul01)
+        };
+        let fac1 = {
+            let swp0a = _mm_shuffle_ps(self.w_axis.0, self.z_axis.0, 0b11_11_11_11);
+            let swp0b = _mm_shuffle_ps(self.w_axis.0, self.z_axis.0, 0b01_01_01_01);
+
+            let swp00 = _mm_shuffle_ps(self.z_axis.0, self.y_axis.0, 0b01_01_01_01);
+            let swp01 = _mm_shuffle_ps(swp0a, swp0a, 0b10_00_00_00);
+            let swp02 = _mm_shuffle_ps(swp0b, swp0b, 0b10_00_00_00);
+            let swp03 = _mm_shuffle_ps(self.z_axis.0, self.y_axis.0, 0b11_11_11_11);
+
+            let mul00 = _mm_mul_ps(swp00, swp01);
+            let mul01 = _mm_mul_ps(swp02, swp03);
+            _mm_sub_ps(mul00, mul01)
+        };
+        let fac2 = {
+            let swp0a = _mm_shuffle_ps(self.w_axis.0, self.z_axis.0, 0b10_10_10_10);
+            let swp0b = _mm_shuffle_ps(self.w_axis.0, self.z_axis.0, 0b01_01_01_01);
+
+            let swp00 = _mm_shuffle_ps(self.z_axis.0, self.y_axis.0, 0b01_01_01_01);
+            let swp01 = _mm_shuffle_ps(swp0a, swp0a, 0b10_00_00_00);
+            let swp02 = _mm_shuffle_ps(swp0b, swp0b, 0b10_00_00_00);
+            let swp03 = _mm_shuffle_ps(self.z_axis.0, self.y_axis.0, 0b10_10_10_10);
+
+            let mul00 = _mm_mul_ps(swp00, swp01);
+            let mul01 = _mm_mul_ps(swp02, swp03);
+            _mm_sub_ps(mul00, mul01)
+        };
+        let fac3 = {
+            let swp0a = _mm_shuffle_ps(self.w_axis.0, self.z_axis.0, 0b11_11_11_11);
+            let swp0b = _mm_shuffle_ps(self.w_axis.0, self.z_axis.0, 0b00_00_00_00);
+
+            let swp00 = _mm_shuffle_ps(self.z_axis.0, self.y_axis.0, 0b00_00_00_00);
+            let swp01 = _mm_shuffle_ps(swp0a, swp0a, 0b10_00_00_00);
+            let swp02 = _mm_shuffle_ps(swp0b, swp0b, 0b10_00_00_00);
+            let swp03 = _mm_shuffle_ps(self.z_axis.0, self.y_axis.0, 0b11_11_11_11);
+
+            let mul00 = _mm_mul_ps(swp00, swp01);
+            let mul01 = _mm_mul_ps(swp02, swp03);
+            _mm_sub_ps(mul00, mul01)
+        };
+        let fac4 = {
+            let swp0a = _mm_shuffle_ps(self.w_axis.0, self.z_axis.0, 0b10_10_10_10);
+            let swp0b = _mm_shuffle_ps(self.w_axis.0, self.z_axis.0, 0b00_00_00_00);
+
+            let swp00 = _mm_shuffle_ps(self.z_axis.0, self.y_axis.0, 0b00_00_00_00);
+            let swp01 = _mm_shuffle_ps(swp0a, swp0a, 0b10_00_00_00);
+            let swp02 = _mm_shuffle_ps(swp0b, swp0b, 0b10_00_00_00);
+            let swp03 = _mm_shuffle_ps(self.z_axis.0, self.y_axis.0, 0b10_10_10_10);
+
+            let mul00 = _mm_mul_ps(swp00, swp01);
+            let mul01 = _mm_mul_ps(swp02, swp03);
+            _mm_sub_ps(mul00, mul01)
+        };
+        let fac5 = {
+            let swp0a = _mm_shuffle_ps(self.w_axis.0, self.z_axis.0, 0b01_01_01_01);
+            let swp0b = _mm_shuffle_ps(self.w_axis.0, self.z_axis.0, 0b00_00_00_00);
+
+            let swp00 = _mm_shuffle_ps(self.z_axis.0, self.y_axis.0, 0b00_00_00_00);
+            let swp01 = _mm_shuffle_ps(swp0a, swp0a, 0b10_00_00_00);
+            let swp02 = _mm_shuffle_ps(swp0b, swp0b, 0b10_00_00_00);
+            let swp03 = _mm_shuffle_ps(self.z_axis.0, self.y_axis.0, 0b01_01_01_01);
+
+            let mul00 = _mm_mul_ps(swp00, swp01);
+            let mul01 = _mm_mul_ps(swp02, swp03);
+            _mm_sub_ps(mul00, mul01)
+        };
+        let sign_a = _mm_set_ps(1.0, -1.0, 1.0, -1.0);
+        let sign_b = _mm_set_ps(-1.0, 1.0, -1.0, 1.0);
+
+        let temp0 = _mm_shuffle_ps(self.y_axis.0, self.x_axis.0, 0b00_00_00_00);
+        let vec0 = _mm_shuffle_ps(temp0, temp0, 0b10_10_10_00);
+
+        let temp1 = _mm_shuffle_ps(self.y_axis.0, self.x_axis.0, 0b01_01_01_01);
+        let vec1 = _mm_shuffle_ps(temp1, temp1, 0b10_10_10_00);
+
+        let temp2 = _mm_shuffle_ps(self.y_axis.0, self.x_axis.0, 0b10_10_10_10);
+        let vec2 = _mm_shuffle_ps(temp2, temp2, 0b10_10_10_00);
+
+        let temp3 = _mm_shuffle_ps(self.y_axis.0, self.x_axis.0, 0b11_11_11_11);
+        let vec3 = _mm_shuffle_ps(temp3, temp3, 0b10_10_10_00);
+
+        let mul00 = _mm_mul_ps(vec1, fac0);
+        let mul01 = _mm_mul_ps(vec2, fac1);
+        let mul02 = _mm_mul_ps(vec3, fac2);
+        let sub00 = _mm_sub_ps(mul00, mul01);
+        let add00 = _mm_add_ps(sub00, mul02);
+        let inv0 = _mm_mul_ps(sign_b, add00);
+
+        let mul03 = _mm_mul_ps(vec0, fac0);
+        let mul04 = _mm_mul_ps(vec2, fac3);
+        let mul05 = _mm_mul_ps(vec3, fac4);
+        let sub01 = _mm_sub_ps(mul03, mul04);
+        let add01 = _mm_add_ps(sub01, mul05);
+        let inv1 = _mm_mul_ps(sign_a, add01);
+
+        let mul06 = _mm_mul_ps(vec0, fac1);
+        let mul07 = _mm_mul_ps(vec1, fac3);
+        let mul08 = _mm_mul_ps(vec3, fac5);
+        let sub02 = _mm_sub_ps(mul06, mul07);
+        let add02 = _mm_add_ps(sub02, mul08);
+        let inv2 = _mm_mul_ps(sign_b, add02);
+
+        let mul09 = _mm_mul_ps(vec0, fac2);
+        let mul10 = _mm_mul_ps(vec1, fac4);
+        let mul11 = _mm_mul_ps(vec2, fac5);
+        let sub03 = _mm_sub_ps(mul09, mul10);
+        let add03 = _mm_add_ps(sub03, mul11);
+        let inv3 = _mm_mul_ps(sign_a, add03);
+
+        let row0 = _mm_shuffle_ps(inv0, inv1, 0b00_00_00_00);
+        let row1 = _mm_shuffle_ps(inv2, inv3, 0b00_00_00_00);
+        let row2 = _mm_shuffle_ps(row0, row1, 0b10_00_10_00);
+
+        let dot0 = dot4(self.x_axis.0, row2);
+        glam_assert!(dot0 != 0.0);
+
+        let rcp0 = _mm_set1_ps(dot0.recip());
+
+        Self {
+            x_axis: Vec4(_mm_mul_ps(inv0, rcp0)),
+            y_axis: Vec4(_mm_mul_ps(inv1, rcp0)),
+            z_axis: Vec4(_mm_mul_ps(inv2, rcp0)),
+            w_axis: Vec4(_mm_mul_ps(inv3, rcp0)),
+        }
+    }
+{% endmacro impl_mat4_inverse %}

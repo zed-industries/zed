@@ -1,0 +1,41 @@
+{
+  "grammars": [
+    {
+      "name": "jsdoc",
+      "camelcase": "JSDoc",
+      "scope": "text.jsdoc",
+      "path": ".",
+      "file-types": null,
+      "highlights": [
+        "queries/highlights.scm"
+      ],
+      "injection-regex": "jsdoc"
+    }
+  ],
+  "metadata": {
+    "version": "0.23.2",
+    "license": "MIT",
+    "description": "JSDoc grammar for tree-sitter",
+    "authors": [
+      {
+        "name": "Max Brunsfeld",
+        "email": "maxbrunsfeld@gmail.com"
+      },
+      {
+        "name": "Amaan Qureshi",
+        "email": "amaanq12@gmail.com"
+      }
+    ],
+    "links": {
+      "repository": "https://github.com/tree-sitter/tree-sitter-jsdoc"
+    }
+  },
+  "bindings": {
+    "c": true,
+    "go": true,
+    "node": true,
+    "python": true,
+    "rust": true,
+    "swift": true
+  }
+}

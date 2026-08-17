@@ -1,0 +1,38 @@
+<root>
+    <p>&#xA;</p>
+    <p>&#xA;&#xA;</p>
+    <p>&#xA;&#xA;&#xA;</p>
+
+    <p>&#xD;</p>
+    <p>&#xD;&#xD;</p>
+    <p>&#xD;&#xD;&#xD;</p>
+
+    <p>&#xA;&#xD;</p>
+    <p>&#xD;&#xA;</p>
+
+    <p>&#xA;&#xD;&#xA;</p>
+    <p>&#xD;&#xA;&#xD;</p>
+
+    <p>&#xA;q&#xA;</p>
+    <p>&#xD;q&#xD;</p>
+    <p>&#xA;q&#xD;</p>
+    <p>&#xD;q&#xA;</p>
+
+    <p>&#xA;&#xD;&#xA;</p>
+    <p>&#xD;&#xA;&#xA;</p>
+    <p>&#xD;&#xD;&#xA;</p>
+    <p>&#xD;&#xA;&#xD;</p>
+    <p>&#xD;&#xA;&#xD;&#xA;</p>
+
+    <p>&#xA;&#xA;q</p>
+    <p>q&#xA;&#xA;</p>
+    <p>q&#xA;&#xA;q</p>
+
+    <p>&#xD;&#xD;q</p>
+    <p>q&#xD;&#xD;</p>
+    <p>q&#xD;&#xD;q</p>
+
+    <p>&#xD;&#xA;&#xD;&#xA;q</p>
+    <p>q&#xD;&#xA;&#xD;&#xA;</p>
+    <p>q&#xD;&#xA;&#xD;&#xA;q</p>
+</root>

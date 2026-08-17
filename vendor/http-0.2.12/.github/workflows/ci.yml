@@ -1,0 +1,81 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+env:
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    name: Test ${{ matrix.rust }}
+    #needs: [style]
+    strategy:
+      matrix:
+        rust:
+          - stable
+          - beta
+          - nightly
+
+        include:
+          - rust: nightly
+            benches: true
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install Rust (${{ matrix.rust }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+
+      - name: Test
+        run: cargo test
+
+      - name: Test all benches
+        if: matrix.benches
+        run: cargo test --benches ${{ matrix.features }}
+
+  msrv:
+    name: Check MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Get MSRV from package metadata
+        id: metadata
+        run: |
+          cargo metadata --no-deps --format-version 1 |
+              jq -r '"msrv=" + (.packages[] | select(.name == "http")).rust_version' >> $GITHUB_OUTPUT
+
+      - name: Install Rust (${{ steps.metadata.outputs.msrv }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.metadata.outputs.msrv }}
+
+      - name: Test
+        run: cargo check -p http
+
+  wasm:
+    name: WASM
+    #needs: [style]
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Check
+        run: cargo check --target wasm32-unknown-unknown

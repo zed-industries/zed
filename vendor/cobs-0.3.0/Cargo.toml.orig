@@ -1,0 +1,32 @@
+[package]
+name = "cobs"
+version = "0.3.0"
+authors = ["Allen Welkie <>", "James Munns <james@onevariable.com>"]
+license = "MIT OR Apache-2.0"
+description = """
+    This is an implementation of the Consistent Overhead Byte Stuffing (COBS) algorithm.
+    COBS is an algorithm for transforming a message into an encoding where a specific value
+    (the "sentinel" value) is not used. This value can then be used to mark frame boundaries
+    in a serial communication channel. """
+repository = "https://github.com/jamesmunns/cobs.rs"
+keywords = ["consistent", "overhead", "byte", "stuffing", "encoding"]
+edition = "2021"
+
+[features]
+default = ["std"]
+std = ["alloc", "thiserror/std"]
+alloc = []
+# Legacy feature for backwards compatibility
+use_std = ["std"]
+
+[dependencies]
+thiserror = { version = "2", default-features = false }
+defmt = { version = "0.3", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+
+[dev-dependencies]
+quickcheck = "1"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--generate-link-to-definition"]

@@ -1,0 +1,174 @@
+[package]
+autobenches = false
+categories = ["api-bindings", "date-and-time", "wasm"]
+description = "Drop-in replacement for std::time for Wasm in browsers"
+edition = "2021"
+include = ["CHANGELOG.md", "LICENSE-*", "src/**/*"]
+keywords = ["instant", "wasm", "web", "systemtime", "time"]
+license = "MIT OR Apache-2.0"
+name = "web-time"
+repository = "https://github.com/daxpedda/web-time"
+rust-version = "1.60"
+version = "1.1.0"
+
+[features]
+serde = ["dep:serde"]
+
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+js-sys = "0.3.20"
+serde = { version = "1", optional = true }
+wasm-bindgen = { version = "0.2.70", default-features = false }
+
+[dev-dependencies]
+static_assertions = "1"
+
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+pollster = { version = "0.3", features = ["macro"] }
+
+[target.'cfg(target_family = "wasm")'.dev-dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+rand = "0.8"
+serde_json = "1"
+wasm-bindgen-futures = "0.4"
+wasm-bindgen-test = "0.3"
+web-sys = { version = "0.3", features = [
+	"CssStyleDeclaration",
+	"Document",
+	"Element",
+	"HtmlTableElement",
+	"HtmlTableRowElement",
+	"Performance",
+	"Window",
+] }
+
+[target.'cfg(all(target_family = "wasm", target_feature = "atomics"))'.dev-dependencies]
+futures-channel = { version = "0.3", default-features = false, features = ["alloc"] }
+futures-util = { version = "0.3", default-features = false }
+wasm-worker = { git = "https://github.com/daxpedda/wasm-worker", rev = "8b3e6324bdb5d44d5565b6981ce74ee773da9e3f" }
+web-sys = { version = "0.3", features = ["WorkerGlobalScope"] }
+
+[profile.bench]
+codegen-units = 1
+lto = true
+
+[[example]]
+name = "benchmark"
+path = "benches/benchmark.rs"
+
+[[test]]
+name = "serde"
+path = "tests/serde.rs"
+required-features = ["serde"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+targets = ["wasm32-unknown-unknown"]
+
+[lints.rust]
+# Rust groups.
+future_incompatible = { level = "warn", priority = -1 }
+rust_2018_compatibility = { level = "warn", priority = -1 }
+rust_2018_idioms = { level = "warn", priority = -1 }
+rust_2021_compatibility = { level = "warn", priority = -1 }
+unused = { level = "warn", priority = -1 }
+# Rust lints.
+deprecated_in_future = "warn"
+ffi_unwind_calls = "warn"
+macro_use_extern_crate = "warn"
+meta_variable_misuse = "warn"
+missing_abi = "warn"
+missing_copy_implementations = "warn"
+missing_debug_implementations = "warn"
+missing_docs = "warn"
+non_ascii_idents = "warn"
+single_use_lifetimes = "warn"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+unreachable_pub = "warn"
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "warn"
+unused_import_braces = "warn"
+unused_lifetimes = "warn"
+unused_qualifications = "warn"
+
+[lints.clippy]
+# Clippy groups.
+cargo = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Clippy restriction lints.
+absolute_paths = "warn"
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+as_conversions = "warn"
+assertions_on_result_states = "warn"
+clone_on_ref_ptr = "warn"
+create_dir = "warn"
+dbg_macro = "warn"
+decimal_literal_representation = "warn"
+default_union_representation = "warn"
+empty_drop = "warn"
+empty_structs_with_brackets = "warn"
+error_impl_error = "warn"
+exit = "warn"
+filetype_is_file = "warn"
+float_cmp_const = "warn"
+fn_to_numeric_cast_any = "warn"
+format_push_string = "warn"
+get_unwrap = "warn"
+if_then_some_else_none = "warn"
+impl_trait_in_params = "warn"
+indexing_slicing = "warn"
+infinite_loop = "warn"
+large_include_file = "warn"
+lossy_float_literal = "warn"
+min_ident_chars = "warn"
+missing_assert_message = "warn"
+missing_asserts_for_indexing = "warn"
+missing_docs_in_private_items = "warn"
+mixed_read_write_in_expression = "warn"
+mutex_atomic = "warn"
+non_ascii_literal = "warn"
+partial_pub_fields = "warn"
+print_stderr = "warn"
+print_stdout = "warn"
+pub_without_shorthand = "warn"
+rc_buffer = "warn"
+rc_mutex = "warn"
+redundant_type_annotations = "warn"
+ref_patterns = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+same_name_method = "warn"
+self_named_module_files = "warn"
+semicolon_outside_block = "warn"
+single_char_lifetime_names = "warn"
+str_to_string = "warn"
+string_add = "warn"
+string_lit_chars_any = "warn"
+string_slice = "warn"
+string_to_string = "warn"
+suspicious_xor_used_as_pow = "warn"
+todo = "warn"
+try_err = "warn"
+undocumented_unsafe_blocks = "warn"
+unimplemented = "warn"
+unnecessary_safety_doc = "warn"
+unnecessary_self_imports = "warn"
+unneeded_field_pattern = "warn"
+unseparated_literal_suffix = "warn"
+unwrap_used = "warn"
+use_debug = "warn"
+verbose_file_reads = "warn"
+# Allowed Clippy lints.
+equatable_if_let = "allow"
+explicit_deref_methods = "allow"
+future_not_send = "allow"
+module_inception = "allow"
+module_name_repetitions = "allow"
+option_if_let_else = "allow"
+redundant_pub_crate = "allow"
+tabs_in_doc_comments = "allow"
+
+[lints.rustdoc]
+all = { level = "warn", priority = -1 }

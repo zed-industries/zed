@@ -1,0 +1,6 @@
+package foo:foo;
+
+world foo {
+  import foo:bar/the-interface;
+  import foo:bar/bar;
+}

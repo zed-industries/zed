@@ -1,0 +1,22 @@
+[package]
+name = "rtoolbox"
+version = "0.0.3"
+description = "Utility functions for other crates, no backwards compatibility guarantees."
+repository = "https://github.com/conradkleinespel/duck"
+authors = ["Conrad Kleinespel <conradk@conradk.com>"]
+license = "Apache-2.0"
+edition = "2018"
+
+[features]
+serde = ["dep:serde", "dep:serde_json"]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"], optional = true }
+serde_json = { version = "1.0", optional = true }
+
+[target.'cfg(unix)'.dependencies.libc]
+version = "0.2"
+
+[target.'cfg(windows)'.dependencies.windows-sys]
+version = "0.52"
+features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_SystemServices"]

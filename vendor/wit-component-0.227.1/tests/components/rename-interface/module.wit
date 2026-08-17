@@ -1,0 +1,18 @@
+package foo:foo;
+
+interface foo {
+  record bar {
+    f: u8,
+  }
+
+  a: func() -> bar;
+}
+
+world module {
+  import foo;
+  import other-name: interface {
+    use foo.{bar};
+
+    a: func() -> bar;
+  }
+}

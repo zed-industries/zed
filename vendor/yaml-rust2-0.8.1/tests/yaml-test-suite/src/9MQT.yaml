@@ -1,0 +1,31 @@
+---
+- name: Scalar doc with '...' in content
+  from: '@ingydotnet'
+  tags: double scalar
+  yaml: |
+    --- "a
+    ...x
+    b"
+  tree: |
+    +STR
+     +DOC ---
+      =VAL "a ...x b
+     -DOC
+    -STR
+  json: |
+    "a ...x b"
+  dump: |
+    --- a ...x b
+  emit: |
+    --- "a ...x b"
+
+- fail: true
+  yaml: |
+    --- "a
+    ... x
+    b"
+  tree: |
+    +STR
+     +DOC ---
+  dump: null
+  emit: null

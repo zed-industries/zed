@@ -1,0 +1,50 @@
+// Copyright 2023 LiveKit, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package rpc;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/livekit/protocol/infra";
+
+service Link {
+  rpc WatchLocalLinks(WatchLocalLinksRequest) returns (stream WatchLocalLinksResponse);
+  rpc SimulateLinkState(SimulateLinkStateRequest) returns (SimulateLinkStateResponse);
+}
+
+message WatchLocalLinksRequest {}
+
+message WatchLocalLinksResponse {
+  string local_region = 1;
+  string remote_region = 2;
+  int64 rtt = 3;
+  int64 jitter = 4;
+  double packet_loss = 5;
+  bool disabled = 6;
+  google.protobuf.Timestamp last_read = 7;
+}
+
+message SimulateLinkStateRequest {
+  string local_region = 1;
+  string remote_region = 2;
+  optional int64 rtt = 3;
+  optional int64 jitter = 4;
+  optional double packet_loss = 5;
+  optional bool disabled = 6;
+  int64 timeout = 7;
+}
+
+message SimulateLinkStateResponse {}

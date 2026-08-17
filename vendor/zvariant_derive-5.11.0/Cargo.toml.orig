@@ -1,0 +1,48 @@
+[package]
+name = "zvariant_derive"
+# Keep major and minor version in sync with zvariant crate
+version = "5.11.0"
+authors = ["Zeeshan Ali Khan <zeeshanak@gnome.org>"]
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+description = "D-Bus & GVariant encoding & decoding"
+repository = { workspace = true }
+keywords = ["D-Bus", "DBus", "IPC", "GVariant"]
+license = { workspace = true }
+categories = ["data-structures", "encoding", "parsing"]
+readme = "README.md"
+
+[lib]
+proc-macro = true
+
+[features]
+default = []
+gvariant = ["zvariant_utils/gvariant"]
+
+[dependencies]
+proc-macro2.workspace = true
+syn.workspace = true
+quote.workspace = true
+proc-macro-crate.workspace = true
+zvariant_utils = { path = "../zvariant_utils", version = "3.3.1" }
+
+[dev-dependencies]
+zvariant = { workspace = true, features = ["enumflags2"] }
+enumflags2.workspace = true
+serde.workspace = true
+serde_repr.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-gnu",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-freebsd",
+    "x86_64-unknown-netbsd",
+    "aarch64-linux-android",
+]
+
+[lints]
+workspace = true

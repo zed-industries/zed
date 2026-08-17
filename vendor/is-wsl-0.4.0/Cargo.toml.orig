@@ -1,0 +1,14 @@
+[package]
+name = "is-wsl"
+description = "Checks if the process is running inside Windows Subsystem for Linux."
+version = "0.4.0"
+authors = ["Sean Larkin <TheLarkInn@users.noreply.github.com>"]
+repository = "https://github.com/TheLarkInn/is-wsl"
+license = "MIT"
+categories = ["command-line-utilities"]
+
+[dependencies]
+is-docker = "0.2.0"
+once_cell = "1.17.0"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

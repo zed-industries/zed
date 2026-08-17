@@ -1,0 +1,6 @@
+package foo:foo;
+
+interface a {
+  use foo:a/the-name.{ty};
+  use foo:b/the-name.{ty as ty2};
+}

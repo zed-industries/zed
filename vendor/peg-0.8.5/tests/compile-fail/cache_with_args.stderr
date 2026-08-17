@@ -1,0 +1,11 @@
+error: rules with generics or parameters cannot use #[cache] or #[cache_left_rec]
+ --> $DIR/cache_with_args.rs:5:10
+  |
+5 |     rule foo(x: u32) = "foo" //~ ERROR
+  |          ^^^
+
+error: rules with generics or parameters cannot use #[cache] or #[cache_left_rec]
+ --> $DIR/cache_with_args.rs:8:10
+  |
+8 |     rule ltarg<'a>() -> &'a str = { "" } //~ ERROR
+  |          ^^^^^

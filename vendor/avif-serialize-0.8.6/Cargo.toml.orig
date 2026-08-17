@@ -1,0 +1,28 @@
+[package]
+name = "avif-serialize"
+version = "0.8.6"
+authors = ["Kornel Lesiński <kornel@geekhood.net>"]
+edition = "2021"
+license = "BSD-3-Clause"
+description = "Minimal writer for AVIF header structure (MPEG/HEIF/MIAF/ISO-BMFF)"
+readme = "README.md"
+categories = ["multimedia::images", "encoding"]
+keywords = ["avif", "heif", "bmff", "av1", "mux"]
+repository = "https://github.com/kornelski/avif-serialize"
+homepage = "https://lib.rs/avif-serialize"
+include = ["src/*.rs", "Cargo.toml", "README.md", "LICENSE"]
+rust-version = "1.80"
+
+[dependencies]
+arrayvec = "0.7.6"
+
+[dev-dependencies]
+mp4parse = "0.17"
+avif-parse = "1.4.0"
+
+[badges]
+maintenance = { status = "passively-maintained" }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+rustdoc-args = ["--generate-link-to-definition"]

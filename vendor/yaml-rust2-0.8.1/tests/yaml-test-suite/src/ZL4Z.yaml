@@ -1,0 +1,14 @@
+---
+- name: Invalid nested mapping
+  from: '@perlpunk'
+  tags: error mapping
+  fail: true
+  yaml: |
+    ---
+    a: 'b': c
+  tree: |
+    +STR
+     +DOC ---
+      +MAP
+       =VAL :a
+       =VAL 'b

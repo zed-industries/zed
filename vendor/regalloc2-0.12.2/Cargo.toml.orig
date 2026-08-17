@@ -1,0 +1,55 @@
+[workspace]
+members = ["regalloc2-tool"]
+
+[package]
+name = "regalloc2"
+version = "0.12.2"
+authors = [
+    "Chris Fallin <chris@cfallin.org>",
+    "Mozilla SpiderMonkey Developers",
+]
+edition = "2018"
+license = "Apache-2.0 WITH LLVM-exception"
+description = "Backtracking register allocator inspired from IonMonkey"
+repository = "https://github.com/bytecodealliance/regalloc2"
+
+[dependencies]
+log = { version = "0.4.8", default-features = false }
+smallvec = { version = "1.6.1", features = ["union"] }
+rustc-hash = { version = "2.0.0", default-features = false }
+hashbrown = { version = "0.15", default-features = false, features = [] }
+
+# Optional serde support, enabled by feature below.
+serde = { version = "1.0.136", features = [
+    "derive",
+    "alloc",
+], default-features = false, optional = true }
+
+# The below are only needed for fuzzing.
+libfuzzer-sys = { version = "0.4.2", optional = true }
+bumpalo = { version = "3.16.0", features = ["allocator-api2"] }
+allocator-api2 = { version = "0.2.18", default-features = false, features = ["alloc"] }
+
+# When testing regalloc2 by itself, enable debug assertions and overflow checks
+[profile.release]
+debug = true
+debug-assertions = true
+overflow-checks = true
+
+[features]
+default = ["std"]
+
+# Enables std-specific features such as the Error trait for RegAllocError.
+std = []
+
+# Enables generation of DefAlloc edits for the checker.
+checker = []
+
+# Enables detailed logging which can be somewhat expensive.
+trace-log = []
+
+# Exposes the internal API for fuzzing.
+fuzzing = ["libfuzzer-sys", "checker", "trace-log"]
+
+# Enables serde for exposed types.
+enable-serde = ["serde"]

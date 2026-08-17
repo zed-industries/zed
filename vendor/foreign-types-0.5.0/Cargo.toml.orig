@@ -1,0 +1,17 @@
+[package]
+name = "foreign-types"
+version = "0.5.0"
+authors = ["Steven Fackler <sfackler@gmail.com>"]
+edition = "2018"
+license = "MIT/Apache-2.0"
+description = "A framework for Rust wrappers over C APIs"
+repository = "https://github.com/sfackler/foreign-types"
+readme = "README.md"
+
+[features]
+default = ["std"]
+std = ["foreign-types-macros/std"]
+
+[dependencies]
+foreign-types-macros = { version = "0.2", path = "../foreign-types-macros" }
+foreign-types-shared = { version = "0.3", path = "../foreign-types-shared" }

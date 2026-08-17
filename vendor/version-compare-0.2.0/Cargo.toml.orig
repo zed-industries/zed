@@ -1,0 +1,15 @@
+[package]
+name = "version-compare"
+version = "0.2.0"
+authors = ["Tim Visee <3a4fb3964f@sinenomine.email>"]
+license = "MIT"
+readme = "README.md"
+homepage = "https://timvisee.com/projects/version-compare/"
+repository = "https://gitlab.com/timvisee/version-compare"
+documentation = "https://docs.rs/version-compare"
+description = "Rust library to easily compare version numbers with no specific format, and test against various comparison operators."
+keywords = ["version", "compare", "comparison", "comparing"]
+categories = ["parser-implementations", "parsing"]
+edition = "2021"
+rust-version = "1.56.0"
+include = ["/src", "/examples", "Cargo.toml", "LICENSE", "README.md"]

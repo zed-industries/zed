@@ -1,0 +1,20 @@
+[package]
+name = "wasite"
+version = "0.1.0"
+license = "Apache-2.0 OR BSL-1.0 OR MIT"
+description = "WASI Terminal Environment API"
+repository = "https://github.com/ardaku/wasite"
+documentation = "https://docs.rs/wasite"
+homepage = "https://github.com/ardaku/wasite/blob/stable/CHANGELOG.md"
+include = ["/src/**", "/examples/**", "/README.md"]
+keywords = ["wasi", "terminal", "extension", "env", "interactive"]
+categories = [
+  "api-bindings",
+  "command-line-interface",
+  "internationalization",
+  "os",
+  "wasm",
+]
+readme = "README.md"
+edition = "2018"
+rust-version = "1.40"

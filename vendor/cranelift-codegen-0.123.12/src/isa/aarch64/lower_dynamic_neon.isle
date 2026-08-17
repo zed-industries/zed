@@ -1,0 +1,98 @@
+
+;;;; Rules for `iadd` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(rule -4 (lower (has_type ty @ (dynamic_lane _ _) (iadd x y)))
+      (value_reg (add_vec (put_in_reg x) (put_in_reg y) (vector_size ty))))
+
+;;;; Rules for `isub` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(rule -5 (lower (has_type ty @ (dynamic_lane _ _) (isub x y)))
+      (value_reg (sub_vec (put_in_reg x) (put_in_reg y) (vector_size ty))))
+
+;;;; Rules for `imul` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(rule -4 (lower (has_type (lane_fits_in_32 ty @ (dynamic_lane _ _)) (imul x y)))
+      (value_reg (vec_rrr (VecALUOp.Mul) (put_in_reg x) (put_in_reg y) (vector_size ty))))
+
+;;;; Rules for `fadd` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(rule -2 (lower (has_type ty @ (dynamic_lane _ _) (fadd x y)))
+      (value_reg (vec_rrr (VecALUOp.Fadd) (put_in_reg x) (put_in_reg y) (vector_size ty))))
+
+;;;; Rules for `fsub` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(rule -2 (lower (has_type ty @ (dynamic_lane _ _) (fsub x y)))
+      (value_reg (vec_rrr (VecALUOp.Fsub) (put_in_reg x) (put_in_reg y) (vector_size ty))))
+
+;;;; Rules for `fmul` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(rule -2 (lower (has_type ty @ (dynamic_lane _ _) (fmul x y)))
+      (value_reg (vec_rrr (VecALUOp.Fmul) (put_in_reg x) (put_in_reg y) (vector_size ty))))
+
+;;;; Rules for `fdiv` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(rule -2 (lower (has_type ty @ (dynamic_lane _ _) (fdiv x y)))
+      (value_reg (vec_rrr (VecALUOp.Fdiv) (put_in_reg x) (put_in_reg y) (vector_size ty))))
+
+;;;; Rules for `fmin` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(rule -2 (lower (has_type ty @ (dynamic_lane _ _) (fmin x y)))
+      (value_reg (vec_rrr (VecALUOp.Fmin) (put_in_reg x) (put_in_reg y) (vector_size ty))))
+
+;;;; Rules for `fmax` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(rule -2 (lower (has_type ty @ (dynamic_lane _ _) (fmax x y)))
+      (value_reg (vec_rrr (VecALUOp.Fmax) (put_in_reg x) (put_in_reg y) (vector_size ty))))
+
+;;;; Rules for `snarrow` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(rule -2 (lower (has_type (ty_dyn128_int ty) (snarrow x y)))
+      (if-let _ (zero_value y))
+      (sqxtn x (lane_size ty)))
+
+(rule -1 (lower (has_type (ty_dyn64_int ty) (snarrow x y)))
+      (let ((dst Reg (mov_vec_elem x y 1 0 (VectorSize.Size64x2))))
+            (sqxtn dst (lane_size ty))))
+
+(rule -3 (lower (has_type (ty_dyn128_int ty) (snarrow x y)))
+      (let ((low_half Reg (sqxtn x (lane_size ty)))
+            (result Reg (sqxtn2 low_half y (lane_size ty))))
+        result))
+
+;;;; Rules for `unarrow` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(rule -2 (lower (has_type (ty_dyn128_int ty) (unarrow x y)))
+      (if-let _ (zero_value y))
+      (sqxtun x (lane_size ty)))
+
+(rule -1 (lower (has_type (ty_dyn64_int ty) (unarrow x y)))
+      (let ((dst Reg (mov_vec_elem x y 1 0 (VectorSize.Size64x2))))
+            (sqxtun dst (lane_size ty))))
+
+(rule -3 (lower (has_type (ty_dyn128_int ty) (unarrow x y)))
+      (let ((low_half Reg (sqxtun x (lane_size ty)))
+            (result Reg (sqxtun2 low_half y (lane_size ty))))
+        result))
+
+;;;; Rules for `uunarrow` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(rule -2 (lower (has_type (ty_dyn128_int ty) (uunarrow x y)))
+      (if-let _ (zero_value y))
+      (uqxtn x (lane_size ty)))
+
+(rule -1 (lower (has_type (ty_dyn64_int ty) (uunarrow x y)))
+      (let ((dst Reg (mov_vec_elem x y 1 0 (VectorSize.Size64x2))))
+            (uqxtn dst (lane_size ty))))
+
+(rule -3 (lower (has_type (ty_dyn128_int ty) (uunarrow x y)))
+      (let ((low_half Reg (uqxtn x (lane_size ty)))
+            (result Reg (uqxtn2 low_half y (lane_size ty))))
+        result))
+
+;;; Rules for `dynamic_stack_addr` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(rule (lower (dynamic_stack_addr stack_slot))
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (abi_dynamic_stackslot_addr dst stack_slot))))
+        (value_reg dst)))
+
+;;; Rules for `extract_vector` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(rule (lower (extract_vector x 0))
+      (value_reg (put_in_reg x)))
+
+;;;; Rules for `swiden_high` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule -1 (lower (has_type ty (swiden_high x)))
+      (vec_extend (VecExtendOp.Sxtl) x true (lane_size ty)))
+
+;;;; Rules for `uwiden_high` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule -1 (lower (has_type ty (uwiden_high x)))
+      (vec_extend (VecExtendOp.Uxtl) x true (lane_size ty)))

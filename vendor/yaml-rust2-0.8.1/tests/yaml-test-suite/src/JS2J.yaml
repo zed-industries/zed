@@ -1,0 +1,23 @@
+---
+- name: Spec Example 6.29. Node Anchors
+  from: http://www.yaml.org/spec/1.2/spec.html#id2785977
+  tags: spec alias
+  yaml: |
+    First occurrence: &anchor Value
+    Second occurrence: *anchor
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :First occurrence
+       =VAL &anchor :Value
+       =VAL :Second occurrence
+       =ALI *anchor
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "First occurrence": "Value",
+      "Second occurrence": "Value"
+    }

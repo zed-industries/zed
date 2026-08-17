@@ -1,0 +1,17 @@
+[package]
+name = "num-cmp"
+version = "0.1.0"
+authors = ["Kang Seonghoon <public+git@mearie.org>"]
+
+description = "Comparison between differently typed numbers"
+homepage = "https://github.com/lifthrasiir/num-cmp"
+documentation = "https://docs.rs/num-cmp/"
+repository = "https://github.com/lifthrasiir/num-cmp"
+keywords = ["numeric", "comparison", "compare"]
+categories = ["algorithms"]
+readme = "README.md"
+license = "MIT/Apache-2.0"
+
+[features]
+"i128" = []
+

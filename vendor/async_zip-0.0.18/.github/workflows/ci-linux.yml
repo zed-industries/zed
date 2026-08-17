@@ -1,0 +1,51 @@
+name: Test (Linux)
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Test [no features]
+      run: cargo test --verbose
+
+    - name: Test ['chrono' feature]
+      run: cargo test --verbose --features chrono
+
+    - name: Test ['tokio' feature]
+      run: cargo test --verbose --features tokio
+
+    - name: Test ['tokio-fs' feature]
+      run: cargo test --verbose --features tokio-fs
+
+    - name: Test ['deflate' feature]
+      run: cargo test --verbose --features deflate
+
+    - name: Test ['bzip2' feature]
+      run: cargo test --verbose --features bzip2
+
+    - name: Test ['lzma' feature]
+      run: cargo test --verbose --features lzma
+
+    - name: Test ['zstd' feature]
+      run: cargo test --verbose --features zstd
+
+    - name: Test ['xz' feature]
+      run: cargo test --verbose --features xz
+
+    - name: Test ['deflate64' feature]
+      run: cargo test --verbose --features deflate64
+
+    - name: Test ['full' feature]
+      run: cargo test --verbose --features full

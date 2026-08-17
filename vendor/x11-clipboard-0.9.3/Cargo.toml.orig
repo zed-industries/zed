@@ -1,0 +1,13 @@
+[package]
+name = "x11-clipboard"
+version = "0.9.3"
+authors = ["quininer kel <quininer@live.com>"]
+description = "x11 clipboard support for Rust."
+repository = "https://github.com/quininer/x11-clipboard"
+documentation = "https://docs.rs/x11-clipboard/"
+keywords = [ "x11", "xcb", "clipboard" ]
+license = "MIT"
+
+[dependencies]
+libc = { version = "0.2.152" }
+x11rb = { version = "0.13.0", features = ["xfixes"]}

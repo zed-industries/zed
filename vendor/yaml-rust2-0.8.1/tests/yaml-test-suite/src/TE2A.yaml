@@ -1,0 +1,28 @@
+---
+- name: Spec Example 8.16. Block Mappings
+  from: http://www.yaml.org/spec/1.2/spec.html#id2798147
+  tags: spec mapping
+  yaml: |
+    block mapping:
+     key: value
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :block mapping
+       +MAP
+        =VAL :key
+        =VAL :value
+       -MAP
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "block mapping": {
+        "key": "value"
+      }
+    }
+  dump: |
+    block mapping:
+      key: value

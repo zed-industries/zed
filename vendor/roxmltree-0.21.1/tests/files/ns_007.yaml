@@ -1,0 +1,11 @@
+Document:
+  - Element:
+      tag_name: e@http://www.uvic.ca
+      attributes:
+        attr: "no_ns"
+        attr@http://www.ietf.org: "b_ns"
+        attr@http://www.w3.org: "a_ns"
+      namespaces:
+        None: http://www.uvic.ca
+        a: http://www.w3.org
+        b: http://www.ietf.org

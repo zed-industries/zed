@@ -1,0 +1,123 @@
+error: must be a path if it's a string: expected identifier
+  --> tests/compile-fail/default_expr_bad_arg.rs:53:25
+   |
+53 |     #[darling(default = r#"|| "world".to_owned()"#)]
+   |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0308]: mismatched types
+ --> tests/compile-fail/default_expr_bad_arg.rs:5:25
+  |
+5 |     #[darling(default = usize::default)]
+  |                         ^^^^^- help: try using a conversion method: `.to_string()`
+  |                         |
+  |                         expected `String`, found `usize`
+
+error[E0308]: mismatched types
+ --> tests/compile-fail/default_expr_bad_arg.rs:8:25
+  |
+8 |     #[darling(default = "usize::default")]
+  |                         ^^^^^^^^^^^^^^^^- help: try using a conversion method: `.to_string()`
+  |                         |
+  |                         expected `String`, found `usize`
+
+error[E0308]: mismatched types
+  --> tests/compile-fail/default_expr_bad_arg.rs:11:25
+   |
+11 |     #[darling(default = || usize::default())]
+   |                         ^- help: try using a conversion method: `.to_string()`
+   |                         |
+   |                         expected `String`, found `usize`
+
+error[E0308]: mismatched types
+  --> tests/compile-fail/default_expr_bad_arg.rs:17:25
+   |
+17 |     #[darling(default = f64::default, map = f64::to_bits)]
+   |                         ^^^ expected `u64`, found `f64`
+
+error[E0308]: mismatched types
+  --> tests/compile-fail/default_expr_bad_arg.rs:20:25
+   |
+20 |     #[darling(default = "f64::default", map = f64::to_bits)]
+   |                         ^^^^^^^^^^^^^^ expected `u64`, found `f64`
+
+error[E0308]: mismatched types
+  --> tests/compile-fail/default_expr_bad_arg.rs:23:25
+   |
+23 |     #[darling(default = || f64::default(), map = f64::to_bits)]
+   |                         ^ expected `u64`, found `f64`
+
+error[E0308]: mismatched types
+  --> tests/compile-fail/default_expr_bad_arg.rs:29:35
+   |
+29 |     #[darling(multiple, default = bool::default)]
+   |                                   ^^^^ expected `Vec<bool>`, found `bool`
+   |
+   = note: expected struct `Vec<bool>`
+                found type `bool`
+
+error[E0308]: mismatched types
+  --> tests/compile-fail/default_expr_bad_arg.rs:32:35
+   |
+32 |     #[darling(multiple, default = "bool::default")]
+   |                                   ^^^^^^^^^^^^^^^ expected `Vec<bool>`, found `bool`
+   |
+   = note: expected struct `Vec<bool>`
+                found type `bool`
+
+error[E0308]: mismatched types
+  --> tests/compile-fail/default_expr_bad_arg.rs:35:35
+   |
+35 |     #[darling(multiple, default = || bool::default())]
+   |                                   ^ expected `Vec<bool>`, found `bool`
+   |
+   = note: expected struct `Vec<bool>`
+                found type `bool`
+
+error[E0308]: mismatched types
+  --> tests/compile-fail/default_expr_bad_arg.rs:41:25
+   |
+41 |     #[darling(default = String::with_capacity)]
+   |                         ------^^^^^^^^^^^^^^^
+   |                         |
+   |                         incorrect number of function parameters
+   |                         arguments to this function are incorrect
+   |
+   = note: expected fn pointer `fn() -> _`
+                 found fn item `fn(usize) -> String {String::with_capacity}`
+help: the return type of this call is `fn(usize) -> String {String::with_capacity}` due to the type of the argument passed
+  --> tests/compile-fail/default_expr_bad_arg.rs:41:25
+   |
+41 |     #[darling(default = String::with_capacity)]
+   |                         ^^^^^^---------------
+   |                         |
+   |                         this argument influences the return type of `identity`
+note: function defined here
+  --> $RUST/core/src/convert/mod.rs
+
+error[E0308]: mismatched types
+  --> tests/compile-fail/default_expr_bad_arg.rs:44:25
+   |
+44 |     #[darling(default = "String::with_capacity")]
+   |                         ^^^^^^^^^^^^^^^^^^^^^^^
+   |                         |
+   |                         incorrect number of function parameters
+   |                         arguments to this function are incorrect
+   |
+   = note: expected fn pointer `fn() -> _`
+                 found fn item `fn(usize) -> String {String::with_capacity}`
+help: the return type of this call is `fn(usize) -> String {String::with_capacity}` due to the type of the argument passed
+  --> tests/compile-fail/default_expr_bad_arg.rs:44:25
+   |
+44 |     #[darling(default = "String::with_capacity")]
+   |                         ^^^^^^^^^^^^^^^^^^^^^^^ this argument influences the return type of `identity`
+note: function defined here
+  --> $RUST/core/src/convert/mod.rs
+
+error[E0593]: closure is expected to take 0 arguments, but it takes 1 argument
+  --> tests/compile-fail/default_expr_bad_arg.rs:47:25
+   |
+47 |     #[darling(default = |cap| String::with_capacity(cap))]
+   |                         ^^^^^
+   |                         |
+   |                         expected closure that takes 0 arguments
+   |                         takes 1 argument

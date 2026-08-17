@@ -1,0 +1,37 @@
+---
+- name: Nested top level flow mapping
+  from: '@perlpunk'
+  tags: flow indent mapping sequence
+  yaml: |
+    { key: [[[
+      value
+     ]]]
+    }
+  tree: |
+    +STR
+     +DOC
+      +MAP {}
+       =VAL :key
+       +SEQ []
+        +SEQ []
+         +SEQ []
+          =VAL :value
+         -SEQ
+        -SEQ
+       -SEQ
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "key": [
+        [
+          [
+            "value"
+          ]
+        ]
+      ]
+    }
+  dump: |
+    key:
+    - - - value

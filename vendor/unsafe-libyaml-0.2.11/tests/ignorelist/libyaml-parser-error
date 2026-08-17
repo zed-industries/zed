@@ -1,0 +1,10 @@
+9C9N: Wrong indented flow sequence
+9HCY: Need document footer before directives
+9JBA: Invalid comment after end of flow sequence
+CVW2: Invalid comment after comma
+EB22: Missing document-end marker before directive
+QB6E: Wrong indented multiline quoted scalar
+RHX7: YAML directive without document end marker
+S98Z: Block scalar with more spaces than first content line
+SU5Z: Comment without whitespace after doublequoted scalar
+X4QW: Comment without whitespace after block scalar indicator

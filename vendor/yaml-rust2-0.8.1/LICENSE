@@ -1,0 +1,9 @@
+Code up to and including commit `da52a68615f2ecdd6b7e4567019f280c433c1521` is licensed by Chen Yuheng under either of:
+  - [Apache License, Version 2.0](.licenses/ChenYuheng-Apache) (http://www.apache.org/licenses/LICENSE-2.0)
+  - [MIT License](./licenses/ChenYuheng-MIT) (http://opensource.org/licenses/MIT)
+
+Code modifications starting with commit `1d71a23b151dcc12b289d0f06d8207dd9c764216` (included) are licenced by Ethiraric under either of:
+  - [Apache License, Version 2.0](.licenses/Ethiraric-Apache) (http://www.apache.org/licenses/LICENSE-2.0)
+  - [MIT License](./licenses/Ethiraric-MIT) (http://opensource.org/licenses/MIT)
+
+Redistributions of this Work must include licenses of both Chen Yuheng and Ethiraric.

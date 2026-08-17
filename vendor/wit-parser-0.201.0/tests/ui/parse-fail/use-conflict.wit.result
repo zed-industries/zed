@@ -1,0 +1,5 @@
+name `x` is defined more than once
+     --> tests/ui/parse-fail/use-conflict.wit:10:15
+      |
+   10 |   use foo.{x, x};
+      |               ^

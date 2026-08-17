@@ -1,0 +1,29 @@
+[dependencies]
+logos-codegen = {version = "0.14.4", path = "../logos-codegen"}
+
+[features]
+# Enables debug messages
+debug = ["logos-codegen/debug"]
+# Don't use or generate unsafe code
+forbid_unsafe = ["logos-codegen/forbid_unsafe"]
+
+[lib]
+bench = false
+proc-macro = true
+
+[package]
+name = "logos-derive"
+authors.workspace = true
+categories.workspace = true
+description.workspace = true
+edition.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[package.metadata.release]
+shared-version = true

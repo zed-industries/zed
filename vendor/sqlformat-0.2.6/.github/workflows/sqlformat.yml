@@ -1,0 +1,70 @@
+name: sqlformat
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  build-test-unix:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        conf:
+          - minimum
+          - latest-stable
+          - latest-beta
+          - latest-nightly
+        include:
+          - conf: minimum
+            toolchain: 1.62.0
+          - conf: latest-stable
+            toolchain: stable
+          - conf: latest-beta
+            toolchain: beta
+          - conf: latest-nightly
+            toolchain: nightly
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install ${{ matrix.toolchain }}
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.toolchain }}
+          override: true
+          components: clippy, rustfmt
+      - name: Cache cargo registry
+        uses: actions/cache@v1
+        with:
+          path: ~/.cargo/registry/cache
+          key: ${{ runner.os }}-${{ matrix.conf }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.conf }}-cargo-registry-
+      - name: Run rustfmt
+        if: matrix.toolchain == 'stable'
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: -- --check
+      - name: Run clippy
+        if: matrix.toolchain == 'stable'
+        uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          args: -- -D warnings
+      # FIXME: criterion and its dependencies require a newer version than 1.62, but it is only used for benchmarks.
+      # Is there a way to not have criterion built when we run tests?
+      - name: Run cargo check
+        if: matrix.toolchain == '1.62.0'
+        run: cargo check
+      - name: Run tests
+        if: matrix.toolchain != '1.62.0'
+        run: cargo test
+      - name: Build benchmarks
+        if: matrix.toolchain == 'stable'
+        run: cargo bench --no-run
+      - name: Build docs
+        run: cargo doc --no-deps

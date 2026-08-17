@@ -1,0 +1,14 @@
+[package]
+authors = ["The Wasmtime Project Developers"]
+description = "INTERNAL: Macros for defining asm functions in Wasmtime"
+edition.workspace = true
+rust-version.workspace = true
+license = "Apache-2.0 WITH LLVM-exception"
+name = "wasmtime-internal-asm-macros"
+repository = "https://github.com/bytecodealliance/wasmtime"
+version.workspace = true
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+cfg-if = { workspace = true }

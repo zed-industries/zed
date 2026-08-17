@@ -1,0 +1,54 @@
+[package]
+name = "crypto-bigint"
+version = "0.5.5"
+description = """
+Pure Rust implementation of a big integer library which has been designed from
+the ground-up for use in cryptographic applications. Provides constant-time,
+no_std-friendly implementations of modern formulas using const generics.
+"""
+authors = ["RustCrypto Developers"]
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/RustCrypto/crypto-bigint"
+categories = ["algorithms", "cryptography", "data-structures", "mathematics", "no-std"]
+keywords = ["arbitrary", "crypto", "bignum", "integer", "precision"]
+readme = "README.md"
+resolver = "2"
+edition = "2021"
+rust-version = "1.65"
+
+[dependencies]
+subtle = { version = "2.4", default-features = false }
+
+# optional dependencies
+der = { version = "0.7", optional = true, default-features = false }
+generic-array = { version = "0.14", optional = true }
+rand_core = { version = "0.6.4", optional = true }
+rlp = { version = "0.5", optional = true, default-features = false }
+serdect = { version = "0.2", optional = true, default-features = false }
+zeroize = { version = "1", optional = true,  default-features = false }
+
+[dev-dependencies]
+bincode = "1"
+criterion = { version = "0.5", features = ["html_reports"] }
+hex-literal = "0.4"
+num-bigint = "0.4"
+num-integer = "0.1"
+num-traits = "0.2"
+proptest = "1"
+rand_core = { version = "0.6", features = ["std"] }
+rand_chacha = "0.3"
+
+[features]
+default = ["rand"]
+alloc = ["serdect?/alloc"]
+rand = ["rand_core/std"]
+serde = ["dep:serdect"]
+extra-sizes = []
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[[bench]]
+name = "bench"
+harness = false

@@ -1,0 +1,31 @@
+[package]
+name = "gethostname"
+description = "gethostname for all platforms"
+readme = "README.md"
+homepage = "https://codeberg.org/swsnr/gethostname.rs"
+repository = "https://codeberg.org/swsnr/gethostname.rs.git"
+documentation = "https://docs.rs/gethostname"
+version = "1.1.0"
+authors = ["Sebastian Wiesner <sebastian@swsnr.de>"]
+edition = "2021"
+license = "Apache-2.0"
+keywords = ["gethostname", "DNS", "hostname"]
+categories = ["os", "api-bindings"]
+rust-version = "1.71"
+
+[target.'cfg(not(windows))'.dependencies]
+rustix = { version = "1.0.3", default-features = false, features = ["system"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-link = "0.2.1"
+
+[package.metadata.release]
+pre-release-commit-message = "Release {{version}}"
+tag-prefix = ""
+tag-message = "Version {{tag_name}}"
+pre-release-replacements = [
+    # Update the changelog
+    { file = "CHANGELOG.md", search = "## \\[Unreleased\\]", replace = "## [Unreleased]\n\n## [{{version}}] – {{date}}", exactly = 1 },
+    { file = "CHANGELOG.md", search = "HEAD", replace = "{{tag_name}}", exactly = 1 },
+    { file = "CHANGELOG.md", search = "\\[Unreleased\\]: ", replace = "[Unreleased]: https://codeberg.org/swsnr/gethostname.rs/compare/{{tag_name}}...HEAD\n[{{version}}]: ", exactly = 1 },
+]

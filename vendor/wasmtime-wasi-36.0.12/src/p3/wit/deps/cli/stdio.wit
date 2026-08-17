@@ -1,0 +1,17 @@
+@since(version = 0.3.0)
+interface stdin {
+  @since(version = 0.3.0)
+  get-stdin: func() -> stream<u8>;
+}
+
+@since(version = 0.3.0)
+interface stdout {
+  @since(version = 0.3.0)
+  set-stdout: func(data: stream<u8>);
+}
+
+@since(version = 0.3.0)
+interface stderr {
+  @since(version = 0.3.0)
+  set-stderr: func(data: stream<u8>);
+}

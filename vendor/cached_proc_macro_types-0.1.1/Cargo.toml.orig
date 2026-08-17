@@ -1,0 +1,14 @@
+[package]
+name = "cached_proc_macro_types"
+version = "0.1.1"
+authors = ["James Kominick <james@kominick.com>"]
+description = "Generic cache implementations and simplified function memoization"
+repository = "https://github.com/jaemk/cached"
+documentation = "https://docs.rs/cached"
+readme = "README.md"
+categories = ["caching"]
+keywords = ["caching", "cache", "memoize", "lru"]
+license = "MIT"
+edition = "2018"
+
+[dependencies]

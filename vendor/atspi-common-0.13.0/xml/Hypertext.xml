@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<node>
+  <interface name="org.a11y.atspi.Hypertext">
+
+    <method name="GetNLinks">
+      <arg direction="out" type="i"/>
+    </method>
+
+    <method name="GetLink">
+      <arg direction="in" name="linkIndex" type="i"/>
+      <arg direction="out" type="(so)"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QSpiObjectReference"/>
+    </method>
+
+    <method name="GetLinkIndex">
+      <arg direction="in" name="characterIndex" type="i"/>
+      <arg direction="out" type="i"/>
+    </method>
+
+  </interface>
+</node>

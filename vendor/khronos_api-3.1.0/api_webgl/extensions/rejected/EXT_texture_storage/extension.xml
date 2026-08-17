@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rejected href="rejected/EXT_texture_storage/">
+  <name>EXT_texture_storage</name>
+
+  <contact> <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL
+  working group</a> (public_webgl 'at' khronos.org) </contact>
+
+  <contributors>
+    <contributor>Kirill Dmitrenko (dmikis 'at' yandex-team.ru)</contributor>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+
+  <number>k</number>
+
+  <depends>
+    <api version="1.0"/>
+    <core version="2.0"/>
+  </depends>
+
+  <overview>
+    <mirrors href="http://www.khronos.org/registry/gles/extensions/EXT/EXT_texture_storage.txt"
+             name="EXT_texture_storage">
+    </mirrors>
+
+    <features>
+      <feature>
+        The behaviour of <code>texImage2D</code>,
+        <code>compressedTexImage2D</code> and <code>copyTexImage2D</code>
+        methods of a WebGL context is changed. After a successful call to <code>texStorage2DEXT</code>,
+        the value of <code>TEXTURE_IMMUTABLE_FORMAT_EXT</code> for this texture
+        object is set to <code>TRUE</code>, and no further changes to the dimensions
+        or format of the texture may be made. Using <code>texImage2D</code>,
+        <code>compressedTexImage2D</code>, <code>copyTexImage2D</code> or
+        <code>texStorage2DEXT</code> with the same texture will result
+        in the error <code>INVALID_OPERATION</code> being generated.
+      </feature>
+    </features>
+  </overview>
+
+  <idl xml:space="preserve">
+interface EXT_texture_storage {
+    const GLenum TEXTURE_IMMUTABLE_FORMAT_EXT = 0x912F;
+    void texStorage2DEXT(GLenum target, GLsizei levels, GLenum internalformat, GLsizei width, GLsizei height);
+}
+</idl>
+
+  <newfun>
+    <function name="texStorage2DEXT" type="void">
+      <param name="target" type="GLenum"/>
+      <param name="levels" type="GLsizei"/>
+      <param name="internalformat" type="GLenum"/>
+      <param name="width" type="GLsizei"/>
+      <param name="height" type="GLsizei"/>
+      Simultaneously specify storage for all levels of a two-dimensional texture.
+    </function>
+  </newfun>
+
+  <history>
+    <revision date="2015/09/16">
+      <change>Initial revision</change>
+    </revision>
+    <revision date="2017/01/11">
+      <change>Moved to rejected now that initial WebGL 2.0 implementations are shipping imminently.</change>
+    </revision>
+  </history>
+</rejected>

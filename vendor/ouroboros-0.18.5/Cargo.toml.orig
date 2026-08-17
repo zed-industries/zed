@@ -1,0 +1,19 @@
+[package]
+name = "ouroboros"
+version = "0.18.5"
+authors = ["Josh <someguynamedjosh@github.com>"]
+edition = "2018"
+license = "MIT OR Apache-2.0"
+description = "Easy, safe self-referential struct generation."
+readme = "../README.md"
+documentation = "https://docs.rs/ouroboros"
+repository = "https://github.com/someguynamedjosh/ouroboros"
+
+[dependencies]
+aliasable = "0.1.3"
+ouroboros_macro = { version = "0.18.5", path = "../ouroboros_macro" }
+static_assertions = "1.1.0"
+
+[features]
+default = ["std"]
+std = ["ouroboros_macro/std"]

@@ -1,0 +1,58 @@
+---
+source: codespan-reporting/tests/term.rs
+expression: TEST_DATA.emit_no_color(&config)
+---
+error[E0666]: nested `impl Trait` is not allowed
+  --> nested_impl_trait.rs:5:56
+  |
+5 | fn bad_in_ret_position(x: impl Into<u32>) -> impl Into<impl Debug> { x }
+  |                                              ----------^^^^^^^^^^-
+  |                                              |         |
+  |                                              |         nested `impl Trait` here
+  |                                              outer `impl Trait`
+
+error[E0121]: the type placeholder `_` is not allowed within types on item signatures
+  --> typeck_type_placeholder_item.rs:1:18
+  |
+1 | fn fn_test1() -> _ { 5 }
+  |                  ^
+  |                  |
+  |                  not allowed in type signatures
+  |                  help: replace with the correct return type: `i32`
+
+error[E0121]: the type placeholder `_` is not allowed within types on item signatures
+  --> typeck_type_placeholder_item.rs:2:25
+  |
+2 | fn fn_test2(x: i32) -> (_, _) { (x, x) }
+  |                        -^--^-
+  |                        ||  |
+  |                        ||  not allowed in type signatures
+  |                        |not allowed in type signatures
+  |                        help: replace with the correct return type: `(i32, i32)`
+
+error[E0277]: `std::rc::Rc<()>` cannot be sent between threads safely
+   --> no_send_res_ports.rs:25:5
+   |  
+25 |       thread::spawn(move|| {
+   |       ^^^^^^^^^^^^^ `std::rc::Rc<()>` cannot be sent between threads safely
+   | /-------------------'
+26 | |         let y = x;
+27 | |         println!("{:?}", y);
+28 | |     });
+   | \------' within this `[closure@no_send_res_ports.rs:29:19: 33:6 x:main::Foo]`
+   |  
+   --> libstd/thread/mod.rs:5:8
+   |
+ 5 |     F: Send + 'static,
+   |        ---- required by this bound in `std::thread::spawn`
+   |
+   = help: within `[closure@no_send_res_ports.rs:29:19: 33:6 x:main::Foo]`, the trait `std::marker::Send` is not implemented for `std::rc::Rc<()>`
+   = note: required because it appears within the type `Port<()>`
+   = note: required because it appears within the type `main::Foo`
+   = note: required because it appears within the type `[closure@no_send_res_ports.rs:29:19: 33:6 x:main::Foo]`
+
+error: aborting due 5 previous errors
+ = Some errors have detailed explanations: E0121, E0277, E0666.
+ = For more information about an error, try `rustc --explain E0121`.
+
+

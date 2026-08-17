@@ -1,0 +1,28 @@
+[package]
+authors = ["Joe Wilm <joe@jwilm.com>", "Christian Duerr <contact@christianduerr.com>"]
+description = "Parser for implementing terminal emulators"
+repository = "https://github.com/alacritty/vte"
+documentation = "https://docs.rs/vte/"
+keywords = ["ansi", "vte", "parser", "terminal"]
+categories = ["parsing", "no-std"]
+exclude = ["/.travis.yml"]
+readme = "README.md"
+license = "Apache-2.0 OR MIT"
+version = "0.15.0"
+name = "vte"
+edition = "2021"
+rust-version = "1.62.1"
+
+[features]
+ansi = ["log", "cursor-icon", "bitflags"]
+default = ["std"]
+std = ["memchr/std"]
+serde = ["dep:serde"]
+
+[dependencies]
+arrayvec = { version = "0.7.2", default-features = false }
+bitflags = { version = "2.3.3", default-features = false, optional = true }
+cursor-icon = { version = "1.0.0", default-features = false, optional = true }
+log = { version = "0.4.17", optional = true }
+memchr = { version = "2.7.4", default-features = false }
+serde = { version = "1.0.160", features = ["derive"], optional = true }

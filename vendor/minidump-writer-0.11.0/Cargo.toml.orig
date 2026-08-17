@@ -1,0 +1,69 @@
+[package]
+name = "minidump-writer"
+version = "0.11.0"
+authors = ["Martin Sirringhaus"]
+description = "Rust rewrite of Breakpad's minidump_writer"
+repository = "https://github.com/rust-minidump/minidump-writer"
+homepage = "https://github.com/rust-minidump/minidump-writer"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+bitflags = "2.8"
+byteorder = "1.4"
+cfg-if = "1.0"
+crash-context = "0.6"
+error-graph = { version = "0.1.1", features = ["serde"] }
+failspot = "0.2.0"
+log = "0.4"
+memoffset = "0.9"
+minidump-common = "0.26"
+scroll = "0.12"
+serde = { version = "1.0.208", features = ["derive"] }
+serde_json = "1.0.116"
+tempfile = "3.16"
+thiserror = "2.0"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+goblin = "0.9.2"
+memmap2 = "0.9"
+
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+nix = { version = "0.29", default-features = false, features = [
+    "mman",
+    "process",
+    "ptrace",
+    "signal",
+    "uio",
+    "user",
+] }
+# Used for parsing procfs info.
+# default-features is disabled since it pulls in chrono
+procfs-core = { version = "0.17", default-features = false, features = ["serde1"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+bitflags = "2.4"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Binds some additional mac specifics not in libc
+mach2 = "0.4"
+
+[dev-dependencies]
+# We auto-detect what the test binary that is spawned for most tests should be
+# compiled for
+current_platform = "0.2"
+failspot = { version = "0.2.0", features = ["enabled"] }
+# Minidump-processor is async so we need an executor
+futures = { version = "0.3", features = ["executor"] }
+minidump = "0.26"
+memmap2 = "0.9"
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+# We dump symbols for the `test` executable so that we can validate that minidumps
+# created by this crate can be processed by minidump-processor
+dump_syms = { version = "2.2", default-features = false }
+#minidump-processor = { version = "0.25", default-features = false }
+minidump-unwind = { version = "0.26", features = ["debuginfo"] }
+similar-asserts = "1.6"
+uuid = "1.12"

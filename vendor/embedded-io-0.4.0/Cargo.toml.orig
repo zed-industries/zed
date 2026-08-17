@@ -1,0 +1,30 @@
+[package]
+name = "embedded-io"
+version = "0.4.0"
+edition = "2021"
+description = "Embedded IO traits"
+repository = "https://github.com/embassy-rs/embedded-io"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+categories = [
+    "embedded",
+    "no-std",
+]
+
+[features]
+std = ["alloc", "futures?/std"]
+alloc = []
+
+async = []
+futures = ["std", "async", "dep:futures"]
+tokio = ["std", "async", "dep:tokio"]
+
+[dependencies]
+defmt = { version = "0.3", optional = true }
+futures = { version = "0.3.21", default-features = false, optional = true }
+tokio = { version = "1", features = ["net"], default-features = false, optional = true }
+log = { version = "0.4.14", optional = true }
+
+[package.metadata.docs.rs]
+features = ["std", "async", "defmt", "futures", "tokio"]
+rustdoc-args = ["--cfg", "docsrs"]

@@ -1,0 +1,50 @@
+<?xml version="1.0"?>
+
+<ratified href="OES_element_index_uint/">
+  <name>OES_element_index_uint</name>
+  <contact>
+    <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL working group</a> (public_webgl 'at' khronos.org)
+  </contact>
+  <contributors>
+    <contributor>Members of the WebGL working group</contributor>
+    <contributor>Florian B&#246;sch (pyalot 'at' gmail.com)</contributor>
+  </contributors>
+  <number>10</number>
+  <depends>
+    <api version="1.0" />
+    <core version="2.0" />
+  </depends>
+  <overview>
+    <mirrors href="http://www.khronos.org/registry/gles/extensions/OES/OES_element_index_uint.txt" name="OES_element_index_uint"/>
+    <features>
+      <feature>
+        The <code>drawElements</code> entry point parameter <code>type</code> accepts the value <code>UNSIGNED_INT</code>
+      </feature>
+    </features>
+  </overview>
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface OES_element_index_uint {
+};
+  </idl>
+  <history>
+    <revision date="2012/01/24">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2012/01/27">
+      <change>Removed the bufferData requirement as this is not checked by webgl</change>
+    </revision>
+    <revision date="2012/02/24">
+      <change>Removed the enumerants from the IDL which are contained in the context and added aliases to the extension name</change>
+    </revision>
+    <revision date="2012/10/16">
+      <change>Based on feedback on public_webgl, moved from draft to community approved, and removed aliases.</change>
+    </revision>
+    <revision date="2013/05/15">
+      <change>Ratified by Khronos Board of Promoters.</change>
+    </revision>
+    <revision date="2014/07/15">
+      <change>Added NoInterfaceObject extended attribute.</change>
+    </revision>
+  </history>
+</ratified>

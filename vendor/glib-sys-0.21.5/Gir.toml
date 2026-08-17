@@ -1,0 +1,152 @@
+[options]
+work_mode = "sys"
+library = "GLib"
+version = "2.0"
+min_cfg_version = "2.56"
+single_version_file = "."
+girs_directories = ["../../gir-files"]
+
+ignore = [
+    "GLib.ANALYZER_ANALYZING",
+    "GLib.C_STD_VERSION",
+    "GLib.DIR_SEPARATOR",
+    "GLib.DIR_SEPARATOR_S",
+    "GLib.GINT16_FORMAT",
+    "GLib.GINT16_MODIFIER",
+    "GLib.GINT32_FORMAT",
+    "GLib.GINT32_MODIFIER",
+    "GLib.GINT64_FORMAT",
+    "GLib.GINT64_MODIFIER",
+    "GLib.GNUC_FUNCTION",
+    "GLib.GNUC_PRETTY_FUNCTION",
+    "GLib.GUINT16_FORMAT",
+    "GLib.GUINT32_FORMAT",
+    "GLib.GUINT64_FORMAT",
+    "GLib.GUINT64_MODIFIER",
+    "GLib.GINTPTR_FORMAT",
+    "GLib.GINTPTR_MODIFIER",
+    "GLib.GUINTPTR_FORMAT",
+    "GLib.GUINTPTR_MODIFIER",
+    "GLib.GSIZE_FORMAT",
+    "GLib.GSIZE_MODIFIER",
+    "GLib.GSSIZE_FORMAT",
+    "GLib.GSSIZE_MODIFIER",
+    "GLib.HAVE_GINT64",
+    "GLib.HAVE_GNUC_VARARGS",
+    "GLib.HAVE_GNUC_VISIBILITY",
+    "GLib.HAVE_GROWING_STACK",
+    "GLib.HAVE_ISO_VARARGS",
+    "GLib.MAJOR_VERSION",
+    "GLib.MAXINT8",
+    "GLib.MAXINT16",
+    "GLib.MAXINT32",
+    "GLib.MAXINT64",
+    "GLib.MAXUINT8",
+    "GLib.MAXUINT16",
+    "GLib.MAXUINT32",
+    "GLib.MAXUINT64",
+    "GLib.MICRO_VERSION",
+    "GLib.MININT8",
+    "GLib.MININT16",
+    "GLib.MININT32",
+    "GLib.MININT64",
+    "GLib.MINOR_VERSION",
+    "GLib.MODULE_SUFFIX",
+    "GLib.PID_FORMAT",
+    "GLib.POLLFD_FORMAT",
+    "GLib.SEARCHPATH_SEPARATOR",
+    "GLib.SEARCHPATH_SEPARATOR_S",
+    "GLib.SIZEOF_LONG",
+    "GLib.SIZEOF_SIZE_T",
+    "GLib.SIZEOF_SSIZE_T",
+    "GLib.SIZEOF_VOID_P",
+    "GLib.VA_COPY_AS_ARRAY",
+    "GLib.VERSION_MIN_REQUIRED",
+    "GLib.macro__has_attribute_ifunc",
+    "GLib.macro__has_attribute_no_sanitize_address",
+]
+
+[[object]]
+name = "GLib.*"
+status = "generate"
+    [[object.function]]
+    pattern = "(fopen|creat|chmod|blow_chunks|utime|slice_debug_tree_statistics|rename|remove|open|mkdir|lstat|fsync|freopen|set_prgname_once)"
+    # see https://gitlab.gnome.org/GNOME/glib/-/issues/3231 + majority of those are available through std
+    ignore = true
+    [[object.function]]
+    name = "atomic_int_get"
+    # generates a type using *const volatile instead of *const gint or so.
+    manual = true
+    [[object.function]]
+    name = "unix_get_passwd_entry"
+    cfg_condition = "unix"
+    [[object.function]]
+    name = "assertion_message_cmpint"
+    version = "2.78"
+    [[object.function]]
+    name = "sort_array"
+    version = "2.82"
+
+[[object]]
+name = "GLib.LOG_DOMAIN"
+# C-only macro
+status = "ignore"
+
+[[object]]
+name = "GLib.Pid"
+status = "manual"
+
+[[object]]
+name = "GLib.PollFD"
+status = "manual"
+
+[[object]]
+name = "GLib.UnixPipe"
+status = "generate"
+cfg_condition = "unix"
+
+[[object]]
+name = "GLib.UnixPipeEnd"
+status = "generate"
+cfg_condition = "unix"
+
+[[object]]
+name = "GLib.TestLogMsg"
+# layout is broken due to rust having no long double
+status = "ignore"
+
+[[object]]
+name = "GLib.macro__has_attribute___noreturn__"
+# C-only macro
+status = "ignore"
+
+[[object]]
+name = "GLib.StaticMutex"
+# deprecated type and also the layout is broken due to mismatching gir data
+status = "ignore"
+    [[object.function]]
+    pattern = ".+"
+    ignore = true
+
+[[object]]
+name = "GLib.StaticPrivate"
+# deprecated type, no longer needed
+    [[object.function]]
+    pattern = ".+"
+    ignore = true
+
+[[object]]
+name = "GLib.StaticRecMutex"
+# deprecated type and also the layout is broken due to mismatching gir data
+status = "ignore"
+    [[object.function]]
+    pattern = ".+"
+    ignore = true
+
+[[object]]
+name = "GLib.StaticRWLock"
+# deprecated type and also the layout is broken due to mismatching gir data
+status = "ignore"
+    [[object.function]]
+    pattern = ".+"
+    ignore = true

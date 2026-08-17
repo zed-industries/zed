@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+  "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+ <node name="/com/example/sample_object0">
+   <interface name="com.example.SampleInterface0">
+     <method name="Frobate">
+       <arg name="foz" type="z"/>
+     </method>
+   </interface>
+ </node>

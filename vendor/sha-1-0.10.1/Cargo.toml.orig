@@ -1,0 +1,39 @@
+[package]
+name = "sha-1"
+version = "0.10.1"
+description = "SHA-1 hash function. This crate is deprecated! Use the sha1 crate instead."
+authors = ["RustCrypto Developers"]
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+edition = "2018"
+documentation = "https://docs.rs/sha1"
+repository = "https://github.com/RustCrypto/hashes"
+keywords = ["crypto", "sha1", "hash", "digest"]
+categories = ["cryptography", "no-std"]
+
+[lib]
+name = "sha1"
+
+[dependencies]
+digest = "0.10.4"
+cfg-if = "1.0"
+
+[target.'cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))'.dependencies]
+cpufeatures = "0.2"
+sha1-asm = { version = "0.5", optional = true }
+
+[dev-dependencies]
+digest = { version = "0.10.4", features = ["dev"] }
+hex-literal = "0.2.2"
+
+[features]
+default = ["std"]
+std = ["digest/std"]
+oid = ["digest/oid"] # Enable OID support. WARNING: Bumps MSRV to 1.57
+asm = ["sha1-asm"] # WARNING: this feature SHOULD NOT be enabled by library crates
+compress = [] # Expose compress function
+force-soft = [] # Force software implementation
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

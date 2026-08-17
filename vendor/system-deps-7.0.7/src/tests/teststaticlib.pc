@@ -1,0 +1,10 @@
+prefix=./src/tests
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib/
+includedir=${prefix}/include/testlib
+
+Name: Test Library
+Description: A fake library to test pkg-config.
+Version: 1.2.3
+Libs: -L${libdir} -lteststatic -F${libdir} -framework someframework
+Cflags: -I${includedir} -DBADGER=yes -DAWESOME

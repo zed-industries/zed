@@ -1,0 +1,148 @@
+[package]
+name = "crc-fast"
+version = "1.9.0"
+edition = "2021"
+authors = ["Don MacAskill"]
+license = "MIT OR Apache-2.0"
+keywords = ["crc", "checksum", "simd", "accelerated", "fast"]
+categories = ["algorithms", "encoding", "hardware-support"]
+repository = "https://github.com/awesomized/crc-fast-rust"
+description = "World's fastest generic CRC16, CRC32, and CRC64 calculator using SIMD. Supplies a C-compatible shared library for use in other languages."
+readme = "README.md"
+
+# important intrinsics stabilization notes:
+# 1.69.0 added VPCLMULQDQ x86 detection support
+# 1.70.0 added LLVM 16 which supports PMULL2 on Aarch64
+# 1.89.0 stabilized AVX-512 intrinsics, including VPCLMULQDQ
+rust-version = "1.81"
+
+[lib]
+name = "crc_fast"
+crate-type = ["lib", "cdylib", "staticlib"]
+bench = true
+
+[dependencies]
+# can move to crc 3.4+ once our MSRV is Rust 1.82+
+crc = "~3.3"
+
+# We use digest with default-features = false and features = ["alloc"] to enable heap allocation support in no_std environments.
+# This configuration is safe because the alloc feature in digest does not depend on its default features as of digest v0.10.
+digest = { version = "0.10", optional = true, default-features = false, features = ["alloc"] }
+
+# will be removed once Rust 1.89 is the minimum supported version
+rustversion = "1.0"
+
+# constrain indexmap (transitive) to a version compatible with Rust 1.81.0
+indexmap = { version = ">=2.11.0, <2.12.0", optional = true }
+
+# no_std support
+# spin is optional - only needed on architectures with SIMD (for feature detection)
+# or when cache feature is enabled
+spin = { version = "0.10.0", default-features = false, features = [
+    "once",
+    "rwlock",
+    "mutex",
+    "spin_mutex",
+], optional = true }
+# hashbrown is only needed when caching is enabled in no_std
+hashbrown = { version = "0.16.0", optional = true }
+
+# Target-specific dependencies: spin is needed for feature detection on SIMD-capable architectures
+[target.'cfg(target_arch = "aarch64")'.dependencies]
+spin = { version = "0.10.0", default-features = false, features = [
+    "once",
+    "rwlock",
+    "mutex",
+    "spin_mutex",
+] }
+
+[target.'cfg(target_arch = "x86")'.dependencies]
+spin = { version = "0.10.0", default-features = false, features = [
+    "once",
+    "rwlock",
+    "mutex",
+    "spin_mutex",
+] }
+
+[target.'cfg(target_arch = "x86_64")'.dependencies]
+spin = { version = "0.10.0", default-features = false, features = [
+    "once",
+    "rwlock",
+    "mutex",
+    "spin_mutex",
+] }
+
+[dev-dependencies]
+criterion = "0.7"
+cbindgen = "0.29"
+
+# can move to proptest 1.9+ once our MSRV is Rust 1.82+
+proptest = "~1.8"
+
+rand = "0.9"
+regex = "1.12"
+wasm-bindgen-test = "0.3"
+
+# lto=true has a big improvement in performance
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1
+opt-level = 3
+
+[[bin]]
+name = "checksum"
+path = "src/bin/checksum.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "arch-check"
+path = "src/bin/arch-check.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "get-custom-params"
+path = "src/bin/get-custom-params.rs"
+required-features = ["cli"]
+
+[[bench]]
+name = "benchmark"
+harness = false
+required-features = ["std"]
+
+[features]
+# default features
+default = ["std", "panic-handler", "ffi"]
+std = ["alloc"] # std implies alloc is available
+alloc = ["digest"] # marker feature for heap allocation support
+panic-handler = [] # Provides panic handler for no_std library checks (disable in binaries)
+ffi = [
+] # C/C++ compatible dynamic/static library, planned to become optional in the next MAJOR version (v2) to reduce overhead
+
+# optional features
+cli = ["std"] # command line interface binaries (checksum, arch-check, get-custom-params)
+cache = [
+    "alloc",
+    "hashbrown",
+    "spin",
+] # no_std caching requires alloc + hashbrown HashMap + spin for synchronization
+
+# the features below are deprecated, aren't in use, and will be removed in the next MAJOR version (v2)
+vpclmulqdq = [] # deprecated, VPCLMULQDQ stabilized in Rust 1.89.0
+optimize_crc32_auto = [] # deprecated
+optimize_crc32_neon_eor3_v9s3x2e_s3 = [] # deprecated
+optimize_crc32_neon_v12e_v1 = [] # deprecated
+optimize_crc32_neon_v3s4x2e_v2 = [] # deprecated
+optimize_crc32_neon_blended = [] # deprecated
+optimize_crc32_avx512_vpclmulqdq_v3x2 = [] # deprecated
+optimize_crc32_avx512_v4s3x3 = [] # deprecated
+optimize_crc32_sse_v4s3x3 = [] # deprecated
+
+[package.metadata.docs.rs]
+features = ["std"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[[test]]
+name = "checksum_integration_tests"
+path = "tests/checksum_integration_tests.rs"
+required-features = ["cli"]

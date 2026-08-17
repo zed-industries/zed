@@ -1,0 +1,150 @@
+syntax = "proto3";
+
+package livekit;
+
+option go_package = "github.com/livekit/protocol/livekit";
+option csharp_namespace = "LiveKit.Proto";
+option ruby_package = "LiveKit::Proto";
+
+import "google/protobuf/timestamp.proto";
+import "livekit_models.proto";
+
+
+// Phone number status enumeration
+enum PhoneNumberStatus {
+  PHONE_NUMBER_STATUS_UNSPECIFIED = 0;  // Default value
+  PHONE_NUMBER_STATUS_ACTIVE = 1;       // Number is active and ready for use
+  PHONE_NUMBER_STATUS_PENDING = 2;      // Number is being provisioned
+  PHONE_NUMBER_STATUS_RELEASED = 3;     // Number has been released
+  PHONE_NUMBER_STATUS_OFFLINE = 4;      // Number is offline (not associated with any dispatch rule)
+}
+
+// Phone number type enumeration
+enum PhoneNumberType {
+  PHONE_NUMBER_TYPE_UNKNOWN = 0;        // Default value - unknown or parsing error
+  PHONE_NUMBER_TYPE_MOBILE = 1;         // Mobile phone number
+  PHONE_NUMBER_TYPE_LOCAL = 2;          // Local/fixed line number
+  PHONE_NUMBER_TYPE_TOLL_FREE = 3;      // Toll-free number
+}
+
+// Public Phone Number Service - External API for phone number management
+service PhoneNumberService {
+  // Search available phone numbers in inventory
+  rpc SearchPhoneNumbers(SearchPhoneNumbersRequest)
+      returns (SearchPhoneNumbersResponse) {}
+
+  // Purchase a phone number from inventory
+  rpc PurchasePhoneNumber(PurchasePhoneNumberRequest)
+      returns (PurchasePhoneNumberResponse) {}
+
+  // List phone numbers for a project
+  rpc ListPhoneNumbers(ListPhoneNumbersRequest)
+      returns (ListPhoneNumbersResponse) {}
+
+  // Get a phone number from a project
+  rpc GetPhoneNumber(GetPhoneNumberRequest)
+      returns (GetPhoneNumberResponse) {}
+
+  // Update a phone number in a project
+  rpc UpdatePhoneNumber(UpdatePhoneNumberRequest)
+      returns (UpdatePhoneNumberResponse) {}
+
+  // Release phone numbers
+  rpc ReleasePhoneNumbers(ReleasePhoneNumbersRequest)
+      returns (ReleasePhoneNumbersResponse) {}
+}
+
+// SearchPhoneNumbersRequest - Request to search available phone numbers
+message SearchPhoneNumbersRequest {
+  string country_code = 1;                 // Filter by country code (e.g., "US", "CA")
+  optional string area_code = 2;           // Filter by area code (e.g., "415")
+  optional int32 limit = 3;                // Maximum number of results (default: 50)
+  optional TokenPagination page_token = 4; // Token for pagination (empty for first page)
+}
+
+// SearchPhoneNumbersResponse - Response containing available phone numbers
+message SearchPhoneNumbersResponse {
+  repeated PhoneNumber items = 1;      // List of available phone numbers
+  TokenPagination next_page_token = 2; // Token for next page (empty if no more pages)
+}
+
+// PurchasePhoneNumberRequest - Request to purchase phone numbers
+message PurchasePhoneNumberRequest {
+  repeated string phone_numbers = 1;        // Phone numbers to purchase (e.g., ["+1234567890", "+1234567891"])
+  optional string sip_dispatch_rule_id = 2; // SIP dispatch rule ID to apply to all purchased numbers
+}
+
+// PurchasePhoneNumberResponse - Response containing the purchased phone numbers
+message PurchasePhoneNumberResponse {
+  repeated PhoneNumber phone_numbers = 1; // Details of the purchased phone numbers
+}
+
+// ListPhoneNumbersRequest - Request to list phone numbers
+message ListPhoneNumbersRequest {
+  optional int32 limit = 1;                 // Maximum number of results (default: 50)
+  repeated PhoneNumberStatus statuses = 2;           // Filter by statuses (active, pending, released)
+  optional TokenPagination page_token = 3;  // Token for pagination (empty for first page)
+  optional string sip_dispatch_rule_id = 4; // Filter by SIP dispatch rule ID
+}
+
+// ListPhoneNumbersResponse - Response containing phone numbers
+message ListPhoneNumbersResponse {
+  repeated PhoneNumber items = 1;      // List of phone numbers
+  TokenPagination next_page_token = 2; // Token for next page (empty if no more pages)
+  int32 total_count = 3;               // Total number of phone numbers
+  int32 offline_count = 4;             // Total number of offline phone numbers
+}
+
+// GetPhoneNumberRequest - Request to get a phone number
+message GetPhoneNumberRequest {
+  optional string id = 1;           // Use phone number ID for direct lookup
+  optional string phone_number = 2; // Use phone number string for lookup
+}
+
+// GetPhoneNumberResponse - Response containing the phone number
+message GetPhoneNumberResponse {
+  PhoneNumber phone_number = 1;         // The phone number details
+}
+
+// UpdatePhoneNumberRequest - Request to update a phone number
+message UpdatePhoneNumberRequest {
+  optional string id = 1;                   // Use phone number ID for direct lookup
+  optional string phone_number = 2;         // Use phone number string for lookup
+  optional string sip_dispatch_rule_id = 3; // SIP dispatch rule ID to assign to the phone number
+}
+
+// UpdatePhoneNumberResponse - Response containing the updated phone number
+message UpdatePhoneNumberResponse {
+  PhoneNumber phone_number = 1;         // The updated phone number details
+}
+
+// ReleasePhoneNumbersRequest - Request to release phone numbers
+message ReleasePhoneNumbersRequest {
+  repeated string ids = 1;              // Use phone number IDs for direct lookup
+  repeated string phone_numbers = 2;    // Use phone number strings for lookup
+}
+
+// ReleasePhoneNumbersResponse - Response for releasing phone numbers
+message ReleasePhoneNumbersResponse {
+  // Empty response - operation completed successfully
+}
+
+// PhoneNumber - Unified phone number type for inventory and purchased numbers
+message PhoneNumber {
+  string id = 1;                              // Unique identifier
+  string e164_format = 2;                     // Phone number in E.164 format (e.g., "+14155552671")
+  string country_code = 3;                    // Country code (e.g., "US")
+  string area_code = 4;                       // Area code (e.g., "415")
+  PhoneNumberType number_type = 5;            // Number type (mobile, local, toll-free, unknown)
+  string locality = 6;                        // City/locality (e.g., "San Francisco")
+  string region = 7;                          // State/region (e.g., "CA")
+  double spam_score = 8;                      // Spam score for fraud detection
+  google.protobuf.Timestamp created_at = 9;   // Creation timestamp
+  google.protobuf.Timestamp updated_at = 10;  // Last update timestamp
+  repeated string capabilities = 11;          // Available capabilities (e.g., "voice", "sms")
+  PhoneNumberStatus status = 12;              // Current status
+  google.protobuf.Timestamp assigned_at = 13; // Assignment timestamp
+  google.protobuf.Timestamp released_at = 14; // Release timestamp (if applicable)
+  string sip_dispatch_rule_id = 15 [deprecated=true]; // Associated SIP dispatch rule ID (deprecated: use sip_dispatch_rule_ids instead)
+  repeated string sip_dispatch_rule_ids = 16; // Associated SIP dispatch rule IDs
+}

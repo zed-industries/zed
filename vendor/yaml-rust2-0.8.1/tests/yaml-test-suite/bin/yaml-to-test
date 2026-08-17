@@ -1,0 +1,148 @@
+#!/usr/bin/env perl
+
+use strict; use warnings;
+use utf8;
+use FindBin;
+use lib $FindBin::Bin;
+use autodie qw(open close);
+use YAMLTestSuite;
+use Encode;
+use YAML::PP;
+use YAML::PP::Common qw/ PRESERVE_ORDER /;
+use JSON::PP;
+use Capture::Tiny ':all';
+use FindBin;
+use boolean;
+
+main(@ARGV);
+
+sub main {
+    my $yaml = decode_utf8 $ENV{YAML};
+    $yaml .= "\n" if length($yaml);
+
+    my ($more, $skip, $name, $from, $tags, $tree) =
+        @ENV{qw<MORE SKIP NAME FROM TAGS TREE>};
+
+    my $fail = 0;
+    if ($tree eq 'ERROR') {
+        $tree = '';
+        $fail = 1;
+    }
+    else {
+        $tree =~ s/\A=//;
+        $tree =~ s/^\ +//gm;
+    }
+
+    my $ypp = YAML::PP->new(
+        boolean => 'boolean',
+        preserve => PRESERVE_ORDER,
+    );
+
+    my $test = $ypp->preserved_mapping({});
+    %$test = (
+        $skip ? (skip => true) : (),
+        name => $name,
+        from => $from,
+        $tags ? ( tags => $tags ) : (),
+        $fail ? ( fail => true ) : (),
+        yaml => $yaml,
+        tree_json_dump_emit($yaml, $tree, $fail),
+    );
+
+    if ($more) {
+        delete $test->{name};
+        delete $test->{from};
+        delete $test->{skip};
+        $ypp->dumper->{header} = 0;
+    }
+
+    my $out = encode_utf8 $ypp->dump([$test]);
+
+    if ($more) {
+        $out = "\n$out";
+    }
+
+    print $out;
+}
+
+sub tree_json_dump_emit {
+    my ($yaml, $tree, $fail) = @_;
+
+    $yaml = YAMLTestSuite->unescape($yaml);
+
+    my @data;
+
+    if ($fail) {
+        $tree = run_cmd(
+            "yamlpp-events",
+            $yaml,
+        );
+        if ($tree) {
+            push @data, tree => escape(indent($tree));
+        }
+    }
+    else {
+        push @data, tree => escape(indent($tree));
+
+        my $json = run_cmd(
+            "yamlpp-load-dump -M YAML::PP::Ref -D JSON::PP",
+            $yaml,
+        );
+        if ($json) {
+            push @data, json => escape($json);
+        }
+
+        # my $dump = run_cmd(
+        #     "yamlpp-load-dump -M YAML::PP::Ref -D YAML::PP",
+        #     $yaml,
+        # );
+        # if ($dump) {
+        #     push @data, dump => escape($dump);
+        # }
+
+        my $emit = run_cmd(
+            "yamlpp-load-dump -M YAML::PP::Ref -D YAML::PP::LibYAML",
+            $yaml,
+        );
+        if ($emit and $emit ne $yaml) {
+            push @data, emit => escape($emit);
+        }
+    }
+
+    return @data;
+}
+
+sub run_cmd {
+    my ($cmd, $yaml) = @_;
+
+    my ($out, $err, $rc) = capture {
+        open my $pipe, '|-', $cmd
+            or die;
+        print $pipe encode_utf8($yaml);
+        return 0;
+    };
+
+    return $out || '';
+}
+
+sub escape {
+    my ($text) = @_;
+    $text =~ s/(\ +)$/"␣" x length($1)/gem;
+    return $text;
+}
+
+sub indent {
+    my ($text) = @_;
+    my $i = 0;
+    $text =~ s<^(.)><
+        if ($1 eq '+') {
+            (' ' x $i++) . $1;
+        } elsif ($1 eq '-') {
+            (' ' x --$i) . $1;
+        } else {
+            (' ' x $i) . $1;
+        }
+    >megx;
+    $text =~ s/\n?\z/\n/;
+    return $text;
+}

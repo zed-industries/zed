@@ -1,0 +1,181 @@
+version: 2.1
+orbs:
+  # codecov: codecov/codecov@3.3.0
+  rust: circleci/rust@1.6.1
+
+jobs:
+  build-and-test:
+    parameters:
+      rust-version:
+        type: string
+        default: "1.75.0"
+      debian-version:
+        type: string
+        default: "bookworm"
+      rust-features:
+        type: string
+        default: "--all-targets"
+      proptest-enable:
+        type: boolean
+        default: false
+    docker:
+      - image: rust:<< parameters.rust-version >>-<< parameters.debian-version >>
+    environment:
+      RUSTFLAGS: '-D warnings'
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+    steps:
+      - checkout
+      - run:
+          name: Rust Version
+          command: rustc --version; cargo --version
+      - when:
+          condition: << parameters.proptest-enable >>
+          steps:
+          - run:
+              name: Enable Running Property Tests
+              command: scripts/bigdecimal-property-tests enable
+      - run:
+          name: Generate cargo.lock
+          command: if [ ! -f Cargo.lock ]; then cargo generate-lockfile; fi
+      - restore_cache:
+          keys:
+            - bigdecimal-cargo-<< parameters.rust-version >>-{{ checksum "Cargo.lock" }}
+            - bigdecimal-cargo-
+      - run:
+          name: Check
+          command: cargo check << parameters.rust-features >>
+      - save_cache:
+          paths:
+            - /usr/local/cargo
+          key: bigdecimal-cargo-<< parameters.rust-version >>-{{ checksum "Cargo.lock" }}
+      - run:
+          name: Build
+          command: cargo build << parameters.rust-features >>
+      - run:
+          name: Test
+          command: cargo test << parameters.rust-features >>
+
+  upload-coverage:
+    parameters:
+      rust-version:
+        type: string
+      debian-version:
+        type: string
+        default: "bookworm"
+    machine: true
+    steps:
+      - checkout
+      - run:
+          name: Generate Coverage
+          command: >
+              docker run
+              --security-opt seccomp=unconfined
+              -v "${PWD}:/home"
+              -e CI=true
+              $(bash <(curl -s https://codecov.io/env))
+              akubera/rust-codecov:<< parameters.rust-version >>-<< parameters.debian-version >>
+              sh -c 'cargo test -q --no-run && kcov-rust && upload-kcov-results-to-codecov'
+      - store_artifacts:
+          path: target/cov
+
+  lint-check:
+    docker:
+      - image: cimg/rust:1.75
+    steps:
+      - checkout
+      - run:
+          name: Generate cargo.lock
+          command: cargo generate-lockfile
+      - rust/build:
+          with_cache: false
+      # - rust/format
+      - rust/clippy
+      - rust/test
+      - run:
+          name: Build examples
+          command: cargo build --examples
+
+  cargo-semver-check:
+    docker:
+      - image: "akubera/rust:stable"
+    steps:
+      - checkout
+      - run:
+          name: Tool Versions
+          command: >
+            rustc --version
+            && cargo --version
+            && cargo semver-checks --version
+      - run:
+          name: cargo semver-checks
+          command: cargo semver-checks --verbose
+      - run:
+          name: cargo semver-checks (no-std)
+          command: cargo semver-checks --verbose --only-explicit-features
+
+workflows:
+  version: 2
+  cargo:build-and-test:
+    jobs:
+    - rust/lint-test-build:
+        name: "lint-test-build:stable"
+        release: true
+        version: "1.75"
+        pre-steps:
+            - checkout
+            - run:
+                command: cargo generate-lockfile
+    - rust/lint-test-build:
+        name: "lint-test-build:1.56"
+        release: true
+        version: "1.56"
+        pre-steps:
+            - checkout
+            - run:
+                command: cargo generate-lockfile
+
+    - lint-check
+
+    - build-and-test:
+        name: build-and-test:MSRV
+        rust-version: "1.43.1"
+        debian-version: "buster"
+
+    - build-and-test:
+        name: build-and-test:MSRV:serde
+        rust-version: "1.43.1"
+        debian-version: "buster"
+        rust-features: "--all-targets --features='serde'"
+
+    - build-and-test:
+        name: build-and-test:latest
+
+    - build-and-test:
+        name: build-and-test:latest:serde
+        rust-features: "--all-targets --features='serde'"
+        proptest-enable: true
+
+    - build-and-test:
+        name: build-and-test:no_std
+        rust-features: "--no-default-features"
+
+    - build-and-test:
+        name: build-and-test:serde+no_std
+        rust-features: "--no-default-features --features='serde'"
+
+    - build-and-test:
+        name: build-and-test:serde_json
+        rust-features: "--features='serde-json'"
+
+    - build-and-test:
+        name: build-and-test:serde_json+no_std
+        rust-features: "--features='serde-json' --no-default-features"
+
+    - cargo-semver-check:
+        requires:
+        - build-and-test:latest:serde
+
+    - upload-coverage:
+        rust-version: "1.75.0"
+        requires:
+        - build-and-test:latest:serde

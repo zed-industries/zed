@@ -1,0 +1,8 @@
+error: Must set either `method` or `field` on a delegate.
+ --> tests/compile-fail/delegate_neither.rs:4:1
+  |
+4 | / #[setters(generate_delegates(ty = "Other"))]
+5 | | struct NeitherFieldNorMethod {
+6 | |     a: u32,
+7 | | }
+  | |_^

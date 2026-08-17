@@ -1,0 +1,19 @@
+error[E0271]: type mismatch resolving `<StringPiece as ExternType>::Id == (f, o, l, l, y, (), B, y, t, e, R, a, n, g, e)`
+  --> tests/ui/wrong_type_id.rs:11:14
+   |
+11 |         type ByteRange = crate::here::StringPiece;
+   |              ^^^^^^^^^ type mismatch resolving `<StringPiece as ExternType>::Id == (f, o, l, l, y, (), B, y, t, e, R, a, n, g, e)`
+   |
+note: expected this to be `(f, o, l, l, y, (), B, y, t, e, R, a, n, g, e)`
+  --> tests/ui/wrong_type_id.rs:1:1
+   |
+ 1 | #[cxx::bridge(namespace = "folly")]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: expected tuple `(f, o, l, l, y, (), B, y, t, e, R, a, n, g, e)`
+              found tuple `(f, o, l, l, y, (), S, t, r, i, n, g, P, i, e, c, e)`
+note: required by a bound in `verify_extern_type`
+  --> src/extern_type.rs
+   |
+   | pub fn verify_extern_type<T: ExternType<Id = Id>, Id>() {}
+   |                                         ^^^^^^^ required by this bound in `verify_extern_type`
+   = note: this error originates in the attribute macro `cxx::bridge` (in Nightly builds, run with -Z macro-backtrace for more info)

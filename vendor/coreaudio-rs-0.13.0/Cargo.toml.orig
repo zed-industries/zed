@@ -1,0 +1,71 @@
+[package]
+name = "coreaudio-rs"
+version = "0.13.0"
+authors = [
+    "mitchmindtree <mitchell.nordine@gmail.com>",
+    "yupferris <jake@fusetools.com>",
+]
+description = "A friendly rust interface for Apple's CoreAudio API."
+keywords = ["core", "audio", "unit", "osx", "ios"]
+readme = "README.md"
+license = "MIT/Apache-2.0"
+edition = '2018'
+repository = "https://github.com/RustAudio/coreaudio-rs.git"
+homepage = "https://github.com/RustAudio/coreaudio-rs"
+
+[lib]
+name = "coreaudio"
+
+[features]
+default = ["audio_toolbox", "core_audio"]
+audio_toolbox = [
+    "dep:objc2-audio-toolbox",
+    "dep:objc2-core-foundation",
+    "dep:objc2-core-audio",
+    "dep:objc2-core-audio-types",
+]
+core_audio = ["dep:objc2-core-audio", "dep:objc2-core-audio-types"]
+core_midi = []
+
+# Deprecated
+audio_unit = ["audio_toolbox"]
+
+# Unsupported
+open_al = []
+
+[dependencies]
+bitflags = "1.0"
+libc = "0.2"
+objc2-core-foundation = { version = "0.3", optional = true, default-features = false, features = [
+    "std",
+    "CFString",
+] }
+objc2-audio-toolbox = { version = "0.3", optional = true, default-features = false, features = [
+    "std",
+    "bitflags",
+    "libc",
+    "objc2-core-foundation",
+    "objc2-core-audio",
+    "objc2-core-audio-types",
+    "AUComponent",
+    "AudioComponent",
+    "AudioOutputUnit",
+    "AudioUnitProperties",
+    "AudioSession",
+] }
+objc2-core-audio = { version = "0.3", optional = true, default-features = false, features = [
+    "std",
+    "objc2-core-audio-types",
+    "AudioHardware",
+    "AudioHardwareDeprecated",
+] }
+objc2-core-audio-types = { version = "0.3", optional = true, default-features = false, features = [
+    "std",
+    "bitflags",
+    "CoreAudioBaseTypes",
+] }
+
+[package.metadata.docs.rs]
+all-features = true
+default-target = "aarch64-apple-darwin"
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-apple-ios"]

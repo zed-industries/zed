@@ -1,0 +1,56 @@
+;; Ensure that anonymous structured types are not allowed in type positions at
+;; this time, everything has to be named to assist in binding in languages.
+
+(assert_invalid
+  (witx
+    (typename $a (@witx pointer (record (field $b u8))))
+  )
+  "Anonymous structured types")
+
+(assert_invalid
+  (witx
+    (typename $a (@witx pointer (union)))
+  )
+  "Anonymous structured types")
+
+(assert_invalid
+  (witx
+    (typename $a (@witx pointer (enum $b)))
+  )
+  "Anonymous structured types")
+
+(assert_invalid
+  (witx
+    (typename $a (@witx pointer (flags $b)))
+  )
+  "Anonymous structured types")
+
+(assert_invalid
+  (witx
+    (typename $a (@witx pointer (handle)))
+  )
+  "Anonymous structured types")
+
+(assert_invalid
+  (witx
+    (typename $a (record (field $b (record (field $c u8)))))
+  )
+  "Anonymous structured types")
+
+(assert_invalid
+  (witx
+    (typename $tag (enum $c))
+    (typename $a (record (field $b (union))))
+  )
+  "Anonymous structured types")
+
+
+;; pointers don't count for anonymous indirections
+(witx
+  (typename $a (@witx pointer u8)))
+
+(witx
+  (typename $a (@witx pointer (@witx const_pointer u8))))
+
+(witx
+  (typename $a (record (field $b (@witx pointer u8)))))

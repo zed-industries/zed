@@ -1,0 +1,685 @@
+[
+  {
+    "Description": "Set substitutions for Latin fonts"
+  },
+  {
+    "Alias": {
+      "alias": "Bitstream Vera Serif",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Cambria",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Constantia",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "DejaVu Serif",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Elephant",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Garamond",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Georgia",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Liberation Serif",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Luxi Serif",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "MS Serif",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Nimbus Roman No9 L",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Nimbus Roman",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Palatino Linotype",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Thorndale AMT",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Thorndale",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Times New Roman",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Times",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Albany AMT",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Albany",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Arial Unicode MS",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Arial",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Bitstream Vera Sans",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Britannic",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Calibri",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Candara",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Century Gothic",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Corbel",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "DejaVu Sans",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Helvetica",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Haettenschweiler",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Liberation Sans",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "MS Sans Serif",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Nimbus Sans L",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Nimbus Sans",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Luxi Sans",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Tahoma",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Trebuchet MS",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Twentieth Century",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Verdana",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "sans-serif"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Andale Mono",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "monospace"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Bitstream Vera Sans Mono",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "monospace"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Consolas",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "monospace"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Courier New",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "monospace"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Courier",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "monospace"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Courier Std",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "monospace"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Cumberland AMT",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "monospace"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Cumberland",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "monospace"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "DejaVu Sans Mono",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "monospace"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Fixedsys",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "monospace"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Inconsolata",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "monospace"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Liberation Mono",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "monospace"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Luxi Mono",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "monospace"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Nimbus Mono L",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "monospace"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Nimbus Mono",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "monospace"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Nimbus Mono PS",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "monospace"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Terminal",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "monospace"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Bauhaus Std",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "fantasy"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Cooper Std",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "fantasy"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Copperplate Gothic Std",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "fantasy"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Impact",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "fantasy"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Comic Sans MS",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "cursive"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "ITC Zapf Chancery Std",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "cursive"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Zapfino",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "cursive"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Cantarell",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "system-ui"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Noto Sans UI",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "system-ui"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Segoe UI",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "system-ui"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Segoe UI Historic",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "system-ui"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Segoe UI Symbol",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "system-ui"
+      ]
+    }
+  }
+]

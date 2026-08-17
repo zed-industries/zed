@@ -1,0 +1,57 @@
+name: ci
+
+on: [push, pull_request]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  debug:
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v3
+    - name: Build
+      run: cargo build --verbose
+    - name: Run tests
+      run: cargo test --verbose
+
+  release:
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v3
+    - name: Build
+      run: cargo build --verbose --release
+    - name: Run tests
+      run: cargo test --verbose --release
+
+  debug-nostd:
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v3
+    - name: Build
+      run: cargo build --verbose --no-default-features --features alloc
+    - name: Run tests
+      run: cargo test --verbose --no-default-features --features alloc
+
+  release-nostd:
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v3
+    - name: Build
+      run: cargo build --verbose --release --no-default-features --features alloc
+    - name: Run tests
+      run: cargo test --verbose --release --no-default-features --features alloc
+
+  c_api:
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v3
+    - name: Run c_api test
+      run: cd c_api && ./run_test.sh
+
+  fmt:
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v3
+    - name: Format
+      run: cargo fmt --check

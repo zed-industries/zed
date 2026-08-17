@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+  <Type Name="windows_core::array::Array&lt;*&gt;">
+    <DisplayString>{{ len={len} }}</DisplayString>
+
+    <Expand>
+      <Item Name="[len]">len</Item>
+      <ArrayItems>
+        <Size>len</Size>
+        <ValuePointer>data</ValuePointer>
+      </ArrayItems>
+    </Expand>
+  </Type>
+
+  <Type Name="windows_core::imp::ref_count::RefCount">
+    <DisplayString>{__0}</DisplayString>
+  </Type>
+</AutoVisualizer>

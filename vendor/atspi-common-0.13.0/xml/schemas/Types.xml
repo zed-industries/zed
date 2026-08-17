@@ -1,0 +1,1560 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<enums>
+	<enum dbus_type="i" name="role">
+		<item name="atspi_role_invalid" value="0">
+			<description>
+				 A role indicating an error condition, such as
+							uninitialized Role data.
+
+			</description>
+		</item>
+		<item name="atspi_role_accelerator_label" value="1">
+			<description>
+				 Object is a label indicating the keyboard
+							accelerators for the parent.
+
+			</description>
+		</item>
+		<item name="atspi_role_alert" value="2">
+			<description>
+				 Object is used to alert the user about something.
+
+			</description>
+		</item>
+		<item name="atspi_role_animation" value="3">
+			<description>
+				 Object contains a dynamic or moving image of some
+							kind.
+
+			</description>
+		</item>
+		<item name="atspi_role_arrow" value="4">
+			<description>
+				 Object is a 2D directional indicator.
+
+			</description>
+		</item>
+		<item name="atspi_role_calendar" value="5">
+			<description>
+				 Object contains one or more dates, usually arranged
+							into a 2D list.
+
+			</description>
+		</item>
+		<item name="atspi_role_canvas" value="6">
+			<description>
+				 Object that can be drawn into and is used to trap
+							events.
+
+			</description>
+		</item>
+		<item name="atspi_role_check_box" value="7">
+			<description>
+				 A choice that can be checked or unchecked and
+							provides a separate indicator for the current state.
+
+			</description>
+		</item>
+		<item name="atspi_role_check_menu_item" value="8">
+			<description>
+				 A menu item that behaves like a check box. See
+							ATSPI_ROLE_CHECK_BOX.
+
+			</description>
+		</item>
+		<item name="atspi_role_color_chooser" value="9">
+			<description>
+				 A specialized dialog that lets the user choose a
+							color.
+
+			</description>
+		</item>
+		<item name="atspi_role_column_header" value="10">
+			<description>
+				 The header for a column of data.
+
+			</description>
+		</item>
+		<item name="atspi_role_combo_box" value="11">
+			<description>
+				 A list of choices the user can select from.
+
+			</description>
+		</item>
+		<item name="atspi_role_date_editor" value="12">
+			<description>
+				 An object which allows entry of a date.
+
+			</description>
+		</item>
+		<item name="atspi_role_desktop_icon" value="13">
+			<description>
+				 An inconifed internal frame within a DESKTOP_PANE.
+
+			</description>
+		</item>
+		<item name="atspi_role_desktop_frame" value="14">
+			<description>
+				 A pane that supports internal frames and
+							 iconified versions of those internal frames.
+
+			</description>
+		</item>
+		<item name="atspi_role_dial" value="15">
+			<description>
+				 An object that allows a value to be changed via rotating a
+							 visual element, or which displays a value via such a rotating element.
+
+			</description>
+		</item>
+		<item name="atspi_role_dialog" value="16">
+			<description>
+				 A top level window with title bar and a border.
+
+			</description>
+		</item>
+		<item name="atspi_role_directory_pane" value="17">
+			<description>
+				 A pane that allows the user to navigate through
+							 and select the contents of a directory.
+
+			</description>
+		</item>
+		<item name="atspi_role_drawing_area" value="18">
+			<description>
+				 An object used for drawing custom user interface
+							 elements.
+
+			</description>
+		</item>
+		<item name="atspi_role_file_chooser" value="19">
+			<description>
+				 A specialized dialog that displays the files in
+							 the directory and lets the user select a file, browse a different
+							 directory, or specify a filename.
+
+			</description>
+		</item>
+		<item name="atspi_role_filler" value="20">
+			<description>
+				 A object that fills up space in a user interface.
+
+			</description>
+		</item>
+		<item name="atspi_role_focus_traversable" value="21">
+			<description>
+				 Don't use, reserved for future use.
+
+			</description>
+		</item>
+		<item name="atspi_role_font_chooser" value="22">
+			<description>
+				 Allows selection of a display font.
+
+			</description>
+		</item>
+		<item name="atspi_role_frame" value="23">
+			<description>
+				 A top level window with a title bar, border, menubar,
+							 etc.
+
+			</description>
+		</item>
+		<item name="atspi_role_glass_pane" value="24">
+			<description>
+				 A pane that is guaranteed to be painted on top of
+							 all panes beneath it.
+
+			</description>
+		</item>
+		<item name="atspi_role_html_container" value="25">
+			<description>
+				 A document container for HTML, whose children
+							 represent the document content.
+
+			</description>
+		</item>
+		<item name="atspi_role_icon" value="26">
+			<description>
+				 A small fixed size picture, typically used to decorate
+							 components.
+
+			</description>
+		</item>
+		<item name="atspi_role_image" value="27">
+			<description>
+				 An image, typically static.
+
+			</description>
+		</item>
+		<item name="atspi_role_internal_frame" value="28">
+			<description>
+				 A frame-like object that is clipped by a desktop
+							 pane.
+
+			</description>
+		</item>
+		<item name="atspi_role_label" value="29">
+			<description>
+				 An object used to present an icon or short string in an
+							 interface.
+
+			</description>
+		</item>
+		<item name="atspi_role_layered_pane" value="30">
+			<description>
+				 A specialized pane that allows its children to be
+							 drawn in layers, providing a form of stacking order.
+
+			</description>
+		</item>
+		<item name="atspi_role_list" value="31">
+			<description>
+				 An object that presents a list of objects to the user and
+							 allows the user to select one or more of them.
+
+			</description>
+		</item>
+		<item name="atspi_role_list_item" value="32">
+			<description>
+				 An object that represents an element of a list.
+
+			</description>
+		</item>
+		<item name="atspi_role_menu" value="33">
+			<description>
+				 An object usually found inside a menu bar that contains a
+							 list of actions the user can choose from.
+
+			</description>
+		</item>
+		<item name="atspi_role_menu_bar" value="34">
+			<description>
+				 An object usually drawn at the top of the primary
+							 dialog box of an application that contains a list of menus the user can
+							 choose from.
+
+			</description>
+		</item>
+		<item name="atspi_role_menu_item" value="35">
+			<description>
+				 An object usually contained in a menu that presents
+							 an action the user can choose.
+
+			</description>
+		</item>
+		<item name="atspi_role_option_pane" value="36">
+			<description>
+				 A specialized pane whose primary use is inside a
+							 dialog.
+
+			</description>
+		</item>
+		<item name="atspi_role_page_tab" value="37">
+			<description>
+				 An object that is a child of a page tab list.
+
+			</description>
+		</item>
+		<item name="atspi_role_page_tab_list" value="38">
+			<description>
+				 An object that presents a series of panels (or
+							 page tabs), one at a time,through some mechanism provided by the
+							 object.
+
+			</description>
+		</item>
+		<item name="atspi_role_panel" value="39">
+			<description>
+				 A generic container that is often used to group objects.
+
+			</description>
+		</item>
+		<item name="atspi_role_password_text" value="40">
+			<description>
+				 A text object uses for passwords, or other places
+							 where the text content is not shown visibly to the user.
+
+			</description>
+		</item>
+		<item name="atspi_role_popup_menu" value="41">
+			<description>
+				 A temporary window that is usually used to offer the
+							 user a list of choices, and then hides when the user selects one of those
+							 choices.
+
+			</description>
+		</item>
+		<item name="atspi_role_progress_bar" value="42">
+			<description>
+				 An object used to indicate how much of a task has
+							 been completed.
+
+			</description>
+		</item>
+		<item name="atspi_role_push_button" value="43">
+			<description>
+				 An object the user can manipulate to tell the
+							 application to do something.
+
+			</description>
+		</item>
+		<item name="atspi_role_radio_button" value="44">
+			<description>
+				 A specialized check box that will cause other
+							 radio buttons in the same group to become unchecked when this one is
+							 checked.
+
+			</description>
+		</item>
+		<item name="atspi_role_radio_menu_item" value="45">
+			<description>
+				 Object is both a menu item and a "radio button".
+							 See ATSPI_ROLE_RADIO_BUTTON.
+
+			</description>
+		</item>
+		<item name="atspi_role_root_pane" value="46">
+			<description>
+				 A specialized pane that has a glass pane and a
+							 layered pane as its children.
+
+			</description>
+		</item>
+		<item name="atspi_role_row_header" value="47">
+			<description>
+				 The header for a row of data.
+
+			</description>
+		</item>
+		<item name="atspi_role_scroll_bar" value="48">
+			<description>
+				 An object usually used to allow a user to
+							 incrementally view a large amount of data by moving the bounds of a
+							 viewport along a one-dimensional axis.
+
+			</description>
+		</item>
+		<item name="atspi_role_scroll_pane" value="49">
+			<description>
+				 An object that allows a user to incrementally view
+							 a large amount of information. Scroll pane objects are usually
+							 accompanied by ATSPI_ROLE_SCROLL_BAR controllers, on which the
+							 ATSPI_RELATION_CONTROLLER_FOR and ATSPI_RELATION_CONTROLLED_BY
+							 reciprocal relations are set. See the GetRelationSet method.
+
+			</description>
+		</item>
+		<item name="atspi_role_separator" value="50">
+			<description>
+				 An object usually contained in a menu to provide a
+							 visible and logical separation of the contents in a menu.
+
+			</description>
+		</item>
+		<item name="atspi_role_slider" value="51">
+			<description>
+				 An object that allows the user to select from a bounded range.
+							 Unlike ATSPI_ROLE_SCROLL_BAR, ATSPI_ROLE_SLIDER objects need not control
+							 'viewport'-like objects.
+
+			</description>
+		</item>
+		<item name="atspi_role_spin_button" value="52">
+			<description>
+				 An object which allows one of a set of choices to
+							 be selected, and which displays the current choice.
+
+			</description>
+		</item>
+		<item name="atspi_role_split_pane" value="53">
+			<description>
+				 A specialized panel that presents two other panels
+							 at the same time.
+
+			</description>
+		</item>
+		<item name="atspi_role_status_bar" value="54">
+			<description>
+				 Object displays non-quantitative status information
+							 (c.f. ATSPI_ROLE_PROGRESS_BAR)
+
+			</description>
+		</item>
+		<item name="atspi_role_table" value="55">
+			<description>
+				 An object used to repesent information in terms of rows
+							 and columns.
+
+			</description>
+		</item>
+		<item name="atspi_role_table_cell" value="56">
+			<description>
+				 A 'cell' or discrete child within a Table. Note:
+							 Table cells need not have ATSPI_ROLE_TABLE_CELL, other
+							 role values are valid as well.
+
+			</description>
+		</item>
+		<item name="atspi_role_table_column_header" value="57">
+			<description>
+				 An object which labels a particular column
+							 in a Table interface interface.
+
+			</description>
+		</item>
+		<item name="atspi_role_table_row_header" value="58">
+			<description>
+				 An object which labels a particular row in a
+							 Table interface. Table rows and columns may also be labelled via the
+							 ATSPI_RELATION_LABEL_FOR/ATSPI_RELATION_LABELLED_BY relationships; see
+							 the GetRelationSet method.
+
+			</description>
+		</item>
+		<item name="atspi_role_tearoff_menu_item" value="59">
+			<description>
+				 Object allows menu to be removed from menubar
+							 and shown in its own window.
+
+			</description>
+		</item>
+		<item name="atspi_role_terminal" value="60">
+			<description>
+				 An object that emulates a terminal.
+
+			</description>
+		</item>
+		<item name="atspi_role_text" value="61">
+			<description>
+				 An interactive widget that supports multiple lines of text
+							 and optionally accepts user input, but whose purpose is not to solicit user
+							 input. Thus ATSPI_ROLE_TEXT is appropriate for the text view in a plain text
+							 editor but inappropriate for an input field in a dialog box or web form. For
+							 widgets whose purpose is to solicit input from the user, see ATSPI_ROLE_ENTRY
+							 and ATSPI_ROLE_PASSWORD_TEXT. For generic objects which display a brief amount
+							 of textual information, see ATSPI_ROLE_STATIC.
+
+			</description>
+		</item>
+		<item name="atspi_role_toggle_button" value="62">
+			<description>
+				 A specialized push button that can be checked or
+							 unchecked, but does not procide a separate indicator for the current
+							 state.
+
+			</description>
+		</item>
+		<item name="atspi_role_tool_bar" value="63">
+			<description>
+				 A bar or palette usually composed of push buttons or
+							 toggle buttons.
+
+			</description>
+		</item>
+		<item name="atspi_role_tool_tip" value="64">
+			<description>
+				 An object that provides information about another
+							 object.
+
+			</description>
+		</item>
+		<item name="atspi_role_tree" value="65">
+			<description>
+				 An object used to repsent hierarchical information to the
+							 user.
+
+			</description>
+		</item>
+		<item name="atspi_role_tree_table" value="66">
+			<description>
+				 An object that presents both tabular and
+							 hierarchical info to the user.
+
+			</description>
+		</item>
+		<item name="atspi_role_unknown" value="67">
+			<description>
+				 The object contains some accessible information,
+							 but its role is not known.
+
+			</description>
+		</item>
+		<item name="atspi_role_viewport" value="68">
+			<description>
+				 An object usually used in a scroll pane, or to
+							 otherwise clip a larger object or content renderer to a specific
+							 onscreen viewport.
+
+			</description>
+		</item>
+		<item name="atspi_role_window" value="69">
+			<description>
+				 A top level window with no title or border.
+
+			</description>
+		</item>
+		<item name="atspi_role_extended" value="70">
+			<description>
+				 means that the role for this item is known, but not
+							 included in the core enumeration. Deprecated since 2.24.
+
+			</description>
+		</item>
+		<item name="atspi_role_header" value="71">
+			<description>
+				 An object that serves as a document header.
+
+			</description>
+		</item>
+		<item name="atspi_role_footer" value="72">
+			<description>
+				 An object that serves as a document footer.
+
+			</description>
+		</item>
+		<item name="atspi_role_paragraph" value="73">
+			<description>
+				 An object which is contains a single paragraph of
+							 text content. See also ATSPI_ROLE_TEXT.
+
+			</description>
+		</item>
+		<item name="atspi_role_ruler" value="74">
+			<description>
+				 An object which describes margins and tab stops, etc.
+							 for text objects which it controls (should have
+							 ATSPI_RELATION_CONTROLLER_FOR relation to such).
+
+			</description>
+		</item>
+		<item name="atspi_role_application" value="75">
+			<description>
+				 An object corresponding to the toplevel accessible
+							 of an application, which may contain ATSPI_ROLE_FRAME objects or other
+							 accessible objects. Children of objects with the ATSPI_ROLE_DESKTOP_FRAME role
+							 are generally ATSPI_ROLE_APPLICATION objects.
+
+			</description>
+		</item>
+		<item name="atspi_role_autocomplete" value="76">
+			<description>
+				 The object is a dialog or list containing items
+							 for insertion into an entry widget, for instance a list of words for
+							 completion of a text entry.
+
+			</description>
+		</item>
+		<item name="atspi_role_editbar" value="77">
+			<description>
+				 The object is an editable text object in a toolbar.
+
+			</description>
+		</item>
+		<item name="atspi_role_embedded" value="78">
+			<description>
+				 The object is an embedded component container.  This
+							 role is a "grouping" hint that the contained objects share a context
+							 which is different from the container in which this accessible is
+							 embedded. In particular, it is used for some kinds of document embedding,
+							 and for embedding of out-of-process component, "panel applets", etc.
+
+			</description>
+		</item>
+		<item name="atspi_role_entry" value="79">
+			<description>
+				 The object is a component whose textual content may be
+							 entered or modified by the user, provided ATSPI_STATE_EDITABLE is present.
+							 A readonly ATSPI_ROLE_ENTRY object (i.e. where ATSPI_STATE_EDITABLE is
+							 not present) implies a read-only 'text field' in a form, as opposed to a
+							 title, label, or caption.
+
+			</description>
+		</item>
+		<item name="atspi_role_chart" value="80">
+			<description>
+				 The object is a graphical depiction of quantitative data.
+							 It may contain multiple subelements whose attributes and/or description
+							 may be queried to obtain both the  quantitative data and information about
+							 how the data is being presented. The ATSPI_LABELLED_BY relation is
+							 particularly important in interpreting objects of this type, as is the
+							 accessible description property. See ATSPI_ROLE_CAPTION.
+
+			</description>
+		</item>
+		<item name="atspi_role_caption" value="81">
+			<description>
+				 The object contains descriptive information, usually
+							 textual, about another user interface element such as a table, chart, or
+							 image.
+
+			</description>
+		</item>
+		<item name="atspi_role_document_frame" value="82">
+			<description>
+				 The object is a visual frame or container which
+							 contains a view of document content.  Document frames may occur within
+							 another Document instance, in which case the second document may be
+							 said to be embedded in the containing instance.  HTML frames are often
+							 ATSPI_ROLE_DOCUMENT_FRAME:  Either this object, or a singleton descendant,
+							 should implement the org.a11y.atspi.Document interface.
+
+			</description>
+		</item>
+		<item name="atspi_role_heading" value="83">
+			<description>
+				 The object serves as a heading for content which
+							 follows it in a document. The 'heading level' of the heading, if
+							 availabe,  may be obtained by       querying the object's attributes.
+
+			</description>
+		</item>
+		<item name="atspi_role_page" value="84">
+			<description>
+				 The object is a containing instance which encapsulates a
+							 page of information. ATSPI_ROLE_PAGE is used in documents and content which
+							 support a paginated navigation model.
+
+			</description>
+		</item>
+		<item name="atspi_role_section" value="85">
+			<description>
+				 The object is a containing instance of document content
+							 which constitutes a particular 'logical' section of the document.  The
+							 type of content within a section, and the nature of the section division
+							 itself, may be obtained by querying the object's attributes.  Sections
+							 may be nested.
+
+			</description>
+		</item>
+		<item name="atspi_role_redundant_object" value="86">
+			<description>
+				 The object is redundant with another object in
+							 the hierarchy, and is exposed for purely technical reasons.  Objects of
+							 this role should be ignored by clients, if they are encountered at all.
+
+			</description>
+		</item>
+		<item name="atspi_role_form" value="87">
+			<description>
+				 The object is a containing instance of document content
+							 which has within it components with which the user can interact in order
+							 to input information; i.e. the object is a container for pushbuttons,
+							 comboboxes, text input fields, and other 'GUI' components. ATSPI_ROLE_FORM
+							 should not, in general, be used for toplevel GUI containers or dialogs,
+							 but should be reserved for 'GUI' containers which occur within document
+							 content, for instance within Web documents, presentations, or text
+							 documents.  Unlike other GUI containers and dialogs which occur inside
+							 application instances, ATSPI_ROLE_FORM containers' components are
+							 associated with the current document, rather than the current foreground
+							 application or viewer instance.
+
+			</description>
+		</item>
+		<item name="atspi_role_link" value="88">
+			<description>
+				 The object is a hypertext anchor, i.e. a "link" in a
+							 hypertext document.  Such objects are distinct from 'inline' content
+							 which may also use the Hypertext/Hyperlink interfaces to indicate
+							 the range/location within a text object where an inline or embedded object
+							 lies.
+
+			</description>
+		</item>
+		<item name="atspi_role_input_method_window" value="89">
+			<description>
+				 The object is a window or similar viewport
+							 which is used to allow composition or input of a 'complex character',
+							 in other words it is an "input method window".
+
+			</description>
+		</item>
+		<item name="atspi_role_table_row" value="90">
+			<description>
+				 A row in a table.
+
+			</description>
+		</item>
+		<item name="atspi_role_tree_item" value="91">
+			<description>
+				 An object that represents an element of a tree.
+
+			</description>
+		</item>
+		<item name="atspi_role_document_spreadsheet" value="92">
+			<description>
+				 A document frame which contains a
+							 spreadsheet.
+
+			</description>
+		</item>
+		<item name="atspi_role_document_presentation" value="93">
+			<description>
+				 A document frame which contains a
+							 presentation or slide content.
+
+			</description>
+		</item>
+		<item name="atspi_role_document_text" value="94">
+			<description>
+				 A document frame which contains textual content,
+							 such as found in a word processing application.
+
+			</description>
+		</item>
+		<item name="atspi_role_document_web" value="95">
+			<description>
+				 A document frame which contains HTML or other
+							 markup suitable for display in a web browser.
+
+			</description>
+		</item>
+		<item name="atspi_role_document_email" value="96">
+			<description>
+				 A document frame which contains email content
+							 to be displayed or composed either in plain text or HTML.
+
+			</description>
+		</item>
+		<item name="atspi_role_comment" value="97">
+			<description>
+				 An object found within a document and designed to
+							 present a comment, note, or other annotation. In some cases, this object
+							 might not be visible until activated.
+
+			</description>
+		</item>
+		<item name="atspi_role_list_box" value="98">
+			<description>
+				 A non-collapsible list of choices the user can select from.
+
+			</description>
+		</item>
+		<item name="atspi_role_grouping" value="99">
+			<description>
+				 A group of related widgets. This group typically has a label.
+
+			</description>
+		</item>
+		<item name="atspi_role_image_map" value="100">
+			<description>
+				 An image map object. Usually a graphic with multiple
+								hotspots, where each hotspot can be activated resulting in the loading of
+								another document or section of a document.
+
+			</description>
+		</item>
+		<item name="atspi_role_notification" value="101">
+			<description>
+				 A transitory object designed to present a
+								message to the user, typically at the desktop level rather than inside a
+								particular application.
+
+			</description>
+		</item>
+		<item name="atspi_role_info_bar" value="102">
+			<description>
+				 An object designed to present a message to the user
+								within an existing window.
+
+			</description>
+		</item>
+		<item name="atspi_role_level_bar" value="103">
+			<description>
+				 A bar that serves as a level indicator to, for
+								instance, show the strength of a password or the state of a battery. Since: 2.8
+
+			</description>
+		</item>
+		<item name="atspi_role_title_bar" value="104">
+			<description>
+				 A bar that serves as the title of a window or a
+								dialog. Since: 2.12
+
+			</description>
+		</item>
+		<item name="atspi_role_block_quote" value="105">
+			<description>
+				 An object which contains a text section
+								that is quoted from another source.  Since: 2.12
+
+			</description>
+		</item>
+		<item name="atspi_role_audio" value="106">
+			<description>
+				 An object which represents an audio
+								element. Since: 2.12
+
+			</description>
+		</item>
+		<item name="atspi_role_video" value="107">
+			<description>
+				 An object which represents a video
+								element. Since: 2.12
+
+			</description>
+		</item>
+		<item name="atspi_role_definition" value="108">
+			<description>
+				 A definition of a term or concept. Since: 2.12
+
+			</description>
+		</item>
+		<item name="atspi_role_article" value="109">
+			<description>
+				 A section of a page that consists of a
+								composition that forms an independent part of a document, page, or
+								site. Examples: A blog entry, a news story, a forum post. Since: 2.12
+
+			</description>
+		</item>
+		<item name="atspi_role_landmark" value="110">
+			<description>
+				 A region of a web page intended as a
+								navigational landmark. This is designed to allow Assistive
+								Technologies to provide quick navigation among key regions within a
+								document. Since: 2.12
+
+			</description>
+		</item>
+		<item name="atspi_role_log" value="111">
+			<description>
+				 A text widget or container holding log content, such
+								as chat history and error logs. In this role there is a
+								relationship between the arrival of new items in the log and the
+								reading order. The log contains a meaningful sequence and new
+								information is added only to the end of the log, not at arbitrary
+								points. Since: 2.12
+
+			</description>
+		</item>
+		<item name="atspi_role_marquee" value="112">
+			<description>
+				 A container where non-essential information
+								changes frequently. Common usages of marquee include stock tickers
+								and ad banners. The primary difference between a marquee and a log
+								is that logs usually have a meaningful order or sequence of
+								important content changes. Since: 2.12
+
+			</description>
+		</item>
+		<item name="atspi_role_math" value="113">
+			<description>
+				 A text widget or container that holds a mathematical
+								expression. Since: 2.12
+
+			</description>
+		</item>
+		<item name="atspi_role_rating" value="114">
+			<description>
+				 A widget whose purpose is to display a rating,
+								such as the number of stars associated with a song in a media
+								player. Objects of this role should also implement
+								the Value interface. Since: 2.12
+
+			</description>
+		</item>
+		<item name="atspi_role_timer" value="115">
+			<description>
+				 An object containing a numerical counter which
+								indicates an amount of elapsed time from a start point, or the time
+								remaining until an end point. Since: 2.12
+
+			</description>
+		</item>
+		<item name="atspi_role_static" value="116">
+			<description>
+				 A generic non-container object whose purpose is to display
+								a brief amount of information to the user and whose role is known by the
+								implementor but lacks semantic value for the user. Examples in which
+								ATSPI_ROLE_STATIC is appropriate include the message displayed in a message
+								box and an image used as an alternative means to display text.
+								ATSPI_ROLE_STATIC should not be applied to widgets which are traditionally
+								interactive, objects which display a significant amount of content, or any
+								object which has an accessible relation pointing to another object. The
+								displayed information, as a general rule, should be exposed through the
+								accessible name of the object. For labels which describe another widget, see
+								ATSPI_ROLE_LABEL. For text views, see ATSPI_ROLE_TEXT. For generic
+								containers, see ATSPI_ROLE_PANEL. For objects whose role is not known by the
+								implementor, see ATSPI_ROLE_UNKNOWN. Since: 2.16.
+
+			</description>
+		</item>
+		<item name="atspi_role_math_fraction" value="117">
+			<description>
+				 An object that represents a mathematical fraction. Since: 2.16.
+
+			</description>
+		</item>
+		<item name="atspi_role_math_root" value="118">
+			<description>
+				 An object that represents a mathematical expression
+								displayed with a radical. Since: 2.16.
+
+			</description>
+		</item>
+		<item name="atspi_role_subscript" value="119">
+			<description>
+				 An object that contains text that is displayed as a
+								subscript. Since: 2.16.
+
+			</description>
+		</item>
+		<item name="atspi_role_superscript" value="120">
+			<description>
+				 An object that contains text that is displayed as a
+								superscript. Since: 2.16.
+
+			</description>
+		</item>
+		<item name="atspi_role_description_list" value="121">
+			<description>
+				 An object that represents a list of term-value
+								groups. A term-value group represents an individual description and consist
+								of one or more names (ATSPI_ROLE_DESCRIPTION_TERM) followed by one or more
+								values (ATSPI_ROLE_DESCRIPTION_VALUE). For each list, there should not be
+								more than one group with the same term name. Since: 2.26.
+
+			</description>
+		</item>
+		<item name="atspi_role_description_term" value="122">
+			<description>
+				 An object that represents a term or phrase
+								with a corresponding definition. Since: 2.26.
+
+			</description>
+		</item>
+		<item name="atspi_role_description_value" value="123">
+			<description>
+				 An object that represents the description,
+								definition, or value of a term. Since: 2.26.
+
+			</description>
+		</item>
+		<item name="atspi_role_footnote" value="124">
+			<description>
+				 An object that contains the text of a footnote. Since: 2.26.
+
+			</description>
+		</item>
+		<item name="atspi_role_content_deletion" value="125">
+			<description>
+				 Content previously deleted or proposed to be
+								deleted, e.g. in revision history or a content view providing suggestions
+								from reviewers. Since: 2.34.
+
+			</description>
+		</item>
+		<item name="atspi_role_content_insertion" value="126">
+			<description>
+				 Content previously inserted or proposed to be
+								inserted, e.g. in revision history or a content view providing suggestions
+								from reviewers. Since: 2.34.
+
+			</description>
+		</item>
+		<item name="atspi_role_mark" value="127">
+			<description>
+				 A run of content that is marked or highlighted, such as for
+								reference purposes, or to call it out as having a special purpose. If the
+								marked content has an associated section in the document elaborating on the
+								reason for the mark, then an ATSPI_RELATION_DETAILS relation should be used on the mark
+								to point to that associated section. In addition, the reciprocal relation
+								ATSPI_RELATION_DETAILS_FOR should be used on the associated content section
+								to point back to the mark. See the GetRelationSet method. Since: 2.36.
+
+			</description>
+		</item>
+		<item name="atspi_role_suggestion" value="128">
+			<description>
+				 A container for content that is called out as a
+								proposed change from the current version of the document, such as by a reviewer of
+								the content. An object with this role should include children with
+								ATSPI_ROLE_CONTENT_DELETION and/or ATSPI_ROLE_CONTENT_INSERTION, in any order, to
+								indicate what the actual change is. Since: 2.36
+
+			</description>
+		</item>
+		<item name="atspi_role_push_button_menu" value="129">
+			<description>
+				 A specialized push button to open a menu. Since: 2.46
+			</description>
+		</item>
+	</enum>
+	<enum dbus_type="u" name="relation">
+		<item name="atspi_relation_null" value="0">
+			<description>
+				 Not a meaningful relationship; clients should not
+							normally encounter this value.
+
+			</description>
+		</item>
+		<item name="atspi_relation_label_for" value="1">
+			<description>
+				 Object is a label for one or more other objects.
+
+			</description>
+		</item>
+		<item name="atspi_relation_labelled_by" value="2">
+			<description>
+				 Object is labelled by one or more other
+							objects.
+
+			</description>
+		</item>
+		<item name="atspi_relation_controller_for" value="3">
+			<description>
+				 Object is an interactive object which
+							modifies the state, onscreen location, or other attributes of one or more
+							target objects.
+
+			</description>
+		</item>
+		<item name="atspi_relation_controlled_by" value="4">
+			<description>
+				 Object state, position, etc. is
+							modified/controlled by user interaction with one or more other objects.
+							For instance a viewport or scroll pane may be ATSPI_RELATION_CONTROLLED_BY
+							scrollbars.
+
+			</description>
+		</item>
+		<item name="atspi_relation_member_of" value="5">
+			<description>
+				 Object has a grouping relationship (e.g. 'same
+							group as') to one or more other objects.
+
+			</description>
+		</item>
+		<item name="atspi_relation_tooltip_for" value="6">
+			<description>
+				 Object is a tooltip associated with another
+							object.
+
+			</description>
+		</item>
+		<item name="atspi_relation_node_child_of" value="7">
+			<description>
+				 Object is a child of the target.
+
+			</description>
+		</item>
+		<item name="atspi_relation_node_parent_of" value="8">
+			<description>
+				 Object is a parent of the target.
+
+			</description>
+		</item>
+		<item name="atspi_relation_extended" value="9">
+			<description>
+				 Used to indicate that a relationship exists, but
+						 its type is not specified in the enumeration.
+
+			</description>
+		</item>
+		<item name="atspi_relation_flows_to" value="10">
+			<description>
+				 Object renders content which flows logically to
+							 another object. For instance, text in a paragraph may flow to another
+							 object which is not the 'next sibling' in the accessibility hierarchy.
+
+			</description>
+		</item>
+		<item name="atspi_relation_flows_from" value="11">
+			<description>
+				 Reciprocal of ATSPI_RELATION_FLOWS_TO.
+
+			</description>
+		</item>
+		<item name="atspi_relation_subwindow_of" value="12">
+			<description>
+				 Object is visually and semantically considered
+							 a subwindow of another object, even though it is not the object's child.
+							 Useful when dealing with embedded applications and other cases where the
+							 widget hierarchy does not map cleanly to the onscreen presentation.
+
+			</description>
+		</item>
+		<item name="atspi_relation_embeds" value="13">
+			<description>
+				 Similar to ATSPI_RELATION_SUBWINDOW_OF, but
+							 specifically used for cross-process embedding.
+
+			</description>
+		</item>
+		<item name="atspi_relation_embedded_by" value="14">
+			<description>
+				 Reciprocal of ATSPI_RELATION_EMBEDS. Used to
+							 denote content rendered by embedded renderers that live in a separate process
+							 space from the embedding context.
+
+			</description>
+		</item>
+		<item name="atspi_relation_popup_for" value="15">
+			<description>
+				 Denotes that the object is a transient window or
+							 frame associated with another onscreen object. Similar to ATSPI_TOOLTIP_FOR,
+							 but more general. Useful for windows which are technically toplevels
+							 but which, for one or more reasons, do not explicitly cause their
+							 associated window to lose 'window focus'. Creation of an ATSPI_ROLE_WINDOW
+							 object with the ATSPI_RELATION_POPUP_FOR relation usually requires
+							 some presentation action on the part of assistive technology clients,
+							 even though the previous toplevel ATSPI_ROLE_FRAME object may still be
+							 the active window.
+
+			</description>
+		</item>
+		<item name="atspi_relation_parent_window_of" value="16">
+			<description>
+				 This is the reciprocal relation to
+							 ATSPI_RELATION_POPUP_FOR.
+
+			</description>
+		</item>
+		<item name="atspi_relation_description_for" value="17">
+			<description>
+				 Reciprocal of ATSPI_RELATION_DESCRIBED_BY.
+							 Indicates that this object provides descriptive information about the target
+							 object(s). See also ATSPI_RELATION_DETAILS_FOR and ATSPI_RELATION_ERROR_FOR.
+
+			</description>
+		</item>
+		<item name="atspi_relation_described_by" value="18">
+			<description>
+				 Reciprocal of ATSPI_RELATION_DESCRIPTION_FOR.
+							 Indicates that one or more target objects provide descriptive information
+							 about this object. This relation type is most appropriate for information
+							 that is not essential as its presentation may be user-configurable and/or
+							 limited to an on-demand mechanism such as an assistive technology command.
+							 For brief, essential information such as can be found in a widget's on-screen
+							 label, use ATSPI_RELATION_LABELLED_BY. For an on-screen error message, use
+							 ATSPI_RELATION_ERROR_MESSAGE. For lengthy extended descriptive information
+							 contained in an on-screen object, consider using ATSPI_RELATION_DETAILS as
+							 assistive technologies may provide a means for the user to navigate to
+							 objects containing detailed descriptions so that their content can be more
+							 closely reviewed.
+
+			</description>
+		</item>
+		<item name="atspi_relation_details" value="19">
+			<description>
+				 Reciprocal of ATSPI_RELATION_DETAILS_FOR. Indicates
+							 that this object has a detailed or extended description, the contents of
+							 which can be found in the target object(s). This relation type is most
+							 appropriate for information that is sufficiently lengthy as to make
+							 navigation to the container of that information desirable. For less verbose
+							 information suitable for announcement only, see ATSPI_RELATION_DESCRIBED_BY.
+							 If the detailed information describes an error condition,
+							 ATSPI_RELATION_ERROR_FOR should be used instead.  Since 2.26.
+
+			</description>
+		</item>
+		<item name="atspi_relation_details_for" value="20">
+			<description>
+				 Reciprocal of ATSPI_RELATION_DETAILS. Indicates
+							 that this object provides a detailed or extended description about the target
+							 object(s). See also ATSPI_RELATION_DESCRIPTION_FOR and ATSPI_RELATION_ERROR_FOR.
+							 Since 2.26.
+
+			</description>
+		</item>
+		<item name="atspi_relation_error_message" value="21">
+			<description>
+				 Reciprocal of ATSPI_RELATION_ERROR_FOR.
+							 Indicates that this object has one or more errors, the nature of which is
+							 described in the contents of the target object(s). Objects that have this
+							 relation type should also contain ATSPI_STATE_INVALID_ENTRY when their
+							 GetState method is called.  Since: 2.26.
+
+			</description>
+		</item>
+		<item name="atspi_relation_error_for" value="22">
+			<description>
+				 Reciprocal of ATSPI_RELATION_ERROR_MESSAGE.
+							 Indicates that this object contains an error message describing an invalid
+							 condition in the target object(s). Since: 2.26.
+			</description>
+		</item>
+	</enum>
+	<enum dbus_type="i" name="state">
+		<item name="atspi_state_invalid" value="0">
+			<description>
+				 Indicates an invalid state - probably an error
+							condition.
+
+			</description>
+		</item>
+		<item name="atspi_state_active" value="1">
+			<description>
+				 Indicates a window is currently the active window, or
+							an object is the active subelement within a container or table. ATSPI_STATE_ACTIVE
+							should not be used for objects which have ATSPI_STATE_FOCUSABLE or
+							ATSPI_STATE_SELECTABLE: Those objects should use
+							ATSPI_STATE_FOCUSED and ATSPI_STATE_SELECTED respectively.
+							ATSPI_STATE_ACTIVE is a means to indicate that an object which is not
+							focusable and not selectable is the currently-active item within its
+							parent container.
+
+			</description>
+		</item>
+		<item name="atspi_state_armed" value="2">
+			<description>
+				 Indicates that the object is armed.
+
+			</description>
+		</item>
+		<item name="atspi_state_busy" value="3">
+			<description>
+				 Indicates the current object is busy, i.e. onscreen
+							representation is in the process of changing, or the object is
+							temporarily unavailable for interaction due to activity already in progress.
+
+			</description>
+		</item>
+		<item name="atspi_state_checked" value="4">
+			<description>
+				 Indicates this object is currently checked.
+
+			</description>
+		</item>
+		<item name="atspi_state_collapsed" value="5">
+			<description>
+				 Indicates this object is collapsed.
+
+			</description>
+		</item>
+		<item name="atspi_state_defunct" value="6">
+			<description>
+				 Indicates that this object no longer has a valid
+							backing widget (for instance, if its peer object has been destroyed).
+
+			</description>
+		</item>
+		<item name="atspi_state_editable" value="7">
+			<description>
+				 Indicates the user can change the contents of this
+							object.
+
+			</description>
+		</item>
+		<item name="atspi_state_enabled" value="8">
+			<description>
+				 Indicates that this object is enabled, i.e. that it
+							currently reflects some application state. Objects that are "greyed out"
+							may lack this state, and may lack the ATSPI_STATE_SENSITIVE if direct
+							user interaction cannot cause them to acquire ATSPI_STATE_ENABLED.
+							See ATSPI_STATE_SENSITIVE.
+
+			</description>
+		</item>
+		<item name="atspi_state_expandable" value="9">
+			<description>
+				 Indicates this object allows progressive
+							disclosure of its children.
+
+			</description>
+		</item>
+		<item name="atspi_state_expanded" value="10">
+			<description>
+				 Indicates this object is expanded.
+
+			</description>
+		</item>
+		<item name="atspi_state_focusable" value="11">
+			<description>
+				 Indicates this object can accept keyboard focus,
+							 which means all events resulting from typing on the keyboard will
+							 normally be passed to it when it has focus.
+
+			</description>
+		</item>
+		<item name="atspi_state_focused" value="12">
+			<description>
+				 Indicates this object currently has the keyboard
+							 focus.
+
+			</description>
+		</item>
+		<item name="atspi_state_has_tooltip" value="13">
+			<description>
+				 Indicates that the object has an associated
+							 tooltip.
+
+			</description>
+		</item>
+		<item name="atspi_state_horizontal" value="14">
+			<description>
+				 Indicates the orientation of this object is
+							 horizontal.
+
+			</description>
+		</item>
+		<item name="atspi_state_iconified" value="15">
+			<description>
+				 Indicates this object is minimized and is
+							 represented only by an icon.
+
+			</description>
+		</item>
+		<item name="atspi_state_modal" value="16">
+			<description>
+				 Indicates something must be done with this object
+							 before the user can interact with an object in a different window.
+
+			</description>
+		</item>
+		<item name="atspi_state_multi_line" value="17">
+			<description>
+				 Indicates this (text) object can contain multiple
+							 lines of text.
+
+			</description>
+		</item>
+		<item name="atspi_state_multiselectable" value="18">
+			<description>
+				 Indicates this object allows more than one of
+							 its children to be selected at the same time, or in the case of text
+							 objects, that the object supports non-contiguous text selections.
+
+			</description>
+		</item>
+		<item name="atspi_state_opaque" value="19">
+			<description>
+				 Indicates this object paints every pixel within its
+							 rectangular region. It also indicates an alpha value of unity, if it
+							 supports alpha blending.
+
+			</description>
+		</item>
+		<item name="atspi_state_pressed" value="20">
+			<description>
+				 Indicates this object is currently pressed.
+
+			</description>
+		</item>
+		<item name="atspi_state_resizable" value="21">
+			<description>
+				 Indicates the size of this object's size is not
+							 fixed.
+
+			</description>
+		</item>
+		<item name="atspi_state_selectable" value="22">
+			<description>
+				 Indicates this object is the child of an object
+							 that allows its children to be selected and that this child is one of
+							 those children that can be selected.
+
+			</description>
+		</item>
+		<item name="atspi_state_selected" value="23">
+			<description>
+				 Indicates this object is the child of an object that
+							 allows its children to be selected and that this child is one of those
+							 children that has been selected.
+
+			</description>
+		</item>
+		<item name="atspi_state_sensitive" value="24">
+			<description>
+				 Indicates this object is sensitive, e.g. to user
+							 interaction. ATSPI_STATE_SENSITIVE usually accompanies.
+							 ATSPI_STATE_ENABLED for user-actionable controls, but may be found in the
+							 absence of ATSPI_STATE_ENABLED if the current visible state of the control
+							 is "disconnected" from the application state.  In such cases, direct user
+							 interaction can often result in the object gaining ATSPI_STATE_SENSITIVE,
+							 for instance if a user makes an explicit selection using an object whose
+							 current state is ambiguous or undefined. See ATSPI_STATE_ENABLED,
+							 ATSPI_STATE_INDETERMINATE.
+
+			</description>
+		</item>
+		<item name="atspi_state_showing" value="25">
+			<description>
+				 Indicates this object, the object's parent, the
+							 object's parent's parent, and so on, are all 'shown' to the end-user,
+							 i.e. subject to "exposure" if blocking or obscuring objects do not
+							 interpose between this object and the top of the window stack.
+
+			</description>
+		</item>
+		<item name="atspi_state_single_line" value="26">
+			<description>
+				 Indicates this (text) object can contain only a
+							 single line of text.
+
+			</description>
+		</item>
+		<item name="atspi_state_stale" value="27">
+			<description>
+				 Indicates that the information returned for this object
+							 may no longer be synchronized with the application state.  This can occur
+							 if the object has ATSPI_STATE_TRANSIENT, and can also occur towards the
+							 end of the object peer's lifecycle.
+
+			</description>
+		</item>
+		<item name="atspi_state_transient" value="28">
+			<description>
+				 Indicates this object is transient.
+
+			</description>
+		</item>
+		<item name="atspi_state_vertical" value="29">
+			<description>
+				 Indicates the orientation of this object is vertical;
+							 for example this state may appear on such objects as scrollbars, text
+							 objects (with vertical text flow), separators, etc.
+
+			</description>
+		</item>
+		<item name="atspi_state_visible" value="30">
+			<description>
+				 Indicates this object is visible, e.g. has been
+							 explicitly marked for exposure to the user. ATSPI_STATE_VISIBLE is no
+							 guarantee that the object is actually unobscured on the screen, only that
+							 it is 'potentially' visible, barring obstruction, being scrolled or clipped
+							 out of the field of view, or having an ancestor container that has not yet
+							 made visible. A widget is potentially onscreen if it has both
+							 ATSPI_STATE_VISIBLE and ATSPI_STATE_SHOWING. The absence of
+							 ATSPI_STATE_VISIBLE and ATSPI_STATE_SHOWING is
+							 semantically equivalent to saying that an object is 'hidden'.
+
+			</description>
+		</item>
+		<item name="atspi_state_manages_descendants" value="31">
+			<description>
+				 Indicates that "active-descendant-changed"
+							 event is sent when children become 'active' (i.e. are selected or
+							 navigated to onscreen).  Used to prevent need to enumerate all children
+							 in very large containers, like tables. The presence of
+							 ATSPI_STATE_MANAGES_DESCENDANTS is an indication to the client that the
+							 children should not, and need not, be enumerated by the client.
+							 Objects implementing this state are expected to provide relevant state
+							 notifications to listening clients, for instance notifications of
+							 visibility changes and activation of their contained child objects, without
+							 the client having previously requested references to those children.
+
+			</description>
+		</item>
+		<item name="atspi_state_indeterminate" value="32">
+			<description>
+				 Indicates that a check box or other boolean
+							 indicator is in a state other than checked or not checked.  This
+							 usually means that the boolean value reflected or controlled by the
+							 object does not apply consistently to the entire current context.
+							 For example, a checkbox for the "Bold" attribute of text may have
+							 ATSPI_STATE_INDETERMINATE if the currently selected text contains a mixture
+							 of weight attributes. In many cases interacting with a
+							 ATSPI_STATE_INDETERMINATE object will cause the context's corresponding
+							 boolean attribute to be homogenized, whereupon the object will lose
+							 ATSPI_STATE_INDETERMINATE and a corresponding state-changed event will be
+							 fired.
+
+			</description>
+		</item>
+		<item name="atspi_state_required" value="33">
+			<description>
+				 Indicates that user interaction with this object is
+							 'required' from the user, for instance before completing the
+							 processing of a form.
+
+			</description>
+		</item>
+		<item name="atspi_state_truncated" value="34">
+			<description>
+				 Indicates that an object's onscreen content
+							 is truncated, e.g. a text value in a spreadsheet cell.
+
+			</description>
+		</item>
+		<item name="atspi_state_animated" value="35">
+			<description>
+				 Indicates this object's visual representation is
+							 dynamic, not static. This state may be applied to an object during an
+							 animated 'effect' and be removed from the object once its visual
+							 representation becomes static. Some applications, notably content viewers,
+							 may not be able to detect all kinds of animated content.  Therefore the
+							 absence of this state should not be taken as
+							 definitive evidence that the object's visual representation is
+							 static; this state is advisory.
+
+			</description>
+		</item>
+		<item name="atspi_state_invalid_entry" value="36">
+			<description>
+				 This object has indicated an error condition
+							 due to failure of input validation.  For instance, a form control may
+							 acquire this state in response to invalid or malformed user input.
+
+			</description>
+		</item>
+		<item name="atspi_state_supports_autocompletion" value="37">
+			<description>
+				 This state indicates that the object
+							 in question implements some form of typeahead or
+							 pre-selection behavior whereby entering the first character of one or more
+							 sub-elements causes those elements to scroll into view or become
+							 selected. Subsequent character input may narrow the selection further as
+							 long as one or more sub-elements match the string. This state is normally
+							 only useful and encountered on objects that implement AtspiSelection.
+							 In some cases the typeahead behavior may result in full or partial
+							 completion of the data in the input field, in which case
+							 these input events may trigger text-changed events from the source.
+
+			</description>
+		</item>
+		<item name="atspi_state_selectable_text" value="38">
+			<description>
+				 This state indicates that the object in
+							 question supports text selection. It should only be exposed on objects
+							 which implement the AtspiText interface, in order to distinguish this state
+							 from ATSPI_STATE_SELECTABLE, which infers that the object in question is a
+							 selectable child of an object which implements AtspiSelection. While
+							 similar, text selection and subelement selection are distinct operations.
+
+			</description>
+		</item>
+		<item name="atspi_state_is_default" value="39">
+			<description>
+				 This state indicates that the object in question is
+							 the 'default' interaction object in a dialog, i.e. the one that gets
+							 activated if the user presses "Enter" when the dialog is initially
+							 posted.
+
+			</description>
+		</item>
+		<item name="atspi_state_visited" value="40">
+			<description>
+				 This state indicates that the object (typically a
+							 hyperlink) has already been activated or invoked, with the result that
+							 some backing data has been downloaded or rendered.
+
+			</description>
+		</item>
+		<item name="atspi_state_checkable" value="41">
+			<description>
+				 Indicates this object has the potential to
+							 be checked, such as a checkbox or toggle-able table cell. Since: 2.12
+
+			</description>
+		</item>
+		<item name="atspi_state_has_popup" value="42">
+			<description>
+				 Indicates that the object has a popup
+							 context menu or sub-level menu which may or may not be
+							 showing. This means that activation renders conditional content.
+							 Note that ordinary tooltips are not considered popups in this
+							 context. Since: 2.12
+
+			</description>
+		</item>
+		<item name="atspi_state_read_only" value="43">
+			<description>
+				 Indicates that an object which is ENABLED and
+							 SENSITIVE has a value which can be read, but not modified, by the
+							 user. Since: 2.16
+			</description>
+		</item>
+	</enum>
+</enums>

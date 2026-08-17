@@ -1,0 +1,33 @@
+[package]
+name = "tokio-rustls"
+version = "0.24.1"
+license = "MIT/Apache-2.0"
+repository = "https://github.com/rustls/tokio-rustls"
+homepage = "https://github.com/rustls/tokio-rustls"
+documentation = "https://docs.rs/tokio-rustls"
+readme = "README.md"
+description = "Asynchronous TLS/SSL streams for Tokio using Rustls."
+categories = ["asynchronous", "cryptography", "network-programming"]
+edition = "2018"
+rust-version = "1.56"
+
+[dependencies]
+tokio = "1.0"
+rustls = { version = "0.21.0", default-features = false }
+
+[features]
+default = ["logging", "tls12"]
+dangerous_configuration = ["rustls/dangerous_configuration"]
+early-data = []
+logging = ["rustls/logging"]
+secret_extraction = ["rustls/secret_extraction"]
+tls12 = ["rustls/tls12"]
+
+[dev-dependencies]
+argh = "0.1"
+tokio = { version = "1.0", features = ["full"] }
+futures-util = "0.3.1"
+lazy_static = "1"
+webpki-roots = "0.23.1"
+rustls-pemfile = "1"
+webpki = { package = "rustls-webpki", version = "0.100.0", features = ["alloc", "std"] }

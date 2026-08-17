@@ -1,0 +1,7 @@
+// Map keys must be primitive types only
+package foo:invalid-map-key;
+
+interface test {
+  // This should fail - tuple is not a valid map key type
+  type invalid = map<tuple<u32, string>, u32>;
+}

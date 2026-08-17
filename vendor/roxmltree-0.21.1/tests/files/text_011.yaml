@@ -1,0 +1,145 @@
+Document:
+  - Element:
+      tag_name: root
+      children:
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            children:
+              - Text: "\n"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            children:
+              - Text: "\n\n"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            children:
+              - Text: "\n\n\n"
+        - Text: "\n\n    "
+        - Element:
+            tag_name: p
+            children:
+              - Text: "\r"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            children:
+              - Text: "\r\r"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            children:
+              - Text: "\r\r\r"
+        - Text: "\n\n    "
+        - Element:
+            tag_name: p
+            children:
+              - Text: "\n\r"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            children:
+              - Text: "\r\n"
+        - Text: "\n\n    "
+        - Element:
+            tag_name: p
+            children:
+              - Text: "\n\r\n"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            children:
+              - Text: "\r\n\r"
+        - Text: "\n\n    "
+        - Element:
+            tag_name: p
+            children:
+              - Text: "\nq\n"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            children:
+              - Text: "\rq\r"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            children:
+              - Text: "\nq\r"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            children:
+              - Text: "\rq\n"
+        - Text: "\n\n    "
+        - Element:
+            tag_name: p
+            children:
+              - Text: "\n\r\n"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            children:
+              - Text: "\r\n\n"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            children:
+              - Text: "\r\r\n"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            children:
+              - Text: "\r\n\r"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            children:
+              - Text: "\r\n\r\n"
+        - Text: "\n\n    "
+        - Element:
+            tag_name: p
+            children:
+              - Text: "\n\nq"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            children:
+              - Text: "q\n\n"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            children:
+              - Text: "q\n\nq"
+        - Text: "\n\n    "
+        - Element:
+            tag_name: p
+            children:
+              - Text: "\r\rq"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            children:
+              - Text: "q\r\r"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            children:
+              - Text: "q\r\rq"
+        - Text: "\n\n    "
+        - Element:
+            tag_name: p
+            children:
+              - Text: "\r\n\r\nq"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            children:
+              - Text: "q\r\n\r\n"
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            children:
+              - Text: "q\r\n\r\nq"
+        - Text: "\n"

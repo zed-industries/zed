@@ -1,0 +1,30 @@
+[package]
+name          = "signature"
+description   = "Traits for cryptographic signature algorithms (e.g. ECDSA, Ed25519)"
+version       = "2.2.0"
+authors       = ["RustCrypto Developers"]
+license       = "Apache-2.0 OR MIT"
+documentation = "https://docs.rs/signature"
+repository    = "https://github.com/RustCrypto/traits/tree/master/signature"
+readme        = "README.md"
+keywords      = ["crypto", "ecdsa", "ed25519", "signature", "signing"]
+categories    = ["cryptography", "no-std"]
+edition       = "2021"
+rust-version  = "1.60"
+
+[dependencies]
+derive = { package = "signature_derive", version = "2", optional = true, path = "../signature_derive" }
+digest = { version = "0.10.6", optional = true, default-features = false }
+rand_core = { version = "0.6.4", optional = true, default-features = false }
+
+[dev-dependencies]
+hex-literal = "0.4"
+sha2 = { version = "0.10", default-features = false }
+
+[features]
+alloc = []
+std = ["alloc", "rand_core?/std"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

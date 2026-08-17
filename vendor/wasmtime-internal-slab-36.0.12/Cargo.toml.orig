@@ -1,0 +1,14 @@
+[package]
+authors = ["The Wasmtime Project Developers"]
+description = "INTERNAL: Uni-typed slab with a free list for use in Wasmtime"
+edition.workspace = true
+rust-version.workspace = true
+license = "Apache-2.0 WITH LLVM-exception"
+name = "wasmtime-internal-slab"
+repository = "https://github.com/bytecodealliance/wasmtime"
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]

@@ -1,0 +1,82 @@
+# Derived from regalloc.rs' GitHub CI config file.
+
+name: Rust
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  # Lint code with rustfmt, report an error if it needs to be run.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install rustfmt
+      run: rustup component add rustfmt
+    - name: Run rustfmt and check there's no difference
+      run: cargo fmt --all -- --check
+
+  # Make sure the code compiles and that all the tests pass.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Build
+      run: cargo build
+    - name: Run tests
+      run: cargo test --all --verbose
+
+  # Make sure the code typechecks with non-default features enabled.
+  features:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Check with all features
+      run: cargo check --all-features
+
+  # Make sure the code and its dependencies compile without std.
+  no_std:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install thumbv6m-none-eabi target
+      run: rustup target add thumbv6m-none-eabi
+    - name: Check no_std build
+      run: cargo check --target thumbv6m-none-eabi --no-default-features --features trace-log,checker,enable-serde
+
+  # Lint dependency graph for security advisories, duplicate versions, and
+  # incompatible licences.
+  cargo_deny:
+    name: Cargo deny
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        submodules: true
+    - run: |
+        set -e
+        curl -L https://github.com/EmbarkStudios/cargo-deny/releases/download/0.14.22/cargo-deny-0.14.22-x86_64-unknown-linux-musl.tar.gz | tar xzf -
+        mv cargo-deny-*-x86_64-unknown-linux-musl/cargo-deny cargo-deny
+        echo `pwd` >> $GITHUB_PATH
+    - run: cargo deny check
+
+  # Builds the fuzz targets.
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install nightly
+      run: rustup toolchain install nightly
+    - name: Install cargo-fuzz
+      run: cargo +nightly install cargo-fuzz
+    - name: Build ssagen fuzzing target
+      run: cargo +nightly fuzz build ssagen
+    - name: Build moves fuzzing target
+      run: cargo +nightly fuzz build moves
+    - name: Build ion fuzzing target
+      run: cargo +nightly fuzz build ion
+    - name: Build and smoke-test ion_checker fuzzing target
+      run: cargo +nightly fuzz run ion_checker ./fuzz/smoketest/ion_checker.bin

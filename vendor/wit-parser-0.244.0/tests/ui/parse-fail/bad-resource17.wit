@@ -1,0 +1,8 @@
+package foo:bar;
+
+interface foo {
+  resource b;
+  resource a {
+    constructor() -> result<b, string>;
+  }
+}

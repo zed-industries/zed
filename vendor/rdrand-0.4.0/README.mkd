@@ -1,0 +1,8 @@
+An implementation of random number generators based on `rdrand` and `rdseed` instructions.
+
+The random number generators provided by this crate are fairly slow (the latency for these
+instructions is pretty high), but provide high quality random bits. Caveat is: neither AMD’s
+nor Intel’s designs are public and therefore are not verifiable for lack of backdoors.
+
+Unless you know what you are doing, use the random number generators provided by the `rand`
+crate (such as `EntropyRng`) instead.

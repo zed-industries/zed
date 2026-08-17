@@ -1,0 +1,299 @@
+#
+# Makefile for FreeType2 link library using Amiga SAS/C 6.58
+#
+
+
+# Copyright (C) 2005-2023 by
+# Werner Lemberg and Detlef Würkner.
+#
+# This file is part of the FreeType project, and may only be used, modified,
+# and distributed under the terms of the FreeType project license,
+# LICENSE.TXT.  By continuing to use, modify, or distribute this file you
+# indicate that you have read the license and understand and accept it
+# fully.
+
+
+# to build from the builds/amiga directory call
+#
+#  smake assign
+#  smake
+#
+# Your programs source code should start with this
+# (uncomment the parts you do not need to keep the program small):
+# ---8<---
+#define FT_USE_AUTOFIT // autofitter
+#define FT_USE_RASTER  // monochrome rasterizer
+#define FT_USE_SMOOTH  // anti-aliasing rasterizer
+#define FT_USE_TT      // truetype font driver
+#define FT_USE_T1      // type1 font driver
+#define FT_USE_T42     // type42 font driver
+#define FT_USE_T1CID   // cid-keyed type1 font driver
+#define FT_USE_CFF     // opentype font driver
+#define FT_USE_BDF     // bdf bitmap font driver
+#define FT_USE_PCF     // pcf bitmap font driver
+#define FT_USE_PFR     // pfr font driver
+#define FT_USE_WINFNT  // windows .fnt|.fon bitmap font driver
+#define FT_USE_OTV     // opentype validator
+#define FT_USE_GXV     // truetype gx validator
+#include "FT:src/base/ftinit.c"
+# ---8<---
+#
+# link your programs with ft2_680x0.lib and either ftsystem.o or ftsystempure.o
+# (and either ftdebug.o or ftdebugpure.o if you enabled FT_DEBUG_LEVEL_ERROR or
+# FT_DEBUG_LEVEL_TRACE in include/freetype/config/ftoption.h).
+
+OBJBASE = ftbase.o ftbbox.o ftbdf.o ftbitmap.o ftcid.o ftfstype.o      \
+	  ftgasp.o ftglyph.o ftgxval.o ftmm.o ftotval.o                \
+	  ftpatent.o ftpfr.o ftstroke.o ftsynth.o fttype1.o ftwinfnt.o
+
+OBJSYSTEM = ftsystem.o ftsystempure.o
+
+OBJDEBUG = ftdebug.o ftdebugpure.o
+
+OBJAFIT = autofit.o
+
+OBJGXV = gxvalid.o
+
+OBJOTV = otvalid.o
+
+OBJPS = psaux.o psnames.o pshinter.o
+
+OBJRASTER = raster.o smooth.o
+
+OBJSFNT = sfnt.o
+
+OBJCACHE = ftcache.o
+
+OBJFONTD = cff.o type1.o type42.o type1cid.o\
+	   truetype.o winfnt.o bdf.o pcf.o pfr.o
+
+CORE = FT:src/
+
+CPU       = 68000
+#CPU      = 68020
+#CPU      = 68030
+#CPU      = 68040
+#CPU      = 68060
+
+OPTIMIZER = optinlocal
+
+SCFLAGS = optimize opttime optsched strmerge data=faronly idlen=50 cpu=$(CPU)\
+	  idir=include/ idir=$(CORE) idir=FT:include/ nostackcheck nochkabort\
+	  noicons ignore=79,85,110,306 parameters=both define=FT2_BUILD_LIBRARY
+
+LIB  = ft2_$(CPU).lib
+
+# sample linker options
+OPTS = link lib=$(LIB),lib:sc.lib,lib:amiga.lib,lib:debug.lib\
+       smallcode smalldata noicons utillib
+
+# sample program entry
+#myprog: myprog.c ftsystem.o $(LIB)
+#	sc $< programname=$@ ftsystem.o $(SCFLAGS) $(OPTS)
+
+all:	$(LIB) $(OBJSYSTEM) $(OBJDEBUG)
+
+assign:
+	assign FT: //
+
+# uses separate object modules in lib to make for easier debugging
+# also, can make smaller programs if entire engine is not used
+ft2_$(CPU).lib:  $(OBJBASE) $(OBJAFIT) $(OBJOTV) $(OBJPS) $(OBJRASTER) $(OBJSFNT) $(OBJCACHE) $(OBJFONTD) lzw.o gzip.o bzip2.o
+	oml $@ r $(OBJBASE) $(OBJAFIT) $(OBJOTV) $(OBJPS) $(OBJRASTER) $(OBJSFNT) $(OBJCACHE) $(OBJFONTD) lzw.o gzip.o bzip2.o
+
+clean:
+	-delete \#?.o
+
+realclean: clean
+	-delete ft2$(CPU).lib
+
+#
+# freetype library base
+#
+ftbase.o: $(CORE)base/ftbase.c
+	sc $(SCFLAGS) objname=$@ $<
+ftinit.o: $(CORE)base/ftinit.c
+	sc $(SCFLAGS) objname=$@ $<
+ftsystem.o: $(CORE)base/ftsystem.c
+	sc $(SCFLAGS) objname=$@ $<
+ftsystempure.o: src/base/ftsystem.c	## pure version for use in run-time library etc
+	sc $(SCFLAGS) objname=$@ $<
+ftdebug.o: $(CORE)base/ftdebug.c
+	sc $(SCFLAGS) objname=$@ $<
+ftdebugpure.o: src/base/ftdebug.c	## pure version for use in run-time library etc
+	sc $(SCFLAGS) objname=$@ $<
+#
+# freetype library base extensions
+#
+ftbbox.o: $(CORE)base/ftbbox.c
+	sc $(SCFLAGS) objname=$@ $<
+ftbdf.o: $(CORE)base/ftbdf.c
+	sc $(SCFLAGS) objname=$@ $<
+ftbitmap.o: $(CORE)base/ftbitmap.c
+	sc $(SCFLAGS) objname=$@ $<
+ftcid.o: $(CORE)base/ftcid.c
+	sc $(SCFLAGS) objname=$@ $<
+ftfstype.o: $(CORE)base/ftfstype.c
+	sc $(SCFLAGS) objname=$@ $<
+ftgasp.o: $(CORE)base/ftgasp.c
+	sc $(SCFLAGS) objname=$@ $<
+ftglyph.o: $(CORE)base/ftglyph.c
+	sc $(SCFLAGS) objname=$@ $<
+ftgxval.o: $(CORE)base/ftgxval.c
+	sc $(SCFLAGS) objname=$@ $<
+ftmm.o: $(CORE)base/ftmm.c
+	sc $(SCFLAGS) objname=$@ $<
+ftotval.o: $(CORE)base/ftotval.c
+	sc $(SCFLAGS) objname=$@ $<
+ftpatent.o: $(CORE)base/ftpatent.c
+	sc $(SCFLAGS) objname=$@ $<
+ftpfr.o: $(CORE)base/ftpfr.c
+	sc $(SCFLAGS) objname=$@ $<
+ftstroke.o: $(CORE)base/ftstroke.c
+	sc $(SCFLAGS) objname=$@ $<
+ftsynth.o: $(CORE)base/ftsynth.c
+	sc $(SCFLAGS) objname=$@ $<
+fttype1.o: $(CORE)base/fttype1.c
+	sc $(SCFLAGS) objname=$@ $<
+ftwinfnt.o: $(CORE)base/ftwinfnt.c
+	sc $(SCFLAGS) objname=$@ $<
+
+#
+# freetype library autofitter module
+#
+autofit.o: $(CORE)autofit/autofit.c
+	sc $(SCFLAGS) objname=$@ $<
+
+#
+# freetype library PS hinting module
+#
+pshinter.o: $(CORE)pshinter/pshinter.c
+	sc $(SCFLAGS) objname=$@ $<
+#
+# freetype library PS support module
+#
+psaux.o: $(CORE)psaux/psaux.c
+	sc $(SCFLAGS) objname=$@ $<
+
+#
+# freetype library PS glyph names module
+#
+psnames.o: $(CORE)psnames/psnames.c
+	sc $(SCFLAGS) code=far objname=$@ $<
+
+#
+# freetype library monochrome raster module
+#
+raster.o: $(CORE)raster/raster.c
+	sc $(SCFLAGS) objname=$@ $<
+
+#
+# freetype library anti-aliasing raster module
+#
+smooth.o: $(CORE)smooth/smooth.c
+	sc $(SCFLAGS) objname=$@ $<
+
+#
+# freetype library 'sfnt' module
+#
+sfnt.o: $(CORE)sfnt/sfnt.c
+	sc $(SCFLAGS) objname=$@ $<
+
+#
+# freetype library glyph and image caching system (still experimental)
+#
+ftcache.o: $(CORE)cache/ftcache.c
+	sc $(SCFLAGS) objname=$@ $<
+
+#
+# freetype library OpenType font driver
+#
+cff.o: $(CORE)cff/cff.c
+	sc $(SCFLAGS) objname=$@ $<
+
+#
+# freetype library TrueType font driver
+#
+truetype.o: $(CORE)truetype/truetype.c
+	sc $(SCFLAGS) objname=$@ $<
+
+#
+# freetype library Type1 font driver
+#
+type1.o: $(CORE)type1/type1.c
+	sc $(SCFLAGS) objname=$@ $<
+
+#
+# FreeType2 library Type42 font driver
+#
+type42.o: $(CORE)type42/type42.c
+	sc $(SCFLAGS) objname=$@ $<
+
+#
+# freetype library CID-keyed Type1 font driver
+#
+type1cid.o: $(CORE)cid/type1cid.c
+	sc $(SCFLAGS) objname=$@ $<
+#
+# freetype library CID-keyed Type1 font driver extensions
+#
+#cidafm.o: $(CORE)cid/cidafm.c
+#	sc $(SCFLAGS) objname=$@ $<
+
+#
+# freetype library BDF bitmap font driver
+#
+bdf.o: $(CORE)bdf/bdf.c
+	sc $(SCFLAGS) objname=$@ $<
+
+#
+# freetype library PCF bitmap font driver
+#
+pcf.o: $(CORE)pcf/pcf.c
+	sc $(SCFLAGS) objname=$@ $<
+
+#
+# freetype library gzip support for compressed PCF bitmap fonts
+#
+gzip.o: $(CORE)gzip/ftgzip.c
+	sc $(SCFLAGS) define FAR objname=$@ $<
+
+#
+# freetype library bzip2 support for compressed PCF bitmap fonts
+#
+bzip2.o: $(CORE)bzip2/ftbzip2.c
+	sc $(SCFLAGS) define FAR objname=$@ $<
+
+#
+# freetype library compress support for compressed PCF bitmap fonts
+#
+lzw.o: $(CORE)lzw/ftlzw.c
+	sc $(SCFLAGS) objname=$@ $<
+
+#
+# freetype library PFR font driver
+#
+pfr.o: $(CORE)pfr/pfr.c
+	sc $(SCFLAGS) objname=$@ $<
+
+#
+# freetype library Windows FNT/FON bitmap font driver
+#
+winfnt.o: $(CORE)winfonts/winfnt.c
+	sc $(SCFLAGS) objname=$@ $<
+
+#
+# freetype library TrueTypeGX validator
+#
+gxvalid.o: $(CORE)gxvalid/gxvalid.c
+	sc $(SCFLAGS) objname=$@ $<
+
+#
+# freetype library OpenType validator
+#
+otvalid.o: $(CORE)otvalid/otvalid.c
+	sc $(SCFLAGS) objname=$@ $<
+
+#Local Variables:
+#coding: latin-1
+#End:

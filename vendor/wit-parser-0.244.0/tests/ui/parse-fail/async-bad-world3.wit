@@ -1,0 +1,6 @@
+package a:b;
+
+world foo {
+  import x: async func();
+  record x {}
+}

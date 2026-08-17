@@ -1,0 +1,20 @@
+[package]
+name = "svgtypes"
+version = "0.11.0"
+authors = ["Yevhenii Reizner <razrfalcon@gmail.com>"]
+categories = ["parser-implementations"]
+description = "SVG types parser."
+documentation = "https://docs.rs/svgtypes/"
+keywords = ["svg", "parser", "tokenizer"]
+license = "MIT/Apache-2.0"
+edition = "2018"
+readme = "README.md"
+repository = "https://github.com/RazrFalcon/svgtypes"
+exclude = ["benches/", "codegen/", "fuzz/"]
+
+[workspace]
+members = ["benches"]
+
+[dependencies]
+siphasher = "0.3" # perfect hash implementation for color names
+kurbo = "0.9" # ArcTo to CurveTo(s)

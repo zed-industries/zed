@@ -1,0 +1,11 @@
+---
+- name: Invalid comma in tag
+  from: '@perlpunk'
+  tags: error tag
+  fail: true
+  yaml: |
+    - !!str, xxx
+  tree: |
+    +STR
+     +DOC
+      +SEQ

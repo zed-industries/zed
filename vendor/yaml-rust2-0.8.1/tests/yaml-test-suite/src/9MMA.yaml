@@ -1,0 +1,9 @@
+---
+- name: Directive by itself with no document
+  from: '@ingydotnet'
+  tags: error directive
+  fail: true
+  yaml: |
+    %YAML 1.2
+  tree: |
+    +STR

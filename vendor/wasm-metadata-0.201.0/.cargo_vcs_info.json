@@ -1,0 +1,6 @@
+{
+  "git": {
+    "sha1": "90161a9b5fbfeaa40e9b4ba2339d7cd1bd52deff"
+  },
+  "path_in_vcs": "crates/wasm-metadata"
+}

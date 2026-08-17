@@ -1,0 +1,25 @@
+on:
+  push:
+    # Pattern matched against refs/tags
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: Publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: rs-workspace/rust-toolchain@v0.2.0
+
+      - name: Publish Crate
+        run: cargo publish --token ${CRATES_TOKEN}
+        env:
+          CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}

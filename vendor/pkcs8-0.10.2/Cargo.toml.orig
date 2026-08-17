@@ -1,0 +1,44 @@
+[package]
+name = "pkcs8"
+version = "0.10.2"
+description = """
+Pure Rust implementation of Public-Key Cryptography Standards (PKCS) #8:
+Private-Key Information Syntax Specification (RFC 5208), with additional
+support for PKCS#8v2 asymmetric key packages (RFC 5958)
+"""
+authors = ["RustCrypto Developers"]
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/RustCrypto/formats/tree/master/pkcs8"
+categories = ["cryptography", "data-structures", "encoding", "no-std", "parser-implementations"]
+keywords = ["crypto", "key", "pkcs", "private"]
+readme = "README.md"
+edition = "2021"
+rust-version = "1.65"
+
+[dependencies]
+der = { version = "0.7", features = ["oid"], path = "../der" }
+spki = { version = "0.7.1", path = "../spki" }
+
+# optional dependencies
+rand_core = { version = "0.6", optional = true, default-features = false }
+pkcs5 = { version = "0.7", optional = true, path = "../pkcs5" }
+subtle = { version = "2", optional = true, default-features = false }
+
+[dev-dependencies]
+hex-literal = "0.3"
+tempfile = "3"
+
+[features]
+alloc = ["der/alloc", "der/zeroize", "spki/alloc"]
+std = ["alloc", "der/std", "spki/std"]
+
+3des = ["encryption", "pkcs5/3des"]
+des-insecure = ["encryption", "pkcs5/des-insecure"]
+encryption = ["alloc", "pkcs5/alloc", "pkcs5/pbes2", "rand_core"]
+getrandom = ["rand_core/getrandom"]
+pem = ["alloc", "der/pem", "spki/pem"]
+sha1-insecure = ["encryption", "pkcs5/sha1-insecure"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

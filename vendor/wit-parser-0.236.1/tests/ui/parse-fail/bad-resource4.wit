@@ -1,0 +1,6 @@
+package foo:bar;
+
+interface foo {
+  type foo = u32;
+  type t = borrow<foo>;
+}

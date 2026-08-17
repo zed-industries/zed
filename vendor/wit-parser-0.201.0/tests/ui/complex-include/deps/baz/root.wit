@@ -1,0 +1,9 @@
+package foo:baz;
+
+interface a {}
+interface b {}
+
+world baz-a {
+    import a;
+    import b;
+}

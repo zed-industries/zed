@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="720px" height="720px" viewBox="0 0 720 720" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <defs>
+        <linearGradient x1="50%" y1="0%" x2="50%" y2="100%" id="limeGradient">
+            <stop stop-color="#0EFFDD" offset="0%"></stop>
+            <stop stop-color="#24FF74" offset="100%"></stop>
+        </linearGradient>
+    </defs>
+    <g>
+        <g>
+            <path d="M576,720 L144,720 C64.5,720 0,655.5 0,576 L0,144 C0,64.5 64.5,0 144,0 L576,0 C655.5,0 720,64.5 720,144 L720,576 C720,655.5 655.5,720 576,720 Z" id="app-backplate" fill="url(#limeGradient)"></path>
+            <polygon id="Path" fill="#000000" points="141 132 334 368 334 195 651 545 569 545 398 364 396 545 205 309 205 545 141 545"></polygon>
+        </g>
+    </g>
+</svg>

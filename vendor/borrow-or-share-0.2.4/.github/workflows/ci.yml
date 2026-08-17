@@ -1,0 +1,20 @@
+on:
+  push:
+    branches: ["main"]
+
+name: CI
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+      - name: Test with no features
+        run: cargo test
+      - name: Test with all features
+        run: cargo test --all-features

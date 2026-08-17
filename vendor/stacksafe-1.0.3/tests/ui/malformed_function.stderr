@@ -1,0 +1,11 @@
+error: expected type, found `)`
+  --> tests/ui/malformed_function.rs:18:17
+   |
+18 | fn malformed(_: ) {}
+   |                 ^ expected type
+
+error: unexpected end of input, expected one of: `for`, parentheses, `unsafe`, `fn`, `extern`, identifier, `::`, `<`, `dyn`, square brackets, `*`, `&`, `!`, `impl`, `_`, lifetime
+  --> tests/ui/malformed_function.rs:18:17
+   |
+18 | fn malformed(_: ) {}
+   |                 ^

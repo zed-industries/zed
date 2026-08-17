@@ -1,0 +1,7 @@
+package root:component;
+
+world root {
+  import foo:foo/bar;
+  import foo:foo/baz;
+  import foo:foo/foo;
+}

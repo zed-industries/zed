@@ -1,0 +1,125 @@
+#
+# Rust Test Suite
+#
+# This workflow builds the project via Cargo, configures a suitable test
+# environment, and then runs the test-suite defined in Cargo.
+#
+
+name: "Rust Test Suite"
+
+on:
+  pull_request:
+  push:
+    branches-ignore: ["pr/**"]
+    tags: ["**"]
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: "bash"
+
+jobs:
+  #
+  # CI with Default Configuration
+  #
+  # This simply runs `cargo build && cargo test` on all sources. We want to
+  # explicitly ensure that this project stays compatible to the stable channel
+  # and the standard build setup.
+  #
+  ci:
+    name: "Default - rust-${{ matrix.rust }}@${{ matrix.os }}"
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ["ubuntu-latest"]
+        rust: ["nightly", "stable"]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - name: "Fetch Sources"
+      uses: actions/checkout@v3
+    - name: "Install Rust Components"
+      run: rustup default "${{ matrix.rust }}"
+    - name: "Build Project"
+      run: cargo build --verbose --all-targets
+    - name: "Run Tests"
+      run: cargo test --verbose
+
+  #
+  # Cross-Compilation to UEFI Target
+  #
+  # This cross-compiles all sources (including the examples) for native UEFI
+  # targets. This test ensures that we can actually compile for our main target
+  # platforms.
+  #
+  ci-cross:
+    name: "Cross-Compilation - ${{ matrix.target }}/rust-${{ matrix.rust }}@${{ matrix.os }}"
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ["ubuntu-latest"]
+        rust: ["nightly", "stable"]
+        target:
+        - "aarch64-unknown-uefi"
+        - "i686-unknown-uefi"
+        - "x86_64-unknown-uefi"
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - name: "Fetch Sources"
+      uses: actions/checkout@v3
+    - name: "Install Rust Components"
+      run: |
+        rustup default "${{ matrix.rust }}"
+        rustup target add --toolchain "${{ matrix.rust }}" "${{ matrix.target }}"
+    - name: "Build Project"
+      run: |
+        cargo build \
+          --examples \
+          --features native \
+          --lib \
+          --target "${{ matrix.target }}" \
+          --verbose
+
+  #
+  # Bootstrap to UEFI Target
+  #
+  # This uses the `-Zbuild-std` feature to fully bootstrap a native UEFI target
+  # via cross-compilation. This currently requires a nightly compiler.
+  #
+  ci-bootstrap:
+    name: "Bootstrap - ${{ matrix.target }}/rust-${{ matrix.rust }}@${{ matrix.os }}"
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ["ubuntu-latest"]
+        rust: ["nightly"]
+        target:
+        - "aarch64-unknown-uefi"
+        - "i686-unknown-uefi"
+        - "x86_64-unknown-uefi"
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - name: "Fetch Sources"
+      uses: actions/checkout@v3
+    - name: "Install Rust Components"
+      run: |
+        rustup default "${{ matrix.rust }}"
+        rustup component add --toolchain "${{ matrix.rust }}" rust-src
+    - name: "Build Project"
+      run: |
+        cargo build \
+          -Zbuild-std=core,compiler_builtins,alloc \
+          -Zbuild-std-features=compiler-builtins-mem \
+          --examples \
+          --features native \
+          --lib \
+          --target "${{ matrix.target }}" \
+          --verbose

@@ -1,0 +1,27 @@
+[package]
+name = "prost-types"
+version = "0.9.0"
+authors = [
+    "Dan Burkert <dan@danburkert.com>",
+    "Tokio Contributors <team@tokio.rs>",
+]
+license = "Apache-2.0"
+repository = "https://github.com/tokio-rs/prost"
+documentation = "https://docs.rs/prost-types"
+readme = "README.md"
+description = "A Protocol Buffers implementation for the Rust Language."
+edition = "2018"
+
+[lib]
+doctest = false
+
+[features]
+default = ["std"]
+std = ["prost/std"]
+
+[dependencies]
+bytes = { version = "1", default-features = false }
+prost = { version = "0.9.0", path = "..", default-features = false, features = ["prost-derive"] }
+
+[dev-dependencies]
+proptest = "1"

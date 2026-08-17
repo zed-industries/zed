@@ -1,0 +1,15 @@
+Document:
+  - Element:
+      tag_name: root
+      children:
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              a: "  A  B    "
+        - Text: "\n    "
+        - Element:
+            tag_name: p
+            attributes:
+              a: "\r\rA\n\nB\r\n\r\n"
+        - Text: "\n"

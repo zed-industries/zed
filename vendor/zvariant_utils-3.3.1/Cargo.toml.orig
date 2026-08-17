@@ -1,0 +1,44 @@
+[package]
+name = "zvariant_utils"
+version = "3.3.1"
+authors = [
+    "Zeeshan Ali Khan <zeeshanak@gnome.org>",
+    "turbocooler <turbocooler@cocaine.ninja>",
+]
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+description = "Various utilities used internally by the zvariant crate."
+repository = { workspace = true }
+keywords = ["D-Bus", "DBus", "IPC", "GVariant"]
+license = { workspace = true }
+categories = ["data-structures", "encoding", "parsing"]
+readme = "README.md"
+
+[features]
+default = []
+gvariant = []
+
+[dependencies]
+proc-macro2.workspace = true
+syn.workspace = true
+quote.workspace = true
+serde.workspace = true
+winnow.workspace = true
+
+[dev-dependencies]
+zvariant.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-gnu",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-freebsd",
+    "x86_64-unknown-netbsd",
+    "aarch64-linux-android",
+]
+
+[lints]
+workspace = true

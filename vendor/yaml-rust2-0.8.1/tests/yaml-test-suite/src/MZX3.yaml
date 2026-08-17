@@ -1,0 +1,31 @@
+---
+- name: Non-Specific Tags on Scalars
+  from: NimYAML tests
+  tags: folded scalar
+  yaml: |
+    - plain
+    - "double quoted"
+    - 'single quoted'
+    - >
+      block
+    - plain again
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       =VAL :plain
+       =VAL "double quoted
+       =VAL 'single quoted
+       =VAL >block\n
+       =VAL :plain again
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      "plain",
+      "double quoted",
+      "single quoted",
+      "block\n",
+      "plain again"
+    ]

@@ -1,0 +1,13 @@
+(decl pure ctor (u32) u32)
+(decl impure (u32) u32)
+
+(decl entry (u32) u32)
+
+(rule (entry x)
+      (if-let y (ctor x))
+      y)
+
+(rule (ctor x)
+      (impure x))
+
+(rule (impure x) x)

@@ -1,0 +1,16 @@
+allow-branch = [
+    "*",
+    "!HEAD",
+]
+sign-commit = true
+sign-tag = true
+push-remote = "origin"
+release = true
+publish = true
+verify = true
+push = true
+consolidate-commits = false
+pre-release-commit-message = "chore: release {{crate_name}} version {{version}}"
+tag-message = "chore: release {{crate_name}} version {{version}}"
+tag-name = "{{prefix}}v{{version}}"
+tag = true

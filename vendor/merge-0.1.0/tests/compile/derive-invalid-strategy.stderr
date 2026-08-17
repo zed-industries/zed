@@ -1,0 +1,13 @@
+error[E0308]: mismatched types
+ --> $DIR/derive-invalid-strategy.rs:8:24
+  |
+8 |       #[merge(strategy = my_custom_merge_strategy)]
+  |  ________________________^
+9 | |     field1: u8,
+  | |__________^ expected `u8`, found `&mut u8`
+  |
+help: consider removing the borrow
+  |
+8 |     #[merge(strategy = my_custom_merge_strategy)]
+9 |     field1: u8,
+  |

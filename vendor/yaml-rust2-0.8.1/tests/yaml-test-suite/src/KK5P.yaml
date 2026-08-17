@@ -1,0 +1,81 @@
+---
+- name: Various combinations of explicit block mappings
+  from: '@perlpunk'
+  tags: explicit-key mapping sequence
+  yaml: |
+    complex1:
+      ? - a
+    complex2:
+      ? - a
+      : b
+    complex3:
+      ? - a
+      : >
+        b
+    complex4:
+      ? >
+        a
+      :
+    complex5:
+      ? - a
+      : - b
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :complex1
+       +MAP
+        +SEQ
+         =VAL :a
+        -SEQ
+        =VAL :
+       -MAP
+       =VAL :complex2
+       +MAP
+        +SEQ
+         =VAL :a
+        -SEQ
+        =VAL :b
+       -MAP
+       =VAL :complex3
+       +MAP
+        +SEQ
+         =VAL :a
+        -SEQ
+        =VAL >b\n
+       -MAP
+       =VAL :complex4
+       +MAP
+        =VAL >a\n
+        =VAL :
+       -MAP
+       =VAL :complex5
+       +MAP
+        +SEQ
+         =VAL :a
+        -SEQ
+        +SEQ
+         =VAL :b
+        -SEQ
+       -MAP
+      -MAP
+     -DOC
+    -STR
+  dump: |
+    complex1:
+      ? - a
+      :
+    complex2:
+      ? - a
+      : b
+    complex3:
+      ? - a
+      : >
+        b
+    complex4:
+      ? >
+        a
+      :
+    complex5:
+      ? - a
+      : - b

@@ -1,0 +1,11 @@
+error: whole type
+ --> $DIR/to_tokens_span.rs:4:17
+  |
+4 | to_tokens_span!(std::option::Option);
+  |                 ^^^^^^^^^^^^^^^^^^^
+
+error: explicit .span()
+ --> $DIR/to_tokens_span.rs:4:17
+  |
+4 | to_tokens_span!(std::option::Option);
+  |                 ^^^

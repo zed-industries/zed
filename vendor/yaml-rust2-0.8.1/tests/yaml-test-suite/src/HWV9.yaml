@@ -1,0 +1,11 @@
+---
+- name: Document-end marker
+  from: '@perlpunk'
+  tags: footer
+  yaml: |
+    ...
+  tree: |
+    +STR
+    -STR
+  json: ''
+  dump: ''

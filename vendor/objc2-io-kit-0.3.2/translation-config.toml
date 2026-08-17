@@ -1,0 +1,274 @@
+framework = "IOKit"
+crate = "objc2-io-kit"
+required-crates = ["objc2-core-foundation"]
+custom-lib-rs = true
+macos = "10.0"
+maccatalyst = "13.0"
+ios = "16.0"
+visionos = "1.0"
+
+# FIXME: Map the rest of IOKit
+# NOTE: Be sure to audit for safety as well (we're marking IOKit as safe below).
+module.audio.skipped = true
+module.avc.skipped = true
+module.firewire.skipped = true
+module.i2c.skipped = true
+module.iokitmig.skipped = true
+module.kext.skipped = true
+module.ndrvsupport.skipped = true
+module.sbp2.skipped = true
+module.scsi.skipped = true
+module.storage.skipped = true
+module.stream.skipped = true
+
+# IOPM.h
+# Cast to (void*)1
+const.kIOPMMessageSleepWakeUUIDSet.skipped = true
+# Cast to (void*)NULL
+const.kIOPMMessageSleepWakeUUIDCleared.skipped = true
+
+# References kIOReturnUnsupported (u32) in enum (i32)
+const.kIOPSFamilyCodeUnsupported.skipped = true
+
+# IOKit/IOReturn.h
+# Defines
+const.sub_iokit_common.skipped = false
+const.sub_iokit_usb.skipped = false
+const.sub_iokit_firewire.skipped = false
+const.sub_iokit_block_storage.skipped = false
+const.sub_iokit_graphics.skipped = false
+const.sub_iokit_networking.skipped = false
+const.sub_iokit_bluetooth.skipped = false
+const.sub_iokit_pmu.skipped = false
+const.sub_iokit_acpi.skipped = false
+const.sub_iokit_smbus.skipped = false
+const.sub_iokit_ahci.skipped = false
+const.sub_iokit_powermanagement.skipped = false
+const.sub_iokit_hidsystem.skipped = false
+const.sub_iokit_scsi.skipped = false
+const.sub_iokit_usbaudio.skipped = false
+const.sub_iokit_wirelesscharging.skipped = false
+const.sub_iokit_thunderbol.skipped = false
+const.sub_iokit_graphics_acceleration.skipped = false
+const.sub_iokit_keystore.skipped = false
+const.sub_iokit_apfs.skipped = false
+const.sub_iokit_acpiec.skipped = false
+const.sub_iokit_timesync_avb.skipped = false
+
+# usb/IOUSB.h
+# Constants using CFUUIDGetConstantUUIDWithBytes
+const.kIOUSBDeviceInterfaceID.skipped = true
+const.kIOUSBInterfaceInterfaceID.skipped = true
+
+# usb/USB.h
+# Redefine for kUSBHostMessageRenegotiateCurrent
+const.kIOUSBMessageRenegotiateCurrent.skipped = true
+
+# TODO: Check cfgs with `TARGET_OS_MACCATALYST`.
+
+# Requires C++
+module.video.skipped = true
+
+# `ns_consumed`, `cf_consumed` and `os_consumed`
+fn.IOServiceGetMatchingService.skipped = true
+fn.IOServiceGetMatchingServices.skipped = true
+fn.IOServiceAddMatchingNotification.skipped = true
+# + a few methods from DriverKit.framework and Kernel.framework, but those
+# are written in C++, so we're not going to ever handle them anyhow.
+
+# Unnecessarily requires `libc`
+typedef.IOReturn.skipped = true
+
+# Complex expression involving `sizeof`
+const.kOSAsyncRef64Size.skipped = true
+const.kOSAsyncRef64Count.skipped = true
+
+# Needs io_user_reference_t, and contains arrays in typedefs
+typedef.OSAsyncReference64.skipped = true
+struct.OSNotificationHeader64.skipped = true
+struct.IOServiceInterestContent64.skipped = true
+
+# Needs mach_msg_size_t/mach_msg_header_t/mach_timespec_t, which isn't exposed by libc
+typedef.OSAsyncReference.skipped = true
+struct.OSNotificationHeader.skipped = true
+fn.IODispatchCalloutFromMessage.skipped = true
+fn.IOServiceWaitQuiet.skipped = true
+fn.IOKitWaitQuietWithOptions.skipped = true
+fn.IOKitWaitQuiet.skipped = true
+fn.OSGetNotificationFromMessage.skipped = true
+struct._IODataQueueAppendix.skipped = true
+typedef.IODataQueueAppendix.skipped = true
+struct.IORPCMessageMach.skipped = true
+struct.IORPCMessageErrorReturn.skipped = true
+struct.IORPC.skipped = true
+fn.IORPCMessageFromMach.skipped = true
+struct.evioSpecialKeyMsg.skipped = true
+typedef.evioSpecialKeyMsg_t.skipped = true
+
+# Recursive
+typedef.LowLatencyUserBufferInfo.skipped = true
+struct.LowLatencyUserBufferInfo.skipped = true
+typedef.LowLatencyUserBufferInfoV2.skipped = true
+struct.LowLatencyUserBufferInfoV2.skipped = true
+typedef.LowLatencyUserBufferInfoV3.skipped = true
+struct.LowLatencyUserBufferInfoV3.skipped = true
+
+# Overflows while calculating on 32-bit.
+const.kIORPCMessageIDKernel.skipped = true
+const.kUSBAllStreams.skipped = true
+
+# Defined twice
+const.kIOUserServerCDHashKey.skipped = true
+const.kAppleExternalConnectorBitmap.skipped = true
+
+# Needs us to define `iokit_usbhost_msg` and `iokit_usbhost_err`.
+const.kUSBHostMessageConfigurationSet.skipped = true
+const.kUSBHostMessageRenegotiateCurrent.skipped = true
+const.kUSBHostMessageControllerException.skipped = true
+const.kUSBHostMessageDeviceIsRequestingClose.skipped = true
+const.kUSBHostReturnPipeStalled.skipped = true
+const.kUSBHostReturnNoPower.skipped = true
+const.kUSBHostReturnRedundant.skipped = true
+
+# Defined before the thing it refers to.
+const.kUSBDeviceContainerID.skipped = true
+
+# Overflows while calculating
+const.kIOUSB30Bitrate5Gbps.skipped = true
+const.kIOUSB30Bitrate10Gbps.skipped = true
+const.kIOUSB32Bitrate20Gbps.skipped = true
+const.kIODisplayModeIDBootProgrammable.skipped = true
+const.kIODisplayModeIDReservedBase.skipped = true
+const.kAppleOnboardGUID.skipped = true
+
+# Emit these.
+const.IO1BitIndexedPixels.skipped = false
+const.IO2BitIndexedPixels.skipped = false
+const.IO4BitIndexedPixels.skipped = false
+const.IO8BitIndexedPixels.skipped = false
+const.IO16BitDirectPixels.skipped = false
+const.IO32BitDirectPixels.skipped = false
+const.IOYUV422Pixels.skipped = false
+const.IO8BitOverlayPixels.skipped = false
+const.IOPagedPixels.skipped = false
+const.IO_SampleTypeAlpha.skipped = false
+const.IO_SampleTypeSkip.skipped = false
+
+# Needs OSSpinLock
+struct.StdFBShmem_t.skipped = true
+typedef.StdFBShmem_t.skipped = true
+struct.IOGraphicsEngineContext.skipped = true
+typedef.IOGraphicsEngineContext.skipped = true
+const.kIOGraphicsEngineContext.skipped = true
+const.kIOGraphicsEngineContextVersion.skipped = true
+struct._NXEQElStruct.skipped = true
+typedef.NXEQElement.skipped = true
+struct._evGlobals.skipped = true
+typedef.EvGlobals.skipped = true
+const.IOSharedLockData.skipped = true
+const.ev_lock_data_t.skipped = true
+
+# Unknown ABI
+typedef.IOPixelEncoding.skipped = true
+struct.IOPixelInformation.skipped = true
+typedef.IOPixelInformation.skipped = true
+struct.bm12Cursor.skipped = true
+struct.bm18Cursor.skipped = true
+struct.bm34Cursor.skipped = true
+struct.bm38Cursor.skipped = true
+typedef.NXEventSystemInfoData.skipped = true
+
+# Double typedefs
+typedef.NXTabletPointDataPtr.skipped = true
+typedef.NXTabletProximityDataPtr.skipped = true
+typedef.NXEventPtr.skipped = true
+
+# Needs libc::audit_token_t
+struct._NXEventExtension.skipped = true
+typedef.NXEventExtension.skipped = true
+struct._NXEventExt.skipped = true
+typedef.NXEventExt.skipped = true
+fn.IOHIDAccessCheckAuditToken.skipped = true
+
+# Private
+typedef._NXLLEvent.skipped = true
+
+# IONetworkMedium.h
+# Aliases for constants from net/if_media.h
+const.kIOMediumEthernet.use-value = true
+const.kIOMediumEthernetAuto.use-value = true
+const.kIOMediumEthernetManual.use-value = true
+const.kIOMediumEthernetNone.use-value = true
+const.kIOMediumEthernet10BaseT.use-value = true
+const.kIOMediumEthernet10Base2.use-value = true
+const.kIOMediumEthernet10Base5.use-value = true
+const.kIOMediumEthernet100BaseTX.use-value = true
+const.kIOMediumEthernet100BaseFX.use-value = true
+const.kIOMediumEthernet100BaseT4.use-value = true
+const.kIOMediumEthernet100BaseVG.use-value = true
+const.kIOMediumEthernet100BaseT2.use-value = true
+const.kIOMediumEthernet1000BaseSX.use-value = true
+const.kIOMediumEthernet10BaseSTP.use-value = true
+const.kIOMediumEthernet10BaseFL.use-value = true
+const.kIOMediumEthernet1000BaseLX.use-value = true
+const.kIOMediumEthernet1000BaseCX.use-value = true
+const.kIOMediumEthernet1000BaseTX.use-value = true
+const.kIOMediumEthernet1000BaseT.use-value = true
+const.kIOMediumEthernetHomePNA1.use-value = true
+const.kIOMediumEthernet10GBaseSR.use-value = true
+const.kIOMediumEthernet10GBaseLR.use-value = true
+const.kIOMediumEthernet10GBaseCX4.use-value = true
+const.kIOMediumEthernet10GBaseT.use-value = true
+const.kIOMediumEthernet2500BaseT.use-value = true
+const.kIOMediumEthernet5000BaseT.use-value = true
+const.kIOMediumIEEE80211.use-value = true
+const.kIOMediumIEEE80211Auto.use-value = true
+const.kIOMediumIEEE80211Manual.use-value = true
+const.kIOMediumIEEE80211None.use-value = true
+const.kIOMediumIEEE80211FH1.use-value = true
+const.kIOMediumIEEE80211FH2.use-value = true
+const.kIOMediumIEEE80211DS1.use-value = true
+const.kIOMediumIEEE80211DS2.use-value = true
+const.kIOMediumIEEE80211DS5.use-value = true
+const.kIOMediumIEEE80211DS11.use-value = true
+const.kIOMediumIEEE80211OptionAdhoc.use-value = true
+const.kIOMediumOptionEEE.use-value = true
+const.kIOMediumOptionFullDuplex.use-value = true
+const.kIOMediumOptionHalfDuplex.use-value = true
+const.kIOMediumOptionFlowControl.use-value = true
+const.kIOMediumOptionFlag0.use-value = true
+const.kIOMediumOptionFlag1.use-value = true
+const.kIOMediumOptionFlag2.use-value = true
+const.kIOMediumOptionLoopback.use-value = true
+const.kIONetworkLinkValid.use-value = true
+const.kIONetworkLinkActive.use-value = true
+const.kIONetworkLinkNoNetworkChange.use-value = true
+
+##
+## Safety
+##
+
+# SAFETY: The IOKit functions that we map are well-behaved.
+#
+# A lot of HID functions document something like
+# > If this parameter is not a valid IOHIDElementRef, the behavior is undefined
+#
+# Which is perfectly fine, because the functions are correctly typed
+# (so this requirement is upheld by the type system).
+#
+# Note that some functions take handles like `io_object_t`, including
+# `IOObjectRelease`/`IOObjectRetain`. These are safe to use, the kernel checks
+# these, and returns an error if you pass e.g. an over-released handle (just
+# like file handles).
+#
+# There's also functions like `IOHIDDeviceActivate`, which says that a queue
+# must be set before activation, or that register functions shouldn't be called
+# after activation, but it's hard to see how that would cause memory safety
+# (as compared to just logical safety).
+unsafe-default-safety.documentation-is-reviewed = true
+
+# Unsure if memory (un-)mapping has further constraints?
+fn.IOConnectMapMemory.unsafe = true
+fn.IOConnectMapMemory64.unsafe = true
+fn.IOConnectUnmapMemory.unsafe = true
+fn.IOConnectUnmapMemory64.unsafe = true

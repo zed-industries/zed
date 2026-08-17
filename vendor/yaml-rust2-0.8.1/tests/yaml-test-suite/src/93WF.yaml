@@ -1,0 +1,27 @@
+---
+- name: Spec Example 6.6. Line Folding [1.3]
+  from: K527, modified for YAML 1.3
+  tags: folded spec whitespace scalar 1.3-mod
+  yaml: |
+    --- >-
+      trimmed
+    ␣␣
+    ␣
+
+      as
+      space
+  tree: |
+    +STR
+     +DOC ---
+      =VAL >trimmed\n\n\nas space
+     -DOC
+    -STR
+  json: |
+    "trimmed\n\n\nas space"
+  dump: |
+    --- >-
+      trimmed
+
+
+
+      as space

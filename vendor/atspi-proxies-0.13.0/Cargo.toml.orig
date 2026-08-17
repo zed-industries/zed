@@ -1,0 +1,38 @@
+[package]
+categories             = ["accessibility", "api-bindings"]
+description            = "AT-SPI2 proxies to query or manipulate UI objects"
+edition                = "2021"
+homepage               = "https://github.com/odilia-app/atspi"
+include                = ["LICENSE-*", "README.md", "src/**/*"]
+keywords               = ["a11y", "accessibility", "linux", "screen-reader", "tts"]
+license                = "Apache-2.0 OR MIT"
+name                   = "atspi-proxies"
+readme                 = "README.md"
+repository             = "https://github.com/odilia-app/atspi"
+rust-version.workspace = true
+version                = "0.13.0"
+
+[package.metadata.release]
+publish = true
+release = true
+
+[features]
+default  = ["wrappers"]
+wrappers = []
+
+[dependencies]
+atspi-common = { path = "../atspi-common", version = "0.13.0" }
+serde        = { version = "^1.0.200", default-features = false, features = ["derive"] }
+zbus         = { workspace = true }
+
+[dev-dependencies]
+atspi-common = { path = "../atspi-common", version = "0.13.0" }
+byteorder    = "1.4"
+futures-lite = { version = "2.6.0", default-features = false }
+rename-item  = "0.1.0"
+serde_json   = "1.0.96"
+serde_plain  = "1.0.1"
+tokio        = { version = "1.38.2", default-features = false, features = ["macros", "rt-multi-thread"] }
+tokio-stream = "0.1.1"
+tokio-test   = "0.4.2"
+tracing      = "0.1.40"

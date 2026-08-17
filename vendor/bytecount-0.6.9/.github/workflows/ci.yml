@@ -1,0 +1,95 @@
+on: 
+  push:
+    branches:
+      - master
+  pull_request:
+
+name: Continuous integration
+
+jobs:
+  test:
+    name: Test suite
+    strategy:
+      matrix:
+        rust:
+          - 1.32.0
+          - stable
+          - beta
+          - nightly
+        os:
+          - macos-latest
+          - ubuntu-latest
+        arch:
+          - i686
+          - x86_64
+          - aarch64
+        features:
+          - default
+          - runtime-dispatch-simd
+          - generic-simd
+        exclude:
+        - rust: 1.32.0
+          features: generic-simd
+        - rust: stable
+          features: generic-simd
+        - rust: beta
+          features: generic-simd
+
+    env:
+      ARCH: ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1.0.7
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+          override: true
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Build (1.32.0, default)
+        uses: actions-rs/cargo@v1.0.3
+        with:
+          command: build
+          args: --release
+        if: ${{ matrix.features == 'default' && matrix.rust == '1.32.0' }}
+      - name: Build (1.32.0, non-default)
+        uses: actions-rs/cargo@v1.0.3
+        with:
+          command: build
+          args: --release --features ${{ matrix.features }}
+        if: ${{ matrix.features != 'default' && matrix.rust == '1.32.0' }}        
+      - name: Test (default)
+        uses: actions-rs/cargo@v1.0.3
+        with:
+          command: test
+          args: --release
+        if: ${{ matrix.features == 'default' && matrix.rust != '1.32.0' }}
+      - name: Test (non-default)
+        uses: actions-rs/cargo@v1.0.3
+        with:
+          command: test
+          args: --release --features ${{ matrix.features }}
+        if: ${{ matrix.features != 'default' && matrix.rust != '1.32.0' }}
+      - name: bench
+        uses: actions-rs/cargo@v1.0.3
+        with:
+          command: bench
+        env:
+          COUNTS: 0,10,1000,100000,10000000
+        if: ${{ matrix.rust != '1.32.0' }}
+
+  # Fails currently on check_count_overflow_many 
+  #
+  # miri:
+  #   name: MIRI testing
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v2.3.4
+  #     - uses: actions-rs/toolchain@v1.0.7
+  #       with:
+  #         profile: minimal
+  #         toolchain: nightly
+  #         override: true
+  #     - name: Run miri
+  #       run: ./ci/miri.sh

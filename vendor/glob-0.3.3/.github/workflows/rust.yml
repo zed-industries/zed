@@ -1,0 +1,99 @@
+name: CI
+
+env:
+  CARGO_TERM_VERBOSE: true
+  RUSTDOCFLAGS: -Dwarnings
+  RUSTFLAGS: -Dwarnings
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        channel:
+          - stable
+          - nightly
+          - 1.63.0 # MSRV of test dependencies
+        os:
+          - macos-13 # x86 MacOS
+          - macos-15 # Arm MacOS
+          - windows-2025
+          - ubuntu-24.04
+        include:
+          - channel: beta
+            os: ubuntu-24.04
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Update rust
+      run: |
+        rustup default ${{ matrix.channel }}
+        rustup update --no-self-update
+
+    - run: cargo test --all
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Update rust
+      run: |
+        # use beta since it gives us near-latest fixes but isn't as volatile as nightly
+        rustup default beta
+        rustup component add clippy
+        rustup update --no-self-update
+    - run: cargo clippy --all -- -Aclippy::while_let_loop
+
+  msrv:
+    name: Check building with the MSRV
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Update rust
+      run: |
+        rustup default 1.63.0
+        rustup update --no-self-update
+
+    - run: cargo build
+
+  rustfmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    - name: Install Rust
+      run: |
+        rustup default nightly
+        rustup update --no-self-update
+        rustup component add rustfmt
+    - run: cargo fmt -- --check
+
+  success:
+    needs:
+      - test
+      - clippy
+      - msrv
+      - rustfmt
+    runs-on: ubuntu-latest
+    # GitHub branch protection is exceedingly silly and treats "jobs skipped because a dependency
+    # failed" as success. So we have to do some contortions to ensure the job fails if any of its
+    # dependencies fails.
+    if: always() # make sure this is never "skipped"
+    steps:
+      # Manually check the status of all dependencies. `if: failure()` does not work.
+      - name: check if any dependency failed
+        run: jq --exit-status 'all(.result == "success")' <<< '${{ toJson(needs) }}'

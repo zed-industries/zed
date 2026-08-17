@@ -1,0 +1,11 @@
+---
+- name: Mapping starting at --- line
+  from: https://gist.github.com/anonymous/c728390e92ec93fb371ac77f21435cca via @ingydotnet
+  tags: error header mapping
+  fail: true
+  yaml: |
+    --- key1: value1
+        key2: value2
+  tree: |
+    +STR
+     +DOC ---

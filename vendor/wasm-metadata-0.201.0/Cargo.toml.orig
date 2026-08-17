@@ -1,0 +1,24 @@
+[package]
+name = "wasm-metadata"
+version.workspace = true
+edition.workspace = true
+license = "Apache-2.0 WITH LLVM-exception"
+repository = "https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wasm-metadata"
+description = "Read and manipulate WebAssembly metadata"
+
+[lints]
+workspace = true
+
+[dependencies]
+clap = { workspace = true, optional = true }
+anyhow = { workspace = true }
+wasmparser = { workspace = true }
+wasm-encoder = { workspace = true }
+indexmap = { workspace = true, features = ["serde"] }
+serde = { workspace = true }
+serde_derive = { workspace = true }
+serde_json = { version = "1" }
+spdx = "0.10.1"
+
+[dev-dependencies]
+wat = { workspace = true }

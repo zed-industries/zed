@@ -1,0 +1,172 @@
+{
+  "worlds": [],
+  "interfaces": [
+    {
+      "name": "bar",
+      "types": {
+        "the-type": 0
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "foo",
+      "types": {
+        "the-type": 1
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "baz",
+      "types": {
+        "the-type": 2,
+        "test": 3
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "empty",
+      "types": {},
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "use-from-empty",
+      "types": {},
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "use-multiple",
+      "types": {
+        "the-type": 4,
+        "test": 5
+      },
+      "functions": {
+        "some-function": {
+          "name": "some-function",
+          "kind": "freestanding",
+          "params": [
+            {
+              "name": "x",
+              "type": 4
+            }
+          ],
+          "results": [
+            {
+              "type": 5
+            }
+          ]
+        }
+      },
+      "package": 0
+    },
+    {
+      "name": "trailing-comma",
+      "types": {
+        "the-type": 6,
+        "the-foo": 7
+      },
+      "functions": {},
+      "package": 0
+    }
+  ],
+  "types": [
+    {
+      "name": "the-type",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "the-type",
+      "kind": {
+        "type": 0
+      },
+      "owner": {
+        "interface": 1
+      }
+    },
+    {
+      "name": "the-type",
+      "kind": {
+        "type": 1
+      },
+      "owner": {
+        "interface": 2
+      }
+    },
+    {
+      "name": "test",
+      "kind": {
+        "type": 0
+      },
+      "owner": {
+        "interface": 2
+      }
+    },
+    {
+      "name": "the-type",
+      "kind": {
+        "type": 2
+      },
+      "owner": {
+        "interface": 5
+      }
+    },
+    {
+      "name": "test",
+      "kind": {
+        "type": 3
+      },
+      "owner": {
+        "interface": 5
+      }
+    },
+    {
+      "name": "the-type",
+      "kind": {
+        "type": 1
+      },
+      "owner": {
+        "interface": 6
+      }
+    },
+    {
+      "name": "the-foo",
+      "kind": {
+        "record": {
+          "fields": [
+            {
+              "name": "a",
+              "type": 6
+            }
+          ]
+        }
+      },
+      "owner": {
+        "interface": 6
+      }
+    }
+  ],
+  "packages": [
+    {
+      "name": "foo:foo",
+      "interfaces": {
+        "bar": 0,
+        "foo": 1,
+        "baz": 2,
+        "empty": 3,
+        "use-from-empty": 4,
+        "use-multiple": 5,
+        "trailing-comma": 6
+      },
+      "worlds": {}
+    }
+  ]
+}

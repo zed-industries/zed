@@ -1,0 +1,20 @@
+(type A (enum (A1 (x u32)) (A2 (x u32))))
+(type B (enum (B1 (x u32)) (B2 (x u32))))
+
+(decl Input (A) u32)
+(extern extractor Input get_input) ;; fn get_input<C>(ctx: &mut C, ret: u32) -> Option<(A,)>
+
+(decl Lower (A) B)
+
+(rule
+  (Lower (A.A1 sub @ (Input (A.A2 42))))
+  (B.B2 sub))
+
+(decl Extractor (B) A)
+(extractor
+  (Extractor x)
+  (A.A2 x))
+
+(rule
+  (Lower (Extractor b))
+  (B.B1 b))

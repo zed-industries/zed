@@ -1,0 +1,16 @@
+[package]
+description = "Internal pulley macros"
+edition.workspace = true
+rust-version.workspace = true
+license = "Apache-2.0 WITH LLVM-exception"
+name = "pulley-macros"
+repository = "https://github.com/bytecodealliance/wasmtime/tree/main/pulley/macros"
+version.workspace = true
+
+[dependencies]
+syn = { workspace = true, features = ['full'] }
+quote = { workspace = true }
+proc-macro2 = { workspace = true }
+
+[lib]
+proc-macro = true

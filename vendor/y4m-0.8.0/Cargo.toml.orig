@@ -1,0 +1,14 @@
+[package]
+name = "y4m"
+version = "0.8.0"
+authors = ["Kagami Hiiragi <kagami@genshiken.org>"]
+description = "YUV4MPEG2 (.y4m) Encoder/Decoder."
+keywords = ["y4m", "YUV4MPEG2", "video", "decoder", "encoder"]
+license = "MIT"
+readme = "README.md"
+homepage = "https://github.com/image-rs/y4m"
+repository = "https://github.com/image-rs/y4m.git"
+documentation = "https://docs.rs/y4m"
+
+[dev-dependencies]
+resize = "0.4"

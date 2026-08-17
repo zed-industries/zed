@@ -1,0 +1,22 @@
+name: Code Coverage
+
+on: [push]
+jobs:
+  test:
+    name: Coverage
+    runs-on: ubuntu-latest
+    container:
+      image: xd009642/tarpaulin:develop-nightly
+      options: --security-opt seccomp=unconfined
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Generate code coverage
+      run: |
+        cargo +nightly tarpaulin --verbose --features debug --workspace --timeout 120 --out Xml
+
+    - name: Upload to codecov.io
+      uses: codecov/codecov-action@v4
+      with:
+        fail_ci_if_error: true

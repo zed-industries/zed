@@ -1,0 +1,65 @@
+clone_depth: 1
+
+branches:
+  only:
+    - master
+
+environment:
+  LLVM_VERSION: 9.0.1
+  PLATFORM: x64
+  matrix:
+    - channel: stable
+      target: i686-pc-windows-msvc
+      type: msvc
+    - channel: stable
+      target: x86_64-pc-windows-msvc
+      type: msvc
+    - channel: stable
+      target: i686-pc-windows-gnu
+      type: gnu
+    - channel: stable
+      target: x86_64-pc-windows-gnu
+      type: gnu
+    - channel: nightly
+      target: i686-pc-windows-msvc
+      type: msvc
+    - channel: nightly
+      target: x86_64-pc-windows-msvc
+      type: msvc
+    - channel: nightly
+      target: i686-pc-windows-gnu
+      type: gnu
+    - channel: nightly
+      target: x86_64-pc-windows-gnu
+      type: gnu
+
+install:
+    - if %PLATFORM% == x86 (set RUST_PLATFORM=i686&set MINGW_BITS=32) else (set RUST_PLATFORM=x86_64&set MINGW_BITS=64)
+    - ps: >-
+        If ($env:target -eq 'x86_64-pc-windows-gnu') {
+            $env:PATH += ';C:\msys64\mingw64\bin'
+        } ElseIf ($env:target -eq 'i686-pc-windows-gnu') {
+            $env:PATH += ';C:\msys64\mingw32\bin'
+        }
+    - appveyor DownloadFile https://win.rustup.rs/ -FileName rustup-init.exe
+    - rustup-init -yv --default-toolchain %channel% --default-host %target%
+    - set PATH=%PATH%;%USERPROFILE%\.cargo\bin
+    - rustc -vV
+    - cargo -vV
+    # Install LLVM for GNU
+    - if %type%==gnu set PATH=C:\msys64\mingw%MINGW_BITS%\bin;C:\msys64\usr\bin;%PATH%
+    - if %type%==gnu set "MINGW_URL=http://repo.msys2.org/mingw/%RUST_PLATFORM%/mingw-w64-%RUST_PLATFORM%"
+    - if %type%==gnu set "URL_VER=%LLVM_VERSION%-1-any.pkg.tar.xz"
+    - if %type%==gnu bash -lc "pacman -U --noconfirm $MINGW_URL-clang-$URL_VER $MINGW_URL-llvm-$URL_VER"
+    - if %type%==gnu bash -lc "clang --version"
+    # Use preinstalled LLVM for MSVC
+    - if %type%==msvc set PATH=%PATH%;C:\Program Files\LLVM\bin
+    - if %type%==msvc where clang
+    - if %type%==msvc clang --version
+
+build_script:
+    - cargo build -vv
+test_script:
+    - cargo test -vv
+deploy: off
+

@@ -1,0 +1,453 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="kde_output_device_v2">
+  <copyright><![CDATA[
+    SPDX-FileCopyrightText: 2008-2011 Kristian Høgsberg
+    SPDX-FileCopyrightText: 2010-2011 Intel Corporation
+    SPDX-FileCopyrightText: 2012-2013 Collabora, Ltd.
+    SPDX-FileCopyrightText: 2015 Sebastian Kügler <sebas@kde.org>
+    SPDX-FileCopyrightText: 2021 Méven Car <meven.car@enioka.com>
+
+    SPDX-License-Identifier: MIT-CMU
+    ]]></copyright>
+
+
+  <interface name="kde_output_device_v2" version="11">
+    <description summary="output configuration representation">
+      An output device describes a display device available to the compositor.
+      output_device is similar to wl_output, but focuses on output
+      configuration management.
+
+      A client can query all global output_device objects to enlist all
+      available display devices, even those that may currently not be
+      represented by the compositor as a wl_output.
+
+      The client sends configuration changes to the server through the
+      outputconfiguration interface, and the server applies the configuration
+      changes to the hardware and signals changes to the output devices
+      accordingly.
+
+      This object is published as global during start up for every available
+      display devices, or when one later becomes available, for example by
+      being hotplugged via a physical connector.
+
+      Warning! The protocol described in this file is a desktop environment
+      implementation detail. Regular clients must not use this protocol.
+      Backward incompatible changes may be added without bumping the major
+      version of the extension.
+    </description>
+
+    <enum name="subpixel">
+      <description summary="subpixel geometry information">
+        This enumeration describes how the physical pixels on an output are
+        laid out.
+      </description>
+      <entry name="unknown" value="0"/>
+      <entry name="none" value="1"/>
+      <entry name="horizontal_rgb" value="2"/>
+      <entry name="horizontal_bgr" value="3"/>
+      <entry name="vertical_rgb" value="4"/>
+      <entry name="vertical_bgr" value="5"/>
+    </enum>
+
+    <enum name="transform">
+      <description summary="transform from framebuffer to output">
+        This describes the transform, that a compositor will apply to a
+        surface to compensate for the rotation or mirroring of an
+        output device.
+
+        The flipped values correspond to an initial flip around a
+        vertical axis followed by rotation.
+
+        The purpose is mainly to allow clients to render accordingly and
+        tell the compositor, so that for fullscreen surfaces, the
+        compositor is still able to scan out directly client surfaces.
+      </description>
+
+      <entry name="normal" value="0"/>
+      <entry name="90" value="1"/>
+      <entry name="180" value="2"/>
+      <entry name="270" value="3"/>
+      <entry name="flipped" value="4"/>
+      <entry name="flipped_90" value="5"/>
+      <entry name="flipped_180" value="6"/>
+      <entry name="flipped_270" value="7"/>
+    </enum>
+
+    <event name="geometry">
+      <description summary="geometric properties of the output">
+        The geometry event describes geometric properties of the output.
+        The event is sent when binding to the output object and whenever
+        any of the properties change.
+      </description>
+      <arg name="x" type="int"
+         summary="x position within the global compositor space"/>
+      <arg name="y" type="int"
+         summary="y position within the global compositor space"/>
+      <arg name="physical_width" type="int"
+         summary="width in millimeters of the output"/>
+      <arg name="physical_height" type="int"
+         summary="height in millimeters of the output"/>
+      <arg name="subpixel" type="int"
+         summary="subpixel orientation of the output"/>
+      <arg name="make" type="string"
+         summary="textual description of the manufacturer"/>
+      <arg name="model" type="string"
+         summary="textual description of the model"/>
+      <arg name="transform" type="int"
+         summary="transform that maps framebuffer to output"/>
+    </event>
+
+    <event name="current_mode">
+      <description summary="current mode">
+        This event describes the mode currently in use for this head. It is only
+        sent if the output is enabled.
+      </description>
+      <arg name="mode" type="object" interface="kde_output_device_mode_v2"/>
+    </event>
+
+    <event name="mode">
+      <description summary="advertise available output modes and current one">
+        The mode event describes an available mode for the output.
+
+        When the client binds to the output_device object, the server sends this
+        event once for every available mode the output_device can be operated by.
+
+        There will always be at least one event sent out on initial binding,
+        which represents the current mode.
+
+        Later if an output changes, its mode event is sent again for the
+        eventual added modes and lastly the current mode. In other words, the
+        current mode is always represented by the latest event sent with the current
+        flag set.
+
+        The size of a mode is given in physical hardware units of the output device.
+        This is not necessarily the same as the output size in the global compositor
+        space. For instance, the output may be scaled, as described in
+        kde_output_device_v2.scale, or transformed, as described in
+        kde_output_device_v2.transform.
+      </description>
+      <arg name="mode" type="new_id" interface="kde_output_device_mode_v2"/>
+    </event>
+
+    <event name="done">
+      <description summary="sent all information about output">
+        This event is sent after all other properties have been
+        sent on binding to the output object as well as after any
+        other output property change have been applied later on.
+        This allows to see changes to the output properties as atomic,
+        even if multiple events successively announce them.
+      </description>
+    </event>
+
+    <event name="scale">
+      <description summary="output scaling properties">
+        This event contains scaling geometry information
+        that is not in the geometry event. It may be sent after
+        binding the output object or if the output scale changes
+        later. If it is not sent, the client should assume a
+        scale of 1.
+
+        A scale larger than 1 means that the compositor will
+        automatically scale surface buffers by this amount
+        when rendering. This is used for high resolution
+        displays where applications rendering at the native
+        resolution would be too small to be legible.
+
+        It is intended that scaling aware clients track the
+        current output of a surface, and if it is on a scaled
+        output it should use wl_surface.set_buffer_scale with
+        the scale of the output. That way the compositor can
+        avoid scaling the surface, and the client can supply
+        a higher detail image.
+      </description>
+      <arg name="factor" type="fixed" summary="scaling factor of output"/>
+    </event>
+
+    <event name="edid">
+      <description summary="advertise EDID data for the output">
+        The edid event encapsulates the EDID data for the outputdevice.
+
+        The event is sent when binding to the output object. The EDID
+        data may be empty, in which case this event is sent anyway.
+        If the EDID information is empty, you can fall back to the name
+        et al. properties of the outputdevice.
+      </description>
+      <arg name="raw" type="string" summary="base64-encoded EDID string"/>
+    </event>
+
+    <event name="enabled">
+      <description summary="output is enabled or disabled">
+        The enabled event notifies whether this output is currently
+        enabled and used for displaying content by the server.
+        The event is sent when binding to the output object and
+        whenever later on an output changes its state by becoming
+        enabled or disabled.
+      </description>
+      <arg name="enabled" type="int" summary="output enabled state"/>
+    </event>
+
+    <event name="uuid">
+      <description summary="A unique id for this outputdevice">
+        The uuid can be used to identify the output. It's controlled by
+        the server entirely. The server should make sure the uuid is
+        persistent across restarts. An empty uuid is considered invalid.
+      </description>
+      <arg name="uuid" type="string" summary="output devices ID"/>
+    </event>
+
+    <event name="serial_number">
+      <description summary="Serial Number">
+        Serial ID of the monitor, sent on startup before the first done event.
+      </description>
+      <arg name="serialNumber" type="string"
+          summary="textual representation of serial number"/>
+    </event>
+    <event name="eisa_id">
+      <description summary="EISA ID">
+        EISA ID of the monitor, sent on startup before the first done event.
+      </description>
+      <arg name="eisaId" type="string"
+         summary="textual representation of EISA identifier"/>
+    </event>
+
+    <enum name="capability" bitfield="true">
+      <description summary="describes capabilities of the outputdevice">
+        Describes what capabilities this device has.
+      </description>
+      <entry name="overscan" value="0x1"
+           summary="if this output_device can use overscan"/>
+      <entry name="vrr" value="0x2"
+           summary="if this outputdevice supports variable refresh rate"/>
+      <entry name="rgb_range" value="0x4"
+             summary="if setting the rgb range is possible"/>
+      <entry name="high_dynamic_range" value="0x8" since="3"
+             summary="if this outputdevice supports high dynamic range"/>
+      <entry name="wide_color_gamut" value="0x10" since="3"
+             summary="if this outputdevice supports a wide color gamut"/>
+      <entry name="auto_rotate" value="0x20" since="4"
+             summary="if this outputdevice supports autorotation"/>
+      <entry name="icc_profile" value="0x40" since="5"
+             summary="if this outputdevice supports icc profiles"/>
+      <entry name="brightness" value="0x80" since="9"
+             summary="if this outputdevice supports the brightness setting"/>
+    </enum>
+
+    <event name="capabilities">
+      <description summary="capability flags">
+        What capabilities this device has, sent on startup before the first
+        done event.
+      </description>
+      <arg name="flags" type="uint" enum="capability"/>
+    </event>
+
+    <event name="overscan">
+      <description summary="overscan">
+        Overscan value of the monitor in percent, sent on startup before the
+        first done event.
+      </description>
+      <arg name="overscan" type="uint"
+         summary="amount of overscan of the monitor"/>
+    </event>
+
+    <enum name="vrr_policy">
+      <description summary="describes vrr policy">
+        Describes when the compositor may employ variable refresh rate
+      </description>
+      <entry name="never" value="0"/>
+      <entry name="always" value="1"/>
+      <entry name="automatic" value="2"/>
+    </enum>
+
+    <event name="vrr_policy">
+      <description summary="Variable Refresh Rate Policy">
+        What policy the compositor will employ regarding its use of variable
+        refresh rate.
+      </description>
+      <arg name="vrr_policy" type="uint" enum="vrr_policy"/>
+    </event>
+
+    <enum name="rgb_range">
+      <description summary="describes RGB range policy">
+        Whether full or limited color range should be used
+      </description>
+      <entry name="automatic" value="0"/>
+      <entry name="full" value="1"/>
+      <entry name="limited" value="2"/>
+    </enum>
+
+    <event name="rgb_range">
+      <description summary="RGB range">
+        What rgb range the compositor is using for this output
+      </description>
+      <arg name="rgb_range" type="uint" enum="rgb_range"/>
+    </event>
+
+    <event name="name" since="2">
+      <description summary="Output's name">
+        Name of the output, it's useful to cross-reference to an zxdg_output_v1 and ultimately QScreen
+      </description>
+      <arg name="name" type="string"/>
+    </event>
+
+    <event name="high_dynamic_range" since="3">
+      <description summary="if HDR is enabled">
+        Whether or not high dynamic range is enabled for this output
+      </description>
+      <arg name="hdr_enabled" type="uint" summary="1 if enabled, 0 if disabled"/>
+    </event>
+
+    <event name="sdr_brightness" since="3">
+      <description summary="the brightness of sdr if hdr is enabled">
+        If high dynamic range is used, this value defines the brightness in nits for content
+        that's in standard dynamic range format. Note that while the value is in nits, that
+        doesn't necessarily translate to the same brightness on the screen.
+      </description>
+      <arg name="sdr_brightness" type="uint"/>
+    </event>
+
+    <event name="wide_color_gamut" since="3">
+      <description summary="if WCG is enabled">
+        Whether or not the use of a wide color gamut is enabled for this output
+      </description>
+      <arg name="wcg_enabled" type="uint" summary="1 if enabled, 0 if disabled"/>
+    </event>
+
+    <enum name="auto_rotate_policy">
+      <description summary="describes when auto rotate should be used"/>
+      <entry name="never" value="0"/>
+      <entry name="in_tablet_mode" value="1"/>
+      <entry name="always" value="2"/>
+    </enum>
+
+    <event name="auto_rotate_policy" since="4">
+      <description summary="describes when auto rotate is used"/>
+      <arg name="policy" type="uint" enum="auto_rotate_policy"/>
+    </event>
+
+    <event name="icc_profile_path" since="5">
+      <description summary="describes when auto rotate is used"/>
+      <arg name="profile_path" type="string"/>
+    </event>
+
+    <event name="brightness_metadata" since="6">
+      <description summary="metadata about the screen's brightness limits"/>
+      <arg name="max_peak_brightness" type="uint" summary="in nits"/>
+      <arg name="max_frame_average_brightness" type="uint" summary="in nits"/>
+      <arg name="min_brightness" type="uint" summary="in 0.0001 nits"/>
+    </event>
+
+    <event name="brightness_overrides" since="6">
+      <description summary="overrides for the screen's brightness limits"/>
+      <arg name="max_peak_brightness" type="int" summary="-1 for no override, positive values are the brightness in nits"/>
+      <arg name="max_average_brightness" type="int" summary="-1 for no override, positive values are the brightness in nits"/>
+      <arg name="min_brightness" type="int" summary="-1 for no override, positive values are the brightness in 0.0001 nits"/>
+    </event>
+
+    <event name="sdr_gamut_wideness" since="6">
+      <description summary="describes which gamut is assumed for sRGB applications">
+          This can be used to provide the colors users assume sRGB applications should have based on the
+          default experience on many modern sRGB screens.
+      </description>
+      <arg name="gamut_wideness" type="uint" summary="0 means rec.709 primaries, 10000 means native primaries"/>
+    </event>
+
+    <enum name="color_profile_source" since="7">
+      <description summary="which source the compositor should use for the color profile on an output"/>
+      <entry name="sRGB" value="0"/>
+      <entry name="ICC" value="1"/>
+      <entry name="EDID" value="2"/>
+    </enum>
+
+    <event name="color_profile_source" since="7">
+      <description summary="describes which source the compositor uses for the color profile on an output"/>
+      <arg name="source" type="uint" enum="color_profile_source"/>
+    </event>
+
+    <event name="brightness" since="8">
+      <description summary="brightness multiplier">
+        This is the brightness modifier of the output. It doesn't specify
+        any absolute values, but is merely a multiplier on top of other
+        brightness values, like sdr_brightness and brightness_metadata.
+        0 is the minimum brightness (not completely dark) and 10000 is
+        the maximum brightness.
+        This is currently only supported / meaningful while HDR is active.
+      </description>
+      <arg name="brightness" type="uint" summary="brightness in 0-10000"/>
+    </event>
+
+    <enum name="color_power_tradeoff">
+      <description summary="tradeoff between power and accuracy">
+        The compositor can do a lot of things that trade between
+        performance, power and color accuracy. This setting describes
+        a high level preference from the user about in which direction
+        that tradeoff should be made.
+      </description>
+      <entry name="efficiency" value="0" summary="prefer efficiency and performance"/>
+      <entry name="accuracy" value="1" summary="prefer accuracy"/>
+    </enum>
+
+    <event name="color_power_tradeoff" since="10">
+      <description summary="the preferred color/power tradeoff"/>
+      <arg name="preference" type="uint" enum="color_power_tradeoff"/>
+    </event>
+
+    <event name="dimming" since="11">
+      <description summary="dimming multiplier">
+        This is the dimming multiplier of the output. This is similar to
+        the brightness setting, except it's meant to be a temporary setting
+        only, not persistent and may be implemented differently depending
+        on the display.
+        0 is the minimum dimming factor (not completely dark) and 10000
+        means the output is not dimmed.
+      </description>
+      <arg name="multiplier" type="uint" summary="multiplier in 0-10000"/>
+    </event>
+  </interface>
+
+  <interface name="kde_output_device_mode_v2" version="1">
+    <description summary="output mode">
+      This object describes an output mode.
+
+      Some heads don't support output modes, in which case modes won't be
+      advertised.
+
+      Properties sent via this interface are applied atomically via the
+      kde_output_device.done event. No guarantees are made regarding the order
+      in which properties are sent.
+    </description>
+
+    <event name="size">
+      <description summary="mode size">
+        This event describes the mode size. The size is given in physical
+        hardware units of the output device. This is not necessarily the same as
+        the output size in the global compositor space. For instance, the output
+        may be scaled or transformed.
+      </description>
+      <arg name="width" type="int" summary="width of the mode in hardware units"/>
+      <arg name="height" type="int" summary="height of the mode in hardware units"/>
+    </event>
+
+    <event name="refresh">
+      <description summary="mode refresh rate">
+        This event describes the mode's fixed vertical refresh rate. It is only
+        sent if the mode has a fixed refresh rate.
+      </description>
+      <arg name="refresh" type="int" summary="vertical refresh rate in mHz"/>
+    </event>
+
+    <event name="preferred">
+      <description summary="mode is preferred">
+        This event advertises this mode as preferred.
+      </description>
+    </event>
+
+    <event name="removed">
+      <description summary="the mode has been destroyed">
+        The compositor will destroy the object immediately after sending this
+        event, so it will become invalid and the client should release any
+        resources associated with it.
+      </description>
+    </event>
+  </interface>
+
+</protocol>

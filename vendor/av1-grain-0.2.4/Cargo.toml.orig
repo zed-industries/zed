@@ -1,0 +1,37 @@
+[package]
+name = "av1-grain"
+version = "0.2.4"
+edition = "2021"
+rust-version = "1.62.1"
+license = "BSD-2-Clause"
+description = "Helpers for generating and parsing AV1 film grain data"
+readme = "README.md"
+repository = "https://github.com/rust-av/av1-grain"
+homepage = "https://github.com/rust-av/av1-grain"
+documentation = "https://docs.rs/av1-grain"
+
+[dependencies]
+anyhow = "1.0.58"
+arrayvec = "0.7.2"
+log = "0.4.17"
+nom = { version = "7.1.1", optional = true }
+num-rational = { version = "0.4.1", optional = true }
+serde = { version = "1.0.140", optional = true, features = ["derive"] }
+v_frame = { version = "0.3.0", optional = true }
+
+[dev-dependencies]
+quickcheck = "1.0.3"
+quickcheck_macros = "1.0.0"
+
+[features]
+default = ["create", "parse", "diff", "estimate"]
+unstable = []
+create = []
+diff = ["num-rational", "v_frame"]
+estimate = ["v_frame"]
+parse = ["nom"]
+serialize = ["serde", "arrayvec/serde"]
+
+[profile.release]
+codegen-units = 1
+lto = "thin"

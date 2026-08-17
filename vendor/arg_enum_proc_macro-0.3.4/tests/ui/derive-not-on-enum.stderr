@@ -1,0 +1,7 @@
+error: proc-macro derive panicked
+ --> $DIR/derive-not-on-enum.rs:3:10
+  |
+3 | #[derive(ArgEnum)]
+  |          ^^^^^^^
+  |
+  = help: message: Only enum supported

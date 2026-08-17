@@ -1,0 +1,15 @@
+[package]
+name = "xcursor"
+description = "A library for loading XCursor themes"
+version = "0.3.10"
+edition = "2018"
+
+authors = ["Samuele Esposito"]
+license = "MIT"
+repository = "https://github.com/esposm03/xcursor-rs"
+documentation = "https://docs.rs/xcursor"
+readme = "README.md"
+categories = ["gui"]
+keywords = ["themes", "cursor", "x-cursor", "load", "parser"]
+
+include = ["**/*.rs", "Cargo.toml", "LICENSE", "README.md"]

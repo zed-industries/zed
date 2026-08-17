@@ -1,0 +1,29 @@
+package foo:foo;
+
+interface a {
+  record foo {}
+
+  a: func() -> foo;
+}
+
+interface b {
+  use a.{foo};
+
+  a: func() -> foo;
+}
+
+interface c {
+  use b.{foo};
+
+  a: func() -> foo;
+}
+
+world d {
+  import a;
+  import b;
+  import d: interface {
+    use c.{foo};
+
+    b: func() -> foo;
+  }
+}

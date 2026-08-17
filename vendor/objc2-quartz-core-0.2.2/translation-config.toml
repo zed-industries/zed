@@ -1,0 +1,269 @@
+framework = "QuartzCore"
+crate = "objc2-quartz-core"
+umbrella-header = "CoreAnimation.h"
+required-dependencies = ["objc2-foundation"]
+custom-lib-rs = true
+macos = "10.3"
+maccatalyst = "13.0"
+ios = "2.0"
+tvos = "9.0"
+visionos = "1.0"
+
+# Uses stuff from CoreFoundation and CoreGraphics
+class.CAKeyframeAnimation.methods.path.skipped = true
+class.CAKeyframeAnimation.methods."setPath:".skipped = true
+class.CAShapeLayer.methods.path.skipped = true
+class.CAShapeLayer.methods."setPath:".skipped = true
+class.CAShapeLayer.methods.fillColor.skipped = true
+class.CAShapeLayer.methods."setFillColor:".skipped = true
+class.CAShapeLayer.methods.strokeColor.skipped = true
+class.CAShapeLayer.methods."setStrokeColor:".skipped = true
+class.CAEmitterCell.methods.color.skipped = true
+class.CAEmitterCell.methods."setColor:".skipped = true
+class.CALayer.methods.affineTransform.skipped = true
+class.CALayer.methods."setAffineTransform:".skipped = true
+class.CALayer.methods."drawInContext:".skipped = true
+class.CALayer.methods."renderInContext:".skipped = true
+class.CALayer.methods.backgroundColor.skipped = true
+class.CALayer.methods."setBackgroundColor:".skipped = true
+class.CALayer.methods.borderColor.skipped = true
+class.CALayer.methods."setBorderColor:".skipped = true
+class.CALayer.methods.shadowColor.skipped = true
+class.CALayer.methods."setShadowColor:".skipped = true
+class.CALayer.methods.shadowPath.skipped = true
+class.CALayer.methods."setShadowPath:".skipped = true
+protocol.CALayerDelegate.methods."drawLayer:inContext:".skipped = true
+
+# Needs `CGColorSpaceRef`
+class.CAMetalLayer.methods.colorspace.skipped = true
+class.CAMetalLayer.methods."setColorspace:".skipped = true
+class.CAOpenGLLayer.skipped = true
+class.CARenderer.methods."rendererWithMTLTexture:options:".skipped = true
+class.CARenderer.methods."setDestination:".skipped = true
+class.CARenderer.methods."beginFrameAtTime:timeStamp:".skipped = true
+class.CARemoteLayerClient.methods."initWithServerPort:".skipped = true
+class.CARemoteLayerServer.methods.serverPort.skipped = true
+class.CAReplicatorLayer.methods.instanceColor.skipped = true
+class.CAReplicatorLayer.methods."setInstanceColor:".skipped = true
+class.CATextLayer.methods.font.skipped = true
+class.CATextLayer.methods."setFont:".skipped = true
+class.CATextLayer.methods.foregroundColor.skipped = true
+class.CATextLayer.methods."setForegroundColor:".skipped = true
+fn.CATransform3DMakeAffineTransform.skipped = true
+fn.CATransform3DGetAffineTransform.skipped = true
+
+# I'm unsure of the ABI of the array this takes
+class.CAMediaTimingFunction.methods."getControlPointAtIndex:values:".skipped = true
+
+# Needs `EAGLDrawable` from `OpenGLES`
+class.CAEAGLLayer.skipped-protocols = ["EAGLDrawable"]
+
+###
+### Safety
+###
+
+# We probably technically had the choice of making these classes mutating
+# methods require `&mut`, but as with so many things in Cocoa, that would
+# make it difficult to use in a larger context (e.g. even after assigning a
+# layer to a view you'd often still want to modify the layer).
+
+fn.CACurrentMediaTime.unsafe = false
+
+# SAFETY: Basic mathematical functions
+fn.CATransform3DIsIdentity.unsafe = false
+fn.CATransform3DEqualToTransform.unsafe = false
+fn.CATransform3DMakeTranslation.unsafe = false
+fn.CATransform3DMakeScale.unsafe = false
+fn.CATransform3DMakeRotation.unsafe = false
+fn.CATransform3DTranslate.unsafe = false
+fn.CATransform3DScale.unsafe = false
+fn.CATransform3DRotate.unsafe = false
+fn.CATransform3DConcat.unsafe = false
+fn.CATransform3DInvert.unsafe = false
+fn.CATransform3DMakeAffineTransform.unsafe = false
+fn.CATransform3DIsAffine.unsafe = false
+fn.CATransform3DGetAffineTransform.unsafe = false
+
+class.CALayer.methods.layer.unsafe = false
+class.CALayer.methods.init.unsafe = false
+class.CALayer.methods.initWithLayer.unsafe = true # must be called in a specific context
+class.CALayer.methods.presentationLayer.unsafe = true # return value may not be safe to modify
+class.CALayer.methods.modelLayer.unsafe = true # must be called in a specific context
+class.CALayer.methods.new.unsafe = false
+class.CALayer.methods.bounds.unsafe = false
+class.CALayer.methods."setBounds:".unsafe = false
+class.CALayer.methods.position.unsafe = false
+class.CALayer.methods."setPosition:".unsafe = false
+class.CALayer.methods.zPosition.unsafe = false
+class.CALayer.methods."setZPosition:".unsafe = false
+class.CALayer.methods.anchorPoint.unsafe = false
+class.CALayer.methods."setAnchorPoint:".unsafe = false
+class.CALayer.methods.anchorPointZ.unsafe = false
+class.CALayer.methods."setAnchorPointZ:".unsafe = false
+class.CALayer.methods.transform.unsafe = false
+class.CALayer.methods."setTransform:".unsafe = false
+class.CALayer.methods.affineTransform.unsafe = false
+class.CALayer.methods."setAffineTransform:".unsafe = false
+class.CALayer.methods.frame.unsafe = false
+class.CALayer.methods."setFrame:".unsafe = false
+class.CALayer.methods.isHidden.unsafe = false
+class.CALayer.methods."setHidden:".unsafe = false
+class.CALayer.methods.isDoubleSided.unsafe = false
+class.CALayer.methods."setDoubleSided:".unsafe = false
+class.CALayer.methods.isGeometryFlipped.unsafe = false
+class.CALayer.methods."setGeometryFlipped:".unsafe = false
+
+class.CALayer.methods.contentsAreFlipped.unsafe = false
+
+class.CALayer.methods.superlayer.unsafe = false
+class.CALayer.methods.removeFromSuperlayer.unsafe = false
+class.CALayer.methods.sublayers.unsafe = true # The returned array is not guaranteed to retain its elements
+class.CALayer.methods."setSublayers:".unsafe = true # Requires all layers to have a `nil` superlayer
+# If the layer already has a superlayer, it will be changed
+# appropriately by these methods (`removeFromSuperlayer` is called on
+# the given layer inside these).
+class.CALayer.methods."addSublayer:".unsafe = false
+class.CALayer.methods."insertSublayer:atIndex:".unsafe = false
+class.CALayer.methods."insertSublayer:below:".unsafe = false
+class.CALayer.methods."insertSublayer:above:".unsafe = false
+class.CALayer.methods."replaceSublayer:".unsafe = true # Requires `oldlayer` to exist in the current layer
+
+class.CALayer.methods.sublayerTransform.unsafe = false
+class.CALayer.methods."setSublayerTransform:".unsafe = false
+class.CALayer.methods.mask.unsafe = false
+class.CALayer.methods."setMask:".unsafe = true # Argument must have a `nil` superlayer
+class.CALayer.methods.masksToBounds.unsafe = false
+class.CALayer.methods."setMasksToBounds:".unsafe = false
+
+class.CALayer.methods."convertPoint:fromLayer:".unsafe = false
+class.CALayer.methods."convertPoint:toLayer:".unsafe = false
+class.CALayer.methods."convertRect:fromLayer:".unsafe = false
+class.CALayer.methods."convertRect:toLayer:".unsafe = false
+class.CALayer.methods."convertTime:fromLayer:".unsafe = false
+class.CALayer.methods."convertTime:toLayer:".unsafe = false
+class.CALayer.methods."hitTest:".unsafe = false
+class.CALayer.methods."containsPoint:".unsafe = false
+
+class.CALayer.methods.contents.unsafe = true # No type set
+class.CALayer.methods."setContents:".unsafe = true # No type set
+class.CALayer.methods.contentsRect.unsafe = false
+class.CALayer.methods."setContentsRect:".unsafe = false
+class.CALayer.methods.contentsGravity.unsafe = false
+class.CALayer.methods."setContentsGravity:".unsafe = false
+class.CALayer.methods.contentsScale.unsafe = false
+class.CALayer.methods."setContentsScale:".unsafe = false
+class.CALayer.methods.contentsCenter.unsafe = false
+class.CALayer.methods."setContentsCenter:".unsafe = false
+class.CALayer.methods.contentsFormat.unsafe = false
+class.CALayer.methods."setContentsFormat:".unsafe = false
+class.CALayer.methods.minificationFilter.unsafe = false
+class.CALayer.methods."setMinificationFilter:".unsafe = false
+class.CALayer.methods.magnificationFilter.unsafe = false
+class.CALayer.methods."setMagnificationFilter:".unsafe = false
+class.CALayer.methods.minificationFilterBias.unsafe = false
+class.CALayer.methods."setMinificationFilterBias:".unsafe = false
+class.CALayer.methods.isOpaque.unsafe = false
+class.CALayer.methods."setOpaque:".unsafe = false
+
+class.CALayer.methods.display.unsafe = false
+class.CALayer.methods.setNeedsDisplay.unsafe = false
+class.CALayer.methods."setNeedsDisplayInRect:".unsafe = false
+class.CALayer.methods.needsDisplay.unsafe = false
+class.CALayer.methods.displayIfNeeded.unsafe = false
+class.CALayer.methods.needsDisplayOnBoundsChange.unsafe = false
+class.CALayer.methods."setNeedsDisplayOnBoundsChange:".unsafe = false
+
+class.CALayer.methods.drawsAsynchronously.unsafe = false
+class.CALayer.methods."setDrawsAsynchronously:".unsafe = false
+class.CALayer.methods.edgeAntialiasingMask.unsafe = false
+class.CALayer.methods."setEdgeAntialiasingMask:".unsafe = false
+class.CALayer.methods.allowsEdgeAntialiasing.unsafe = false
+class.CALayer.methods."setAllowsEdgeAntialiasing:".unsafe = false
+class.CALayer.methods.cornerRadius.unsafe = false
+class.CALayer.methods."setCornerRadius:".unsafe = false
+class.CALayer.methods.maskedCorners.unsafe = false
+class.CALayer.methods."setMaskedCorners:".unsafe = false
+class.CALayer.methods.cornerCurve.unsafe = false
+class.CALayer.methods."setCornerCurve:".unsafe = false
+class.CALayer.methods."cornerCurveExpansionFactor:".unsafe = false
+class.CALayer.methods.borderWidth.unsafe = false
+class.CALayer.methods."setBorderWidth:".unsafe = false
+class.CALayer.methods.opacity.unsafe = false
+# Gives "undefined results" outside [0; 1], but by this the authors
+# very likely didn't mean "triggers language-level UB".
+class.CALayer.methods."setOpacity:".unsafe = false
+class.CALayer.methods.allowsGroupOpacity.unsafe = false
+class.CALayer.methods."setAllowsGroupOpacity:".unsafe = false
+# No type set:
+# compositingFilter
+# setCompositingFilter:
+# filters
+# setFilters:
+# backgroundFilters
+# setBackgroundFilters:
+class.CALayer.methods.shouldRasterize.unsafe = false
+class.CALayer.methods."setShouldRasterize:".unsafe = false
+class.CALayer.methods.rasterizationScale.unsafe = false
+class.CALayer.methods."setRasterizationScale:".unsafe = false
+class.CALayer.methods.shadowOpacity.unsafe = false
+# Gives "undefined results" outside [0; 1], but by this the authors
+# very likely didn't mean "triggers language-level UB".
+class.CALayer.methods."setShadowOpacity:".unsafe = false
+class.CALayer.methods.shadowOffset.unsafe = false
+class.CALayer.methods."setShadowOffset:".unsafe = false
+class.CALayer.methods.shadowRadius.unsafe = false
+class.CALayer.methods."setShadowRadius:".unsafe = false
+class.CALayer.methods.autoresizingMask.unsafe = false
+class.CALayer.methods."setAutoresizingMask:".unsafe = false
+class.CALayer.methods.layoutManager.unsafe = false
+class.CALayer.methods."setLayoutManager:".unsafe = false
+
+class.CALayer.methods.preferredFrameSize.unsafe = false
+class.CALayer.methods.setNeedsLayout.unsafe = false
+class.CALayer.methods.needsLayout.unsafe = false
+class.CALayer.methods.layoutIfNeeded.unsafe = false
+class.CALayer.methods.layoutSublayers.unsafe = false
+class.CALayer.methods."resizeSublayersWithOldSize:".unsafe = false
+class.CALayer.methods."resizeWithOldSuperlayerSize:".unsafe = false
+
+class.CALayer.methods."defaultActionForKey:".unsafe = false
+class.CALayer.methods."actionForKey:".unsafe = false
+class.CALayer.methods.actions.unsafe = false
+class.CALayer.methods."setActions:".unsafe = false
+
+class.CALayer.methods."addAnimation:forKey:".unsafe = false # Copies the animation
+
+class.CALayer.methods.removeAllAnimations.unsafe = false
+class.CALayer.methods."removeAnimationForKey:".unsafe = false
+class.CALayer.methods.animationKeys.unsafe = false
+class.CALayer.methods.animationForKey.unsafe = true # Modifying the returned animation is UB
+
+class.CALayer.methods.name.unsafe = false
+class.CALayer.methods."setName:".unsafe = false
+class.CALayer.methods.delegate.unsafe = false
+class.CALayer.methods."setDelegate:".unsafe = false
+# No type set:
+# style
+# setStyle:
+
+class.CARenderer.methods.layer.unsafe = false
+class.CARenderer.methods."setLayer:".unsafe = false
+class.CARenderer.methods.bounds.unsafe = false
+class.CARenderer.methods."setBounds:".unsafe = false
+class.CARenderer.methods.updateBounds.unsafe = false
+class.CARenderer.methods."addUpdateRect:".unsafe = false
+class.CARenderer.methods.render.unsafe = false
+class.CARenderer.methods.nextFrameTime.unsafe = false
+class.CARenderer.methods.endFrame.unsafe = false
+
+# SAFETY: CATransaction methods access thread-local state.
+class.CATransaction.methods.begin.unsafe = false
+class.CATransaction.methods.commit.unsafe = false
+class.CATransaction.methods.flush.unsafe = false
+class.CATransaction.methods.animationDuration.unsafe = false
+class.CATransaction.methods."setAnimationDuration:".unsafe = false
+class.CATransaction.methods.animationTimingFunction.unsafe = false
+class.CATransaction.methods."setAnimationTimingFunction:".unsafe = false
+class.CATransaction.methods.disableActions.unsafe = false
+class.CATransaction.methods."setDisableActions:".unsafe = false
+# TODO: completionBlock and setCompletionBlock:

@@ -1,0 +1,13 @@
+syntax = "proto3";
+package logger;
+
+option go_package = "github.com/livekit/protocol/livekit/logger";
+option csharp_namespace = "LiveKit.Proto";
+option ruby_package = "LiveKit::Proto";
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.FieldOptions {
+  bool redact = 91841;
+  string redact_format = 91842;
+}

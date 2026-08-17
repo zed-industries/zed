@@ -1,0 +1,4460 @@
+{% import "macros.rs.tera" as macros %}
+
+// Generated from {{template_path}} template. Edit the template, not the generated file.
+
+{% if is_scalar and not is_align %}
+    {% set mask_t = "BVec" ~ dim %}
+{% else %}
+    {% set is_simd = true %}
+    {% if is_sse2 %}
+        {% set simd_t = "__m128" %}
+    {% elif is_wasm32 %}
+        {% set simd_t = "v128" %}
+    {% elif is_neon %}
+        {% set simd_t = "float32x4_t" %}
+    {% elif is_coresimd %}
+        {% set simd_t = "f32x4" %}
+    {% else %}
+        {% set is_simd = false %}
+    {% endif %}
+    {% set mask_t = "BVec" ~ dim ~ "A" %}
+{% endif %}
+
+{% if scalar_t == "f32" or scalar_t == "f64" %}
+    {% set is_signed = true %}
+    {% set is_float = true %}
+    {% if scalar_t == "f32" %}
+        {% if dim == 3 and is_align %}
+            {% set self_t = "Vec3A" %}
+            {% set mask_t = "BVec3A" %}
+        {% else %}
+            {% set self_t = "Vec" ~ dim %}
+        {% endif %}
+        {% set vec2_t = "Vec2" %}
+        {% set vec3_t = "Vec3" %}
+        {% set vec3a_t = "Vec3A" %}
+        {% set vec4_t = "Vec4" %}
+        {% set quat_t = "Quat" %}
+    {% elif scalar_t == "f64" %}
+        {% set self_t = "DVec" ~ dim %}
+        {% set vec2_t = "DVec2" %}
+        {% set vec3_t = "DVec3" %}
+        {% set vec4_t = "DVec4" %}
+        {% set from_types = ["Vec" ~ dim, "IVec" ~ dim, "UVec" ~ dim] %}
+        {% set quat_t = "DQuat" %}
+    {% endif %}
+{% elif scalar_t == "i8" %}
+    {% set is_signed = true %}
+    {% set is_float = false %}
+    {% set unsigned_scalar_t = "u8" %}
+    {% set self_t = "I8Vec" ~ dim %}
+    {% set opposite_signedness_t = "U8Vec" ~ dim %}
+    {% set vec2_t = "I8Vec2" %}
+    {% set vec3_t = "I8Vec3" %}
+    {% set vec4_t = "I8Vec4" %}
+    {% set try_from_types = ["U8Vec" ~ dim, "I16Vec" ~ dim, "U16Vec" ~ dim, "IVec" ~ dim, "UVec" ~ dim, "I64Vec" ~ dim, "U64Vec" ~ dim, "USizeVec" ~ dim] %}
+{% elif scalar_t == "u8" %}
+    {% set is_signed = false %}
+    {% set is_float = false %}
+    {% set unsigned_scalar_t = "u8" %}
+    {% set self_t = "U8Vec" ~ dim %}
+    {% set opposite_signedness_t = "I8Vec" ~ dim %}
+    {% set vec2_t = "U8Vec2" %}
+    {% set vec3_t = "U8Vec3" %}
+    {% set vec4_t = "U8Vec4" %}
+    {% set try_from_types = ["I8Vec" ~ dim, "I16Vec" ~ dim, "U16Vec" ~ dim, "IVec" ~ dim, "UVec" ~ dim, "I64Vec" ~ dim, "U64Vec" ~ dim, "USizeVec" ~ dim] %}
+{% elif scalar_t == "i16" %}
+    {% set is_signed = true %}
+    {% set is_float = false %}
+    {% set unsigned_scalar_t = "u16" %}
+    {% set self_t = "I16Vec" ~ dim %}
+    {% set opposite_signedness_t = "U16Vec" ~ dim %}
+    {% set vec2_t = "I16Vec2" %}
+    {% set vec3_t = "I16Vec3" %}
+    {% set vec4_t = "I16Vec4" %}
+    {% set from_types = ["I8Vec" ~ dim, "U8Vec" ~ dim] %}
+    {% set try_from_types = ["U16Vec" ~ dim, "IVec" ~ dim, "UVec" ~ dim, "I64Vec" ~ dim, "U64Vec" ~ dim, "USizeVec" ~ dim] %}
+{% elif scalar_t == "u16" %}
+    {% set is_signed = false %}
+    {% set is_float = false %}
+    {% set unsigned_scalar_t = "u16" %}
+    {% set self_t = "U16Vec" ~ dim %}
+    {% set opposite_signedness_t = "I16Vec" ~ dim %}
+    {% set vec2_t = "U16Vec2" %}
+    {% set vec3_t = "U16Vec3" %}
+    {% set vec4_t = "U16Vec4" %}
+    {% set from_types = ["U8Vec" ~ dim] %}
+    {% set try_from_types = ["I8Vec" ~ dim, "I16Vec" ~ dim, "IVec" ~ dim, "UVec" ~ dim, "I64Vec" ~ dim, "U64Vec" ~ dim, "USizeVec" ~ dim] %}
+{% elif scalar_t == "i32" %}
+    {% set is_signed = true %}
+    {% set is_float = false %}
+    {% set unsigned_scalar_t = "u32" %}
+    {% set self_t = "IVec" ~ dim %}
+    {% set opposite_signedness_t = "UVec" ~ dim %}
+    {% set vec2_t = "IVec2" %}
+    {% set vec3_t = "IVec3" %}
+    {% set vec4_t = "IVec4" %}
+    {% set from_types = ["I8Vec" ~ dim, "U8Vec" ~ dim, "I16Vec" ~ dim, "U16Vec" ~ dim] %}
+    {% set try_from_types = ["UVec" ~ dim, "I64Vec" ~ dim, "U64Vec" ~ dim, "USizeVec" ~ dim] %}
+{% elif scalar_t == "u32" %}
+    {% set is_signed = false %}
+    {% set is_float = false %}
+    {% set unsigned_scalar_t = "u32" %}
+    {% set self_t = "UVec" ~ dim %}
+    {% set opposite_signedness_t = "IVec" ~ dim %}
+    {% set vec2_t = "UVec2" %}
+    {% set vec3_t = "UVec3" %}
+    {% set vec4_t = "UVec4" %}
+    {% set from_types = ["U8Vec" ~ dim, "U16Vec" ~ dim] %}
+    {% set try_from_types = ["I8Vec" ~ dim, "I16Vec" ~ dim, "IVec" ~ dim, "I64Vec" ~ dim, "U64Vec" ~ dim, "USizeVec" ~ dim] %}
+{% elif scalar_t == "i64" %}
+    {% set is_signed = true %}
+    {% set is_float = false %}
+    {% set unsigned_scalar_t = "u64" %}
+    {% set self_t = "I64Vec" ~ dim %}
+    {% set opposite_signedness_t = "U64Vec" ~ dim %}
+    {% set vec2_t = "I64Vec2" %}
+    {% set vec3_t = "I64Vec3" %}
+    {% set vec4_t = "I64Vec4" %}
+    {% set from_types = ["I8Vec" ~ dim, "U8Vec" ~ dim, "I16Vec" ~ dim, "U16Vec" ~ dim, "IVec" ~ dim, "UVec" ~ dim] %}
+    {% set try_from_types = ["U64Vec" ~ dim, "USizeVec" ~ dim] %}
+{% elif scalar_t == "u64" %}
+    {% set is_signed = false %}
+    {% set is_float = false %}
+    {% set unsigned_scalar_t = "u64" %}
+    {% set self_t = "U64Vec" ~ dim %}
+    {% set opposite_signedness_t = "I64Vec" ~ dim %}
+    {% set vec2_t = "U64Vec2" %}
+    {% set vec3_t = "U64Vec3" %}
+    {% set vec4_t = "U64Vec4" %}
+    {% set from_types = ["U8Vec" ~ dim, "U16Vec" ~ dim, "UVec" ~ dim] %}
+    {% set try_from_types = ["I8Vec" ~ dim, "I16Vec" ~ dim, "IVec" ~ dim, "I64Vec" ~ dim, "USizeVec" ~ dim] %}
+{% elif scalar_t == "usize" %}
+    {% set is_signed = false %}
+    {% set is_float = false %}
+    {% set unsigned_scalar_t = "usize" %}
+    {% set self_t = "USizeVec" ~ dim %}
+    {% set vec2_t = "USizeVec2" %}
+    {% set vec3_t = "USizeVec3" %}
+    {% set vec4_t = "USizeVec4" %}
+    {% set from_types = ["U8Vec" ~ dim, "U16Vec" ~ dim] %}
+    {% set try_from_types = ["I8Vec" ~ dim, "I16Vec" ~ dim, "IVec" ~ dim, "I64Vec" ~ dim, "UVec" ~ dim, "U64Vec" ~ dim] %}
+{% endif %}
+{% set bvec_from_type = "BVec" ~ dim %}
+{% if dim > 2 %}
+    {% set bveca_from_type = "BVec" ~ dim ~ "A" %}
+{% endif %}
+
+{% if dim == 2 %}
+    {% if scalar_t == "i8" or scalar_t == "u8" %}
+        {% set cuda_align = 2 %}
+    {% elif scalar_t == "i16" or scalar_t == "u16" %}
+        {% set cuda_align = 4 %}
+    {% elif scalar_t == "f32" or scalar_t == "i32" or scalar_t == "u32" %}
+        {% set cuda_align = 8 %}
+    {% elif scalar_t == "f64" or scalar_t == "i64" or scalar_t == "u64" %}
+        {% set cuda_align = 16 %}
+    {% elif scalar_t == "usize" %}
+        {# assuming 64 bit here #}
+        {% set cuda_align = 16 %}
+    {% endif %}
+{% elif dim == 4 %}
+    {% if scalar_t == "i8" or scalar_t == "u8" %}
+        {% set cuda_align = 4 %}
+    {% elif scalar_t == "i16" or scalar_t == "u16" %}
+        {% set cuda_align = 8 %}
+    {% elif scalar_t == "f32" or scalar_t == "i32" or scalar_t == "u32" %}
+        {% set cuda_align = 16 %}
+    {% elif scalar_t == "f64" or scalar_t == "i64" or scalar_t == "u64" %}
+        {% set cuda_align = 16 %}
+    {% elif scalar_t == "usize" %}
+        {# assuming 64 bit here #}
+        {% set cuda_align = 16 %}
+    {% endif %}
+{% endif %}
+
+{% set components = ["x", "y", "z", "w"] | slice(end = dim) %}
+{% if is_float %}
+    {% set one = "1.0" %}
+    {% set neg_one = "-1.0" %}
+    {% set zero = "0.0" %}
+{% else %}
+    {% set one = "1" %}
+    {% set neg_one = "-1" %}
+    {% set zero = "0" %}
+{% endif %}
+
+{% if bveca_from_type and bveca_from_type == "BVec4A" and is_scalar %}
+    {% if scalar_t == "f32" %}
+        #[cfg(feature = "scalar-math")]
+        use crate::BVec4 as BVec4A;
+    {% endif %}
+    #[cfg(not(feature = "scalar-math"))]
+    use crate::BVec4A;
+    use crate::{
+        {% if bveca_from_type and bveca_from_type != mask_t %}
+            {{ mask_t }},
+        {% endif %}
+{% else %}
+    use crate::{
+        {{ mask_t }},
+        {% if bveca_from_type and bveca_from_type != mask_t %}
+            {{ bveca_from_type }},
+        {% endif %}
+{% endif %}
+    {% if self_t != vec2_t %}
+        {{ vec2_t }},
+    {% endif %}
+    {% if self_t != vec3_t %}
+        {{ vec3_t }},
+    {% endif %}
+    {% if self_t == "Vec3" or self_t == "Vec4" %}
+        {{ vec3a_t }},
+    {% endif %}
+    {% if dim > 2 and self_t != vec4_t %}
+        {{ vec4_t }},
+    {% endif %}
+    {% if is_sse2 %}
+        sse2::*,
+    {% elif is_wasm32 %}
+        wasm32::*,
+    {% elif is_neon %}
+        neon::*,
+    {% elif is_coresimd %}
+        coresimd::*,
+    {% endif %}
+    {% if is_float %}
+        {{ scalar_t }}::math,
+        {% if dim == 3 %}
+            FloatExt,
+            {{ quat_t }},
+        {% endif %}
+    {% endif %}
+    {% if from_types %}
+        {% for ty in from_types %}
+            {{ ty }},
+        {% endfor %}
+    {% endif %}
+    {% if try_from_types %}
+        {% for ty in try_from_types %}
+            {{ ty }},
+        {% endfor %}
+    {% endif %}
+    {% if bvec_from_type != mask_t %}
+        {{ bvec_from_type }},
+    {% endif %}
+};
+
+use core::fmt;
+use core::iter::{Product, Sum};
+use core::{f32, ops::*};
+
+{% if is_sse2 %}
+#[cfg(target_arch = "x86")]
+use core::arch::x86::*;
+#[cfg(target_arch = "x86_64")]
+use core::arch::x86_64::*;
+{% elif is_wasm32 %}
+use core::arch::wasm32::*;
+{% elif is_coresimd %}
+use core::simd::{cmp::SimdPartialEq, cmp::SimdPartialOrd, num::SimdFloat, *};
+use std::simd::StdFloat;
+{% elif is_neon %}
+use core::arch::aarch64::*;
+{% endif %}
+
+{% if not is_coresimd %}
+#[cfg(feature = "zerocopy")]
+use zerocopy_derive::*;
+{% endif %}
+
+{% if is_sse2 or is_neon %}
+#[repr(C)]
+union UnionCast {
+    a: [f32; 4],
+    v: {{ self_t }}
+}
+{% endif %}
+
+/// Creates a {{ dim }}-dimensional vector.
+#[inline(always)]
+#[must_use]
+pub const fn {{ self_t | lower }}(
+    {% for c in components %}
+        {{ c }}: {{ scalar_t }},
+    {% endfor %}
+) -> {{ self_t }} {
+    {{ self_t }}::new({{ components | join(sep=",") }})
+}
+
+/// A {{ dim }}-dimensional vector.
+{%- if self_t == "Vec3A" %}
+///
+/// SIMD vector types are used for storage on supported platforms for better
+/// performance than the [`Vec3`] type.
+///
+/// It is possible to convert between [`Vec3`] and [`Vec3A`] types using [`From`]
+/// or [`Into`] trait implementations.
+///
+/// This type is 16 byte aligned.
+{%- elif self_t == "Vec4" and is_simd %}
+///
+/// SIMD vector types are used for storage on supported platforms.
+///
+/// This type is 16 byte aligned.
+{%- endif %}
+#[derive(
+    Clone,
+    Copy,
+    {% if is_scalar %}
+    PartialEq,
+    {% if not is_float %}
+    Eq,
+    Hash,
+    {% endif %}
+    {% endif %}
+)]
+{%- if self_t == "Vec3A" and is_scalar %}
+#[cfg_attr(feature = "bytemuck", derive(bytemuck::AnyBitPattern))]
+{%- if not is_coresimd %}
+#[cfg_attr(feature = "zerocopy", derive(FromBytes, Immutable, KnownLayout))]
+{%- endif %}
+{%- else %}
+#[cfg_attr(feature = "bytemuck", derive(bytemuck::Pod, bytemuck::Zeroable))]
+{%- if not is_coresimd %}
+#[cfg_attr(feature = "zerocopy", derive(FromBytes, Immutable, IntoBytes, KnownLayout))]
+{%- endif %}
+{%- endif %}
+{%- if self_t == "Vec3A" and is_scalar %}
+#[repr(align(16))]
+{%- elif self_t == "Vec4" and is_scalar %}
+#[cfg_attr(any(not(feature = "scalar-math"), feature = "cuda"), repr(align(16)))]
+{%- elif dim != 3 and is_scalar %}
+#[cfg_attr(feature = "cuda", repr(align({{ cuda_align }})))]
+{%- endif %}
+{%- if is_scalar %}
+#[repr(C)]
+#[cfg_attr(target_arch = "spirv", rust_gpu::vector::v1)]
+pub struct {{ self_t }}
+{
+    {% for c in components %}
+        pub {{ c }}: {{ scalar_t }},
+    {%- endfor %}
+}
+{% else %}
+#[repr(transparent)]
+pub struct {{ self_t }}(pub(crate) {{ simd_t }});
+{% endif %}
+
+impl {{ self_t }} {
+    /// All zeroes.
+    pub const ZERO: Self = Self::splat({{ zero }});
+
+    /// All ones.
+    pub const ONE: Self = Self::splat({{ one }});
+
+{% if is_signed %}
+    /// All negative ones.
+    pub const NEG_ONE: Self = Self::splat(-{{ one }});
+{% endif %}
+
+    /// All `{{ scalar_t }}::MIN`.
+    pub const MIN: Self = Self::splat({{ scalar_t }}::MIN);
+
+    /// All `{{ scalar_t }}::MAX`.
+    pub const MAX: Self = Self::splat({{ scalar_t }}::MAX);
+
+{% if is_float %}
+    /// All `{{ scalar_t }}::NAN`.
+    pub const NAN: Self = Self::splat({{ scalar_t }}::NAN);
+
+    /// All `{{ scalar_t }}::INFINITY`.
+    pub const INFINITY: Self = Self::splat({{ scalar_t }}::INFINITY);
+
+    /// All `{{ scalar_t }}::NEG_INFINITY`.
+    pub const NEG_INFINITY: Self = Self::splat({{ scalar_t }}::NEG_INFINITY);
+{% endif %}
+
+{% for i in range(end = dim) %}
+    {% set C = components[i] | upper %}
+    /// A unit vector pointing along the positive {{ C }} axis.
+    pub const {{ C }}: Self = Self::new(
+        {% for j in range(end = dim) %}
+            {% if i == j %} {{ one }} {% else %} {{ zero }} {% endif %},
+        {%- endfor %}
+    );
+{% endfor %}
+
+{% if is_signed %}
+    {% for i in range(end = dim) %}
+        {% set C = components[i] | upper %}
+        /// A unit vector pointing along the negative {{ C }} axis.
+        pub const NEG_{{ C }}: Self = Self::new(
+            {% for j in range(end = dim) %}
+                {% if i == j %} {{ neg_one }} {% else %} {{ zero }} {% endif %},
+            {%- endfor %}
+        );
+    {% endfor %}
+{% endif %}
+
+    /// The unit axes.
+    pub const AXES: [Self; {{ dim }}] = [
+        {% for c in components %}
+            Self::{{ c | upper }},
+        {% endfor %}
+    ];
+
+{% if is_float %}
+    /// {{ self_t }} uses Rust Portable SIMD
+    pub const USES_CORE_SIMD: bool = {{ is_coresimd }};
+    /// {{ self_t }} uses Arm NEON
+    pub const USES_NEON: bool = {{ is_neon }};
+    /// {{ self_t }} uses scalar math
+    pub const USES_SCALAR_MATH: bool = {{ is_scalar }};
+    /// {{ self_t }} uses Intel SSE2
+    pub const USES_SSE2: bool = {{ is_sse2 }};
+    /// {{ self_t }} uses WebAssembly 128-bit SIMD
+    pub const USES_WASM32_SIMD: bool = {{ is_wasm32 }};
+{% endif %}
+
+    /// Creates a new vector.
+    #[inline(always)]
+    #[must_use]
+    pub const fn new(
+        {% for c in components %}
+            {{ c }}: {{ scalar_t }},
+        {% endfor %}
+    ) -> Self {
+        {% if is_scalar %}
+            Self {
+                {% for c in components %}
+                    {{ c }},
+                {%- endfor %}
+            }
+        {% elif is_sse2 %}
+            unsafe {
+                UnionCast { a: [
+                    {% if dim == 3 %}
+                        x, y, z, z
+                    {% elif dim == 4 %}
+                        x, y, z, w
+                    {% endif %}
+                ] }.v
+            }
+        {% elif is_wasm32 %}
+            Self(f32x4(
+                {% if dim == 3 %}
+                    x, y, z, z
+                {% elif dim == 4 %}
+                    x, y, z, w
+                {% endif %}
+            ))
+        {% elif is_coresimd %}
+            Self(f32x4::from_array([
+                x, y, z,
+                {% if dim == 3 %}
+                    z
+                {% elif dim == 4 %}
+                    w
+                {% endif %}
+            ]))
+        {% elif is_neon %}
+            {% if dim == 3 %}
+                unsafe { UnionCast { a: [x, y, z, z] }.v }
+            {% elif dim == 4 %}
+                unsafe { UnionCast { a: [x, y, z, w] }.v }
+            {% endif %}
+        {% endif %}
+    }
+
+    /// Creates a vector with all elements set to `v`.
+    #[inline]
+    #[must_use]
+    pub const fn splat(v: {{ scalar_t }}) -> Self {
+        {% if is_scalar %}
+            Self {
+                {% for c in components %}
+                    {{ c }}: v,
+                {% endfor %}
+            }
+        {% elif is_wasm32 %}
+            Self(f32x4(v, v, v, v))
+        {% elif is_coresimd %}
+            Self(Simd::from_array([v; 4]))
+        {% else %}
+            unsafe { UnionCast { a: [v; 4] }.v }
+        {% endif %}
+    }
+
+    /// Returns a vector containing each element of `self` modified by a mapping function `f`.
+    #[inline]
+    #[must_use]
+    pub fn map<F>(self, f: F) -> Self
+    where
+        F: Fn({{ scalar_t }}) -> {{ scalar_t }},
+    {
+        Self::new(
+            {% for c in components %}
+                f(self.{{ c }}),
+            {%- endfor %}
+        )
+    }
+
+    /// Creates a vector from the elements in `if_true` and `if_false`, selecting which to use
+    /// for each element of `self`.
+    ///
+    /// A true element in the mask uses the corresponding element from `if_true`, and false
+    /// uses the element from `if_false`.
+    #[inline]
+    #[must_use]
+    pub fn select(mask: {{ mask_t }}, if_true: Self, if_false: Self) -> Self {
+        {% if is_scalar %}
+            Self {
+                {% for c in components %}
+                    {{ c  }}: if mask.test({{ loop.index0 }}) { if_true.{{ c }} } else { if_false.{{ c }} },
+                {%- endfor %}
+            }
+        {% elif is_sse2 %}
+            Self(unsafe { _mm_or_ps(_mm_andnot_ps(mask.0, if_false.0), _mm_and_ps(if_true.0, mask.0)) })
+        {% elif is_wasm32 %}
+            Self(v128_bitselect(if_true.0, if_false.0, mask.0))
+        {% elif is_coresimd %}
+            Self(mask.0.select(if_true.0, if_false.0))
+        {% elif is_neon %}
+            Self(unsafe { vbslq_f32(mask.0, if_true.0, if_false.0) })
+        {% endif %}
+    }
+
+    /// Creates a new vector from an array.
+    #[inline]
+    #[must_use]
+    pub const fn from_array(a: [{{ scalar_t }}; {{ dim }}]) -> Self {
+        Self::new(
+            {% for c in components %}
+                a[{{ loop.index0 }}],
+            {%- endfor %}
+        )
+    }
+
+    /// Converts `self` to `[{{ components | join(sep=", ") }}]`
+    #[inline]
+    #[must_use]
+    pub const fn to_array(&self) -> [{{ scalar_t }}; {{ dim }}] {
+        {% if is_scalar %}
+            [
+                {% for c in components %}
+                    self.{{ c }},
+                {% endfor %}
+            ]
+        {% else %}
+            unsafe { *(self as *const Self as *const [{{ scalar_t }}; {{ dim }}]) }
+        {% endif %}
+    }
+
+    /// Creates a vector from the first {{ dim }} values in `slice`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `slice` is less than {{ dim }} elements long.
+    #[inline]
+    #[must_use]
+    pub const fn from_slice(slice: &[{{ scalar_t }}]) -> Self {
+        assert!(slice.len() >= {{ dim }});
+        Self::new(
+            {% for c in components %}
+                slice[{{ loop.index0 }}],
+            {%- endfor %}
+        )
+    }
+
+    /// Writes the elements of `self` to the first {{ dim }} elements in `slice`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `slice` is less than {{ dim }} elements long.
+    #[inline]
+    pub fn write_to_slice(self, slice: &mut [{{ scalar_t }}]) {
+        {% if self_t == "Vec4" and is_sse2 %}
+            assert!(slice.len() >= 4);
+            unsafe { _mm_storeu_ps(slice.as_mut_ptr(), self.0); }
+        {% elif self_t == "Vec4" and is_neon %}
+            assert!(slice.len() >= 4);
+            unsafe { vst1q_f32(slice.as_mut_ptr(), self.0); }
+        {% else %}
+            slice[..{{ dim }}].copy_from_slice(&self.to_array());
+        {% endif %}
+    }
+
+{% if dim == 2 %}
+    /// Creates a 3D vector from `self` and the given `z` value.
+    #[inline]
+    #[must_use]
+    pub const fn extend(self, z: {{ scalar_t }}) -> {{ vec3_t }} {
+        {{ vec3_t }}::new(self.x, self.y, z)
+    }
+{% elif dim == 3 %}
+    {% if self_t == "Vec3A" %}
+    /// Creates a [`Vec3A`] from the `x`, `y` and `z` elements of `self` discarding `w`.
+    ///
+    /// On architectures where SIMD is supported such as SSE2 on `x86_64` this conversion is a noop.
+    #[inline]
+    #[must_use]
+    pub fn from_vec4(v: Vec4) -> Self {
+        {% if is_scalar %}
+            Self { x: v.x, y: v.y, z: v.z }
+        {% else %}
+            Self(v.0)
+        {% endif %}
+    }
+    {% else %}
+    /// Internal method for creating a 3D vector from a 4D vector, discarding `w`.
+    #[allow(dead_code)]
+    #[inline]
+    #[must_use]
+    pub(crate) fn from_vec4(v: {{ vec4_t }}) -> Self {
+        {% if is_scalar %}
+            Self { x: v.x, y: v.y, z: v.z }
+        {% else %}
+            Self(v.0)
+        {% endif %}
+    }
+    {% endif %}
+
+    /// Creates a 4D vector from `self` and the given `w` value.
+    #[inline]
+    #[must_use]
+    pub fn extend(self, w: {{ scalar_t }}) -> {{ vec4_t }} {
+        {{ vec4_t }}::new(self.x, self.y, self.z, w)
+    }
+
+    /// Creates a 2D vector from the `x` and `y` elements of `self`, discarding `z`.
+    ///
+    /// Truncation may also be performed by using [`self.xy()`][crate::swizzles::Vec3Swizzles::xy()].
+    #[inline]
+    #[must_use]
+    pub fn truncate(self) -> {{ vec2_t }} {
+        use crate::swizzles::Vec3Swizzles;
+        self.xy()
+    }
+
+    {% if is_float %}
+    /// Projects a homogeneous coordinate to 3D space by performing perspective divide.
+    ///
+    /// # Panics
+    ///
+    /// Will panic if `v.w` is `0` when `glam_assert` is enabled.
+    #[inline]
+    #[must_use]
+    pub fn from_homogeneous(v: {{ vec4_t }}) -> Self {
+        glam_assert!(v.w != 0.0);
+        Self::from_vec4(v) / v.w
+    }
+    
+    /// Creates a homogeneous coordinate from `self`, equivalent to `self.extend(1.0)`.
+    #[inline]
+    #[must_use]
+    pub fn to_homogeneous(self) -> {{ vec4_t }} {
+        self.extend(1.0)
+    }
+    {% endif %}
+
+{% elif dim == 4 %}
+    /// Creates a 3D vector from the `x`, `y` and `z` elements of `self`, discarding `w`.
+    ///
+    /// Truncation to [`{{ vec3_t }}`] may also be performed by using [`self.xyz()`][crate::swizzles::Vec4Swizzles::xyz()].
+    {%- if scalar_t == "f32" %}
+    ///
+    /// To truncate to [`Vec3A`] use [`Vec3A::from_vec4()`].
+    {%- endif %}
+    #[inline]
+    #[must_use]
+    pub fn truncate(self) -> {{ vec3_t }} {
+        use crate::swizzles::Vec4Swizzles;
+        self.xyz()
+    }
+
+    {% if is_float %}
+    /// Projects a homogeneous coordinate to 3D space by performing perspective divide.
+    {%- if scalar_t == "f32" %}
+    ///
+    /// To project to [`Vec3A`] use [`Vec3A::from_homogeneous()`].
+    {%- endif %}
+    ///
+    /// # Panics
+    ///
+    /// Will panic if `self.w` is `0` when `glam_assert` is enabled.
+    #[inline]
+    #[must_use]
+    pub fn project(self) -> {{ vec3_t }} {
+        {{ vec3_t }}::from_homogeneous(self)
+    }
+    {% endif %}
+{% endif %}
+
+{% if self_t == "Vec3A" %}
+    // Converts `self` to a `Vec3`.
+    #[inline]
+    #[must_use]
+    pub fn to_vec3(self) -> Vec3 {
+        Vec3::from(self)
+    }
+{% elif self_t == "Vec3" %}
+    // Converts `self` to a `Vec3A`.
+    #[inline]
+    #[must_use]
+    pub fn to_vec3a(self) -> Vec3A {
+        Vec3A::from(self)
+    }
+{% endif %}
+
+{% for c in components %}
+    /// Creates a {{ dim }}D vector from `self` with the given value of `{{ c }}`.
+    #[inline]
+    #[must_use]
+    pub fn with_{{ c }}(mut self, {{ c }}: {{ scalar_t }}) -> Self {
+        self.{{ c }} = {{ c }};
+        self
+    }
+{% endfor %}
+
+    /// Computes the dot product of `self` and `rhs`.
+    #[inline]
+    #[must_use]
+    pub fn dot(self, rhs: Self) -> {{ scalar_t }} {
+        {% if is_scalar %}
+            {% for c in components %}
+                (self.{{ c }} * rhs.{{ c }}) {% if not loop.last %} + {% endif %}
+            {%- endfor %}
+        {% elif is_sse2 %}
+            unsafe { dot{{ dim }}(self.0, rhs.0) }
+        {% elif is_neon %}
+            {% if dim < 4 %}
+                // this was faster than intrinsics in testing
+                {%- for c in components %}
+                    (self.{{ c }} * rhs.{{ c }}) {% if not loop.last %} + {% endif %}
+                {%- endfor %}
+            {% else %}
+                unsafe { dot{{ dim }}(self.0, rhs.0) }
+            {% endif %}
+        {% else %}
+            dot{{ dim }}(self.0, rhs.0)
+        {% endif %}
+    }
+
+    /// Returns a vector where every component is the dot product of `self` and `rhs`.
+    #[inline]
+    #[must_use]
+    pub fn dot_into_vec(self, rhs: Self) -> Self {
+        {% if is_scalar %}
+            Self::splat(self.dot(rhs))
+        {% elif is_sse2 %}
+            Self(unsafe { dot{{ dim }}_into_m128(self.0, rhs.0) })
+        {% elif is_wasm32 %}
+            Self(dot{{ dim }}_into_v128(self.0, rhs.0))
+        {% elif is_coresimd %}
+            Self(dot{{ dim }}_into_f32x4(self.0, rhs.0))
+        {% elif is_neon %}
+            Self(unsafe { dot{{ dim }}_into_f32x4(self.0, rhs.0) })
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+
+{% if dim == 3 %}
+    /// Computes the cross product of `self` and `rhs`.
+    #[inline]
+    #[must_use]
+    pub fn cross(self, rhs: Self) -> Self {
+        {% if is_scalar %}
+            Self {
+                x: self.y * rhs.z - rhs.y * self.z,
+                y: self.z * rhs.x - rhs.z * self.x,
+                z: self.x * rhs.y - rhs.x * self.y,
+            }
+        {% elif is_sse2 %}
+            unsafe {
+                // x  <-  a.y*b.z - a.z*b.y
+                // y  <-  a.z*b.x - a.x*b.z
+                // z  <-  a.x*b.y - a.y*b.x
+                // We can save a shuffle by grouping it in this wacky order:
+                // (self.zxy() * rhs - self * rhs.zxy()).zxy()
+                let lhszxy = _mm_shuffle_ps(self.0, self.0, 0b01_01_00_10);
+                let rhszxy = _mm_shuffle_ps(rhs.0, rhs.0, 0b01_01_00_10);
+                let lhszxy_rhs = _mm_mul_ps(lhszxy, rhs.0);
+                let rhszxy_lhs = _mm_mul_ps(rhszxy, self.0);
+                let sub = _mm_sub_ps(lhszxy_rhs, rhszxy_lhs);
+                Self(_mm_shuffle_ps(sub, sub, 0b01_01_00_10))
+            }
+        {% elif is_wasm32 %}
+            let lhszxy = i32x4_shuffle::<2, 0, 1, 1>(self.0, self.0);
+            let rhszxy = i32x4_shuffle::<2, 0, 1, 1>(rhs.0, rhs.0);
+            let lhszxy_rhs = f32x4_mul(lhszxy, rhs.0);
+            let rhszxy_lhs = f32x4_mul(rhszxy, self.0);
+            let sub = f32x4_sub(lhszxy_rhs, rhszxy_lhs);
+            Self(i32x4_shuffle::<2, 0, 1, 1>(sub, sub))
+        {% elif is_coresimd %}
+            let lhszxy = simd_swizzle!(self.0, [2, 0, 1, 1]);
+            let rhszxy = simd_swizzle!(rhs.0, [2, 0, 1, 1]);
+            let lhszxy_rhs = lhszxy * rhs.0;
+            let rhszxy_lhs = rhszxy * self.0;
+            let sub = lhszxy_rhs - rhszxy_lhs;
+            Self(simd_swizzle!(sub, [2, 0, 1, 1]))
+        {% elif is_neon %}
+            unsafe {
+                // Implementation taken from Realtime Math
+                let lhs = self.0;
+                let rhs = rhs.0;
+                // cross(a, b) = (a.yzx * b.zxy) - (a.zxy * b.yzx)
+                let lhs_yzwx = vextq_f32(lhs, lhs, 1);
+                let rhs_wxyz = vextq_f32(rhs, rhs, 3);
+
+                let lhs_yzx = vsetq_lane_f32(vgetq_lane_f32(lhs, 0), lhs_yzwx, 2);
+                let rhs_zxy = vsetq_lane_f32(vgetq_lane_f32(rhs, 2), rhs_wxyz, 0);
+
+                // part_a = (a.yzx * b.zxy)
+                let part_a = vmulq_f32(lhs_yzx, rhs_zxy);
+
+                let lhs_wxyz = vextq_f32(lhs, lhs, 3);
+                let rhs_yzwx = vextq_f32(rhs, rhs, 1);
+                let lhs_zxy = vsetq_lane_f32(vgetq_lane_f32(lhs, 2), lhs_wxyz, 0);
+                let rhs_yzx = vsetq_lane_f32(vgetq_lane_f32(rhs, 0), rhs_yzwx, 2);
+
+                // result = part_a - (a.zxy * b.yzx)
+                let result = vmlsq_f32(part_a, lhs_zxy, rhs_yzx);
+                Self(result)
+            }
+        {% else %}
+             unimplemented!()
+        {% endif %}
+    }
+{% endif %}
+
+    /// Returns a vector containing the minimum values for each element of `self` and `rhs`.
+    ///
+    /// In other words this computes `[min(x, rhs.x), min(self.y, rhs.y), ..]`.
+{%- if is_float  %}
+    /// 
+    /// NaN propogation does not follow IEEE 754-2008 semantics for minNum and may differ on
+    /// different SIMD architectures.
+{%- endif %}
+    #[inline]
+    #[must_use]
+    pub fn min(self, rhs: Self) -> Self {
+        {% if is_scalar %}
+            Self {
+                {% for c in components %}
+                    {{ c }}: if self.{{ c }} < rhs.{{ c }} { self.{{ c }} } else { rhs.{{ c }} },
+                {%- endfor %}
+            }
+        {% elif is_sse2 %}
+            Self(unsafe { _mm_min_ps(self.0, rhs.0) })
+        {% elif is_wasm32 %}
+            Self(f32x4_pmin(self.0, rhs.0))
+        {% elif is_coresimd %}
+            Self(self.0.simd_lt(rhs.0).select(self.0, rhs.0))
+        {% elif is_neon %}
+            Self(unsafe { vminq_f32(self.0, rhs.0) })
+        {% else %}
+             unimplemented!()
+        {% endif %}
+    }
+
+    /// Returns a vector containing the maximum values for each element of `self` and `rhs`.
+    ///
+    /// In other words this computes `[max(self.x, rhs.x), max(self.y, rhs.y), ..]`.
+{%- if is_float  %}
+    /// 
+    /// NaN propogation does not follow IEEE 754-2008 semantics for maxNum and may differ on
+    /// different SIMD architectures.
+{%- endif %}
+    #[inline]
+    #[must_use]
+    pub fn max(self, rhs: Self) -> Self {
+        {% if is_scalar %}
+            Self {
+                {% for c in components %}
+                    {{ c }}: if self.{{ c }} > rhs.{{ c }} { self.{{ c }} } else { rhs.{{ c }} },
+                {%- endfor %}
+            }
+        {% elif is_sse2 %}
+            Self(unsafe { _mm_max_ps(self.0, rhs.0) })
+        {% elif is_wasm32 %}
+            Self(f32x4_pmax(self.0, rhs.0))
+        {% elif is_coresimd %}
+            Self(self.0.simd_gt(rhs.0).select(self.0, rhs.0))
+        {% elif is_neon %}
+            Self(unsafe { vmaxq_f32(self.0, rhs.0) })
+        {% else %}
+             unimplemented!()
+        {% endif %}
+    }
+
+    /// Component-wise clamping of values, similar to [`{{ scalar_t }}::clamp`].
+    ///
+    /// Each element in `min` must be less-or-equal to the corresponding element in `max`.
+{%- if is_float  %}
+    /// 
+    /// NaN propogation does not follow IEEE 754-2008 semantics and may differ on
+    /// different SIMD architectures.
+{%- endif %}
+    ///
+    /// # Panics
+    ///
+    /// Will panic if `min` is greater than `max` when `glam_assert` is enabled.
+    #[inline]
+    #[must_use]
+    pub fn clamp(self, min: Self, max: Self) -> Self {
+        glam_assert!(min.cmple(max).all(), "clamp: expected min <= max");
+        self.max(min).min(max)
+    }
+
+    /// Returns the horizontal minimum of `self`.
+    ///
+    /// In other words this computes `min(x, y, ..)`.
+{%- if is_float  %}
+    /// 
+    /// NaN propogation does not follow IEEE 754-2008 semantics and may differ on
+    /// different SIMD architectures.
+{%- endif %}
+    #[inline]
+    #[must_use]
+    pub fn min_element(self) -> {{ scalar_t }} {
+        {% if is_scalar %}
+            let min = |a, b| if a < b { a } else { b };
+            {%- if dim == 2 %}
+                min(self.x, self.y)
+            {%- elif dim == 3 %}
+                min(self.x, min(self.y, self.z))
+            {%- elif dim == 4 %}
+                min(self.x, min(self.y, min(self.z, self.w)))
+            {% endif %}
+        {% elif is_sse2 %}
+            {% if dim == 3 %}
+                unsafe {
+                    let v = self.0;
+                    let v = _mm_min_ps(v, _mm_shuffle_ps(v, v, 0b01_01_10_10));
+                    let v = _mm_min_ps(v, _mm_shuffle_ps(v, v, 0b00_00_00_01));
+                    _mm_cvtss_f32(v)
+                }
+            {% elif dim == 4 %}
+                unsafe {
+                    let v = self.0;
+                    let v = _mm_min_ps(v, _mm_shuffle_ps(v, v, 0b00_00_11_10));
+                    let v = _mm_min_ps(v, _mm_shuffle_ps(v, v, 0b00_00_00_01));
+                    _mm_cvtss_f32(v)
+                }
+            {% endif %}
+        {% elif is_wasm32 %}
+            {% if dim == 3 %}
+                let v = self.0;
+                let v = f32x4_pmin(v, i32x4_shuffle::<2, 2, 1, 1>(v, v));
+                let v = f32x4_pmin(v, i32x4_shuffle::<1, 0, 0, 0>(v, v));
+                f32x4_extract_lane::<0>(v)
+            {% elif dim == 4 %}
+                let v = self.0;
+                let v = f32x4_pmin(v, i32x4_shuffle::<2, 3, 0, 0>(v, v));
+                let v = f32x4_pmin(v, i32x4_shuffle::<1, 0, 0, 0>(v, v));
+                f32x4_extract_lane::<0>(v)
+            {% endif %}
+        {% elif is_coresimd %}
+            let min = |a: {{ simd_t }}, b: {{ simd_t }}| a.simd_lt(b).select(a, b);
+            {%- if dim == 3 %}
+                let v = self.0;
+                let v = min(v, simd_swizzle!(v, [2, 2, 1, 1]));
+                let v = min(v, simd_swizzle!(v, [1, 0, 0, 0]));
+                v[0]
+            {%- elif dim == 4 %}
+                let v = self.0;
+                let v = min(v, simd_swizzle!(v, [2, 3, 0, 0]));
+                let v = min(v, simd_swizzle!(v, [1, 0, 0, 0]));
+                v[0]
+            {% endif %}
+        {% elif is_neon %}
+            {% if dim == 3 %}
+                self.x.min(self.y.min(self.z))
+            {% elif dim == 4 %}
+                unsafe { vminnmvq_f32(self.0) }
+            {% endif %}
+        {% else %}
+             unimplemented!()
+        {% endif %}
+    }
+
+    /// Returns the horizontal maximum of `self`.
+    ///
+    /// In other words this computes `max(x, y, ..)`.
+{%- if is_float  %}
+    /// 
+    /// NaN propogation does not follow IEEE 754-2008 semantics and may differ on
+    /// different SIMD architectures.
+{%- endif %}
+    #[inline]
+    #[must_use]
+    pub fn max_element(self) -> {{ scalar_t }} {
+        {% if is_scalar %}
+            let max = |a, b| if a > b { a } else { b };
+            {%- if dim == 2 %}
+                max(self.x, self.y)
+            {%- elif dim == 3 %}
+                max(self.x, max(self.y, self.z))
+            {%- elif dim == 4 %}
+                max(self.x, max(self.y, max(self.z, self.w)))
+            {% endif %}
+        {% elif is_sse2 %}
+            {% if dim == 3 %}
+                unsafe {
+                    let v = self.0;
+                    let v = _mm_max_ps(v, _mm_shuffle_ps(v, v, 0b00_00_10_10));
+                    let v = _mm_max_ps(v, _mm_shuffle_ps(v, v, 0b00_00_00_01));
+                    _mm_cvtss_f32(v)
+                }
+            {% elif dim == 4 %}
+                unsafe {
+                    let v = self.0;
+                    let v = _mm_max_ps(v, _mm_shuffle_ps(v, v, 0b00_00_11_10));
+                    let v = _mm_max_ps(v, _mm_shuffle_ps(v, v, 0b00_00_00_01));
+                    _mm_cvtss_f32(v)
+                }
+            {% endif %}
+        {% elif is_wasm32 %}
+            {% if dim == 3 %}
+                let v = self.0;
+                let v = f32x4_pmax(v, i32x4_shuffle::<2, 2, 0, 0>(v, v));
+                let v = f32x4_pmax(v, i32x4_shuffle::<1, 0, 0, 0>(v, v));
+                f32x4_extract_lane::<0>(v)
+            {% elif dim == 4 %}
+                let v = self.0;
+                let v = f32x4_pmax(v, i32x4_shuffle::<2, 3, 0, 0>(v, v));
+                let v = f32x4_pmax(v, i32x4_shuffle::<1, 0, 0, 0>(v, v));
+                f32x4_extract_lane::<0>(v)
+            {% endif %}
+        {% elif is_coresimd %}
+            let max = |a: {{ simd_t }}, b: {{ simd_t }}| a.simd_gt(b).select(a, b);
+            {%- if dim == 3 %}
+                let v = self.0;
+                let v = max(v, simd_swizzle!(v, [2, 2, 0, 0]));
+                let v = max(v, simd_swizzle!(v, [1, 0, 0, 0]));
+                v[0]
+            {%- elif dim == 4 %}
+                let v = self.0;
+                let v = max(v, simd_swizzle!(v, [2, 3, 0, 0]));
+                let v = max(v, simd_swizzle!(v, [1, 0, 0, 0]));
+                v[0]
+            {% endif %}
+        {% elif is_neon %}
+            {% if dim == 3 %}
+                self.x.max(self.y.max(self.z))
+            {% elif dim == 4 %}
+                unsafe { vmaxnmvq_f32(self.0) }
+            {% endif %}
+        {% else %}
+             unimplemented!()
+        {% endif %}
+    }
+
+    /// Returns the index of the first minimum element of `self`.
+    #[doc(alias = "argmin")]
+    #[inline]
+    #[must_use] 
+    pub fn min_position(self) -> usize {
+        {% if dim == 2 %}
+            if self.x <= self.y { 0 } else { 1 }
+        {% elif dim == 3 %}
+            let mut min = self.x;
+            let mut index = 0;
+            if self.y < min {
+                min = self.y;
+                index = 1;
+            }
+            if self.z < min {
+                index = 2;
+            }
+            index
+        {% elif dim == 4 %}
+            let mut min = self.x;
+            let mut index = 0;
+            if self.y < min {
+                min = self.y;
+                index = 1;
+            }
+            if self.z < min {
+                min = self.z;
+                index = 2;
+            }
+            if self.w < min {
+                index = 3;
+            }
+            index
+        {% endif %}
+    }
+
+    /// Returns the index of the first maximum element of `self`.
+    #[doc(alias = "argmax")]
+    #[inline]
+    #[must_use]
+    pub fn max_position(self) -> usize {
+        {% if dim == 2 %}
+            if self.x >= self.y { 0 } else { 1 }
+        {% elif dim == 3 %}
+            let mut max = self.x;
+            let mut index = 0;
+            if self.y > max {
+                max = self.y;
+                index = 1;
+            }
+            if self.z > max {
+                index = 2;
+            }
+            index
+        {% elif dim == 4 %}
+            let mut max = self.x;
+            let mut index = 0;
+            if self.y > max {
+                max = self.y;
+                index = 1;
+            }
+            if self.z > max {
+                max = self.z;
+                index = 2;
+            }
+            if self.w > max {
+                index = 3;
+            }
+            index
+        {% endif %}
+    }
+
+    /// Returns the sum of all elements of `self`.
+    ///
+    /// In other words, this computes `self.x + self.y + ..`.
+    #[inline]
+    #[must_use]
+    pub fn element_sum(self) -> {{ scalar_t }} {
+        {% if is_scalar %}
+            {% for c in components %}
+                self.{{ c }} {% if not loop.last %} + {% endif %}
+            {%- endfor %}
+        {% elif is_sse2 %}
+            {% if dim == 3 %}
+                unsafe {
+                    let v = self.0;
+                    let v = _mm_add_ps(v, _mm_shuffle_ps(v, Self::ZERO.0, 0b00_11_00_01));
+                    let v = _mm_add_ps(v, _mm_shuffle_ps(v, v, 0b00_00_00_10));
+                    _mm_cvtss_f32(v)
+                }
+            {% elif dim == 4 %}
+                unsafe {
+                    let v = self.0;
+                    let v = _mm_add_ps(v, _mm_shuffle_ps(v, v, 0b00_11_00_01));
+                    let v = _mm_add_ps(v, _mm_shuffle_ps(v, v, 0b00_00_00_10));
+                    _mm_cvtss_f32(v)
+                }
+            {% endif %}
+        {% elif is_wasm32 %}
+            {% if dim == 3 %}
+                let v = self.0;
+                let v = f32x4_add(v, i32x4_shuffle::<1, 0, 4, 0>(v, Self::ZERO.0));
+                let v = f32x4_add(v, i32x4_shuffle::<2, 0, 0, 0>(v, v));
+                f32x4_extract_lane::<0>(v)
+            {% elif dim == 4 %}
+                let v = self.0;
+                let v = f32x4_add(v, i32x4_shuffle::<1, 0, 3, 0>(v, v));
+                let v = f32x4_add(v, i32x4_shuffle::<2, 0, 0, 0>(v, v));
+                f32x4_extract_lane::<0>(v)
+            {% endif %}
+        {% elif is_coresimd %}
+            {% if dim == 3 %}
+                simd_swizzle!(self.0, Self::ZERO.0, [0, 1, 2, 4]).reduce_sum()
+            {% elif dim == 4 %}
+                self.0.reduce_sum()
+            {% endif %}
+        {% elif is_neon %}
+            {% if dim == 3 %}
+                unsafe { vaddvq_f32(vsetq_lane_f32(0.0, self.0, 3)) }
+            {% elif dim == 4 %}
+                unsafe { vaddvq_f32(self.0) }
+            {% endif %}
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+
+    /// Returns the product of all elements of `self`.
+    ///
+    /// In other words, this computes `self.x * self.y * ..`.
+    #[inline]
+    #[must_use]
+    pub fn element_product(self) -> {{ scalar_t }} {
+        {% if is_scalar %}
+            {% for c in components %}
+                self.{{ c }} {% if not loop.last %} * {% endif %}
+            {%- endfor %}
+        {% elif is_sse2 %}
+            {% if dim == 3 %}
+                unsafe {
+                    let v = self.0;
+                    let v = _mm_mul_ps(v, _mm_shuffle_ps(v, Self::ONE.0, 0b00_11_00_01));
+                    let v = _mm_mul_ps(v, _mm_shuffle_ps(v, v, 0b00_00_00_10));
+                    _mm_cvtss_f32(v)
+                }
+            {% elif dim == 4 %}
+                unsafe {
+                    let v = self.0;
+                    let v = _mm_mul_ps(v, _mm_shuffle_ps(v, v, 0b00_11_00_01));
+                    let v = _mm_mul_ps(v, _mm_shuffle_ps(v, v, 0b00_00_00_10));
+                    _mm_cvtss_f32(v)
+                }
+            {% endif %}
+        {% elif is_wasm32 %}
+            {% if dim == 3 %}
+                let v = self.0;
+                let v = f32x4_mul(v, i32x4_shuffle::<1, 0, 4, 0>(v, Self::ONE.0));
+                let v = f32x4_mul(v, i32x4_shuffle::<2, 0, 0, 0>(v, v));
+                f32x4_extract_lane::<0>(v)
+            {% elif dim == 4 %}
+                let v = self.0;
+                let v = f32x4_mul(v, i32x4_shuffle::<1, 0, 3, 0>(v, v));
+                let v = f32x4_mul(v, i32x4_shuffle::<2, 0, 0, 0>(v, v));
+                f32x4_extract_lane::<0>(v)
+            {% endif %}
+        {% elif is_coresimd %}
+            {% if dim == 3 %}
+                simd_swizzle!(self.0, Self::ONE.0, [0, 1, 2, 4]).reduce_product()
+            {% elif dim == 4 %}
+                self.0.reduce_product()
+            {% endif %}
+        {% elif is_neon %}
+            {% if dim == 3 %}
+                unsafe {
+                    let s = vmuls_laneq_f32(vgetq_lane_f32(self.0, 0), self.0, 1);
+                    vmuls_laneq_f32(s, self.0, 2)
+                }
+            {% elif dim == 4 %}
+                unsafe {
+                    let s = vmuls_laneq_f32(vgetq_lane_f32(self.0, 0), self.0, 1);
+                    let s = vmuls_laneq_f32(s, self.0, 2);
+                    vmuls_laneq_f32(s, self.0, 3)
+                }
+            {% endif %}
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+
+    /// Returns a vector mask containing the result of a `==` comparison for each element of
+    /// `self` and `rhs`.
+    ///
+    /// In other words, this computes `[self.x == rhs.x, self.y == rhs.y, ..]` for all
+    /// elements.
+    #[inline]
+    #[must_use]
+    pub fn cmpeq(self, rhs: Self) -> {{ mask_t }} {
+        {% if is_scalar %}
+            {{ mask_t }}::new(
+                {% for c in components %}
+                    self.{{ c }}.eq(&rhs.{{ c }}),
+                {%- endfor %}
+            )
+        {% elif is_sse2 %}
+            {{ mask_t }}(unsafe { _mm_cmpeq_ps(self.0, rhs.0) })
+        {% elif is_wasm32 %}
+            {{ mask_t }}(f32x4_eq(self.0, rhs.0))
+        {% elif is_coresimd %}
+            {{ mask_t }}(f32x4::simd_eq(self.0, rhs.0))
+        {% elif is_neon %}
+            {{ mask_t }}(unsafe { vceqq_f32(self.0, rhs.0) })
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+
+    /// Returns a vector mask containing the result of a `!=` comparison for each element of
+    /// `self` and `rhs`.
+    ///
+    /// In other words this computes `[self.x != rhs.x, self.y != rhs.y, ..]` for all
+    /// elements.
+    #[inline]
+    #[must_use]
+    pub fn cmpne(self, rhs: Self) -> {{ mask_t }} {
+        {% if is_scalar %}
+            {{ mask_t }}::new(
+                {% for c in components %}
+                    self.{{ c }}.ne(&rhs.{{ c }}),
+                {%- endfor %}
+            )
+        {% elif is_sse2 %}
+            {{ mask_t }}(unsafe { _mm_cmpneq_ps(self.0, rhs.0) })
+        {% elif is_wasm32 %}
+            {{ mask_t }}(f32x4_ne(self.0, rhs.0))
+        {% elif is_coresimd %}
+            {{ mask_t }}(f32x4::simd_ne(self.0, rhs.0))
+        {% elif is_neon %}
+            {{ mask_t }}(unsafe { vmvnq_u32(vceqq_f32(self.0, rhs.0)) })
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+
+    /// Returns a vector mask containing the result of a `>=` comparison for each element of
+    /// `self` and `rhs`.
+    ///
+    /// In other words this computes `[self.x >= rhs.x, self.y >= rhs.y, ..]` for all
+    /// elements.
+    #[inline]
+    #[must_use]
+    pub fn cmpge(self, rhs: Self) -> {{ mask_t }} {
+        {% if is_scalar %}
+            {{ mask_t }}::new(
+                {% for c in components %}
+                    self.{{ c }}.ge(&rhs.{{ c }}),
+                {%- endfor %}
+            )
+        {% elif is_sse2 %}
+            {{ mask_t }}(unsafe { _mm_cmpge_ps(self.0, rhs.0) })
+        {% elif is_wasm32 %}
+            {{ mask_t }}(f32x4_ge(self.0, rhs.0))
+        {% elif is_coresimd %}
+            {{ mask_t }}(f32x4::simd_ge(self.0, rhs.0))
+        {% elif is_neon %}
+            {{ mask_t }}(unsafe { vcgeq_f32(self.0, rhs.0) })
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+
+    /// Returns a vector mask containing the result of a `>` comparison for each element of
+    /// `self` and `rhs`.
+    ///
+    /// In other words this computes `[self.x > rhs.x, self.y > rhs.y, ..]` for all
+    /// elements.
+    #[inline]
+    #[must_use]
+    pub fn cmpgt(self, rhs: Self) -> {{ mask_t }} {
+        {% if is_scalar %}
+            {{ mask_t }}::new(
+                {% for c in components %}
+                    self.{{ c }}.gt(&rhs.{{ c }}),
+                {%- endfor %}
+            )
+        {% elif is_sse2 %}
+            {{ mask_t }}(unsafe { _mm_cmpgt_ps(self.0, rhs.0) })
+        {% elif is_wasm32 %}
+            {{ mask_t }}(f32x4_gt(self.0, rhs.0))
+        {% elif is_coresimd %}
+            {{ mask_t }}(f32x4::simd_gt(self.0, rhs.0))
+        {% elif is_neon %}
+            {{ mask_t }}(unsafe { vcgtq_f32(self.0, rhs.0) })
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+
+    /// Returns a vector mask containing the result of a `<=` comparison for each element of
+    /// `self` and `rhs`.
+    ///
+    /// In other words this computes `[self.x <= rhs.x, self.y <= rhs.y, ..]` for all
+    /// elements.
+    #[inline]
+    #[must_use]
+    pub fn cmple(self, rhs: Self) -> {{ mask_t }} {
+        {% if is_scalar %}
+            {{ mask_t }}::new(
+                {% for c in components %}
+                    self.{{ c }}.le(&rhs.{{ c }}),
+                {%- endfor %}
+            )
+        {% elif is_sse2 %}
+            {{ mask_t }}(unsafe { _mm_cmple_ps(self.0, rhs.0) })
+        {% elif is_wasm32 %}
+            {{ mask_t }}(f32x4_le(self.0, rhs.0))
+        {% elif is_coresimd %}
+            {{ mask_t }}(f32x4::simd_le(self.0, rhs.0))
+        {% elif is_neon %}
+            {{ mask_t }}(unsafe { vcleq_f32(self.0, rhs.0) })
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+
+    /// Returns a vector mask containing the result of a `<` comparison for each element of
+    /// `self` and `rhs`.
+    ///
+    /// In other words this computes `[self.x < rhs.x, self.y < rhs.y, ..]` for all
+    /// elements.
+    #[inline]
+    #[must_use]
+    pub fn cmplt(self, rhs: Self) -> {{ mask_t }} {
+        {% if is_scalar %}
+            {{ mask_t }}::new(
+                {% for c in components %}
+                    self.{{ c }}.lt(&rhs.{{ c }}),
+                {%- endfor %}
+            )
+        {% elif is_sse2 %}
+            {{ mask_t }}(unsafe { _mm_cmplt_ps(self.0, rhs.0) })
+        {% elif is_wasm32 %}
+            {{ mask_t }}(f32x4_lt(self.0, rhs.0))
+        {% elif is_coresimd %}
+            {{ mask_t }}(f32x4::simd_lt(self.0, rhs.0))
+        {% elif is_neon %}
+            {{ mask_t }}(unsafe { vcltq_f32(self.0, rhs.0) })
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+
+{% if is_signed %}
+    /// Returns a vector containing the absolute value of each element of `self`.
+    #[inline]
+    #[must_use]
+    pub fn abs(self) -> Self {
+        {% if is_scalar %}
+            Self {
+                {% for c in components %}
+                    {%- if is_float %}
+                        {{ c }}: math::abs(self.{{ c }}),
+                    {%- else %}
+                        {{ c }}: self.{{ c }}.abs(),
+                    {%- endif %}
+                {%- endfor %}
+            }
+        {% elif is_sse2 %}
+            Self(unsafe { crate::sse2::m128_abs(self.0) })
+        {% elif is_wasm32 %}
+            Self(f32x4_abs(self.0))
+        {% elif is_coresimd %}
+            Self(self.0.abs())
+        {% elif is_neon %}
+            Self(unsafe { vabsq_f32(self.0) })
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+
+    /// Returns a vector with elements representing the sign of `self`.
+    ///
+    {% if is_float -%}
+    /// - `1.0` if the number is positive, `+0.0` or `INFINITY`
+    /// - `-1.0` if the number is negative, `-0.0` or `NEG_INFINITY`
+    /// - `NAN` if the number is `NAN`
+    {%- else -%}
+    ///  - `0` if the number is zero
+    ///  - `1` if the number is positive
+    ///  - `-1` if the number is negative
+    {%- endif %}
+    #[inline]
+    #[must_use]
+    pub fn signum(self) -> Self {
+        {% if is_scalar %}
+            Self {
+                {% for c in components %}
+                    {%- if is_float %}
+                        {{ c }}: math::signum(self.{{ c }}),
+                    {%- else %}
+                        {{ c }}: self.{{ c }}.signum(),
+                    {%- endif %}
+                {%- endfor %}
+            }
+        {% elif is_coresimd %}
+            Self(self.0.signum())
+        {% elif is_sse2 %}
+            let result = Self(unsafe { _mm_or_ps(_mm_and_ps(self.0, Self::NEG_ONE.0), Self::ONE.0) });
+            let mask = self.is_nan_mask();
+            Self::select(mask, self, result)
+        {% elif is_wasm32 %}
+            let result = Self(v128_or(v128_and(self.0, Self::NEG_ONE.0), Self::ONE.0));
+            let mask = self.is_nan_mask();
+            Self::select(mask, self, result)
+        {% elif is_neon %}
+            let result = Self(unsafe {
+                vreinterpretq_f32_u32(vorrq_u32(
+                    vandq_u32(
+                        vreinterpretq_u32_f32(self.0),
+                        vreinterpretq_u32_f32(Self::NEG_ONE.0)),
+                    vreinterpretq_u32_f32(Self::ONE.0),
+                ))
+            });
+            let mask = self.is_nan_mask();
+            Self::select(mask, self, result)
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+
+    {% if is_float %}
+    /// Returns a vector with signs of `rhs` and the magnitudes of `self`.
+    #[inline]
+    #[must_use]
+    pub fn copysign(self, rhs: Self) -> Self {
+        {% if is_scalar %}
+            Self {
+                {% for c in components %}
+                    {{ c }}: math::copysign(self.{{ c }}, rhs.{{ c }}),
+                {%- endfor %}
+            }
+        {% elif is_coresimd %}
+            Self(self.0.copysign(rhs.0))
+        {% elif is_sse2 %}
+            let mask = Self::splat(-0.0);
+            Self(unsafe { _mm_or_ps(_mm_and_ps(rhs.0, mask.0), _mm_andnot_ps(mask.0, self.0)) })
+        {% elif is_wasm32 %}
+            let mask = Self::splat(-0.0);
+            Self(v128_or(v128_and(rhs.0, mask.0), v128_andnot(self.0, mask.0)))
+        {% elif is_neon %}
+            let mask = Self::splat(-0.0);
+            Self(unsafe {
+                vreinterpretq_f32_u32(vorrq_u32(
+                    vandq_u32(vreinterpretq_u32_f32(rhs.0), vreinterpretq_u32_f32(mask.0)),
+                    vandq_u32(
+                        vreinterpretq_u32_f32(self.0),
+                        vmvnq_u32(vreinterpretq_u32_f32(mask.0)))
+                ))
+            })
+        {% else %}
+            unimplemented!();
+        {% endif %}
+    }
+    {% endif %}
+
+    /// Returns a bitmask with the lowest {{ dim }} bits set to the sign bits from the elements of `self`.
+    ///
+    /// A negative element results in a `1` bit and a positive element in a `0` bit.  Element `x` goes
+    /// into the first lowest bit, element `y` into the second, etc.
+    ///
+    /// An element is negative if it has a negative sign, including -0.0, NaNs with negative sign
+    /// bit and negative infinity.
+    #[inline]
+    #[must_use]
+    pub fn is_negative_bitmask(self) -> u32 {
+        {% if is_scalar and is_float %}
+            {% for c in components %}
+                {% if loop.first %}
+                    (self.{{ c }}.is_sign_negative() as u32) |
+                {% else %}
+                    ((self.{{ c }}.is_sign_negative() as u32) << {{ loop.index0 }}) {% if not loop.last %} | {% endif %}
+                {% endif %}
+            {% endfor %}
+        {% elif is_scalar %}
+            {% for c in components %}
+                {% if loop.first %}
+                    (self.{{ c }}.is_negative() as u32) |
+                {% else %}
+                    ((self.{{ c }}.is_negative() as u32) << {{ loop.index0 }}) {% if not loop.last %} | {% endif %}
+                {% endif %}
+            {% endfor %}
+        {% elif is_sse2 %}
+            {% if dim == 3 %}
+                unsafe { (_mm_movemask_ps(self.0) as u32) & 0x7 }
+            {% elif dim == 4 %}
+                unsafe { _mm_movemask_ps(self.0) as u32 }
+            {% endif %}
+        {% elif is_wasm32 %}
+            {% if dim == 3 %}
+                (u32x4_bitmask(self.0) & 0x7) as u32
+            {% elif dim == 4 %}
+                u32x4_bitmask(self.0) as u32
+            {% endif %}
+        {% elif is_coresimd %}
+            {% if dim == 3 %}
+                (self.0.is_sign_negative().to_bitmask() & 0x7) as u32
+            {% elif dim == 4 %}
+                self.0.is_sign_negative().to_bitmask() as u32
+            {% endif %}
+        {% elif is_neon %}
+            unsafe {
+                let nmask = vreinterpretq_u32_f32(vdupq_n_f32(-0.0));
+                let m = vandq_u32(vreinterpretq_u32_f32(self.0), nmask);
+                let x = vgetq_lane_u32(m, 0) >> 31;
+                let y = vgetq_lane_u32(m, 1) >> 31;
+                let z = vgetq_lane_u32(m, 2) >> 31;
+                {% if dim == 3 %}
+                    x | y << 1 | z << 2
+                {% elif dim == 4 %}
+                    let w = vgetq_lane_u32(m, 3) >> 31;
+                    x | y << 1 | z << 2 | w << 3
+                {% endif %}
+            }
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+{% endif %}
+
+{% if is_float %}
+    /// Returns `true` if, and only if, all elements are finite.  If any element is either
+    /// `NaN`, positive or negative infinity, this will return `false`.
+    #[inline]
+    #[must_use]
+    pub fn is_finite(self) -> bool {
+        {% if is_scalar  %}
+            {% for c in components %}
+                self.{{ c }}.is_finite() {% if not loop.last %} && {% endif %}
+            {%- endfor %}
+        {% else %}
+            self.is_finite_mask().all()
+        {% endif %}
+    }
+
+    /// Performs `is_finite` on each element of self, returning a vector mask of the results.
+    ///
+    /// In other words, this computes `[x.is_finite(), y.is_finite(), ...]`.
+    #[inline]
+    #[must_use]
+    pub fn is_finite_mask(self) -> {{ mask_t }} {
+        {% if is_scalar %}
+            {{ mask_t }}::new(
+                {% for c in components %}
+                    self.{{ c }}.is_finite(),
+                {%- endfor %}
+            )
+        {% elif is_sse2 %}
+            {{ mask_t }}(unsafe { _mm_cmplt_ps(crate::sse2::m128_abs(self.0), Self::INFINITY.0) })
+        {% elif is_wasm32 %}
+            {{ mask_t }}(f32x4_lt(f32x4_abs(self.0), Self::INFINITY.0))
+        {% elif is_coresimd %}
+            {{ mask_t }}(f32x4::is_finite(self.0))
+        {% elif is_neon %}
+            {{ mask_t }}(unsafe { vcltq_f32(vabsq_f32(self.0), Self::INFINITY.0) })
+        {% endif %}
+    }
+
+    /// Returns `true` if any elements are `NaN`.
+    #[inline]
+    #[must_use]
+    pub fn is_nan(self) -> bool {
+        {% if is_scalar %}
+            {% for c in components %}
+                self.{{ c }}.is_nan() {% if not loop.last %} || {% endif %}
+            {%- endfor %}
+        {% else %}
+            self.is_nan_mask().any()
+        {% endif %}
+    }
+
+    /// Performs `is_nan` on each element of self, returning a vector mask of the results.
+    ///
+    /// In other words, this computes `[x.is_nan(), y.is_nan(), ...]`.
+    #[inline]
+    #[must_use]
+    pub fn is_nan_mask(self) -> {{ mask_t }} {
+        {% if is_scalar %}
+            {{ mask_t }}::new(
+                {% for c in components %}
+                    self.{{ c }}.is_nan(),
+                {%- endfor %}
+            )
+        {% elif is_sse2 %}
+            {{ mask_t }}(unsafe { _mm_cmpunord_ps(self.0, self.0) })
+        {% elif is_wasm32 %}
+            {{ mask_t }}(f32x4_ne(self.0, self.0))
+        {% elif is_coresimd %}
+            {{ mask_t }}(f32x4::is_nan(self.0))
+        {% elif is_neon %}
+            {{ mask_t }}(unsafe { vmvnq_u32(vceqq_f32(self.0, self.0)) })
+        {% endif %}
+    }
+
+    /// Computes the length of `self`.
+    #[doc(alias = "magnitude")]
+    #[inline]
+    #[must_use]
+    pub fn length(self) -> {{ scalar_t }} {
+        {% if is_scalar or is_neon %}
+            math::sqrt(self.dot(self))
+        {% elif is_sse2 %}
+            unsafe {
+                let dot = dot{{ dim }}_in_x(self.0, self.0);
+                _mm_cvtss_f32(_mm_sqrt_ps(dot))
+            }
+        {% elif is_wasm32 %}
+            let dot = dot{{ dim }}_in_x(self.0, self.0);
+            f32x4_extract_lane::<0>(f32x4_sqrt(dot))
+        {% elif is_coresimd %}
+            let dot = dot{{ dim }}_in_x(self.0, self.0);
+            dot.sqrt()[0]
+        {% endif %}
+    }
+{% endif %}
+
+    /// Computes the squared length of `self`.
+{%- if is_float %}
+    ///
+    /// This is faster than `length()` as it avoids a square root operation.
+{%- endif %}
+    #[doc(alias = "magnitude2")]
+    #[inline]
+    #[must_use]
+    pub fn length_squared(self) -> {{ scalar_t }} {
+        self.dot(self)
+    }
+
+{% if is_float %}
+    /// Computes `1.0 / length()`.
+    ///
+    /// For valid results, `self` must _not_ be of length zero.
+    #[inline]
+    #[must_use]
+    pub fn length_recip(self) -> {{ scalar_t }} {
+        {% if is_scalar or is_neon %}
+            self.length().recip()
+        {% elif is_sse2 %}
+            unsafe {
+                let dot = dot{{ dim }}_in_x(self.0, self.0);
+                _mm_cvtss_f32(_mm_div_ps(Self::ONE.0, _mm_sqrt_ps(dot)))
+            }
+        {% elif is_wasm32 %}
+            let dot = dot{{ dim }}_in_x(self.0, self.0);
+            f32x4_extract_lane::<0>(f32x4_div(Self::ONE.0, f32x4_sqrt(dot)))
+        {% elif is_coresimd %}
+            let dot = dot{{ dim }}_in_x(self.0, self.0);
+            dot.sqrt().recip()[0]
+        {% endif %}
+    }
+
+    /// Computes the Euclidean distance between two points in space.
+    #[inline]
+    #[must_use]
+    pub fn distance(self, rhs: Self) -> {{ scalar_t }} {
+        (self - rhs).length()
+    }
+{% endif %}
+
+{% if is_signed %}
+    /// Compute the squared euclidean distance between two points in space.
+    #[inline]
+    #[must_use]
+    pub fn distance_squared(self, rhs: Self) -> {{ scalar_t }} {
+        (self - rhs).length_squared()
+    }
+
+    /// Returns the element-wise quotient of [Euclidean division] of `self` by `rhs`.
+    {%- if not is_float%}
+    ///
+    /// # Panics
+    /// This function will panic if any `rhs` element is 0 or the division results in overflow.
+    {%- endif %}
+    #[inline]
+    #[must_use]
+    pub fn div_euclid(self, rhs: Self) -> Self {
+        Self::new(
+            {% for c in components %}
+                {% if is_float %}
+                math::div_euclid(self.{{ c }}, rhs.{{ c }}),
+                {% else %}
+                self.{{ c }}.div_euclid(rhs.{{ c }}),
+                {% endif %}
+            {%- endfor %}
+        )
+    }
+
+    /// Returns the element-wise remainder of [Euclidean division] of `self` by `rhs`.
+    {%- if not is_float %}
+    ///
+    /// # Panics
+    /// This function will panic if any `rhs` element is 0 or the division results in overflow.
+    {%- endif %}
+    ///
+    /// [Euclidean division]: {{scalar_t}}::rem_euclid
+    #[inline]
+    #[must_use]
+    pub fn rem_euclid(self, rhs: Self) -> Self {
+        Self::new(
+            {% for c in components %}
+                {% if is_float %}
+                math::rem_euclid(self.{{ c }}, rhs.{{ c }}),
+                {% else %}
+                self.{{ c }}.rem_euclid(rhs.{{ c }}),
+                {% endif %}
+            {%- endfor %}
+        )
+    }
+{% endif %}
+
+{% if is_float %}
+    /// Returns `self` normalized to length 1.0.
+    ///
+    /// For valid results, `self` must be finite and _not_ of length zero, nor very close to zero.
+    ///
+    /// See also [`Self::try_normalize()`] and [`Self::normalize_or_zero()`].
+    ///
+    /// # Panics
+    ///
+    /// Will panic if the resulting normalized vector is not finite when `glam_assert` is enabled.
+    #[inline]
+    #[must_use]
+    pub fn normalize(self) -> Self {
+        {% if is_scalar or is_neon %}
+            #[allow(clippy::let_and_return)]
+            let normalized = self.mul(self.length_recip());
+            glam_assert!(normalized.is_finite());
+            normalized
+        {% elif is_sse2 %}
+            unsafe {
+                let length = _mm_sqrt_ps(dot{{ dim }}_into_m128(self.0, self.0));
+                #[allow(clippy::let_and_return)]
+                let normalized = Self(_mm_div_ps(self.0, length));
+                glam_assert!(normalized.is_finite());
+                normalized
+            }
+        {% elif is_wasm32 %}
+            let length = f32x4_sqrt(dot{{ dim }}_into_v128(self.0, self.0));
+            #[allow(clippy::let_and_return)]
+            let normalized = Self(f32x4_div(self.0, length));
+            glam_assert!(normalized.is_finite());
+            normalized
+        {% elif is_coresimd %}
+            let length = dot{{ dim }}_into_f32x4(self.0, self.0).sqrt();
+            #[allow(clippy::let_and_return)]
+            let normalized = Self(self.0 / length);
+            glam_assert!(normalized.is_finite());
+            normalized
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+
+    /// Returns `self` normalized to length 1.0 if possible, else returns `None`.
+    ///
+    /// In particular, if the input is zero (or very close to zero), or non-finite,
+    /// the result of this operation will be `None`.
+    ///
+    /// See also [`Self::normalize_or_zero()`].
+    #[inline]
+    #[must_use]
+    pub fn try_normalize(self) -> Option<Self> {
+        let rcp = self.length_recip();
+        if rcp.is_finite() && rcp > 0.0 {
+            Some(self * rcp)
+        } else {
+            None
+        }
+    }
+
+    /// Returns `self` normalized to length 1.0 if possible, else returns a
+    /// fallback value.
+    ///
+    /// In particular, if the input is zero (or very close to zero), or non-finite,
+    /// the result of this operation will be the fallback value.
+    ///
+    /// See also [`Self::try_normalize()`].
+    #[inline]
+    #[must_use]
+    pub fn normalize_or(self, fallback: Self) -> Self {
+        let rcp = self.length_recip();
+        if rcp.is_finite() && rcp > 0.0 {
+            self * rcp
+        } else {
+            fallback
+        }
+    }
+
+    /// Returns `self` normalized to length 1.0 if possible, else returns zero.
+    ///
+    /// In particular, if the input is zero (or very close to zero), or non-finite,
+    /// the result of this operation will be zero.
+    ///
+    /// See also [`Self::try_normalize()`].
+    #[inline]
+    #[must_use]
+    pub fn normalize_or_zero(self) -> Self {
+        self.normalize_or(Self::ZERO)
+    }
+
+    /// Returns `self` normalized to length 1.0 and the length of `self`.
+    ///
+    /// If `self` is zero length then `(Self::X, 0.0)` is returned.
+    #[inline]
+    #[must_use]
+    pub fn normalize_and_length(self) -> (Self, {{ scalar_t }}) {
+        let length = self.length();
+        let rcp = 1.0 / length;
+        if rcp.is_finite() && rcp > 0.0 {
+            (self * rcp, length)
+        } else {
+            (Self::X, 0.0)
+        }
+    }
+
+    /// Returns whether `self` is length `1.0` or not.
+    ///
+    /// Uses a precision threshold of approximately `1e-4`.
+    #[inline]
+    #[must_use]
+    pub fn is_normalized(self) -> bool {
+        math::abs(self.length_squared() - 1.0) <= 2e-4
+    }
+
+    /// Returns the vector projection of `self` onto `rhs`.
+    ///
+    /// `rhs` must be of non-zero length.
+    ///
+    /// # Panics
+    ///
+    /// Will panic if `rhs` is zero length when `glam_assert` is enabled.
+    #[inline]
+    #[must_use]
+    pub fn project_onto(self, rhs: Self) -> Self {
+        let other_len_sq_rcp = rhs.dot(rhs).recip();
+        glam_assert!(other_len_sq_rcp.is_finite());
+        rhs * self.dot(rhs) * other_len_sq_rcp
+    }
+
+    /// Returns the vector rejection of `self` from `rhs`.
+    ///
+    /// The vector rejection is the vector perpendicular to the projection of `self` onto
+    /// `rhs`, in rhs words the result of `self - self.project_onto(rhs)`.
+    ///
+    /// `rhs` must be of non-zero length.
+    ///
+    /// # Panics
+    ///
+    /// Will panic if `rhs` has a length of zero when `glam_assert` is enabled.
+    #[doc(alias("plane"))]
+    #[inline]
+    #[must_use]
+    pub fn reject_from(self, rhs: Self) -> Self {
+        self - self.project_onto(rhs)
+    }
+
+    /// Returns the vector projection of `self` onto `rhs`.
+    ///
+    /// `rhs` must be normalized.
+    ///
+    /// # Panics
+    ///
+    /// Will panic if `rhs` is not normalized when `glam_assert` is enabled.
+    #[inline]
+    #[must_use]
+    pub fn project_onto_normalized(self, rhs: Self) -> Self {
+        glam_assert!(rhs.is_normalized());
+        rhs * self.dot(rhs)
+    }
+
+    /// Returns the vector rejection of `self` from `rhs`.
+    ///
+    /// The vector rejection is the vector perpendicular to the projection of `self` onto
+    /// `rhs`, in rhs words the result of `self - self.project_onto(rhs)`.
+    ///
+    /// `rhs` must be normalized.
+    ///
+    /// # Panics
+    ///
+    /// Will panic if `rhs` is not normalized when `glam_assert` is enabled.
+    #[doc(alias("plane"))]
+    #[inline]
+    #[must_use]
+    pub fn reject_from_normalized(self, rhs: Self) -> Self {
+        self - self.project_onto_normalized(rhs)
+    }
+
+    /// Returns a vector containing the nearest integer to a number for each element of `self`.
+    /// Round half-way cases away from 0.0.
+    #[inline]
+    #[must_use]
+    pub fn round(self) -> Self {
+        {% if is_scalar %}
+            Self {
+                {% for c in components %}
+                    {{ c }}: math::round(self.{{ c }}),
+                {%- endfor %}
+            }
+        {% elif is_sse2 %}
+            Self(unsafe { m128_round(self.0) })
+        {% elif is_wasm32 %}
+            Self(f32x4_nearest(self.0))
+        {% elif is_coresimd %}
+            Self(self.0.round())
+        {% elif is_neon %}
+            Self(unsafe { vrndnq_f32(self.0) })
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+
+    /// Returns a vector containing the largest integer less than or equal to a number for each
+    /// element of `self`.
+    #[inline]
+    #[must_use]
+    pub fn floor(self) -> Self {
+        {% if is_scalar %}
+            Self {
+                {% for c in components %}
+                    {{ c }}: math::floor(self.{{ c }}),
+                {%- endfor %}
+            }
+        {% elif is_sse2 %}
+            Self(unsafe { m128_floor(self.0) })
+        {% elif is_wasm32 %}
+            Self(f32x4_floor(self.0))
+        {% elif is_coresimd %}
+            Self(self.0.floor())
+        {% elif is_neon %}
+            Self(unsafe { vrndmq_f32(self.0) })
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+
+    /// Returns a vector containing the smallest integer greater than or equal to a number for
+    /// each element of `self`.
+    #[inline]
+    #[must_use]
+    pub fn ceil(self) -> Self {
+        {% if is_scalar %}
+            Self {
+                {% for c in components %}
+                    {{ c }}: math::ceil(self.{{ c }}),
+                {%- endfor %}
+            }
+        {% elif is_sse2 %}
+            Self(unsafe { m128_ceil(self.0) })
+        {% elif is_wasm32 %}
+            Self(f32x4_ceil(self.0))
+        {% elif is_coresimd %}
+            Self(self.0.ceil())
+        {% elif is_neon %}
+            Self(unsafe { vrndpq_f32(self.0) })
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+
+    /// Returns a vector containing the integer part each element of `self`. This means numbers are
+    /// always truncated towards zero.
+    #[inline]
+    #[must_use]
+    pub fn trunc(self) -> Self {
+        {% if is_scalar %}
+            Self {
+                {% for c in components %}
+                    {{ c }}: math::trunc(self.{{ c }}),
+                {%- endfor %}
+            }
+        {% elif is_sse2 %}
+            Self(unsafe { m128_trunc(self.0) })
+        {% elif is_wasm32 %}
+            Self(f32x4_trunc(self.0))
+        {% elif is_coresimd %}
+            Self(self.0.trunc())
+        {% elif is_neon %}
+            Self(unsafe { vrndq_f32(self.0) })
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+
+    /// Returns a vector containing the fractional part of the vector as `self - self.trunc()`.
+    ///
+    /// Note that this differs from the GLSL implementation of `fract` which returns
+    /// `self - self.floor()`.
+    ///
+    /// Note that this is fast but not precise for large numbers.
+    #[inline]
+    #[must_use]
+    pub fn fract(self) -> Self {
+        self - self.trunc()
+    }
+
+    /// Returns a vector containing the fractional part of the vector as `self - self.floor()`.
+    ///
+    /// Note that this differs from the Rust implementation of `fract` which returns
+    /// `self - self.trunc()`.
+    ///
+    /// Note that this is fast but not precise for large numbers.
+    #[inline]
+    #[must_use]
+    pub fn fract_gl(self) -> Self {
+        self - self.floor()
+    }
+
+    /// Returns a vector containing `e^self` (the exponential function) for each element of
+    /// `self`.
+    #[inline]
+    #[must_use]
+    pub fn exp(self) -> Self {
+        Self::new(
+            {% for c in components %}
+                math::exp(self.{{ c }}),
+            {%- endfor %}
+        )
+    }
+
+    /// Returns a vector containing `2^self` for each element of `self`.
+    #[inline]
+    #[must_use]
+    pub fn exp2(self) -> Self {
+        Self::new(
+            {% for c in components %}
+                math::exp2(self.{{ c }}),
+            {%- endfor %}
+        )
+    }
+
+    /// Returns a vector containing the natural logarithm for each element of `self`.
+    /// This returns NaN when the element is negative and negative infinity when the element is zero.
+    #[inline]
+    #[must_use]
+    pub fn ln(self) -> Self {
+        Self::new(
+            {% for c in components %}
+                math::ln(self.{{ c }}),
+            {%- endfor %}
+        )
+    }
+
+    /// Returns a vector containing the base 2 logarithm for each element of `self`.
+    /// This returns NaN when the element is negative and negative infinity when the element is zero.
+    #[inline]
+    #[must_use]
+    pub fn log2(self) -> Self {
+        Self::new(
+            {% for c in components %}
+                math::log2(self.{{ c }}),
+            {%- endfor %}
+        )
+    }
+
+    /// Returns a vector containing each element of `self` raised to the power of `n`.
+    #[inline]
+    #[must_use]
+    pub fn powf(self, n: {{ scalar_t }}) -> Self {
+        Self::new(
+            {% for c in components %}
+                math::powf(self.{{ c }}, n),
+            {%- endfor %}
+        )
+    }
+
+    /// Returns a vector containing the reciprocal `1.0/n` of each element of `self`.
+    #[inline]
+    #[must_use]
+    pub fn recip(self) -> Self {
+        {% if is_scalar %}
+            Self {
+                {% for c in components %}
+                    {{ c }}: 1.0 / self.{{ c }},
+                {%- endfor %}
+            }
+        {% elif is_sse2 %}
+            Self(unsafe { _mm_div_ps(Self::ONE.0, self.0) })
+        {% elif is_wasm32 %}
+            Self(f32x4_div(Self::ONE.0, self.0))
+        {% elif is_coresimd %}
+            Self(self.0.recip())
+        {% elif is_neon %}
+            Self(unsafe { vdivq_f32(Self::ONE.0, self.0) })
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+
+    /// Performs a linear interpolation between `self` and `rhs` based on the value `s`.
+    ///
+    /// When `s` is `0.0`, the result will be equal to `self`.  When `s` is `1.0`, the result
+    /// will be equal to `rhs`. When `s` is outside of range `[0, 1]`, the result is linearly
+    /// extrapolated.
+    #[doc(alias = "mix")]
+    #[inline]
+    #[must_use]
+    pub fn lerp(self, rhs: Self, s: {{ scalar_t }}) -> Self {
+        self * (1.0 - s) + rhs * s
+    }
+
+    /// Moves towards `rhs` based on the value `d`.
+    ///
+    /// When `d` is `0.0`, the result will be equal to `self`. When `d` is equal to 
+    /// `self.distance(rhs)`, the result will be equal to `rhs`. Will not go past `rhs`.
+    #[inline]
+    #[must_use]
+    pub fn move_towards(&self, rhs: Self, d: {{ scalar_t }}) -> Self {
+        let a = rhs - *self;
+        let len = a.length();
+        if len <= d || len <= 1e-4 {
+            return rhs;
+        }
+        *self + a / len * d 
+    }
+
+    /// Calculates the midpoint between `self` and `rhs`. 
+    ///
+    /// The midpoint is the average of, or halfway point between, two vectors.
+    /// `a.midpoint(b)` should yield the same result as `a.lerp(b, 0.5)`
+    /// while being slightly cheaper to compute.
+    #[inline]
+    pub fn midpoint(self, rhs: Self) -> Self {
+        (self + rhs) * 0.5
+    }
+
+    /// Returns true if the absolute difference of all elements between `self` and `rhs` is
+    /// less than or equal to `max_abs_diff`.
+    ///
+    /// This can be used to compare if two vectors contain similar elements. It works best when
+    /// comparing with a known value. The `max_abs_diff` that should be used used depends on
+    /// the values being compared against.
+    ///
+    /// For more see
+    /// [comparing floating point numbers](https://randomascii.wordpress.com/2012/02/25/comparing-floating-point-numbers-2012-edition/).
+    #[inline]
+    #[must_use]
+    pub fn abs_diff_eq(self, rhs: Self, max_abs_diff: {{ scalar_t }}) -> bool {
+        self.sub(rhs).abs().cmple(Self::splat(max_abs_diff)).all()
+    }
+
+    /// Returns a vector with a length no less than `min` and no more than `max`.
+    ///
+    /// # Panics
+    ///
+    /// Will panic if `min` is greater than `max`, or if either `min` or `max` is negative, when `glam_assert` is enabled.
+    #[inline]
+    #[must_use]
+    pub fn clamp_length(self, min: {{ scalar_t }}, max: {{ scalar_t }}) -> Self {
+        glam_assert!(0.0 <= min);
+        glam_assert!(min <= max);
+        let length_sq = self.length_squared();
+        if length_sq < min * min {
+            min * (self / math::sqrt(length_sq))
+        } else if length_sq > max * max {
+            max * (self / math::sqrt(length_sq))
+        } else {
+            self
+        }
+    }
+
+    /// Returns a vector with a length no more than `max`.
+    ///
+    /// # Panics
+    ///
+    /// Will panic if `max` is negative when `glam_assert` is enabled.
+    #[inline]
+    #[must_use]
+    pub fn clamp_length_max(self, max: {{ scalar_t }}) -> Self {
+        glam_assert!(0.0 <= max); 
+        let length_sq = self.length_squared();
+        if length_sq > max * max {
+            max * (self / math::sqrt(length_sq))
+        } else {
+            self
+        }
+    }
+
+    /// Returns a vector with a length no less than `min`.
+    ///
+    /// # Panics
+    ///
+    /// Will panic if `min` is negative when `glam_assert` is enabled.
+    #[inline]
+    #[must_use]
+    pub fn clamp_length_min(self, min: {{ scalar_t }}) -> Self {
+        glam_assert!(0.0 <= min); 
+        let length_sq = self.length_squared();
+        if length_sq < min * min {
+            min * (self / math::sqrt(length_sq))
+        } else {
+            self
+        }
+    }
+
+    /// Fused multiply-add. Computes `(self * a) + b` element-wise with only one rounding
+    /// error, yielding a more accurate result than an unfused multiply-add.
+    ///
+    /// Using `mul_add` *may* be more performant than an unfused multiply-add if the target
+    /// architecture has a dedicated fma CPU instruction. However, this is not always true,
+    /// and will be heavily dependant on designing algorithms with specific target hardware in
+    /// mind.
+    #[inline]
+    #[must_use]
+    pub fn mul_add(self, a: Self, b: Self) -> Self {
+        {% if is_sse2 %}
+            #[cfg(target_feature = "fma")]
+            unsafe { Self(_mm_fmadd_ps(self.0, a.0, b.0)) }
+            #[cfg(not(target_feature = "fma"))]
+        {% endif %}
+        {% if is_coresimd %}
+            Self(self.0.mul_add(a.0, b.0))
+        {% elif is_neon %}
+            Self(unsafe { vfmaq_f32(b.0, self.0, a.0) })
+        {% else %}
+            Self::new(
+                {% for c in components %}
+                    math::mul_add(self.{{ c }}, a.{{ c }}, b.{{ c }}),
+                {%- endfor %}
+            )
+        {% endif %}
+    }
+
+    /// Returns the reflection vector for a given incident vector `self` and surface normal
+    /// `normal`.
+    ///
+    /// `normal` must be normalized.
+    ///
+    /// # Panics
+    ///
+    /// Will panic if `normal` is not normalized when `glam_assert` is enabled.
+    #[inline]
+    #[must_use]
+    pub fn reflect(self, normal: Self) -> Self {
+        glam_assert!(normal.is_normalized());
+        self - 2.0 * self.dot(normal) * normal
+    }
+
+    /// Returns the refraction direction for a given incident vector `self`, surface normal
+    /// `normal` and ratio of indices of refraction, `eta`. When total internal reflection occurs,
+    /// a zero vector will be returned.
+    ///
+    /// `self` and `normal` must be normalized.
+    ///
+    /// # Panics
+    ///
+    /// Will panic if `self` or `normal` is not normalized when `glam_assert` is enabled.
+    #[inline]
+    #[must_use]
+    pub fn refract(self, normal: Self, eta: {{ scalar_t }}) -> Self {
+        glam_assert!(self.is_normalized());
+        glam_assert!(normal.is_normalized());
+        let n_dot_i = normal.dot(self);
+        let k = 1.0 - eta * eta * (1.0 - n_dot_i * n_dot_i);
+        if k >= 0.0 {
+            eta * self - (eta * n_dot_i + math::sqrt(k)) * normal
+        } else {
+            Self::ZERO
+        }
+    }
+
+{% if dim == 2 %}
+    /// Creates a 2D vector containing `[angle.cos(), angle.sin()]`. This can be used in
+    /// conjunction with the [`rotate()`][Self::rotate()] method, e.g.
+    /// `{{ vec2_t }}::from_angle(PI).rotate({{ vec2_t }}::Y)` will create the vector `[-1, 0]`
+    /// and rotate [`{{ vec2_t }}::Y`] around it returning `-{{ vec2_t }}::Y`.
+    #[inline]
+    #[must_use]
+    pub fn from_angle(angle: {{ scalar_t }}) -> Self {
+        let (sin, cos) = math::sin_cos(angle);
+        Self {
+            x: cos,
+            y: sin,
+        }
+    }
+
+    /// Returns the angle (in radians) of this vector in the range `[-π, +π]`.
+    ///
+    /// The input does not need to be a unit vector however it must be non-zero.
+    #[inline]
+    #[must_use]
+    pub fn to_angle(self) -> {{ scalar_t }} {
+        math::atan2(self.y, self.x)
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(
+        since = "0.27.0",
+        note = "Use angle_to() instead, the semantics of angle_between will change in the future."
+    )]
+    pub fn angle_between(self, rhs: Self) -> {{ scalar_t }} {
+        self.angle_to(rhs)
+    }
+
+    /// Returns the angle of rotation (in radians) from `self` to `rhs` in the range `[-π, +π]`.
+    ///
+    /// The inputs do not need to be unit vectors however they must be non-zero.
+    #[inline]
+    #[must_use]
+    pub fn angle_to(self, rhs: Self) -> {{ scalar_t }} {
+        let angle = math::acos_approx(
+            self.dot(rhs) / math::sqrt(self.length_squared() * rhs.length_squared()));
+
+        angle * math::signum(self.perp_dot(rhs))
+    }
+{% elif dim == 3 %}
+    /// Returns the angle (in radians) between two vectors in the range `[0, +π]`.
+    ///
+    /// The inputs do not need to be unit vectors however they must be non-zero.
+    #[inline]
+    #[must_use]
+    pub fn angle_between(self, rhs: Self) -> {{ scalar_t }} {
+        math::acos_approx(
+            self.dot(rhs).div(
+                math::sqrt(self.length_squared().mul(rhs.length_squared()))))
+    }
+
+    /// Rotates around the x axis by `angle` (in radians).
+    #[inline]
+    #[must_use]
+    pub fn rotate_x(self, angle: {{ scalar_t }}) -> Self {
+        let (sina, cosa) = math::sin_cos(angle);
+        Self::new(
+            self.x,
+            self.y * cosa - self.z * sina,
+            self.y * sina + self.z * cosa,
+        )
+    }
+
+    /// Rotates around the y axis by `angle` (in radians).
+    #[inline]
+    #[must_use]
+    pub fn rotate_y(self, angle: {{ scalar_t }}) -> Self {
+        let (sina, cosa) = math::sin_cos(angle);
+        Self::new(
+            self.x * cosa + self.z * sina,
+            self.y,
+            self.x * -sina + self.z * cosa,
+        )
+    }
+
+    /// Rotates around the z axis by `angle` (in radians).
+    #[inline]
+    #[must_use]
+    pub fn rotate_z(self, angle: {{ scalar_t }}) -> Self {
+        let (sina, cosa) = math::sin_cos(angle);
+        Self::new(
+            self.x * cosa - self.y * sina,
+            self.x * sina + self.y * cosa,
+            self.z,
+        )
+    }
+
+    /// Rotates around `axis` by `angle` (in radians).
+    ///
+    /// The axis must be a unit vector.
+    ///
+    /// # Panics
+    ///
+    /// Will panic if `axis` is not normalized when `glam_assert` is enabled.
+    #[inline]
+    #[must_use]
+    pub fn rotate_axis(self, axis: Self, angle: {{ scalar_t }}) -> Self {
+        {{ quat_t }}::from_axis_angle(axis{% if self_t == "Vec3A" %}.into(){% endif%}, angle) * self
+    }
+
+    /// Rotates towards `rhs` up to `max_angle` (in radians).
+    ///
+    /// When `max_angle` is `0.0`, the result will be equal to `self`. When `max_angle` is equal to
+    /// `self.angle_between(rhs)`, the result will be parallel to `rhs`. If `max_angle` is negative,
+    /// rotates towards the exact opposite of `rhs`. Will not go past the target.
+    #[inline]
+    #[must_use]
+    pub fn rotate_towards(self, rhs: Self, max_angle: {{ scalar_t }}) -> Self {
+        let angle_between = self.angle_between(rhs);
+        // When `max_angle < 0`, rotate no further than `PI` radians away
+        let angle = max_angle.clamp(angle_between - core::{{ scalar_t }}::consts::PI, angle_between);
+        let axis = self
+            .cross(rhs)
+            .try_normalize()
+            .unwrap_or_else(|| self.any_orthogonal_vector().normalize());
+        {{ quat_t }}::from_axis_angle(axis{% if self_t == "Vec3A" %}.into(){% endif%}, angle) * self
+    }
+
+    /// Returns some vector that is orthogonal to the given one.
+    ///
+    /// The input vector must be finite and non-zero.
+    ///
+    /// The output vector is not necessarily unit length. For that use
+    /// [`Self::any_orthonormal_vector()`] instead.
+    #[inline]
+    #[must_use]
+    pub fn any_orthogonal_vector(&self) -> Self {
+        // This can probably be optimized
+        if math::abs(self.x) > math::abs(self.y) {
+            Self::new(-self.z, 0.0, self.x) // self.cross(Self::Y)
+        } else {
+            Self::new(0.0, self.z, -self.y) // self.cross(Self::X)
+        }
+    }
+
+    /// Returns any unit vector that is orthogonal to the given one.
+    ///
+    /// The input vector must be unit length.
+    ///
+    /// # Panics
+    ///
+    /// Will panic if `self` is not normalized when `glam_assert` is enabled.
+    #[inline]
+    #[must_use]
+    pub fn any_orthonormal_vector(&self) -> Self {
+        glam_assert!(self.is_normalized());
+        // From https://graphics.pixar.com/library/OrthonormalB/paper.pdf
+        let sign = math::signum(self.z);
+        let a = -1.0 / (sign + self.z);
+        let b = self.x * self.y * a;
+        Self::new(b, sign + self.y * self.y * a, -self.y)
+    }
+
+    /// Given a unit vector return two other vectors that together form an orthonormal
+    /// basis. That is, all three vectors are orthogonal to each other and are normalized.
+    ///
+    /// # Panics
+    ///
+    /// Will panic if `self` is not normalized when `glam_assert` is enabled.
+    #[inline]
+    #[must_use]
+    pub fn any_orthonormal_pair(&self) -> (Self, Self) {
+        glam_assert!(self.is_normalized());
+        // From https://graphics.pixar.com/library/OrthonormalB/paper.pdf
+        let sign = math::signum(self.z);
+        let a = -1.0 / (sign + self.z);
+        let b = self.x * self.y * a;
+        (
+            Self::new(1.0 + sign * self.x * self.x * a, sign * b, -sign * self.x),
+            Self::new(b, sign + self.y * self.y * a, -self.y),
+        )
+    }
+
+    /// Performs a spherical linear interpolation between `self` and `rhs` based on the value `s`.
+    ///
+    /// When `s` is `0.0`, the result will be equal to `self`.  When `s` is `1.0`, the result
+    /// will be equal to `rhs`. When `s` is outside of range `[0, 1]`, the result is linearly
+    /// extrapolated.
+    #[inline]
+    #[must_use]
+    pub fn slerp(self, rhs: Self, s: {{ scalar_t }}) -> Self {
+        let self_length = self.length();
+        let rhs_length = rhs.length();
+        // Cosine of the angle between the vectors [-1, 1], or NaN if either vector has a zero length
+        let dot = self.dot(rhs) / (self_length * rhs_length);
+        // If dot is close to 1 or -1, or is NaN the calculations for t1 and t2 break down
+        if math::abs(dot) < 1.0 - 3e-7 {
+            // Angle between the vectors [0, +π]
+            let theta = math::acos_approx(dot);
+            // Sine of the angle between vectors [0, 1]
+            let sin_theta = math::sin(theta);
+            let t1 = math::sin(theta * (1. - s));
+            let t2 = math::sin(theta * s);
+        
+            // Interpolate vector lengths
+            let result_length = self_length.lerp(rhs_length, s);
+            // Scale the vectors to the target length and interpolate them
+            return (self * (result_length / self_length) * t1
+                + rhs * (result_length / rhs_length) * t2)
+                * sin_theta.recip();
+        }
+        if dot < 0.0 {
+            // Vectors are almost parallel in opposing directions
+
+            // Create a rotation from self to rhs along some axis
+            let axis = self.any_orthogonal_vector().normalize(){% if is_align %}.into(){% endif %};
+            let rotation = {{ quat_t }}::from_axis_angle(axis, core::{{ scalar_t }}::consts::PI * s);
+            // Interpolate vector lengths
+            let result_length = self_length.lerp(rhs_length, s);
+            rotation * self * (result_length / self_length) 
+        } else {
+            // Vectors are almost parallel in the same direction, or dot was NaN
+            self.lerp(rhs, s)
+        }
+    }
+{% endif %}
+{% endif %}
+
+{% if not is_float %}
+
+    /// Computes the [manhattan distance] between two points.
+    ///
+    /// # Overflow
+    /// This method may overflow if the result is greater than [`{{ unsigned_scalar_t }}::MAX`].
+    ///
+    /// See also [`checked_manhattan_distance`][{{ self_t }}::checked_manhattan_distance].
+    ///
+    /// [manhattan distance]: https://en.wikipedia.org/wiki/Taxicab_geometry
+    #[inline]
+    #[must_use]
+    pub fn manhattan_distance(self, rhs: Self) -> {{ unsigned_scalar_t }} {
+        {% for c in components %}
+            {% if not loop.first %} + {% endif %}
+            self.{{c}}.abs_diff(rhs.{{c}})
+        {% endfor %}
+    }
+
+    /// Computes the [manhattan distance] between two points.
+    ///
+    /// This will returns [`None`] if the result is greater than [`{{ unsigned_scalar_t }}::MAX`].
+    ///
+    /// [manhattan distance]: https://en.wikipedia.org/wiki/Taxicab_geometry
+    #[inline]
+    #[must_use]
+    pub fn checked_manhattan_distance(self, rhs: Self) -> Option<{{ unsigned_scalar_t }}> {
+        {% for c in components %}
+            {%- if loop.first -%}
+                let d = self.{{c}}.abs_diff(rhs.{{c}});
+            {%- elif loop.last -%}
+                d.checked_add(self.{{c}}.abs_diff(rhs.{{c}}))
+            {%- else -%}
+                let d = d.checked_add(self.{{c}}.abs_diff(rhs.{{c}}))?;
+            {%- endif -%}
+        {% endfor %}
+    }
+
+    /// Computes the [chebyshev distance] between two points.
+    ///
+    /// [chebyshev distance]: https://en.wikipedia.org/wiki/Chebyshev_distance
+    #[inline]
+    #[must_use]
+    pub fn chebyshev_distance(self, rhs: Self) -> {{ unsigned_scalar_t }} {
+        // Note: the compiler will eventually optimize out the loop
+        [
+            {% for c in components %}
+                self.{{c}}.abs_diff(rhs.{{c}}),
+            {% endfor %}
+        ].into_iter().max().unwrap()
+    }
+
+{% endif %}
+
+
+{% if is_signed and dim == 2 %}
+    /// Returns a vector that is equal to `self` rotated by 90 degrees.
+    #[inline]
+    #[must_use]
+    pub fn perp(self) -> Self {
+        Self {
+            x: -self.y,
+            y: self.x,
+        }
+    }
+
+    /// The perpendicular dot product of `self` and `rhs`.
+    /// Also known as the wedge product, 2D cross product, and determinant.
+    #[doc(alias = "wedge")]
+    #[doc(alias = "cross")]
+    #[doc(alias = "determinant")]
+    #[inline]
+    #[must_use]
+    pub fn perp_dot(self, rhs: Self) -> {{ scalar_t }} {
+        (self.x * rhs.y) - (self.y * rhs.x)
+    }
+
+    /// Returns `rhs` rotated by the angle of `self`. If `self` is normalized,
+    /// then this just rotation. This is what you usually want. Otherwise,
+    /// it will be like a rotation with a multiplication by `self`'s length.
+    {%- if is_float %}
+    ///
+    /// This can be used in conjunction with the [`from_angle()`][Self::from_angle()] method, e.g.
+    /// `{{ vec2_t }}::from_angle(PI).rotate({{ vec2_t }}::Y)` will create the vector `[-1, 0]`
+    /// and rotate [`{{ vec2_t }}::Y`] around it returning `-{{ vec2_t }}::Y`.
+    {%- else %}
+    ///
+    /// This can be used to rotate by 90 degree increments, e.g. `[sin(90), cos(90)` = `[1, 0]` or
+    /// `[sin(180), cos(180)]` = `[0, -1]`.
+    {%- endif %}
+    #[inline]
+    #[must_use]
+    pub fn rotate(self, rhs: Self) -> Self {
+        Self {
+            x: self.x * rhs.x - self.y * rhs.y,
+            y: self.y * rhs.x + self.x * rhs.y,
+        }
+    }
+{% endif %}
+
+{% if is_signed and is_float and dim == 2 %}
+    /// Rotates towards `rhs` up to `max_angle` (in radians).
+    ///
+    /// When `max_angle` is `0.0`, the result will be equal to `self`. When `max_angle` is equal to
+    /// `self.angle_between(rhs)`, the result will be parallel to `rhs`. If `max_angle` is negative,
+    /// rotates towards the exact opposite of `rhs`. Will not go past the target.
+    #[inline]
+    #[must_use]
+    pub fn rotate_towards(&self, rhs: Self, max_angle: {{ scalar_t }}) -> Self {
+        let a = self.angle_to(rhs);
+        let abs_a = math::abs(a);
+        // When `max_angle < 0`, rotate no further than `PI` radians away
+        let angle = max_angle.clamp(abs_a - core::{{ scalar_t }}::consts::PI, abs_a) * math::signum(a);
+        Self::from_angle(angle).rotate(*self)
+    }
+{% endif %}
+
+{% if scalar_t != "f32" %}
+    {% if dim == 2 %}
+    /// Casts all elements of `self` to `f32`.
+    #[inline]
+    #[must_use]
+    pub fn as_vec2(&self) -> crate::Vec2 {
+        crate::Vec2::new(self.x as f32, self.y as f32)
+    }
+    {% elif dim == 3 %}
+    /// Casts all elements of `self` to `f32`.
+    #[inline]
+    #[must_use]
+    pub fn as_vec3(&self) -> crate::Vec3 {
+        crate::Vec3::new(self.x as f32, self.y as f32, self.z as f32)
+    }
+
+    /// Casts all elements of `self` to `f32`.
+    #[inline]
+    #[must_use]
+    pub fn as_vec3a(&self) -> crate::Vec3A {
+        crate::Vec3A::new(self.x as f32, self.y as f32, self.z as f32)
+    }
+    {% elif dim == 4 %}
+    /// Casts all elements of `self` to `f32`.
+    #[inline]
+    #[must_use]
+    pub fn as_vec4(&self) -> crate::Vec4 {
+        crate::Vec4::new(self.x as f32, self.y as f32, self.z as f32, self.w as f32)
+    }
+    {% endif %}
+{% endif %}
+{% if scalar_t != "f64" %}
+    {% if dim == 2 %}
+    /// Casts all elements of `self` to `f64`.
+    #[inline]
+    #[must_use]
+    pub fn as_dvec2(&self) -> crate::DVec2 {
+        crate::DVec2::new(self.x as f64, self.y as f64)
+    }
+    {% elif dim == 3 %}
+    /// Casts all elements of `self` to `f64`.
+    #[inline]
+    #[must_use]
+    pub fn as_dvec3(&self) -> crate::DVec3 {
+        crate::DVec3::new(self.x as f64, self.y as f64, self.z as f64)
+    }
+    {% elif dim == 4 %}
+    /// Casts all elements of `self` to `f64`.
+    #[inline]
+    #[must_use]
+    pub fn as_dvec4(&self) -> crate::DVec4 {
+        crate::DVec4::new(self.x as f64, self.y as f64, self.z as f64, self.w as f64)
+    }
+    {% endif %}
+{% endif %}
+{% if scalar_t != "i8" %}
+    {% if dim == 2 %}
+    /// Casts all elements of `self` to `i8`.
+    #[inline]
+    #[must_use]
+    pub fn as_i8vec2(&self) -> crate::I8Vec2 {
+        crate::I8Vec2::new(self.x as i8, self.y as i8)
+    }
+    {% elif dim == 3 %}
+    /// Casts all elements of `self` to `i8`.
+    #[inline]
+    #[must_use]
+    pub fn as_i8vec3(&self) -> crate::I8Vec3 {
+        crate::I8Vec3::new(self.x as i8, self.y as i8, self.z as i8)
+    }
+    {% elif dim == 4 %}
+    /// Casts all elements of `self` to `i8`.
+    #[inline]
+    #[must_use]
+    pub fn as_i8vec4(&self) -> crate::I8Vec4 {
+        crate::I8Vec4::new(self.x as i8, self.y as i8, self.z as i8, self.w as i8)
+    }
+    {% endif %}
+{% endif %}
+{% if scalar_t != "u8" %}
+    {% if dim == 2 %}
+    /// Casts all elements of `self` to `u8`.
+    #[inline]
+    #[must_use]
+    pub fn as_u8vec2(&self) -> crate::U8Vec2 {
+        crate::U8Vec2::new(self.x as u8, self.y as u8)
+    }
+    {% elif dim == 3 %}
+    /// Casts all elements of `self` to `u8`.
+    #[inline]
+    #[must_use]
+    pub fn as_u8vec3(&self) -> crate::U8Vec3 {
+        crate::U8Vec3::new(self.x as u8, self.y as u8, self.z as u8)
+    }
+    {% elif dim == 4 %}
+    /// Casts all elements of `self` to `u8`.
+    #[inline]
+    #[must_use]
+    pub fn as_u8vec4(&self) -> crate::U8Vec4 {
+        crate::U8Vec4::new(self.x as u8, self.y as u8, self.z as u8, self.w as u8)
+    }
+    {% endif %}
+{% endif %}
+{% if scalar_t != "i16" %}
+    {% if dim == 2 %}
+    /// Casts all elements of `self` to `i16`.
+    #[inline]
+    #[must_use]
+    pub fn as_i16vec2(&self) -> crate::I16Vec2 {
+        crate::I16Vec2::new(self.x as i16, self.y as i16)
+    }
+    {% elif dim == 3 %}
+    /// Casts all elements of `self` to `i16`.
+    #[inline]
+    #[must_use]
+    pub fn as_i16vec3(&self) -> crate::I16Vec3 {
+        crate::I16Vec3::new(self.x as i16, self.y as i16, self.z as i16)
+    }
+    {% elif dim == 4 %}
+    /// Casts all elements of `self` to `i16`.
+    #[inline]
+    #[must_use]
+    pub fn as_i16vec4(&self) -> crate::I16Vec4 {
+        crate::I16Vec4::new(self.x as i16, self.y as i16, self.z as i16, self.w as i16)
+    }
+    {% endif %}
+{% endif %}
+{% if scalar_t != "u16" %}
+    {% if dim == 2 %}
+    /// Casts all elements of `self` to `u16`.
+    #[inline]
+    #[must_use]
+    pub fn as_u16vec2(&self) -> crate::U16Vec2 {
+        crate::U16Vec2::new(self.x as u16, self.y as u16)
+    }
+    {% elif dim == 3 %}
+    /// Casts all elements of `self` to `u16`.
+    #[inline]
+    #[must_use]
+    pub fn as_u16vec3(&self) -> crate::U16Vec3 {
+        crate::U16Vec3::new(self.x as u16, self.y as u16, self.z as u16)
+    }
+    {% elif dim == 4 %}
+    /// Casts all elements of `self` to `u16`.
+    #[inline]
+    #[must_use]
+    pub fn as_u16vec4(&self) -> crate::U16Vec4 {
+        crate::U16Vec4::new(self.x as u16, self.y as u16, self.z as u16, self.w as u16)
+    }
+    {% endif %}
+{% endif %}
+{% if scalar_t != "i32" %}
+    {% if dim == 2 %}
+    /// Casts all elements of `self` to `i32`.
+    #[inline]
+    #[must_use]
+    pub fn as_ivec2(&self) -> crate::IVec2 {
+        crate::IVec2::new(self.x as i32, self.y as i32)
+    }
+    {% elif dim == 3 %}
+    /// Casts all elements of `self` to `i32`.
+    #[inline]
+    #[must_use]
+    pub fn as_ivec3(&self) -> crate::IVec3 {
+        crate::IVec3::new(self.x as i32, self.y as i32, self.z as i32)
+    }
+    {% elif dim == 4 %}
+    /// Casts all elements of `self` to `i32`.
+    #[inline]
+    #[must_use]
+    pub fn as_ivec4(&self) -> crate::IVec4 {
+        crate::IVec4::new(self.x as i32, self.y as i32, self.z as i32, self.w as i32)
+    }
+    {% endif %}
+{% endif %}
+{% if scalar_t != "u32" %}
+    {% if dim == 2 %}
+    /// Casts all elements of `self` to `u32`.
+    #[inline]
+    #[must_use]
+    pub fn as_uvec2(&self) -> crate::UVec2 {
+        crate::UVec2::new(self.x as u32, self.y as u32)
+    }
+    {% elif dim == 3 %}
+    /// Casts all elements of `self` to `u32`.
+    #[inline]
+    #[must_use]
+    pub fn as_uvec3(&self) -> crate::UVec3 {
+        crate::UVec3::new(self.x as u32, self.y as u32, self.z as u32)
+    }
+    {% elif dim == 4 %}
+    /// Casts all elements of `self` to `u32`.
+    #[inline]
+    #[must_use]
+    pub fn as_uvec4(&self) -> crate::UVec4 {
+        crate::UVec4::new(self.x as u32, self.y as u32, self.z as u32, self.w as u32)
+    }
+    {% endif %}
+{% endif %}
+{% if scalar_t != "i64" %}
+    {% if dim == 2 %}
+    /// Casts all elements of `self` to `i64`.
+    #[inline]
+    #[must_use]
+    pub fn as_i64vec2(&self) -> crate::I64Vec2 {
+        crate::I64Vec2::new(self.x as i64, self.y as i64)
+    }
+    {% elif dim == 3 %}
+    /// Casts all elements of `self` to `i64`.
+    #[inline]
+    #[must_use]
+    pub fn as_i64vec3(&self) -> crate::I64Vec3 {
+        crate::I64Vec3::new(self.x as i64, self.y as i64, self.z as i64)
+    }
+    {% elif dim == 4 %}
+    /// Casts all elements of `self` to `i64`.
+    #[inline]
+    #[must_use]
+    pub fn as_i64vec4(&self) -> crate::I64Vec4 {
+        crate::I64Vec4::new(self.x as i64, self.y as i64, self.z as i64, self.w as i64)
+    }
+    {% endif %}
+{% endif %}
+{% if scalar_t != "u64" %}
+    {% if dim == 2 %}
+    /// Casts all elements of `self` to `u64`.
+    #[inline]
+    #[must_use]
+    pub fn as_u64vec2(&self) -> crate::U64Vec2 {
+        crate::U64Vec2::new(self.x as u64, self.y as u64)
+    }
+    {% elif dim == 3 %}
+    /// Casts all elements of `self` to `u64`.
+    #[inline]
+    #[must_use]
+    pub fn as_u64vec3(&self) -> crate::U64Vec3 {
+        crate::U64Vec3::new(self.x as u64, self.y as u64, self.z as u64)
+    }
+    {% elif dim == 4 %}
+    /// Casts all elements of `self` to `u64`.
+    #[inline]
+    #[must_use]
+    pub fn as_u64vec4(&self) -> crate::U64Vec4 {
+        crate::U64Vec4::new(self.x as u64, self.y as u64, self.z as u64, self.w as u64)
+    }
+    {% endif %}
+{% endif %}
+{% if scalar_t != "usize" %}
+    {% if dim == 2 %}
+    /// Casts all elements of `self` to `usize`.
+    #[inline]
+    #[must_use]
+    pub fn as_usizevec2(&self) -> crate::USizeVec2 {
+        crate::USizeVec2::new(self.x as usize, self.y as usize)
+    }
+    {% elif dim == 3 %}
+    /// Casts all elements of `self` to `usize`.
+    #[inline]
+    #[must_use]
+    pub fn as_usizevec3(&self) -> crate::USizeVec3 {
+        crate::USizeVec3::new(self.x as usize, self.y as usize, self.z as usize)
+    }
+    {% elif dim == 4 %}
+    /// Casts all elements of `self` to `usize`.
+    #[inline]
+    #[must_use]
+    pub fn as_usizevec4(&self) -> crate::USizeVec4 {
+        crate::USizeVec4::new(self.x as usize, self.y as usize, self.z as usize, self.w as usize)
+    }
+    {% endif %}
+{% endif %}
+
+{% if not is_float %}
+    /// Returns a vector containing the wrapping addition of `self` and `rhs`.
+    ///
+    /// In other words this computes `Some([self.x + rhs.x, self.y + rhs.y, ..])` but returns `None` on any overflow.
+    #[inline]
+    #[must_use]
+    pub const fn checked_add(self, rhs: Self) -> Option<Self> {
+        {% for c in components %}
+            let {{ c }} = match self.{{ c }}.checked_add(rhs.{{ c }}) { Some(v) => v, None => {return None} };
+        {%- endfor %}
+
+        Some(Self {
+            {% for c in components %}
+                {{ c }},
+            {%- endfor %}
+        })
+    }
+
+    /// Returns a vector containing the wrapping subtraction of `self` and `rhs`.
+    ///
+    /// In other words this computes `Some([self.x - rhs.x, self.y - rhs.y, ..])` but returns `None` on any overflow.
+    #[inline]
+    #[must_use]
+    pub const fn checked_sub(self, rhs: Self) -> Option<Self> {
+        {% for c in components %}
+            let {{ c }} = match self.{{ c }}.checked_sub(rhs.{{ c }}) { Some(v) => v, None => {return None} };
+        {%- endfor %}
+
+        Some(Self {
+            {% for c in components %}
+                {{ c }},
+            {%- endfor %}
+        })
+    }
+
+    /// Returns a vector containing the wrapping multiplication of `self` and `rhs`.
+    ///
+    /// In other words this computes `Some([self.x * rhs.x, self.y * rhs.y, ..])` but returns `None` on any overflow.
+    #[inline]
+    #[must_use]
+    pub const fn checked_mul(self, rhs: Self) -> Option<Self> {
+        {% for c in components %}
+            let {{ c }} = match self.{{ c }}.checked_mul(rhs.{{ c }}) { Some(v) => v, None => {return None} };
+        {%- endfor %}
+
+        Some(Self {
+            {% for c in components %}
+                {{ c }},
+            {%- endfor %}
+        })
+    }
+
+    /// Returns a vector containing the wrapping division of `self` and `rhs`.
+    ///
+    /// In other words this computes `Some([self.x / rhs.x, self.y / rhs.y, ..])` but returns `None` on any division by zero.
+    #[inline]
+    #[must_use]
+    pub const fn checked_div(self, rhs: Self) -> Option<Self> {
+        {% for c in components %}
+            let {{ c }} = match self.{{ c }}.checked_div(rhs.{{ c }}) { Some(v) => v, None => {return None} };
+        {%- endfor %}
+
+        Some(Self {
+            {% for c in components %}
+                {{ c }},
+            {%- endfor %}
+        })
+    }
+
+    /// Returns a vector containing the wrapping addition of `self` and `rhs`.
+    ///
+    /// In other words this computes `[self.x.wrapping_add(rhs.x), self.y.wrapping_add(rhs.y), ..]`.
+    #[inline]
+    #[must_use]
+    pub const fn wrapping_add(self, rhs: Self) -> Self {
+        Self {
+            {% for c in components %}
+                {{ c }}: self.{{ c }}.wrapping_add(rhs.{{ c }}),
+            {%- endfor %}
+        }
+    }
+
+    /// Returns a vector containing the wrapping subtraction of `self` and `rhs`.
+    ///
+    /// In other words this computes `[self.x.wrapping_sub(rhs.x), self.y.wrapping_sub(rhs.y), ..]`.
+    #[inline]
+    #[must_use]
+    pub const fn wrapping_sub(self, rhs: Self) -> Self {
+        Self {
+            {% for c in components %}
+                {{ c }}: self.{{ c }}.wrapping_sub(rhs.{{ c }}),
+            {%- endfor %}
+        }
+    }
+
+    /// Returns a vector containing the wrapping multiplication of `self` and `rhs`.
+    ///
+    /// In other words this computes `[self.x.wrapping_mul(rhs.x), self.y.wrapping_mul(rhs.y), ..]`.
+    #[inline]
+    #[must_use]
+    pub const fn wrapping_mul(self, rhs: Self) -> Self {
+        Self {
+            {% for c in components %}
+                {{ c }}: self.{{ c }}.wrapping_mul(rhs.{{ c }}),
+            {%- endfor %}
+        }
+    }
+
+    /// Returns a vector containing the wrapping division of `self` and `rhs`.
+    ///
+    /// In other words this computes `[self.x.wrapping_div(rhs.x), self.y.wrapping_div(rhs.y), ..]`.
+    #[inline]
+    #[must_use]
+    pub const fn wrapping_div(self, rhs: Self) -> Self {
+        Self {
+            {% for c in components %}
+                {{ c }}: self.{{ c }}.wrapping_div(rhs.{{ c }}),
+            {%- endfor %}
+        }
+    }
+
+    /// Returns a vector containing the saturating addition of `self` and `rhs`.
+    ///
+    /// In other words this computes `[self.x.saturating_add(rhs.x), self.y.saturating_add(rhs.y), ..]`.
+    #[inline]
+    #[must_use]
+    pub const fn saturating_add(self, rhs: Self) -> Self {
+        Self {
+            {% for c in components %}
+                {{ c }}: self.{{ c }}.saturating_add(rhs.{{ c }}),
+            {%- endfor %}
+        }
+    }
+
+    /// Returns a vector containing the saturating subtraction of `self` and `rhs`.
+    ///
+    /// In other words this computes `[self.x.saturating_sub(rhs.x), self.y.saturating_sub(rhs.y), ..]`.
+    #[inline]
+    #[must_use]
+    pub const fn saturating_sub(self, rhs: Self) -> Self {
+        Self {
+            {% for c in components %}
+                {{ c }}: self.{{ c }}.saturating_sub(rhs.{{ c }}),
+            {%- endfor %}
+        }
+    }
+
+    /// Returns a vector containing the saturating multiplication of `self` and `rhs`.
+    ///
+    /// In other words this computes `[self.x.saturating_mul(rhs.x), self.y.saturating_mul(rhs.y), ..]`.
+    #[inline]
+    #[must_use]
+    pub const fn saturating_mul(self, rhs: Self) -> Self {
+        Self {
+            {% for c in components %}
+                {{ c }}: self.{{ c }}.saturating_mul(rhs.{{ c }}),
+            {%- endfor %}
+        }
+    }
+
+    /// Returns a vector containing the saturating division of `self` and `rhs`.
+    ///
+    /// In other words this computes `[self.x.saturating_div(rhs.x), self.y.saturating_div(rhs.y), ..]`.
+    #[inline]
+    #[must_use]
+    pub const fn saturating_div(self, rhs: Self) -> Self {
+        Self {
+            {% for c in components %}
+                {{ c }}: self.{{ c }}.saturating_div(rhs.{{ c }}),
+            {%- endfor %}
+        }
+    }
+
+    {% if scalar_t != "usize" %}
+        {% if is_signed %}
+            /// Returns a vector containing the wrapping addition of `self` and unsigned vector `rhs`.
+            ///
+            /// In other words this computes `Some([self.x + rhs.x, self.y + rhs.y, ..])` but returns `None` on any overflow.
+            #[inline]
+            #[must_use]
+            pub const fn checked_add_unsigned(self, rhs: {{ opposite_signedness_t }}) -> Option<Self> {
+                {% for c in components %}
+                    let {{ c }} = match self.{{ c }}.checked_add_unsigned(rhs.{{ c }}) { Some(v) => v, None => {return None} };
+                {%- endfor %}
+
+                Some(Self {
+                    {% for c in components %}
+                        {{ c }},
+                    {%- endfor %}
+                })
+            }
+
+            /// Returns a vector containing the wrapping subtraction of `self` and unsigned vector `rhs`.
+            ///
+            /// In other words this computes `Some([self.x - rhs.x, self.y - rhs.y, ..])` but returns `None` on any overflow.
+            #[inline]
+            #[must_use]
+            pub const fn checked_sub_unsigned(self, rhs: {{ opposite_signedness_t }}) -> Option<Self> {
+                {% for c in components %}
+                    let {{ c }} = match self.{{ c }}.checked_sub_unsigned(rhs.{{ c }}) { Some(v) => v, None => {return None} };
+                {%- endfor %}
+
+                Some(Self {
+                    {% for c in components %}
+                        {{ c }},
+                    {%- endfor %}
+                })
+            }
+
+            /// Returns a vector containing the wrapping addition of `self` and unsigned vector `rhs`.
+            ///
+            /// In other words this computes `[self.x.wrapping_add_unsigned(rhs.x), self.y.wrapping_add_unsigned(rhs.y), ..]`.
+            #[inline]
+            #[must_use]
+            pub const fn wrapping_add_unsigned(self, rhs: {{ opposite_signedness_t }}) -> Self {
+                Self {
+                    {% for c in components %}
+                        {{ c }}: self.{{ c }}.wrapping_add_unsigned(rhs.{{ c }}),
+                    {%- endfor %}
+                }
+            }
+
+            /// Returns a vector containing the wrapping subtraction of `self` and unsigned vector `rhs`.
+            ///
+            /// In other words this computes `[self.x.wrapping_sub_unsigned(rhs.x), self.y.wrapping_sub_unsigned(rhs.y), ..]`.
+            #[inline]
+            #[must_use]
+            pub const fn wrapping_sub_unsigned(self, rhs: {{ opposite_signedness_t }}) -> Self {
+                Self {
+                    {% for c in components %}
+                        {{ c }}: self.{{ c }}.wrapping_sub_unsigned(rhs.{{ c }}),
+                    {%- endfor %}
+                }
+            }
+
+            // Returns a vector containing the saturating addition of `self` and unsigned vector `rhs`.
+            ///
+            /// In other words this computes `[self.x.saturating_add_unsigned(rhs.x), self.y.saturating_add_unsigned(rhs.y), ..]`.
+            #[inline]
+            #[must_use]
+            pub const fn saturating_add_unsigned(self, rhs: {{ opposite_signedness_t }}) -> Self {
+                Self {
+                    {% for c in components %}
+                        {{ c }}: self.{{ c }}.saturating_add_unsigned(rhs.{{ c }}),
+                    {%- endfor %}
+                }
+            }
+
+            /// Returns a vector containing the saturating subtraction of `self` and unsigned vector `rhs`.
+            ///
+            /// In other words this computes `[self.x.saturating_sub_unsigned(rhs.x), self.y.saturating_sub_unsigned(rhs.y), ..]`.
+            #[inline]
+            #[must_use]
+            pub const fn saturating_sub_unsigned(self, rhs: {{ opposite_signedness_t }}) -> Self {
+                Self {
+                    {% for c in components %}
+                        {{ c }}: self.{{ c }}.saturating_sub_unsigned(rhs.{{ c }}),
+                    {%- endfor %}
+                }
+            }
+        {% else %}
+            /// Returns a vector containing the wrapping addition of `self` and signed vector `rhs`.
+            ///
+            /// In other words this computes `Some([self.x + rhs.x, self.y + rhs.y, ..])` but returns `None` on any overflow.
+            #[inline]
+            #[must_use]
+            pub const fn checked_add_signed(self, rhs: {{ opposite_signedness_t }}) -> Option<Self> {
+                {% for c in components %}
+                    let {{ c }} = match self.{{ c }}.checked_add_signed(rhs.{{ c }}) { Some(v) => v, None => {return None} };
+                {%- endfor %}
+
+                Some(Self {
+                    {% for c in components %}
+                        {{ c }},
+                    {%- endfor %}
+                })
+            }
+
+            /// Returns a vector containing the wrapping addition of `self` and signed vector `rhs`.
+            ///
+            /// In other words this computes `[self.x.wrapping_add_signed(rhs.x), self.y.wrapping_add_signed(rhs.y), ..]`.
+            #[inline]
+            #[must_use]
+            pub const fn wrapping_add_signed(self, rhs: {{ opposite_signedness_t }}) -> Self {
+                Self {
+                    {% for c in components %}
+                        {{ c }}: self.{{ c }}.wrapping_add_signed(rhs.{{ c }}),
+                    {%- endfor %}
+                }
+            }
+
+            /// Returns a vector containing the saturating addition of `self` and signed vector `rhs`.
+            ///
+            /// In other words this computes `[self.x.saturating_add_signed(rhs.x), self.y.saturating_add_signed(rhs.y), ..]`.
+            #[inline]
+            #[must_use]
+            pub const fn saturating_add_signed(self, rhs: {{ opposite_signedness_t }}) -> Self {
+                Self {
+                    {% for c in components %}
+                        {{ c }}: self.{{ c }}.saturating_add_signed(rhs.{{ c }}),
+                    {%- endfor %}
+                }
+            }
+        {% endif %}
+    {% endif %}
+{% endif %}
+}
+
+impl Default for {{ self_t }} {
+    #[inline(always)]
+    fn default() -> Self {
+        Self::ZERO
+    }
+}
+
+{% if not is_scalar %}
+impl PartialEq for {{ self_t }} {
+    #[inline]
+    fn eq(&self, rhs: &Self) -> bool {
+        self.cmpeq(*rhs).all()
+    }
+}
+{% endif %}
+
+impl Div for {{ self_t }} {
+    type Output = Self;
+    #[inline]
+    fn div(self, rhs: Self) -> Self {
+        {% if is_scalar %}
+            Self {
+                {% for c in components %}
+                    {{ c }}: self.{{ c }}.div(rhs.{{ c }}),
+                {%- endfor %}
+            }
+        {% elif is_sse2 %}
+            Self(unsafe { _mm_div_ps(self.0, rhs.0) })
+        {% elif is_wasm32 %}
+            Self(f32x4_div(self.0, rhs.0))
+        {% elif is_coresimd %}
+            Self(self.0 / rhs.0)
+        {% elif is_neon %}
+            Self(unsafe { vdivq_f32(self.0, rhs.0) })
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+}
+
+{{ macros::impl_ref_binop(imp="Div", self_t=self_t, rhs_t=self_t, output_t=self_t) }}
+
+impl DivAssign for {{ self_t }} {
+    #[inline]
+    fn div_assign(&mut self, rhs: Self) {
+        {% if is_scalar %}
+            {% for c in components %}
+                self.{{ c }}.div_assign(rhs.{{ c }});
+            {%- endfor %}
+        {% elif is_sse2 %}
+            self.0 = unsafe { _mm_div_ps(self.0, rhs.0) };
+        {% elif is_wasm32 %}
+            self.0 = f32x4_div(self.0, rhs.0);
+        {% elif is_coresimd %}
+            self.0 /= rhs.0;
+        {% elif is_neon %}
+            self.0 = unsafe { vdivq_f32(self.0, rhs.0) };
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+}
+
+{{ macros::impl_ref_op_assign(imp="Div", self_t=self_t, rhs_t=self_t) }}
+
+impl Div<{{ scalar_t }}> for {{ self_t }} {
+    type Output = Self;
+    #[inline]
+    fn div(self, rhs: {{ scalar_t }}) -> Self {
+        {% if is_scalar %}
+            Self {
+                {% for c in components %}
+                    {{ c }}: self.{{ c }}.div(rhs),
+                {%- endfor %}
+            }
+        {% elif is_sse2 %}
+            Self(unsafe { _mm_div_ps(self.0, _mm_set1_ps(rhs)) })
+        {% elif is_wasm32 %}
+            Self(f32x4_div(self.0, f32x4_splat(rhs)))
+        {% elif is_coresimd %}
+            Self(self.0 / f32x4::splat(rhs))
+        {% elif is_neon %}
+            Self(unsafe { vdivq_f32(self.0, vld1q_dup_f32(&rhs)) })
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+}
+
+{{ macros::impl_ref_binop(imp="Div", self_t=self_t, rhs_t=scalar_t, output_t=self_t) }}
+
+impl DivAssign<{{ scalar_t }}> for {{ self_t }} {
+    #[inline]
+    fn div_assign(&mut self, rhs: {{ scalar_t }}) {
+        {% if is_scalar %}
+            {% for c in components %}
+                self.{{ c }}.div_assign(rhs);
+            {%- endfor %}
+        {% elif is_sse2 %}
+            self.0 = unsafe { _mm_div_ps(self.0, _mm_set1_ps(rhs)) };
+        {% elif is_wasm32 %}
+            self.0 = f32x4_div(self.0, f32x4_splat(rhs));
+        {% elif is_coresimd %}
+            self.0 /= f32x4::splat(rhs);
+        {% elif is_neon %}
+            self.0 = unsafe { vdivq_f32(self.0, vld1q_dup_f32(&rhs)) };
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+}
+
+{{ macros::impl_ref_op_assign(imp="Div", self_t=self_t, rhs_t=scalar_t) }}
+
+impl Div<{{ self_t }}> for {{ scalar_t }} {
+    type Output = {{ self_t }};
+    #[inline]
+    fn div(self, rhs: {{ self_t }}) -> {{ self_t }} {
+        {% if is_scalar %}
+            {{ self_t }} {
+                {% for c in components %}
+                    {{ c }}: self.div(rhs.{{ c }}),
+                {%- endfor %}
+            }
+        {% elif is_sse2 %}
+            {{ self_t }}(unsafe { _mm_div_ps(_mm_set1_ps(self), rhs.0) })
+        {% elif is_wasm32 %}
+            {{ self_t }}(f32x4_div(f32x4_splat(self), rhs.0))
+        {% elif is_coresimd %}
+            {{ self_t }}(f32x4::splat(self) / rhs.0)
+        {% elif is_neon %}
+            {{ self_t }}(unsafe { vdivq_f32(vld1q_dup_f32(&self), rhs.0) })
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+}
+
+{{ macros::impl_ref_binop(imp="Div", self_t=scalar_t, rhs_t=self_t, output_t=self_t) }}
+
+impl Mul for {{ self_t }} {
+    type Output = Self;
+    #[inline]
+    fn mul(self, rhs: Self) -> Self {
+        {% if is_scalar %}
+            Self {
+                {% for c in components %}
+                    {{ c }}: self.{{ c }}.mul(rhs.{{ c }}),
+                {%- endfor %}
+            }
+        {% elif is_sse2 %}
+            Self(unsafe { _mm_mul_ps(self.0, rhs.0) })
+        {% elif is_wasm32 %}
+            Self(f32x4_mul(self.0, rhs.0))
+        {% elif is_coresimd %}
+            Self(self.0 * rhs.0)
+        {% elif is_neon %}
+            Self(unsafe { vmulq_f32(self.0, rhs.0) })
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+}
+
+{{ macros::impl_ref_binop(imp="Mul", self_t=self_t, rhs_t=self_t, output_t=self_t) }}
+
+impl MulAssign for {{ self_t }} {
+    #[inline]
+    fn mul_assign(&mut self, rhs: Self) {
+        {% if is_scalar %}
+            {% for c in components %}
+                self.{{ c }}.mul_assign(rhs.{{ c }});
+            {%- endfor %}
+        {% elif is_sse2 %}
+            self.0 = unsafe { _mm_mul_ps(self.0, rhs.0) };
+        {% elif is_wasm32 %}
+            self.0 = f32x4_mul(self.0, rhs.0);
+        {% elif is_coresimd %}
+            self.0 *= rhs.0;
+        {% elif is_neon %}
+            self.0 = unsafe { vmulq_f32(self.0, rhs.0) };
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+}
+
+{{ macros::impl_ref_op_assign(imp="Mul", self_t=self_t, rhs_t=self_t) }}
+
+impl Mul<{{ scalar_t }}> for {{ self_t }} {
+    type Output = Self;
+    #[inline]
+    fn mul(self, rhs: {{ scalar_t }}) -> Self {
+        {% if is_scalar %}
+            Self {
+                {% for c in components %}
+                    {{ c }}: self.{{ c }}.mul(rhs),
+                {%- endfor %}
+            }
+        {% elif is_sse2 %}
+            Self(unsafe { _mm_mul_ps(self.0, _mm_set1_ps(rhs)) })
+        {% elif is_wasm32 %}
+            Self(f32x4_mul(self.0, f32x4_splat(rhs)))
+        {% elif is_coresimd %}
+            Self(self.0 * f32x4::splat(rhs))
+        {% elif is_neon %}
+            Self(unsafe { vmulq_n_f32(self.0, rhs) })
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+}
+
+{{ macros::impl_ref_binop(imp="Mul", self_t=self_t, rhs_t=scalar_t, output_t=self_t) }}
+
+impl MulAssign<{{ scalar_t }}> for {{ self_t }} {
+    #[inline]
+    fn mul_assign(&mut self, rhs: {{ scalar_t }}) {
+        {% if is_scalar %}
+            {% for c in components %}
+                self.{{ c }}.mul_assign(rhs);
+            {%- endfor %}
+        {% elif is_sse2 %}
+            self.0 = unsafe { _mm_mul_ps(self.0, _mm_set1_ps(rhs)) };
+        {% elif is_wasm32 %}
+            self.0 = f32x4_mul(self.0, f32x4_splat(rhs))
+        {% elif is_coresimd %}
+            self.0 *= f32x4::splat(rhs);
+        {% elif is_neon %}
+            self.0 = unsafe { vmulq_n_f32(self.0, rhs) };
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+}
+
+{{ macros::impl_ref_op_assign(imp="Mul", self_t=self_t, rhs_t=scalar_t) }}
+
+impl Mul<{{ self_t }}> for {{ scalar_t }} {
+    type Output = {{ self_t }};
+    #[inline]
+    fn mul(self, rhs: {{ self_t }}) -> {{ self_t }} {
+        {% if is_scalar %}
+            {{ self_t }} {
+                {% for c in components %}
+                    {{ c }}: self.mul(rhs.{{ c }}),
+                {%- endfor %}
+            }
+        {% elif is_sse2 %}
+            {{ self_t }}(unsafe { _mm_mul_ps(_mm_set1_ps(self), rhs.0) })
+        {% elif is_wasm32 %}
+            {{ self_t }}(f32x4_mul(f32x4_splat(self), rhs.0))
+        {% elif is_coresimd %}
+            {{ self_t }}(f32x4::splat(self) * rhs.0)
+        {% elif is_neon %}
+            {{ self_t }}(unsafe { vmulq_n_f32(rhs.0, self) })
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+}
+
+{{ macros::impl_ref_binop(imp="Mul", self_t=scalar_t, rhs_t=self_t, output_t=self_t) }}
+
+impl Add for {{ self_t }} {
+    type Output = Self;
+    #[inline]
+    fn add(self, rhs: Self) -> Self {
+        {% if is_scalar %}
+            Self {
+                {% for c in components %}
+                    {{ c }}: self.{{ c }}.add(rhs.{{ c }}),
+                {%- endfor %}
+            }
+        {% elif is_sse2 %}
+            Self(unsafe { _mm_add_ps(self.0, rhs.0) })
+        {% elif is_wasm32 %}
+            Self(f32x4_add(self.0, rhs.0))
+        {% elif is_coresimd %}
+            Self(self.0 + rhs.0)
+        {% elif is_neon %}
+            Self(unsafe { vaddq_f32(self.0, rhs.0) })
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+}
+
+{{ macros::impl_ref_binop(imp="Add", self_t=self_t, rhs_t=self_t, output_t=self_t) }}
+
+impl AddAssign for {{ self_t }} {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        {% if is_scalar %}
+            {% for c in components %}
+                self.{{ c }}.add_assign(rhs.{{ c }});
+            {%- endfor %}
+        {% elif is_sse2 %}
+            self.0 = unsafe { _mm_add_ps(self.0, rhs.0) };
+        {% elif is_wasm32 %}
+            self.0 = f32x4_add(self.0, rhs.0);
+        {% elif is_coresimd %}
+            self.0 += rhs.0;
+        {% elif is_neon %}
+            self.0 = unsafe { vaddq_f32(self.0, rhs.0) };
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+}
+
+{{ macros::impl_ref_op_assign(imp="Add", self_t=self_t, rhs_t=self_t) }}
+
+impl Add<{{ scalar_t }}> for {{ self_t }} {
+    type Output = Self;
+    #[inline]
+    fn add(self, rhs: {{ scalar_t }}) -> Self {
+        {% if is_scalar %}
+            Self {
+                {% for c in components %}
+                    {{ c }}: self.{{ c }}.add(rhs),
+                {%- endfor %}
+            }
+        {% elif is_sse2 %}
+            Self(unsafe { _mm_add_ps(self.0, _mm_set1_ps(rhs)) })
+        {% elif is_wasm32 %}
+            Self(f32x4_add(self.0, f32x4_splat(rhs)))
+        {% elif is_coresimd %}
+            Self(self.0 + f32x4::splat(rhs))
+        {% elif is_neon %}
+            Self(unsafe { vaddq_f32(self.0, vld1q_dup_f32(&rhs)) })
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+}
+
+{{ macros::impl_ref_binop(imp="Add", self_t=self_t, rhs_t=scalar_t, output_t=self_t) }}
+
+impl AddAssign<{{ scalar_t }}> for {{ self_t }} {
+    #[inline]
+    fn add_assign(&mut self, rhs: {{ scalar_t }}) {
+        {% if is_scalar %}
+            {% for c in components %}
+                self.{{ c }}.add_assign(rhs);
+            {%- endfor %}
+        {% elif is_sse2 %}
+            self.0 = unsafe { _mm_add_ps(self.0, _mm_set1_ps(rhs)) };
+        {% elif is_wasm32 %}
+            self.0 = f32x4_add(self.0, f32x4_splat(rhs));
+        {% elif is_coresimd %}
+            self.0 += f32x4::splat(rhs);
+        {% elif is_neon %}
+            self.0 = unsafe { vaddq_f32(self.0, vld1q_dup_f32(&rhs)) };
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+}
+
+{{ macros::impl_ref_op_assign(imp="Add", self_t=self_t, rhs_t=scalar_t) }}
+
+impl Add<{{ self_t }}> for {{ scalar_t }} {
+    type Output = {{ self_t }};
+    #[inline]
+    fn add(self, rhs: {{ self_t }}) -> {{ self_t }} {
+        {% if is_scalar %}
+            {{ self_t }} {
+                {% for c in components %}
+                    {{ c }}: self.add(rhs.{{ c }}),
+                {%- endfor %}
+            }
+        {% elif is_sse2 %}
+            {{ self_t }}(unsafe { _mm_add_ps(_mm_set1_ps(self), rhs.0) })
+        {% elif is_wasm32 %}
+            {{ self_t }}(f32x4_add(f32x4_splat(self), rhs.0))
+        {% elif is_coresimd %}
+            {{ self_t }}(f32x4::splat(self) + rhs.0)
+        {% elif is_neon %}
+            {{ self_t }}(unsafe { vaddq_f32(vld1q_dup_f32(&self), rhs.0) })
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+}
+
+{{ macros::impl_ref_binop(imp="Add", self_t=scalar_t, rhs_t=self_t, output_t=self_t) }}
+
+impl Sub for {{ self_t }} {
+    type Output = Self;
+    #[inline]
+    fn sub(self, rhs: Self) -> Self {
+        {% if is_scalar %}
+            Self {
+                {% for c in components %}
+                    {{ c }}: self.{{ c }}.sub(rhs.{{ c }}),
+                {%- endfor %}
+            }
+        {% elif is_sse2 %}
+            Self(unsafe { _mm_sub_ps(self.0, rhs.0) })
+        {% elif is_wasm32 %}
+            Self(f32x4_sub(self.0, rhs.0))
+        {% elif is_coresimd %}
+            Self(self.0 - rhs.0)
+        {% elif is_neon %}
+            Self(unsafe { vsubq_f32(self.0, rhs.0) })
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+}
+
+{{ macros::impl_ref_binop(imp="Sub", self_t=self_t, rhs_t=self_t, output_t=self_t) }}
+
+impl SubAssign for {{ self_t }} {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        {% if is_scalar %}
+            {% for c in components %}
+                self.{{ c }}.sub_assign(rhs.{{ c }});
+            {%- endfor %}
+        {% elif is_sse2 %}
+            self.0 = unsafe { _mm_sub_ps(self.0, rhs.0) };
+        {% elif is_wasm32 %}
+            self.0 = f32x4_sub(self.0, rhs.0);
+        {% elif is_coresimd %}
+            self.0 -= rhs.0;
+        {% elif is_neon %}
+            self.0 = unsafe { vsubq_f32(self.0, rhs.0) };
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+}
+
+{{ macros::impl_ref_op_assign(imp="Sub", self_t=self_t, rhs_t=self_t) }}
+
+impl Sub<{{ scalar_t }}> for {{ self_t }} {
+    type Output = Self;
+    #[inline]
+    fn sub(self, rhs: {{ scalar_t }}) -> Self {
+        {% if is_scalar %}
+            Self {
+                {% for c in components %}
+                    {{ c }}: self.{{ c }}.sub(rhs),
+                {%- endfor %}
+            }
+        {% elif is_sse2 %}
+            Self(unsafe { _mm_sub_ps(self.0, _mm_set1_ps(rhs)) })
+        {% elif is_wasm32 %}
+            Self(f32x4_sub(self.0, f32x4_splat(rhs)))
+        {% elif is_coresimd %}
+            Self(self.0 - f32x4::splat(rhs))
+        {% elif is_neon %}
+            Self(unsafe { vsubq_f32(self.0, vld1q_dup_f32(&rhs)) })
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+}
+
+{{ macros::impl_ref_binop(imp="Sub", self_t=self_t, rhs_t=scalar_t, output_t=self_t) }}
+
+impl SubAssign<{{ scalar_t }}> for {{ self_t }} {
+    #[inline]
+    fn sub_assign(&mut self, rhs: {{ scalar_t }}) {
+        {% if is_scalar %}
+            {% for c in components %}
+                self.{{ c }}.sub_assign(rhs);
+            {%- endfor %}
+        {% elif is_sse2 %}
+            self.0 = unsafe { _mm_sub_ps(self.0, _mm_set1_ps(rhs)) };
+        {% elif is_wasm32 %}
+            self.0 = f32x4_sub(self.0, f32x4_splat(rhs))
+        {% elif is_coresimd %}
+            self.0 -= f32x4::splat(rhs);
+        {% elif is_neon %}
+            self.0 = unsafe { vsubq_f32(self.0, vld1q_dup_f32(&rhs)) };
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+}
+
+{{ macros::impl_ref_op_assign(imp="Sub", self_t=self_t, rhs_t=scalar_t) }}
+
+impl Sub<{{ self_t }}> for {{ scalar_t }} {
+    type Output = {{ self_t }};
+    #[inline]
+    fn sub(self, rhs: {{ self_t }}) -> {{ self_t }} {
+        {% if is_scalar %}
+            {{ self_t }} {
+                {% for c in components %}
+                    {{ c }}: self.sub(rhs.{{ c }}),
+                {%- endfor %}
+            }
+        {% elif is_sse2 %}
+            {{ self_t }}(unsafe { _mm_sub_ps(_mm_set1_ps(self), rhs.0) })
+        {% elif is_wasm32 %}
+            {{ self_t }}(f32x4_sub(f32x4_splat(self), rhs.0))
+        {% elif is_coresimd %}
+            {{ self_t }}(f32x4::splat(self) - rhs.0)
+        {% elif is_neon %}
+            {{ self_t }}(unsafe { vsubq_f32(vld1q_dup_f32(&self), rhs.0) })
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+}
+
+{{ macros::impl_ref_binop(imp="Sub", self_t=scalar_t, rhs_t=self_t, output_t=self_t) }}
+
+impl Rem for {{ self_t }} {
+    type Output = Self;
+    #[inline]
+    fn rem(self, rhs: Self) -> Self {
+        {% if is_scalar %}
+            Self {
+                {% for c in components %}
+                    {{ c }}: self.{{ c }}.rem(rhs.{{ c }}),
+                {%- endfor %}
+            }
+        {% elif is_sse2 %}
+            unsafe {
+                let n = m128_floor(_mm_div_ps(self.0, rhs.0));
+                Self(_mm_sub_ps(self.0, _mm_mul_ps(n, rhs.0)))
+            }
+        {% elif is_wasm32 %}
+            let n = f32x4_floor(f32x4_div(self.0, rhs.0));
+            Self(f32x4_sub(self.0, f32x4_mul(n, rhs.0)))
+        {% elif is_coresimd %}
+            Self(self.0 % rhs.0)
+        {% elif is_neon %}
+            unsafe {
+                let n = vrndmq_f32(vdivq_f32(self.0, rhs.0));
+                Self(vsubq_f32(self.0, vmulq_f32(n, rhs.0)))
+            }
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+}
+
+{{ macros::impl_ref_binop(imp="Rem", self_t=self_t, rhs_t=self_t, output_t=self_t) }}
+
+impl RemAssign for {{ self_t }} {
+    #[inline]
+    fn rem_assign(&mut self, rhs: Self) {
+        {% if is_scalar %}
+            {% for c in components %}
+                self.{{ c }}.rem_assign(rhs.{{ c }});
+            {%- endfor %}
+        {% elif is_coresimd %}
+            self.0 %= rhs.0;
+        {% else %}
+            *self = self.rem(rhs);
+        {% endif %}
+    }
+}
+
+{{ macros::impl_ref_op_assign(imp="Rem", self_t=self_t, rhs_t=self_t) }}
+
+impl Rem<{{ scalar_t }}> for {{ self_t }} {
+    type Output = Self;
+    #[inline]
+    fn rem(self, rhs: {{ scalar_t }}) -> Self {
+        {% if is_scalar %}
+            Self {
+                {% for c in components %}
+                    {{ c }}: self.{{ c }}.rem(rhs),
+                {%- endfor %}
+            }
+        {% else %}
+            self.rem(Self::splat(rhs))
+        {% endif %}
+    }
+}
+
+{{ macros::impl_ref_binop(imp="Rem", self_t=self_t, rhs_t=scalar_t, output_t=self_t) }}
+
+impl RemAssign<{{ scalar_t }}> for {{ self_t }} {
+    #[inline]
+    fn rem_assign(&mut self, rhs: {{ scalar_t }}) {
+        {% if is_scalar %}
+            {% for c in components %}
+                self.{{ c }}.rem_assign(rhs);
+            {%- endfor %}
+        {% elif is_coresimd %}
+            self.0 %= f32x4::splat(rhs);
+        {% else %}
+            *self = self.rem(Self::splat(rhs));
+        {% endif %}
+    }
+}
+
+{{ macros::impl_ref_op_assign(imp="Rem", self_t=self_t, rhs_t=scalar_t) }}
+
+impl Rem<{{ self_t }}> for {{ scalar_t }} {
+    type Output = {{ self_t }};
+    #[inline]
+    fn rem(self, rhs: {{ self_t }}) -> {{ self_t }} {
+        {% if is_scalar %}
+            {{ self_t }} {
+                {% for c in components %}
+                    {{ c }}: self.rem(rhs.{{ c }}),
+                {%- endfor %}
+            }
+        {% else %}
+            {{ self_t }}::splat(self).rem(rhs)
+        {% endif %}
+    }
+}
+
+{{ macros::impl_ref_binop(imp="Rem", self_t=scalar_t, rhs_t=self_t, output_t=self_t) }}
+
+impl AsRef<[{{ scalar_t }}; {{ dim }}]> for {{ self_t }} {
+    #[inline]
+    fn as_ref(&self) -> &[{{ scalar_t }}; {{ dim }}] {
+        unsafe { &*(self as *const Self as *const [{{ scalar_t }}; {{ dim }}]) }
+    }
+}
+
+impl AsMut<[{{ scalar_t }}; {{ dim }}]> for {{ self_t }} {
+    #[inline]
+    fn as_mut(&mut self) -> &mut [{{ scalar_t }}; {{ dim }}] {
+        unsafe { &mut *(self as *mut Self as *mut [{{ scalar_t }}; {{ dim }}]) }
+    }
+}
+
+impl Sum for {{ self_t }} {
+    #[inline]
+    fn sum<I>(iter: I) -> Self
+    where
+        I: Iterator<Item = Self>,
+    {
+        iter.fold(Self::ZERO, Self::add)
+    }
+}
+
+impl<'a> Sum<&'a Self> for {{ self_t }} {
+    #[inline]
+    fn sum<I>(iter: I) -> Self
+    where
+        I: Iterator<Item = &'a Self>,
+    {
+        iter.fold(Self::ZERO, |a, &b| Self::add(a, b))
+    }
+}
+
+impl Product for {{ self_t }} {
+    #[inline]
+    fn product<I>(iter: I) -> Self
+    where
+        I: Iterator<Item = Self>,
+    {
+        iter.fold(Self::ONE, Self::mul)
+    }
+}
+
+impl<'a> Product<&'a Self> for {{ self_t }} {
+    #[inline]
+    fn product<I>(iter: I) -> Self
+    where
+        I: Iterator<Item = &'a Self>,
+    {
+        iter.fold(Self::ONE, |a, &b| Self::mul(a, b))
+    }
+}
+
+{% if is_signed %}
+impl Neg for {{ self_t }} {
+    type Output = Self;
+    #[inline]
+    fn neg(self) -> Self {
+        {% if is_scalar %}
+            Self {
+                {% for c in components %}
+                    {{ c }}: self.{{ c }}.neg(),
+                {%- endfor %}
+            }
+        {% elif is_sse2 %}
+            Self(unsafe { _mm_xor_ps(_mm_set1_ps(-0.0), self.0) })
+        {% elif is_wasm32 %}
+            Self(f32x4_neg(self.0))
+        {% elif is_coresimd %}
+            Self(-self.0)
+        {% elif is_neon %}
+            Self(unsafe { vnegq_f32(self.0) })
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+}
+
+{{ macros::impl_ref_unop(imp="Neg", self_t=self_t, output_t=self_t) }}
+{% endif %}
+
+{% if not is_float %}
+impl Not for {{ self_t }} {
+    type Output = Self;
+    #[inline]
+    fn not(self) -> Self {
+        Self {
+            {% for c in components %}
+                {{ c }}: self.{{ c }}.not(),
+            {%- endfor %}
+        }
+    }
+}
+
+{{ macros::impl_ref_unop(imp="Not", self_t=self_t, output_t=self_t) }}
+
+impl BitAnd for {{ self_t }} {
+    type Output = Self;
+    #[inline]
+    fn bitand(self, rhs: Self) -> Self::Output {
+        Self {
+            {% for c in components %}
+                {{ c }}: self.{{ c }}.bitand(rhs.{{ c }}),
+            {%- endfor %}
+        }
+    }
+}
+
+{{ macros::impl_ref_binop(imp="BitAnd", method="bitand", self_t=self_t, rhs_t=self_t, output_t=self_t) }}
+
+{{ macros::impl_op_assign(imp="BitAnd", self_t=self_t, rhs_t=self_t) }}
+
+impl BitOr for {{ self_t }} {
+    type Output = Self;
+    #[inline]
+    fn bitor(self, rhs: Self) -> Self::Output {
+        Self {
+            {% for c in components %}
+                {{ c }}: self.{{ c }}.bitor(rhs.{{ c }}),
+            {%- endfor %}
+        }
+    }
+}
+
+{{ macros::impl_ref_binop(imp="BitOr", method="bitor", self_t=self_t, rhs_t=self_t, output_t=self_t) }}
+
+{{ macros::impl_op_assign(imp="BitOr", self_t=self_t, rhs_t=self_t) }}
+
+impl BitXor for {{ self_t }} {
+    type Output = Self;
+    #[inline]
+    fn bitxor(self, rhs: Self) -> Self::Output {
+        Self {
+            {% for c in components %}
+                {{ c }}: self.{{ c }}.bitxor(rhs.{{ c }}),
+            {%- endfor %}
+        }
+    }
+}
+
+{{ macros::impl_ref_binop(imp="BitXor", method="bitxor", self_t=self_t, rhs_t=self_t, output_t=self_t) }}
+
+{{ macros::impl_op_assign(imp="BitXor", self_t=self_t, rhs_t=self_t) }}
+
+impl BitAnd<{{ scalar_t }}> for {{ self_t }} {
+    type Output = Self;
+    #[inline]
+    fn bitand(self, rhs: {{ scalar_t }}) -> Self::Output {
+        Self {
+            {% for c in components %}
+                {{ c }}: self.{{ c }}.bitand(rhs),
+            {%- endfor %}
+        }
+    }
+}
+
+{{ macros::impl_ref_binop(imp="BitAnd", method="bitand", self_t=self_t, rhs_t=scalar_t, output_t=self_t) }}
+
+{{ macros::impl_op_assign(imp="BitAnd", self_t=self_t, rhs_t=scalar_t) }}
+
+impl BitOr<{{ scalar_t }}> for {{ self_t }} {
+    type Output = Self;
+    #[inline]
+    fn bitor(self, rhs: {{ scalar_t }}) -> Self::Output {
+        Self {
+            {% for c in components %}
+                {{ c }}: self.{{ c }}.bitor(rhs),
+            {%- endfor %}
+        }
+    }
+}
+
+{{ macros::impl_ref_binop(imp="BitOr", method="bitor", self_t=self_t, rhs_t=scalar_t, output_t=self_t) }}
+
+{{ macros::impl_op_assign(imp="BitOr", self_t=self_t, rhs_t=scalar_t) }}
+
+impl BitXor<{{ scalar_t }}> for {{ self_t }} {
+    type Output = Self;
+    #[inline]
+    fn bitxor(self, rhs: {{ scalar_t }}) -> Self::Output {
+        Self {
+            {% for c in components %}
+                {{ c }}: self.{{ c }}.bitxor(rhs),
+            {%- endfor %}
+        }
+    }
+}
+
+{{ macros::impl_ref_binop(imp="BitXor", method="bitxor", self_t=self_t, rhs_t=scalar_t, output_t=self_t) }}
+
+{{ macros::impl_op_assign(imp="BitXor", self_t=self_t, rhs_t=scalar_t) }}
+
+{% for rhs_t in ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"] %}
+    impl Shl<{{ rhs_t }}> for {{ self_t }} {
+        type Output = Self;
+        #[inline]
+        fn shl(self, rhs: {{ rhs_t }}) -> Self::Output {
+            Self {
+                {% for c in components %}
+                    {{ c }}: self.{{ c }}.shl(rhs),
+                {%- endfor %}
+            }
+        }
+    }
+
+    {{ macros::impl_ref_binop(imp="Shl", self_t=self_t, rhs_t=rhs_t, output_t=self_t) }}
+
+    {{ macros::impl_op_assign(imp="Shl", self_t=self_t, rhs_t=rhs_t) }}
+
+    impl Shr<{{ rhs_t }}> for {{ self_t }} {
+        type Output = Self;
+        #[inline]
+        fn shr(self, rhs: {{ rhs_t }}) -> Self::Output {
+            Self {
+                {% for c in components %}
+                    {{ c }}: self.{{ c }}.shr(rhs),
+                {%- endfor %}
+            }
+        }
+    }
+
+    {{ macros::impl_ref_binop(imp="Shr", self_t=self_t, rhs_t=rhs_t, output_t=self_t) }}
+
+    {{ macros::impl_op_assign(imp="Shr", self_t=self_t, rhs_t=rhs_t) }}
+{% endfor %}
+
+{% for rhs_t in ["IVec" ~ dim, "UVec" ~ dim] %}
+        impl Shl{% if rhs_t != self_t %}<{{ rhs_t }}>{% endif %} for {{ self_t }} {
+            type Output = Self;
+            #[inline]
+            fn shl(self, rhs: {% if rhs_t != self_t %}{{ rhs_t }}{% else %}Self{% endif %}) -> Self {
+                Self {
+                    {% for c in components %}
+                        {{ c }}: self.{{ c }}.shl(rhs.{{ c }}),
+                    {%- endfor %}
+                }
+            }
+        }
+
+        {{ macros::impl_ref_binop(imp="Shl", self_t=self_t, rhs_t=rhs_t, output_t=self_t) }}
+
+        impl Shr{% if rhs_t != self_t %}<{{ rhs_t }}>{% endif %} for {{ self_t }} {
+            type Output = Self;
+            #[inline]
+            fn shr(self, rhs: {% if rhs_t != self_t %}{{ rhs_t }}{% else %}Self{% endif %}) -> Self {
+                Self {
+                    {% for c in components %}
+                        {{ c }}: self.{{ c }}.shr(rhs.{{ c }}),
+                    {%- endfor %}
+                }
+            }
+        }
+
+        {{ macros::impl_ref_binop(imp="Shr", self_t=self_t, rhs_t=rhs_t, output_t=self_t) }}
+{% endfor %}
+{% endif %}
+
+impl Index<usize> for {{ self_t }} {
+    type Output = {{ scalar_t }};
+    #[inline]
+    fn index(&self, index: usize) -> &Self::Output {
+        {% if is_coresimd %}
+            &self.0[index]
+        {% else %}
+            match index {
+                {% for c in components %}
+                    {{ loop.index0 }} => &self.{{ c }},
+                {%- endfor %}
+                _ => panic!("index out of bounds"),
+            }
+        {% endif %}
+    }
+}
+
+impl IndexMut<usize> for {{ self_t }} {
+    #[inline]
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        {% if is_coresimd %}
+            &mut self.0[index]
+        {% else %}
+            match index {
+                {% for c in components %}
+                    {{ loop.index0 }} => &mut self.{{ c }},
+                {%- endfor %}
+                _ => panic!("index out of bounds"),
+            }
+        {% endif %}
+    }
+}
+
+impl fmt::Display for {{ self_t }} {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        {% if is_float %}
+        if let Some(p) = f.precision() {
+            {% if dim == 2 %}
+                write!(f, "[{:.*}, {:.*}]", p, self.x, p, self.y)
+            {% elif dim == 3 %}
+                write!(f, "[{:.*}, {:.*}, {:.*}]", p, self.x, p, self.y, p, self.z)
+            {% elif dim == 4 %}
+                write!(f, "[{:.*}, {:.*}, {:.*}, {:.*}]", p, self.x, p, self.y, p, self.z, p, self.w)
+            {% endif %}
+        } else {
+        {% endif %}
+            {% if dim == 2 %}
+                write!(f, "[{}, {}]", self.x, self.y)
+            {% elif dim == 3 %}
+                write!(f, "[{}, {}, {}]", self.x, self.y, self.z)
+            {% elif dim == 4 %}
+                write!(f, "[{}, {}, {}, {}]", self.x, self.y, self.z, self.w)
+            {% endif %}
+        {% if is_float %}
+        }
+        {% endif %}
+    }
+}
+
+impl fmt::Debug for {{ self_t }} {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.debug_tuple(stringify!({{ self_t }}))
+            {% for c in components %}
+                .field(&self.{{ c }})
+            {% endfor %}
+            .finish()
+    }
+}
+
+{% if not is_scalar %}
+impl From<{{ self_t }}> for {{ simd_t }} {
+    #[inline(always)]
+    fn from(t: {{ self_t }}) -> Self {
+        t.0
+    }
+}
+
+impl From<{{ simd_t }}> for {{ self_t }} {
+    #[inline(always)]
+    fn from(t: {{ simd_t }}) -> Self {
+        Self(t)
+    }
+}
+{% endif %}
+
+impl From<[{{ scalar_t }}; {{ dim }}]> for {{ self_t }} {
+    #[inline]
+    fn from(a: [{{ scalar_t }}; {{ dim }}]) -> Self {
+        {% if self_t == "Vec4" and is_sse2 %}
+            Self(unsafe { _mm_loadu_ps(a.as_ptr()) })
+        {% elif self_t == "Vec4" and is_coresimd %}
+            Self(f32x4::from_array(a))
+        {% elif self_t == "Vec4" and is_neon %}
+            Self(unsafe { vld1q_f32(a.as_ptr()) })
+        {% else %}
+            Self::new(
+                {% for c in components %}
+                    a[{{ loop.index0 }}],
+                {%- endfor %}
+            )
+        {% endif %}
+    }
+}
+
+impl From<{{ self_t }}> for [{{ scalar_t }}; {{ dim }}] {
+    #[inline]
+    fn from(v: {{ self_t }}) -> Self {
+        {% if is_scalar %}
+            [
+                {% for c in components %}
+                    v.{{ c }},
+                {%- endfor %}
+            ]
+        {% elif is_sse2 %}
+            use core::mem::MaybeUninit;
+            use crate::Align16;
+            let mut out: MaybeUninit<Align16<Self>> = MaybeUninit::uninit();
+            unsafe {
+                _mm_store_ps(out.as_mut_ptr().cast(), v.0);
+                out.assume_init().0
+            }
+        {% elif is_wasm32 %}
+            unsafe {
+                *(&v.0 as *const v128 as *const Self)
+            }
+        {% elif is_coresimd %}
+            {% if dim == 3 %}
+                unsafe {
+                    *(v.0.as_array().as_ptr() as *const Self)
+                }
+            {% elif dim == 4 %}
+                v.0.to_array()
+            {% endif %}
+        {% elif is_neon %}
+            use core::mem::MaybeUninit;
+            use crate::align16::Align16;
+            let mut out: MaybeUninit<Align16<Self>> = MaybeUninit::uninit();
+            unsafe {
+                vst1q_f32(out.as_mut_ptr().cast(), v.0);
+                out.assume_init().0
+            }
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+}
+
+impl From<{{ macros::make_tuple_t(t=scalar_t, n=dim) }}> for {{ self_t }} {
+    #[inline]
+    fn from(t: {{ macros::make_tuple_t(t=scalar_t, n=dim) }}) -> Self {
+        Self::new(
+            {% for c in components %}
+                t.{{ loop.index0 }},
+            {%- endfor %}
+        )
+    }
+}
+
+impl From<{{ self_t }}> for {{ macros::make_tuple_t(t=scalar_t, n=dim) }} {
+    #[inline]
+    fn from(v: {{ self_t }}) -> Self {
+        (
+            {% for c in components %}
+                v.{{ c }},
+            {%- endfor %}
+        )
+    }
+}
+
+{% if self_t == "Vec3A" %}
+impl From<Vec3> for Vec3A {
+    #[inline]
+    fn from(v: Vec3) -> Self {
+        Self::new(v.x, v.y, v.z)
+    }
+}
+
+impl From<Vec3A> for Vec3 {
+    #[inline]
+    fn from(v: Vec3A) -> Self {
+        {% if is_scalar %}
+            Self {
+                x: v.x,
+                y: v.y,
+                z: v.z,
+            }
+        {% elif is_sse2 %}
+            use crate::Align16;
+            use core::mem::MaybeUninit;
+            let mut out: MaybeUninit<Align16<Self>> = MaybeUninit::uninit();
+            unsafe {
+                _mm_store_ps(out.as_mut_ptr().cast(), v.0);
+                out.assume_init().0
+            }
+        {% elif is_wasm32 %}
+            unsafe {
+                *(&v.0 as *const v128 as *const Self)
+            }
+        {% elif is_coresimd %}
+            unsafe {
+                *(v.0.as_array().as_ptr() as *const Self)
+            }
+        {% elif is_neon %}
+            use core::mem::MaybeUninit;
+            use crate::align16::Align16;
+            let mut out: MaybeUninit<Align16<Self>> = MaybeUninit::uninit();
+            unsafe {
+                vst1q_f32(out.as_mut_ptr().cast(), v.0);
+                out.assume_init().0
+            }
+        {% else %}
+            unimplemented!()
+        {% endif %}
+    }
+}
+{% elif self_t == "Vec4" %}
+impl From<(Vec3A, f32)> for Vec4 {
+    #[inline]
+    fn from((v, w): (Vec3A, f32)) -> Self {
+        v.extend(w)
+    }
+}
+
+impl From<(f32, Vec3A)> for Vec4 {
+    #[inline]
+    fn from((x, v): (f32, Vec3A)) -> Self {
+        Self::new(x, v.x, v.y, v.z)
+    }
+}
+{% endif %}
+
+{% if dim == 3 %}
+impl From<({{ vec2_t }}, {{ scalar_t }})> for {{ self_t }} {
+    #[inline]
+    fn from((v, z): ({{ vec2_t }}, {{ scalar_t }})) -> Self {
+        Self::new(v.x, v.y, z)
+    }
+}
+{% elif dim == 4 %}
+impl From<({{ vec3_t }}, {{ scalar_t }})> for {{ self_t }} {
+    #[inline]
+    fn from((v, w): ({{ vec3_t }}, {{ scalar_t }})) -> Self {
+        Self::new(v.x, v.y, v.z, w)
+    }
+}
+
+impl From<({{ scalar_t }}, {{ vec3_t }})> for {{ self_t }} {
+    #[inline]
+    fn from((x, v): ({{ scalar_t }}, {{ vec3_t }})) -> Self {
+        Self::new(x, v.x, v.y, v.z)
+    }
+}
+
+impl From<({{ vec2_t }}, {{ scalar_t }}, {{ scalar_t }})> for {{ self_t }} {
+    #[inline]
+    fn from((v, z, w): ({{ vec2_t }}, {{ scalar_t }}, {{ scalar_t }})) -> Self {
+        Self::new(v.x, v.y, z, w)
+    }
+}
+
+impl From<({{ vec2_t }}, {{ vec2_t }})> for {{ self_t }} {
+    #[inline]
+    fn from((v, u): ({{ vec2_t }}, {{ vec2_t }})) -> Self {
+        Self::new(v.x, v.y, u.x, u.y)
+    }
+}
+{% endif %}
+
+{% if not is_scalar %}
+impl Deref for {{ self_t }} {
+    type Target = crate::deref::Vec{{ dim }}<{{ scalar_t }}>;
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*(self as *const Self).cast() }
+    }
+}
+
+impl DerefMut for {{ self_t }} {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut *(self as *mut Self).cast() }
+    }
+}
+{% endif %}
+
+{% if from_types %}
+    {% for ty in from_types %}
+    impl From<{{ ty }}> for {{ self_t }} {
+        #[inline]
+        fn from(v: {{ ty }}) -> Self {
+            Self::new(
+                {% for c in components %}
+                    {{ scalar_t }}::from(v.{{ c }}),
+                {% endfor %}
+            )
+        }
+    }
+    {% endfor %}
+{% endif %}
+
+{% if try_from_types %}
+    {% for ty in try_from_types %}
+    impl TryFrom<{{ ty }}> for {{ self_t }} {
+        type Error = core::num::TryFromIntError;
+
+        #[inline]
+        fn try_from(v: {{ ty }}) -> Result<Self, Self::Error> {
+            Ok(Self::new(
+                {% for c in components %}
+                    {{ scalar_t }}::try_from(v.{{ c }})?,
+                {% endfor %}
+            ))
+        }
+    }
+    {% endfor %}
+{% endif %}
+
+impl From<{{ bvec_from_type }}> for {{ self_t }} {
+    #[inline]
+    fn from(v: {{ bvec_from_type }}) -> Self {
+        Self::new(
+            {% for c in components %}
+                {{ scalar_t }}::from(v.{{ c }}),
+            {% endfor %}
+        )
+    }
+}
+
+{% if bveca_from_type %}
+    {% if bveca_from_type == "BVec4A" %}
+    #[cfg(not(feature = "scalar-math"))]
+    {%- endif %}
+    impl From<{{ bveca_from_type }}> for {{ self_t }} {
+        #[inline]
+        fn from(v: {{ bveca_from_type }}) -> Self {
+            let bool_array: [bool; {{ dim }}] = v.into();
+            Self::new(
+                {% for c in components %}
+                    {{ scalar_t }}::from(bool_array[{{ loop.index0 }}]),
+                {% endfor %}
+            )
+        }
+    }
+{% endif %}

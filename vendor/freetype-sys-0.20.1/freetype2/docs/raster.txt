@@ -1,0 +1,635 @@
+
+                   How FreeType's rasterizer work
+
+                          by David Turner
+
+                        Revised 2007-Feb-01
+
+
+This file  is an  attempt to explain  the internals of  the FreeType
+rasterizer.  The  rasterizer is of  quite general purpose  and could
+easily be integrated into other programs.
+
+
+  I. Introduction
+
+ II. Rendering Technology
+     1. Requirements
+     2. Profiles and Spans
+        a. Sweeping the Shape
+        b. Decomposing Outlines into Profiles
+        c. The Render Pool
+        d. Computing Profiles Extents
+        e. Computing Profiles Coordinates
+        f. Sweeping and Sorting the Spans
+
+
+I. Introduction
+===============
+
+  A  rasterizer is  a library  in charge  of converting  a vectorial
+  representation of a shape  into a bitmap.  The FreeType rasterizer
+  has  been  originally developed  to  render  the  glyphs found  in
+  TrueType  files, made  up  of segments  and second-order  Béziers.
+  Meanwhile it has been extended to render third-order Bézier curves
+  also.   This  document  is   an  explanation  of  its  design  and
+  implementation.
+
+  While  these explanations start  from the  basics, a  knowledge of
+  common rasterization techniques is assumed.
+
+
+II. Rendering Technology
+========================
+
+1. Requirements
+---------------
+
+  We  assume that  all scaling,  rotating, hinting,  etc.,  has been
+  already done.  The glyph is thus  described by a list of points in
+  the device space.
+
+  - All point coordinates  are in the 26.6 fixed  float format.  The
+    used orientation is:
+
+
+       ^ y
+       |         reference orientation
+       |
+       *----> x
+      0
+
+
+    `26.6' means  that 26 bits  are used for  the integer part  of a
+    value   and  6   bits  are   used  for   the   fractional  part.
+    Consequently, the `distance'  between two neighbouring pixels is
+    64 `units' (1 unit = 1/64 of a pixel).
+
+    Note  that, for  the rasterizer,  pixel centers  are  located at
+    integer   coordinates.   The   TrueType   bytecode  interpreter,
+    however, assumes that  the lower left edge of  a pixel (which is
+    taken  to be  a square  with  a length  of 1  unit) has  integer
+    coordinates.
+
+
+        ^ y                                        ^ y
+        |                                          |
+        |            (1,1)                         |      (0.5,0.5)
+        +-----------+                        +-----+-----+
+        |           |                        |     |     |
+        |           |                        |     |     |
+        |           |                        |     o-----+-----> x
+        |           |                        |   (0,0)   |
+        |           |                        |           |
+        o-----------+-----> x                +-----------+
+      (0,0)                             (-0.5,-0.5)
+
+   TrueType bytecode interpreter          FreeType rasterizer
+
+
+    A pixel line in the target bitmap is called a `scanline'.
+
+  - A  glyph  is  usually  made  of several  contours,  also  called
+    `outlines'.  A contour is simply a closed curve that delimits an
+    outer or inner region of the glyph.  It is described by a series
+    of successive points of the points table.
+
+    Each point  of the glyph  has an associated flag  that indicates
+    whether  it is  `on' or  `off' the  curve.  Two  successive `on'
+    points indicate a line segment joining the two points.
+
+    One `off' point amidst two `on' points indicates a second-degree
+    (conic)  Bézier parametric  arc, defined  by these  three points
+    (the `off' point being the  control point, and the `on' ones the
+    start and end points).  Similarly, a third-degree (cubic) Bézier
+    curve  is described  by four  points (two  `off'  control points
+    between two `on' points).
+
+    Finally,  for  second-order curves  only,  two successive  `off'
+    points  forces the  rasterizer to  create, during  rendering, an
+    `on'  point amidst them,  at their  exact middle.   This greatly
+    facilitates the  definition of  successive Bézier arcs.
+
+  The parametric form of a second-order Bézier curve is:
+
+      P(t) = (1-t)^2*P1 + 2*t*(1-t)*P2 + t^2*P3
+
+      (P1 and P3 are the end points, P2 the control point.)
+
+  The parametric form of a third-order Bézier curve is:
+
+      P(t) = (1-t)^3*P1 + 3*t*(1-t)^2*P2 + 3*t^2*(1-t)*P3 + t^3*P4
+
+      (P1 and P4 are the end points, P2 and P3 the control points.)
+
+  For both formulae, t is a real number in the range [0..1].
+
+  Note  that the rasterizer  does not  use these  formulae directly.
+  They exhibit,  however, one very  useful property of  Bézier arcs:
+  Each  point of  the curve  is a  weighted average  of  the control
+  points.
+
+  As all weights  are positive and always sum up  to 1, whatever the
+  value  of t,  each arc  point lies  within the  triangle (polygon)
+  defined by the arc's three (four) control points.
+
+  In  the following,  only second-order  curves are  discussed since
+  rasterization of third-order curves is completely identical.
+
+  Here some samples for second-order curves.
+
+
+                                        *            # on curve
+                                                     * off curve
+                                     __---__
+        #-__                      _--       -_
+            --__                _-            -
+                --__           #               \
+                    --__                        #
+                        -#
+                                 Two `on' points
+         Two `on' points       and one `off' point
+                                  between them
+
+                      *
+        #            __      Two `on' points with two `off'
+         \          -  -     points between them. The point
+          \        /    \    marked `0' is the middle of the
+           -      0      \   `off' points, and is a `virtual
+            -_  _-       #   on' point where the curve passes.
+              --             It does not appear in the point
+              *              list.
+
+
+2. Profiles and Spans
+---------------------
+
+  The following is a basic explanation of the _kind_ of computations
+  made  by  the   rasterizer  to  build  a  bitmap   from  a  vector
+  representation.  Note  that the actual  implementation is slightly
+  different, due to performance tuning and other factors.
+
+  However, the following ideas remain  in the same category, and are
+  more convenient to understand.
+
+
+  a. Sweeping the Shape
+
+    The best way to fill a shape is to decompose it into a number of
+    simple  horizontal segments,  then turn  them on  in  the target
+    bitmap.  These segments are called `spans'.
+
+                __---__
+             _--       -_
+           _-            -
+          -               \
+         /                 \
+        /                   \
+       |                     \
+
+                __---__         Example: filling a shape
+             _----------_                with spans.
+           _--------------
+          ----------------\
+         /-----------------\    This is typically done from the top
+        /                   \   to the bottom of the shape, in a
+       |           |         \  movement called a `sweep'.
+                   V
+
+                __---__
+             _----------_
+           _--------------
+          ----------------\
+         /-----------------\
+        /-------------------\
+       |---------------------\
+
+
+    In  order  to draw  a  span,  the  rasterizer must  compute  its
+    coordinates, which  are simply the x coordinates  of the shape's
+    contours, taken on the y scanlines.
+
+
+                   /---/    |---|   Note that there are usually
+                  /---/     |---|   several spans per scanline.
+        |        /---/      |---|
+        |       /---/_______|---|   When rendering this shape to the
+        V      /----------------|   current scanline y, we must
+              /-----------------|   compute the x values of the
+           a /----|         |---|   points a, b, c, and d.
+      - - - *     * - - - - *   * - - y -
+           /     / b       c|   |d
+
+
+                   /---/    |---|
+                  /---/     |---|  And then turn on the spans a-b
+                 /---/      |---|  and c-d.
+                /---/_______|---|
+               /----------------|
+              /-----------------|
+           a /----|         |---|
+      - - - ####### - - - - ##### - - y -
+           /     / b       c|   |d
+
+
+  b. Decomposing Outlines into Profiles
+
+    For  each  scanline during  the  sweep,  we  need the  following
+    information:
+
+    o The  number of  spans on  the current  scanline, given  by the
+      number of  shape points  intersecting the scanline  (these are
+      the points a, b, c, and d in the above example).
+
+    o The x coordinates of these points.
+
+    x coordinates are  computed before the sweep, in  a phase called
+    `decomposition' which converts the glyph into *profiles*.
+
+    Put it simply, a `profile'  is a contour's portion that can only
+    be either ascending or descending,  i.e., it is monotonic in the
+    vertical direction (we also say  y-monotonic).  There is no such
+    thing as a horizontal profile, as we shall see.
+
+    Here are a few examples:
+
+
+      this square
+                                          1         2
+         ---->----     is made of two
+        |         |                       |         |
+        |         |       profiles        |         |
+        ^         v                       ^    +    v
+        |         |                       |         |
+        |         |                       |         |
+         ----<----
+
+                                         up        down
+
+
+      this triangle
+
+             P2                             1          2
+
+             |\        is made of two       |         \
+          ^  | \  \                         |          \
+          | |   \  \      profiles         |            \      |
+         |  |    \  v                  ^   |             \     |
+           |      \                    |  |         +     \    v
+           |       \                   |  |                \
+        P1 ---___   \                     ---___            \
+                 ---_\                          ---_         \
+             <--__     P3                   up           down
+
+
+
+      A more general contour can be made of more than two profiles:
+
+              __     ^
+             /  |   /  ___          /    |
+            /   |     /   |        /     |       /     |
+           |    |    /   /    =>  |      v      /     /
+           |    |   |   |         |      |     ^     |
+        ^  |    |___|   |  |      ^   +  |  +  |  +  v
+        |  |           |   v      |                 |
+           |           |          |           up    |
+           |___________|          |    down         |
+
+                <--               up              down
+
+
+    Successive  profiles are  always joined  by  horizontal segments
+    that are not part of the profiles themselves.
+
+    For  the  rasterizer,  a  profile  is  simply  an  *array*  that
+    associates  one  horizontal *pixel*  coordinate  to each  bitmap
+    *scanline*  crossed  by  the  contour's section  containing  the
+    profile.  Note that profiles are *oriented* up or down along the
+    glyph's original flow orientation.
+
+    In other graphics libraries, profiles are also called `edges' or
+    `edgelists'.
+
+
+  c. The Render Pool
+
+    FreeType  has been designed  to be  able to  run well  on _very_
+    light systems, including embedded systems with very few memory.
+
+    A render pool  will be allocated once; the  rasterizer uses this
+    pool for all  its needs by managing this  memory directly in it.
+    The  algorithms that are  used for  profile computation  make it
+    possible to use  the pool as a simple  growing heap.  This means
+    that this  memory management is  actually quite easy  and faster
+    than any kind of malloc()/free() combination.
+
+    Moreover,  we'll see  later that  the rasterizer  is  able, when
+    dealing with profiles too large  and numerous to lie all at once
+    in  the render  pool, to  immediately decompose  recursively the
+    rendering process  into independent sub-tasks,  each taking less
+    memory to be performed (see `sub-banding' below).
+
+    The  render pool doesn't  need to  be large.   A 4KByte  pool is
+    enough for nearly all renditions, though nearly 100% slower than
+    a more comfortable 16KByte or 32KByte pool (that was tested with
+    complex glyphs at sizes over 500 pixels).
+
+
+  d. Computing Profiles Extents
+
+    Remember that a profile is an array, associating a _scanline_ to
+    the x pixel coordinate of its intersection with a contour.
+
+    Though it's not exactly how the FreeType rasterizer works, it is
+    convenient  to think  that  we need  a  profile's height  before
+    allocating it in the pool and computing its coordinates.
+
+    The profile's height  is the number of scanlines  crossed by the
+    y-monotonic section of a contour.  We thus need to compute these
+    sections from  the vectorial description.  In order  to do that,
+    we are  obliged to compute all  (local and global)  y extrema of
+    the glyph (minima and maxima).
+
+
+           P2             For instance, this triangle has only
+                          two y-extrema, which are simply
+           |\
+           | \               P2.y  as a vertical maximum
+          |   \              P3.y  as a vertical minimum
+          |    \
+         |      \            P1.y is not a vertical extremum (though
+         |       \           it is a horizontal minimum, which we
+      P1 ---___   \          don't need).
+               ---_\
+                     P3
+
+
+    Note  that the  extrema are  expressed  in pixel  units, not  in
+    scanlines.   The triangle's  height  is certainly  (P3.y-P2.y+1)
+    pixel  units,   but  its  profiles'  heights   are  computed  in
+    scanlines.  The exact conversion is simple:
+
+      - min scanline = FLOOR  ( min y )
+      - max scanline = CEILING( max y )
+
+    A problem  arises with Bézier  Arcs.  While a segment  is always
+    necessarily y-monotonic (i.e.,  flat, ascending, or descending),
+    which makes extrema computations easy,  the ascent of an arc can
+    vary between its control points.
+
+
+                          P2
+                         *
+                                       # on curve
+                                       * off curve
+                   __-x--_
+                _--       -_
+          P1  _-            -          A non y-monotonic Bézier arc.
+             #               \
+                              -        The arc goes from P1 to P3.
+                               \
+                                \  P3
+                                 #
+
+
+    We first  need to be  able to easily detect  non-monotonic arcs,
+    according to  their control points.  I will  state here, without
+    proof, that the monotony condition can be expressed as:
+
+      P1.y <= P2.y <= P3.y   for an ever-ascending arc
+
+      P1.y >= P2.y >= P3.y   for an ever-descending arc
+
+    with the special case of
+
+      P1.y = P2.y = P3.y     where the arc is said to be `flat'.
+
+    As  you can  see, these  conditions can  be very  easily tested.
+    They are, however, extremely important, as any arc that does not
+    satisfy them necessarily contains an extremum.
+
+    Note  also that  a monotonic  arc can  contain an  extremum too,
+    which is then one of its `on' points:
+
+
+        P1           P2
+          #---__   *         P1P2P3 is ever-descending, but P1
+                -_           is an y-extremum.
+                  -
+           ---_    \
+               ->   \
+                     \  P3
+                      #
+
+
+    Let's go back to our previous example:
+
+
+                          P2
+                         *
+                                       # on curve
+                                       * off curve
+                   __-x--_
+                _--       -_
+          P1  _-            -          A non-y-monotonic Bézier arc.
+             #               \
+                              -        Here we have
+                               \              P2.y >= P1.y &&
+                                \  P3         P2.y >= P3.y      (!)
+                                 #
+
+
+    We need to  compute the vertical maximum of this  arc to be able
+    to compute a profile's height (the point marked by an `x').  The
+    arc's equation indicates that  a direct computation is possible,
+    but  we rely  on a  different technique,  which use  will become
+    apparent soon.
+
+    Bézier  arcs have  the  special property  of  being very  easily
+    decomposed into two sub-arcs,  which are themselves Bézier arcs.
+    Moreover, it is easy to prove that there is at most one vertical
+    extremum on  each Bézier arc (for  second-degree curves; similar
+    conditions can be found for third-order arcs).
+
+    For instance,  the following arc  P1P2P3 can be  decomposed into
+    two sub-arcs Q1Q2Q3 and R1R2R3:
+
+
+                    P2
+                   *
+                                    # on  curve
+                                    * off curve
+
+
+                                    original Bézier arc P1P2P3.
+                __---__
+             _--       --_
+           _-             -_
+          -                 -
+         /                   \
+        /                     \
+       #                       #
+     P1                         P3
+
+
+
+                    P2
+                   *
+
+
+
+                   Q3                 Decomposed into two subarcs
+          Q2                R2        Q1Q2Q3 and R1R2R3
+            *   __-#-__   *
+             _--       --_
+           _-       R1    -_          Q1 = P1         R3 = P3
+          -                 -         Q2 = (P1+P2)/2  R2 = (P2+P3)/2
+         /                   \
+        /                     \            Q3 = R1 = (Q2+R2)/2
+       #                       #
+     Q1                         R3    Note that Q2, R2, and Q3=R1
+                                      are on a single line which is
+                                      tangent to the curve.
+
+
+    We have then decomposed  a non-y-monotonic Bézier curve into two
+    smaller sub-arcs.  Note that in the above drawing, both sub-arcs
+    are monotonic, and that the extremum is then Q3=R1.  However, in
+    a  more general  case,  only  one sub-arc  is  guaranteed to  be
+    monotonic.  Getting back to our former example:
+
+
+                    Q2
+                   *
+
+                   __-x--_ R1
+                _--       #_
+          Q1  _-        Q3  -   R2
+             #               \ *
+                              -
+                               \
+                                \  R3
+                                 #
+
+
+    Here, we see that,  though Q1Q2Q3 is still non-monotonic, R1R2R3
+    is ever  descending: We  thus know that  it doesn't  contain the
+    extremum.  We can then re-subdivide Q1Q2Q3 into two sub-arcs and
+    go  on recursively,  stopping  when we  encounter two  monotonic
+    subarcs, or when the subarcs become simply too small.
+
+    We  will finally  find  the vertical  extremum.   Note that  the
+    iterative process of finding an extremum is called `flattening'.
+
+
+  e. Computing Profiles Coordinates
+
+    Once we have the height of each profile, we are able to allocate
+    it in the render pool.   The next task is to compute coordinates
+    for each scanline.
+
+    In  the case  of segments,  the computation  is straightforward,
+    using  the  Euclidean   algorithm  (also  known  as  Bresenham).
+    However, for Bézier arcs, the job is a little more complicated.
+
+    We assume  that all Béziers that  are part of a  profile are the
+    result of  flattening the curve,  which means that they  are all
+    y-monotonic (ascending  or descending, and never  flat).  We now
+    have  to compute the  intersections of  arcs with  the profile's
+    scanlines.  One  way is  to use a  similar scheme  to flattening
+    called `stepping'.
+
+
+                                 Consider this arc, going from P1 to
+      ---------------------      P3.  Suppose that we need to
+                                 compute its intersections with the
+                                 drawn scanlines.  As already
+      ---------------------      mentioned this can be done
+                                 directly, but the involved
+          * P2         _---# P3  algorithm is far too slow.
+      ------------- _--  --
+                  _-
+                _/               Instead, it is still possible to
+      ---------/-----------      use the decomposition property in
+              /                  the same recursive way, i.e.,
+             |                   subdivide the arc into subarcs
+      ------|--------------      until these get too small to cross
+            |                    more than one scanline!
+           |
+      -----|---------------      This is very easily done using a
+          |                      rasterizer-managed stack of
+          |                      subarcs.
+          # P1
+
+
+  f. Sweeping and Sorting the Spans
+
+    Once all our profiles have  been computed, we begin the sweep to
+    build (and fill) the spans.
+
+    As both the  TrueType and Type 1 specifications  use the winding
+    fill  rule (but  with opposite  directions), we  place,  on each
+    scanline, the present profiles in two separate lists.
+
+    One  list,  called  the  `left'  one,  only  contains  ascending
+    profiles, while  the other `right' list  contains the descending
+    profiles.
+
+    As  each glyph  is made  of  closed curves,  a simple  geometric
+    property ensures that  the two lists contain the  same number of
+    elements.
+
+    Creating spans is thus straightforward:
+
+    1. We sort each list in increasing horizontal order.
+
+    2. We pair  each value of  the left list with  its corresponding
+       value in the right list.
+
+
+                   /     /  |   |          For example, we have here
+                  /     /   |   |          four profiles.  Two of
+                >/     /    |   |  |       them are ascending (1 &
+              1//     /   ^ |   |  | 2     3), while the two others
+              //     //  3| |   |  v       are descending (2 & 4).
+              /     //4   | |   |          On the given scanline,
+           a /     /<       |   |          the left list is (1,3),
+      - - - *-----* - - - - *---* - - y -  and the right one is
+           /     / b       c|   |d         (4,2) (sorted).
+
+                                   There are then two spans, joining
+                                   1 to 4 (i.e. a-b) and 3 to 2
+                                   (i.e. c-d)!
+
+
+    Sorting doesn't necessarily  take much time, as in  99 cases out
+    of 100, the lists' order is  kept from one scanline to the next.
+    We can  thus implement it  with two simple  singly-linked lists,
+    sorted by a classic bubble-sort, which takes a minimum amount of
+    time when the lists are already sorted.
+
+    A  previous  version  of  the  rasterizer  used  more  elaborate
+    structures, like arrays to  perform `faster' sorting.  It turned
+    out that  this old scheme is  not faster than  the one described
+    above.
+
+    Once the spans  have been `created', we can  simply draw them in
+    the target bitmap.
+
+------------------------------------------------------------------------
+
+Copyright (C) 2003-2023 by
+David Turner, Robert Wilhelm, and Werner Lemberg.
+
+This  file  is  part  of the  FreeType  project, and may  only be  used,
+modified,  and  distributed  under  the  terms of  the FreeType  project
+license, LICENSE.TXT.   By continuing to use, modify, or distribute this
+file you  indicate that  you have  read the  license and understand  and
+accept it fully.
+
+
+--- end of raster.txt ---
+
+Local Variables:
+coding: utf-8
+End:

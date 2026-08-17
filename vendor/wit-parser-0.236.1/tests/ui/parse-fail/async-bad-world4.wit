@@ -1,0 +1,11 @@
+package a:b;
+
+world a {
+  import x: async func();
+}
+
+world b {
+  include a;
+  import x: func();
+}
+

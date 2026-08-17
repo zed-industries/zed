@@ -1,0 +1,34 @@
+r#"Copyright, OpenVision Technologies, Inc., 1993-1996, All Rights
+Reserved
+
+WARNING:  Retrieving the OpenVision Kerberos Administration system
+source code, as described below, indicates your acceptance of the
+following terms.  If you do not agree to the following terms, do
+not retrieve the OpenVision Kerberos administration system.
+
+You may freely use and distribute the Source Code and Object Code
+compiled from it, with or without modification, but this Source
+Code is provided to you "AS IS" EXCLUSIVE OF ANY WARRANTY,
+INCLUDING, WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY OR
+FITNESS FOR A PARTICULAR PURPOSE, OR ANY OTHER WARRANTY, WHETHER
+EXPRESS OR IMPLIED. IN NO EVENT WILL OPENVISION HAVE ANY LIABILITY
+FOR ANY LOST PROFITS, LOSS OF DATA OR COSTS OF PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES, OR FOR ANY SPECIAL, INDIRECT, OR
+CONSEQUENTIAL DAMAGES ARISING OUT OF THIS AGREEMENT, INCLUDING,
+WITHOUT LIMITATION, THOSE RESULTING FROM THE USE OF THE SOURCE
+CODE, OR THE FAILURE OF THE SOURCE CODE TO PERFORM, OR FOR ANY
+OTHER REASON.
+
+OpenVision retains all copyrights in the donated Source Code.
+OpenVision also retains copyright to derivative works of the Source
+Code, whether created by OpenVision or by a third party. The
+OpenVision copyright notice must be preserved if derivative works
+are made based on the donated Source Code.
+
+OpenVision Technologies, Inc. has donated this Kerberos
+Administration system to MIT for inclusion in the standard Kerberos
+5 distribution. This donation underscores our commitment to
+continuing Kerberos technology development and our gratitude for
+the valuable work which has been performed by MIT and the Kerberos
+community.
+"#

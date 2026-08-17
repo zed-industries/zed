@@ -1,0 +1,40 @@
+Here is a list of items that need to be addressed in FreeType 2
+---------------------------------------------------------------
+
+* Implement stem3/counter hints properly in the Postscript hinter.
+
+* Add CIDCMap support to the CID driver.
+
+* Add track kerning support to the PFR driver.
+
+* Add kerning (AFM file) support to the CID driver.
+
+
+Here is a list of bugs which should be handled
+----------------------------------------------
+
+Other bugs have been registered at the savannah bugzilla of FreeType.
+
+* CID driver:
+    Handle the case where a CID font has a top-level font matrix also
+    (see PLRM, 5.11.3, Type 0 CIDFonts).  Since CID_FaceInfoRec lacks
+    a font_matrix entry we have to directly apply it to all subfont
+    matrices.
+
+* CID driver:
+    Use top-level font matrix entry for setting the upem value, not the
+    entries in the FDarray.  If absent, use 1000.
+
+------------------------------------------------------------------------
+
+Copyright (C) 2001-2023 by
+David Turner, Robert Wilhelm, and Werner Lemberg.
+
+This  file  is  part  of the  FreeType  project, and may  only be  used,
+modified,  and  distributed  under  the  terms of  the FreeType  project
+license, LICENSE.TXT.   By continuing to use, modify, or distribute this
+file you  indicate that  you have  read the  license and understand  and
+accept it fully.
+
+
+--- end of TODO ---

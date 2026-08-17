@@ -1,0 +1,13 @@
+---
+- name: Invalid document-start marker in doublequoted tring
+  from: '@perlpunk'
+  tags: header double error
+  fail: true
+  yaml: |
+    ---
+    "
+    ---
+    "
+  tree: |
+    +STR
+     +DOC ---

@@ -1,0 +1,45 @@
+[package]
+name = "ff"
+version = "0.12.1"
+authors = [
+    "Sean Bowe <ewillbefull@gmail.com>",
+    "Jack Grigg <thestr4d@gmail.com>",
+]
+description = "Library for building and interfacing with finite fields"
+readme = "README.md"
+documentation = "https://docs.rs/ff/"
+homepage = "https://github.com/zkcrypto/ff"
+license = "MIT/Apache-2.0"
+repository = "https://github.com/zkcrypto/ff"
+edition = "2021"
+
+[dependencies]
+bitvec = { version = "1", default-features = false, optional = true }
+byteorder = { version = "1", default-features = false, optional = true }
+ff_derive = { version = "0.12.1", path = "ff_derive", optional = true }
+rand_core = { version = "0.6", default-features = false }
+subtle = { version = "2.2.1", default-features = false, features = ["i128"] }
+
+[dev-dependencies]
+rand = "0.8"
+
+[features]
+default = ["bits", "std"]
+alloc = []
+bits = ["bitvec"]
+derive = ["byteorder", "ff_derive"]
+std = ["alloc"]
+# with MSRV 1.60 this could be merged into bits with ff_derive?/bits
+# see PR#72 for more information.
+derive_bits = ["bits", "ff_derive/bits"]
+
+[[test]]
+name = "derive"
+required-features = ["derive"]
+
+[badges]
+maintenance = { status = "actively-developed" }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

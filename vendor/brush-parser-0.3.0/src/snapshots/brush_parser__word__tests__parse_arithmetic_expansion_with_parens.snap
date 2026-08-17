@@ -1,0 +1,16 @@
+---
+source: brush-parser/src/word.rs
+expression: "test_parse(\"$((((1+2)*3)))\")?"
+---
+ParseTestResults(
+  input: "$((((1+2)*3)))",
+  result: [
+    WordPieceWithSource(
+      piece: ArithmeticExpression(UnexpandedArithmeticExpr(
+        value: "((1+2)*3)",
+      )),
+      start_index: 0,
+      end_index: 14,
+    ),
+  ],
+)

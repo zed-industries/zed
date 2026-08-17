@@ -1,0 +1,48 @@
+[package]
+name = "kurbo"
+version = "0.9.5"
+authors = ["Raph Levien <raph.levien@gmail.com>"]
+license = "MIT/Apache-2.0"
+edition = "2021"
+keywords = ["graphics", "curve", "curves", "bezier", "geometry"]
+repository = "https://github.com/linebender/kurbo"
+description = "A 2D curves library"
+readme = "README.md"
+categories = ["graphics"]
+
+[package.metadata.docs.rs]
+features = ["mint", "schemars", "serde"]
+
+[features]
+default = ["std"]
+std = []
+
+[dependencies.arrayvec]
+version = "0.7.1"
+default-features = false
+
+[dependencies.libm]
+version = "0.2.6"
+optional = true
+
+[dependencies.mint]
+version = "0.5.1"
+optional = true
+
+[dependencies.schemars]
+version = "0.8.6"
+optional = true
+
+[dependencies.serde]
+version = "1.0.105"
+optional = true
+default-features = false
+features = ["alloc", "derive"]
+
+# This is used for research but not really needed; maybe refactor.
+[dev-dependencies]
+rand = "0.8.0"
+
+[target.'cfg(target_arch="wasm32")'.dev-dependencies]
+getrandom = { version = "0.2.0", features = ["js"] }
+

@@ -1,0 +1,5 @@
+error: Variant with `catch_all` must be a tuple with exactly 1 field matching the repr type
+ --> tests/try_build/compile_fail/catch_all_non_tuple.rs:5:16
+  |
+5 |     #[num_enum(catch_all)]
+  |                ^^^^^^^^^

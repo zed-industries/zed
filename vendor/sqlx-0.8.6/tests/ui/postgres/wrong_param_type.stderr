@@ -1,0 +1,47 @@
+error[E0308]: mismatched types
+ --> $DIR/wrong_param_type.rs:2:50
+  |
+2 |     let _query = sqlx::query!("select $1::text", 0i32);
+  |                                                  ^^^^ expected `&str`, found `i32`
+
+error[E0308]: mismatched types
+ --> $DIR/wrong_param_type.rs:4:50
+  |
+4 |     let _query = sqlx::query!("select $1::text", &0i32);
+  |                                                  ^ expected `str`, found `i32`
+  |
+  = note: expected reference `&str`
+             found reference `&i32`
+
+error[E0308]: mismatched types
+ --> $DIR/wrong_param_type.rs:6:50
+  |
+6 |     let _query = sqlx::query!("select $1::text", Some(0i32));
+  |                                                  ^^^^ expected `&str`, found `i32`
+  |
+  = note: expected enum `Option<&str>`
+             found enum `Option<i32>`
+
+error[E0308]: mismatched types
+ --> $DIR/wrong_param_type.rs:9:50
+  |
+9 |     let _query = sqlx::query!("select $1::text", arg);
+  |                                                  ^^^ expected `&str`, found `i32`
+
+error[E0308]: mismatched types
+  --> $DIR/wrong_param_type.rs:12:50
+   |
+12 |     let _query = sqlx::query!("select $1::text", arg);
+   |                                                  ^^^ expected `&str`, found `i32`
+   |
+   = note: expected enum `Option<&str>`
+              found enum `Option<i32>`
+
+error[E0308]: mismatched types
+  --> $DIR/wrong_param_type.rs:13:50
+   |
+13 |     let _query = sqlx::query!("select $1::text", arg.as_ref());
+   |                                                  ^^^ expected `str`, found `i32`
+   |
+   = note: expected enum `Option<&str>`
+              found enum `Option<&i32>`

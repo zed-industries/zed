@@ -1,0 +1,42 @@
+[
+  {
+    "Alias": {
+      "alias": "sans-serif",
+      "prefer": [
+        "DejaVu Sans"
+      ],
+      "accept": [],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "serif",
+      "prefer": [
+        "DejaVu Serif"
+      ],
+      "accept": [],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "monospace",
+      "prefer": [
+        "DejaVu Sans Mono"
+      ],
+      "accept": [],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "emoji",
+      "prefer": [
+        "Noto Color Emoji"
+      ],
+      "accept": [],
+      "default": []
+    }
+  }
+]

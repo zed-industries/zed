@@ -1,0 +1,16 @@
+package foo:foo;
+
+interface red {
+  use green.{thing};
+
+  foo: func() -> thing;
+}
+
+interface green {
+  type thing = s32;
+}
+
+world neptune {
+  import red;
+  import green;
+}

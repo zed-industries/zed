@@ -1,0 +1,24 @@
+[package]
+name = "windows-result"
+version = "0.4.1"
+edition = "2021"
+rust-version = "1.82"
+license = "MIT OR Apache-2.0"
+description = "Windows error handling"
+repository = "https://github.com/microsoft/windows-rs"
+categories = ["os::windows-apis"]
+readme = "readme.md"
+
+[dependencies]
+windows-link = { workspace = true }
+
+[features]
+default = ["std"]
+std = []
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+default-target = "x86_64-pc-windows-msvc"
+targets = []

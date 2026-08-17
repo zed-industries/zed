@@ -1,0 +1,12 @@
+package foo:dep2;
+
+package foo:shared {
+  interface shared2 {
+    type t2 = string;
+  }
+}
+
+interface i2 {
+  use foo:shared/shared2.{t2};
+  type o2 = option<t2>;
+}

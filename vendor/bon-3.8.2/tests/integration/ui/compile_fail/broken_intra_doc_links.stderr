@@ -1,0 +1,53 @@
+error: the documentation should not reference `Self` because it will be moved to the builder struct's impl block where `Self` changes meaning, which may confuse the reader of this code; use explicit type names instead.
+ --> tests/integration/ui/compile_fail/broken_intra_doc_links.rs:5:5
+  |
+5 |     /// [Self] link
+  |     ^^^^^^^^^^^^^^^
+
+error: the documentation should not reference `Self` because it will be moved to the builder struct's impl block where `Self` changes meaning, which may confuse the reader of this code; use explicit type names instead.
+  --> tests/integration/ui/compile_fail/broken_intra_doc_links.rs:16:9
+   |
+16 |         /// [Self] link
+   |         ^^^^^^^^^^^^^^^
+
+error: the documentation should not reference `Self` because it will be moved to the builder struct's impl block where `Self` changes meaning, which may confuse the reader of this code; use explicit type names instead.
+  --> tests/integration/ui/compile_fail/broken_intra_doc_links.rs:24:5
+   |
+24 |     /// [`Self`] link
+   |     ^^^^^^^^^^^^^^^^^
+
+error: the documentation should not reference `Self` because it will be moved to the builder struct's impl block where `Self` changes meaning, which may confuse the reader of this code; use explicit type names instead.
+  --> tests/integration/ui/compile_fail/broken_intra_doc_links.rs:31:9
+   |
+31 |         /// [`Self`] link
+   |         ^^^^^^^^^^^^^^^^^
+
+error: the documentation should not reference `Self` because it will be moved to the builder struct's impl block where `Self` changes meaning, which may confuse the reader of this code; use explicit type names instead.
+  --> tests/integration/ui/compile_fail/broken_intra_doc_links.rs:40:13
+   |
+40 |             /// [`Self`] link
+   |             ^^^^^^^^^^^^^^^^^
+
+error: the documentation should not reference `Self` because it will be moved to the builder struct's impl block where `Self` changes meaning, which may confuse the reader of this code; use explicit type names instead.
+  --> tests/integration/ui/compile_fail/broken_intra_doc_links.rs:50:13
+   |
+50 |             /// [`Self`] link
+   |             ^^^^^^^^^^^^^^^^^
+
+error: the documentation should not reference `Self` because it will be moved to the builder struct where `Self` changes meaning, which may confuse the reader of this code; use explicit type names instead.
+  --> tests/integration/ui/compile_fail/broken_intra_doc_links.rs:58:5
+   |
+58 |     /// [Self] link
+   |     ^^^^^^^^^^^^^^^
+
+error: the documentation should not reference `Self` because it will be moved to the builder struct's impl block where `Self` changes meaning, which may confuse the reader of this code; use explicit type names instead.
+  --> tests/integration/ui/compile_fail/broken_intra_doc_links.rs:64:5
+   |
+64 |     /// [Self] link
+   |     ^^^^^^^^^^^^^^^
+
+error: the documentation should not reference `Self` because it will be moved to the builder's state module where `Self` changes meaning, which may confuse the reader of this code; use explicit type names instead.
+  --> tests/integration/ui/compile_fail/broken_intra_doc_links.rs:70:5
+   |
+70 |     /// [Self] link
+   |     ^^^^^^^^^^^^^^^

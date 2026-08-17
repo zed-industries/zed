@@ -1,0 +1,5 @@
+error: #[stacksafe] can only be applied to functions
+  --> tests/ui/non_function_item.rs:18:1
+   |
+18 | struct NotAFunction;
+   | ^^^^^^^^^^^^^^^^^^^^

@@ -1,0 +1,28 @@
+---
+- name: Anchor for empty node
+  from: https://github.com/nodeca/js-yaml/issues/301
+  tags: alias anchor
+  yaml: |
+    ---
+    a: &anchor
+    b: *anchor
+  tree: |
+    +STR
+     +DOC ---
+      +MAP
+       =VAL :a
+       =VAL &anchor :
+       =VAL :b
+       =ALI *anchor
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "a": null,
+      "b": null
+    }
+  dump: |
+    ---
+    a: &anchor
+    b: *anchor

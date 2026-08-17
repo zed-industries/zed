@@ -1,0 +1,8 @@
+error: these discriminant values do not fit in any supported enum repr type
+ --> tests/ui/enum_unsatisfiable.rs:3:5
+  |
+3 | /     enum Bad {
+4 | |         A = -0xFFFF_FFFF_FFFF_FFFF,
+5 | |         B = 0xFFFF_FFFF_FFFF_FFFF,
+6 | |     }
+  | |_____^

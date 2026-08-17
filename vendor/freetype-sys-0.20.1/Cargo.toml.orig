@@ -1,0 +1,21 @@
+[package]
+
+name = "freetype-sys"
+version = "0.20.1"
+authors = ["Coeuvre <coeuvre@gmail.com>"]
+links = "freetype"
+build = "build.rs"
+keywords = ["freetype", "ffi"]
+description = "Low level binding for FreeType font library"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/PistonDevelopers/freetype-sys.git"
+homepage = "https://github.com/PistonDevelopers/freetype-sys"
+edition = "2018"
+
+[build-dependencies]
+cc = "1"
+pkg-config = "0.3.11"
+
+[dependencies]
+libc = "0.2.42"

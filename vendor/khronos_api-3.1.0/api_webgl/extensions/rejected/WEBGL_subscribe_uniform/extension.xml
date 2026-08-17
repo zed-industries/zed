@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rejected href="rejected/WEBGL_subscribe_uniform/">
+  <name>WEBGL_subscribe_uniform</name>
+
+  <contact> <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL
+  working group</a> (public_webgl 'at' khronos.org) </contact>
+
+  <contributors>
+    <contributor>Owen Glofcheski, Google</contributor>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+
+  <number>NN</number>
+
+  <depends>
+    <api version="1.0"/>
+  </depends>
+
+
+  <overview id="overview">
+    <p> This extension exposes the ability to subscribe to a set of uniform targets 
+        which can be used to populate uniforms within shader programs. This extension
+        is generic, but currently only supports mouse position as a subscription target.
+    </p><p>Background: 
+    </p><p>The depth of the web pipeline makes it difficult to support low latency 
+           interaction as event information retrieved via javascript
+           is outdated by the time it's displayed to clients. By populating event 
+           information later in the pipeline one can reduce perceived input latency.
+    </p><p>This extension creates a new buffer type <code>'Valuebuffer'</code> to 
+           maintain the active state for predefined subscription targets. Since a
+           mechanism for buffering uniform information isn't available pre 2.0 (UBOs)
+           an additional data type was needed. See 'New Types' for additional 
+           information.</p>
+    <p> When this extension is enabled: </p>
+    <ul>
+      <li>This extension provides a mechanism to store mouse positional information 
+          in buffers and defer modification of uniform variables which use mouse 
+          positional information until the WebGL commands are executed.
+      </li>
+      <li>This extension provides a mechanism to explicitly update mouse 
+          positional information to maintain per frame consistency.
+      </li>
+    </ul>
+  </overview>
+
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface WEBGL_subscribe_uniform {
+  const GLenum SUBSCRIBED_VALUES_BUFFER = 0x924B;
+
+  // subscription targets
+  const GLenum MOUSE_POSITION = 0x924C;
+
+  WebGLValuebuffer? createValuebuffer();
+  void deleteValuebuffer(WebGLValuebuffer? buffer);
+  void isValuebuffer(WebGLValuebuffer? buffer);
+  void bindValuebuffer(GLenum target, WebGLValuebuffer? buffer);
+
+  void subscribeValue(GLenum traget, GLenum subscription);
+  void populateSubscribedValues(GLenum target);
+  void uniformValuebuffer(WebGLUniformLocation? location, GLenum target, GLenum subscription);
+}; // interface WEBGL_subscribe_uniform
+  </idl>
+
+  <newfun>
+    <function name="createValuebuffer" type="WebGLValuebuffer">
+    Creates and returns a <code>Valuebuffer</code> object.</function>
+
+    <function name="deleteValuebuffer" type="void"><param
+    name="buffer" type="WebGLValuebuffer"/>Deletes a <code>Valuebuffer</code>
+    object.</function>
+
+    <function name="isValuebuffer" type="bool"><param
+    name="buffer" type="WebGLValuebuffer"/>Returns whether an object is a 
+    <code>Valuebuffer</code> object.</function>
+
+    <function name="bindValuebuffer" type="void"><param
+    name="target" type="GLenum"/><param
+    name="buffer" type="WebGLValuebuffer"/>Lets you use a named 
+    <code>Valuebuffer</code> object.</function>
+
+    <function name="subscribeValuebuffer" type="void"><param
+    name="target" type="GLenum"/><param
+    name="subscription" type="GLenum"/>Subscribes the currently bound 
+    <code>Valuebuffer</code> object to a subscription target.</function>
+
+    <function name="populateSubscribedValues" type="void"><param
+    name="target" type="GLenum"/>Populates the currently bound 
+    <code>Valuebuffer</code> object with the state of the subscriptions to
+    which it is subscribed.</function>
+
+    <function name="uniformValuebuffer" type="void"><param
+    name="location" type="WebGLUniformLocation"/><param
+    name="target" type="GLenum"/><param
+    name="subscription" type="GLenum"/>Modifies the value of a uniform variable
+    or uniform variable array using the state of the subscription target in the
+    currently bound <code>Valuebuffer</code> object.</function>
+  </newfun>
+
+  <newtypes>
+    <interface name="WebGLValuebuffer" noobject="true">
+      <p>This interface is used to maintain a reference to internal 
+      <code>Valuebuffer</code> subscription states.</p>
+    </interface>
+    <p>A <code>Valuebuffer</code> abstracts the mapping of subscription targets to internal 
+       state and acts as a single storage object for subscription information (e.g. current 
+       mouse position). Clients can then use the objects data to populate uniform variables.</p>
+    <p>Post WebGL API 2.0, this abstraction could exist as a layer ontop of UBOs
+       which managers the mapping of subscription targets to internal state and the mapping
+       of subscription targets to offsets within the buffer. The UBO would be used to store the 
+       active buffer state as well as the uniform location mapping. Clients would be required to
+       state all their subscription targets at once to allocate the appropriate amount of memory. 
+       Aside from this small change the implementation is essentially the same, with UBOs replacing
+       <code>Valuebuffers</code> and relevant create, delete, bind methods being replaced.
+       Additionally, the inclusion of UBOs would replace the need for 
+       <code>uniformValueBuffer(...)</code>.</p>
+  </newtypes>
+
+  <newtok>
+    <function name="bindValuebuffer" type="any"><param 
+    name="target" type="GLenum"/><param
+    name="buffer" type="WebGLValuebuffer"/>
+    <p><code>SUBSCRIBED_VALUES_BUFFER</code> 
+    is accepted as the target parameter to bindValuebuffer</p></function>
+
+    <function name="subscribeValuebuffer" type="void"><param
+    name="target" type="GLenum"/><param
+    name="subscription" type="GLenum"/>
+    <p><code>SUBSCRIBED_VALUES_BUFFER</code> 
+    is accepted as the target parameter to subscribeValuebuffer</p>
+    <p><code>MOUSE_POSITION</code> 
+    is accepted as the subscription parameter to subscribeValuebuffer</p></function>
+
+    <function name="populateSubscribedValues" type="void"><param
+    name="target" type="GLenum"/>
+    <p><code>SUBSCRIBED_VALUES_BUFFER</code> 
+    is accepted as the target parameter to populateSubscribedValues</p></function>
+
+    <function name="uniformValuebuffer" type="void"><param
+    name="location" type="WebGLUniformLocation"/><param
+    name="target" type="GLenum"/><param
+    name="subscription" type="GLenum"/>
+    <p><code>SUBSCRIBED_VALUES_BUFFER</code> 
+    is accepted as the target parameter to uniformValuebuffer</p>
+    <p><code>MOUSE_POSITION</code> 
+    is accepted as the subscription parameter to uniformValuebuffer</p></function>
+  </newtok>
+
+  <samplecode><div class="example"><pre xml:space="preserve">
+&lt;script id="vshader" type="x-shader/x-vertex"&gt;
+  uniform ivec2 uMousePosition;
+
+  void main()
+  {
+    gl_Position = vec4(uMousePosition, 0, 1);
+  }
+&lt;/script&gt;
+
+function init(gl) {
+  shader.uMousePosition = gl.getUniformLocation(shader, "uMousePosition");
+  ...
+
+  var ext = gl.getExtension('WEBGL_subscribe_uniform');
+    
+  // Create the value buffer and subscribe.
+  var valuebuffer = ext.createValuebuffer();
+  ext.bindValuebuffer(SUBSCRIBED_VALUES_BUFFER, valuebuffer);
+  ext.subscribeValue(MOUSE_POSITION);
+  ...
+}
+     
+function draw(gl) {   
+  // Populate buffer and populate uniform
+  ext.bindValuebuffer(SUBSCRIBED_VALUES_BUFFER, valuebuffer);
+  ext.populateSubscribedValues(SUBSCRIBED_VALUES_BUFFER);
+  ext.uniformValuebuffer(shader.uMousePosition,
+                         SUBSCRIBED_VALUES_BUFFER,
+                         MOUSE_POSITION);
+
+  gl.drawElements(...);
+}
+  </pre></div></samplecode>
+
+  <issues/>
+
+  <history>
+    <revision date="2014/11/13">
+      <change>Initial revision.</change>
+    </revision>
+
+    <revision date="2016/04/14">
+      <change>Moved to rejected state. Does not have a champion at this point. Was difficult to
+      reason about how to use the extension, given that the on-screen rendering would be farther
+      ahead than the application's state. Seems that the best solution is to focus on reducing the
+      depth, and therefore latency, of the browser's rendering pipeline.</change>
+    </revision>
+  </history>
+</rejected>

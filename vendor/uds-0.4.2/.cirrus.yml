@@ -1,0 +1,177 @@
+task:
+  name: FreeBSD 12 amd64 stable
+  freebsd_instance:
+    image: freebsd-12-1-release-amd64
+    cpu: 1
+    memory: 1G # Lower is not supported
+  depends_on: Linux i686 stable
+  env:
+    RUST_BACKTRACE: 1
+    HOME: /tmp # cargo caching needs it
+  setup_script:
+    - pkg install -y rust
+  cargo_cache:
+    folder: $HOME/.cargo/registry
+    fingerprint_script: cat Cargo.lock 2> /dev/null || true
+  target_cache:
+    folder: target
+    fingerprint_script:
+      - rustc --version
+      - cat Cargo.lock 2> /dev/null || true
+  info_script:
+    - rustc --version
+  build_script:
+    - cargo check --tests --examples
+    - cargo build --all-features --tests --examples
+  test_script:
+    - cargo run --all-features --bin characteristics
+    - cargo test --all-features --no-fail-fast -- --test-threads 1 --nocapture
+  before_cache_script:
+    - rm -rf $HOME/.cargo/registry/index
+
+task:
+  name: Linux amd64 1.63
+  container:
+    image: rust:1.63.0
+    cpu: 1
+    memory: 1G # OOMs with 512MB
+  allow_failures: false
+  env:
+    RUST_BACKTRACE: 1
+  cargo_cache:
+    folder: $HOME/.cargo/registry
+    fingerprint_script: cat Cargo.lock 2> /dev/null || true
+  target_cache:
+    folder: target
+    fingerprint_script: cat Cargo.lock 2> /dev/null || true
+  check_script:
+    - cargo check
+    - cargo check --features mio_08
+    - cargo check --features tokio
+  test_script:
+    - cargo test --all-features --no-fail-fast -- --test-threads=1 --nocapture
+  before_cache_script:
+    - rm -rf $HOME/.cargo/registry/index
+
+task:
+  name: Linux amd64 nightly minimal-versions
+  container:
+    image: rustlang/rust:nightly
+    cpu: 1
+    memory: 1G
+  allow_failures: false
+  env:
+    RUST_BACKTRACE: 1
+  cargo_cache:
+    folder: $HOME/.cargo/registry
+    fingerprint_script: cat Cargo.lock 2> /dev/null || true
+  # rustc version so likely to have changed that build artefacts are not worth caching
+  info_script:
+    - rustc --version
+  check_script:
+    - cargo check -Z minimal-versions -Z avoid-dev-deps
+    - cargo check -Z minimal-versions -Z avoid-dev-deps --features mio_08
+    - cargo check -Z minimal-versions -Z avoid-dev-deps --features tokio
+  # neither -Z minimal-versions nor -Z direct-minimal-versions work with tokio 1
+  # and it's a dev-dependency so can't test anything else either
+  before_cache_script:
+    - rm -rf $HOME/.cargo/registry/index
+
+task:
+  name: Linux i686 stable
+  container:
+    image: rust:latest
+    cpu: 1
+    memory: 1G # OOMs with 512MB
+  allow_failures: false
+  env:
+    RUST_BACKTRACE: 1
+  setup_script:
+    - apt-get update
+    - apt-get install -yqq gcc gcc-multilib linux-libc-dev
+    - rustup target add i686-unknown-linux-gnu
+    - rustup target add i686-unknown-linux-musl
+  cargo_cache:
+    folder: $HOME/.cargo/registry
+    fingerprint_script: cat Cargo.lock 2> /dev/null || true
+  target_cache:
+    folder: target
+    fingerprint_script:
+      - rustc --version
+      - cat Cargo.lock 2> /dev/null || true
+  info_script:
+    - rustc --version
+  build_script:
+    - cargo build --target i686-unknown-linux-gnu --all-features
+    - cargo build --target i686-unknown-linux-musl --all-features
+  test_script:
+    - cargo run --target i686-unknown-linux-gnu --all-features --bin characteristics
+    - cargo test --target i686-unknown-linux-gnu --all-features --no-fail-fast -- --test-threads=1 --nocapture
+    - cargo test --target i686-unknown-linux-musl --all-features --no-fail-fast -- --test-threads=1 --nocapture
+  before_cache_script:
+    - rm -rf $HOME/.cargo/registry/index
+
+task:
+  name: Cross-check stable
+  container:
+    image: rust:latest
+    cpu: 1
+    memory: 1536MB # sometimes OOMs with 1GB
+  allow_failures: false
+  setup_script:
+    - rustup component add clippy
+    - rustup target add x86_64-unknown-netbsd
+    - rustup target add x86_64-unknown-illumos
+    - rustup target add x86_64-unknown-linux-gnux32
+    - rustup target add aarch64-unknown-linux-gnu
+    - rustup target add aarch64-linux-android
+    - rustup target add i686-linux-android
+    - rustup target add x86_64-pc-windows-msvc
+  cargo_cache:
+    folder: $HOME/.cargo/registry
+    fingerprint_script: cat Cargo.lock 2> /dev/null || true
+  target_cache:
+    folder: target
+    fingerprint_script:
+      - rustc --version
+      - cat Cargo.lock 2> /dev/null || true
+  info_script:
+    - rustc --version
+  check_script:
+    - cargo clippy
+    - cargo clippy --all-features
+    - cargo check --target x86_64-unknown-netbsd --all-features --tests
+    - cargo check --target x86_64-unknown-illumos --tests
+    - cargo check --target x86_64-unknown-linux-gnux32 --all-features --tests
+    - cargo check --target aarch64-unknown-linux-gnu --all-features --tests
+    - cargo check --target aarch64-linux-android --all-features --tests
+    - cargo check --target i686-linux-android --all-features --tests
+    - cargo check --target x86_64-pc-windows-msvc --all-features --lib
+  before_cache_script:
+    - rm -rf $HOME/.cargo/registry/index
+
+task:
+  name: macOS stable
+  macos_instance:
+    image: monterey-base
+    # doesn't accept cpu or memory fields
+  depends_on: Linux i686 stable
+  env:
+    RUST_BACKTRACE: 1
+  setup_script:
+    - brew update
+    - brew install rust
+  cargo_cache:
+    folder: $HOME/.cargo/registry
+    fingerprint_script: cat Cargo.lock 2> /dev/null || true
+  info_script:
+    - rustc --version
+  build_script:
+    - cargo check --tests --examples
+    - cargo build --all-features --tests --examples
+  test_script:
+    - cargo run --all-features --bin characteristics
+    # serialize tests to avoid spurious failures in fd-passing tests
+    - cargo test --all-features --no-fail-fast -- --test-threads 1 --nocapture
+  before_cache_script:
+    - rm -rf $HOME/.cargo/registry/index

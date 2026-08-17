@@ -1,0 +1,139 @@
+This  document contains  instructions  on how  to  build the  FreeType
+library on Unix  systems.  This also works for  emulations like Cygwin
+or MSys on Win32:
+
+
+  1. Ensure that you are using GNU Make
+  -------------------------------------
+
+    The FreeType build system  _exclusively_ works with GNU Make.  You
+    will  not be  able to  compile the  library with  the instructions
+    below using any other alternative (including BSD Make).
+
+    Check that you have GNU make by running the command:
+
+       make -v
+
+    This should dump some text that begins with:
+
+       GNU Make  <version number>
+       Copyright (C) <year> Free Software Foundation Inc.
+
+    Note that version  3.81 or higher is *required* or the  build will
+    fail.
+
+    It is also fine to have GNU Make under another name (e.g. 'gmake')
+    if you use the MAKE variable as described below.
+
+    As  a  special exception,  'makepp'  can  also  be used  to  build
+    FreeType 2.  See the file docs/MAKEPP for details.
+
+    For builds  with `cmake' please check file `CMakeLists.txt';  this
+    is a contributed file not directly supported by the FreeType team.
+
+
+  2. Regenerate the configure script if needed
+  --------------------------------------------
+
+    This only applies if you  are building a git snapshot or checkout,
+    *not* if you grabbed the sources of an official release.
+
+    You  need  to invoke  the  `autogen.sh'  script  in the  top-level
+    directory  in order  to  create the  `configure'  script for  your
+    platform.  Normally, this simply means typing:
+
+      sh autogen.sh
+
+    In case of problems, you may  need to install or upgrade Automake,
+    Autoconf or Libtool.  See  `README.git' in the top-level directory
+    for more information.
+
+
+  3. Build and install the library
+  --------------------------------
+
+    Say
+
+      ./configure --help
+
+    to see  the list of  possible configuration options  and important
+    environment  variables.  The ./configure script  will detect  some
+    prerequisite  system  libraries  (libpng, brotli, etc.)  if  their
+    headers are available at the default locations.
+
+    The following  should work  on all Unix  systems where  the `make'
+    command invokes GNU Make:
+
+      ./configure [options]
+      make
+      make install           (as root)
+
+    The default installation path  is `/usr/local'.  It can be changed
+    with the `--prefix=<path>' option.  Example:
+
+      ./configure --prefix=/usr
+
+    When using  a different command  to invoke GNU Make,  use the MAKE
+    variable.  For example,  if `gmake' is the command  to use on your
+    system, do something like:
+
+       MAKE=gmake ./configure [options]
+       gmake
+       gmake install            (as root)
+
+    If  this still doesn't  work, there  must be  a problem  with your
+    system (e.g., you are using a very old version of GNU Make).
+
+    For library identification, FreeType's `configure' script uses the
+    `pkg-config' interface: Assuming it  needs library `foo', it calls
+    the  `pkg-config' program  to find  information on  library `foo',
+    which in turn  looks for a `foo.pc' file installed  at the system.
+    Some platforms,  however, don't come with  `pkg-support'; you then
+    have  to  use environment  variables  as  described by  `configure
+    --help'.  Example:
+
+      LIBPNG_CFLAGS="-I/path/to/libpng/include/directory" \
+      LIBPNG_LIBS="-L/path/to/libpng/lib/directory" \
+      configure ...
+
+    It  is possible  to  compile FreeType  in  a different  directory.
+    Assuming the FreeType source  files in directory `/src/freetype' a
+    compilation in directory `foo' works as follows:
+
+      cd foo
+      /src/freetype/configure [options]
+      make
+      make install
+
+
+  3.1 Interdependency with HarfBuzz
+  .................................
+
+    Note that there  is a chicken-and-egg problem  currently since the
+    HarfBuzz library  (used by the  auto-hinter to improve  support of
+    OpenType  fonts)  depends on  FreeType,  which  can be  solved  as
+    follows in case HarfBuzz is not yet installed on your system.
+
+    1. Call    FreeType's     `configure'    script     with    option
+       `--without-harfbuzz', then compile and install FreeType.
+
+    2. Compile and install HarfBuzz.
+
+    3. Call    FreeType's    `configure'   script    without    option
+       `--without-harfbuzz' (after  executing `make  distclean'), then
+       compile and install FreeType again.
+
+
+----------------------------------------------------------------------
+
+Copyright (C) 2003-2023 by
+David Turner, Robert Wilhelm, and Werner Lemberg.
+
+This  file is  part of  the FreeType  project, and  may only  be used,
+modified,  and distributed  under the  terms of  the  FreeType project
+license,  LICENSE.TXT.  By  continuing to  use, modify,  or distribute
+this file you  indicate that you have read  the license and understand
+and accept it fully.
+
+
+--- end of INSTALL.UNIX ---

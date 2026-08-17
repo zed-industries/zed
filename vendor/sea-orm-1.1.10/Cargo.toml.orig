@@ -1,0 +1,111 @@
+[workspace]
+members = [".", "sea-orm-macros", "sea-orm-codegen"]
+
+[package]
+name = "sea-orm"
+version = "1.1.10"
+authors = ["Chris Tsang <chris.2y3@outlook.com>"]
+edition = "2021"
+description = "🐚 An async & dynamic ORM for Rust"
+license = "MIT OR Apache-2.0"
+homepage = "https://www.sea-ql.org/SeaORM"
+documentation = "https://docs.rs/sea-orm"
+repository = "https://github.com/SeaQL/sea-orm"
+categories = ["database"]
+keywords = ["async", "orm", "mysql", "postgres", "sqlite"]
+rust-version = "1.81"
+
+[package.metadata.docs.rs]
+features = ["default", "sqlx-all", "mock", "proxy", "runtime-async-std-native-tls", "postgres-array", "sea-orm-internal"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lib]
+name = "sea_orm"
+path = "src/lib.rs"
+
+[dependencies]
+async-stream = { version = "0.3", default-features = false }
+async-trait = { version = "0.1", default-features = false }
+chrono = { version = "0.4.30", default-features = false, optional = true }
+time = { version = "0.3.36", default-features = false, optional = true }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+log = { version = "0.4", default-features = false }
+tracing = { version = "0.1", default-features = false, features = ["attributes", "log"] }
+rust_decimal = { version = "1", default-features = false, optional = true }
+bigdecimal = { version = "0.4", default-features = false, optional = true }
+sea-orm-macros = { version = "~1.1.10", path = "sea-orm-macros", default-features = false, features = ["strum"] }
+sea-query = { version = "0.32.1", default-features = false, features = ["thread-safe", "hashable-value", "backend-mysql", "backend-postgres", "backend-sqlite"] }
+sea-query-binder = { version = "0.7.0", default-features = false, optional = true }
+strum = { version = "0.26", default-features = false }
+serde = { version = "1.0", default-features = false }
+serde_json = { version = "1.0", default-features = false, optional = true }
+sqlx = { version = "0.8.4", default-features = false, optional = true }
+uuid = { version = "1", default-features = false, optional = true }
+pgvector = { version = "~0.4", default-features = false, optional = true }
+ipnetwork = { version = "0.20", default-features = false, optional = true }
+ouroboros = { version = "0.18", default-features = false }
+url = { version = "2.2", default-features = false }
+thiserror = { version = "2", default-features = false }
+
+[dev-dependencies]
+smol = { version = "1.2" }
+smol-potat = { version = "1.1" }
+async-std = { version = "1", features = ["attributes", "tokio1"] }
+futures = { version = "0.3" }
+tokio = { version = "1.6", features = ["full"] }
+actix-rt = { version = "2.2.0" }
+maplit = { version = "1" }
+tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
+sea-orm = { path = ".", features = ["mock", "debug-print", "tests-cfg", "postgres-array", "sea-orm-internal", "with-ipnetwork"] }
+pretty_assertions = { version = "0.7" }
+time = { version = "0.3.36", features = ["macros"] }
+uuid = { version = "1", features = ["v4"] }
+arraystring = "0.3"
+dotenv = "0.15"
+
+[features]
+debug-print = []
+default = [
+    "macros",
+    "with-json",
+    "with-chrono",
+    "with-rust_decimal",
+    "with-bigdecimal",
+    "with-uuid",
+    "with-time",
+]
+macros = ["sea-orm-macros/derive"]
+mock = []
+proxy = ["serde_json", "serde/derive"]
+with-json = ["serde_json", "sea-query/with-json", "chrono?/serde", "rust_decimal?/serde", "bigdecimal?/serde", "uuid?/serde", "time?/serde", "pgvector?/serde", "sea-query-binder?/with-json", "sqlx?/json"]
+with-chrono = ["chrono", "sea-query/with-chrono", "sea-query-binder?/with-chrono", "sqlx?/chrono"]
+with-rust_decimal = ["rust_decimal", "sea-query/with-rust_decimal", "sea-query-binder?/with-rust_decimal", "sqlx?/rust_decimal"]
+with-bigdecimal = ["bigdecimal", "sea-query/with-bigdecimal", "sea-query-binder?/with-bigdecimal", "sqlx?/bigdecimal"]
+with-uuid = ["uuid", "sea-query/with-uuid", "sea-query-binder?/with-uuid", "sqlx?/uuid"]
+with-time = ["time", "sea-query/with-time", "sea-query-binder?/with-time", "sqlx?/time"]
+with-ipnetwork = ["ipnetwork", "sea-query/with-ipnetwork", "sea-query-binder?/with-ipnetwork", "sqlx?/ipnetwork"]
+postgres-array = ["sea-query/postgres-array", "sea-query-binder?/postgres-array", "sea-orm-macros/postgres-array"]
+postgres-vector = ["pgvector", "sea-query/postgres-vector", "sea-query-binder?/postgres-vector"]
+json-array = ["postgres-array"] # this does not actually enable sqlx-postgres, but only a few traits to support array in sea-query
+sea-orm-internal = []
+sqlx-dep = []
+sqlx-all = ["sqlx-mysql", "sqlx-postgres", "sqlx-sqlite"]
+sqlx-mysql = ["sqlx-dep", "sea-query-binder/sqlx-mysql", "sqlx/mysql"]
+sqlx-postgres = ["sqlx-dep", "sea-query-binder/sqlx-postgres", "sqlx/postgres", "postgres-array"]
+sqlx-sqlite = ["sqlx-dep", "sea-query-binder/sqlx-sqlite", "sqlx/sqlite"]
+sqlite-use-returning-for-3_35 = []
+runtime-async-std = ["sqlx?/runtime-async-std"]
+runtime-async-std-native-tls = ["sqlx?/runtime-async-std-native-tls", "runtime-async-std"]
+runtime-async-std-rustls = ["sqlx?/runtime-async-std-rustls", "runtime-async-std"]
+runtime-actix = ["sqlx?/runtime-tokio"]
+runtime-actix-native-tls = ["sqlx?/runtime-tokio-native-tls", "runtime-actix"]
+runtime-actix-rustls = ["sqlx?/runtime-tokio-rustls", "runtime-actix"]
+runtime-tokio = ["sqlx?/runtime-tokio"]
+runtime-tokio-native-tls = ["sqlx?/runtime-tokio-native-tls", "runtime-tokio"]
+runtime-tokio-rustls = ["sqlx?/runtime-tokio-rustls", "runtime-tokio"]
+tests-cfg = ["serde/derive"]
+seaography = ["sea-orm-macros/seaography"]
+
+# This allows us to develop using a local version of sea-query
+# [patch.crates-io]
+# sea-query = { path = "../sea-query" }

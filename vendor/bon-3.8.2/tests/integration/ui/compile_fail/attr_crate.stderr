@@ -1,0 +1,59 @@
+error: path must not be relative; specify the path that starts with `crate::` instead; if you want to refer to a reexport from an external crate then use leading colons like `::crate_name::reexport::path::bon`
+ --> tests/integration/ui/compile_fail/attr_crate.rs:4:19
+  |
+4 | #[builder(crate = self::bon)]
+  |                   ^^^^
+
+error: path must not be relative; specify the path that starts with `crate::` instead; if you want to refer to a reexport from an external crate then use leading colons like `::crate_name::reexport::path::bon`
+ --> tests/integration/ui/compile_fail/attr_crate.rs:8:19
+  |
+8 | #[builder(crate = super::bon)]
+  |                   ^^^^^
+
+error: path must be absolute; if you want to refer to a reexport from an external crate then add leading colons like `::bon`; if the path leads to a module in the current crate, then specify the absolute path with `crate` like `crate::reexport::path::bon` or `$crate::reexport::path::bon` (if within a macro)
+  --> tests/integration/ui/compile_fail/attr_crate.rs:12:19
+   |
+12 | #[builder(crate = bon)]
+   |                   ^^^
+
+error: path must not be relative; specify the path that starts with `crate::` instead; if you want to refer to a reexport from an external crate then use leading colons like `::crate_name::reexport::path::bon`
+  --> tests/integration/ui/compile_fail/attr_crate.rs:15:19
+   |
+15 | #[builder(crate = self::bon)]
+   |                   ^^^^
+
+error: path must not be relative; specify the path that starts with `crate::` instead; if you want to refer to a reexport from an external crate then use leading colons like `::crate_name::reexport::path::bon`
+  --> tests/integration/ui/compile_fail/attr_crate.rs:18:19
+   |
+18 | #[builder(crate = super::bon)]
+   |                   ^^^^^
+
+error: path must be absolute; if you want to refer to a reexport from an external crate then add leading colons like `::bon`; if the path leads to a module in the current crate, then specify the absolute path with `crate` like `crate::reexport::path::bon` or `$crate::reexport::path::bon` (if within a macro)
+  --> tests/integration/ui/compile_fail/attr_crate.rs:21:19
+   |
+21 | #[builder(crate = bon)]
+   |                   ^^^
+
+error: `crate` parameter should be specified via `#[bon(crate = path::to::bon)]` when impl block syntax is used; no need to specify it in the method's `#[builder]` attribute
+  --> tests/integration/ui/compile_fail/attr_crate.rs:28:23
+   |
+28 |     #[builder(crate = ::bon)]
+   |                       ^
+
+error: path must not be relative; specify the path that starts with `crate::` instead; if you want to refer to a reexport from an external crate then use leading colons like `::crate_name::reexport::path::bon`
+  --> tests/integration/ui/compile_fail/attr_crate.rs:34:15
+   |
+34 | #[bon(crate = self::bon)]
+   |               ^^^^
+
+error: path must not be relative; specify the path that starts with `crate::` instead; if you want to refer to a reexport from an external crate then use leading colons like `::crate_name::reexport::path::bon`
+  --> tests/integration/ui/compile_fail/attr_crate.rs:40:15
+   |
+40 | #[bon(crate = super::bon)]
+   |               ^^^^^
+
+error: path must be absolute; if you want to refer to a reexport from an external crate then add leading colons like `::bon`; if the path leads to a module in the current crate, then specify the absolute path with `crate` like `crate::reexport::path::bon` or `$crate::reexport::path::bon` (if within a macro)
+  --> tests/integration/ui/compile_fail/attr_crate.rs:46:15
+   |
+46 | #[bon(crate = bon)]
+   |               ^^^

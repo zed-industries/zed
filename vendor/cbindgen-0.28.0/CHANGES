@@ -1,0 +1,364 @@
+# unreleased
+
+# 0.28.0
+
+      * Parse unsafe attributes in https://github.com/mozilla/cbindgen/pull/1020
+      * Fix local override of enum prefix-with-name by jsgf in https://github.com/mozilla/cbindgen/pull/1006
+      * Add rename-all=prefix in https://github.com/mozilla/cbindgen/pull/1021
+      * ir: add support for UnsafeCell and SyncUnsafeCell by alekitto in https://github.com/mozilla/cbindgen/pull/1003
+      * Implement mangling for arrays in https://github.com/mozilla/cbindgen/pull/1022
+      * Fix: Ignore `CARGO_BUILD_TARGET` in tests by bryango in https://github.com/mozilla/cbindgen/pull/1010
+      * Newline for each field for constexpr field constants by youknowone in https://github.com/mozilla/cbindgen/pull/988
+      * Fix clippy warnings by youknowone in https://github.com/mozilla/cbindgen/pull/1026
+      * Add aarch64/arm64 to CI by NickeZ in https://github.com/mozilla/cbindgen/pull/1036
+      * Add `unstable_ir` feature flag that makes the ir pub by heesooy in https://github.com/mozilla/cbindgen/pull/1011
+      * Support generated a symbols file by TheElectronWill in https://github.com/mozilla/cbindgen/pull/916
+
+# 0.27.0
+
+      * Revert: The `Config` struct now has a private member.
+      * Allow users to specify a crate version for bindings generation (#901).
+      * Update MSRV to 1.74 (#912, #987).
+      * Support #[deprecated] on enum variants (#933).
+      * Support integrating the package_version information in a header file comment (#939).
+      * Add a language backend (#942).
+      * Support generics with defaulted args (#959).
+      * Add `VaList` compatibility (#970).
+
+# 0.26.0
+
+      * Fix swapping of `>>=` and `<<=` in constants.
+      * Add support for #[deprecated] (#860).
+      * Built-in support for bitflags 2.0.
+      * Support for "C-unwind" ABI.
+      * Generate bindings for non-public extern items if they are #[no_mangle].
+
+## 0.25.0
+
+      * Re-release of yanked 0.24.6 as a major release
+      * Update MSRV to 1.57
+      * Support variadic arguments (`...`) (#805)
+      * Add --depfile option (#820)
+      * Breaking changes: The `Config` struct now has a private member.
+
+## 0.24.6 (YANKED: depfile option was breaking, see #841)
+
+      * Update MSRV to 1.57
+      * Support variadic arguments (`...`) (#805)
+      * Add --depfile option (#820)
+
+## 0.24.5
+
+      * Don't enforce tempfile version.
+
+## 0.24.4
+
+      * Move expand infinite recursion fix (#799)
+      * Add with_cpp_compat to the builder (#796)
+      * Handle never type in return position consistently (#780)
+      * Fix warnings (#816, #819)
+      * Updated documentation (#788, #791, #792, #810, #823)
+
+## 0.24.3
+
+      * Make struct expressions correctly generated through typedefs (#768).
+
+## 0.24.2
+
+      * Make bitfield operators use explicit constructors.
+
+## 0.24.1
+
+      * Add support for unary negation (#765).
+      * Make more bitfield operators constexpr (#765).
+
+## 0.24.0
+
+      * Basic const generic support (#759, #760 #762).
+      * Suffixes on integer literals are now honored to avoid narrowing (#764).
+
+## 0.23.0
+
+      * Better support for constexpr. (#756)
+      * constexpr is now enabled by default in C++ mode. You can use const.allow_constexpr=false to revert to previous behavior. (#756)
+      * Minimum syn version no longer parses old rust code. (#754)
+
+## 0.22.0
+
+      * Support rename rule for union body members (#751).
+      * constant: Add support for associated constant expressions (#752).
+      * Fix regression in CamelCase rename rule (should be lowerCamelCase) (#750).
+      * enumeration: simplify standard types in variants (#749).
+      * Avoid generating and writing bindings when called recursively (#747).
+      * Cython: Omit per-variant tags in unions generated for Rust enums (#748).
+      * Update various dependencies.
+
+## 0.21.0
+
+      * Update MSRV to 1.54.0
+      * Update clap to 3.1.
+      * Update heck to 0.4.0
+      * unraw identifiers
+      * Honor documentation_length in Cython.
+      * Add documentation_style to with short and full options
+      * Map RawFd to Int
+      * Respect remove_underscores config when prefixing name to enum
+
+## 0.20.0
+
+     * Add Builder::with_using_namespaces. (#688)
+     * Ignore PhantomPinned. (#695)
+     * Simplify Pin<T> to T. (#697)
+     * Update --pretty=expanded to -Zunpretty=expanded. (#706)
+
+## 0.19.0
+
+     * Simplify types in generics (#663)
+     * Use --profile=check for macro expansion (#671)
+     * Use exported name to prefix enum variants (#672)
+     * Fix path attribute handling in inline submodules (#679)
+     * Fix a stack overflow with some recursive typedefs (#680)
+
+## 0.18.0
+
+     * Simplify types in nested types such as pointed-to types and function signatures (#661)
+
+## 0.17.0
+
+     * Add with_parse_extra_bindings to builder. (#645)
+     * Support NonZero and fix incorrect simplification of Option<ptr> into ptr. (#647)
+     * Deal with name conflicts correctly in declaration type resolution. (#651)
+     * Support pointers to ZSTs. (#656)
+
+## 0.16.0
+
+     * Remove artificial restriction on lifetime parameters on enums (#604)
+     * Add an option for converting usize/isize into size_t/ptrdiff_t. (#606)
+     * Allow controlling the cargo profile used for expansion. (#607)
+     * Support wider range of expressions in enum discriminants (#614)
+     * Support generation of Cython bindings (#590)
+     * Fixed some issues with style=tag and recursive structs (#615)
+     * Default C style to Both (as specified in docs) (#615)
+     * Fix resolution of path dependencies from certain modules. (#629)
+     * Support inlined definitions for tuple variants with a single field in C (#631)
+
+Thanks to all the awesome contributors that contributed to this release.
+
+## 0.15.0
+
+     * Allow customizing mangling of generic parameters in C (#575)
+     * Box<T> simplifies to T* in C (4ce324c)
+     * ManuallyDrop<T> and MaybeUninit<T> simplify to T in C, and are opaque in C++ (0076a17)
+     * C++ supports a derive-ostream annotation to derive serialization of structs, unions and enums (#582)
+     * Large character constants have been fixed on Windows (#586)
+     * Constants are now generated for typedefs, etc (#589)
+     * The `sort_by` configuration option has been made to work for constants (#587)
+     * Default sort order is source order now (sort_by = "None"), and can be changed by the above option (#587)
+
+## 0.14.6
+
+     * Fixed the builds with older versions of rustc.
+
+## 0.14.5
+
+     * Add support to specify line ending style (#568)
+     * Add cbindgen:ptrs-as-arrays annotation to allow making function
+       arguments C/C++ arrays.
+
+## 0.14.4
+
+     * Allow to override the mangling separator (#502)
+
+     * cbindgen now handles better having ZSTs in template parameters, and
+       default template parameters (#563).
+
+     * Support for annotating nonnull pointers (#558)
+
+     * Fixed bitflags that overflow a signed integer (#556)
+
+     * Support for wildcard argument names (#550)
+
+     * Support for the never return type, with configurable annotation (#549)
+
+     * Properly reject arrays as function arguments (#540)
+
+## 0.14.3
+
+     * Introduce cbindgen:ignore comment annotation, to allow ignoring items or modules. (#519)
+     * Support for casts in constant expressions. (#526)
+     * Make a non-fatal error a warning message. (#535)
+     * Add a --metadata option to the CLI, to allow passing pre-computed cargo metadata. (#538)
+
+## 0.14.2
+
+     * Fixed minimal dependency versions. (#507)
+     * Add an option to write pragma once. (#511)
+     * Fix submodule scanning for implicit Rust 2018 modules. (#512)
+     * Fix dependency parsing / scanning to handle target-specific versions. (#513)
+     * Use heck for case conversion. (#514)
+     * Add support for verbatim content after includes. (#416)
+     * Allow to add attributes to most generated functions. (#515)
+
+## 0.14.1
+
+     * Handle mangling pointers. (#508)
+     * Unconditionally generate a return statement in partialeq implementations. (#509)
+
+## 0.14.0
+
+     * Minor tweak at how [export.exclude] is handled to allow excluding
+       generic instantiations in C mode. (#501)
+     * Documented cpp_compat option. (#496)
+     * Fixed a panic when parsing associated constants for a built-in type. (#494)
+
+## 0.13.2
+
+     * Constants now have suitable documentation. (#471)
+     * Fixed some C warnings by emitting void when there are no arguments. (#470)
+     * Avoids reading cargo.toml when not needed, which can cause panics in workspace situations.
+     * Only write `default` cases if the switch is not exhaustive. (#475)
+     * Some warnings have been refined. (#477)
+     * Code generation for static arrays has been fixed. (#479)
+     * Opt-in support for constexpr in constants. (#481)
+     * Fix C code generation and some warnings when extremely large constants are used. (#490)
+     * Proper escaping of enum variants and fields. (#483)
+     * Added support for RefCell (as an opaque type) and Cell. (#489)
+
+## 0.13.1
+
+     * Support `#[cfg]` on individual enum variants. (#469)
+
+## 0.13.0
+
+     * Support 'swift_name' attributes on generated functions (#449)
+     * Add [export.pre_body] to config (#452)
+     * Handle new line in doc attribute (#454)
+     * Add support for `Self` in tagged enums, structs and unions (#455, #455, #456)
+     * Make sentinel variant respect regular config (#459)
+     * Fix layout of tagged enums with size under some configurations (#463)
+     * Add an option to allow configuring the order of function names in generated headers (#466)
+
+## 0.12.2
+
+     * Fixed version detection with lockfile v2. https://github.com/mozilla/cbindgen/pull/446
+     * Added support for export_name on functions. https://github.com/mozilla/cbindgen/pull/447
+
+## 0.12.1
+
+     * Added support for #[repr*64)] on enums. https://github.com/mozilla/cbindgen/pull/441
+     * Added support to generate plain enums instead of enum classes for C++. https://github.com/mozilla/cbindgen/pull/443
+     * Fixed dependency resolution with lockfile v2. https://github.com/mozilla/cbindgen/pull/438
+
+## 0.12.0
+
+     * Added support for #[repr(align)] and #[repr(packed)] on structs and unions. https://github.com/mozilla/cbindgen/pull/431
+     * Added support to generate copy-assignment operators for enums. https://github.com/mozilla/cbindgen/pull/434
+
+## 0.11.1
+
+     * More binary operators and expressions are supported. https://github.com/mozilla/cbindgen/pull/425
+     * More built-in bitflags operators. https://github.com/mozilla/cbindgen/pull/426
+
+## 0.11.0
+
+     * Made rust char map to uint32_t. https://github.com/mozilla/cbindgen/pull/424
+
+## 0.10.1
+
+     * Improved error message for missing config file. https://github.com/mozilla/cbindgen/pull/422
+     * Add missing header for char32_t. https://github.com/mozilla/cbindgen/pull/414
+
+## 0.10.0
+
+     * Initialize struct literal with list-initializer for C++11 standard. https://github.com/mozilla/cbindgen/pull/401
+     * Surround namespace with __cplusplus ifdef in cpp_compat mode. https://github.com/mozilla/cbindgen/pull/407
+     * Add support for --quiet flag. https://github.com/mozilla/cbindgen/pull/400
+     * Map char to char32_t. https://github.com/mozilla/cbindgen/pull/396
+     * Improve binding_crate_ref() error message. https://github.com/mozilla/cbindgen/pull/395
+     * avoid prematurely returning during expansion. https://github.com/mozilla/cbindgen/pull/389
+     * Add support for adding "using namespace" statements. https://github.com/mozilla/cbindgen/pull/387
+
+## 0.9.1
+
+     * Various improvements to comment output. https://github.com/mozilla/cbindgen/pull/370 / https://github.com/mozilla/cbindgen/pull/375.
+     * Fixed expand when ran from build.rs. https://github.com/mozilla/cbindgen/pull/371
+     * More debugging output for expansion. https://github.com/mozilla/cbindgen/pull/383
+     * New option to add a default private constructor in C++ tagged enums. https://github.com/mozilla/cbindgen/pull/377
+     * Syn and related dependencies updated to 1.0. https://github.com/mozilla/cbindgen/pull/379
+
+## 0.9.0
+
+     * Support to generate C headers with C++ compatibility. https://github.com/mozilla/cbindgen/pull/349
+     * Fix include guard generation when no_includes is set. https://github.com/mozilla/cbindgen/pull/352
+     * Fix crate parsing order so that types from the binding crate are preferred in presence of conflicting names. https://github.com/mozilla/cbindgen/pull/355
+     * Add extra_bindings option to generate bindings for dependencies. https://github.com/mozilla/cbindgen/pull/362
+     * Clap dependency is optional now so it's feasible to avoid building it if cbindgen is used as a library. https://github.com/mozilla/cbindgen/pull/363
+
+## 0.8.7
+
+     * Require C++11 to run the test-suite (#341, test-only)
+     * Improve mangling error message (#340)
+     * Add the ability to automatically derive copy-constructors for tagged enums (#339)
+     * Use placement new for constructing in tagged unions' helper methods (#333)
+
+## 0.8.6
+
+    * Fixed a panic when missing a lock file
+
+## 0.8.5
+
+    * Improved support for Rust 2018 modules
+    * Add possibility to autogenerate tagged union destructors
+
+## 0.8.4
+
+    * Support for package renaming in Cargo.toml
+    * Improved error messages for |cargo metadata| failures
+    * Replaced 'test.py' harness with |cargo test|
+    * Char constants will now be escaped properly
+    * Visibility of constants will now be respected
+    * Added a C99 doc comment style
+
+## 0.8.2
+
+     * Improvements to bitflags parsing
+
+## 0.8.1
+
+     * Support for manual parsing and expanding of bitflags macros
+     * Support for optional tagged enum casts with asserts
+
+## 0.8.0
+
+    * support for 'includes' without default includes
+    * removed dependency on ancient serde_derive!
+
+## 0.7.1
+
+    * Fix for crash when unwrapping unsupported type with associated constants
+
+## 0.7.0
+
+    * support for libc::ssize_t
+    * fixed some warnings on nightly
+    * fix for transparent associated constants
+    * switched more API's to use AsRef<Path>
+    * impl std::error::Error for cbindgen::Error
+    * now support putting user-defined content in item bodies
+
+## 0.6.8
+
+    * ptrdiff_t is now a recognized primitive type
+    * named function type arguments are now propagated
+    * fixes for struct literals in constants
+    * reserved C/C++ keywords are now escaped automatically
+    * negative enum discriminants are now supported
+    * fix for prefixing and formatting variant names
+    * fix for snake_case formatter
+    * syn update
+    * doxygen style comments are now output by default
+    * VaList is now a recognized primitive type
+    * fix for comment processing
+    * constant is propagated into array types
+    * references are now supported in IR, and used for some helper method generation
+    * assignment helper functions will generate array copies if necessary

@@ -1,0 +1,35 @@
+lints.workspace = true
+
+[package]
+name = "time-macros"
+version = "0.2.27"
+categories = ["date-and-time"]
+description = """
+    Procedural macros for the time crate.
+    This crate is an implementation detail and should not be relied upon directly.
+"""
+
+authors.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+targets = ["x86_64-unknown-linux-gnu"]
+rustdoc-args = ["--generate-link-to-definition"]
+
+[features]
+formatting = []
+large-dates = []
+parsing = []
+serde = []
+
+[lib]
+proc-macro = true
+
+[dependencies]
+time-core.workspace = true
+num-conv.workspace = true

@@ -1,0 +1,24 @@
+[package]
+name = "wiggle-generate"
+version.workspace = true
+authors = ["Pat Hickey <phickey@fastly.com>", "Jakub Konka <kubkon@jakubkonka.com>", "Alex Crichton <alex@alexcrichton.com>"]
+license = "Apache-2.0 WITH LLVM-exception"
+edition.workspace = true
+rust-version.workspace = true
+description = "Library crate for wiggle code generator."
+categories = ["wasm"]
+keywords = ["webassembly", "wasm"]
+repository = "https://github.com/bytecodealliance/wasmtime"
+readme = "README.md"
+include = ["src/**/*", "README.md", "LICENSE"]
+
+[lints]
+workspace = true
+
+[dependencies]
+witx = "0.9.1"
+quote = { workspace = true }
+proc-macro2 = { workspace = true }
+heck = { workspace = true }
+anyhow = { workspace = true }
+syn = { workspace = true, features = ["full"] }

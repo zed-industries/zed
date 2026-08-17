@@ -1,0 +1,16 @@
+# Width options
+max_width = 100
+fn_call_width = 80
+attr_fn_like_width = 80
+struct_lit_width = 80
+struct_variant_width = 60
+array_width = 80
+chain_width = 60
+single_line_if_else_max_width = 60
+
+# Other options
+merge_derives = false
+overflow_delimited_expr = true
+struct_lit_single_line = true
+empty_item_single_line = true
+where_single_line = true

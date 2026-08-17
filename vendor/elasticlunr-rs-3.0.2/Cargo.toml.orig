@@ -1,0 +1,58 @@
+[package]
+authors = ["Matt Ickstadt <mattico8@gmail.com>"]
+license = "MIT/Apache-2.0"
+name = "elasticlunr-rs"
+version = "3.0.2"
+description = "A partial port of elasticlunr.js to Rust for generating static document search indexes"
+documentation = "https://docs.rs/elasticlunr-rs"
+repository = "https://github.com/mattico/elasticlunr-rs"
+keywords = ["search", "index", "indexing", "lunr", "elasticlunr"]
+exclude = ["tests/lunr-fixture-gen/", "js/", ".github/"]
+readme = "README.md"
+edition = "2018"
+rust-version = "1.57.0"
+
+[badges]
+maintenance = { status = "passively-maintained" }
+
+[lib]
+name = "elasticlunr"
+
+[[bench]]
+name = "bench"
+harness = false
+
+[dev-dependencies]
+criterion = "0.4.0"
+maplit = "1"
+
+[dependencies]
+regex = "1"
+rust-stemmers = { version = "1.2.0", optional = true } # 1.2.0 minimum for Norwegian
+serde = "1"
+serde_derive = "1.0.34" # First verstion to support #[serde(flatten)]
+serde_json = "1"
+jieba-rs = { version = "0.6", optional = true }
+lindera = { version = "0.14", optional = true, features = ["ipadic"] }
+lindera-core = { version = "0.13.5", optional = true }
+
+[features]
+languages = ["ar", "da", "de", "du", "es", "fi", "fr", "hu", "it", "ja", "ko", "no", "pt", "ro", "ru", "sv", "tr", "zh"]
+ar = []
+da = ["rust-stemmers"]
+de = ["rust-stemmers"]
+du = ["rust-stemmers"]
+es = ["rust-stemmers"]
+fi = ["rust-stemmers"]
+fr = ["rust-stemmers"]
+hu = ["rust-stemmers"]
+it = ["rust-stemmers"]
+ja = ["lindera", "lindera-core"]
+ko = []
+no = ["rust-stemmers"]
+pt = ["rust-stemmers"]
+ro = ["rust-stemmers"]
+ru = ["rust-stemmers"]
+sv = ["rust-stemmers"]
+tr = ["rust-stemmers"]
+zh = ["jieba-rs"]

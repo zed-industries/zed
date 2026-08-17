@@ -1,0 +1,28 @@
+---
+- name: Multiline Scalar at Top Level [1.3]
+  from: 9YRD, modified for YAML 1.3
+  tags: scalar whitespace 1.3-mod
+  yaml: |
+    ---
+    a
+    b␣␣
+      c
+    d
+
+    e
+  tree: |
+    +STR
+     +DOC ---
+      =VAL :a b c d\ne
+     -DOC
+    -STR
+  json: |
+    "a b c d\ne"
+  dump: |
+    'a b c d
+
+      e'
+  emit: |
+    --- a b c d
+
+    e

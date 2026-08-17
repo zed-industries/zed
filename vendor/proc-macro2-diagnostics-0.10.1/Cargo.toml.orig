@@ -1,0 +1,28 @@
+[package]
+name = "proc-macro2-diagnostics"
+version = "0.10.1"
+authors = ["Sergio Benitez <sb@sergio.bz>"]
+description = "Diagnostics for proc-macro2."
+license = "MIT/Apache-2.0"
+edition = "2018"
+readme = "README.md"
+repository = "https://github.com/SergioBenitez/proc-macro2-diagnostics"
+homepage = "https://github.com/SergioBenitez/proc-macro2-diagnostics"
+documentation = "https://docs.rs/proc-macro2-diagnostics"
+
+[features]
+default = ["colors"]
+colors = ["yansi"]
+
+[dependencies]
+quote = "1.0"
+proc-macro2 = "1.0"
+syn = "2.0"
+yansi = { version = "1.0.0-rc", optional = true }
+
+[build-dependencies]
+version_check = "0.9.4"
+
+[dev-dependencies]
+trybuild = "1.0"
+diagnostic-example = { path = "example/" }

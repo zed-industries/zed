@@ -1,0 +1,14 @@
+---
+- name: Spec Example 7.7. Single Quoted Characters
+  from: http://www.yaml.org/spec/1.2/spec.html#id2788307
+  tags: spec scalar 1.3-err
+  yaml: |
+    'here''s to "quotes"'
+  tree: |
+    +STR
+     +DOC
+      =VAL 'here's to "quotes"
+     -DOC
+    -STR
+  json: |
+    "here's to \"quotes\""

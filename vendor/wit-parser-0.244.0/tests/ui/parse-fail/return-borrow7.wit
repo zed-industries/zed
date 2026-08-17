@@ -1,0 +1,11 @@
+package foo:bar;
+
+interface foo {
+  resource y;
+
+  record y2 {
+    a: borrow<y>,
+  }
+
+  x: func() -> y2;
+}

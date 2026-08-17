@@ -1,0 +1,55 @@
+---
+- name: Spec Example 6.1. Indentation Spaces
+  from: http://www.yaml.org/spec/1.2/spec.html#id2777865
+  tags: comment flow spec indent upto-1.2 whitespace
+  yaml: |2
+      # Leading comment line spaces are
+       # neither content nor indentation.
+    ␣␣␣␣
+    Not indented:
+     By one space: |
+        By four
+          spaces
+     Flow style: [    # Leading spaces
+       By two,        # in flow style
+      Also by two,    # are neither
+      —»Still by two   # content nor
+        ]             # indentation.
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :Not indented
+       +MAP
+        =VAL :By one space
+        =VAL |By four\n  spaces\n
+        =VAL :Flow style
+        +SEQ []
+         =VAL :By two
+         =VAL :Also by two
+         =VAL :Still by two
+        -SEQ
+       -MAP
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "Not indented": {
+        "By one space": "By four\n  spaces\n",
+        "Flow style": [
+          "By two",
+          "Also by two",
+          "Still by two"
+        ]
+      }
+    }
+  dump: |
+    Not indented:
+      By one space: |
+        By four
+          spaces
+      Flow style:
+      - By two
+      - Also by two
+      - Still by two

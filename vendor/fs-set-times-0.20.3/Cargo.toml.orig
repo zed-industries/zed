@@ -1,0 +1,25 @@
+[package]
+name = "fs-set-times"
+version = "0.20.3"
+authors = ["Dan Gohman <dev@sunfishcode.online>"]
+description = "Set filesystem timestamps"
+documentation = "https://docs.rs/fs-set-times"
+license = "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
+repository = "https://github.com/bytecodealliance/fs-set-times"
+edition = "2021"
+keywords = ["api", "file"]
+categories = ["filesystem"]
+exclude = ["/.github"]
+
+[dependencies]
+io-lifetimes = { version = "2.0.0", default-features = false }
+
+[target.'cfg(not(windows))'.dependencies]
+rustix = { version = "1.0.0", features = ["fs", "time"] }
+
+[target.'cfg(windows)'.dependencies.windows-sys]
+version = ">=0.52, <0.60"
+features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+]

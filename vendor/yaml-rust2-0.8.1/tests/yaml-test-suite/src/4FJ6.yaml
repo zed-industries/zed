@@ -1,0 +1,42 @@
+---
+- name: Nested implicit complex keys
+  from: '@perlpunk'
+  tags: complex-key flow mapping sequence
+  yaml: |
+    ---
+    [
+      [ a, [ [[b,c]]: d, e]]: 23
+    ]
+  tree: |
+    +STR
+     +DOC ---
+      +SEQ []
+       +MAP {}
+        +SEQ []
+         =VAL :a
+         +SEQ []
+          +MAP {}
+           +SEQ []
+            +SEQ []
+             =VAL :b
+             =VAL :c
+            -SEQ
+           -SEQ
+           =VAL :d
+          -MAP
+          =VAL :e
+         -SEQ
+        -SEQ
+        =VAL :23
+       -MAP
+      -SEQ
+     -DOC
+    -STR
+  dump: |
+    ---
+    - ? - a
+        - - ? - - b
+                - c
+            : d
+          - e
+      : 23

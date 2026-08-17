@@ -1,0 +1,12 @@
+package foo:foo;
+
+interface a {
+    variant error {
+        other(string),
+    }
+    g: func() -> result<_, error>;
+}
+
+world nope {
+    import a;
+}

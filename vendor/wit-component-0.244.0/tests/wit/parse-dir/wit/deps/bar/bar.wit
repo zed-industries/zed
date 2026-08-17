@@ -1,0 +1,9 @@
+package foo:bar;
+
+interface bar {
+  f: func() -> bool;
+}
+
+world bar-world {
+      export bar;
+}

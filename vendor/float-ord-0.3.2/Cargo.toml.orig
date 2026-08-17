@@ -1,0 +1,16 @@
+[package]
+name = "float-ord"
+version = "0.3.2"
+authors = ["Michael Howell <michael@notriddle.com>"]
+description = "A total ordering for floating-point numbers"
+keywords = ["floats", "sort", "compare"]
+categories = ["algorithms", "no-std"]
+license = "MIT / Apache-2.0"
+repository = "https://github.com/notriddle/rust-float-ord"
+documentation = "https://docs.rs/float-ord/0.3.1/float-ord/"
+
+[dev-dependencies]
+rand = "0.8"
+
+[badges]
+travis-ci = { repository = "notriddle/rust-float-ord" }

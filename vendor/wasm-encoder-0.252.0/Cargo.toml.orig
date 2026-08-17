@@ -1,0 +1,43 @@
+[package]
+name = "wasm-encoder"
+version.workspace = true
+authors = ["Nick Fitzgerald <fitzgen@gmail.com>"]
+edition.workspace = true
+license.workspace = true
+readme = "README.md"
+repository = "https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wasm-encoder"
+homepage = "https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wasm-encoder"
+documentation = "https://docs.rs/wasm-encoder"
+description = """
+A low-level WebAssembly encoder.
+"""
+rust-version.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+
+[lints]
+workspace = true
+
+[dependencies]
+leb128fmt.workspace = true
+
+# Enable this dependency to get a bunch of `From<wasmparser::Foo> for
+# wasm_encoder::Foo` impls.
+wasmparser = { optional = true, workspace = true, features = ["simd"] }
+
+[dev-dependencies]
+anyhow = { workspace = true }
+tempfile = { workspace = true }
+wasmparser = { path = "../wasmparser" }
+wasmprinter = { workspace = true }
+
+[features]
+default = ['std', 'component-model']
+
+# A feature which enables implementations of `std::error::Error` as appropriate.
+std = ["wasmparser?/std"]
+
+# On-by-default: conditional support for emitting components in addition to
+# core modules.
+component-model = ['wasmparser?/component-model']

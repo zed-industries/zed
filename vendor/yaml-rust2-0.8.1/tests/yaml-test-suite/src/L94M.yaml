@@ -1,0 +1,28 @@
+---
+- name: Tags in Explicit Mapping
+  from: NimYAML tests
+  tags: explicit-key tag mapping
+  yaml: |
+    ? !!str a
+    : !!int 47
+    ? c
+    : !!str d
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL <tag:yaml.org,2002:str> :a
+       =VAL <tag:yaml.org,2002:int> :47
+       =VAL :c
+       =VAL <tag:yaml.org,2002:str> :d
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "a": 47,
+      "c": "d"
+    }
+  dump: |
+    !!str a: !!int 47
+    c: !!str d

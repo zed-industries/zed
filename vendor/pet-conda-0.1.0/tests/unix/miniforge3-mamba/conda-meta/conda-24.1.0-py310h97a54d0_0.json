@@ -1,0 +1,7 @@
+{
+  "build": "py310h97a54d0_0",
+  "build_number": 0,
+  "channel": "https://conda.anaconda.org/conda-forge/osx-arm64",
+  "name": "conda",
+  "version": "24.1.0"
+}

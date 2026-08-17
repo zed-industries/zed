@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_INCREMENTAL: 0
+  RUSTFLAGS: "-Cdebuginfo=0 --deny=warnings"
+  RUSTDOCFLAGS: "--deny=warnings"
+
+jobs:
+  fmt:
+    name: Tidy Code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: hecrj/setup-rust-action@v1
+        with:
+          rust-version: stable
+          components: rustfmt
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: typos-cli
+      - name: Check Formatting
+        run: cargo fmt --all -- --check
+      - name: Run Typos
+        run: typos
+
+  tests:
+    name: Tests
+    needs: fmt
+    # `raw-window-handle` only has `cfg` guards for Android, so we just run Ubuntu
+    # and manually test Android
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust_version: ["1.64", stable, nightly]
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - uses: hecrj/setup-rust-action@v1
+        with:
+          rust-version: ${{ matrix.rust_version }}
+      - run: rustup target add wasm32-unknown-unknown
+
+      - name: Pin deps that break MSRV
+        if: matrix.rust_version == '1.64'
+        run: |
+          cargo update -p bumpalo --precise 3.14.0
+
+      - name: Check documentation
+        run: cargo doc --no-deps --document-private-items
+
+      - uses: taiki-e/install-action@cargo-hack
+
+      - name: Run tests
+        run: cargo hack test --feature-powerset
+
+      - name: Run tests for wasm32-unknown-unknown
+        run: cargo hack check --target wasm32-unknown-unknown --feature-powerset

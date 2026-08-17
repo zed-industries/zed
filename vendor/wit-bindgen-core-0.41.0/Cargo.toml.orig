@@ -1,0 +1,20 @@
+[package]
+name = "wit-bindgen-core"
+authors = ["Alex Crichton <alex@alexcrichton.com>"]
+version = { workspace = true }
+edition = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
+homepage = 'https://github.com/bytecodealliance/wit-bindgen'
+description = """
+Low-level support for bindings generation based on WIT files for use with
+`wit-bindgen-cli` and other languages.
+"""
+
+[lib]
+doctest = false
+
+[dependencies]
+wit-parser = { workspace = true }
+anyhow = { workspace = true }
+heck = { workspace = true }

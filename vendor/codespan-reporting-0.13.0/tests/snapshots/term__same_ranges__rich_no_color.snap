@@ -1,0 +1,14 @@
+---
+source: codespan-reporting/tests/term.rs
+expression: TEST_DATA.emit_no_color(&config)
+---
+error: Unexpected token
+  ┌─ same_range:1:5
+  │
+1 │ ::S { }
+  │     ^
+  │     │
+  │     Unexpected '{'
+  │     Expected '('
+
+

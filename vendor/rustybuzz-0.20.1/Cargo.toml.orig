@@ -1,0 +1,50 @@
+[package]
+name = "rustybuzz"
+version = "0.20.1"
+authors = [
+    "Caleb Maclennan <caleb@alerque.com>",
+    "Laurenz Stampfl <laurenz.stampfl@gmail.com>",
+    "Yevhenii Reizner <razrfalcon@gmail.com>",
+    "خالد حسني (Khaled Hosny) <khaled@aliftype.com>"
+]
+edition = "2021"
+description = "A complete harfbuzz shaping algorithm port to Rust."
+documentation = "https://docs.rs/rustybuzz/"
+readme = "README.md"
+repository = "https://github.com/harfbuzz/rustybuzz"
+license = "MIT"
+keywords = ["text", "shaping", "opentype", "truetype"]
+categories = ["text-processing"]
+exclude = ["benches/", "tests/"]
+
+[dependencies]
+bitflags = "2.4.1"
+bytemuck = { version = "1.5", features = ["extern_crate_alloc"] }
+core_maths = "0.1.0" # only for no_std builds
+smallvec = "1.6"
+unicode-bidi-mirroring = "0.4.0"
+unicode-ccc = "0.4.0"
+unicode-properties = { version = "0.1.3", default-features = false, features = ["general-category"] }
+unicode-script = "0.5.2"
+wasmi = { version = "0.37.0", optional = true }
+log = "0.4.22"
+
+[dependencies.ttf-parser]
+version = "0.25.0"
+default-features = false
+features = [
+    "opentype-layout",
+    "apple-layout",
+    "variable-fonts",
+    "glyph-names",
+    "no-std-float",
+]
+
+[features]
+default = ["std"]
+std = ["ttf-parser/std"]
+wasm-shaper = ["std", "dep:wasmi"]
+
+[dev-dependencies]
+pico-args = { version = "0.5", features = ["eq-separator"] }
+libc = "0.2"

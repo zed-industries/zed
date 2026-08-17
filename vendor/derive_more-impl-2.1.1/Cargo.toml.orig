@@ -1,0 +1,106 @@
+[package]
+name = "derive_more-impl"
+version = "2.1.1"
+edition = "2021"
+rust-version = "1.81.0"
+description = "Internal implementation of `derive_more` crate"
+authors = ["Jelte Fennema <github-tech@jeltef.nl>"]
+license = "MIT"
+repository = "https://github.com/JelteF/derive_more"
+documentation = "https://docs.rs/derive_more"
+
+# explicitly no keywords or categories so it cannot be found easily
+
+include = [
+    "src/**/*.rs",
+    "doc/**/*.md",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE",
+]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = "2.0.45"
+convert_case = { version = "0.10", optional = true }
+unicode-xid = { version = "0.2.2", optional = true }
+
+[build-dependencies]
+rustc_version = "0.4"
+
+[dev-dependencies]
+derive_more = { path = "..", features = ["full"] }
+itertools = "0.14.0"
+
+[badges]
+github = { repository = "JelteF/derive_more", workflow = "CI" }
+
+[package.metadata.docs.rs]
+features = ["full"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(ci)", "cfg(error_generic_member_access)", "cfg(nightly)"] }
+
+[features]
+default = []
+
+add = ["syn/extra-traits", "syn/visit"]
+add_assign = ["syn/extra-traits", "syn/visit"]
+as_ref = ["syn/extra-traits", "syn/visit"]
+constructor = []
+debug = ["syn/extra-traits", "dep:unicode-xid"]
+deref = []
+deref_mut = []
+display = ["syn/extra-traits", "dep:unicode-xid", "dep:convert_case"]
+eq = ["syn/extra-traits", "syn/visit"]
+error = ["syn/extra-traits"]
+from = ["syn/extra-traits"]
+from_str = ["syn/full", "syn/visit", "dep:convert_case"]
+index = []
+index_mut = []
+into = ["syn/extra-traits", "syn/visit-mut"]
+into_iterator = []
+is_variant = ["dep:convert_case"]
+mul = ["syn/extra-traits", "syn/visit"]
+mul_assign = ["syn/extra-traits", "syn/visit"]
+not = ["syn/extra-traits"]
+sum = []
+try_from = []
+try_into = ["syn/extra-traits", "syn/full", "syn/visit-mut"]
+try_unwrap = ["dep:convert_case"]
+unwrap = ["dep:convert_case"]
+
+full = [
+    "add",
+    "add_assign",
+    "as_ref",
+    "constructor",
+    "debug",
+    "deref",
+    "deref_mut",
+    "display",
+    "eq",
+    "error",
+    "from",
+    "from_str",
+    "index",
+    "index_mut",
+    "into",
+    "into_iterator",
+    "is_variant",
+    "mul",
+    "mul_assign",
+    "not",
+    "sum",
+    "try_from",
+    "try_into",
+    "try_unwrap",
+    "unwrap",
+]
+
+testing-helpers = ["syn/full"]

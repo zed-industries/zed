@@ -1,0 +1,327 @@
+[
+  {
+    "Description": "Set substitutions for emoji/math fonts"
+  },
+  {
+    "Alias": {
+      "alias": "Noto Color Emoji",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "emoji"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Apple Color Emoji",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "emoji"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Segoe UI Emoji",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "emoji"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Twitter Color Emoji",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "emoji"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "EmojiOne Mozilla",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "emoji"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Emoji Two",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "emoji"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "JoyPixels",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "emoji"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Emoji One",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "emoji"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Noto Emoji",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "emoji"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Android Emoji",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "emoji"
+      ]
+    }
+  },
+  {
+    "Match": {
+      "target": "Pattern",
+      "tests": [
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Family": {
+              "Simple": {
+                "String": "emoji"
+              }
+            }
+          }
+        }
+      ],
+      "edits": [
+        {
+          "mode": "Prepend",
+          "binding": "Weak",
+          "value": {
+            "Lang": {
+              "Simple": {
+                "String": "und-zsye"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "Match": {
+      "target": "Pattern",
+      "tests": [
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Lang": {
+              "Simple": {
+                "String": "und-zsye"
+              }
+            }
+          }
+        },
+        {
+          "qual": "All",
+          "target": "Default",
+          "compare": "NotEq",
+          "value": {
+            "Family": {
+              "Simple": {
+                "String": "emoji"
+              }
+            }
+          }
+        }
+      ],
+      "edits": [
+        {
+          "mode": "Append",
+          "binding": "Strong",
+          "value": {
+            "Family": {
+              "Simple": {
+                "String": "emoji"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "XITS Math",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "math"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "STIX Two Math",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "math"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Cambria Math",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "math"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Latin Modern Math",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "math"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Minion Math",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "math"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Lucida Math",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "math"
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Asana Math",
+      "prefer": [],
+      "accept": [],
+      "default": [
+        "math"
+      ]
+    }
+  },
+  {
+    "Match": {
+      "target": "Pattern",
+      "tests": [
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Family": {
+              "Simple": {
+                "String": "math"
+              }
+            }
+          }
+        }
+      ],
+      "edits": [
+        {
+          "mode": "Prepend",
+          "binding": "Weak",
+          "value": {
+            "Lang": {
+              "Simple": {
+                "String": "und-zmth"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "Match": {
+      "target": "Pattern",
+      "tests": [
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Lang": {
+              "Simple": {
+                "String": "und-zmth"
+              }
+            }
+          }
+        },
+        {
+          "qual": "All",
+          "target": "Default",
+          "compare": "NotEq",
+          "value": {
+            "Family": {
+              "Simple": {
+                "String": "math"
+              }
+            }
+          }
+        }
+      ],
+      "edits": [
+        {
+          "mode": "Append",
+          "binding": "Strong",
+          "value": {
+            "Family": {
+              "Simple": {
+                "String": "math"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+]

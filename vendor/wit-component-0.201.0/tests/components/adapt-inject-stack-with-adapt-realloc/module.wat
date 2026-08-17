@@ -1,0 +1,12 @@
+(module
+  (import "old" "get_sum" (func (result i32)))
+  (func $cabi_realloc (param i32 i32 i32 i32) (result i32)
+    (i32.const 123456789)
+  )
+  (func $cabi_realloc_adapter (param i32 i32 i32 i32) (result i32)
+    (i32.const 987654321)
+  )
+  (memory (export "memory") 1)
+  (export "cabi_realloc" (func $cabi_realloc))
+  (export "cabi_realloc_adapter" (func $cabi_realloc_adapter))
+)

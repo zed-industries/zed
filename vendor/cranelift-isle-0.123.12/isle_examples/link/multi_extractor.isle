@@ -1,0 +1,13 @@
+(type A extern (enum (B) (C)))
+
+(decl multi E1 (A u32) u32)
+
+(extern extractor E1 e1_etor)
+
+(decl multi Rule (u32) u32)
+
+(rule (Rule (E1 a idx))
+      (if-let (A.B) a)
+      idx)
+(rule (Rule _)
+      32)

@@ -1,0 +1,38 @@
+# See the configuration reference at
+# https://github.com/crate-ci/typos/blob/master/docs/reference.md
+
+# Corrections take the form of a key/value pair. The key is the incorrect word
+# and the value is the correct word. If the key and value are the same, the
+# word is treated as always correct. If the value is an empty string, the word
+# is treated as always incorrect.
+
+# Match Identifier - Case Sensitive
+[default.extend-identifiers]
+xBA = "xBA"
+CDxBA = "CDxBA"
+DxBA = "DxBA"
+DCxBA = "DCxBA"
+falt = "falt"
+fo = "fo"
+FO = "FO"
+loca = "loca"
+loca_fmt = "loca_fmt"
+LOCA = "LOCA"
+paeth = "paeth"
+use_ot = "use_ot"
+wdth = "wdth"
+WDTH = "WDTH"
+
+# Match Inside a Word - Case Insensitive
+[default.extend-words]
+
+[files]
+# Include .github, .cargo, etc.
+ignore-hidden = false
+extend-exclude = [
+    "/src/text/lang_data.rs",
+    "/src/text/unicode_data.rs",
+    # /.git isn't in .gitignore, because git never tracks it.
+    # Typos doesn't know that, though.
+    "/.git"
+]

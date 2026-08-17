@@ -1,0 +1,20 @@
+[package]
+name = "unindent"
+version = "0.2.4"
+authors = ["David Tolnay <dtolnay@gmail.com>"]
+categories = ["text-processing"]
+description = "Remove a column of leading whitespace from a string"
+documentation = "https://docs.rs/unindent"
+edition = "2021"
+keywords = ["heredoc", "nowdoc", "multiline", "string", "literal"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/dtolnay/indoc"
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+rustdoc-args = [
+    "--generate-link-to-definition",
+    "--extern-html-root-url=core=https://doc.rust-lang.org",
+    "--extern-html-root-url=alloc=https://doc.rust-lang.org",
+    "--extern-html-root-url=std=https://doc.rust-lang.org",
+]

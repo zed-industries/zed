@@ -1,0 +1,11 @@
+package foo:foo;
+
+interface a {
+  type a = u32;
+}
+
+world foo {
+  export b: interface {
+    type a = u32;
+  }
+}

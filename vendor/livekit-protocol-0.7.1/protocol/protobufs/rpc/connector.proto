@@ -1,0 +1,75 @@
+// Copyright 2025 LiveKit, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package rpc;
+
+option go_package = "github.com/livekit/protocol/rpc";
+
+import "options.proto";
+import "livekit_connector_whatsapp.proto";
+import "livekit_connector_twilio.proto";
+import "rpc/common.proto";
+
+service ConnectorInternal {
+  rpc DialWhatsAppCall(InternalDialWhatsAppCallRequest) returns (livekit.DialWhatsAppCallResponse) {
+    option (psrpc.options).topics = true;
+  };
+  
+  rpc AcceptWhatsAppCall(InternalAcceptWhatsAppCallRequest) returns (livekit.AcceptWhatsAppCallResponse) {
+    option (psrpc.options).topics = true;
+  };
+
+  rpc ConnectTwilioCall(InternalConnectTwilioCallRequest) returns (livekit.ConnectTwilioCallResponse) {
+    option (psrpc.options).topics = true;
+  };
+}
+
+service ConnectorHandler {
+  rpc ConnectWhatsAppCall(livekit.ConnectWhatsAppCallRequest) returns (livekit.ConnectWhatsAppCallResponse) {
+    option (psrpc.options) = {
+      topics: true
+      topic_params: {
+        names: ["whatsapp_call_id"]
+        typed: false
+      }
+    };
+  };
+
+  rpc DisconnectWhatsAppCall(livekit.DisconnectWhatsAppCallRequest) returns (livekit.DisconnectWhatsAppCallResponse) {
+    option (psrpc.options) = {
+      topics: true
+      topic_params: {
+        names: ["whatsapp_call_id"]
+        typed: false
+      }
+    };
+  };
+}
+
+message InternalDialWhatsAppCallRequest {
+  livekit.DialWhatsAppCallRequest request = 1;
+  InternalRoomJoinInfo room_join_info = 2;
+}
+
+message InternalAcceptWhatsAppCallRequest {
+  livekit.AcceptWhatsAppCallRequest request = 1;
+  InternalRoomJoinInfo room_join_info = 2;
+}
+
+message InternalConnectTwilioCallRequest {
+  livekit.ConnectTwilioCallRequest request = 1;
+  InternalRoomJoinInfo room_join_info = 2;
+}

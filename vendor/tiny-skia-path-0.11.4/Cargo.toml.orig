@@ -1,0 +1,27 @@
+[package]
+name = "tiny-skia-path"
+version = "0.11.4"
+authors = ["Yevhenii Reizner <razrfalcon@gmail.com>"]
+edition = "2018"
+description = "A tiny-skia Bezier path implementation"
+documentation = "https://docs.rs/tiny-skia-path/"
+readme = "README.md"
+repository = "https://github.com/RazrFalcon/tiny-skia/tree/master/path"
+license = "BSD-3-Clause"
+keywords = ["graphics", "bezier", "path", "dash", "stroke"]
+categories = ["graphics"]
+workspace = ".."
+
+[dependencies]
+arrayref = "0.3.6"
+bytemuck = "1.4"
+libm = { version = "0.2.1", optional = true } # float support on no_std
+strict-num = { version = "0.1", default-features = false }
+
+[features]
+default = ["std"]
+
+# Enables the use of the standard library. Deactivate this and activate the no-std-float
+# feature to compile for targets that don't have std.
+std = []
+no-std-float = ["libm"]

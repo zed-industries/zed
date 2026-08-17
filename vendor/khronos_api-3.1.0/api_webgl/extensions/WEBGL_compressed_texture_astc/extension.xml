@@ -1,0 +1,577 @@
+<?xml version="1.0"?>
+
+<extension href="WEBGL_compressed_texture_astc/">
+  <name>WEBGL_compressed_texture_astc</name>
+  <contact>
+    <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL working group</a> (public_webgl 'at' khronos.org)
+  </contact>
+  <contributors>
+    <contributor>Christophe Riccio, Unity</contributor>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+  <number>30</number>
+  <depends>
+    <api version="1.0"/>
+  </depends>
+  <overview>
+    <p>
+      This extension exposes the compressed texture format defined in the 
+      <a href="https://www.opengl.org/registry/specs/KHR/texture_compression_astc_hdr.txt">
+      KHR_texture_compression_astc_hdr</a> OpenGL ES extension to WebGL. Consult that extension
+      specification for behavioral definitions, including error behaviors.
+    </p>
+    <p>
+      ASTC textures may be encoded using either high or low dynamic range, corresponding to an "HDR
+      profile" and "LDR profile". The compression format is designed to be extended, and for new
+      profiles to be added in the future. For this reason, enabling the WebGL extension enables all
+      of the profiles supported by the implementation. The supported profiles may be queried by
+      calling <code>getSupportedProfiles</code> against the extension object.
+    </p>
+    <features>
+      <feature>
+        Compression format <code>COMPRESSED_RGBA_ASTC_4x4_KHR</code>,
+        <code>COMPRESSED_RGBA_ASTC_5x4_KHR</code>,
+        <code>COMPRESSED_RGBA_ASTC_5x5_KHR</code>,
+        <code>COMPRESSED_RGBA_ASTC_6x5_KHR</code>,
+        <code>COMPRESSED_RGBA_ASTC_6x6_KHR</code>,
+        <code>COMPRESSED_RGBA_ASTC_8x5_KHR</code>,
+        <code>COMPRESSED_RGBA_ASTC_8x6_KHR</code>,
+        <code>COMPRESSED_RGBA_ASTC_8x8_KHR</code>,
+        <code>COMPRESSED_RGBA_ASTC_10x5_KHR</code>,
+        <code>COMPRESSED_RGBA_ASTC_10x6_KHR</code>,
+        <code>COMPRESSED_RGBA_ASTC_10x8_KHR</code>,
+        <code>COMPRESSED_RGBA_ASTC_10x10_KHR</code>,
+        <code>COMPRESSED_RGBA_ASTC_12x10_KHR</code>,
+        <code>COMPRESSED_RGBA_ASTC_12x12_KHR</code>,
+        <code>COMPRESSED_SRGB8_ALPHA8_ASTC_4x4_KHR</code>,
+        <code>COMPRESSED_SRGB8_ALPHA8_ASTC_5x4_KHR</code>,
+        <code>COMPRESSED_SRGB8_ALPHA8_ASTC_5x5_KHR</code>,
+        <code>COMPRESSED_SRGB8_ALPHA8_ASTC_6x5_KHR</code>,
+        <code>COMPRESSED_SRGB8_ALPHA8_ASTC_6x6_KHR</code>,
+        <code>COMPRESSED_SRGB8_ALPHA8_ASTC_8x5_KHR</code>,
+        <code>COMPRESSED_SRGB8_ALPHA8_ASTC_8x6_KHR</code>,
+        <code>COMPRESSED_SRGB8_ALPHA8_ASTC_8x8_KHR</code>,
+        <code>COMPRESSED_SRGB8_ALPHA8_ASTC_10x5_KHR</code>,
+        <code>COMPRESSED_SRGB8_ALPHA8_ASTC_10x6_KHR</code>,
+        <code>COMPRESSED_SRGB8_ALPHA8_ASTC_10x8_KHR</code>,
+        <code>COMPRESSED_SRGB8_ALPHA8_ASTC_10x10_KHR</code>,
+        <code>COMPRESSED_SRGB8_ALPHA8_ASTC_12x10_KHR</code>,
+        and <code>COMPRESSED_SRGB8_ALPHA8_ASTC_12x12_KHR</code> may be passed to
+        the <code>compressedTexImage2D</code> and <code>compressedTexSubImage2D</code> entry points.
+      </feature>
+      <feature>
+        Calling <code>getParameter</code> with the argument <code>COMPRESSED_TEXTURE_FORMATS</code>
+        will include the format from this specification.
+      </feature>
+      <feature>
+        <p>The following format-specific restrictions must be enforced:</p>
+        <dl>
+          <dt>COMPRESSED_RGBA_ASTC_4x4_KHR</dt>
+          <dt>COMPRESSED_SRGB8_ALPHA8_ASTC_4x4_KHR</dt>
+          <dd>
+            <p>The <code>byteLength</code> of the ArrayBufferView, <code>pixels</code>, passed to
+              <code>compressedTexImage2D</code> or <code>compressedTexSubImage2D</code> must be 
+              equal to the following number of bytes:
+            </p>
+            <blockquote><code>
+              floor((width + 3) / 4) * floor((height + 3) / 4) * 16
+            </code></blockquote>
+            <p>If it is not, an <code>INVALID_VALUE</code> error is generated.</p>
+          </dd>
+        </dl>
+      </feature>
+      <feature>
+        <p>The following format-specific restrictions must be enforced:</p>
+        <dl>
+          <dt>COMPRESSED_RGBA_ASTC_5x4_KHR</dt>
+          <dt>COMPRESSED_SRGB8_ALPHA8_ASTC_5x4_KHR</dt>
+          <dd>
+            <p>The <code>byteLength</code> of the ArrayBufferView, <code>pixels</code>, passed to
+              <code>compressedTexImage2D</code> or <code>compressedTexSubImage2D</code> must be 
+              equal to the following number of bytes:
+            </p>
+            <blockquote><code>
+              floor((width + 4) / 5) * floor((height + 3) / 4) * 16
+            </code></blockquote>
+            <p>If it is not, an <code>INVALID_VALUE</code> error is generated.</p>
+          </dd>
+        </dl>
+      </feature>
+      <feature>
+        <p>The following format-specific restrictions must be enforced:</p>
+        <dl>
+          <dt>COMPRESSED_RGBA_ASTC_5x5_KHR</dt>
+          <dt>COMPRESSED_SRGB8_ALPHA8_ASTC_5x5_KHR</dt>
+          <dd>
+            <p>The <code>byteLength</code> of the ArrayBufferView, <code>pixels</code>, passed to
+              <code>compressedTexImage2D</code> or <code>compressedTexSubImage2D</code> must be 
+              equal to the following number of bytes:
+            </p>
+            <blockquote><code>
+              floor((width + 4) / 5) * floor((height + 4) / 5) * 16
+            </code></blockquote>
+            <p>If it is not, an <code>INVALID_VALUE</code> error is generated.</p>
+          </dd>
+        </dl>
+      </feature>
+      <feature>
+        <p>The following format-specific restrictions must be enforced:</p>
+        <dl>
+          <dt>COMPRESSED_RGBA_ASTC_6x5_KHR</dt>
+          <dt>COMPRESSED_SRGB8_ALPHA8_ASTC_6x5_KHR</dt>
+          <dd>
+            <p>The <code>byteLength</code> of the ArrayBufferView, <code>pixels</code>, passed to
+              <code>compressedTexImage2D</code> or <code>compressedTexSubImage2D</code> must be 
+              equal to the following number of bytes:
+            </p>
+            <blockquote><code>
+              floor((width + 5) / 6) * floor((height + 4) / 5) * 16
+            </code></blockquote>
+            <p>If it is not, an <code>INVALID_VALUE</code> error is generated.</p>
+          </dd>
+        </dl>
+      </feature>
+      <feature>
+        <p>The following format-specific restrictions must be enforced:</p>
+        <dl>
+          <dt>COMPRESSED_RGBA_ASTC_6x6_KHR</dt>
+          <dt>COMPRESSED_SRGB8_ALPHA8_ASTC_6x6_KHR</dt>
+          <dd>
+            <p>The <code>byteLength</code> of the ArrayBufferView, <code>pixels</code>, passed to
+              <code>compressedTexImage2D</code> or <code>compressedTexSubImage2D</code> must be 
+              equal to the following number of bytes:
+            </p>
+            <blockquote><code>
+              floor((width + 5) / 6) * floor((height + 5) / 6) * 16
+            </code></blockquote>
+            <p>If it is not, an <code>INVALID_VALUE</code> error is generated.</p>
+          </dd>
+        </dl>
+      </feature>
+      <feature>
+        <p>The following format-specific restrictions must be enforced:</p>
+        <dl>
+          <dt>COMPRESSED_RGBA_ASTC_8x5_KHR</dt>
+          <dt>COMPRESSED_SRGB8_ALPHA8_ASTC_8x5_KHR</dt>
+          <dd>
+            <p>The <code>byteLength</code> of the ArrayBufferView, <code>pixels</code>, passed to
+              <code>compressedTexImage2D</code> or <code>compressedTexSubImage2D</code> must be 
+              equal to the following number of bytes:
+            </p>
+            <blockquote><code>
+              floor((width + 7) / 8) * floor((height + 4) / 5) * 16
+            </code></blockquote>
+            <p>If it is not, an <code>INVALID_VALUE</code> error is generated.</p>
+          </dd>
+        </dl>
+      </feature>
+      <feature>
+        <p>The following format-specific restrictions must be enforced:</p>
+        <dl>
+          <dt>COMPRESSED_RGBA_ASTC_8x6_KHR</dt>
+          <dt>COMPRESSED_SRGB8_ALPHA8_ASTC_8x6_KHR</dt>
+          <dd>
+            <p>The <code>byteLength</code> of the ArrayBufferView, <code>pixels</code>, passed to
+              <code>compressedTexImage2D</code> or <code>compressedTexSubImage2D</code> must be 
+              equal to the following number of bytes:
+            </p>
+            <blockquote><code>
+              floor((width + 7) / 8) * floor((height + 5) / 6) * 16
+            </code></blockquote>
+            <p>If it is not, an <code>INVALID_VALUE</code> error is generated.</p>
+          </dd>
+        </dl>
+      </feature>
+      <feature>
+        <p>The following format-specific restrictions must be enforced:</p>
+        <dl>
+          <dt>COMPRESSED_RGBA_ASTC_8x8_KHR</dt>
+          <dt>COMPRESSED_SRGB8_ALPHA8_ASTC_8x8_KHR</dt>
+          <dd>
+            <p>The <code>byteLength</code> of the ArrayBufferView, <code>pixels</code>, passed to
+              <code>compressedTexImage2D</code> or <code>compressedTexSubImage2D</code> must be 
+              equal to the following number of bytes:
+            </p>
+            <blockquote><code>
+              floor((width + 7) / 8) * floor((height + 7) / 8) * 16
+            </code></blockquote>
+            <p>If it is not, an <code>INVALID_VALUE</code> error is generated.</p>
+          </dd>
+        </dl>
+      </feature>
+      <feature>
+        <p>The following format-specific restrictions must be enforced:</p>
+        <dl>
+          <dt>COMPRESSED_RGBA_ASTC_10x5_KHR</dt>
+          <dt>COMPRESSED_SRGB8_ALPHA8_ASTC_10x5_KHR</dt>
+          <dd>
+            <p>The <code>byteLength</code> of the ArrayBufferView, <code>pixels</code>, passed to
+              <code>compressedTexImage2D</code> or <code>compressedTexSubImage2D</code> must be 
+              equal to the following number of bytes:
+            </p>
+            <blockquote><code>
+              floor((width + 9) / 10) * floor((height + 4) / 5) * 16
+            </code></blockquote>
+            <p>If it is not, an <code>INVALID_VALUE</code> error is generated.</p>
+          </dd>
+        </dl>
+      </feature>
+      <feature>
+        <p>The following format-specific restrictions must be enforced:</p>
+        <dl>
+          <dt>COMPRESSED_RGBA_ASTC_10x6_KHR</dt>
+          <dt>COMPRESSED_SRGB8_ALPHA8_ASTC_10x6_KHR</dt>
+          <dd>
+            <p>The <code>byteLength</code> of the ArrayBufferView, <code>pixels</code>, passed to
+              <code>compressedTexImage2D</code> or <code>compressedTexSubImage2D</code> must be 
+              equal to the following number of bytes:
+            </p>
+            <blockquote><code>
+              floor((width + 9) / 10) * floor((height + 5) / 6) * 16
+            </code></blockquote>
+            <p>If it is not, an <code>INVALID_VALUE</code> error is generated.</p>
+          </dd>
+        </dl>
+      </feature>
+      <feature>
+        <p>The following format-specific restrictions must be enforced:</p>
+        <dl>
+          <dt>COMPRESSED_RGBA_ASTC_10x8_KHR</dt>
+          <dt>COMPRESSED_SRGB8_ALPHA8_ASTC_10x8_KHR</dt>
+          <dd>
+            <p>The <code>byteLength</code> of the ArrayBufferView, <code>pixels</code>, passed to
+              <code>compressedTexImage2D</code> or <code>compressedTexSubImage2D</code> must be 
+              equal to the following number of bytes:
+            </p>
+            <blockquote><code>
+              floor((width + 9) / 10) * floor((height + 7) / 8) * 16
+            </code></blockquote>
+            <p>If it is not, an <code>INVALID_VALUE</code> error is generated.</p>
+          </dd>
+        </dl>
+      </feature>
+      <feature>
+        <p>The following format-specific restrictions must be enforced:</p>
+        <dl>
+          <dt>COMPRESSED_RGBA_ASTC_10x10_KHR</dt>
+          <dt>COMPRESSED_SRGB8_ALPHA8_ASTC_10x10_KHR</dt>
+          <dd>
+            <p>The <code>byteLength</code> of the ArrayBufferView, <code>pixels</code>, passed to
+              <code>compressedTexImage2D</code> or <code>compressedTexSubImage2D</code> must be 
+              equal to the following number of bytes:
+            </p>
+            <blockquote><code>
+              floor((width + 9) / 10) * floor((height + 9) / 10) * 16
+            </code></blockquote>
+            <p>If it is not, an <code>INVALID_VALUE</code> error is generated.</p>
+          </dd>
+        </dl>
+      </feature>
+      <feature>
+        <p>The following format-specific restrictions must be enforced:</p>
+        <dl>
+          <dt>COMPRESSED_RGBA_ASTC_12x10_KHR</dt>
+          <dt>COMPRESSED_SRGB8_ALPHA8_ASTC_12x10_KHR</dt>
+          <dd>
+            <p>The <code>byteLength</code> of the ArrayBufferView, <code>pixels</code>, passed to
+              <code>compressedTexImage2D</code> or <code>compressedTexSubImage2D</code> must be 
+              equal to the following number of bytes:
+            </p>
+            <blockquote><code>
+              floor((width + 11) / 12) * floor((height + 9) / 10) * 16
+            </code></blockquote>
+            <p>If it is not, an <code>INVALID_VALUE</code> error is generated.</p>
+          </dd>
+        </dl>
+      </feature>
+      <feature>
+        <p>The following format-specific restrictions must be enforced:</p>
+        <dl>
+          <dt>COMPRESSED_RGBA_ASTC_12x12_KHR</dt>
+          <dt>COMPRESSED_SRGB8_ALPHA8_ASTC_12x12_KHR</dt>
+          <dd>
+            <p>The <code>byteLength</code> of the ArrayBufferView, <code>pixels</code>, passed to
+              <code>compressedTexImage2D</code> or <code>compressedTexSubImage2D</code> must be 
+              equal to the following number of bytes:
+            </p>
+            <blockquote><code>
+              floor((width + 11) / 12) * floor((height + 11) / 12) * 16
+            </code></blockquote>
+            <p>If it is not, an <code>INVALID_VALUE</code> error is generated.</p>
+          </dd>
+        </dl>
+      </feature>
+    </features>
+  </overview>
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface WEBGL_compressed_texture_astc {
+    /* Compressed Texture Format */
+    const GLenum COMPRESSED_RGBA_ASTC_4x4_KHR = 0x93B0;
+    const GLenum COMPRESSED_RGBA_ASTC_5x4_KHR = 0x93B1;
+    const GLenum COMPRESSED_RGBA_ASTC_5x5_KHR = 0x93B2;
+    const GLenum COMPRESSED_RGBA_ASTC_6x5_KHR = 0x93B3;
+    const GLenum COMPRESSED_RGBA_ASTC_6x6_KHR = 0x93B4;
+    const GLenum COMPRESSED_RGBA_ASTC_8x5_KHR = 0x93B5;
+    const GLenum COMPRESSED_RGBA_ASTC_8x6_KHR = 0x93B6;
+    const GLenum COMPRESSED_RGBA_ASTC_8x8_KHR = 0x93B7;
+    const GLenum COMPRESSED_RGBA_ASTC_10x5_KHR = 0x93B8;
+    const GLenum COMPRESSED_RGBA_ASTC_10x6_KHR = 0x93B9;
+    const GLenum COMPRESSED_RGBA_ASTC_10x8_KHR = 0x93BA;
+    const GLenum COMPRESSED_RGBA_ASTC_10x10_KHR = 0x93BB;
+    const GLenum COMPRESSED_RGBA_ASTC_12x10_KHR = 0x93BC;
+    const GLenum COMPRESSED_RGBA_ASTC_12x12_KHR = 0x93BD;
+
+    const GLenum COMPRESSED_SRGB8_ALPHA8_ASTC_4x4_KHR = 0x93D0;
+    const GLenum COMPRESSED_SRGB8_ALPHA8_ASTC_5x4_KHR = 0x93D1;
+    const GLenum COMPRESSED_SRGB8_ALPHA8_ASTC_5x5_KHR = 0x93D2;
+    const GLenum COMPRESSED_SRGB8_ALPHA8_ASTC_6x5_KHR = 0x93D3;
+    const GLenum COMPRESSED_SRGB8_ALPHA8_ASTC_6x6_KHR = 0x93D4;
+    const GLenum COMPRESSED_SRGB8_ALPHA8_ASTC_8x5_KHR = 0x93D5;
+    const GLenum COMPRESSED_SRGB8_ALPHA8_ASTC_8x6_KHR = 0x93D6;
+    const GLenum COMPRESSED_SRGB8_ALPHA8_ASTC_8x8_KHR = 0x93D7;
+    const GLenum COMPRESSED_SRGB8_ALPHA8_ASTC_10x5_KHR = 0x93D8;
+    const GLenum COMPRESSED_SRGB8_ALPHA8_ASTC_10x6_KHR = 0x93D9;
+    const GLenum COMPRESSED_SRGB8_ALPHA8_ASTC_10x8_KHR = 0x93DA;
+    const GLenum COMPRESSED_SRGB8_ALPHA8_ASTC_10x10_KHR = 0x93DB;
+    const GLenum COMPRESSED_SRGB8_ALPHA8_ASTC_12x10_KHR = 0x93DC;
+    const GLenum COMPRESSED_SRGB8_ALPHA8_ASTC_12x12_KHR = 0x93DD;
+
+    // Profile query support.
+    sequence&lt;DOMString&gt; getSupportedProfiles();
+};
+  </idl>
+
+  <newfun>
+    <function name="getSupportedProfiles" type="sequence&lt;DOMString&gt;">
+      Returns the names of the ASTC profiles supported by the implementation. As of this writing,
+      valid return values will include "ldr", corresponding to the
+      GL_KHR_texture_compression_astc_ldr extension string; and "hdr", corresponding to the
+      GL_KHR_texture_compression_astc_hdr extension string. More profiles may be added in the
+      future.
+    </function>
+    <div class="note">
+      The intent of the <code>getSupportedProfiles</code> function is to allow easy reconstruction
+      of the underlying OpenGL or OpenGL ES extension strings for environments like Emscripten, by
+      prepending the string <code>GL_KHR_texture_compression_astc_</code> to the returned profile
+      names.
+    </div>
+  </newfun>
+
+  <newtok>
+    <function name="compressedTexImage2D">
+      <param name="internalformat" type="GLenum"/>
+      Accepted by the <code>internalformat</code> parameter:
+      <code>COMPRESSED_RGBA_ASTC_4x4_KHR</code>,
+      <code>COMPRESSED_RGBA_ASTC_5x4_KHR</code>,
+      <code>COMPRESSED_RGBA_ASTC_5x5_KHR</code>,
+      <code>COMPRESSED_RGBA_ASTC_6x5_KHR</code>,
+      <code>COMPRESSED_RGBA_ASTC_6x6_KHR</code>,
+      <code>COMPRESSED_RGBA_ASTC_8x5_KHR</code>,
+      <code>COMPRESSED_RGBA_ASTC_8x6_KHR</code>,
+      <code>COMPRESSED_RGBA_ASTC_8x8_KHR</code>,
+      <code>COMPRESSED_RGBA_ASTC_10x5_KHR</code>,
+      <code>COMPRESSED_RGBA_ASTC_10x6_KHR</code>,
+      <code>COMPRESSED_RGBA_ASTC_10x8_KHR</code>,
+      <code>COMPRESSED_RGBA_ASTC_10x10_KHR</code>,
+      <code>COMPRESSED_RGBA_ASTC_12x10_KHR</code>,
+      <code>COMPRESSED_RGBA_ASTC_12x12_KHR</code>,
+      <code>COMPRESSED_SRGB8_ALPHA8_ASTC_4x4_KHR</code>,
+      <code>COMPRESSED_SRGB8_ALPHA8_ASTC_5x4_KHR</code>,
+      <code>COMPRESSED_SRGB8_ALPHA8_ASTC_5x5_KHR</code>,
+      <code>COMPRESSED_SRGB8_ALPHA8_ASTC_6x5_KHR</code>,
+      <code>COMPRESSED_SRGB8_ALPHA8_ASTC_6x6_KHR</code>,
+      <code>COMPRESSED_SRGB8_ALPHA8_ASTC_8x5_KHR</code>,
+      <code>COMPRESSED_SRGB8_ALPHA8_ASTC_8x6_KHR</code>,
+      <code>COMPRESSED_SRGB8_ALPHA8_ASTC_8x8_KHR</code>,
+      <code>COMPRESSED_SRGB8_ALPHA8_ASTC_10x5_KHR</code>,
+      <code>COMPRESSED_SRGB8_ALPHA8_ASTC_10x6_KHR</code>,
+      <code>COMPRESSED_SRGB8_ALPHA8_ASTC_10x8_KHR</code>,
+      <code>COMPRESSED_SRGB8_ALPHA8_ASTC_10x10_KHR</code>,
+      <code>COMPRESSED_SRGB8_ALPHA8_ASTC_12x10_KHR</code>,
+      <code>COMPRESSED_SRGB8_ALPHA8_ASTC_12x12_KHR</code>
+      <br/>
+    </function>
+    
+    <function name="compressedTexSubImage2D">
+      <param name="internalformat" type="GLenum"/>
+      Accepted by the <code>internalformat</code> parameter:
+      <code>COMPRESSED_RGBA_ASTC_4x4_KHR</code>,
+      <code>COMPRESSED_RGBA_ASTC_5x4_KHR</code>,
+      <code>COMPRESSED_RGBA_ASTC_5x5_KHR</code>,
+      <code>COMPRESSED_RGBA_ASTC_6x5_KHR</code>,
+      <code>COMPRESSED_RGBA_ASTC_6x6_KHR</code>,
+      <code>COMPRESSED_RGBA_ASTC_8x5_KHR</code>,
+      <code>COMPRESSED_RGBA_ASTC_8x6_KHR</code>,
+      <code>COMPRESSED_RGBA_ASTC_8x8_KHR</code>,
+      <code>COMPRESSED_RGBA_ASTC_10x5_KHR</code>,
+      <code>COMPRESSED_RGBA_ASTC_10x6_KHR</code>,
+      <code>COMPRESSED_RGBA_ASTC_10x8_KHR</code>,
+      <code>COMPRESSED_RGBA_ASTC_10x10_KHR</code>,
+      <code>COMPRESSED_RGBA_ASTC_12x10_KHR</code>,
+      <code>COMPRESSED_RGBA_ASTC_12x12_KHR</code>,
+      <code>COMPRESSED_SRGB8_ALPHA8_ASTC_4x4_KHR</code>,
+      <code>COMPRESSED_SRGB8_ALPHA8_ASTC_5x4_KHR</code>,
+      <code>COMPRESSED_SRGB8_ALPHA8_ASTC_5x5_KHR</code>,
+      <code>COMPRESSED_SRGB8_ALPHA8_ASTC_6x5_KHR</code>,
+      <code>COMPRESSED_SRGB8_ALPHA8_ASTC_6x6_KHR</code>,
+      <code>COMPRESSED_SRGB8_ALPHA8_ASTC_8x5_KHR</code>,
+      <code>COMPRESSED_SRGB8_ALPHA8_ASTC_8x6_KHR</code>,
+      <code>COMPRESSED_SRGB8_ALPHA8_ASTC_8x8_KHR</code>,
+      <code>COMPRESSED_SRGB8_ALPHA8_ASTC_10x5_KHR</code>,
+      <code>COMPRESSED_SRGB8_ALPHA8_ASTC_10x6_KHR</code>,
+      <code>COMPRESSED_SRGB8_ALPHA8_ASTC_10x8_KHR</code>,
+      <code>COMPRESSED_SRGB8_ALPHA8_ASTC_10x10_KHR</code>,
+      <code>COMPRESSED_SRGB8_ALPHA8_ASTC_12x10_KHR</code>,
+      <code>COMPRESSED_SRGB8_ALPHA8_ASTC_12x12_KHR</code>
+      <br/>
+    </function>
+  </newtok>
+
+  <errors>
+    <error enum="INVALID_VALUE">
+      The error <code>INVALID_VALUE</code> is generated by <code>compressedTexImage2D</code> and <code>compressedTexSubImage2D</code>
+      if the <code>internalformat</code> parameter is 
+      <code>COMPRESSED_RGBA_ASTC_4x4_KHR</code> or <code>COMPRESSED_SRGB8_ALPHA8_ASTC_4x4_KHR</code>
+      and the byteLength of the ArrayBufferView is not:
+      <blockquote><code>
+        floor((width + 3) / 4) * floor((height + 3) / 4) * 16
+      </code></blockquote>
+    </error>
+    <error enum="INVALID_VALUE">
+      The error <code>INVALID_VALUE</code> is generated by <code>compressedTexImage2D</code> and <code>compressedTexSubImage2D</code>
+      if the <code>internalformat</code> parameter is 
+      <code>COMPRESSED_RGBA_ASTC_5x4_KHR</code> or <code>COMPRESSED_SRGB8_ALPHA8_ASTC_5x4_KHR</code>
+      and the byteLength of the ArrayBufferView is not:
+      <blockquote><code>
+        floor((width + 4) / 5) * floor((height + 3) / 4) * 16
+      </code></blockquote>
+    </error>
+    <error enum="INVALID_VALUE">
+      The error <code>INVALID_VALUE</code> is generated by <code>compressedTexImage2D</code> and <code>compressedTexSubImage2D</code>
+      if the <code>internalformat</code> parameter is 
+      <code>COMPRESSED_RGBA_ASTC_5x5_KHR</code> or <code>COMPRESSED_SRGB8_ALPHA8_ASTC_5x5_KHR</code>
+      and the byteLength of the ArrayBufferView is not:
+      <blockquote><code>
+        floor((width + 4) / 5) * floor((height + 4) / 5) * 16
+      </code></blockquote>
+    </error>
+    <error enum="INVALID_VALUE">
+      The error <code>INVALID_VALUE</code> is generated by <code>compressedTexImage2D</code> and <code>compressedTexSubImage2D</code>
+      if the <code>internalformat</code> parameter is 
+      <code>COMPRESSED_RGBA_ASTC_6x5_KHR</code> or <code>COMPRESSED_SRGB8_ALPHA8_ASTC_6x5_KHR</code>
+      and the byteLength of the ArrayBufferView is not:
+      <blockquote><code>
+        floor((width + 5) / 6) * floor((height + 4) / 5) * 16
+      </code></blockquote>
+    </error>
+    <error enum="INVALID_VALUE">
+      The error <code>INVALID_VALUE</code> is generated by <code>compressedTexImage2D</code> and <code>compressedTexSubImage2D</code>
+      if the <code>internalformat</code> parameter is 
+      <code>COMPRESSED_RGBA_ASTC_6x6_KHR</code> or <code>COMPRESSED_SRGB8_ALPHA8_ASTC_6x6_KHR</code>
+      and the byteLength of the ArrayBufferView is not:
+      <blockquote><code>
+        floor((width + 5) / 6) * floor((height + 5) / 6) * 16
+      </code></blockquote>
+    </error>
+    <error enum="INVALID_VALUE">
+      The error <code>INVALID_VALUE</code> is generated by <code>compressedTexImage2D</code> and <code>compressedTexSubImage2D</code>
+      if the <code>internalformat</code> parameter is 
+      <code>COMPRESSED_RGBA_ASTC_8x5_KHR</code> or <code>COMPRESSED_SRGB8_ALPHA8_ASTC_8x5_KHR</code>
+      and the byteLength of the ArrayBufferView is not:
+      <blockquote><code>
+        floor((width + 7) / 8) * floor((height + 4) / 5) * 16
+      </code></blockquote>
+    </error>
+    <error enum="INVALID_VALUE">
+      The error <code>INVALID_VALUE</code> is generated by <code>compressedTexImage2D</code> and <code>compressedTexSubImage2D</code>
+      if the <code>internalformat</code> parameter is 
+      <code>COMPRESSED_RGBA_ASTC_8x6_KHR</code> or <code>COMPRESSED_SRGB8_ALPHA8_ASTC_8x6_KHR</code>
+      and the byteLength of the ArrayBufferView is not:
+      <blockquote><code>
+        floor((width + 7) / 8) * floor((height + 5) / 6) * 16
+      </code></blockquote>
+    </error>
+    <error enum="INVALID_VALUE">
+      The error <code>INVALID_VALUE</code> is generated by <code>compressedTexImage2D</code> and <code>compressedTexSubImage2D</code>
+      if the <code>internalformat</code> parameter is 
+      <code>COMPRESSED_RGBA_ASTC_8x8_KHR</code> or <code>COMPRESSED_SRGB8_ALPHA8_ASTC_8x8_KHR</code>
+      and the byteLength of the ArrayBufferView is not:
+      <blockquote><code>
+        floor((width + 7) / 8) * floor((height + 7) / 8) * 16
+      </code></blockquote>
+    </error>
+    <error enum="INVALID_VALUE">
+      The error <code>INVALID_VALUE</code> is generated by <code>compressedTexImage2D</code> and <code>compressedTexSubImage2D</code>
+      if the <code>internalformat</code> parameter is 
+      <code>COMPRESSED_RGBA_ASTC_10x5_KHR</code> or <code>COMPRESSED_SRGB8_ALPHA8_ASTC_10x5_KHR</code>
+      and the byteLength of the ArrayBufferView is not:
+      <blockquote><code>
+        floor((width + 9) / 10) * floor((height + 4) / 5) * 16
+      </code></blockquote>
+    </error>
+    <error enum="INVALID_VALUE">
+      The error <code>INVALID_VALUE</code> is generated by <code>compressedTexImage2D</code> and <code>compressedTexSubImage2D</code>
+      if the <code>internalformat</code> parameter is 
+      <code>COMPRESSED_RGBA_ASTC_10x6_KHR</code> or <code>COMPRESSED_SRGB8_ALPHA8_ASTC_10x6_KHR</code>
+      and the byteLength of the ArrayBufferView is not:
+      <blockquote><code>
+        floor((width + 9) / 10) * floor((height + 5) / 6) * 16
+      </code></blockquote>
+    </error>
+    <error enum="INVALID_VALUE">
+      The error <code>INVALID_VALUE</code> is generated by <code>compressedTexImage2D</code> and <code>compressedTexSubImage2D</code>
+      if the <code>internalformat</code> parameter is 
+      <code>COMPRESSED_RGBA_ASTC_10x8_KHR</code> or <code>COMPRESSED_SRGB8_ALPHA8_ASTC_10x8_KHR</code>
+      and the byteLength of the ArrayBufferView is not:
+      <blockquote><code>
+        floor((width + 9) / 10) * floor((height + 7) / 8) * 16
+      </code></blockquote>
+    </error>
+    <error enum="INVALID_VALUE">
+      The error <code>INVALID_VALUE</code> is generated by <code>compressedTexImage2D</code> and <code>compressedTexSubImage2D</code>
+      if the <code>internalformat</code> parameter is 
+      <code>COMPRESSED_RGBA_ASTC_10x10_KHR</code> or <code>COMPRESSED_SRGB8_ALPHA8_ASTC_10x10_KHR</code>
+      and the byteLength of the ArrayBufferView is not:
+      <blockquote><code>
+        floor((width + 9) / 10) * floor((height + 9) / 10) * 16
+      </code></blockquote>
+    </error>
+    <error enum="INVALID_VALUE">
+      The error <code>INVALID_VALUE</code> is generated by <code>compressedTexImage2D</code> and <code>compressedTexSubImage2D</code>
+      if the <code>internalformat</code> parameter is 
+      <code>COMPRESSED_RGBA_ASTC_12x10_KHR</code> or <code>COMPRESSED_SRGB8_ALPHA8_ASTC_12x10_KHR</code>
+      and the byteLength of the ArrayBufferView is not:
+      <blockquote><code>
+        floor((width + 11) / 12) * floor((height + 9) / 10) * 16
+      </code></blockquote>
+     </error>
+    <error enum="INVALID_VALUE">
+      The error <code>INVALID_VALUE</code> is generated by <code>compressedTexImage2D</code> and <code>compressedTexSubImage2D</code>
+      if the <code>internalformat</code> parameter is 
+      <code>COMPRESSED_RGBA_ASTC_12x12_KHR</code> or <code>COMPRESSED_SRGB8_ALPHA8_ASTC_12x12_KHR</code>
+      and the byteLength of the ArrayBufferView is not:
+      <blockquote><code>
+        floor((width + 11) / 12) * floor((height + 11) / 12) * 16
+      </code></blockquote>
+     </error>
+  </errors>
+
+  <history>
+    <revision date="2015/03/10">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2015/08/07">
+      <change>Added profile string support. Renamed constants back to _KHR.</change>
+    </revision>
+    <revision date="2015/08/10">
+      <change>Clarified intent of getSupportedProfiles. Stressed that OpenGL ES extension defines the behavior.</change>
+    </revision>
+    <revision date="2015/08/10">
+      <change>Moved to draft status.</change>
+    </revision>
+    <revision date="2016/12/12">
+      <change>Moved to community approved after discussion on public_webgl list.</change>
+    </revision>
+  </history>
+</extension>

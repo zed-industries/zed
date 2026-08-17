@@ -1,0 +1,22 @@
+[package]
+name = "wit-bindgen"
+authors = ["Alex Crichton <alex@alexcrichton.com>"]
+version.workspace = true
+edition.workspace = true
+repository = 'https://github.com/bytecodealliance/wit-bindgen'
+license = "Apache-2.0 WITH LLVM-exception"
+homepage = 'https://github.com/bytecodealliance/wit-bindgen'
+description = """
+Rust bindings generator and runtime support for WIT and the component model.
+Used when compiling Rust programs to the component model.
+"""
+
+[dependencies]
+wit-bindgen-rust-macro = { path = "./macro", optional = true, version = "0.22.0" }
+wit-bindgen-rt = { path = "./rt", optional = true, version = "0.22.0" }
+bitflags = { workspace = true }
+
+[features]
+default = ["macros", "realloc"]
+macros = ["dep:wit-bindgen-rust-macro"]
+realloc = ["dep:wit-bindgen-rt"]

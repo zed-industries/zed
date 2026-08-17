@@ -1,0 +1,189 @@
+<?xml version="1.0"?>
+
+<extension href="WEBGL_compressed_texture_etc/">
+  <name>WEBGL_compressed_texture_etc</name>
+  <contact>
+    <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL working group</a> (public_webgl 'at' khronos.org)
+  </contact>
+  <contributors>
+    <contributor>Jeff Gilbert, Mozilla</contributor>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+  <number>29</number>
+  <depends>
+    <api version="1.0"/>
+  </depends>
+  <overview>
+    <p>
+      This extension exposes the compressed texture formats defined as core in the
+      <a href="http://www.khronos.org/registry/gles/specs/3.0/es_spec_3.0.4.pdf">
+      OpenGL ES 3.0</a> spec to WebGL. These include the ETC2 and EAC formats, where
+      ETC2 is a superset of ETC1. ETC1 textures can be loaded using the ETC2 token
+      value. All of these formats are in the ETC family.
+    </p>
+    <p>
+      Browsers should not advertise this extension when the WebGL implementation, or
+      graphics driver, supports these formats by decompressing them.
+    </p>
+    <features>
+      <feature>
+        Compression formats <code>COMPRESSED_R11_EAC</code>,
+        <code>COMPRESSED_SIGNED_R11_EAC</code>,
+        <code>COMPRESSED_RG11_EAC</code>,
+        <code>COMPRESSED_SIGNED_RG11_EAC</code>,
+        <code>COMPRESSED_RGB8_ETC2</code>,
+        <code>COMPRESSED_SRGB8_ETC2</code>,
+        <code>COMPRESSED_RGB8_PUNCHTHROUGH_ALPHA1_ETC2</code>,
+        <code>COMPRESSED_SRGB8_PUNCHTHROUGH_ALPHA1_ETC2</code>,
+        <code>COMPRESSED_RGBA8_ETC2_EAC</code>,
+        and <code>COMPRESSED_SRGB8_ALPHA8_ETC2_EAC</code> may be passed to the
+        <code>compressedTexImage2D</code> and <code>compressedTexSubImage2D</code> entry points. In
+        WebGL 2.0, they may also be passed to the <code>compressedTexImage3D</code> and
+        <code>compressedTexSubImage3D</code> entry points with the <code>TEXTURE_2D_ARRAY</code>
+        target.
+      </feature>
+      <feature>
+        Calling <code>getParameter</code> with the argument <code>COMPRESSED_TEXTURE_FORMATS</code>
+        will include the formats from this specification.
+      </feature>
+      <feature>
+        For all of the formats, <code>validatedSize</code> (defined for each specific format
+        below) is validated in the following ways:
+        <ul>
+            <li>
+                <b>WebGL 1.0 and 2.0</b>: if the variant of <code>compressedTexImage*D</code> or
+                <code>compressedTexSubImage*D</code> taking <code>ArrayBufferView pixels</code> is
+                called, then the <code>byteLength</code> of the view must be equal to
+                <code>validatedSize</code>, or an INVALID_VALUE error is generated.
+            </li>
+            <li>
+                <b>WebGL 2.0</b>: if the variant of <code>compressedTexImage*D</code> or
+                <code>compressedTexSubImage*D</code> taking <code>GLintptr offset</code> is called,
+                and <code>offset + validatedSize</code> is greater than the size of the bound
+                <code>PIXEL_UNPACK_BUFFER</code>, an <code>INVALID_OPERATION</code> error is
+                generated.
+            </li>
+        </ul>
+        <dl>
+          <dt>COMPRESSED_R11_EAC</dt>
+          <dt>COMPRESSED_SIGNED_R11_EAC</dt>
+          <dt>COMPRESSED_RGB8_ETC2</dt>
+          <dt>COMPRESSED_SRGB8_ETC2</dt>
+          <dt>COMPRESSED_RGB8_PUNCHTHROUGH_ALPHA1_ETC2</dt>
+          <dt>COMPRESSED_SRGB8_PUNCHTHROUGH_ALPHA1_ETC2</dt>
+          <dd><p><code>validatedSize</code> is computed in the following way:</p>
+          <blockquote><code>
+            floor((width + 3) / 4) * floor((height + 3) / 4) * 8
+          </code></blockquote>
+          </dd>
+        </dl>
+        <dl>
+          <dt>COMPRESSED_RG11_EAC</dt>
+          <dt>COMPRESSED_SIGNED_RG11_EAC</dt>
+          <dt>COMPRESSED_RGBA8_ETC2_EAC</dt>
+          <dt>COMPRESSED_SRGB8_ALPHA8_ETC2_EAC</dt>
+          <dd><p><code>validatedSize</code> is computed in the following way:</p>
+          <blockquote><code>
+            floor((width + 3) / 4) * floor((height + 3) / 4) * 16
+          </code></blockquote>
+          </dd>
+        </dl>
+      </feature>
+    </features>
+  </overview>
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface WEBGL_compressed_texture_etc {
+    /* Compressed Texture Formats */
+    const GLenum COMPRESSED_R11_EAC                        = 0x9270;
+    const GLenum COMPRESSED_SIGNED_R11_EAC                 = 0x9271;
+    const GLenum COMPRESSED_RG11_EAC                       = 0x9272;
+    const GLenum COMPRESSED_SIGNED_RG11_EAC                = 0x9273;
+    const GLenum COMPRESSED_RGB8_ETC2                      = 0x9274;
+    const GLenum COMPRESSED_SRGB8_ETC2                     = 0x9275;
+    const GLenum COMPRESSED_RGB8_PUNCHTHROUGH_ALPHA1_ETC2  = 0x9276;
+    const GLenum COMPRESSED_SRGB8_PUNCHTHROUGH_ALPHA1_ETC2 = 0x9277;
+    const GLenum COMPRESSED_RGBA8_ETC2_EAC                 = 0x9278;
+    const GLenum COMPRESSED_SRGB8_ALPHA8_ETC2_EAC          = 0x9279;
+};
+  </idl>
+  
+  <newtok>
+    <function name="compressedTexImage2D">
+      <param name="internalformat" type="GLenum"/>
+      Accepted by the <code>internalformat</code> parameter:
+      <code>COMPRESSED_R11_EAC</code>,
+      <code>COMPRESSED_SIGNED_R11_EAC</code>,
+      <code>COMPRESSED_RG11_EAC</code>,
+      <code>COMPRESSED_SIGNED_RG11_EAC</code>,
+      <code>COMPRESSED_RGB8_ETC2</code>,
+      <code>COMPRESSED_SRGB8_ETC2</code>,
+      <code>COMPRESSED_RGB8_PUNCHTHROUGH_ALPHA1_ETC2</code>,
+      <code>COMPRESSED_SRGB8_PUNCHTHROUGH_ALPHA1_ETC2</code>,
+      <code>COMPRESSED_RGBA8_ETC2_EAC</code> or
+      <code>COMPRESSED_SRGB8_ALPHA8_ETC2_EAC</code>
+      <br/>
+    </function>
+    
+    <function name="compressedTexSubImage2D">
+      <param name="internalformat" type="GLenum"/>
+      Accepted by the <code>internalformat</code> parameter:
+      <code>COMPRESSED_R11_EAC</code>,
+      <code>COMPRESSED_SIGNED_R11_EAC</code>,
+      <code>COMPRESSED_RG11_EAC</code>,
+      <code>COMPRESSED_SIGNED_RG11_EAC</code>,
+      <code>COMPRESSED_RGB8_ETC2</code>,
+      <code>COMPRESSED_SRGB8_ETC2</code>,
+      <code>COMPRESSED_RGB8_PUNCHTHROUGH_ALPHA1_ETC2</code>,
+      <code>COMPRESSED_SRGB8_PUNCHTHROUGH_ALPHA1_ETC2</code>,
+      <code>COMPRESSED_RGBA8_ETC2_EAC</code> or
+      <code>COMPRESSED_SRGB8_ALPHA8_ETC2_EAC</code>
+      <br/>
+    </function>
+  </newtok>
+
+  <errors>
+    <error enum="INVALID_VALUE">
+      The error <code>INVALID_VALUE</code> is generated by <code>compressedTexImage2D</code>,
+      <code>compressedTexSubImage2D</code>, <code>compressedTexImage3D</code>, and
+      <code>compressedTexSubImage3D</code> if the variant taking <code>ArrayBufferView pixels</code>
+      is called and the size restrictions above are not met.
+    </error>
+    <error enum="INVALID_OPERATION">
+      The error <code>INVALID_OPERATION</code> is generated by <code>compressedTexImage2D</code>,
+      <code>compressedTexSubImage2D</code>, <code>compressedTexImage3D</code>, and
+      <code>compressedTexSubImage3D</code> if the variant taking <code>GLintptr offset</code> is
+      called and the size restrictions above are not met.
+    </error>
+  </errors>
+  <history>
+    <revision date="2013/12/9">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2014/07/15">
+      <change>Added NoInterfaceObject extended attribute.</change>
+    </revision>
+    <revision date="2014/12/12">
+      <change>COMPRESSED_RGB_ETC2 should be COMPRESSED_RGB8_ETC2.</change>
+      <change>Remove unnecessary language.</change>
+    </revision>
+    <revision date="2015/01/31">
+      <change>Moved to draft.</change>
+      <change>Added issue questions.</change>
+      <change>Formalized the newtok and error codes.</change>
+    </revision>
+    <revision date="2016/09/16">
+      <change>Renamed to WEBGL_compressed_texture_es3_0.</change>
+    </revision>
+    <revision date="2016/09/21">
+      <change>Clarifications to the supported formats on suggestion from Mark Callow.</change>
+    </revision>
+    <revision date="2016/09/30">
+      <change>Addressed issues regarding 3D entry points, description of interation with WebGL 2.0,
+      and generation of INVALID_OPERATION and INVALID_VALUE errors. Added note that browsers should
+      not advertise this extension if these compressed texture formats are decompressed. Renamed to
+      WEBGL_compressed_texture_etc after further discussion. Promoted to community
+      approved.</change>
+    </revision>
+  </history>
+</extension>

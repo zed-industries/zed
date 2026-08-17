@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<draft href="EXT_float_blend/">
+  <name>EXT_float_blend</name>
+
+  <contact> <a href="https://www.khronos.org/webgl/public-mailing-list">WebGL
+  working group</a> (public_webgl 'at' khronos.org) </contact>
+
+  <contributors>
+    <contributor>Mark Callow</contributor>
+
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+
+  <number>35</number>
+
+  <depends>
+    <api version="2.0"/>
+    <ext name="EXT_color_buffer_float" require="true"/>
+  </depends>
+
+  <overview>
+    <mirrors href="http://www.khronos.org/registry/gles/extensions/EXT/EXT_float_blend.txt"
+             name="EXT_float_blend"/>
+
+    <features>
+      <feature>
+        <p>An <code>INVALID_OPERATION</code> error will no longer be raised by
+        <code>drawArrays</code> or <code>drawElements</code> when blending is
+        enabled and the draw buffer has 32-bit floating-point components. Note
+        that in order to create such a draw buffer the
+        <a href="http://www.khronos.org/registry/webgl/extensions/EXT_color_buffer_float">
+        EXT_color_buffer_float</a> extension must be enabled.</p>
+      </feature>
+    </features>
+
+  </overview>
+
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface EXT_float_blend {
+}; // interface EXT_float_blend
+</idl>
+
+  <history>
+    <revision date="2015/04/13">
+      <change>Initial revision.</change>
+    </revision>
+
+    <revision date="2017/01/03">
+      <change>Promoted to draft status after discussion on public_webgl.</change>
+    </revision>
+  </history>
+</draft>

@@ -1,0 +1,20 @@
+---
+- name: Zero indented block scalar with line that looks like a comment
+  from: '@perlpunk'
+  tags: comment folded scalar
+  yaml: |
+    --- >
+    line1
+    # no comment
+    line3
+  tree: |
+    +STR
+     +DOC ---
+      =VAL >line1 # no comment line3\n
+     -DOC
+    -STR
+  json: |
+    "line1 # no comment line3\n"
+  dump: |
+    --- >
+      line1 # no comment line3

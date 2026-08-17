@@ -1,0 +1,126 @@
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches: [master]
+    paths-ignore: ['*.mkd', 'LICENSE']
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+jobs:
+  native-test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        rust_toolchain: [nightly, stable, 1.71.0]
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v2
+      - run: rustup install ${{ matrix.rust_toolchain }} --profile=minimal
+      - run: rustup default ${{ matrix.rust_toolchain }}
+      - run: rustup component add clippy
+      - run: cargo update -p libc --precise 0.2.155
+        if: ${{ matrix.rust_toolchain == '1.71.0' }}
+      - run: cargo clippy
+      - run: cargo test -- --nocapture
+      - run: cargo test --release -- --nocapture
+      - run: cargo rustdoc -Zunstable-options --config 'build.rustdocflags=["--cfg", "libloading_docs", "-D", "rustdoc::broken_intra_doc_links"]'
+        if: ${{ matrix.rust_toolchain == 'nightly' }}
+        # pwsh.exe drops quotes kekw. https://stackoverflow.com/a/59036879
+        shell: bash
+
+  windows-test:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rust_toolchain: [nightly, stable]
+        rust_target:
+          - x86_64-pc-windows-gnullvm
+          - i686-pc-windows-gnu
+        include:
+          - rust_target: x86_64-pc-windows-gnullvm
+            mingw_path: C:/msys64/clang64/bin
+            package: mingw-w64-clang-x86_64-clang
+          - rust_target: i686-pc-windows-gnu
+            mingw_path: C:/msys64/mingw32/bin
+            package: mingw-w64-i686-gcc
+    steps:
+      - uses: actions/checkout@v2
+      - run: rustup install ${{ matrix.rust_toolchain }} --profile=minimal
+      - run: rustup default ${{ matrix.rust_toolchain }}
+      - run: rustup target add ${{ matrix.rust_target }}
+      - uses: msys2/setup-msys2@v2
+        with:
+          release: false
+          install: ${{ matrix.package }}
+      - run: echo "${{ matrix.mingw_path }}" | Out-File -FilePath $env:GITHUB_PATH -Append
+        if: ${{ matrix.mingw_path }}"
+      - run: cargo test --target ${{ matrix.rust_target }}
+        env:
+          TARGET: ${{ matrix.rust_target}}
+
+  msys2-test:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v2
+      - run: rustup install nightly --profile=minimal
+      - run: rustup default nightly
+      - run: rustup component add rust-src
+      - uses: msys2/setup-msys2@v2
+        with:
+          release: false
+          install: gcc
+      - run: echo "INPUT(libmsys-2.0.a)" | Out-File -FilePath "C:\msys64\usr\lib\libcygwin.a"
+      - run: |
+          $env:PATH = "C:\msys64\usr\bin\;$env:PATH"
+          cargo test --target x86_64-pc-cygwin -Zbuild-std
+        env:
+          CARGO_TARGET_X86_64_PC_CYGWIN_LINKER: x86_64-pc-cygwin-gcc.exe
+
+  bare-cross-build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rust_toolchain: [nightly]
+        rust_target:
+          # BSDs: could be tested with full system emulation
+          # - x86_64-unknown-dragonfly
+          # - x86_64-unknown-freebsd
+          - x86_64-unknown-haiku
+          # - x86_64-unknown-netbsd
+          - x86_64-unknown-openbsd
+          - x86_64-unknown-redox
+          - x86_64-unknown-fuchsia
+          - wasm32-unknown-unknown
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v2
+      - run: rustup install ${{ matrix.rust_toolchain }} --profile=minimal
+      - run: rustup default ${{ matrix.rust_toolchain }}
+      - run: rustup component add rust-src --toolchain nightly --target ${{ matrix.rust_target }}
+      - run: cargo build --target ${{ matrix.rust_target }} -Zbuild-std
+
+  cross-ios-build:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rust_toolchain: [nightly, stable]
+        rust_target:
+          - aarch64-apple-ios
+          - x86_64-apple-ios
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v2
+      - run: rustup install ${{ matrix.rust_toolchain }} --profile=minimal
+      - run: rustup default ${{ matrix.rust_toolchain }}
+      - run: rustup target add ${{ matrix.rust_target }}
+      - run: cargo build  --target=${{ matrix.rust_target }}

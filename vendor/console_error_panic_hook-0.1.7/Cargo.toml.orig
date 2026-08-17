@@ -1,0 +1,16 @@
+[package]
+authors = ["Nick Fitzgerald <fitzgen@gmail.com>"]
+categories = ["wasm"]
+description = "A panic hook for `wasm32-unknown-unknown` that logs panics to `console.error`"
+license = "Apache-2.0/MIT"
+name = "console_error_panic_hook"
+readme = "./README.md"
+repository = "https://github.com/rustwasm/console_error_panic_hook"
+version = "0.1.7"
+
+[badges]
+travis-ci = { repository = "rustwasm/console_error_panic_hook" }
+
+[dependencies]
+cfg-if = "1.0.0"
+wasm-bindgen = "0.2.37"

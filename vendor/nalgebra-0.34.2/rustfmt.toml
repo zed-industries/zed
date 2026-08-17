@@ -1,0 +1,3 @@
+edition = "2024"
+use_try_shorthand = true
+use_field_init_shorthand = true

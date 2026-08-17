@@ -1,0 +1,292 @@
+// This file is generated from a similarly-named Perl script in the BoringSSL
+// source tree. Do not edit by hand.
+
+#include <openssl/asm_base.h>
+
+#if !defined(OPENSSL_NO_ASM) && defined(OPENSSL_X86) && defined(__ELF__)
+.text
+.globl	gcm_gmult_ssse3
+.hidden	gcm_gmult_ssse3
+.type	gcm_gmult_ssse3,@function
+.align	16
+gcm_gmult_ssse3:
+.L_gcm_gmult_ssse3_begin:
+	pushl	%ebp
+	pushl	%ebx
+	pushl	%esi
+	pushl	%edi
+	movl	20(%esp),%edi
+	movl	24(%esp),%esi
+	movdqu	(%edi),%xmm0
+	call	.L000pic_point
+.L000pic_point:
+	popl	%eax
+	movdqa	.Lreverse_bytes-.L000pic_point(%eax),%xmm7
+	movdqa	.Llow4_mask-.L000pic_point(%eax),%xmm2
+.byte	102,15,56,0,199
+	movdqa	%xmm2,%xmm1
+	pandn	%xmm0,%xmm1
+	psrld	$4,%xmm1
+	pand	%xmm2,%xmm0
+	pxor	%xmm2,%xmm2
+	pxor	%xmm3,%xmm3
+	movl	$5,%eax
+.L001loop_row_1:
+	movdqa	(%esi),%xmm4
+	leal	16(%esi),%esi
+	movdqa	%xmm2,%xmm6
+.byte	102,15,58,15,243,1
+	movdqa	%xmm6,%xmm3
+	psrldq	$1,%xmm2
+	movdqa	%xmm4,%xmm5
+.byte	102,15,56,0,224
+.byte	102,15,56,0,233
+	pxor	%xmm5,%xmm2
+	movdqa	%xmm4,%xmm5
+	psllq	$60,%xmm5
+	movdqa	%xmm5,%xmm6
+	pslldq	$8,%xmm6
+	pxor	%xmm6,%xmm3
+	psrldq	$8,%xmm5
+	pxor	%xmm5,%xmm2
+	psrlq	$4,%xmm4
+	pxor	%xmm4,%xmm2
+	subl	$1,%eax
+	jnz	.L001loop_row_1
+	pxor	%xmm3,%xmm2
+	psrlq	$1,%xmm3
+	pxor	%xmm3,%xmm2
+	psrlq	$1,%xmm3
+	pxor	%xmm3,%xmm2
+	psrlq	$5,%xmm3
+	pxor	%xmm3,%xmm2
+	pxor	%xmm3,%xmm3
+	movl	$5,%eax
+.L002loop_row_2:
+	movdqa	(%esi),%xmm4
+	leal	16(%esi),%esi
+	movdqa	%xmm2,%xmm6
+.byte	102,15,58,15,243,1
+	movdqa	%xmm6,%xmm3
+	psrldq	$1,%xmm2
+	movdqa	%xmm4,%xmm5
+.byte	102,15,56,0,224
+.byte	102,15,56,0,233
+	pxor	%xmm5,%xmm2
+	movdqa	%xmm4,%xmm5
+	psllq	$60,%xmm5
+	movdqa	%xmm5,%xmm6
+	pslldq	$8,%xmm6
+	pxor	%xmm6,%xmm3
+	psrldq	$8,%xmm5
+	pxor	%xmm5,%xmm2
+	psrlq	$4,%xmm4
+	pxor	%xmm4,%xmm2
+	subl	$1,%eax
+	jnz	.L002loop_row_2
+	pxor	%xmm3,%xmm2
+	psrlq	$1,%xmm3
+	pxor	%xmm3,%xmm2
+	psrlq	$1,%xmm3
+	pxor	%xmm3,%xmm2
+	psrlq	$5,%xmm3
+	pxor	%xmm3,%xmm2
+	pxor	%xmm3,%xmm3
+	movl	$6,%eax
+.L003loop_row_3:
+	movdqa	(%esi),%xmm4
+	leal	16(%esi),%esi
+	movdqa	%xmm2,%xmm6
+.byte	102,15,58,15,243,1
+	movdqa	%xmm6,%xmm3
+	psrldq	$1,%xmm2
+	movdqa	%xmm4,%xmm5
+.byte	102,15,56,0,224
+.byte	102,15,56,0,233
+	pxor	%xmm5,%xmm2
+	movdqa	%xmm4,%xmm5
+	psllq	$60,%xmm5
+	movdqa	%xmm5,%xmm6
+	pslldq	$8,%xmm6
+	pxor	%xmm6,%xmm3
+	psrldq	$8,%xmm5
+	pxor	%xmm5,%xmm2
+	psrlq	$4,%xmm4
+	pxor	%xmm4,%xmm2
+	subl	$1,%eax
+	jnz	.L003loop_row_3
+	pxor	%xmm3,%xmm2
+	psrlq	$1,%xmm3
+	pxor	%xmm3,%xmm2
+	psrlq	$1,%xmm3
+	pxor	%xmm3,%xmm2
+	psrlq	$5,%xmm3
+	pxor	%xmm3,%xmm2
+	pxor	%xmm3,%xmm3
+.byte	102,15,56,0,215
+	movdqu	%xmm2,(%edi)
+	pxor	%xmm0,%xmm0
+	pxor	%xmm1,%xmm1
+	pxor	%xmm2,%xmm2
+	pxor	%xmm3,%xmm3
+	pxor	%xmm4,%xmm4
+	pxor	%xmm5,%xmm5
+	pxor	%xmm6,%xmm6
+	popl	%edi
+	popl	%esi
+	popl	%ebx
+	popl	%ebp
+	ret
+.size	gcm_gmult_ssse3,.-.L_gcm_gmult_ssse3_begin
+.globl	gcm_ghash_ssse3
+.hidden	gcm_ghash_ssse3
+.type	gcm_ghash_ssse3,@function
+.align	16
+gcm_ghash_ssse3:
+.L_gcm_ghash_ssse3_begin:
+	pushl	%ebp
+	pushl	%ebx
+	pushl	%esi
+	pushl	%edi
+	movl	20(%esp),%edi
+	movl	24(%esp),%esi
+	movl	28(%esp),%edx
+	movl	32(%esp),%ecx
+	movdqu	(%edi),%xmm0
+	call	.L004pic_point
+.L004pic_point:
+	popl	%ebx
+	movdqa	.Lreverse_bytes-.L004pic_point(%ebx),%xmm7
+	andl	$-16,%ecx
+.byte	102,15,56,0,199
+	pxor	%xmm3,%xmm3
+.L005loop_ghash:
+	movdqa	.Llow4_mask-.L004pic_point(%ebx),%xmm2
+	movdqu	(%edx),%xmm1
+.byte	102,15,56,0,207
+	pxor	%xmm1,%xmm0
+	movdqa	%xmm2,%xmm1
+	pandn	%xmm0,%xmm1
+	psrld	$4,%xmm1
+	pand	%xmm2,%xmm0
+	pxor	%xmm2,%xmm2
+	movl	$5,%eax
+.L006loop_row_4:
+	movdqa	(%esi),%xmm4
+	leal	16(%esi),%esi
+	movdqa	%xmm2,%xmm6
+.byte	102,15,58,15,243,1
+	movdqa	%xmm6,%xmm3
+	psrldq	$1,%xmm2
+	movdqa	%xmm4,%xmm5
+.byte	102,15,56,0,224
+.byte	102,15,56,0,233
+	pxor	%xmm5,%xmm2
+	movdqa	%xmm4,%xmm5
+	psllq	$60,%xmm5
+	movdqa	%xmm5,%xmm6
+	pslldq	$8,%xmm6
+	pxor	%xmm6,%xmm3
+	psrldq	$8,%xmm5
+	pxor	%xmm5,%xmm2
+	psrlq	$4,%xmm4
+	pxor	%xmm4,%xmm2
+	subl	$1,%eax
+	jnz	.L006loop_row_4
+	pxor	%xmm3,%xmm2
+	psrlq	$1,%xmm3
+	pxor	%xmm3,%xmm2
+	psrlq	$1,%xmm3
+	pxor	%xmm3,%xmm2
+	psrlq	$5,%xmm3
+	pxor	%xmm3,%xmm2
+	pxor	%xmm3,%xmm3
+	movl	$5,%eax
+.L007loop_row_5:
+	movdqa	(%esi),%xmm4
+	leal	16(%esi),%esi
+	movdqa	%xmm2,%xmm6
+.byte	102,15,58,15,243,1
+	movdqa	%xmm6,%xmm3
+	psrldq	$1,%xmm2
+	movdqa	%xmm4,%xmm5
+.byte	102,15,56,0,224
+.byte	102,15,56,0,233
+	pxor	%xmm5,%xmm2
+	movdqa	%xmm4,%xmm5
+	psllq	$60,%xmm5
+	movdqa	%xmm5,%xmm6
+	pslldq	$8,%xmm6
+	pxor	%xmm6,%xmm3
+	psrldq	$8,%xmm5
+	pxor	%xmm5,%xmm2
+	psrlq	$4,%xmm4
+	pxor	%xmm4,%xmm2
+	subl	$1,%eax
+	jnz	.L007loop_row_5
+	pxor	%xmm3,%xmm2
+	psrlq	$1,%xmm3
+	pxor	%xmm3,%xmm2
+	psrlq	$1,%xmm3
+	pxor	%xmm3,%xmm2
+	psrlq	$5,%xmm3
+	pxor	%xmm3,%xmm2
+	pxor	%xmm3,%xmm3
+	movl	$6,%eax
+.L008loop_row_6:
+	movdqa	(%esi),%xmm4
+	leal	16(%esi),%esi
+	movdqa	%xmm2,%xmm6
+.byte	102,15,58,15,243,1
+	movdqa	%xmm6,%xmm3
+	psrldq	$1,%xmm2
+	movdqa	%xmm4,%xmm5
+.byte	102,15,56,0,224
+.byte	102,15,56,0,233
+	pxor	%xmm5,%xmm2
+	movdqa	%xmm4,%xmm5
+	psllq	$60,%xmm5
+	movdqa	%xmm5,%xmm6
+	pslldq	$8,%xmm6
+	pxor	%xmm6,%xmm3
+	psrldq	$8,%xmm5
+	pxor	%xmm5,%xmm2
+	psrlq	$4,%xmm4
+	pxor	%xmm4,%xmm2
+	subl	$1,%eax
+	jnz	.L008loop_row_6
+	pxor	%xmm3,%xmm2
+	psrlq	$1,%xmm3
+	pxor	%xmm3,%xmm2
+	psrlq	$1,%xmm3
+	pxor	%xmm3,%xmm2
+	psrlq	$5,%xmm3
+	pxor	%xmm3,%xmm2
+	pxor	%xmm3,%xmm3
+	movdqa	%xmm2,%xmm0
+	leal	-256(%esi),%esi
+	leal	16(%edx),%edx
+	subl	$16,%ecx
+	jnz	.L005loop_ghash
+.byte	102,15,56,0,199
+	movdqu	%xmm0,(%edi)
+	pxor	%xmm0,%xmm0
+	pxor	%xmm1,%xmm1
+	pxor	%xmm2,%xmm2
+	pxor	%xmm3,%xmm3
+	pxor	%xmm4,%xmm4
+	pxor	%xmm5,%xmm5
+	pxor	%xmm6,%xmm6
+	popl	%edi
+	popl	%esi
+	popl	%ebx
+	popl	%ebp
+	ret
+.size	gcm_ghash_ssse3,.-.L_gcm_ghash_ssse3_begin
+.align	16
+.Lreverse_bytes:
+.byte	15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0
+.align	16
+.Llow4_mask:
+.long	252645135,252645135,252645135,252645135
+#endif  // !defined(OPENSSL_NO_ASM) && defined(OPENSSL_X86) && defined(__ELF__)

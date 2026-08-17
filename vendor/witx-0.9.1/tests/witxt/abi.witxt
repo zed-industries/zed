@@ -1,0 +1,490 @@
+(assert_abi
+  (witx (module $x (@interface func (export "f"))))
+  (wasm)
+  (call_wasm call.wasm return)
+  (call_interface call.interface return)
+)
+
+;; scalar arguments
+(assert_abi
+  (witx (module $x (@interface func (export "f") (param $p u8))))
+  (wasm (param i32))
+  (call_wasm get-arg0 i32.from_u8 call.wasm return)
+  (call_interface get-arg0 u8.from_i32 call.interface return)
+)
+(assert_abi
+  (witx (module $x (@interface func (export "f") (param $p s8))))
+  (wasm (param i32))
+  (call_wasm get-arg0 i32.from_s8 call.wasm return)
+  (call_interface get-arg0 s8.from_i32 call.interface return)
+)
+(assert_abi
+  (witx (module $x (@interface func (export "f") (param $p u16))))
+  (wasm (param i32))
+  (call_wasm get-arg0 i32.from_u16 call.wasm return)
+  (call_interface get-arg0 u16.from_i32 call.interface return)
+)
+(assert_abi
+  (witx (module $x (@interface func (export "f") (param $p s16))))
+  (wasm (param i32))
+  (call_wasm get-arg0 i32.from_s16 call.wasm return)
+  (call_interface get-arg0 s16.from_i32 call.interface return)
+)
+(assert_abi
+  (witx (module $x (@interface func (export "f") (param $p u32))))
+  (wasm (param i32))
+  (call_wasm get-arg0 i32.from_u32 call.wasm return)
+  (call_interface get-arg0 u32.from_i32 call.interface return)
+)
+(assert_abi
+  (witx (module $x (@interface func (export "f") (param $p s32))))
+  (wasm (param i32))
+  (call_wasm get-arg0 i32.from_s32 call.wasm return)
+  (call_interface get-arg0 s32.from_i32 call.interface return)
+)
+(assert_abi
+  (witx (module $x (@interface func (export "f") (param $p u64))))
+  (wasm (param i64))
+  (call_wasm get-arg0 i64.from_u64 call.wasm return)
+  (call_interface get-arg0 u64.from_i64 call.interface return)
+)
+(assert_abi
+  (witx (module $x (@interface func (export "f") (param $p s64))))
+  (wasm (param i64))
+  (call_wasm get-arg0 i64.from_s64 call.wasm return)
+  (call_interface get-arg0 s64.from_i64 call.interface return)
+)
+(assert_abi
+  (witx (module $x (@interface func (export "f") (param $p f32))))
+  (wasm (param f32))
+  (call_wasm get-arg0 f32.from_if32 call.wasm return)
+  (call_interface get-arg0 if32.from_f32 call.interface return)
+)
+(assert_abi
+  (witx (module $x (@interface func (export "f") (param $p f64))))
+  (wasm (param f64))
+  (call_wasm get-arg0 f64.from_if64 call.wasm return)
+  (call_interface get-arg0 if64.from_f64 call.interface return)
+)
+(assert_abi
+  (witx (module $x (@interface func (export "f") (param $p (@witx usize)))))
+  (wasm (param i32))
+  (call_wasm get-arg0 i32.from_usize call.wasm return)
+  (call_interface get-arg0 usize.from_i32 call.interface return)
+)
+(assert_abi
+  (witx (module $x (@interface func (export "f") (param $p (@witx char8)))))
+  (wasm (param i32))
+  (call_wasm get-arg0 i32.from_char8 call.wasm return)
+  (call_interface get-arg0 char8.from_i32 call.interface return)
+)
+(assert_abi
+  (witx (module $x (@interface func (export "f") (param $p char))))
+  (wasm (param i32))
+  (call_wasm get-arg0 i32.from_char call.wasm return)
+  (call_interface get-arg0 char.from_i32 call.interface return)
+)
+(assert_abi
+  (witx (module $x (@interface func (export "f") (param $p (@witx pointer u8)))))
+  (wasm (param i32))
+  (call_wasm get-arg0 i32.from_pointer call.wasm return)
+  (call_interface get-arg0 pointer.from_i32 call.interface return)
+)
+(assert_abi
+  (witx (module $x (@interface func (export "f") (param $p (@witx const_pointer u8)))))
+  (wasm (param i32))
+  (call_wasm get-arg0 i32.from_const_pointer call.wasm return)
+  (call_interface get-arg0 const_pointer.from_i32 call.interface return)
+)
+
+;; flags parameter
+(assert_abi
+  (witx
+    (typename $a (flags $x $y))
+    (module $x (@interface func (export "f") (param $p $a)))
+  )
+  (wasm (param i32))
+  (call_wasm get-arg0 i32.from_bitflags call.wasm return)
+  (call_interface get-arg0 bitflags.from_i32 call.interface return)
+)
+(assert_abi
+  (witx
+    (typename $a (flags (@witx repr u64) $x $y))
+    (module $x (@interface func (export "f") (param $p $a)))
+  )
+  (wasm (param i64))
+  (call_wasm get-arg0 i64.from_bitflags call.wasm return)
+  (call_interface get-arg0 bitflags.from_i64 call.interface return)
+)
+
+;; struct parameter
+(assert_abi
+  (witx
+    (typename $a (record (field $x u8)))
+    (module $x (@interface func (export "f") (param $p $a)))
+  )
+  (wasm (param i32))
+  (call_wasm get-arg0 addr-of call.wasm return)
+  (call_interface get-arg0 load call.interface return)
+)
+
+;; handle parameter
+(assert_abi
+  (witx
+    (typename $a (handle))
+    (module $x (@interface func (export "f") (param $p $a)))
+  )
+  (wasm (param i32))
+  (call_wasm get-arg0 i32.from_handle call.wasm return)
+  (call_interface get-arg0 handle.from_i32 call.interface return)
+)
+
+;; list parameter
+(assert_abi
+  (witx
+    (module $x (@interface func (export "f") (param $p (list u8))))
+  )
+  (wasm (param i32 i32))
+  (call_wasm get-arg0 list.pointer_length call.wasm return)
+  (call_interface get-arg0 get-arg1 list.from_pointer_length call.interface return)
+)
+
+;; variant parameter -- some not allowed at this time
+(assert_abi
+  (witx
+    (typename $a (enum $b))
+    (module $x (@interface func (export "f") (param $p $a)))
+  )
+  (wasm (param i32))
+  (call_wasm get-arg0 enum.lower call.wasm return)
+  (call_interface get-arg0 enum.lift call.interface return)
+)
+(assert_abi
+  (witx
+    (typename $a (union f32))
+    (module $x (@interface func (export "f") (param $p $a)))
+  )
+  (wasm (param i32))
+  (call_wasm get-arg0 addr-of call.wasm return)
+  (call_interface get-arg0 load call.interface return)
+)
+
+;; scalar returns
+(assert_abi
+  (witx (module $x (@interface func (export "f") (result $p u8))))
+  (wasm (result i32))
+  (call_wasm call.wasm u8.from_i32 return)
+  (call_interface call.interface i32.from_u8 return)
+)
+(assert_abi
+  (witx (module $x (@interface func (export "f") (result $p s8))))
+  (wasm (result i32))
+  (call_wasm call.wasm s8.from_i32 return)
+  (call_interface call.interface i32.from_s8 return)
+)
+(assert_abi
+  (witx (module $x (@interface func (export "f") (result $p u16))))
+  (wasm (result i32))
+  (call_wasm call.wasm u16.from_i32 return)
+  (call_interface call.interface i32.from_u16 return)
+)
+(assert_abi
+  (witx (module $x (@interface func (export "f") (result $p s16))))
+  (wasm (result i32))
+  (call_wasm call.wasm s16.from_i32 return)
+  (call_interface call.interface i32.from_s16 return)
+)
+(assert_abi
+  (witx (module $x (@interface func (export "f") (result $p u32))))
+  (wasm (result i32))
+  (call_wasm call.wasm u32.from_i32 return)
+  (call_interface call.interface i32.from_u32 return)
+)
+(assert_abi
+  (witx (module $x (@interface func (export "f") (result $p s32))))
+  (wasm (result i32))
+  (call_wasm call.wasm s32.from_i32 return)
+  (call_interface call.interface i32.from_s32 return)
+)
+(assert_abi
+  (witx (module $x (@interface func (export "f") (result $p u64))))
+  (wasm (result i64))
+  (call_wasm call.wasm u64.from_i64 return)
+  (call_interface call.interface i64.from_u64 return)
+)
+(assert_abi
+  (witx (module $x (@interface func (export "f") (result $p s64))))
+  (wasm (result i64))
+  (call_wasm call.wasm s64.from_i64 return)
+  (call_interface call.interface i64.from_s64 return)
+)
+(assert_abi
+  (witx (module $x (@interface func (export "f") (result $p f32))))
+  (wasm (result f32))
+  (call_wasm call.wasm if32.from_f32 return)
+  (call_interface call.interface f32.from_if32 return)
+)
+(assert_abi
+  (witx (module $x (@interface func (export "f") (result $p f64))))
+  (wasm (result f64))
+  (call_wasm call.wasm if64.from_f64 return)
+  (call_interface call.interface f64.from_if64 return)
+)
+(assert_abi
+  (witx (module $x (@interface func (export "f") (result $p (@witx usize)))))
+  (wasm (result i32))
+  (call_wasm call.wasm usize.from_i32 return)
+  (call_interface call.interface i32.from_usize return)
+)
+(assert_abi
+  (witx (module $x (@interface func (export "f") (result $p (@witx char8)))))
+  (wasm (result i32))
+  (call_wasm call.wasm char8.from_i32 return)
+  (call_interface call.interface i32.from_char8 return)
+)
+(assert_abi
+  (witx (module $x (@interface func (export "f") (result $p char))))
+  (wasm (result i32))
+  (call_wasm call.wasm char.from_i32 return)
+  (call_interface call.interface i32.from_char return)
+)
+(assert_abi
+  (witx (module $x (@interface func (export "f") (result $p (@witx pointer u8)))))
+  (wasm (result i32))
+  (call_wasm call.wasm pointer.from_i32 return)
+  (call_interface call.interface i32.from_pointer return)
+)
+(assert_abi
+  (witx (module $x (@interface func (export "f") (result $p (@witx const_pointer u8)))))
+  (wasm (result i32))
+  (call_wasm call.wasm const_pointer.from_i32 return)
+  (call_interface call.interface i32.from_const_pointer return)
+)
+
+;; flags return
+(assert_abi
+  (witx
+    (typename $a (flags $x $y))
+    (module $x (@interface func (export "f") (result $p $a)))
+  )
+  (wasm (result i32))
+  (call_wasm call.wasm bitflags.from_i32 return)
+  (call_interface call.interface i32.from_bitflags return)
+)
+(assert_abi
+  (witx
+    (typename $a (flags (@witx repr u64) $x $y))
+    (module $x (@interface func (export "f") (result $p $a)))
+  )
+  (wasm (result i64))
+  (call_wasm call.wasm bitflags.from_i64 return)
+  (call_interface call.interface i64.from_bitflags return)
+)
+
+;; handle return
+(assert_abi
+  (witx
+    (typename $a (handle))
+    (module $x (@interface func (export "f") (result $p $a)))
+  )
+  (wasm (result i32))
+  (call_wasm call.wasm handle.from_i32 return)
+  (call_interface call.interface i32.from_handle return)
+)
+
+;; struct return -- not supported
+(assert_invalid
+  (witx
+    (typename $a (record (field $x u8)))
+    (module $x (@interface func (export "f") (result $p $a)))
+  )
+  "ABI error: invalid return type"
+)
+
+;; list return -- not supported
+(assert_invalid
+  (witx
+    (module $x (@interface func (export "f") (result $p (list u8))))
+  )
+  "ABI error: invalid return type"
+)
+
+;; variant return -- only some allowed
+(assert_invalid
+  (witx
+    (typename $a (enum $b))
+    (module $x (@interface func (export "f") (result $p $a)))
+  )
+  "ABI error: invalid return type"
+)
+(assert_invalid
+  (witx
+    (typename $a (union s32 f32))
+    (module $x (@interface func (export "f") (result $p $a)))
+  )
+  "ABI error: invalid return type"
+)
+(assert_invalid
+  (witx
+    (typename $a (expected (error f32)))
+    (module $x (@interface func (export "f") (result $p $a)))
+  )
+  "ABI error: only named types are allowed in results"
+)
+(assert_invalid
+  (witx
+    (typename $errno (enum $success $bad))
+    (typename $a (expected f32 (error $errno)))
+    (module $x (@interface func (export "f") (result $p $a)))
+  )
+  "ABI error: only named types are allowed in results"
+)
+
+;; Result<(), $errno>
+(assert_abi
+  (witx
+    (typename $errno (enum $success $bad))
+    (typename $a (expected (error $errno)))
+    (module $x (@interface func (export "f") (result $p $a)))
+  )
+  (wasm (result i32))
+
+  (call_wasm
+    call.wasm
+    ;; ok block, nothing happens
+    block.push
+    block.finish
+    ;; err block, we lift the return value as the num
+    block.push
+      reuse_return
+      enum.lift
+    block.finish
+    ;; consumes 2 blocks and uses the return value of the call to discriminate
+    result.lift
+    return)
+
+  (call_interface
+    call.interface
+
+    ;; ok block, nothing happens
+    block.push
+    block.finish
+
+    ;; err block, lift the enum
+    block.push
+      variant-payload
+      enum.lower
+    block.finish
+
+    ;; consume the 2 blocks and lower based on the call
+    result.lower
+    return)
+)
+
+;; Result<$ty, $errno>
+(assert_abi
+  (witx
+    (typename $errno (enum $success $bad))
+    (typename $size u32)
+    (typename $a (expected $size (error $errno)))
+    (module $x (@interface func (export "f") (result $p $a)))
+  )
+  (wasm (param i32) (result i32))
+
+  (call_wasm
+    ;; make space for the return value and push its pointer
+    allocate-space
+    return_pointer.get0
+
+    call.wasm
+
+    ;; ok block, load the return pointer and have it be the result for the `Ok`
+    block.push
+      return_pointer.get0
+      load
+    block.finish
+
+    block.push
+      reuse_return
+      enum.lift
+    block.finish
+
+    result.lift
+    return)
+
+  (call_interface
+    call.interface
+
+    ;; store the successful result at the first return pointer (the first param)
+    block.push
+      variant-payload
+      get-arg0
+      store
+    block.finish
+
+    block.push
+      variant-payload
+      enum.lower
+    block.finish
+
+    result.lower
+    return)
+)
+
+;; Result<($a, $b), $errno>
+(assert_abi
+  (witx
+    (typename $errno (enum $success $bad))
+    (typename $size u32)
+    (typename $other (record (field $a $size)))
+    (module $x (@interface func (export "f")
+      (result $p (expected (tuple $size $other) (error $errno)))))
+  )
+  (wasm (param i32 i32) (result i32))
+
+  (call_wasm
+    allocate-space
+    return_pointer.get0
+    allocate-space
+    return_pointer.get1
+
+    call.wasm
+
+    block.push
+      return_pointer.get0
+      load
+      return_pointer.get1
+      load
+      tuple.lift
+    block.finish
+
+    block.push
+      reuse_return
+      enum.lift
+    block.finish
+
+    result.lift
+    return)
+
+  (call_interface
+    call.interface
+
+    ;; note the reverse order since we're consuming the results of lowering the
+    ;; tuple
+    block.push
+      variant-payload
+      tuple.lower
+      get-arg1
+      store
+      get-arg0
+      store
+    block.finish
+
+    block.push
+      variant-payload
+      enum.lower
+    block.finish
+
+    result.lower
+    return)
+)

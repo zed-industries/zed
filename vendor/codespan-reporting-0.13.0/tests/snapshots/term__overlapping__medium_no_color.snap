@@ -1,0 +1,17 @@
+---
+source: codespan-reporting/tests/term.rs
+expression: TEST_DATA.emit_no_color(&config)
+---
+nested_impl_trait.rs:5:56: error[E0666]: nested `impl Trait` is not allowed
+typeck_type_placeholder_item.rs:1:18: error[E0121]: the type placeholder `_` is not allowed within types on item signatures
+typeck_type_placeholder_item.rs:2:25: error[E0121]: the type placeholder `_` is not allowed within types on item signatures
+typeck_type_placeholder_item.rs:2:28: error[E0121]: the type placeholder `_` is not allowed within types on item signatures
+no_send_res_ports.rs:25:5: error[E0277]: `std::rc::Rc<()>` cannot be sent between threads safely
+ = help: within `[closure@no_send_res_ports.rs:29:19: 33:6 x:main::Foo]`, the trait `std::marker::Send` is not implemented for `std::rc::Rc<()>`
+ = note: required because it appears within the type `Port<()>`
+ = note: required because it appears within the type `main::Foo`
+ = note: required because it appears within the type `[closure@no_send_res_ports.rs:29:19: 33:6 x:main::Foo]`
+error: aborting due 5 previous errors
+ = Some errors have detailed explanations: E0121, E0277, E0666.
+ = For more information about an error, try `rustc --explain E0121`.
+

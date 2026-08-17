@@ -1,0 +1,11 @@
+package root:component;
+
+world root {
+  import foo:foo/name1;
+  import foo:foo/name2;
+
+  export name: interface {
+    use foo:foo/name1.{name};
+    use foo:foo/name2.{name as name1};
+  }
+}

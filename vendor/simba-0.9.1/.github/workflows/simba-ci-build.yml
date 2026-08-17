@@ -1,0 +1,75 @@
+name: Simba CI build
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check formatting
+        run: cargo fmt -- --check
+  clippy:
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install latest nightly
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          override: true
+          components: clippy
+      - name: Check formatting
+        run: cargo clippy --all-features
+  build-native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install latest nightly
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          override: false
+      - name: Build --no-default-feature
+        run: cargo build --no-default-features;
+      - name: Build libm only
+        run: cargo build --no-default-features --features libm;
+      - name: Build (default features)
+        run: cargo build;
+      - name: Build all features except libm
+        run: cargo build --features wide,rkyv-serialize,serde_serialize,partial_fixed_point_support;
+      - name: Build all features
+        run: cargo +nightly build --all-features
+  build-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup target add wasm32-unknown-unknown
+      - name: build
+        run: cargo build --verbose --target wasm32-unknown-unknown;
+  build-no-std:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install latest stable
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: "x86_64-unknown-none,thumbv7em-none-eabihf"
+      - name: build x86_64-unknown-none
+        run: cargo build --verbose --no-default-features --target=x86_64-unknown-none
+      - name: build x86_64-unknown-none --features libm
+        run: cargo build --verbose --no-default-features --features libm --target=x86_64-unknown-none
+      - name: build thumbv7em-none-eabihf
+        run: cargo build --verbose --no-default-features --target=thumbv7em-none-eabihf
+      - name: build thumbv7em-none-eabihf --features libm
+        run: cargo build --verbose --no-default-features --features libm --target=thumbv7em-none-eabihf

@@ -1,0 +1,26 @@
+sequenceDiagram
+participant Alice
+participant Bob
+participant Carol
+participant Dave
+participant Eve
+Alice-->>Bob: Hello 0
+Bob->>Carol: Forward 1
+Carol->>Dave: Process 2
+Dave-->>Eve: Notify 3
+Eve->>Alice: Ack 4
+Alice->>Bob: Hello 5
+Bob-->>Carol: Forward 6
+Carol->>Dave: Process 7
+Dave->>Eve: Notify 8
+Eve-->>Alice: Ack 9
+Alice->>Bob: Hello 10
+Bob->>Carol: Forward 11
+Carol-->>Dave: Process 12
+Dave->>Eve: Notify 13
+Eve->>Alice: Ack 14
+Alice-->>Bob: Hello 15
+Bob->>Carol: Forward 16
+Carol->>Dave: Process 17
+Dave-->>Eve: Notify 18
+Eve->>Alice: Ack 19

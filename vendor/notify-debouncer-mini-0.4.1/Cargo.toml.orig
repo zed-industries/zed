@@ -1,0 +1,30 @@
+[package]
+name = "notify-debouncer-mini"
+version = "0.4.1"
+edition = "2021"
+rust-version = "1.60"
+description = "notify mini debouncer for events"
+documentation = "https://docs.rs/notify-debouncer-mini"
+homepage = "https://github.com/notify-rs/notify"
+repository = "https://github.com/notify-rs/notify.git"
+authors = ["Aron Heinecke <Ox0p54r36@t-online.de>"]
+keywords = ["events", "filesystem", "notify", "watch"]
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "notify_debouncer_mini"
+path = "src/lib.rs"
+
+[features]
+default = ["crossbeam"]
+# can't use dep:crossbeam-channel and feature name crossbeam-channel below rust 1.60
+crossbeam = ["crossbeam-channel","notify/crossbeam-channel"]
+
+[dependencies]
+notify = { version = "6.1.1", path = "../notify" }
+crossbeam-channel = { version = "0.5", optional = true }
+serde = { version = "1.0.89", features = ["derive"], optional = true }
+log = "0.4.17"

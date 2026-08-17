@@ -1,0 +1,26 @@
+---
+- name: Spec Example 5.6. Node Property Indicators
+  from: http://www.yaml.org/spec/1.2/spec.html#id2773402
+  tags: local-tag spec tag alias
+  yaml: |
+    anchored: !local &anchor value
+    alias: *anchor
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :anchored
+       =VAL &anchor <!local> :value
+       =VAL :alias
+       =ALI *anchor
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "anchored": "value",
+      "alias": "value"
+    }
+  dump: |
+    anchored: &anchor !local value
+    alias: *anchor

@@ -1,0 +1,85 @@
+[package]
+name = "cxx"
+version = "1.0.187"
+authors = ["David Tolnay <dtolnay@gmail.com>"]
+categories = ["development-tools::ffi", "api-bindings", "no-std"]
+description = "Safe interop between Rust and C++"
+documentation = "https://docs.rs/cxx"
+edition = "2021"
+exclude = ["/demo", "/gen", "/syntax", "/third-party", "/tools/buck/prelude"]
+homepage = "https://cxx.rs"
+keywords = ["ffi", "c++"]
+license = "MIT OR Apache-2.0"
+links = "cxxbridge1"
+repository = "https://github.com/dtolnay/cxx"
+rust-version = "1.87"
+
+[features]
+default = ["std", "cxxbridge-flags/default"] # c++11
+"c++14" = ["cxxbridge-flags/c++14"]
+"c++17" = ["cxxbridge-flags/c++17"]
+"c++20" = ["cxxbridge-flags/c++20"]
+alloc = []
+std = ["alloc", "foldhash/std"]
+
+[dependencies]
+cxxbridge-macro = { version = "=1.0.187", path = "macro" }
+foldhash = { version = "0.2", default-features = false }
+link-cplusplus = "1.0.11"
+
+[build-dependencies]
+cc = "1.0.101"
+cxxbridge-flags = { version = "=1.0.187", path = "flags", default-features = false }
+
+[dev-dependencies]
+cc = "1.0.101"
+cxx-build = { version = "1", path = "gen/build" }
+cxx-gen = { version = "0.7", path = "gen/lib" }
+cxx-test-suite = { version = "0", path = "tests/ffi" }
+indoc = "2"
+proc-macro2 = "1.0.95"
+quote = "1.0.40"
+rustversion = "1.0.13"
+scratch = "1"
+target-triple = "0.1"
+tempfile = "3.8"
+trybuild = { version = "1.0.108", features = ["diff"] }
+
+# Disallow incompatible version appearing in the same lockfile.
+[target.'cfg(any())'.build-dependencies]
+cxx-build = { version = "=1.0.187", path = "gen/build" }
+cxxbridge-cmd = { version = "=1.0.187", path = "gen/cmd" }
+
+[workspace]
+members = ["demo", "flags", "gen/build", "gen/cmd", "gen/lib", "macro", "tests/ffi"]
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+rustdoc-args = [
+    "--generate-link-to-definition",
+    "--generate-macro-expansion",
+    "--extern-html-root-url=core=https://doc.rust-lang.org",
+    "--extern-html-root-url=alloc=https://doc.rust-lang.org",
+    "--extern-html-root-url=std=https://doc.rust-lang.org",
+]
+
+[package.metadata.bazel]
+additive_build_file_content = """
+cc_library(
+    name = "cxx_cc",
+    srcs = ["src/cxx.cc"],
+    hdrs = ["include/cxx.h"],
+    include_prefix = "rust",
+    includes = ["include"],
+    linkstatic = True,
+    strip_include_prefix = "include",
+    visibility = ["//visibility:public"],
+)
+"""
+deps = [":cxx_cc"]
+extra_aliased_targets = { cxx_cc = "cxx_cc" }
+gen_build_script = false
+
+[patch.crates-io]
+cxx = { path = "." }
+cxx-build = { path = "gen/build" }

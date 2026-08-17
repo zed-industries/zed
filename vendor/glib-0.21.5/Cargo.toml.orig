@@ -1,0 +1,77 @@
+[package]
+name = "glib"
+documentation = "https://gtk-rs.org/gtk-rs-core/stable/latest/docs/glib/"
+description = "Rust bindings for the GLib library"
+readme = "README.md"
+keywords = ["glib", "gtk-rs", "gnome", "GUI"]
+authors.workspace = true
+edition.workspace = true
+exclude.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lib]
+name = "glib"
+
+[dependencies]
+libc.workspace = true
+bitflags.workspace = true
+futures-core = { version = "0.3", default-features = false }
+futures-task = { version = "0.3", default-features = false }
+futures-executor = "0.3"
+futures-channel = "0.3"
+futures-util = "0.3"
+glib-sys.workspace = true
+gobject-sys.workspace = true
+glib-macros.workspace = true
+rs-log = { package = "log", version = "0.4", optional = true }
+smallvec = { version = "1.15", features = ["union", "const_generics", "const_new"] }
+gio-sys = { workspace = true, optional = true }
+memchr = "2.7.5"
+
+[dev-dependencies]
+tempfile = "3"
+gir-format-check.workspace = true
+trybuild2 = "1"
+criterion = "0.7.0"
+
+[features]
+default = ["gio"]
+v2_58 = ["glib-sys/v2_58", "gobject-sys/v2_58"]
+v2_60 = ["v2_58", "glib-sys/v2_60"]
+v2_62 = ["v2_60", "glib-sys/v2_62", "gobject-sys/v2_62"]
+v2_64 = ["v2_62", "glib-sys/v2_64"]
+v2_66 = ["v2_64", "glib-sys/v2_66", "gobject-sys/v2_66"]
+v2_68 = ["v2_66", "glib-sys/v2_68", "gobject-sys/v2_68"]
+v2_70 = ["v2_68", "glib-sys/v2_70", "gobject-sys/v2_70"]
+v2_72 = ["v2_70", "glib-sys/v2_72", "gobject-sys/v2_72"]
+v2_74 = ["v2_72", "glib-sys/v2_74", "gobject-sys/v2_74"]
+v2_76 = ["v2_74", "glib-sys/v2_76", "gobject-sys/v2_76"]
+v2_78 = ["v2_76", "glib-sys/v2_78", "gobject-sys/v2_78"]
+v2_80 = ["v2_78", "glib-sys/v2_80", "gobject-sys/v2_80"]
+v2_82 = ["v2_80", "glib-sys/v2_82", "gobject-sys/v2_82"]
+v2_84 = ["v2_82", "glib-sys/v2_84", "gobject-sys/v2_84"]
+v2_86 = ["v2_84", "glib-sys/v2_86", "gobject-sys/v2_86"]
+log = ["rs-log"]
+log_macros = ["log"]
+compiletests = []
+gio = ["gio-sys"]
+
+[[test]]
+name = "subclass_compiletest"
+required-features = ["compiletests"]
+
+[[test]]
+name = "regex_compiletest"
+required-features = ["compiletests"]
+
+[[bench]]
+name = "gstring"
+harness = false
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--generate-link-to-definition"]

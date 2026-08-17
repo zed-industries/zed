@@ -1,0 +1,9 @@
+
+/// This interface provides a value-export of the default network handle..
+interface instance-network {
+    use network.{network};
+
+    /// Get a handle to the default network.
+    instance-network: func() -> network;
+
+}

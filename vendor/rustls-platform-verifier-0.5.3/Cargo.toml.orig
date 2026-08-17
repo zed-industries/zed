@@ -1,0 +1,70 @@
+[package]
+name = "rustls-platform-verifier"
+version = "0.5.3"
+authors = ["ComplexSpaces <complexspacescode@gmail.com>", "1Password"]
+description = "rustls-platform-verifier supports verifying TLS certificates in rustls with the operating system verifier"
+keywords = ["tls", "certificate", "verification", "os", "native"]
+repository = "https://github.com/rustls/rustls-platform-verifier"
+license = "MIT OR Apache-2.0"
+edition = "2021"
+rust-version = "1.71.0"
+
+[lib]
+name = "rustls_platform_verifier"
+# Note: The `cdylib` specification is for testing only. The shared library
+# is not expected to have a stable API.
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# Enables a C interface to use for testing where `cargo` can't be used.
+# This feature is not stable, nor is the interface exported when it is enabled.
+# Do not rely on this or use it in production.
+ffi-testing = ["android_logger", "rustls/ring"]
+# Enables APIs that expose lower-level verifier types for debugging purposes.
+dbg = []
+# Enables `log::debug` base64-encoded logging of all end-entity certificates processed
+# by the platform's verifier.
+cert-logging = ["base64"]
+# Used for nicely documenting the Android-specific APIs. This feature is not stable.
+docsrs = ["jni"]
+
+[dependencies]
+rustls = { version = "0.23.27", default-features = false, features = ["std"] }
+log = { version = "0.4" }
+base64 = { version = "0.22", optional = true } # Only used when the `cert-logging` feature is enabled.
+jni = { version = "0.21", default-features = false, optional = true } # Only used during doc generation
+once_cell = "1.9"
+
+[target.'cfg(all(unix, not(target_os = "android"), not(target_vendor = "apple"), not(target_arch = "wasm32")))'.dependencies]
+rustls-native-certs = "0.8"
+webpki = { package = "rustls-webpki", version = "0.103", default-features = false }
+
+[target.'cfg(target_os = "android")'.dependencies]
+rustls-platform-verifier-android = { path = "../android-release-support", version = "0.1.0" }
+jni = { version = "0.21", default-features = false }
+webpki = { package = "rustls-webpki", version = "0.103", default-features = false }
+android_logger = { version = "0.15", optional = true } # Only used during testing.
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+webpki = { package = "rustls-webpki", version = "0.103", default-features = false }
+webpki-root-certs = "0.26"
+
+# BSD targets require webpki-roots-certs for the real-world verification tests.
+[target.'cfg(target_os = "freebsd")'.dev-dependencies]
+webpki-root-certs = "0.26"
+
+[target.'cfg(any(target_vendor = "apple"))'.dependencies]
+core-foundation = "0.10"
+core-foundation-sys = "0.8"
+security-framework = { version = "3", features = ["OSX_10_14"] }
+security-framework-sys = { version = "2.10", features = ["OSX_10_14"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = ">=0.52.0, <0.60.0", default-features = false, features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+
+[dev-dependencies]
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--cfg", "docsrs"]
+features = ["dbg", "docsrs"]

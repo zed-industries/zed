@@ -1,0 +1,54 @@
+---
+- name: Spec Example 2.3. Mapping Scalars to Sequences
+  from: http://www.yaml.org/spec/1.2/spec.html#id2759963
+  tags: spec mapping sequence
+  yaml: |
+    american:
+      - Boston Red Sox
+      - Detroit Tigers
+      - New York Yankees
+    national:
+      - New York Mets
+      - Chicago Cubs
+      - Atlanta Braves
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :american
+       +SEQ
+        =VAL :Boston Red Sox
+        =VAL :Detroit Tigers
+        =VAL :New York Yankees
+       -SEQ
+       =VAL :national
+       +SEQ
+        =VAL :New York Mets
+        =VAL :Chicago Cubs
+        =VAL :Atlanta Braves
+       -SEQ
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "american": [
+        "Boston Red Sox",
+        "Detroit Tigers",
+        "New York Yankees"
+      ],
+      "national": [
+        "New York Mets",
+        "Chicago Cubs",
+        "Atlanta Braves"
+      ]
+    }
+  dump: |
+    american:
+    - Boston Red Sox
+    - Detroit Tigers
+    - New York Yankees
+    national:
+    - New York Mets
+    - Chicago Cubs
+    - Atlanta Braves

@@ -1,0 +1,36 @@
+[package]
+name = "wasmparser"
+version.workspace = true
+authors = ["Yury Delendik <ydelendik@mozilla.com>"]
+license = "Apache-2.0 WITH LLVM-exception"
+repository = "https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wasmparser"
+homepage = "https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wasmparser"
+keywords = ["parser", "WebAssembly", "wasm"]
+description = """
+A simple event-driven library for parsing WebAssembly binary files.
+"""
+edition.workspace = true
+exclude = ["benches/*.wasm"]
+
+[lints]
+workspace = true
+
+[dependencies]
+bitflags = "2.4.1"
+indexmap = { workspace = true }
+semver = { workspace = true }
+
+[dev-dependencies]
+anyhow = { workspace = true }
+criterion = { workspace = true }
+wat = { path = "../wat" }
+wast = { path = "../wast" }
+rayon = { workspace = true }
+once_cell = "1.13.0"
+wasm-encoder = { path = "../wasm-encoder" }
+env_logger.workspace = true
+log.workspace = true
+
+[[bench]]
+name = "benchmark"
+harness = false

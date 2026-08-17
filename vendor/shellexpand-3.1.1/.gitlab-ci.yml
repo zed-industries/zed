@@ -1,0 +1,55 @@
+# Template originally came from:
+# https://gitlab.com/gitlab-org/gitlab/-/blob/master/lib/gitlab/ci/templates/Rust.gitlab-ci.yml
+
+# Official language image. Look for the different tagged releases at:
+# https://hub.docker.com/r/library/rust/tags/
+image: "rust:latest"
+
+stages:
+  - test
+  - comprehensive
+
+# Use cargo to test the project
+cargo-test:
+  stage: test
+  script:
+    - rustc --version && cargo --version  # Print version info for debugging
+    - cp Cargo.lock.example Cargo.lock
+    - cargo test --locked --workspace --verbose --all-features
+
+latest-deps:
+  stage: comprehensive
+  script:
+    - rustc --version && cargo --version  # Print version info for debugging
+    - cp Cargo.lock.example Cargo.lock
+    - cargo update
+    - cargo test --locked --workspace --verbose --all-features
+
+feature-matrix:
+  stage: comprehensive
+  script:
+    - cp Cargo.lock.example Cargo.lock
+    - cargo test --locked --workspace --verbose
+    - cargo test --locked --workspace --verbose --no-default-features --features=base-0
+    - cargo test --locked --workspace --verbose --no-default-features --features=base-0,path
+    - cargo test --locked --workspace --verbose --no-default-features --features=base-0,tilde
+    - cargo test --locked --workspace --verbose --no-default-features --features=full
+
+# Test our MSRV and Cargo.toml minimal versions:
+
+msrv-1.31:
+  stage: comprehensive
+  image: "rust:1.31.0"
+  script:
+    - mv Cargo.lock.minimal Cargo.lock
+    - rustc --version && cargo --version  # Print version info for debugging
+    - cargo +1.31.0 test --locked --no-default-features --features=full-msrv-1-31
+
+# Test our MSRV and Cargo.toml minimal versions
+msrv-1.51:
+  stage: comprehensive
+  image: "rust:1.51.0"
+  script:
+    - mv Cargo.lock.minimal Cargo.lock
+    - rustc --version && cargo --version  # Print version info for debugging
+    - cargo +1.51.0 test --locked --workspace --all-features

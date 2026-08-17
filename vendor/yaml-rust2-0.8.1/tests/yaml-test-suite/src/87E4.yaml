@@ -1,0 +1,33 @@
+---
+- name: Spec Example 7.8. Single Quoted Implicit Keys
+  from: http://www.yaml.org/spec/1.2/spec.html#id2788496
+  tags: spec flow sequence mapping
+  yaml: |
+    'implicit block key' : [
+      'implicit flow key' : value,
+     ]
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL 'implicit block key
+       +SEQ []
+        +MAP {}
+         =VAL 'implicit flow key
+         =VAL :value
+        -MAP
+       -SEQ
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "implicit block key": [
+        {
+          "implicit flow key": "value"
+        }
+      ]
+    }
+  dump: |
+    'implicit block key':
+    - 'implicit flow key': value

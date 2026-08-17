@@ -1,0 +1,20 @@
+error[E0277]: the trait bound `ShapeConstraint: SameNumberOfColumns<Const<2>, Const<3>>` is not satisfied
+  --> tests/macros/trybuild/stack_incompatible_block_dimensions.rs:12:12
+   |
+12 |            a21, a22];
+   |            ^^^ the trait `SameNumberOfColumns<Const<2>, Const<3>>` is not implemented for `ShapeConstraint`
+   |
+   = help: the following other types implement trait `SameNumberOfColumns<D1, D2>`:
+             `ShapeConstraint` implements `SameNumberOfColumns<D, D>`
+             `ShapeConstraint` implements `SameNumberOfColumns<D, Dyn>`
+             `ShapeConstraint` implements `SameNumberOfColumns<Dyn, D>`
+   = note: this error originates in the macro `stack` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0282]: type annotations needed
+  --> tests/macros/trybuild/stack_incompatible_block_dimensions.rs:11:5
+   |
+11 | /     stack![a11, a12;
+12 | |            a21, a22];
+   | |____________________^ cannot infer type
+   |
+   = note: this error originates in the macro `stack` (in Nightly builds, run with -Z macro-backtrace for more info)

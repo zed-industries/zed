@@ -1,0 +1,45 @@
+[package]
+name = "minidumper"
+version = "0.9.0"
+description = "IPC impl for creating a minidump for a crashed process"
+repository.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+readme = "README.md"
+documentation = "https://docs.rs/minidumper"
+homepage = "https://github.com/EmbarkStudios/crash-handling/tree/main/minidumper"
+# Unfortunately there is no good category for this on crates.io atm
+categories = ["os"]
+keywords = ["crash", "minidump", "ipc", "out-of-process"]
+
+[dependencies]
+# Nicer cfg handling
+cfg-if.workspace = true
+crash-context.workspace = true
+libc.workspace = true
+# Basic log emitting
+log = "0.4"
+# Minidump writing
+minidump-writer = "0.11"
+# Event loop
+polling = "3.2"
+# Nicer locking primitives
+parking_lot.workspace = true
+# Nicer error creation
+thiserror = "2.0"
+
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+# Improved Unix domain socket support, includes features that are not available in std
+uds = "0.4"
+
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+# Nicer binary interop, keep aligned with minidump-writer
+scroll = { version = "0.12", features = ["derive"] }
+
+[dev-dependencies]
+# Diskwrite example
+crash-handler = { path = "../crash-handler" }
+pretty_env_logger = "0.5.0"
+# uuid generation
+uuid = { version = "1.0", features = ["v4"] }

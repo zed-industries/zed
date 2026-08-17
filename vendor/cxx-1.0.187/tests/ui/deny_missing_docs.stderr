@@ -1,0 +1,47 @@
+error: missing documentation for a struct
+  --> tests/ui/deny_missing_docs.rs:11:5
+   |
+11 |     pub struct UndocumentedStruct {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the lint level is defined here
+  --> tests/ui/deny_missing_docs.rs:6:9
+   |
+ 6 | #![deny(missing_docs)]
+   |         ^^^^^^^^^^^^
+
+error: missing documentation for a struct field
+  --> tests/ui/deny_missing_docs.rs:12:9
+   |
+12 |         pub undocumented_field: u8,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: missing documentation for a struct
+  --> tests/ui/deny_missing_docs.rs:21:5
+   |
+21 |     pub enum UndocumentedEnum {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: missing documentation for an associated constant
+  --> tests/ui/deny_missing_docs.rs:22:9
+   |
+22 |         UndocumentedVariant = 0,
+   |         ^^^^^^^^^^^^^^^^^^^
+
+error: missing documentation for a struct
+  --> tests/ui/deny_missing_docs.rs:44:9
+   |
+44 |         pub type UndocumentedForeignType;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: missing documentation for a type alias
+  --> tests/ui/deny_missing_docs.rs:49:9
+   |
+49 |         pub type UndocumentedTypeAlias = crate::bindgen::UndocumentedTypeAlias;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: missing documentation for a function
+  --> tests/ui/deny_missing_docs.rs:54:9
+   |
+54 |         pub fn undocumented_foreign_fn() -> u8;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

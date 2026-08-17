@@ -1,0 +1,7 @@
+package foo:foo;
+
+world the-world {
+  import imports: interface {
+    y: func();
+  }
+}

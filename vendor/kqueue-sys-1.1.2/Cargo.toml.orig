@@ -1,0 +1,29 @@
+[package]
+name = "kqueue-sys"
+version = "1.1.2"
+authors = ["William Orr <will@worrbase.com>", "Daniel (dmilith) Dettlaff <dmilith@me.com>"]
+description = "Low-level kqueue interface for BSDs"
+license = "MIT"
+keywords = ["kqueue", "kevent", "bsd", "darwin", "macos"]
+categories = ["external-ffi-bindings", "no-std", "os::unix-apis", "filesystem"]
+repository = "https://gitlab.com/rust-kqueue/rust-kqueue-sys"
+readme = "README.md"
+edition = "2021"
+rust-version = "1.65"
+
+[package.metadata.docs.rs]
+targets = [
+	"x86_64-unknown-netbsd",
+	"x86_64-unknown-freebsd",
+	"i686-unknown-freebsd",
+	"x86_64-unknown-dragonfly",
+	"x86_64-unknown-openbsd",
+	"aarch64-apple-darwin",
+	"x86_64-apple-darwin",
+	"aarch64-apple-ios",
+	"x86_64-apple-ios",
+]
+
+[dependencies]
+bitflags = { version = "2.11.0", default-features = false }
+libc = "^0.2.74"

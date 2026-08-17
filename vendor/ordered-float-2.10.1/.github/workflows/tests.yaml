@@ -1,0 +1,55 @@
+on: [push, pull_request]
+
+name: Tests
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+          - stable
+          - 1.36.0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+          override: true
+
+      - name: Test (default features)
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+
+      - name: Test (no default features)
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --no-default-features
+
+      - name: Test (schema features subset)
+        if: matrix.rust == 'stable'
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --features "std,schemars"
+
+      - name: Test (rand features subset)
+        if: matrix.rust == 'stable'
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --features "rand,randtest"
+
+      - name: Test (all features)
+        if: matrix.rust == 'stable'
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --all-features

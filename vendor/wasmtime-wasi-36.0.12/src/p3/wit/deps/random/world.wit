@@ -1,0 +1,13 @@
+package wasi:random@0.3.0;
+
+@since(version = 0.3.0)
+world imports {
+    @since(version = 0.3.0)
+    import random;
+
+    @since(version = 0.3.0)
+    import insecure;
+
+    @since(version = 0.3.0)
+    import insecure-seed;
+}

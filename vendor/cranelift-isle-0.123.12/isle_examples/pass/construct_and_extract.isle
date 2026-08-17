@@ -1,0 +1,15 @@
+(type B (enum (B (x i32) (y i32))))
+
+;; `isub` has a constructor and extractor.
+(decl isub (i32 i32) B)
+(rule (isub x y)
+      (B.B x y))
+(extractor (isub x y)
+           (B.B x y))
+
+;; `value_array_2` has both an external extractor and an external constructor.
+(type Value (primitive Value))
+(type ValueArray2 extern (enum))
+(decl value_array_2 (Value Value) ValueArray2)
+(extern extractor infallible value_array_2 unpack_value_array_2)
+(extern constructor value_array_2 pack_value_array_2)

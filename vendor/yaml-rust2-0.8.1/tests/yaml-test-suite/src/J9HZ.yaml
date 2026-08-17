@@ -1,0 +1,49 @@
+---
+- name: Spec Example 2.9. Single Document with Two Comments
+  from: http://www.yaml.org/spec/1.2/spec.html#id2760633
+  tags: mapping sequence spec comment
+  yaml: |
+    ---
+    hr: # 1998 hr ranking
+      - Mark McGwire
+      - Sammy Sosa
+    rbi:
+      # 1998 rbi ranking
+      - Sammy Sosa
+      - Ken Griffey
+  tree: |
+    +STR
+     +DOC ---
+      +MAP
+       =VAL :hr
+       +SEQ
+        =VAL :Mark McGwire
+        =VAL :Sammy Sosa
+       -SEQ
+       =VAL :rbi
+       +SEQ
+        =VAL :Sammy Sosa
+        =VAL :Ken Griffey
+       -SEQ
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "hr": [
+        "Mark McGwire",
+        "Sammy Sosa"
+      ],
+      "rbi": [
+        "Sammy Sosa",
+        "Ken Griffey"
+      ]
+    }
+  dump: |
+    ---
+    hr:
+    - Mark McGwire
+    - Sammy Sosa
+    rbi:
+    - Sammy Sosa
+    - Ken Griffey

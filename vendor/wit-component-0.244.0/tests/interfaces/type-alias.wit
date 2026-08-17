@@ -1,0 +1,13 @@
+package foo:foo;
+
+interface foo {
+  type a = u8;
+  type b = a;
+
+  f: func(a: a) -> b;
+}
+
+world my-world {
+  import foo;
+  export foo;
+}

@@ -1,0 +1,38 @@
+[package]
+name = "winsafe"
+version = "0.0.19"
+authors = ["Rodrigo Cesar de Freitas Dias <rcesar@gmail.com>"]
+description = "Windows API and GUI in safe, idiomatic Rust."
+categories = ["api-bindings", "gui", "os::windows-apis"]
+keywords = ["com", "ffi", "gui", "win32", "windows"]
+license = "MIT"
+repository = "https://github.com/rodrigocfd/winsafe"
+readme = "README.md"
+include = ["/src/**/*", "/Cargo.toml", "/LICENSE.md", "/README.md"]
+edition = "2021"
+
+[package.metadata.docs.rs]
+default-target = "x86_64-pc-windows-msvc"
+targets = ["aarch64-pc-windows-msvc", "i686-pc-windows-msvc", "x86_64-pc-windows-msvc"]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+comctl = ["ole"]
+dshow = ["oleaut"]
+dwm = ["uxtheme"]
+dxgi = ["ole"]
+gdi = ["user"]
+gui = ["comctl", "shell", "uxtheme"]
+kernel = []
+mf = ["oleaut"]
+ole = ["user"]
+oleaut = ["ole"]
+shell = ["oleaut"]
+taskschd = ["oleaut"]
+user = ["kernel"]
+uxtheme = ["gdi", "ole"]
+version = ["kernel"]
+
+# Generate docs locally:
+# RUSTDOCFLAGS="--cfg docsrs" cargo +nightly doc --all-features

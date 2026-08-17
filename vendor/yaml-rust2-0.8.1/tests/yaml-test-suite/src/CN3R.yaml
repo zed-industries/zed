@@ -1,0 +1,56 @@
+---
+- name: Various location of anchors in flow sequence
+  from: '@perlpunk'
+  tags: anchor flow mapping sequence
+  yaml: |
+    &flowseq [
+     a: b,
+     &c c: d,
+     { &e e: f },
+     &g { g: h }
+    ]
+  tree: |
+    +STR
+     +DOC
+      +SEQ [] &flowseq
+       +MAP {}
+        =VAL :a
+        =VAL :b
+       -MAP
+       +MAP {}
+        =VAL &c :c
+        =VAL :d
+       -MAP
+       +MAP {}
+        =VAL &e :e
+        =VAL :f
+       -MAP
+       +MAP {} &g
+        =VAL :g
+        =VAL :h
+       -MAP
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      {
+        "a": "b"
+      },
+      {
+        "c": "d"
+      },
+      {
+        "e": "f"
+      },
+      {
+        "g": "h"
+      }
+    ]
+  dump: |
+    &flowseq
+    - a: b
+    - &c c: d
+    - &e e: f
+    - &g
+      g: h

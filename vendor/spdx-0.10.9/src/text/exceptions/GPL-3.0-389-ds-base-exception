@@ -1,0 +1,11 @@
+r#"Additional permission under GPLv3 section 7:
+
+If you modify this Program, or any covered work, by
+linking or combining it with OpenSSL, or a modified
+version of OpenSSL licensed under the OpenSSL license
+(https://www.openssl.org/source/license.html), the licensors of this
+Program grant you additional permission to convey the resulting work.                                                                                                   
+Corresponding Source for a non-source form of such a combination
+shall include the source code for the parts that are licensed
+under the OpenSSL license as well as that of the covered work.
+"#

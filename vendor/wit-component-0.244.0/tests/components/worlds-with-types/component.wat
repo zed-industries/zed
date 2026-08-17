@@ -1,0 +1,25 @@
+(component
+  (type (;0;) u32)
+  (import "t" (type $t (;1;) (eq 0)))
+  (type (;2;) (record (field "x" $t)))
+  (import "r" (type $r (;3;) (eq 2)))
+  (core module $main (;0;)
+    (type (;0;) (func (param i32) (result i32)))
+    (export "a" (func 0))
+    (func (;0;) (type 0) (param i32) (result i32)
+      i32.const 1
+    )
+    (@producers
+      (processed-by "wit-component" "$CARGO_PKG_VERSION")
+      (processed-by "my-fake-bindgen" "123.45")
+    )
+  )
+  (core instance $main (;0;) (instantiate $main))
+  (type (;4;) (func (param "r" $r) (result $t)))
+  (alias core export $main "a" (core func $a (;0;)))
+  (func $a (;0;) (type 4) (canon lift (core func $a)))
+  (export $"#func1 a" (@name "a") (;1;) "a" (func $a))
+  (@producers
+    (processed-by "wit-component" "$CARGO_PKG_VERSION")
+  )
+)

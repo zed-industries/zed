@@ -1,0 +1,5 @@
+error: '1' in the alternative values is already attributed as the discriminant of this variant
+ --> tests/try_build/compile_fail/alternative_clashes_with_its_discriminant.rs:5:34
+  |
+5 |     #[num_enum(alternatives = [3,1,4])]
+  |                                  ^

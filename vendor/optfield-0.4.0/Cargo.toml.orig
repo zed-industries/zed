@@ -1,0 +1,30 @@
+[package]
+name = "optfield"
+version = "0.4.0" # remember to update html_root_url and README
+license = "MIT OR Apache-2.0"
+description = "A macro that generates structs with optional fields"
+repository = "https://github.com/roignpar/optfield"
+readme = "README.md"
+authors = ["Robert Ignat <robert.ignat91@gmail.com>"]
+keywords = ["struct", "field", "optional", "option"]
+categories = ["rust-patterns"]
+edition = "2018"
+rust-version = "1.61"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+quote = "1.0.37"
+proc-macro2 = "1.0.92"
+
+[dependencies.syn]
+version = "2.0.90"
+features = ["full", "extra-traits"]
+
+[dev-dependencies]
+paste = "1.0.15"
+
+[dev-dependencies.serde]
+version = "1.0.215"
+features = ["derive"]

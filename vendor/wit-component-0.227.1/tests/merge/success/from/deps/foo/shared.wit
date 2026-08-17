@@ -1,0 +1,46 @@
+package foo:foo@1.0.0;
+
+interface shared-only-from {
+  variant v {
+    c1,
+  }
+
+  bar: func(x: v);
+
+  use foo:only-from-dep/a.{a};
+}
+
+interface shared-items {
+  type a = u32;
+}
+
+world shared-world {
+  import shared-items;
+
+  export shared-items;
+
+  type c = u32;
+
+  import d: interface {}
+}
+
+@since(version = 1.0.0)
+interface shared-version-on-from {}
+
+interface shared-version-on-into {}
+
+world shared-world-with-versions {
+  @since(version = 1.0.0)
+  import shared-version-on-from;
+  import shared-version-on-into;
+
+  @since(version = 1.0.0)
+  export shared-version-on-from;
+  export shared-version-on-into;
+}
+
+world shared-world-with-versions-and-include {
+  import shared-version-on-from;
+  import shared-version-on-into;
+  include shared-world-with-versions;
+}

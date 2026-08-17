@@ -1,0 +1,43 @@
+[package]
+name = "prettyplease"
+version = "0.2.37"
+authors = ["David Tolnay <dtolnay@gmail.com>"]
+autoexamples = false
+categories = ["development-tools"]
+description = "A minimal `syn` syntax tree pretty-printer"
+documentation = "https://docs.rs/prettyplease"
+edition = "2021"
+exclude = ["cargo-expand"]
+keywords = ["rustfmt"]
+license = "MIT OR Apache-2.0"
+links = "prettyplease02"
+repository = "https://github.com/dtolnay/prettyplease"
+rust-version = "1.62"
+
+[features]
+verbatim = ["syn/parsing"]
+
+[dependencies]
+proc-macro2 = { version = "1.0.80", default-features = false }
+syn = { version = "2.0.105", default-features = false, features = ["full"] }
+
+[dev-dependencies]
+indoc = "2"
+proc-macro2 = { version = "1.0.80", default-features = false }
+quote = { version = "1.0.35", default-features = false }
+syn = { version = "2.0.105", default-features = false, features = ["clone-impls", "extra-traits", "parsing", "printing", "visit-mut"] }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+rustdoc-args = [
+    "--generate-link-to-definition",
+    "--extern-html-root-url=core=https://doc.rust-lang.org",
+    "--extern-html-root-url=alloc=https://doc.rust-lang.org",
+    "--extern-html-root-url=std=https://doc.rust-lang.org",
+]
+
+[package.metadata.playground]
+features = ["verbatim"]
+
+[workspace]
+members = ["cargo-expand/update", "examples/update"]

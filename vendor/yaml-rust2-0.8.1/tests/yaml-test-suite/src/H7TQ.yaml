@@ -1,0 +1,10 @@
+---
+- name: Extra words on %YAML directive
+  from: '@ingydotnet'
+  tags: directive
+  fail: true
+  yaml: |
+    %YAML 1.2 foo
+    ---
+  tree: |
+    +STR

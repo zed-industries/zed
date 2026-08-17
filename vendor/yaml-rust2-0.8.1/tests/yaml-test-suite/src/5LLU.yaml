@@ -1,0 +1,16 @@
+---
+- name: Block scalar with wrong indented line after spaces only
+  from: '@perlpunk'
+  tags: error folded whitespace
+  fail: true
+  yaml: |
+    block scalar: >
+    ␣
+    ␣␣
+    ␣␣␣
+     invalid
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :block scalar

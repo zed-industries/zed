@@ -1,0 +1,88 @@
+name: Clippy, Format & Test
+
+on: [pull_request, push, workflow_dispatch]
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+      - run: cargo fmt --manifest-path=example_project/Cargo.toml --all -- --check
+
+  check:
+    name: cargo check
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        toolchain: [stable, "1.81"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+      - run: cargo check --no-default-features
+      - run: cargo check --no-default-features --features cargo-lock
+      - run: cargo check --no-default-features --features dependency-tree
+      - run: cargo check --no-default-features --features git2
+      - run: cargo check --no-default-features --features semver
+      - run: cargo check --no-default-features --features chrono
+      - run: cargo check --all-features
+      - run: cargo check --manifest-path=example_project/Cargo.toml
+
+  semver_crate:
+    name: cargo check of internal crate
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        toolchain: [stable, "1.83"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+      - run: cargo check --manifest-path=semver_check/Cargo.toml
+
+  clippy:
+    name: cargo clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: cargo clippy --all --tests -- -D warnings
+      - run: cargo clippy --all-features --all --tests -- -D warnings
+      - run: cargo clippy --manifest-path=example_project/Cargo.toml --all --tests -- --warn clippy::pedantic -D warnings
+
+  test:
+    name: cargo test
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        toolchain: [stable, nightly]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          targets: x86_64-unknown-none
+          toolchain: ${{ matrix.toolchain }}
+      - if: matrix.toolchain == 'nightly'
+        run: echo "RUSTFLAGS=-Zfmt-debug=none" >> $GITHUB_ENV
+      - run: cargo test --no-default-features
+      - run: cargo test --all-features
+      - run: cargo test -- --ignored nostd_testbox
+      - run: cargo run --manifest-path=example_project/Cargo.toml
+
+  semver:
+    name: Semver check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt update && sudo apt install -y cmake
+      - uses: obi1kenobi/cargo-semver-checks-action@v2

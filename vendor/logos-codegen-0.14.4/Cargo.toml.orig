@@ -1,0 +1,40 @@
+[dependencies]
+beef = "0.5.0"
+fnv = "1.0.6"
+lazy_static = "1.4.0"
+proc-macro2 = "1.0.9"
+quote = "1.0.3"
+regex-syntax = "0.8.2"
+syn = { version = "2.0.13", features = ["full"] }
+
+[dev-dependencies]
+pretty_assertions = "1.4.0"
+rstest = "0.18.2"
+
+[features]
+# Enables debug messages
+debug = []
+# Exports out internal methods for fuzzing
+fuzzing = []
+# Don't use or generate unsafe code
+forbid_unsafe = []
+
+[lib]
+bench = false
+
+[package]
+name = "logos-codegen"
+authors.workspace = true
+categories.workspace = true
+description.workspace = true
+edition.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[package.metadata.release]
+shared-version = true

@@ -1,0 +1,5 @@
+error: Unexpected number of entries in row 1. Expected 3, found 2 entries.
+ --> tests/macros/trybuild/matrix_mismatched_dimensions.rs:5:13
+  |
+5 |             4, 5];
+  |             ^

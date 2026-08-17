@@ -1,0 +1,18 @@
+[package]
+name = "bit_field"
+version = "0.10.3"
+authors = ["Philipp Oppermann <dev@phil-opp.com>"]
+license = "Apache-2.0/MIT"
+
+description = "Simple bit field trait providing get_bit, get_bits, set_bit, and set_bits methods for Rust's integral types."
+keywords = ["no_std"]
+repository = "https://github.com/phil-opp/rust-bit-field"
+documentation = "https://docs.rs/bit_field"
+
+[dependencies]
+
+[package.metadata.release]
+pre-release-replacements = [
+    { file = "Changelog.md", search = "## Unreleased", replace = "## Unreleased\n\n# {{version}} – {{date}}", exactly = 1 },
+]
+pre-release-commit-message = "Release version {{version}}"

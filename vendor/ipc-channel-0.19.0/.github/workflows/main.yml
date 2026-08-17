@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  merge_group:
+    types: [checks_requested]
+
+jobs:
+  test:
+    name: ${{ format('{0} {1}', matrix.platform.target, matrix.features)}}
+    runs-on: ${{ matrix.platform.os }}
+    env:
+      RUST_BACKTRACE: 1
+    strategy:
+      matrix:
+        platform:
+          - { target: aarch64-apple-darwin, os: macos-14 }
+          - { target: x86_64-apple-darwin, os: macos-13 }
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+          - { target: i686-pc-windows-msvc, os: windows-latest }
+        features: ["", "force-inprocess", "async"]
+        include:
+          - features: ""
+            platform: { target: x86_64-pc-windows-msvc, os: windows-latest }
+          - features: ""
+            platform: { target: i686-pc-windows-msvc, os: windows-latest }
+          - features: "memfd"
+            platform: { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: rustfmt
+        run: cargo fmt --check
+
+      - name: clippy
+        run: cargo clippy --features "${{ matrix.features }}" --target ${{ matrix.platform.target }}
+
+      - name: Cargo test
+        run: cargo test --features "${{ matrix.features }}" --target ${{ matrix.platform.target }}
+
+      - name: Cargo test benches
+        run: cargo test --benches --features "${{ matrix.features }}" --target ${{ matrix.platform.target }}
+
+  build_result:
+    name: Result
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - "test"
+
+    steps:
+      - name: Success
+        run: exit 0
+        if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
+      - name: Failure
+        run: exit 1
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')

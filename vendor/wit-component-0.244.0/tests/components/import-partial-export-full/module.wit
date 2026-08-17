@@ -1,0 +1,19 @@
+package a:b;
+
+interface name {
+  variant name2 {
+    num(u16),
+    strs(list<string>),
+  }
+
+  variant name {
+    strs(list<string>),
+  }
+}
+
+world module {
+  import name;
+  use name.{name};
+
+  export name;
+}

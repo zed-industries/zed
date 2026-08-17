@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+#------------------------------------------------------------------------------
+#
+# This program runs bin/suite-to-data.pl using Docker if the Perl module
+# dependencies are not installed locally.
+#
+#------------------------------------------------------------------------------
+
+version=0.0.8
+
+RUN_OR_DOCKER_PULL=true
+
+source "${ROOT:-$PWD}/.bpan/run-or-docker.bash"
+
+check() (
+  need bash 4.4
+  need perl 5.28
+  need perl YAML::PP=0.030
+)
+
+dockerfile() (
+  from alpine
+  cpan YAML::PP@0.030
+)
+
+run "$@"

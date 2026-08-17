@@ -1,0 +1,5 @@
+Document:
+  - Element:
+      tag_name: svg
+      attributes:
+        space@http://www.w3.org/XML/1998/namespace: "preserve"

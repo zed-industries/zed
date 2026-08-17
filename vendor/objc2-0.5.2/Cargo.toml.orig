@@ -1,0 +1,151 @@
+[package]
+name = "objc2"
+version = "0.5.2" # Remember to update html_root_url in lib.rs
+authors = ["Steven Sheldon", "Mads Marquart <mads@marquart.dk>"]
+edition = "2021"
+rust-version = "1.60"
+
+description = "Objective-C interface and runtime bindings"
+keywords = ["objective-c", "macos", "ios", "objc_msgSend", "objc"]
+categories = [
+    "api-bindings",
+    "development-tools::ffi",
+    "os::macos-apis",
+]
+readme = "README.md"
+repository = "https://github.com/madsmtm/objc2"
+documentation = "https://docs.rs/objc2/"
+license = "MIT"
+
+[lints]
+workspace = true
+
+# NOTE: 'unstable' features are _not_ considered part of the SemVer contract,
+# and may be removed in a minor release.
+[features]
+default = ["std"]
+
+# Currently not possible to turn off, put here for forwards compatibility.
+std = ["alloc", "objc2-encode/std", "objc-sys/std", "block2/std", "objc2-foundation/std"]
+alloc = ["objc2-encode/alloc", "objc-sys/alloc", "block2/alloc", "objc2-foundation/alloc"]
+
+# Enables `objc2::exception::throw` and `objc2::exception::catch`
+exception = ["objc-sys/unstable-exception"]
+
+# Wrap every `objc2::msg_send` call in a `@try/@catch` block
+catch-all = ["exception"]
+
+# Allow `*const c_void` and `*mut c_void` to be used as arguments and return
+# types where other pointers were expected.
+#
+# This may be useful for CoreFoundation types, or for migrating code from objc
+# to objc2.
+relax-void-encoding = []
+
+# Make signed and unsigned types interchangable when used as arguments/return
+# types in methods.
+#
+# This may be useful for dealing with Swift code that incorrectly uses `Int`
+# instead of `UInt`.
+relax-sign-encoding = []
+
+# Enable deprecation of using `msg_send!` without a comma between arguments.
+unstable-msg-send-always-comma = []
+
+# This was necessary to access certain functionality in the past, but it is no
+# longer required.
+malloc = ["malloc_buf"]
+
+# This was necessary to enable certain debug assertions in the past, but it is
+# no longer required.
+verify = []
+
+# Make the `sel!` macro look up the selector statically.
+#
+# The plan is to enable this by default, but right now we are uncertain of
+# its stability, and it might need significant changes before being fully
+# ready!
+#
+# Please test it, and report any issues you may find:
+# https://github.com/madsmtm/objc2/issues/new
+unstable-static-sel = ["objc2-proc-macros"]
+unstable-static-sel-inlined = ["unstable-static-sel"]
+unstable-static-class = ["objc2-proc-macros"]
+unstable-static-class-inlined = ["unstable-static-class"]
+
+# Uses nightly features to make autorelease pools fully sound
+unstable-autoreleasesafe = []
+
+# Uses the nightly c_unwind feature to make throwing safe
+#
+# You must manually enable `objc-sys/unstable-c-unwind` to use this.
+unstable-c-unwind = []
+
+# Enable some new features available on ARM64 on:
+# - macOS 13.0
+# - iOS 16.0
+# - tvOS 16.0
+# - watchOS 9.0
+#
+# See https://developer.apple.com/videos/play/wwdc2022/110363/ for an overview
+# of the features.
+#
+# Currently untested, might be unsound or lead to confusing compiler errors.
+#
+# Additionally, the message sending improvements is not yet implemented.
+unstable-apple-new = []
+
+# Deprecated; this is the default on Apple platforms, and not applicable on other platforms.
+apple = []
+
+# Runtime selection. See `objc-sys` for details.
+#
+# `unstable-static-class` is always enabled on GNUStep, as it fails to link in
+# release mode otherwise.
+gnustep-1-7 = ["unstable-static-class", "objc-sys/gnustep-1-7", "block2/gnustep-1-7"]
+gnustep-1-8 = ["gnustep-1-7", "objc-sys/gnustep-1-8", "block2/gnustep-1-8"]
+gnustep-1-9 = ["gnustep-1-8", "objc-sys/gnustep-1-9", "block2/gnustep-1-9"]
+gnustep-2-0 = ["gnustep-1-9", "objc-sys/gnustep-2-0", "block2/gnustep-2-0"]
+gnustep-2-1 = ["gnustep-2-0", "objc-sys/gnustep-2-1", "block2/gnustep-2-1"]
+# Used by `block2`
+unstable-compiler-rt = ["gnustep-1-7"]
+
+[dependencies]
+malloc_buf = { version = "1.0", optional = true }
+objc-sys = { path = "../objc-sys", version = "0.3.5", default-features = false }
+objc2-encode = { path = "../objc2-encode", version = "4.0.3", default-features = false }
+objc2-proc-macros = { path = "../objc2-proc-macros", version = "0.1.3", optional = true }
+
+[dev-dependencies]
+iai = { version = "0.1", git = "https://github.com/madsmtm/iai", branch = "callgrind" }
+static_assertions = "1.1.0"
+memoffset = "0.9.0"
+block2 = { path = "../block2", default-features = false }
+objc2-foundation = { path = "../../framework-crates/objc2-foundation", default-features = false, features = ["NSString", "NSObject"] }
+
+[target.'cfg(target_vendor = "apple")'.dev-dependencies]
+core-foundation = "0.9.3"
+
+[[bench]]
+name = "autorelease"
+harness = false
+
+[package.metadata.docs.rs]
+default-target = "aarch64-apple-darwin"
+features = ["exception"]
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "aarch64-apple-ios",
+    "x86_64-apple-ios",
+    "aarch64-apple-tvos",
+    "aarch64-apple-watchos",
+    "aarch64-apple-ios-macabi",
+    "x86_64-unknown-linux-gnu",
+    "i686-unknown-linux-gnu",
+]
+
+[package.metadata.release]
+shared-version = false
+tag-prefix = "objc"
+enable-features = []

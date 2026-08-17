@@ -1,0 +1,120 @@
+[package]
+name = "sysinfo"
+version = "0.31.4"
+authors = ["Guillaume Gomez <guillaume1.gomez@gmail.com>"]
+description = "Library to get system information such as processes, CPUs, disks, components and networks"
+repository = "https://github.com/GuillaumeGomez/sysinfo"
+license = "MIT"
+readme = "README.md"
+rust-version = "1.74"
+exclude = ["/test-unknown"]
+keywords = ["system-information", "disk", "process", "network", "cpu"]
+edition = "2021"
+
+[lib]
+name = "sysinfo"
+
+[features]
+default = ["component", "disk", "network", "system", "user", "multithread"]
+component = [
+    "windows/Win32_Foundation",
+    "windows/Win32_Security",
+    "windows/Win32_System_Com",
+    "windows/Win32_System_Rpc",
+    "windows/Win32_System_Variant",
+    "windows/Win32_System_Wmi",
+]
+disk = [
+    "windows/Win32_Foundation",
+    "windows/Win32_Storage_FileSystem",
+    "windows/Win32_Security", # For `windows::Win32::Storage::FileSystem::CreateFileW`.
+    "windows/Win32_System_IO",
+    "windows/Win32_System_Ioctl",
+    "windows/Win32_System_WindowsProgramming",
+]
+system = [
+    "windows/Win32_Foundation",
+    "windows/Wdk_System_SystemInformation",
+    "windows/Wdk_System_SystemServices",
+    "windows/Wdk_System_Threading",
+    "windows/Win32_Security_Authorization",
+    "windows/Win32_System_Diagnostics_Debug",
+    "windows/Win32_System_Kernel",
+    "windows/Win32_System_Memory",
+    "windows/Win32_System_Performance",
+    "windows/Win32_System_Power",
+    "windows/Win32_System_ProcessStatus",
+    "windows/Win32_System_Registry",
+    "windows/Win32_System_RemoteDesktop",
+    "windows/Win32_System_SystemInformation",
+    "windows/Win32_System_SystemServices",
+    "windows/Win32_System_Threading",
+    "windows/Win32_UI_Shell",
+    "dep:ntapi",
+    "dep:memchr",
+]
+network = [
+    "windows/Win32_Foundation",
+    "windows/Win32_NetworkManagement_IpHelper",
+    "windows/Win32_NetworkManagement_Ndis",
+    "windows/Win32_Networking_WinSock",
+]
+user = [
+    "windows/Win32_Foundation",
+    "windows/Win32_NetworkManagement_NetManagement",
+    "windows/Win32_Security",
+    "windows/Win32_Security_Authentication_Identity",
+    "windows/Win32_Security_Authorization",
+]
+apple-sandbox = []
+apple-app-store = ["apple-sandbox"]
+c-interface = ["default"]
+multithread = ["dep:rayon"]
+linux-netdevs = []
+linux-tmpfs = []
+debug = ["libc/extra_traits"]
+# This feature is used on CI to emulate unknown/unsupported target.
+unknown-ci = []
+
+[package.metadata.docs.rs]
+features = ["serde"]
+# Setting this default target to prevent `freebsd` to be the default one.
+default-target = "x86_64-unknown-linux-gnu"
+targets = [
+    "i686-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "i686-pc-windows-msvc",
+    "x86_64-unknown-freebsd",
+]
+cargo-args = ["-Zbuild-std"]
+rustdoc-args = ["--generate-link-to-definition"]
+
+[dependencies]
+memchr = { version = "2.5", optional = true }
+rayon = { version = "^1.8", optional = true }
+serde = { version = "^1.0.190", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+ntapi = { version = "0.4", optional = true }
+# Support a range of versions in order to avoid duplication of this crate. Make sure to test all
+# versions when bumping to a new release, and only increase the minimum when absolutely necessary.
+windows = { version = ">=0.54, <=0.57", optional = true }
+
+[target.'cfg(not(any(target_os = "unknown", target_arch = "wasm32")))'.dependencies]
+libc = "^0.2.153"
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+core-foundation-sys = "0.8"
+
+[target.'cfg(all(target_os = "linux", not(target_os = "android")))'.dev-dependencies]
+tempfile = "3.9"
+
+[dev-dependencies]
+serde_json = "1.0" # Used in documentation tests.
+bstr = "1.9.0"
+
+[[example]]
+name = "simple"
+path = "examples/simple.rs"
+required-features = ["default"]

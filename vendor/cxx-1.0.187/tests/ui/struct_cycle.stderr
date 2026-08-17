@@ -1,0 +1,23 @@
+error: unsupported cyclic data structure
+  --> tests/ui/struct_cycle.rs:26:9
+   |
+26 |         node2: Node2,
+   |         ^^^^^^^^^^^^
+
+error: unsupported cyclic data structure
+  --> tests/ui/struct_cycle.rs:22:9
+   |
+22 |         node5: Node5,
+   |         ^^^^^^^^^^^^
+
+error: unsupported cyclic data structure
+  --> tests/ui/struct_cycle.rs:13:9
+   |
+13 |         node4: Node4,
+   |         ^^^^^^^^^^^^
+
+error: unsupported cyclic data structure
+ --> tests/ui/struct_cycle.rs:8:9
+  |
+8 |         node2: Node2,
+  |         ^^^^^^^^^^^^

@@ -1,0 +1,5 @@
+error[E0425]: cannot find function `my_custom_merge_strategy` in this scope
+ --> $DIR/derive-missing-strategy.rs:8:24
+  |
+8 |     #[merge(strategy = my_custom_merge_strategy)]
+  |                        ^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope

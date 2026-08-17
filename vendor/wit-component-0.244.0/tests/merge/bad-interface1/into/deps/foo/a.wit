@@ -1,0 +1,5 @@
+package foo:foo;
+
+interface a {
+  type b = s32;
+}

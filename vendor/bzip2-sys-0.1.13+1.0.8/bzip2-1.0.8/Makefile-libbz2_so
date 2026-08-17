@@ -1,0 +1,59 @@
+
+# This Makefile builds a shared version of the library, 
+# libbz2.so.1.0.8, with soname libbz2.so.1.0,
+# at least on x86-Linux (RedHat 7.2), 
+# with gcc-2.96 20000731 (Red Hat Linux 7.1 2.96-98).  
+# Please see the README file for some important info 
+# about building the library like this.
+
+# ------------------------------------------------------------------
+# This file is part of bzip2/libbzip2, a program and library for
+# lossless, block-sorting data compression.
+#
+# bzip2/libbzip2 version 1.0.8 of 13 July 2019
+# Copyright (C) 1996-2019 Julian Seward <jseward@acm.org>
+#
+# Please read the WARNING, DISCLAIMER and PATENTS sections in the 
+# README file.
+#
+# This program is released under the terms of the license contained
+# in the file LICENSE.
+# ------------------------------------------------------------------
+
+
+SHELL=/bin/sh
+CC=gcc
+BIGFILES=-D_FILE_OFFSET_BITS=64
+CFLAGS=-fpic -fPIC -Wall -Winline -O2 -g $(BIGFILES)
+
+OBJS= blocksort.o  \
+      huffman.o    \
+      crctable.o   \
+      randtable.o  \
+      compress.o   \
+      decompress.o \
+      bzlib.o
+
+all: $(OBJS)
+	$(CC) -shared -Wl,-soname -Wl,libbz2.so.1.0 -o libbz2.so.1.0.8 $(OBJS)
+	$(CC) $(CFLAGS) -o bzip2-shared bzip2.c libbz2.so.1.0.8
+	rm -f libbz2.so.1.0
+	ln -s libbz2.so.1.0.8 libbz2.so.1.0
+
+clean: 
+	rm -f $(OBJS) bzip2.o libbz2.so.1.0.8 libbz2.so.1.0 bzip2-shared
+
+blocksort.o: blocksort.c
+	$(CC) $(CFLAGS) -c blocksort.c
+huffman.o: huffman.c
+	$(CC) $(CFLAGS) -c huffman.c
+crctable.o: crctable.c
+	$(CC) $(CFLAGS) -c crctable.c
+randtable.o: randtable.c
+	$(CC) $(CFLAGS) -c randtable.c
+compress.o: compress.c
+	$(CC) $(CFLAGS) -c compress.c
+decompress.o: decompress.c
+	$(CC) $(CFLAGS) -c decompress.c
+bzlib.o: bzlib.c
+	$(CC) $(CFLAGS) -c bzlib.c

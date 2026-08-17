@@ -1,0 +1,5 @@
+interface or world `bar` does not exist
+     --> tests/ui/parse-fail/unresolved-interface3.wit:5:5
+      |
+    5 | use bar as foo;
+      |     ^--

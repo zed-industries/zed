@@ -1,0 +1,33 @@
+[package]
+name = "password-hash"
+description = """
+Traits which describe the functionality of password hashing algorithms,
+as well as a `no_std`-friendly implementation of the PHC string format
+(a well-defined subset of the Modular Crypt Format a.k.a. MCF)
+"""
+version = "0.4.2"
+authors = ["RustCrypto Developers"]
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+documentation = "https://docs.rs/password-hash"
+repository = "https://github.com/RustCrypto/traits/tree/master/password-hash"
+categories = ["authentication", "cryptography", "no-std"]
+keywords = ["crypt", "mcf", "password", "pbkdf", "phc"]
+edition = "2021"
+rust-version = "1.57"
+
+[dependencies]
+base64ct = "1"
+subtle = { version = "2", default-features = false }
+
+# optional features
+rand_core = { version = "0.6", optional = true, default-features = false }
+
+[features]
+default = ["rand_core"]
+alloc = ["base64ct/alloc"]
+std = ["alloc", "base64ct/std", "rand_core/std"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

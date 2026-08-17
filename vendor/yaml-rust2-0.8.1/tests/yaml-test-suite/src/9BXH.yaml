@@ -1,0 +1,45 @@
+---
+- name: Multiline doublequoted flow mapping key without value
+  from: '@perlpunk'
+  tags: double flow mapping
+  yaml: |
+    ---
+    - { "single line", a: b}
+    - { "multi
+      line", a: b}
+  tree: |
+    +STR
+     +DOC ---
+      +SEQ
+       +MAP {}
+        =VAL "single line
+        =VAL :
+        =VAL :a
+        =VAL :b
+       -MAP
+       +MAP {}
+        =VAL "multi line
+        =VAL :
+        =VAL :a
+        =VAL :b
+       -MAP
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      {
+        "single line": null,
+        "a": "b"
+      },
+      {
+        "multi line": null,
+        "a": "b"
+      }
+    ]
+  dump: |
+    ---
+    - "single line":
+      a: b
+    - "multi line":
+      a: b

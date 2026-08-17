@@ -1,0 +1,112 @@
+[package]
+name = "combine"
+version = "4.6.7"
+authors = ["Markus Westerlind <marwes91@gmail.com>"]
+
+description = "Fast parser combinators on arbitrary streams with zero-copy support."
+
+repository = "https://github.com/Marwes/combine"
+documentation = "https://docs.rs/combine"
+
+readme = "README.md"
+
+keywords = ["parser", "parsing", "combinators", "ll"]
+
+categories = ["parsing", "no-std"]
+
+license = "MIT"
+
+edition = "2018"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lib]
+name = "combine"
+path = "src/lib.rs"
+
+[dependencies]
+regex = { version = "1", optional = true }
+memchr = { version = "2.3", default-features = false }
+pin-project-lite = { version = "0.2", optional = true }
+# Future proofing so that tokio-0.3, tokio-0.1 etc can be supported
+tokio-02-dep = { version = "0.2.3", package = "tokio", features = ["io-util"], default-features = false, optional = true }
+tokio-03-dep = { version = "0.3", package = "tokio", default-features = false, optional = true }
+tokio-dep = { version = "1", package = "tokio", default-features = false, optional = true }
+tokio-util = { version = "0.7", features = ["codec"], default-features = false, optional = true }
+futures-core-03 = { version = "0.3.1", package = "futures-core", default-features = false, optional = true }
+futures-io-03 = { version = "0.3.1", package = "futures-io", default-features = false, optional = true }
+bytes_05 = { version = "0.5", package = "bytes", optional =  true }
+bytes = { version = "1", optional =  true }
+
+[dev-dependencies]
+async-std = "1"
+bytes_05 = { version = "0.5", package = "bytes" }
+bytes = "1"
+criterion = { version = "0.3", default-features = false }
+once_cell = "1.0"
+futures-03-dep = { version = "0.3.1", package = "futures" }
+tokio-02-dep = { version = "0.2", features = ["fs", "io-driver", "io-util", "macros"], package = "tokio" }
+tokio-03-dep = { version = "0.3", features = ["fs", "macros", "rt-multi-thread"], package = "tokio" }
+tokio-dep = { version = "1", features = ["fs", "macros", "rt", "rt-multi-thread", "io-util"], package = "tokio" }
+partial-io = { version = "0.3", features = ["tokio", "quickcheck"] }
+quickcheck = "0.6"
+quick-error = "1.0"
+# End of dev-dependencies
+
+[features]
+default = ["std"]
+# Run the mp4 benchmark, requires a mp4 file named `small.mp4` in the benches directory
+mp4 = []
+pin-project = ["pin-project-lite"]
+tokio-02 = ["pin-project", "std", "tokio-02-dep", "futures-core-03", "pin-project-lite", "bytes_05"]
+tokio-03 = ["pin-project", "std", "tokio-03-dep", "futures-core-03", "pin-project-lite"]
+tokio = ["tokio-dep", "tokio-util/io", "futures-core-03", "pin-project-lite"]
+futures-03 = ["pin-project", "std", "futures-core-03", "futures-io-03", "pin-project-lite"]
+std = ["memchr/std", "bytes", "alloc"]
+alloc = []
+
+[[test]]
+name = "async"
+required-features = ["tokio-02", "futures-io-03"]
+
+[[bench]]
+name = "json"
+harness = false
+required-features = ["std"]
+
+[[bench]]
+name = "http"
+harness = false
+required-features = ["std"]
+
+[[bench]]
+name = "mp4"
+harness = false
+required-features = ["mp4"]
+
+[[bench]]
+name = "buffers"
+harness = false
+required-features = ["std"]
+
+[[example]]
+name = "async"
+required-features = ["std", "tokio"]
+
+[[example]]
+name = "date"
+
+[[example]]
+name = "number"
+
+[[example]]
+name = "readme"
+
+[[example]]
+name = "ini"
+
+[profile.bench]
+lto = true
+codegen-units = 1

@@ -1,0 +1,7 @@
+error[E0277]: the trait bound `Error: From<UninitializedFieldError>` is not satisfied
+  --> tests/compile-fail/custom_error_no_from.rs:21:55
+   |
+21 | #[builder(build_fn(validate = "check_person", error = "Error"))]
+   |                                                       ^^^^^^^ the trait `From<UninitializedFieldError>` is not implemented for `Error`
+   |
+   = note: required because of the requirements on the impl of `Into<Error>` for `UninitializedFieldError`

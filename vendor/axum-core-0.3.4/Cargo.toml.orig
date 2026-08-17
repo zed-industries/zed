@@ -1,0 +1,51 @@
+[package]
+categories = ["asynchronous", "network-programming", "web-programming"]
+description = "Core types and traits for axum"
+edition = "2021"
+rust-version = "1.56"
+homepage = "https://github.com/tokio-rs/axum"
+keywords = ["http", "web", "framework"]
+license = "MIT"
+name = "axum-core"
+readme = "README.md"
+repository = "https://github.com/tokio-rs/axum"
+version = "0.3.4" # remember to also bump the version that axum and axum-extra depend on
+
+[features]
+tracing = ["dep:tracing"]
+
+# Required for intra-doc links to resolve correctly
+__private_docs = ["dep:tower-http"]
+
+[dependencies]
+async-trait = "0.1.67"
+bytes = "1.0"
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
+http = "0.2.7"
+http-body = "0.4.5"
+mime = "0.3.16"
+tower-layer = "0.3"
+tower-service = "0.3"
+
+# optional dependencies
+tower-http = { version = "0.4", optional = true, features = ["limit"] }
+tracing = { version = "0.1.37", default-features = false, optional = true }
+
+[build-dependencies]
+rustversion = "1.0.9"
+
+[dev-dependencies]
+axum = { path = "../axum", version = "0.6.0", features = ["headers"] }
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
+hyper = "0.14.24"
+tokio = { version = "1.25.0", features = ["macros"] }
+tower-http = { version = "0.4", features = ["limit"] }
+
+[package.metadata.cargo-public-api-crates]
+allowed = [
+    "futures_core",
+    "http",
+    "bytes",
+    "http_body",
+    "tower_layer",
+]

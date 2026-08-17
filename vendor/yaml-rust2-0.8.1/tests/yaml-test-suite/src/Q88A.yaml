@@ -1,0 +1,48 @@
+---
+- name: Spec Example 7.23. Flow Content
+  from: http://www.yaml.org/spec/1.2/spec.html#id2793163
+  tags: spec flow sequence mapping
+  yaml: |
+    - [ a, b ]
+    - { a: b }
+    - "a"
+    - 'b'
+    - c
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       +SEQ []
+        =VAL :a
+        =VAL :b
+       -SEQ
+       +MAP {}
+        =VAL :a
+        =VAL :b
+       -MAP
+       =VAL "a
+       =VAL 'b
+       =VAL :c
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      [
+        "a",
+        "b"
+      ],
+      {
+        "a": "b"
+      },
+      "a",
+      "b",
+      "c"
+    ]
+  dump: |
+    - - a
+      - b
+    - a: b
+    - "a"
+    - 'b'
+    - c

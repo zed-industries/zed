@@ -1,0 +1,41 @@
+---
+- name: Spec Example 6.4. Line Prefixes
+  from: http://www.yaml.org/spec/1.2/spec.html#id2778720
+  tags: spec scalar literal double upto-1.2 whitespace
+  yaml: |
+    plain: text
+      lines
+    quoted: "text
+      —»lines"
+    block: |
+      text
+       »lines
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :plain
+       =VAL :text lines
+       =VAL :quoted
+       =VAL "text lines
+       =VAL :block
+       =VAL |text\n \tlines\n
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "plain": "text lines",
+      "quoted": "text lines",
+      "block": "text\n \tlines\n"
+    }
+  dump: |
+    plain: text lines
+    quoted: "text lines"
+    block: "text\n \tlines\n"
+  emit: |
+    plain: text lines
+    quoted: "text lines"
+    block: |
+      text
+       »lines

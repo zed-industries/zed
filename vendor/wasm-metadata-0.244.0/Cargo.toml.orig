@@ -1,0 +1,38 @@
+[package]
+name = "wasm-metadata"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository = "https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wasm-metadata"
+description = "Read and manipulate WebAssembly metadata"
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true, optional = true }
+indexmap = { workspace = true, features = ["serde"] }
+serde = { workspace = true, optional = true }
+serde_derive = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+spdx = { workspace = true, optional = true }
+url = { workspace = true, optional = true }
+wasm-encoder = { workspace = true, features = ['std', 'component-model'] }
+wasmparser = { workspace = true, features = ['std', 'component-model', 'hash-collections'] }
+auditable-serde = { version = "0.8.0", optional = true }
+flate2 = { version = "1.1.0", optional = true }
+
+[features]
+default = ['oci', 'serde']
+oci = [
+  'dep:auditable-serde',
+  'dep:flate2',
+  'dep:url',
+  'dep:spdx',
+  'dep:serde_json',
+  'serde',
+]
+
+serde = ['dep:serde_derive', 'dep:serde']

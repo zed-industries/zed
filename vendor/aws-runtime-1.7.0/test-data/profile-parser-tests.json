@@ -1,0 +1,915 @@
+{
+  "description": [
+    "These are test descriptions that describe how to convert a raw configuration and credentials file into an ",
+    "in-memory representation of the profile file.",
+    "See 'parser-tests.schema.json' for a description of this file's structure."
+  ],
+  "tests": [
+    {
+      "name": "Empty files have no profiles.",
+      "input": {
+        "configFile": ""
+      },
+      "output": {
+        "config": {
+          "profiles": {}
+        }
+      }
+    },
+    {
+      "name": "Empty profiles have no properties.",
+      "input": {
+        "configFile": "[profile foo]"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {}
+          }
+        }
+      }
+    },
+    {
+      "name": "Profile names support alphanumeric characters and - / . % @ _ : +",
+      "input": {
+        "configFile": "[profile some-thing:long/the_one%only.foo@bar+]\n[profile foo!bar]"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "some-thing:long/the_one%only.foo@bar+": {}
+          }
+        }
+      }
+    },
+    {
+      "name": "Profile definitions must end with brackets.",
+      "input": {
+        "configFile": "[profile foo"
+      },
+      "output": {
+        "errorContaining": "Profile definition must end with ']'"
+      }
+    },
+    {
+      "name": "Profile names should be trimmed.",
+      "input": {
+        "configFile": "[profile \tfoo \t]"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {}
+          }
+        }
+      }
+    },
+    {
+      "name": "Tabs can separate profile names from profile prefix.",
+      "input": {
+        "configFile": "[profile\tfoo]"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {}
+          }
+        }
+      }
+    },
+    {
+      "name": "Properties must be defined in a profile.",
+      "input": {
+        "configFile": "name = value"
+      },
+      "output": {
+        "errorContaining": "Expected a profile definition"
+      }
+    },
+    {
+      "name": "Profiles can contain properties.",
+      "input": {
+        "configFile": "[profile foo]\nname = value"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "name": "value"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Windows style line endings are supported.",
+      "input": {
+        "configFile": "[profile foo]\r\nname = value"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "name": "value"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Equals signs are supported in property values.",
+      "input": {
+        "configFile": "[profile foo]\nname = val=ue"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "name": "val=ue"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Unicode characters are supported in property values.",
+      "input": {
+        "configFile": "[profile foo]\nname = ðŸ˜‚"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "name": "ðŸ˜‚"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Profiles can contain multiple properties.",
+      "input": {
+        "configFile": "[profile foo]\nname = value\nname2 = value2"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "name": "value",
+              "name2": "value2"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Profiles can contain multiple properties.",
+      "input": {
+        "configFile": "[profile foo]\nname = value\nname2 = value2"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "name": "value",
+              "name2": "value2"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Property keys and values are trimmed.",
+      "input": {
+        "configFile": "[profile foo]\nname \t=  \tvalue \t"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "name": "value"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Property values can be empty.",
+      "input": {
+        "configFile": "[profile foo]\nname ="
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "name": ""
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Property key cannot be empty.",
+      "input": {
+        "configFile": "[profile foo]\n= value"
+      },
+      "output": {
+        "errorContaining": "Property did not have a name"
+      }
+    },
+    {
+      "name": "Property definitions must contain an equals sign.",
+      "input": {
+        "configFile": "[profile foo]\nkey : value"
+      },
+      "output": {
+        "errorContaining": "Expected an '=' sign defining a property"
+      }
+    },
+    {
+      "name": "Multiple profiles can be empty.",
+      "input": {
+        "configFile": "[profile foo]\n[profile bar]"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {},
+            "bar": {}
+          }
+        }
+      }
+    },
+    {
+      "name": "Multiple profiles can have properties.",
+      "input": {
+        "configFile": "[profile foo]\nname = value\n[profile bar]\nname2 = value2"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "name": "value"
+            },
+            "bar": {
+              "name2": "value2"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Blank lines are ignored.",
+      "input": {
+        "configFile": "\t \n[profile foo]\n\t\n \nname = value\n\t \n[profile bar]\n \t"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "name": "value"
+            },
+            "bar": {}
+          }
+        }
+      }
+    },
+    {
+      "name": "Pound sign comments are ignored.",
+      "input": {
+        "configFile": "# Comment\n[profile foo] # Comment\nname = value # Comment with # sign"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "name": "value"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Semicolon sign comments are ignored.",
+      "input": {
+        "configFile": "; Comment\n[profile foo] ; Comment\nname = value ; Comment with ; sign"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "name": "value"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "All comment types can be used together.",
+      "input": {
+        "configFile": "# Comment\n[profile foo] ; Comment\nname = value # Comment with ; sign"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "name": "value"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Comments can be empty.",
+      "input": {
+        "configFile": ";\n[profile foo];\nname = value ;\n"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "name": "value"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Comments can be adjacent to profile names.",
+      "input": {
+        "configFile": "[profile foo]; Adjacent semicolons\n[profile bar]# Adjacent pound signs"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {},
+            "bar": {}
+          }
+        }
+      }
+    },
+    {
+      "name": "Comments adjacent to values are included in the value.",
+      "input": {
+        "configFile": "[profile foo]\nname = value; Adjacent semicolons\nname2 = value# Adjacent pound signs"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "name": "value; Adjacent semicolons",
+              "name2": "value# Adjacent pound signs"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Property values can be continued on the next line.",
+      "input": {
+        "configFile": "[profile foo]\nname = value\n -continued"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "name": "value\n-continued"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Property values can be continued with multiple lines.",
+      "input": {
+        "configFile": "[profile foo]\nname = value\n -continued\n -and-continued"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "name": "value\n-continued\n-and-continued"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Continuations are trimmed.",
+      "input": {
+        "configFile": "[profile foo]\nname = value\n \t -continued \t "
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "name": "value\n-continued"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Continuation values include pound comments.",
+      "input": {
+        "configFile": "[profile foo]\nname = value\n -continued # Comment"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "name": "value\n-continued # Comment"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Continuation values include semicolon comments.",
+      "input": {
+        "configFile": "[profile foo]\nname = value\n -continued ; Comment"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "name": "value\n-continued ; Comment"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Continuations cannot be used outside of a profile.",
+      "input": {
+        "configFile": " -continued"
+      },
+      "output": {
+        "errorContaining": "Expected a profile definition"
+      }
+    },
+    {
+      "name": "Continuations cannot be used outside of a property.",
+      "input": {
+        "configFile": "[profile foo]\n -continued"
+      },
+      "output": {
+        "errorContaining": "Expected a property definition"
+      }
+    },
+    {
+      "name": "Continuations reset with profile definitions.",
+      "input": {
+        "configFile": "[profile foo]\nname = value\n[profile foo]\n -continued"
+      },
+      "output": {
+        "errorContaining": "Expected a property definition"
+      }
+    },
+    {
+      "name": "Duplicate profiles in the same file merge properties.",
+      "input": {
+        "configFile": "[profile foo]\nname = value\n[profile foo]\nname2 = value2"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "name": "value",
+              "name2": "value2"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Duplicate properties in a profile use the last one defined.",
+      "input": {
+        "configFile": "[profile foo]\nname = value\nname = value2"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "name": "value2"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Duplicate properties in duplicate profiles use the last one defined.",
+      "input": {
+        "configFile": "[profile foo]\nname = value\n[profile foo]\nname = value2"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "name": "value2"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Duplicate properties in duplicate profiles use the last one defined (case insensitive).",
+      "input": {
+        "configFile": "[profile foo]\nName = value\n[profile foo]\nname = value2"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "name": "value2"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Default profile with profile prefix overrides default profile without prefix when profile prefix is first.",
+      "input": {
+        "configFile": "[profile default]\nname = value\n[default]\nname2 = value2"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "default": {
+              "name": "value"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Default profile with profile prefix overrides default profile without prefix when profile prefix is last.",
+      "input": {
+        "configFile": "[default]\nname2 = value2\n[profile default]\nname = value"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "default": {
+              "name": "value"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Invalid profile names are ignored.",
+      "input": {
+        "configFile": "[profile in valid]\nname = value",
+        "credentialsFile": "[in valid 2]\nname2 = value2"
+      },
+      "output": {
+        "config": {
+          "profiles": {}
+        }
+      }
+    },
+    {
+      "name": "Invalid property names are ignored.",
+      "input": {
+        "configFile": "[profile foo]\nin valid = value"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {}
+          }
+        }
+      }
+    },
+    {
+      "name": "All valid profile name characters are supported.",
+      "input": {
+        "configFile": "[profile ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_]"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_": {}
+          }
+        }
+      }
+    },
+    {
+      "name": "All valid property name characters are supported.",
+      "input": {
+        "configFile": "[profile foo]\nABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_ = value"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz0123456789-_": "value"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Properties can have sub-properties.",
+      "input": {
+        "configFile": "[profile foo]\ns3 =\n name = value"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "s3": "\nname = value"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Invalid sub-property definitions cause an error.",
+      "input": {
+        "configFile": "[profile foo]\ns3 =\n invalid"
+      },
+      "output": {
+        "errorContaining": "Expected an '=' sign defining a sub-property"
+      }
+    },
+    {
+      "name": "Sub-property definitions can have an empty value.",
+      "input": {
+        "configFile": "[profile foo]\ns3 =\n name ="
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "s3": "\nname ="
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Sub-property definitions cannot have an empty name.",
+      "input": {
+        "configFile": "[profile foo]\ns3 =\n = value"
+      },
+      "output": {
+        "errorContaining": "Sub-property did not have a name"
+      }
+    },
+    {
+      "name": "Sub-property definitions can have an invalid name.",
+      "input": {
+        "configFile": "[profile foo]\ns3 =\n in valid = value"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "s3": "\nin valid = value"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Sub-properties can have blank lines that are ignored",
+      "input": {
+        "configFile": "[profile foo]\ns3 =\n name = value\n\t \n name2 = value2"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "s3": "\nname = value\nname2 = value2"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Profiles duplicated in multiple files are merged.",
+      "input": {
+        "configFile": "[profile foo]\nname = value",
+        "credentialsFile": "[foo]\nname2 = value2"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "name": "value",
+              "name2": "value2"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Default profiles with mixed prefixes in the config file ignore the one without prefix when merging.",
+      "input": {
+        "configFile": "[profile default]\nname = value\n[default]\nname2 = value2\n[profile default]\nname3 = value3"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "default": {
+              "name": "value",
+              "name3": "value3"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Default profiles with mixed prefixes merge with credentials",
+      "input": {
+        "configFile": "[profile default]\nname = value\n[default]\nname2 = value2\n[profile default]\nname3 = value3",
+        "credentialsFile": "[default]\nsecret=foo"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "default": {
+              "name": "value",
+              "name3": "value3",
+              "secret": "foo"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Duplicate properties between files uses credentials property.",
+      "input": {
+        "configFile": "[profile foo]\nname = value",
+        "credentialsFile": "[foo]\nname = value2"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "name": "value2"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Config profiles without prefix are ignored.",
+      "input": {
+        "configFile": "[foo]\nname = value"
+      },
+      "output": {
+        "config": {
+          "profiles": {}
+        }
+      }
+    },
+    {
+      "name": "Credentials profiles with prefix are ignored.",
+      "input": {
+        "credentialsFile": "[profile foo]\nname = value"
+      },
+      "output": {
+        "config": {
+          "profiles": {}
+        }
+      }
+    },
+    {
+      "name": "Comment characters adjacent to profile decls",
+      "input": {
+        "configFile": "[profile foo]; semicolon\n[profile bar]# pound"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {},
+            "bar": {}
+          }
+        }
+      }
+    },
+    {
+      "name": "Invalid continuation",
+      "input": {
+        "configFile": "[profile foo]\nname = value\n[profile foo]\n -continued"
+      },
+      "output": {
+        "errorContaining": "Expected a property definition, found continuation"
+      }
+    },
+    {
+      "name": "sneaky profile name",
+      "input": {
+        "configFile": "[profilefoo]\nname = value\n[profile bar]"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "bar": {}
+          }
+        }
+      }
+    },
+    {
+      "name": "profile name with extra whitespace",
+      "input": {
+        "configFile": "[   profile foo    ]\nname = value\n[profile bar]"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "bar": {},
+            "foo": {
+              "name": "value"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "profile name with extra whitespace in credentials",
+      "input": {
+        "credentialsFile": "[   foo    ]\nname = value\n[profile bar]"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "foo": {
+              "name": "value"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "properties from an invalid profile name are ignored",
+      "input": {
+        "configFile": "[profile foo]\nname = value\n[profile in valid]\nx = 1\n[profile bar]\nname = value2"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "bar": {
+              "name": "value2"
+            },
+            "foo": {
+              "name": "value"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "sso-session with properties",
+      "input": {
+        "configFile": "[sso-session foo]\nname = value\n[profile bar]"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "bar": {}
+          },
+          "sso_sessions": {
+            "foo": {
+              "name": "value"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "sso-session without the space before the name is a profile",
+      "input": {
+        "credentialsFile": "[sso-sessionfoo]\nname = value\n[bar]"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "sso-sessionfoo": { "name": "value" },
+            "bar": {}
+          },
+          "sso_sessions": {
+          }
+        }
+      }
+    },
+    {
+      "name": "A typo'd sso-session will be ignored",
+      "input": {
+        "configFile": "[sso-sesion foo]\nname = value\n[profile bar]"
+      },
+      "output": {
+        "config": {
+          "profiles": {
+            "bar": {}
+          },
+          "sso_sessions": {
+          }
+        }
+      }
+    }
+  ]
+}

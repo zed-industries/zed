@@ -1,0 +1,15 @@
+---
+- name: Flow mapping missing a separating comma
+  from: '@perlpunk'
+  tags: error flow mapping
+  fail: true
+  yaml: |
+    ---
+    {
+     foo: 1
+     bar: 2 }
+  tree: |
+    +STR
+     +DOC ---
+      +MAP
+       =VAL :foo

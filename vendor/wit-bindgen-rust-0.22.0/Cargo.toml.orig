@@ -1,0 +1,32 @@
+[package]
+name = "wit-bindgen-rust"
+authors = ["Alex Crichton <alex@alexcrichton.com>"]
+version.workspace = true
+edition.workspace = true
+repository = 'https://github.com/bytecodealliance/wit-bindgen'
+license = "Apache-2.0 WITH LLVM-exception"
+homepage = 'https://github.com/bytecodealliance/wit-bindgen'
+description = """
+Rust bindings generator for WIT and the component model, typically used through
+the `wit-bindgen` crate's `generate!` macro.
+"""
+
+[lib]
+test = false
+doctest = false
+
+[dependencies]
+anyhow = { workspace = true }
+wit-bindgen-core = { workspace = true }
+wit-component = { workspace = true }
+wasm-metadata = { workspace = true }
+heck = { workspace = true }
+clap = { workspace = true, optional = true }
+indexmap = { workspace = true }
+
+[dev-dependencies]
+wit-bindgen = { path = '../guest-rust' }
+test-helpers = { path = '../test-helpers' }
+# For use with the custom attributes test
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1"

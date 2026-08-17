@@ -1,0 +1,24 @@
+[
+  {
+    "Description": "Set hintslight to hintstyle"
+  },
+  {
+    "Match": {
+      "target": "Pattern",
+      "tests": [],
+      "edits": [
+        {
+          "mode": "Append",
+          "binding": "Weak",
+          "value": {
+            "HintStyle": {
+              "Simple": {
+                "Constant": "Hintslight"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+]

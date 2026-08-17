@@ -1,0 +1,47 @@
+error[E0277]: mutable reference to C++ type requires a pin -- use Pin<&mut Arg>
+  --> tests/ui/pin_mut_alias.rs:23:23
+   |
+23 |             fn f(arg: &mut Arg);
+   |                       ^^^^^^^^ use `Pin<&mut Arg>`
+   |
+   = help: the trait `ReferenceToUnpin_Arg` is not implemented for `&mut arg::Arg`
+
+error[E0277]: mutable reference to C++ type requires a pin -- use Pin<&mut ArgLife>
+  --> tests/ui/pin_mut_alias.rs:31:32
+   |
+31 |             fn fl<'b, 'c>(arg: &'b mut ArgLife<'c>);
+   |                                ^^^^^^^^^^^^^^^^^^^ use `Pin<&'b mut ArgLife<'c>>`
+   |
+   = help: the trait `ReferenceToUnpin_ArgLife` is not implemented for `&mut arg::ArgLife<'_>`
+
+error[E0277]: mutable reference to C++ type requires a pin -- use Pin<&mut Receiver>
+  --> tests/ui/pin_mut_alias.rs:58:18
+   |
+58 |             fn g(&mut self);
+   |                  ^^^^^^^^^ use `self: Pin<&mut Receiver>`
+   |
+   = help: the trait `ReferenceToUnpin_Receiver` is not implemented for `&mut receiver::Receiver`
+
+error[E0277]: mutable reference to C++ type requires a pin -- use Pin<&mut ReceiverLife>
+  --> tests/ui/pin_mut_alias.rs:66:22
+   |
+66 |             fn g<'b>(&'b mut self);
+   |                      ^^^^^^^^^^^^ use `self: Pin<&'b mut ReceiverLife<'_>>`
+   |
+   = help: the trait `ReferenceToUnpin_ReceiverLife` is not implemented for `&mut receiver::ReceiverLife<'_>`
+
+error[E0277]: mutable reference to C++ type requires a pin -- use Pin<&mut Receiver2>
+  --> tests/ui/pin_mut_alias.rs:93:24
+   |
+93 |             fn h(self: &mut Receiver2);
+   |                        ^^^^^^^^^^^^^^ use `Pin<&mut Receiver2>`
+   |
+   = help: the trait `ReferenceToUnpin_Receiver2` is not implemented for `&mut receiver2::Receiver2`
+
+error[E0277]: mutable reference to C++ type requires a pin -- use Pin<&mut ReveiverLife2>
+   --> tests/ui/pin_mut_alias.rs:101:32
+    |
+101 |             fn h<'b, 'c>(self: &'b mut ReveiverLife2<'c>);
+    |                                ^^^^^^^^^^^^^^^^^^^^^^^^^ use `Pin<&'b mut ReveiverLife2<'c>>`
+    |
+    = help: the trait `ReferenceToUnpin_ReveiverLife2` is not implemented for `&mut receiver2::ReveiverLife2<'_>`

@@ -1,0 +1,90 @@
+name: Rust
+
+on: [push, pull_request]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+          - 1.60.0
+          - stable
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Install toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: ${{ matrix.rust }}
+        override: true
+
+    - name: Build without default features
+      run: cargo build --no-default-features
+
+    - name: Build with fs
+      run: cargo build --no-default-features --features fs
+
+    - name: Build with memmap
+      run: cargo build --no-default-features --features memmap
+
+    - name: Build with fontconfig
+      run: cargo build --no-default-features --features fontconfig
+
+    - name: Run tests
+      run: cargo test
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Install toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: stable
+        override: true
+
+    - name: Build without default features
+      run: cargo build --no-default-features
+
+    - name: Build with fs
+      run: cargo build --no-default-features --features fs
+
+    - name: Build with memmap
+      run: cargo build --no-default-features --features memmap
+
+    - name: Run tests
+      run: cargo test
+
+  build-mac:
+    runs-on: macos-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Install toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: stable
+        override: true
+
+    - name: Build without default features
+      run: cargo build --no-default-features
+
+    - name: Build with fs
+      run: cargo build --no-default-features --features fs
+
+    - name: Build with memmap
+      run: cargo build --no-default-features --features memmap
+
+    - name: Run tests
+      run: cargo test

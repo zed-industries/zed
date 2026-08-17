@@ -1,0 +1,5 @@
+failed to elaborate world imports/exports of `test`
+     --> tests/ui/parse-fail/import-and-export4.wit:40:7
+      |
+   40 | world test {
+      |       ^---: interface `foo:foo/i3` transitively depends on an interface in incompatible ways

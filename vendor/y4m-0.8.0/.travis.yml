@@ -1,0 +1,16 @@
+language: rust
+rust:
+  - stable
+  - beta
+  - nightly
+
+before_install:
+  - if [[ "$TRAVIS_RUST_VERSION" == *stable* ]]; then rustup component add rustfmt; cargo fmt --version; fi
+
+script:
+  - if [[ "$TRAVIS_RUST_VERSION" == *stable* ]]; then cargo fmt -- --check || (echo "Please reformat your code with 'cargo fmt' (version $(cargo fmt --version))"; false); fi
+  - cargo build -v
+  - cargo test -v
+  - cargo doc -v
+after_success:
+  - curl http://docs.piston.rs/travis-doc-upload.sh | sh

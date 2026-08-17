@@ -1,0 +1,5 @@
+world adapt-old {
+  import new: interface {
+    thunk-that-is-not-called: func();
+  }
+}

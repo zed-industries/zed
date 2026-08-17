@@ -1,0 +1,1 @@
+* A cache without the thing inside ‒ passed to load every time. Possibly with multiple cached values.

@@ -1,0 +1,320 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="org_kde_kwin_outputdevice">
+  <copyright><![CDATA[
+        SPDX-FileCopyrightText: 2008-2011 Kristian Høgsberg
+        SPDX-FileCopyrightText: 2010-2011 Intel Corporation
+        SPDX-FileCopyrightText: 2012-2013 Collabora, Ltd.
+        SPDX-FileCopyrightText: 2015 Sebastian Kügler <sebas@kde.org>
+
+        SPDX-License-Identifier: MIT-CMU
+        ]]></copyright>
+
+
+<interface name="org_kde_kwin_outputdevice" version="4">
+    <description summary="output configuration representation">
+        An outputdevice describes a display device available to the compositor.
+        outputdevice is similar to wl_output, but focuses on output
+        configuration management.
+
+        A client can query all global outputdevice objects to enlist all
+        available display devices, even those that may currently not be
+        represented by the compositor as a wl_output.
+
+        The client sends configuration changes to the server through the
+        outputconfiguration interface, and the server applies the configuration
+        changes to the hardware and signals changes to the outputdevices
+        accordingly.
+
+        This object is published as global during start up for every available
+        display devices, or when one later becomes available, for example by
+        being hotplugged via a physical connector.
+    </description>
+
+    <enum name="subpixel">
+        <description summary="subpixel geometry information">
+            This enumeration describes how the physical pixels on an output are
+            laid out.
+        </description>
+        <entry name="unknown" value="0"/>
+        <entry name="none" value="1"/>
+        <entry name="horizontal_rgb" value="2"/>
+        <entry name="horizontal_bgr" value="3"/>
+        <entry name="vertical_rgb" value="4"/>
+        <entry name="vertical_bgr" value="5"/>
+    </enum>
+
+    <enum name="transform">
+        <description summary="transform from framebuffer to output">
+            This describes the transform, that a compositor will apply to a
+            surface to compensate for the rotation or mirroring of an
+            output device.
+
+            The flipped values correspond to an initial flip around a
+            vertical axis followed by rotation.
+
+            The purpose is mainly to allow clients to render accordingly and
+            tell the compositor, so that for fullscreen surfaces, the
+            compositor is still able to scan out directly client surfaces.
+        </description>
+
+        <entry name="normal" value="0"/>
+        <entry name="90" value="1"/>
+        <entry name="180" value="2"/>
+        <entry name="270" value="3"/>
+        <entry name="flipped" value="4"/>
+        <entry name="flipped_90" value="5"/>
+        <entry name="flipped_180" value="6"/>
+        <entry name="flipped_270" value="7"/>
+    </enum>
+
+    <event name="geometry">
+        <description summary="geometric properties of the output">
+            The geometry event describes geometric properties of the output.
+            The event is sent when binding to the output object and whenever
+            any of the properties change.
+        </description>
+        <arg name="x" type="int"
+             summary="x position within the global compositor space"/>
+        <arg name="y" type="int"
+             summary="y position within the global compositor space"/>
+        <arg name="physical_width" type="int"
+             summary="width in millimeters of the output"/>
+        <arg name="physical_height" type="int"
+             summary="height in millimeters of the output"/>
+        <arg name="subpixel" type="int"
+             summary="subpixel orientation of the output"/>
+        <arg name="make" type="string"
+             summary="textual description of the manufacturer"/>
+        <arg name="model" type="string"
+             summary="textual description of the model"/>
+        <arg name="transform" type="int"
+             summary="transform that maps framebuffer to output"/>
+    </event>
+
+    <enum name="mode">
+        <description summary="mode information">
+            These flags describe properties of an output mode. They are
+            used in the flags bitfield of the mode event.
+        </description>
+        <entry name="current" value="0x1"
+                summary="indicates this is the current mode"/>
+        <entry name="preferred" value="0x2"
+                summary="indicates this is the preferred mode"/>
+    </enum>
+
+    <event name="mode">
+        <description summary="advertise available output modes and current one">
+            The mode event describes an available mode for the output.
+
+            When the client binds to the outputdevice object, the server sends this
+            event once for every available mode the outputdevice can be operated by.
+
+            There will always be at least one event sent out on initial binding,
+            which represents the current mode.
+
+            Later on if an output changes its mode the event is sent again, whereby
+            this event represents the mode that has now become current. In other
+            words, the current mode is always represented by the latest event sent
+            with the current flag set.
+
+            The size of a mode is given in physical hardware units of the output device.
+            This is not necessarily the same as the output size in the global compositor
+            space. For instance, the output may be scaled, as described in
+            org_kde_kwin_outputdevice.scale, or transformed, as described in
+            org_kde_kwin_outputdevice.transform.
+
+            The id can be used to refer to a mode when calling set_mode on an
+            org_kde_kwin_outputconfiguration object.
+        </description>
+        <arg name="flags" type="uint" summary="bitfield of mode flags"/>
+        <arg name="width" type="int" summary="width of the mode in hardware units"/>
+        <arg name="height" type="int" summary="height of the mode in hardware units"/>
+        <arg name="refresh" type="int" summary="vertical refresh rate in mHz"/>
+        <arg name="mode_id" type="int" summary="Per outputdevice unique id to identify a mode"/>
+    </event>
+
+    <event name="done">
+        <description summary="sent all information about output">
+            This event is sent after all other properties have been
+            sent on binding to the output object as well as after any
+            other output property change have been applied later on.
+            This allows to see changes to the output properties as atomic,
+            even if multiple events successively announce them.
+        </description>
+    </event>
+
+    <event name="scale">
+        <description summary="output scaling properties">
+            This event contains scaling geometry information
+            that is not in the geometry event. It may be sent after
+            binding the output object or if the output scale changes
+            later. If it is not sent, the client should assume a
+            scale of 1.
+
+            A scale larger than 1 means that the compositor will
+            automatically scale surface buffers by this amount
+            when rendering. This is used for high resolution
+            displays where applications rendering at the native
+            resolution would be too small to be legible.
+
+            It is intended that scaling aware clients track the
+            current output of a surface, and if it is on a scaled
+            output it should use wl_surface.set_buffer_scale with
+            the scale of the output. That way the compositor can
+            avoid scaling the surface, and the client can supply
+            a higher detail image.
+        </description>
+        <arg name="factor" type="int" summary="scaling factor of output"/>
+    </event>
+
+    <event name="edid">
+        <description summary="advertise EDID data for the output">
+            The edid event encapsulates the EDID data for the outputdevice.
+
+            The event is sent when binding to the output object. The EDID
+            data may be empty, in which case this event is sent anyway.
+            If the EDID information is empty, you can fall back to the name
+            et al. properties of the outputdevice.
+        </description>
+        <arg name="raw" type="string" summary="base64-encoded EDID string"/>
+    </event>
+
+    <enum name="enablement">
+        <description summary="describes enabled state">
+            Describes whether a device is enabled, i.e. device is used to
+            display content by the compositor. This wraps a boolean around
+            an int to avoid a boolean trap.
+        </description>
+        <entry name="disabled" value="0"/>
+        <entry name="enabled" value="1"/>
+    </enum>
+
+    <event name="enabled">
+        <description summary="output is enabled or disabled">
+            The enabled event notifies whether this output is currently
+            enabled and used for displaying content by the server.
+            The event is sent when binding to the output object and
+            whenever later on an output changes its state by becoming
+            enabled or disabled.
+        </description>
+        <arg name="enabled" type="int" summary="output enabled state"/>
+    </event>
+
+    <event name="uuid">
+        <description summary="A unique id for this outputdevice">
+            The uuid can be used to identify the output. It's controlled by
+            the server entirely. The server should make sure the uuid is
+            persistent across restarts. An empty uuid is considered invalid.
+        </description>
+        <arg name="uuid" type="string" summary="output devices ID"/>
+    </event>
+
+    <event name="scalef" since="2">
+        <description summary="output scaling properties">
+            This event contains scaling geometry information
+            that is not in the geometry event. It may be sent after
+            binding the output object or if the output scale changes
+            later. If it is not sent, the client should assume a
+            scale of 1.
+
+            A scale larger than 1 means that the compositor will
+            automatically scale surface buffers by this amount
+            when rendering. This is used for high resolution
+            displays where applications rendering at the native
+            resolution would be too small to be legible.
+
+            It is intended that scaling aware clients track the
+            current output of a surface, and if it is on a scaled
+            output it should use wl_surface.set_buffer_scale with
+            the scale of the output. That way the compositor can
+            avoid scaling the surface, and the client can supply
+            a higher detail image.
+
+            wl_output will keep the output scale as an integer. In every situation except
+            configuring the window manager you want to use that.
+        </description>
+        <arg name="factor" type="fixed" summary="scaling factor of output"/>
+    </event>
+
+    <event name="colorcurves" since="2">
+        <description summary="output color curves">
+            Describes the color intensity profile of the output.
+            Commonly used for gamma/color correction.
+
+            The array contains all color ramp values of the output.
+            For example on 8bit screens there are 256 of them.
+
+            The array elements are unsigned 16bit integers.
+        </description>
+        <arg name="red" type="array"
+             summary="red color ramp"/>
+        <arg name="green" type="array"
+             summary="green color ramp"/>
+        <arg name="blue" type="array"
+             summary="blue color ramp"/>
+    </event>
+
+    <event name="serial_number" since="2">
+        <description summary="Serial Number">
+            Serial ID of the monitor, sent on startup before the first done event.
+        </description>
+        <arg name="serialNumber" type="string"
+                summary="textual representation of serial number"/>
+    </event>
+    <event name="eisa_id" since="2">
+        <description summary="EISA ID">
+            EISA ID of the monitor, sent on startup before the first done event.
+        </description>
+        <arg name="eisaId" type="string"
+             summary="textual representation of EISA identifier"/>
+    </event>
+
+    <enum name="capability" bitfield="true" since="3">
+        <description summary="describes capabilities of the outputdevice">
+            Describes what capabilities this device has.
+        </description>
+        <entry name="overscan" value="1"
+               summary="if this outputdevice can use overscan"/>
+        <entry name="vrr" value="2" since="4"
+               summary="if this outputdevice supports variable refresh rate"/>
+    </enum>
+
+    <event name="capabilities" since="3">
+        <description summary="capability flags">
+            What capabilities this device has, sent on startup before the first
+            done event.
+        </description>
+        <arg name="flags" type="uint" enum="capability"/>
+    </event>
+
+    <event name="overscan" since="3">
+        <description summary="overscan">
+            Overscan value of the monitor in percent, sent on startup before the
+            first done event.
+        </description>
+        <arg name="overscan" type="uint"
+             summary="amount of overscan of the monitor"/>
+    </event>
+
+    <enum name="vrr_policy" since="4">
+        <description summary="describes vrr policy">
+            Describes when the compositor may employ variable refresh rate
+        </description>
+        <entry name="never" value="0"/>
+        <entry name="always" value="1"/>
+        <entry name="automatic" value="2"/>
+    </enum>
+
+    <event name="vrr_policy" since="4">
+        <description summary="Variable Refresh Rate Policy">
+            What policy the compositor will employ regarding its use of variable
+            refresh rate.
+        </description>
+        <arg name="vrr_policy" type="uint" enum="vrr_policy"/>
+    </event>
+
+</interface>
+
+
+
+</protocol>

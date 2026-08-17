@@ -1,0 +1,7 @@
+error[E0596]: cannot borrow data in dereference of `UniquePtr<ffi::Opaque>` as mutable
+  --> tests/ui/unique_ptr_as_mut.rs:22:31
+   |
+22 |     let _: &mut ffi::Opaque = &mut opaque;
+   |                               ^^^^^^^^^^^ cannot borrow as mutable
+   |
+   = help: trait `DerefMut` is required to modify through a dereference, but it is not implemented for `UniquePtr<ffi::Opaque>`

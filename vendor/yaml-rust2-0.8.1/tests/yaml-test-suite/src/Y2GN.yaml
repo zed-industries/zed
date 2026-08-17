@@ -1,0 +1,23 @@
+---
+- name: Anchor with colon in the middle
+  from: '@perlpunk'
+  tags: anchor
+  yaml: |
+    ---
+    key: &an:chor value
+  tree: |
+    +STR
+     +DOC ---
+      +MAP
+       =VAL :key
+       =VAL &an:chor :value
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "key": "value"
+    }
+  dump: |
+    ---
+    key: &an:chor value

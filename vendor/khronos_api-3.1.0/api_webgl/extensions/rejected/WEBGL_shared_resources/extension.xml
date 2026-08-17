@@ -1,0 +1,381 @@
+<?xml version="1.0"?>
+
+<rejected href="rejected/WEBGL_shared_resources/">
+  <name>WEBGL_shared_resources</name>
+  <contact>
+    <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL working group</a> (public_webgl 'at' khronos.org)
+  </contact>
+  <contributors>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+  <number>22</number>
+  <depends>
+    <api version="1.0"/>
+  </depends>
+  <overview>
+    <p>
+      This extension exposes the ability to share WebGL resources with multiple WebGLRenderingContexts.
+    </p>
+    <p>
+      Background:
+    </p>
+    <p>
+      The OpenGL ES spec defines that you can share a resource (texture, buffer, shader, program,
+      renderbuffer) with 2 or more GL contexts but with some caveats. To guarantee you'll see a
+      change made in one context in other context requires calling glFinish on the context that
+      made the change and call glBind on the context that wants to see the change.
+    </p>
+    <p>
+      Not calling glFinish and/or glBind does not guarantee you won't see the results which means
+      that users may do neither and their app might just happen to work on some platforms and
+      mysteriously have glitches, rendering corruption, gl errors or program failure on others.
+    </p>
+    <p>
+      WebGL must present consistent behavior for sharing and so this extension provides
+      an API so that implementions can enforce and optimize these requirements.
+    </p>
+    <features>
+      <feature>
+        <p>Adds a new context creation parameter:</p>
+        <dl>
+            <dt><span class="prop-value">shareGroup</span></dt>
+                <dd>
+                    <em>Default: undefined</em>. If the value is set to the <code>group</code>
+                    attribute from the <code>WEBGL_shared_resources</code> object from an existing context
+                    then resources from the existing context are shared with the newly created context.
+                </dd>
+        </dl>
+        <pre class="example">
+var canvas1 = document.createElement("canvas");
+var canvas2 = document.createElement("canvas");
+var ctx1 = canvas1.getContext("webgl");
+var sharedResourcesExtension = ctx1.getExtension("WEBGL_shared_resources");
+var ctx2 = canvas2.getContext("webgl", {
+    shareGroup: sharedResourcesExtension.group
+});
+        </pre>
+      </feature>
+      <feature>
+        <p>
+        In order for a context to use a resouce it must first acquire it.
+        Contexts can make a request to acquire a resource by calling acquireSharedResource
+        in one of 2 modes, EXCLUSIVE or READ_ONLY. A resource may be acquired by multiple
+        contexts in READ_ONLY mode. The resource may only be acquired by one context
+        if the mode is EXCLUSIVE. acquireSharedResource returns an id you can use to cancel the acquire
+        by calling cancelAcquireSharedResource.
+        When the resource is available in the requested mode the callback
+        will be invoked. Resources start their life as acquired in EXCLUSIVE mode in the context
+        in which they are created.
+        </p>
+        <p>
+        To release a resource so it may be acquired by another context call releaseSharedResource and
+        pass it the resource to be released.
+        </p>
+      </feature>
+      <feature>
+        <p>
+        After a resource is acquired it must be bound before it is used. Binding
+        means for buffers calling bindBuffer, for textures either bindTexture or
+        framebufferTexture2D, for renderbuffers either bindRenderbuffer or framebufferRenderbuffer,
+        for shaders attachShader, for programs useProgram. Binding once is sufficient to satisfy
+        this requirement. In other words, if you have a texture attached to more than one texture
+        unit the texture only needs to be re-bound to 1 texture unit.  Attemping to use a resource
+        which has not been bound since it was acquired generates INVALID_OPERATION.
+        </p>
+        <p>
+        Bind Requirement Algorithm:
+        </p>
+        <p>
+        Each resource has a per-context bound flag. When a resource is acquired in a context its
+        bound flag for that context is set to false. If one of the functions listed above
+        is called the bound flag for that context is set to true. Drawing and reading functions,
+        clear, drawArrays, drawElements, readPixels, that would access a resource whose bound flag
+        for that context is false generate INVALID_FRAMEBUFFER_OPERATION. All other functions that
+        use a resource whose bound flag for that context is false generate INVALID_OPERATION.
+        </p>
+        <p>
+        Note: In the specific case of programs, it is not an error to call draw with a program
+        or call useProgram for a program which has shaders that have
+        been acquired but not re-attached. Nor it is an error to draw with or call useProgram
+        for a program which has shaders that have not been acquired.  It is an error to call linkProgram
+        for a program that is using shaders that have been acquired but not re-attached.
+        </p>
+      </feature>
+      <feature>
+        <p>
+        When an attempt is made to use a resource that is not acquired in the current context
+        the implementation must generate the error INVALID_OPERATION or INVALID_FRAMEBUFFER_OPRATION.
+        This includes all gl calls
+        that would access the given resource directly or indirectly. For example, a
+        draw call must fail if any of the resources it would access is not acquired in the
+        correct mode for the call. In other words, if the draw call would read from a buffer
+        or texture and that buffer or texture is not acquired for READ_ONLY or EXCLUSIVE mode the draw
+        must fail with INVALID_FRAMEBUFFER_OPERATION. If the draw would render to a texture or renderbuffer
+        that is not acquired for EXCLUSIVE mode the draw must fail and generate INVALID_FRAMEBUFFER_OPERATION.
+        If a program used in the draw is not acquired for READ_ONLY or EXCLUSIVE mode the draw or clear must fail
+        and generate INVALID_FRAMEBUFFER_OPERATION.
+        </p>
+        <p>
+        For buffers not acquired this includes but is not limited to
+        </p>
+        <pre>
+          bindBuffer
+          bufferData
+          bufferSubData
+          deleteBuffer
+          drawArrays
+          drawElements
+          getParameter with parameter (BUFFER_SIZE or BUFFER_USAGE)
+          isBuffer
+          vertexAttribPointer
+        </pre>
+        <p>
+        For a buffer acquired in READ_ONLY mode this includes but is not limited to
+        </p>
+        <pre>
+          bufferData
+          bufferSubData
+        </pre>
+        <p>
+        For programs not acquired this includes but is not limited to
+        </p>
+        <pre>
+          attachShader
+          bindAttribLocation
+          drawArrays
+          drawElements
+          deleteProgram
+          getActiveAttrib
+          getActiveUniform
+          getAttribLocation
+          getUniformLocation
+          getProgramParameter
+          getProgramInfoLog
+          isProgram
+          linkProgram
+          useProgram
+          validateProgram
+        </pre>
+        <p>
+        For programs acquired in READ_ONLY mode includes but is not limited to
+        </p>
+        <pre>
+          bindAttribLocation
+          deleteProgram
+          linkProgram
+        </pre>
+        <p>
+        For renderbuffers not acquired this includes but is not limited to
+        </p>
+        <pre>
+          bindRenderbuffer
+          clear
+          deleteRenderbuffer
+          drawArrays
+          drawElements
+          framebufferRenderbuffer
+          isRenderbuffer
+          renderbufferStorage
+        </pre>
+        <p>
+        For renderbuffers acquired in READ_ONLY mode this includes
+        </p>
+        <pre>
+          clear
+          deleteRenderbuffer
+          drawArrays
+          drawElements
+          renderbufferStorage
+        </pre>
+        <p>
+        For shaders not acquired this includes but is not limited to
+        </p>
+        <pre>
+          attachShader
+          compileShader
+          deleteShader
+          getShaderSource
+          getShaderParameter
+          isShader
+          shaderSource
+        </pre>
+        <p>
+        For shaders acquired in READ_ONLY mode this includes but is not limited to
+        </p>
+        <pre>
+          deleteShader
+          compileShader
+          shaderSource
+        </pre>
+        <p>
+        For textures not acquired this includes but is not limited to
+        </p>
+        <pre>
+          bindTexture
+          clear
+          compressedTexImage2D
+          compressedTexSubImage2D
+          copyTexImage2D
+          copyTexSubImage2D
+          drawArrays
+          drawElements
+          deleteTexture
+          framebufferTexture2D
+          getTexParameter
+          isTexture
+          texImage2D
+          texParameter
+          texSubImage2D
+        </pre>
+        <p>
+        For textures acquired in READ_ONLY mode this includes but is not limited to
+        </p>
+        <pre>
+          clear
+          compressedTexImage2D
+          compressedTexSubImage2D
+          copyTexImage2D
+          copyTexSubImage2D
+          drawArrays
+          drawElements
+          deleteTexture
+          texImage2D
+          texParameter
+          texSubImage2D
+        </pre>
+        <p>
+        The term "not limited to" is intended to point out that extension may enable
+        other functions to which these rule should apply. For example drawArraysInstancedANGLE
+        must follow the same rules as drawArrays.
+        </p>
+      </feature>
+      <feature>
+          <p>
+          Calling checkFramebufferStatus with the argument FRAMEBUFFER or DRAW_FRAMEBUFFER must
+          return FRAMEBUFFER_INCOMPLETE_ATTACHMENT if any of the resources referenced by the currently
+          bound framebuffer are not acquired for EXCLUSIVE access.
+          Calling checkFramebufferStatus with the argument READ_FRAMEBUFFER will return
+          FRAMEBUFFER_INCOMPLETE_ATTACHMENT if any of the resources referenced by the currently bound
+          framebuffer are not acquired for EXCLUSIVE or READ_ONLY access.
+          </p>
+          <p>
+          Note: This extension exposes the constants READ_FRAMEBUFFER and DRAW_FRAMEBUFFER only for
+          the purpose of calling checkFramebufferStatus. In particular, this extension does not enable
+          calling bindFramebuffer with either constant.
+          </p>
+      </feature>
+      <feature>
+          <p>
+          A context that is deleted automatically releases all resources it has acquired. Note that
+          currently there is no way to explicitly delete a context. Contexts are deleted through
+          garbage collection.
+          </p>
+      </feature>
+      <feature>
+        <p>
+         Note that implementing this extension changes the base class of the sharable resources.
+         Specifically: WebGLBuffer, WebGLProgram, WebGLRenderbuffer, WebGLShader, and WebGLTexture
+         change their base class from WebGLObject to WebGLSharedObject.
+        </p>
+      </feature>
+    </features>
+  </overview>
+  <issues>
+    <ul>
+      <li>
+          <div>
+              Q: What happens if one context deletes a resource another context is attempting to acquire?
+          </div>
+          <div>
+              A: Nothing special. The acquire will succeed when the context that currently has the resource
+              releases it. The context that acquires the resource can use the WebGLSharedObject
+              (buffer, texture, etc...) and will get the normal WebGL behavior associated with using
+              a deleted resource.
+          </div>
+      </li>
+      <li>
+          <div>
+              Q: Can you attach a resources that you have not acquired to a container?
+          </div>
+          <div>
+              A: No. An attachment can remain attached while it is released but it must be acquired
+                 when attaching.
+                 In particular a framebuffer attachment may not be attached to a framebuffer unless
+                 the attachment is acquired. A shader may not be attached to a program unless the
+                 shader is acquired. A buffer may not be attached to an attibute, vertexAttribPointer,
+                 unless the buffer is acquired.
+          </div>
+      </li>
+      <li>
+          <div>
+ Q: What happens if you try to acquire a resource you already have acquired?
+          </div>
+          <div>
+ A: It will generate INVALID_OPERATION
+          </div>
+      </li>
+    </ul>
+  </issues>
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface WEBGL_shared_resources {
+     const GLenum READ_ONLY  = 0x0001;
+     const GLenum EXCLUSIVE  = 0x0004;
+
+     const GLenum READ_FRAMEBUFFER = 0x8CA8;
+     const GLenum DRAW_FRAMEBUFFER = 0x8CA9;
+
+     readonly attribute WebGLShareGroup group;
+
+     long acquireSharedResource(
+         WebGLSharedObject resource,
+         GLenum mode,
+         AcquireSharedResourcesCallback callback);
+     void releaseSharedResource(
+         WebGLSharedObject resource);
+     void cancelAcquireSharedResource(long id);
+};
+
+callback AcquireSharedResourcesCallback = void ();
+
+[NoInterfaceObject]
+interface WebGLShareGroup {
+};
+
+interface WebGLSharedObject : WebGLObject {
+};
+
+interface WebGLBuffer : WebGLSharedObject {
+};
+
+interface WebGLProgram : WebGLSharedObject {
+};
+
+interface WebGLRenderbuffer : WebGLSharedObject {
+};
+
+interface WebGLShader : WebGLSharedObject {
+};
+
+interface WebGLTexture : WebGLSharedObject {
+};
+  </idl>
+  <history>
+    <revision date="2012/02/06">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2013/05/14">
+      <change>Moved to draft after agreement in working group.</change>
+    </revision>
+    <revision date="2014/07/15">
+      <change>Added NoInterfaceObject extended attribute to extension interface and WebGLShareGroup.</change>
+    </revision>
+    <revision date="2018/05/02">
+      <change>Rejected after discussion on public_webgl and no strong objections. At this point in
+      the WebGL API's development it is not profitable to invest the time to implement this
+      extension. Alternatives: CanvasRenderingContext2D.drawImage taking a WebGL-rendered canvas as
+      argument, or using OffscreenCanvas.transferToImageBitmap with a WebGL-rendered canvas,
+      combined with ImageBitmapRenderingContext.transferFromImageBitmap.</change>
+    </revision>
+  </history>
+</rejected>

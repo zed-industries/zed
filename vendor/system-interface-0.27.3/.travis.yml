@@ -1,0 +1,27 @@
+language: rust
+sudo: false
+
+before_install:
+  - target=x86_64-unknown-linux-musl
+  - curl -L https://github.com/mozilla/sccache/releases/download/0.2.13/sccache-0.2.13-$target.tar.gz | tar xzf -
+  - export PATH=$PATH:`pwd`/sccache-0.2.13-$target
+  - export RUSTC_WRAPPER=sccache
+
+before_script:
+  - export RUST_BACKTRACE=1
+
+after_script:
+  - sccache -s
+
+matrix:
+  include:
+    - name: "Precise"
+      rust: stable
+      dist: precise
+
+script:
+  - cargo test --no-default-features --features=cap_std_impls --workspace
+
+notifications:
+  email:
+    on_success: never

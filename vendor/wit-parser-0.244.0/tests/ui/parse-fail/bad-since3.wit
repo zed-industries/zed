@@ -1,0 +1,5 @@
+package a:b;
+
+// for now `version` must come first
+@since(feature = foo, version = 1.0.0)
+interface foo2 {}

@@ -1,0 +1,10 @@
+GET / HTTP/1.1
+Host:example.amazonaws.com
+My-Header1:value4
+My-Header1:value1
+My-Header1:value3
+My-Header1:value2
+X-Amz-Date:20150830T123600Z
+X-Amz-Region-Set:us-east-1
+Authorization:AWS4-ECDSA-P256-SHA256 Credential=AKIDEXAMPLE/20150830/service/aws4_request, SignedHeaders=host;my-header1;x-amz-date;x-amz-region-set, Signature=304402203410301a4cfc805996d0ac5305374d7cdff4e2564fcbd6f6cfed73b227966046022046e36b2ede1f78d2b68ea4534ae59da3de089e58f67ae08490411dfabd77f36e
+

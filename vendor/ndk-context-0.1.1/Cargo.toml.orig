@@ -1,0 +1,11 @@
+[package]
+name = "ndk-context"
+version = "0.1.1"
+authors = ["The Rust Windowing contributors"]
+edition = "2021"
+description = "Handles for accessing Android APIs"
+license = "MIT OR Apache-2.0"
+keywords = ["android", "ndk", "apk", "jni"]
+documentation = "https://docs.rs/ndk-context"
+homepage = "https://github.com/rust-windowing/android-ndk-rs"
+repository = "https://github.com/rust-windowing/android-ndk-rs"

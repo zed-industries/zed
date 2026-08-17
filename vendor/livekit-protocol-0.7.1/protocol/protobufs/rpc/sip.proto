@@ -1,0 +1,175 @@
+// Copyright 2023 LiveKit, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package rpc;
+
+option go_package = "github.com/livekit/protocol/rpc";
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/duration.proto";
+import "options.proto";
+import "livekit_sip.proto";
+import "logger/options.proto";
+
+service SIPInternal {
+  rpc CreateSIPParticipant(InternalCreateSIPParticipantRequest) returns (InternalCreateSIPParticipantResponse) {
+    option (psrpc.options).affinity_func = true;
+    option (psrpc.options).topics = true;
+  };
+  rpc TransferSIPParticipant(InternalTransferSIPParticipantRequest) returns (google.protobuf.Empty) {
+    option (psrpc.options) = {
+      topics: true
+      topic_params: {
+        names: ["sip_call_id"]
+        typed: false
+      }
+    };
+  };
+}
+
+message InternalCreateSIPParticipantRequest {
+  // Used in Cloud only
+  string project_id = 18;
+
+  string sip_call_id = 13;
+  string sip_trunk_id = 19;
+  // IP or hostname that SIP INVITE is sent too
+  string address = 2;
+  // Hostname for the 'From' SIP address in INVITE
+  string hostname = 20;
+  string destination_country = 30;
+  livekit.SIPTransport transport = 16;
+
+  // Number used to make the call
+  string number = 3;
+
+  // Number to call to
+  string call_to = 4;
+
+  string username = 5 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  string password = 6 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+
+  string room_name = 7;
+  string participant_identity = 8;
+  string participant_name = 14 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  string participant_metadata = 15 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  map<string, string> participant_attributes = 17 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+
+  // optional token that should be used when creating LiveKit participant
+  string token = 9 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+
+  // optional websocket url that should be used when creating LiveKit participant
+  string ws_url = 10;
+
+  // Optionally send following DTMF digits (extension codes) when making a call.
+  // Character 'w' can be used to add a 0.5 sec delay.
+  string dtmf = 11;
+
+  // Optionally play dialtone in the room as an audible indicator for existing participants
+  bool play_dialtone = 12;
+
+  map<string, string> headers = 21 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  map<string, string> headers_to_attributes = 22;
+  // Map LiveKit attributes to SIP X-* headers when sending BYE or REFER requests.
+  // Keys are the names of attributes and values are the names of X-* headers they will be mapped to.
+  map<string, string> attributes_to_headers = 26;
+  // Map SIP headers from 200 OK to sip.h.* participant attributes automatically.
+  //
+  // When the names of required headers is known, using headers_to_attributes is strongly recommended.
+  //
+  // When mapping 200 OK headers to follow-up request headers with attributes_to_headers map,
+  // lowercase header names should be used, for example: sip.h.x-custom-header.
+  livekit.SIPHeaderOptions include_headers = 27;
+
+  repeated livekit.SIPFeature enabled_features = 25;
+
+  // Max time for the callee to answer the call.
+  google.protobuf.Duration ringing_timeout = 23;
+  // Max call duration.
+  google.protobuf.Duration max_call_duration = 24;
+
+  livekit.SIPMediaEncryption media_encryption = 28;
+
+  // Wait for the answer for the call before returning.
+  bool wait_until_answered = 29;
+
+  // Optional display name for the 'From' SIP header.
+  //
+  // Cases:
+  // 1) Unspecified: Use legacy behavior - display name will be set to be the caller's number. 
+  // 2) Empty string: Do not send a display name, which will result in a CNAM lookup downstream.
+  // 3) Non-empty: Use the specified value as the display name.
+  optional string display_name = 31 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+
+  // Destination information for routing decisions
+  livekit.Destination destination = 32;
+
+  // Project-level feature flags from ProjectSettings.FeatureFlags
+  map<string, string> feature_flags = 33;
+
+  // NEXT ID: 34
+}
+
+message InternalCreateSIPParticipantResponse {
+  string participant_id = 1;
+  string participant_identity = 2;
+  string sip_call_id = 3;
+}
+
+message InternalTransferSIPParticipantRequest {
+  string sip_call_id = 1;
+  string transfer_to = 2;
+
+  // Optionally play dialtone to the SIP participant as an audible indicator of being transferred
+  bool play_dialtone = 3;
+
+  // Add the following headers to the REFER SIP request.
+  map<string, string> headers = 4 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+
+  // Max time for the transfer destination to answer the call.
+  google.protobuf.Duration ringing_timeout = 5;
+
+  // Project-level feature flags from ProjectSettings.FeatureFlags
+  map<string, string> feature_flags = 6;
+}
+

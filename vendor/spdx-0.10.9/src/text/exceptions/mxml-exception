@@ -1,0 +1,17 @@
+r#"Mini-XML
+
+Copyright © 2003-2024 by Michael R Sweet
+
+
+(Optional) Exceptions to the Apache 2.0 License:
+================================================
+
+In addition, if you combine or link compiled forms of this Software with
+software that is licensed under the GPLv2 or LGPLv2 (“Combined Software”) and if
+a court of competent jurisdiction determines that the patent provision (Section
+3), the indemnity provision (Section 9) or other Section of the License
+conflicts with the conditions of the GPLv2 or LGPLv2, you may retroactively and
+prospectively choose to deem waived or otherwise exclude such Section(s) of the
+License, but only in their entirety and only with respect to the Combined
+Software.
+"#

@@ -1,0 +1,79 @@
+name: deploy
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  create-binaries:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install nasm
+        run: |
+          $NASM_VERSION="2.15.05"
+          $LINK="https://www.nasm.us/pub/nasm/releasebuilds/$NASM_VERSION/win64"
+          curl -LO "$LINK/nasm-$NASM_VERSION-win64.zip"
+          7z e -y "nasm-$NASM_VERSION-win64.zip" -o"C:\nasm"
+          echo "C:\nasm" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable-x86_64-pc-windows-gnu
+          override: true
+
+      - name: Build
+        run: |
+          cargo build --release
+
+      - name: Create zip
+        run: |
+          $METRICS_PATH="$Env:GITHUB_WORKSPACE\target\release"
+          7z a av-scenechange.zip `
+              "$METRICS_PATH\av-scenechange.exe"
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v2
+        with:
+          name: av-scenechange-bins
+          path: av-scenechange.zip
+
+  deploy:
+    needs: create-binaries
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Download the zip
+        uses: actions/download-artifact@v2
+
+      - name: Unzip av-scenechange Windows binaries
+        run: |
+          unzip av-scenechange-bins/av-scenechange.zip -d av-scenechange-bins
+
+      - name: Handle release data and files
+        id: data
+        run: |
+          VERSION=$(head -n 1 CHANGELOG.md | tr -d "## Version ")
+          echo "::set-output name=version::$VERSION"
+          tail -n +2 CHANGELOG.md | sed -e '/^$/,$d' > CHANGELOG.txt
+          cd av-scenechange-bins
+          strip av-scenechange.exe
+          mv av-scenechange.exe ..
+
+      - name: Create a release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Version ${{ steps.data.outputs.version }}
+          body_path: CHANGELOG.txt
+          files: |
+            av-scenechange.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

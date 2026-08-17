@@ -1,0 +1,6 @@
+{
+  "git": {
+    "sha1": "d468916ac27a36fb8a12bafc1bf5c0ec2fe92238"
+  },
+  "path_in_vcs": "crates/targets/aarch64_msvc"
+}

@@ -1,0 +1,67 @@
+on:
+  # For some reason, this fails due to some permissions.
+  # pull_request:
+  push:
+    branches:
+      - master
+  # Run once a week to preserve the cache
+  # (even though it still feels the cache gets lost sometimes?)
+  # FIXME: Doesn't seem to be working. Using the GH pages thing for now.
+  #schedule:
+  #  - cron: '0 0 * * 0'
+
+name: benchmark pull requests
+
+jobs:
+  runBenchmark:
+    name: run benchmark
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          default: true
+          profile: minimal
+
+      - name: Restore compile cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Restore previous benchmark data
+        uses: actions/cache@v4
+        with:
+          path: ./bench-cache
+          key: ${{ runner.os }}-benchmark
+
+      - name: Run benchmarks
+        # We choose just the tracking ones. There's a whole fleet that we check
+        # that compile, but they are too heavy both to run in CI and to show in
+        # the PRs. And they mostly compare us to other methods.
+        #
+        # Provide the bencher output, as the following tool knows how to read that.
+        run: cargo bench --bench track -- --output-format bencher | grep -v 'Gnuplot not found' | tee benches.out
+
+      - name: Compare benchmarks
+        uses: rhysd/github-action-benchmark@d48d326b4ca9ba73ca0cd0d59f108f9e02a381c7
+        with:
+          name: Track benchmarks
+          tool: cargo
+          output-file-path: benches.out
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+          alert-threshold: '150%'
+          comment-on-alert: true
+          comment-always: true
+          # We don't want that to fail. Both our benchmarks and the CI are a
+          # bit noisy and we have quite a few measurements, so the chance of
+          # one failing at random is quite high. It's still nice to have it
+          # measured and available as a comment.
+          fail-on-alert: false
+          #external-data-json-path: ./bench-cache/benchmark-data.json
+          # Because it doesn't put it into the PR, it puts it into the commit :-|
+          alert-comment-cc-users: '@vorner'

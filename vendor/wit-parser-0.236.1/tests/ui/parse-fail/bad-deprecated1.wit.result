@@ -1,0 +1,5 @@
+expected '(', found keyword `interface`
+     --> tests/ui/parse-fail/bad-deprecated1.wit:4:1
+      |
+    4 | interface foo {}
+      | ^

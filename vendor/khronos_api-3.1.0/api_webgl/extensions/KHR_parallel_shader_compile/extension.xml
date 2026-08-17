@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- vi:set sw=2 ts=4: -->
+<?xml-stylesheet href="../../extension.xsl" type="text/xsl"?>
+<draft href="KHR_parallel_shader_compile/">
+  <name>KHR_parallel_shader_compile</name>
+
+  <contact> <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL
+  working group</a> (public_webgl 'at' khronos.org) </contact>
+
+  <contributors>
+    <contributor>Jie Chen, (jie.a.chen 'at' intel.com)</contributor>
+    <contributor>Geoff Lang, (geofflang 'at' google.com)</contributor>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+
+  <number>37</number>
+
+  <depends>
+    <api version="1.0"/>
+  </depends>
+
+  <overview>
+    <mirrors href="https://www.khronos.org/registry/OpenGL/extensions/KHR/KHR_parallel_shader_compile.txt"
+             name="KHR_parallel_shader_compile">
+    </mirrors>
+
+    <features>
+      <feature>
+        Shader compilation and program linking may be performed in a separate CPU thread. This extension provides a mechanism for the application to provide a hint to limit the number of threads it wants to be used to compile shaders, as well as a query to determine if the compilation process is complete.
+      </feature>
+    </features>
+  </overview>
+
+  <idl xml:space="preserve">
+    [NoInterfaceObject]
+    interface KHR_parallel_shader_compile {
+      const GLenum MAX_SHADER_COMPILER_THREADS_KHR      = 0x91B0;
+      const GLenum COMPLETION_STATUS_KHR                = 0x91B1;
+
+      void maxShaderCompilerThreadsKHR(GLuint count);
+    };
+  </idl>
+
+  <samplecode xml:space="preserve">
+    <pre>
+    var canvas = document.createElement("canvas");
+    var gl = canvas.getContext("webgl");
+    var ext = gl.getExtension('KHR_parallel_shader_compile');
+    if (ext) {
+      // Just for demo of API usage. Generally it's not needed unless you really
+      // want to override the implementation-specific maximum.
+      var threads = gl.getParameter(ext.MAX_SHADER_COMPILER_THREADS_KHR);
+      ext.maxShaderCompilerThreadsKHR(Math.max(2, threads));
+    }
+
+    var vSource = "attribute vec2 position; void main() { gl_Position = vec4(position, 0, 1); }";
+    var fSource = "precision mediump float; void main() { gl_FragColor = vec4(1,0,0,1); }";
+
+    var vShader = gl.createShader(gl.VERTEX_SHADER);
+    gl.shaderSource(vShader, vSource);
+    gl.compileShader(vShader);
+
+    var fShader = gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(fShader, fSource);
+    gl.compileShader(fShader);
+
+    var program = gl.createProgram();
+    gl.attachShader(program, vShader);
+    gl.attachShader(program, fShader);
+    gl.linkProgram(program);
+
+    function checkToUseProgram() {
+      if (gl.getProgramParameter(program, gl.LINK_STATUS) == true) {
+        gl.useProgram(program);
+      } else {
+        // error check.
+      }
+    }
+
+    if (ext) {
+      function checkCompletion() {
+        if (gl.getProgramParameter(program, ext.COMPLETION_STATUS_KHR) == true) {
+          checkToUseProgram();
+        } else {
+          requestAnimationFrame(checkCompletion);
+        }
+      }
+      requestAnimationFrame(checkCompletion);
+    } else {
+      checkToUseProgram();
+    }
+    </pre>
+  </samplecode>
+
+  <history>
+    <revision date="2018/08/07">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2018/09/14">
+      <change>Moved to draft status.</change>
+    </revision>
+  </history>
+</draft>

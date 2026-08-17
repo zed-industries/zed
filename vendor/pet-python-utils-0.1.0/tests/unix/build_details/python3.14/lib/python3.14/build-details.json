@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "base_prefix": "/usr",
+  "base_interpreter": "/usr/bin/python",
+  "platform": "linux-x86_64",
+  "language": {
+    "version": "3.14",
+    "version_info": {
+      "major": 3,
+      "minor": 14,
+      "micro": 2,
+      "releaselevel": "final",
+      "serial": 0
+    }
+  },
+  "implementation": {
+    "name": "cpython",
+    "version": {
+      "major": 3,
+      "minor": 14,
+      "micro": 2,
+      "releaselevel": "final",
+      "serial": 0
+    },
+    "hexversion": 51249408,
+    "cache_tag": "cpython-314"
+  }
+}

@@ -1,0 +1,37 @@
+[package]
+name = "selectors"
+version = "0.35.0"
+authors = ["The Servo Project Developers"]
+documentation = "https://docs.rs/selectors/"
+description = "CSS Selectors matching for Rust"
+repository = "https://github.com/servo/stylo"
+readme = "README.md"
+keywords = ["css", "selectors"]
+license = "MPL-2.0"
+edition = "2021"
+build = "build.rs"
+
+[lib]
+name = "selectors"
+path = "lib.rs"
+
+[features]
+bench = []
+to_shmem = ["dep:to_shmem", "dep:to_shmem_derive"]
+
+[dependencies]
+bitflags = "2"
+cssparser = "0.36"
+derive_more = { version = "2", features = ["add", "add_assign"] }
+rustc-hash = "2.1.1"
+log = "0.4"
+phf = "0.13"
+precomputed-hash = "0.1"
+servo_arc = { workspace = true }
+smallvec = "1.0"
+to_shmem = { workspace = true, optional = true }
+to_shmem_derive = { workspace = true, optional = true }
+new_debug_unreachable = "1"
+
+[build-dependencies]
+phf_codegen = "0.13"

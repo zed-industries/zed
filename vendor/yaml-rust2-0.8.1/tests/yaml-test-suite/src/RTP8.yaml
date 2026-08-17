@@ -1,0 +1,20 @@
+---
+- name: Spec Example 9.2. Document Markers
+  from: http://www.yaml.org/spec/1.2/spec.html#id2800866
+  tags: spec header footer
+  yaml: |
+    %YAML 1.2
+    ---
+    Document
+    ... # Suffix
+  tree: |
+    +STR
+     +DOC ---
+      =VAL :Document
+     -DOC ...
+    -STR
+  json: |
+    "Document"
+  dump: |
+    --- Document
+    ...

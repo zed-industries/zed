@@ -1,0 +1,60 @@
+[package]
+name = "compression-codecs"
+version = "0.4.31"
+description = """
+Adaptors for various compression algorithms.
+"""
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+license.workspace = true
+readme = "../../README.md"
+repository.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+all-algorithms = [
+    "brotli",
+    "bzip2",
+    "deflate",
+    "gzip",
+    "lz4",
+    "lzma",
+    "xz-parallel",
+    "xz",
+    "zlib",
+    "zstd",
+    "deflate64",
+]
+
+# algorithms
+deflate = ["flate2"]
+gzip = ["flate2", "memchr"]
+lz4 = ["dep:lz4"]
+lzma = ["dep:liblzma"]
+xz = ["lzma"]
+xz-parallel = ["xz", "liblzma/parallel"]
+xz2 = ["xz"]
+zlib = ["flate2"]
+zstd = ["libzstd", "zstd-safe"]
+zstdmt = ["zstd", "zstd-safe/zstdmt"]
+deflate64 = ["dep:deflate64"]
+
+[dependencies]
+# Workspace dependencies.
+compression-core.workspace = true
+# features
+brotli = { version = "8", optional = true }
+bzip2 = { version = "0.6", optional = true }
+deflate64 = { version = "0.1.5", optional = true }
+flate2 = { version = "1.0.13", optional = true }
+libzstd = { package = "zstd", version = "0.13.1", optional = true, default-features = false }
+lz4 = { version = "1.28.1", optional = true }
+liblzma = { version = "0.4.4", optional = true }
+memchr = { version = "2", optional = true }
+zstd-safe = { version = "7", optional = true, default-features = false }
+
+[lints]
+workspace = true

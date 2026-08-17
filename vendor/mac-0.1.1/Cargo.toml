@@ -1,0 +1,10 @@
+[package]
+
+name = "mac"
+version = "0.1.1"
+authors = ["Jonathan Reem <jonathan.reem@gmail.com>"]
+repository = "https://github.com/reem/rust-mac.git"
+description = "A collection of great and ubiqutitous macros."
+readme = "README.md"
+license = "MIT/Apache-2.0"
+

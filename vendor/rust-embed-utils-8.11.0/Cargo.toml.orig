@@ -1,0 +1,26 @@
+[package]
+name = "rust-embed-utils"
+version = "8.11.0"
+description = "Utilities for rust-embed"
+readme = "readme.md"
+documentation = "https://docs.rs/rust-embed"
+repository = "https://pyrossh.dev/repos/rust-embed"
+license = "MIT"
+keywords = ["http", "rocket", "static", "web", "server"]
+categories = ["web-programming::http-server"]
+authors = ["pyrossh"]
+edition = "2018"
+
+[dependencies]
+walkdir = "2.3.1"
+sha2 = "0.10.5"
+mime_guess = { version = "2.0.4", optional = true }
+
+[dependencies.globset]
+version = "0.4.8"
+optional = true
+
+[features]
+debug-embed = []
+mime-guess = ["mime_guess"]
+include-exclude = ["globset"]

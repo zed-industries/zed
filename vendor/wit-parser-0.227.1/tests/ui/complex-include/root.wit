@@ -1,0 +1,26 @@
+package foo:root;
+
+interface ai {}
+interface bi {}
+
+world a {
+    import ai;
+    import bi;
+}
+
+world b {
+    include foo:bar/bar-a;
+}
+
+world c {
+    include b;
+    include foo:bar/bar-a;
+}
+
+world union-world {
+    include a;
+    include b;
+    include c;
+    include foo:bar/bar-a;
+    include foo:baz/baz-a;
+}

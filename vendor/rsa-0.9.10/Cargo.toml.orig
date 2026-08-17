@@ -1,0 +1,66 @@
+[package]
+name = "rsa"
+version = "0.9.10"
+authors = ["RustCrypto Developers", "dignifiedquire <dignifiedquire@gmail.com>"]
+edition = "2021"
+description = "Pure Rust RSA implementation"
+license = "MIT OR Apache-2.0"
+documentation = "https://docs.rs/rsa"
+repository = "https://github.com/RustCrypto/RSA"
+keywords = ["rsa", "encryption", "security", "crypto"]
+categories = ["cryptography"]
+readme = "README.md"
+rust-version = "1.65"
+
+[dependencies]
+num-bigint = { version = "0.8.6", features = ["i128", "prime", "zeroize"], default-features = false, package = "num-bigint-dig" }
+num-traits = { version= "0.2.9", default-features = false, features = ["libm"] }
+num-integer = { version = "0.1.39", default-features = false }
+rand_core = { version = "0.6.4", default-features = false }
+const-oid = { version = "0.9", default-features = false }
+subtle = { version = "2.1.1", default-features = false }
+digest = { version = "0.10.5", default-features = false, features = ["alloc", "oid"] }
+pkcs1 = { version = "0.7.5", default-features = false, features = ["alloc", "pkcs8"] }
+pkcs8 = { version = "0.10.2", default-features = false, features = ["alloc"] }
+signature = { version = ">2.0, <2.3", default-features = false , features = ["alloc", "digest", "rand_core"] }
+spki = { version = "0.7.3", default-features = false, features = ["alloc"] }
+zeroize = { version = "1.5", features = ["alloc"] }
+
+# optional dependencies
+sha1 = { version = "0.10.5", optional = true, default-features = false, features = ["oid"] }
+sha2 = { version = "0.10.6", optional = true, default-features = false, features = ["oid"] }
+serde = { version = "1.0.184", optional = true, default-features = false, features = ["derive"] }
+
+[dev-dependencies]
+base64ct = { version = "1", features = ["alloc"] }
+hex-literal = "0.4.1"
+proptest = "1"
+serde_test = "1.0.89"
+rand_xorshift = "0.3"
+rand_chacha = "0.3"
+rand = "0.8"
+rand_core = { version = "0.6", default-features = false }
+sha1 = { version = "0.10.5", default-features = false, features = ["oid"] }
+sha2 = { version = "0.10.6", default-features = false, features = ["oid"] }
+sha3 = { version = "0.10.7", default-features = false, features = ["oid"] }
+
+[[bench]]
+name = "key"
+
+[features]
+default = ["std", "pem", "u64_digit"]
+hazmat = []
+getrandom = ["rand_core/getrandom"]
+nightly = ["num-bigint/nightly"]
+serde = ["dep:serde", "num-bigint/serde"]
+pem = ["pkcs1/pem", "pkcs8/pem"]
+pkcs5 = ["pkcs8/encryption"]
+u64_digit = ["num-bigint/u64_digit"]
+std = ["digest/std", "pkcs1/std", "pkcs8/std", "rand_core/std", "signature/std"]
+
+[package.metadata.docs.rs]
+features = ["std", "pem", "serde", "hazmat", "sha2"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[profile.dev]
+opt-level = 2

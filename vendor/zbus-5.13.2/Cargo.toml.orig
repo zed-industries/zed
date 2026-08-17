@@ -1,0 +1,147 @@
+[package]
+name = "zbus"
+version = "5.13.2"
+authors = ["Zeeshan Ali Khan <zeeshanak@gnome.org>"]
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+description = "API for D-Bus communication"
+repository = { workspace = true }
+keywords = ["D-Bus", "DBus", "IPC"]
+license = { workspace = true }
+categories = ["os::unix-apis"]
+readme = "README.md"
+
+[features]
+default = ["async-io", "blocking-api"]
+uuid = ["zvariant/uuid"]
+url = ["zvariant/url"]
+time = ["zvariant/time"]
+chrono = ["zvariant/chrono"]
+heapless = ["zvariant/heapless"]
+# Enables ser/de of `Option<T>` as an array of 0 or 1 elements.
+option-as-array = ["zvariant/option-as-array"]
+camino = ["zvariant/camino"]
+# Enables API that is only needed for bus implementations (enables `p2p`).
+bus-impl = ["p2p"]
+# Enables API that is only needed for peer-to-peer (p2p) connections.
+p2p = ["uuid/v4"]
+async-io = [
+    "dep:async-io",
+    "async-executor",
+    "async-fs",
+    "async-task",
+    "async-lock",
+    # FIXME: We only currently only need this for unix but Cargo doesn't provide a way to enable
+    # features for only specific target OS: https://github.com/rust-lang/cargo/issues/1197.
+    "async-process",
+    "blocking",
+]
+tokio = ["dep:tokio"]
+vsock = ["dep:vsock", "dep:async-io"]
+tokio-vsock = ["dep:tokio-vsock", "tokio"]
+# Enable blocking API (default).
+blocking-api = ["zbus_macros/blocking-api"]
+# Enable `serde_bytes` feature of `zvariant`.
+serde_bytes = ["zvariant/serde_bytes"]
+# Dummy features to satisfy `cargo semver`. Should be removed at the next major version bump.
+async-fs = []
+
+[dependencies]
+zbus_macros = { path = "../zbus_macros", version = "5.13.2" }
+zvariant = { path = "../zvariant", features = [
+    "enumflags2",
+], version = "5.9.2" }
+zbus_names = { path = "../zbus_names", version = "4.3.1" }
+
+serde.workspace = true
+serde_repr.workspace = true
+enumflags2.workspace = true
+futures-core.workspace = true
+futures-lite.workspace = true
+async-broadcast.workspace = true
+hex.workspace = true
+ordered-stream.workspace = true
+uuid.workspace = true
+event-listener.workspace = true
+async-trait.workspace = true
+tracing.workspace = true
+winnow.workspace = true
+
+# Optional and target-specific dependencies.
+async-io = { workspace = true, optional = true }
+async-lock = { workspace = true, optional = true }
+async-executor = { workspace = true, optional = true }
+blocking = { workspace = true, optional = true }
+async-task = { workspace = true, optional = true }
+async-process = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true, features = [
+    "rt",
+    "rt-multi-thread",
+    "net",
+    "time",
+    "fs",
+    "io-util",
+    # FIXME: We should only enable this feature for unix. See comment above regarding `async-process`
+    # on why we can't.
+    "process",
+    "sync",
+    "tracing",
+] }
+vsock = { workspace = true, optional = true }
+tokio-vsock = { workspace = true, optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+uds_windows.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+libc.workspace = true
+
+[target.'cfg(any(target_os = "macos", windows))'.dependencies]
+async-recursion.workspace = true
+
+[dev-dependencies]
+zbus_xml.workspace = true
+
+doc-comment.workspace = true
+futures-util = { workspace = true, features = [
+    "io",
+    "async-await-macro",
+    "async-await",
+] }
+ntest.workspace = true
+test-log.workspace = true
+tokio = { workspace = true, features = [
+    "macros",
+    "rt-multi-thread",
+    "fs",
+    "io-util",
+    "net",
+    "sync",
+    "time",
+    "test-util",
+] }
+tracing-subscriber.workspace = true
+tempfile.workspace = true
+criterion.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lints]
+workspace = true
+
+[lib]
+bench = false
+
+[[bench]]
+name = "benchmarks"
+harness = false
+
+[[example]]
+name = "screen-brightness"
+path = "examples/screen-brightness.rs"
+required-features = ["blocking-api"]

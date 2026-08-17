@@ -1,0 +1,57 @@
+[package]
+name = "sqlx-macros"
+description = "Macros for SQLx, the rust SQL toolkit. Not intended to be used directly."
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+proc-macro = true
+
+[features]
+default = []
+
+# for conditional compilation
+_rt-async-std = ["sqlx-macros-core/_rt-async-std"]
+_rt-tokio = ["sqlx-macros-core/_rt-tokio"]
+
+_tls-native-tls = ["sqlx-macros-core/_tls-native-tls"]
+_tls-rustls-aws-lc-rs = ["sqlx-macros-core/_tls-rustls-aws-lc-rs"]
+_tls-rustls-ring-webpki = ["sqlx-macros-core/_tls-rustls-ring-webpki"]
+_tls-rustls-ring-native-roots = ["sqlx-macros-core/_tls-rustls-ring-native-roots"]
+
+# SQLx features
+derive = ["sqlx-macros-core/derive"]
+macros = ["sqlx-macros-core/macros"]
+migrate = ["sqlx-macros-core/migrate"]
+
+# database
+mysql = ["sqlx-macros-core/mysql"]
+postgres = ["sqlx-macros-core/postgres"]
+sqlite = ["sqlx-macros-core/sqlite"]
+sqlite-unbundled = ["sqlx-macros-core/sqlite-unbundled"]
+
+# type
+bigdecimal = ["sqlx-macros-core/bigdecimal"]
+bit-vec = ["sqlx-macros-core/bit-vec"]
+chrono = ["sqlx-macros-core/chrono"]
+ipnet = ["sqlx-macros-core/ipnet"]
+ipnetwork = ["sqlx-macros-core/ipnetwork"]
+mac_address = ["sqlx-macros-core/mac_address"]
+rust_decimal = ["sqlx-macros-core/rust_decimal"]
+time = ["sqlx-macros-core/time"]
+uuid = ["sqlx-macros-core/uuid"]
+json = ["sqlx-macros-core/json"]
+
+[dependencies]
+sqlx-core = { workspace = true, features = ["any"] }
+sqlx-macros-core = { workspace = true }
+
+proc-macro2 = { version = "1.0.36", default-features = false }
+syn = { version = "2.0.52", default-features = false, features = ["parsing", "proc-macro"] }
+quote = { version = "1.0.26", default-features = false }
+
+[lints]
+workspace = true

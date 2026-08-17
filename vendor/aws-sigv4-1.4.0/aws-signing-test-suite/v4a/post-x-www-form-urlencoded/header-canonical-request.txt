@@ -1,0 +1,12 @@
+POST
+/
+
+content-length:13
+content-type:application/x-www-form-urlencoded
+host:example.amazonaws.com
+x-amz-content-sha256:9095672bbd1f56dfc5b65f3e153adc8731a4a654192329106275f4c7b24d0b6e
+x-amz-date:20150830T123600Z
+x-amz-region-set:us-east-1
+
+content-length;content-type;host;x-amz-content-sha256;x-amz-date;x-amz-region-set
+9095672bbd1f56dfc5b65f3e153adc8731a4a654192329106275f4c7b24d0b6e

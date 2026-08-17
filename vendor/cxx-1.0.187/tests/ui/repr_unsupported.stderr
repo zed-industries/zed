@@ -1,0 +1,17 @@
+error: C++ does not support custom alignment on an enum
+ --> tests/ui/repr_unsupported.rs:3:18
+  |
+3 |     #[repr(align(2))]
+  |                  ^
+
+error: unsupported alignment on a struct
+ --> tests/ui/repr_unsupported.rs:8:12
+  |
+8 |     #[repr(i64)]
+  |            ^^^
+
+error: invalid repr(align) attribute: an arithmetic expression is not supported
+  --> tests/ui/repr_unsupported.rs:13:18
+   |
+13 |     #[repr(align(1 << 10))]
+   |                  ^^^^^^^

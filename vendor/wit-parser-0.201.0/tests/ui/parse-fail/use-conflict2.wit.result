@@ -1,0 +1,5 @@
+name `x` is defined more than once
+     --> tests/ui/parse-fail/use-conflict2.wit:12:8
+      |
+   12 |   type x = s64;
+      |        ^

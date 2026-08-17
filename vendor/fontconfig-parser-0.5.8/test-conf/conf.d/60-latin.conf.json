@@ -1,0 +1,99 @@
+[
+  {
+    "Description": "Set preferable fonts for Latin"
+  },
+  {
+    "Alias": {
+      "alias": "serif",
+      "prefer": [
+        "DejaVu Serif",
+        "Times New Roman",
+        "Thorndale AMT",
+        "Luxi Serif",
+        "Nimbus Roman No9 L",
+        "Nimbus Roman",
+        "Times"
+      ],
+      "accept": [],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "sans-serif",
+      "prefer": [
+        "DejaVu Sans",
+        "Verdana",
+        "Arial",
+        "Albany AMT",
+        "Luxi Sans",
+        "Nimbus Sans L",
+        "Nimbus Sans",
+        "Helvetica",
+        "Lucida Sans Unicode",
+        "BPG Glaho International",
+        "Tahoma"
+      ],
+      "accept": [],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "monospace",
+      "prefer": [
+        "DejaVu Sans Mono",
+        "Inconsolata",
+        "Andale Mono",
+        "Courier New",
+        "Cumberland AMT",
+        "Luxi Mono",
+        "Nimbus Mono L",
+        "Nimbus Mono",
+        "Nimbus Mono PS",
+        "Courier"
+      ],
+      "accept": [],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "fantasy",
+      "prefer": [
+        "Impact",
+        "Copperplate Gothic Std",
+        "Cooper Std",
+        "Bauhaus Std"
+      ],
+      "accept": [],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "cursive",
+      "prefer": [
+        "ITC Zapf Chancery Std",
+        "Zapfino",
+        "Comic Sans MS"
+      ],
+      "accept": [],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "system-ui",
+      "prefer": [
+        "Cantarell",
+        "Noto Sans UI",
+        "Segoe UI",
+        "Segoe UI Historic",
+        "Segoe UI Symbol"
+      ],
+      "accept": [],
+      "default": []
+    }
+  }
+]

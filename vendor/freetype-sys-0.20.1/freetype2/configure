@@ -1,0 +1,137 @@
+#!/bin/sh
+#
+# Copyright (C) 2002-2023 by
+# David Turner, Robert Wilhelm, and Werner Lemberg.
+#
+# This file is part of the FreeType project, and may only be used, modified,
+# and distributed under the terms of the FreeType project license,
+# LICENSE.TXT.  By continuing to use, modify, or distribute this file you
+# indicate that you have read the license and understand and accept it
+# fully.
+#
+#
+# Call the `configure' script located in `builds/unix'.
+#
+
+rm -f config.mk builds/unix/unix-def.mk builds/unix/unix-cc.mk
+
+# respect GNUMAKE environment variable for backward compatibility
+if test "x$GNUMAKE" = x; then
+  if test "x$MAKE" = x; then
+    if test "x`make -v 2>/dev/null | sed -n -e '/GNU/p' -e '/makepp/p'`" = x; then
+      MAKE=gmake
+    else
+      MAKE=make
+    fi
+  fi
+else
+  MAKE=$GNUMAKE
+fi
+
+if test "x`$MAKE -v 2>/dev/null | sed -n -e '/GNU/p' -e '/makepp/p'`" = x; then
+  echo "GNU make (>= 3.81) or makepp (>= 2.0) is required to build FreeType2." >&2
+  echo "Please try" >&2
+  echo >&2
+  echo "  MAKE=<GNU make command name> $0" >&2
+  echo >&2
+  echo "or" >&2
+  echo >&2
+  echo "  MAKE=\"makepp --norc-substitution\" $0" >&2
+  exit 1
+fi
+
+# Get `dirname' functionality.  This is taken and adapted from autoconf's
+# m4sh.m4 (_AS_EXPR_PREPARE, AS_DIRNAME_EXPR, and AS_DIRNAME_SED).
+
+if expr a : '\(a\)' >/dev/null 2>&1; then
+  ft_expr=expr
+else
+  ft_expr=false
+fi
+
+ft2_dir=`(dirname "$0") 2>/dev/null                         ||
+         $ft_expr X"$0" : 'X\(.*[^/]\)//*[^/][^/]*/*$' \| \
+                  X"$0" : 'X\(//\)[^/]' \| \
+                  X"$0" : 'X\(//\)$' \| \
+                  X"$0" : 'X\(/\)' \| \
+                  .     : '\(.\)' 2>/dev/null               ||
+         echo X"$0" |
+           sed '/^X\(.*[^/]\)\/\/*[^/][^/]*\/*$/{
+                  s//\1/
+                  q
+                }
+                /^X\(\/\/\)[^/].*/{
+                  s//\1/
+                  q
+                }
+                /^X\(\/\/\)$/{
+                  s//\1/
+                  q
+                }
+                /^X\(\/\).*/{
+                  s//\1/
+                  q
+                }
+                s/.*/./; q'`
+
+abs_curr_dir=`pwd`
+abs_ft2_dir=`cd "$ft2_dir" && pwd`
+
+# `--srcdir=' option can override abs_ft2_dir
+
+if test $# -gt 0; then
+  for x in "$@"; do
+    case x"$x" in
+    x--srcdir=*)
+      abs_ft2_dir=`echo $x | sed 's/^--srcdir=//'` ;;
+    esac
+  done
+fi
+
+# build a dummy Makefile if we are not building in the source tree;
+# we use inodes to avoid issues with symbolic links
+inode_src=`ls -id $abs_ft2_dir | awk '{print $1}'`
+inode_dst=`ls -id $abs_curr_dir | awk '{print $1}'`
+
+if test $inode_src != $inode_dst; then
+  if test ! -d docs; then
+    mkdir docs
+    echo "Copying documentation assets"
+    cp -R $abs_ft2_dir/docs/markdown $abs_curr_dir/docs
+  fi
+  if test ! -r $abs_curr_dir/modules.cfg; then
+    echo "Copying \`modules.cfg'"
+    cp $abs_ft2_dir/modules.cfg $abs_curr_dir
+  fi
+  echo "Generating \`Makefile'"
+  echo "TOP_DIR        := $abs_ft2_dir"           > Makefile
+  echo "OBJ_DIR        := $abs_curr_dir"         >> Makefile
+  echo "OBJ_BUILD      := \$(OBJ_DIR)"           >> Makefile
+  echo "DOC_DIR        := \$(OBJ_DIR)/docs"      >> Makefile
+  echo "FT_LIBTOOL_DIR := \$(OBJ_DIR)"           >> Makefile
+  echo "ifndef FT2DEMOS"                         >> Makefile
+  echo "  include \$(TOP_DIR)/Makefile"          >> Makefile
+  echo "else"                                    >> Makefile
+  echo "  TOP_DIR_2 := \$(TOP_DIR)/../ft2demos"  >> Makefile
+  echo "  PROJECT   := freetype"                 >> Makefile
+  echo "  CONFIG_MK := \$(OBJ_DIR)/config.mk"    >> Makefile
+  echo "  include \$(TOP_DIR_2)/Makefile"        >> Makefile
+  echo "endif"                                   >> Makefile
+fi
+
+# call make
+
+CFG=
+# work around zsh bug which doesn't like `${1+"$@"}'
+case $# in
+0) ;;
+*) for x in "$@"; do
+     case x"$x" in
+     x--srcdir=* ) CFG="$CFG '$x'/builds/unix" ;;
+     *) CFG="$CFG '$x'" ;;
+     esac
+   done ;;
+esac
+CFG=$CFG $MAKE setup unix
+
+# eof

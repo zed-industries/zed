@@ -1,0 +1,35 @@
+[package]
+name = "bzip2"
+version = "0.4.4"
+authors = ["Alex Crichton <alex@alexcrichton.com>"]
+license = "MIT/Apache-2.0"
+readme = "README.md"
+keywords = ["bzip", "encoding"]
+repository = "https://github.com/alexcrichton/bzip2-rs"
+homepage = "https://github.com/alexcrichton/bzip2-rs"
+documentation = "https://docs.rs/bzip2"
+description = """
+Bindings to libbzip2 for bzip2 compression and decompression exposed as
+Reader/Writer streams.
+"""
+categories = ["compression", "api-bindings"]
+
+[workspace]
+
+[dependencies]
+libc = "0.2"
+bzip2-sys = { version = "0.1.11", path = "bzip2-sys" }
+tokio-io = { version = "0.1", optional = true }
+futures = { version = "0.1", optional = true }
+
+[dev-dependencies]
+rand = "0.8"
+partial-io = { version = "0.3", features = ["quickcheck"] }
+quickcheck = "1.0"
+quickcheck6 = { version = "0.6", package = "quickcheck" }
+tokio-core = "0.1"
+
+[features]
+tokio = ["tokio-io", "futures"]
+# Enable this feature if you want to have a statically linked bzip2
+static = ["bzip2-sys/static"]

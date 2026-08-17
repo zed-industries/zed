@@ -1,0 +1,169 @@
+{% macro impl_mat4_inverse() %}
+    unsafe {
+        // Based on https://github.com/g-truc/glm `glm_mat4_inverse`
+        let swizzle3377 = |a: float32x4_t, b: float32x4_t| -> float32x4_t {
+            let r = vuzp2q_f32(a, b);
+            vtrn2q_f32(r, r)
+        };
+        let swizzle2266 = |a: float32x4_t, b: float32x4_t| -> float32x4_t {
+            let r = vuzp1q_f32(a, b);
+            vtrn2q_f32(r, r)
+        };
+        let swizzle0046 = |a: float32x4_t, b: float32x4_t| -> float32x4_t {
+            let r = vuzp1q_f32(a, a);
+            vuzp1q_f32(r, b)
+        };
+        let swizzle1155 = |a: float32x4_t, b: float32x4_t| -> float32x4_t {
+            let r = vzip1q_f32(a, b);
+            vzip2q_f32(r, r)
+        };
+        let swizzle0044 = |a: float32x4_t, b: float32x4_t| -> float32x4_t {
+            let r = vuzp1q_f32(a, b);
+            vtrn1q_f32(r, r)
+        };
+        let swizzle0266 = |a: float32x4_t, b: float32x4_t| -> float32x4_t {
+            let r = vuzp1q_f32(a, b);
+            vsetq_lane_f32(vgetq_lane_f32(b, 2), r, 2)
+        };
+        let swizzle0246 = |a: float32x4_t, b: float32x4_t| -> float32x4_t {
+            vuzp1q_f32(a, b)
+        };
+        let fac0 = {
+            let swp0a = swizzle3377(self.w_axis.0, self.z_axis.0);
+            let swp0b = swizzle2266(self.w_axis.0, self.z_axis.0);
+
+            let swp00 = swizzle2266(self.z_axis.0, self.y_axis.0);
+            let swp01 = swizzle0046(swp0a, swp0a);
+            let swp02 = swizzle0046(swp0b, swp0b);
+            let swp03 = swizzle3377(self.z_axis.0, self.y_axis.0);
+
+            let mul00 = vmulq_f32(swp00, swp01);
+            let mul01 = vmulq_f32(swp02, swp03);
+            vsubq_f32(mul00, mul01)
+        };
+        let fac1 = {
+            let swp0a = swizzle3377(self.w_axis.0, self.z_axis.0);
+            let swp0b = swizzle1155(self.w_axis.0, self.z_axis.0);
+
+            let swp00 = swizzle1155(self.z_axis.0, self.y_axis.0);
+            let swp01 = swizzle0046(swp0a, swp0a);
+            let swp02 = swizzle0046(swp0b, swp0b);
+            let swp03 = swizzle3377(self.z_axis.0, self.y_axis.0);
+
+            let mul00 = vmulq_f32(swp00, swp01);
+            let mul01 = vmulq_f32(swp02, swp03);
+            vsubq_f32(mul00, mul01)
+        };
+        let fac2 = {
+            let swp0a = swizzle2266(self.w_axis.0, self.z_axis.0);
+            let swp0b = swizzle1155(self.w_axis.0, self.z_axis.0);
+
+            let swp00 = swizzle1155(self.z_axis.0, self.y_axis.0);
+            let swp01 = swizzle0046(swp0a, swp0a);
+            let swp02 = swizzle0046(swp0b, swp0b);
+            let swp03 = swizzle2266(self.z_axis.0, self.y_axis.0);
+
+            let mul00 = vmulq_f32(swp00, swp01);
+            let mul01 = vmulq_f32(swp02, swp03);
+            vsubq_f32(mul00, mul01)
+        };
+        let fac3 = {
+            let swp0a = swizzle3377(self.w_axis.0, self.z_axis.0);
+            let swp0b = swizzle0044(self.w_axis.0, self.z_axis.0);
+
+            let swp00 = swizzle0044(self.z_axis.0, self.y_axis.0);
+            let swp01 = swizzle0046(swp0a, swp0a);
+            let swp02 = swizzle0046(swp0b, swp0b);
+            let swp03 = swizzle3377(self.z_axis.0, self.y_axis.0);
+
+            let mul00 = vmulq_f32(swp00, swp01);
+            let mul01 = vmulq_f32(swp02, swp03);
+            vsubq_f32(mul00, mul01)
+        };
+        let fac4 = {
+            let swp0a = swizzle2266(self.w_axis.0, self.z_axis.0);
+            let swp0b = swizzle0044(self.w_axis.0, self.z_axis.0);
+
+            let swp00 = swizzle0044(self.z_axis.0, self.y_axis.0);
+            let swp01 = swizzle0046(swp0a, swp0a);
+            let swp02 = swizzle0046(swp0b, swp0b);
+            let swp03 = swizzle2266(self.z_axis.0, self.y_axis.0);
+
+            let mul00 = vmulq_f32(swp00, swp01);
+            let mul01 = vmulq_f32(swp02, swp03);
+            vsubq_f32(mul00, mul01)
+        };
+        let fac5 = {
+            let swp0a = swizzle1155(self.w_axis.0, self.z_axis.0);
+            let swp0b = swizzle0044(self.w_axis.0, self.z_axis.0);
+
+            let swp00 = swizzle0044(self.z_axis.0, self.y_axis.0);
+            let swp01 = swizzle0046(swp0a, swp0a);
+            let swp02 = swizzle0046(swp0b, swp0b);
+            let swp03 = swizzle1155(self.z_axis.0, self.y_axis.0);
+
+            let mul00 = vmulq_f32(swp00, swp01);
+            let mul01 = vmulq_f32(swp02, swp03);
+            vsubq_f32(mul00, mul01)
+        };
+
+        const SIGN_A: float32x4_t = Vec4::new(-1.0, 1.0, -1.0, 1.0).0;
+        const SIGN_B: float32x4_t = Vec4::new(1.0, -1.0, 1.0, -1.0).0;
+
+        let temp0 = swizzle0044(self.y_axis.0, self.x_axis.0);
+        let vec0 = swizzle0266(temp0, temp0);
+
+        let temp1 = swizzle1155(self.y_axis.0, self.x_axis.0);
+        let vec1 = swizzle0266(temp1, temp1);
+
+        let temp2 = swizzle2266(self.y_axis.0, self.x_axis.0);
+        let vec2 = swizzle0266(temp2, temp2);
+
+        let temp3 = swizzle3377(self.y_axis.0, self.x_axis.0);
+        let vec3 = swizzle0266(temp3, temp3);
+
+        let mul00 = vmulq_f32(vec1, fac0);
+        let mul01 = vmulq_f32(vec2, fac1);
+        let mul02 = vmulq_f32(vec3, fac2);
+        let sub00 = vsubq_f32(mul00, mul01);
+        let add00 = vaddq_f32(sub00, mul02);
+        let inv0 = vmulq_f32(SIGN_B, add00);
+
+        let mul03 = vmulq_f32(vec0, fac0);
+        let mul04 = vmulq_f32(vec2, fac3);
+        let mul05 = vmulq_f32(vec3, fac4);
+        let sub01 = vsubq_f32(mul03, mul04);
+        let add01 = vaddq_f32(sub01, mul05);
+        let inv1 = vmulq_f32(SIGN_A, add01);
+
+        let mul06 = vmulq_f32(vec0, fac1);
+        let mul07 = vmulq_f32(vec1, fac3);
+        let mul08 = vmulq_f32(vec3, fac5);
+        let sub02 = vsubq_f32(mul06, mul07);
+        let add02 = vaddq_f32(sub02, mul08);
+        let inv2 = vmulq_f32(SIGN_B, add02);
+
+        let mul09 = vmulq_f32(vec0, fac2);
+        let mul10 = vmulq_f32(vec1, fac4);
+        let mul11 = vmulq_f32(vec2, fac5);
+        let sub03 = vsubq_f32(mul09, mul10);
+        let add03 = vaddq_f32(sub03, mul11);
+        let inv3 = vmulq_f32(SIGN_A, add03);
+
+        let row0 = swizzle0044(inv0, inv1);
+        let row1 = swizzle0044(inv2, inv3);
+        let row2 = swizzle0246(row0, row1);
+
+        let dot0 = dot4(self.x_axis.0, row2);
+        glam_assert!(dot0 != 0.0);
+
+        let rcp0 = dot0.recip();
+
+        Self {
+            x_axis: Vec4(vmulq_n_f32(inv0, rcp0)),
+            y_axis: Vec4(vmulq_n_f32(inv1, rcp0)),
+            z_axis: Vec4(vmulq_n_f32(inv2, rcp0)),
+            w_axis: Vec4(vmulq_n_f32(inv3, rcp0)),
+        }
+    }
+{% endmacro impl_mat4_inverse %}

@@ -1,0 +1,52 @@
+<?xml version="1.0"?>
+
+<ratified href="EXT_texture_filter_anisotropic/">
+  <name>EXT_texture_filter_anisotropic</name>
+  <contact>
+    <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL working group</a> (public_webgl 'at' khronos.org)
+  </contact>
+  <contributors>
+    <contributor>Members of the WebGL working group</contributor>
+    <contributor>Florian B&#246;sch (pyalot 'at' gmail.com)</contributor>
+  </contributors>
+  <number>11</number>
+  <depends>
+    <api version="1.0" />
+  </depends>
+  <overview>
+    <mirrors href="http://www.khronos.org/registry/gles/extensions/EXT/texture_filter_anisotropic.txt" name="EXT_texture_filter_anisotropic"/>
+    <features>
+      <feature>
+        The <code>getTexParameter</code>, <code>texParameterf</code> and <code>texParameteri</code> entry points'
+        parameter <code>pname</code> accepts the value <code>TEXTURE_MAX_ANISOTROPY_EXT</code>
+      </feature>
+      <feature>
+        The <code>getParameter</code> entry point parameter <code>pname</code> accepts the value <code>MAX_TEXTURE_MAX_ANISOTROPY_EXT</code>, returning a value of type <code>float</code>.
+      </feature>
+    </features>
+  </overview>
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface EXT_texture_filter_anisotropic {
+  const GLenum TEXTURE_MAX_ANISOTROPY_EXT       = 0x84FE;
+  const GLenum MAX_TEXTURE_MAX_ANISOTROPY_EXT   = 0x84FF;
+};
+  </idl>
+  <history>
+    <revision date="2012/01/27">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2012/02/24">
+      <change>Added the EXT suffix to the enumerants and aliases to the extension name</change>
+    </revision>
+    <revision date="2012/07/19">
+      <change>Moved from draft to community approved status</change>
+    </revision>
+    <revision date="2013/05/15">
+      <change>Ratified by Khronos Board of Promoters.</change>
+    </revision>
+    <revision date="2014/07/15">
+      <change>Added NoInterfaceObject extended attribute.</change>
+    </revision>
+  </history>
+</ratified>

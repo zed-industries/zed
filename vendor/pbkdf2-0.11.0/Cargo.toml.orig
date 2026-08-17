@@ -1,0 +1,40 @@
+[package]
+name = "pbkdf2"
+version = "0.11.0"
+authors = ["RustCrypto Developers"]
+license = "MIT OR Apache-2.0"
+description = "Generic implementation of PBKDF2"
+documentation = "https://docs.rs/pbkdf2"
+repository = "https://github.com/RustCrypto/password-hashes/tree/master/pbkdf2"
+keywords = ["crypto", "password", "hashing"]
+categories = ["cryptography", "no-std"]
+readme = "README.md"
+edition = "2021"
+rust-version = "1.57"
+
+[dependencies]
+digest = { version = "0.10.3", features = ["mac"] }
+
+# optional dependencies
+rayon = { version = "1.2", optional = true }
+password-hash = { version = "0.4", default-features = false, optional = true, features = ["rand_core"]  }
+hmac = { version = "0.12", default-features = false, optional = true }
+sha1 = { version = "0.10", package = "sha-1", default-features = false, optional = true }
+sha2 = { version = "0.10", default-features = false, optional = true }
+
+[dev-dependencies]
+hmac = "0.12"
+hex-literal = "0.3"
+sha1 = { version = "0.10", package = "sha-1" }
+sha2 = "0.10"
+streebog = "0.10"
+
+[features]
+default = ["simple"]
+parallel = ["rayon", "std"]
+simple = ["hmac", "password-hash", "sha2"]
+std = ["password-hash/std"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

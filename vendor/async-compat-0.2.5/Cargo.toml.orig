@@ -1,0 +1,29 @@
+[package]
+name = "async-compat"
+# When publishing a new version:
+# - Update CHANGELOG.md
+# - Create "v0.x.y" git tag
+version = "0.2.5"
+authors = ["Stjepan Glavina <stjepang@gmail.com>"]
+edition = "2018"
+description = "Compatibility adapter between tokio and futures"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/smol-rs/async-compat"
+homepage = "https://github.com/smol-rs/async-compat"
+documentation = "https://docs.rs/async-compat"
+keywords = ["tokio", "futures", "convert", "context"]
+categories = ["asynchronous"]
+
+[dependencies]
+futures-core = "0.3.5"
+futures-io = "0.3.5"
+once_cell = "1.4.1"
+pin-project-lite = "0.2"
+tokio = { version = "1", default-features = false, features = ["rt"] }
+
+[dev-dependencies]
+blocking = "1"
+futures = "0.3.5"
+reqwest = "0.12"
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "io-std", "io-util", "macros", "net", "time"] }
+warp = "0.3"

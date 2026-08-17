@@ -1,0 +1,16 @@
+---
+- name: Missing comma in flow
+  from: ihttps://gist.github.com/anonymous/4ba3365607cc14b4f656e391b45bf4f4 via @ingydotnet
+  tags: error flow comment
+  fail: true
+  yaml: |
+    key: [ word1
+    #  xxx
+      word2 ]
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :key
+       +SEQ []
+        =VAL :word1

@@ -1,0 +1,15 @@
+error: unsupported type CIRCLE of column #1 ("circle")
+ --> $DIR/unsupported-type.rs:3:13
+  |
+3 |     let _ = sqlx::query!("select null::circle");
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in a macro (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: unsupported type CIRCLE for param #1
+ --> $DIR/unsupported-type.rs:4:13
+  |
+4 |     let _ = sqlx::query!("select $1::circle", panic!());
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in a macro (in Nightly builds, run with -Z macro-backtrace for more info)

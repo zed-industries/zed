@@ -1,0 +1,28 @@
+---
+- name: Block scalar indicator order
+  from: '@perlpunk'
+  tags: indent literal
+  yaml: |
+    - |2-
+      explicit indent and chomp
+    - |-2
+      chomp and explicit indent
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       =VAL |explicit indent and chomp
+       =VAL |chomp and explicit indent
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      "explicit indent and chomp",
+      "chomp and explicit indent"
+    ]
+  dump: |
+    - |-
+      explicit indent and chomp
+    - |-
+      chomp and explicit indent

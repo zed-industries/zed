@@ -1,0 +1,8 @@
+r#"As a relaxation of clause 6 of the LGPL, the copyright holders of this
+library give permission to use, copy, link, modify, and distribute,
+binary-only object-code versions of an executable linked with the
+original unmodified Library, without requiring the supply of any
+mechanism to modify or replace the Library and relink (clauses 6a,
+6b, 6c, 6d, 6e), provided that all the other terms of clause 6 are
+complied with.
+"#

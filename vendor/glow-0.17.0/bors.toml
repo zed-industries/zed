@@ -1,0 +1,8 @@
+status = [
+    "build (pinned)",
+    "build (stable)",
+    "build (beta)",
+    "build (nightly)",
+    "build (macos)",
+    "build (windows)"
+]

@@ -1,0 +1,23 @@
+error: invalid component: ordinal was 0
+ --> tests/integration/compile-fail/invalid_datetime.rs:4:28
+  |
+4 |     let _ = datetime!(2021-000 0:00);
+  |                            ^^^
+
+error: invalid component: hour was 24
+ --> tests/integration/compile-fail/invalid_datetime.rs:5:32
+  |
+5 |     let _ = datetime!(2021-001 24:00);
+  |                                ^^
+
+error: unexpected token: 0
+ --> tests/integration/compile-fail/invalid_datetime.rs:6:37
+  |
+6 |     let _ = datetime!(2021-001 0:00 0);
+  |                                     ^
+
+error: unexpected token: x
+ --> tests/integration/compile-fail/invalid_datetime.rs:7:41
+  |
+7 |     let _ = datetime!(2021-001 0:00 UTC x);
+  |                                         ^

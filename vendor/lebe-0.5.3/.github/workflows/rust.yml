@@ -1,0 +1,98 @@
+name: Rust
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Build
+      run: cargo build --verbose
+    - name: Run tests
+      run: cargo test --verbose
+
+  verify-msrv:
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    name: verify minimum supported rust version without cache (takes longer, but caching produces unexpected behaviour)
+    timeout-minutes: 30
+
+    # we are using the `cargo-msrv` app
+    # https://github.com/foresterre/cargo-msrv
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install foresterre/cargo-msrv
+        run: cargo install cargo-msrv
+
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Generate Cargo.lock with minimal-version dependencies
+        run: cargo -Zminimal-versions generate-lockfile
+
+      - name: Verify the Rustc version declared in `Cargo.toml` with `minimal-versions`
+        run: cargo-msrv verify
+
+  # github actions does not support big endian systems directly, but it does support QEMU.
+  # so we use cross-rs, which uses QEMU internally.
+  big-endian:
+    runs-on: ubuntu-latest
+    name: test on emulated big endian system
+    timeout-minutes: 90
+
+    # we are using the cross project for cross compilation:
+    # https://github.com/cross-rs/cross
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install or use cached cross-rs/cross
+        uses: baptiste0928/cargo-install@v1
+        with:
+          crate: cross
+
+      - name: Cache Cargo Dependencies
+        uses: Swatinem/rust-cache@v1.3.0
+
+      - name: Start Docker
+        run: sudo systemctl start docker
+
+      # https://github.com/cross-rs/cross#supported-targets
+      - name: Cross-Compile project to powerpc-unknown-linux-gnu
+        run: cross build --target powerpc-unknown-linux-gnu --verbose
+
+      - name: Cross-Run Tests in powerpc-unknown-linux-gnu
+        run: cross test --target powerpc-unknown-linux-gnu --verbose
+
+  wasm32:
+    runs-on: ubuntu-latest
+    name: test on wasm32
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Cache Cargo Dependencies
+        uses: Swatinem/rust-cache@v1.3.0
+
+      - name: Add wasm32 Target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Build without default features
+        run: cargo build --verbose --no-default-features --target wasm32-unknown-unknown
+
+      - name: Run tests without default features
+        run: cargo test --verbose --no-default-features
+

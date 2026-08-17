@@ -1,0 +1,25 @@
+package foo:root;
+package foo:bar {
+  world module {
+    import bar: interface {
+      record x {
+          a: u8
+      }
+
+      bar1: func(x: string);
+      bar2: func(x: x);
+    }
+  }
+}
+
+package baz:qux {
+  world module {
+    import qux: interface {
+      type x = s8;
+
+      qux1: func(x: list<string>);
+      qux2: func();
+      qux3: func(x: x);
+    }
+  }
+}

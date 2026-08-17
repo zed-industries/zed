@@ -1,0 +1,32 @@
+Please follow the instructions in  INSTALL.UNIX to install FreeType on
+Mac OS X.
+
+Currently  FreeType2 functions  based on  some deprecated  Carbon APIs
+return  `FT_Err_Unimplemented_Feature' always,  even  if FreeType2  is
+configured and  built on  the system that  deprecated Carbon  APIs are
+available.   To  enable  deprecated  FreeType2  functions  as  far  as
+possible, replace `src/base/ftmac.c' by `builds/mac/ftmac.c'.
+
+Starting with  Mac OS X  10.5, gcc  defaults the deployment  target to
+10.5.  In previous  versions of Mac OS X, this  defaulted to 10.1.  If
+you want your built binaries to run only on 10.5, this change does not
+concern you.  If  you want them to  also run on older  versions of Mac
+OS  X,   then  you   must  either  set   the  MACOSX_DEPLOYMENT_TARGET
+environment  variable  or  pass `-mmacosx-version-min'  to  gcc.   You
+should specify the oldest  version of Mac OS you want  the code to run
+on.  For example, if you use Bourne shell:
+
+  export MACOSX_DEPLOYMENT_TARGET=10.2
+
+or, if you use C shell:
+
+  setenv MACOSX_DEPLOYMENT_TARGET 10.2
+
+Alternatively, you could pass `-mmacosx-version-min=10.2' to gcc.
+
+Here the number 10.2 is the lowest version that the built binaries can
+run on.  In the  above cases, the built binaries will run  on Mac OS X
+10.2 and later, but _not_ earlier.  If you want to run on earlier, you
+have to set lower version, e.g., 10.0.
+
+For classic Mac OS (Mac OS 7, 8, 9) please refer to builds/mac/README.

@@ -1,0 +1,20 @@
+[package]
+name = "dispatch"
+version = "0.2.0"
+authors = ["Steven Sheldon"]
+edition = "2018"
+
+description = "Rust wrapper for Apple's Grand Central Dispatch."
+keywords = ["gcd", "objective-c", "osx", "ios"]
+readme = "README.md"
+repository = "http://github.com/SSheldon/rust-dispatch"
+documentation = "http://ssheldon.github.io/rust-objc/dispatch/"
+license = "MIT"
+
+exclude = [
+  ".gitignore",
+  ".travis.yml",
+  "travis_install.sh",
+  "travis_test.sh",
+  "tests-ios/**",
+]

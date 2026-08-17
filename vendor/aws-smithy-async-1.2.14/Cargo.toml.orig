@@ -1,0 +1,41 @@
+[package]
+name = "aws-smithy-async"
+version = "1.2.14"
+authors = ["AWS Rust SDK Team <aws-sdk-rust@amazon.com>", "John DiSanti <jdisanti@amazon.com>"]
+description = "Async runtime agnostic abstractions for smithy-rs."
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/smithy-lang/smithy-rs"
+rust-version = "1.91.1"
+
+[features]
+rt-tokio = ["tokio/time"]
+test-util = ["rt-tokio", "tokio/rt"]
+
+[dependencies]
+pin-project-lite = "0.2.14"
+tokio = { version = "1.49.0", features = ["sync"] }
+futures-util = { version = "0.3.29", default-features = false }
+
+[dev-dependencies]
+pin-utils = "0.1"
+tokio = { version = "1.49.0", features = ["rt", "macros", "test-util"] }
+tokio-test = "0.4.2"
+
+# futures-util is used by `now_or_later`, for instance, but the tooling
+# reports a false positive, saying it is unused.
+[package.metadata.cargo-udeps.ignore]
+normal = ["futures-util"]
+
+[package.metadata.docs.rs]
+all-features = true
+targets = ["x86_64-unknown-linux-gnu"]
+cargo-args = ["-Zunstable-options", "-Zrustdoc-scrape-examples"]
+rustdoc-args = ["--cfg", "docsrs"]
+# End of docs.rs metadata
+
+# make sure to keep crate stability in sync with the second element of the following tuple in
+# buildSrc/src/main/kotlin/CrateSet.kt:
+#  Crate("aws-smithy-async", STABLE_VERSION_PROP_NAME),
+[package.metadata.smithy-rs-release-tooling]
+stable = true

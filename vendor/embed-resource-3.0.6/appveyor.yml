@@ -1,0 +1,46 @@
+image:
+  - Visual Studio 2022
+
+version: 3.0.6-{build}
+
+skip_tags: false
+
+clone_folder: C:\rust-embed-resource
+
+environment:
+  matrix:
+    - TARGET: x86_64-pc-windows-gnu
+      MINGW: true
+      TOOLCHAIN: stable
+    - TARGET: x86_64-pc-windows-gnu
+      MINGW: true
+      TOOLCHAIN: 1.76.0
+    - TARGET: x86_64-pc-windows-msvc
+      TOOLCHAIN: stable
+    - TARGET: x86_64-pc-windows-msvc
+      TOOLCHAIN: 1.76.0
+
+install:
+  - set PATH=%PATH%;C:\Users\appveyor\.cargo\bin
+  - if defined MINGW set PATH=C:\msys64\mingw64\bin;C:\msys64\usr\bin;%PATH%
+  - if defined MINGW bash -lc "pacman --noconfirm -Syyu"
+  - if defined MINGW bash -lc "pacman --noconfirm -Syyu"
+  - if defined MINGW bash -lc "pacman --noconfirm -S mingw-w64-x86_64-toolchain"
+  - curl -SL https://win.rustup.rs/ -oC:\rustup-init.exe
+  - C:\rustup-init.exe -y --default-host="%TARGET%" --default-toolchain="%TOOLCHAIN%"
+
+build: off
+build_script:
+  - cargo build --verbose --release --workspace
+
+test: off
+test_script:
+  - cargo test --verbose --release
+  - cargo run --verbose --release -- empty-resource.rc
+  - cargo run --verbose --release -- include-version.rc .github/workflows/msvc
+
+notifications:
+  - provider: Email
+    to:
+      - nabijaczleweli@gmail.com
+    on_build_status_changed: true

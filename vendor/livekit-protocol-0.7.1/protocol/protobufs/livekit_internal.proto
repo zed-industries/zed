@@ -1,0 +1,217 @@
+// Copyright 2023 LiveKit, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package livekit;
+
+import "livekit_agent_dispatch.proto";
+import "livekit_egress.proto";
+// internal protos, not exposed to clients
+import "livekit_models.proto";
+import "livekit_room.proto";
+import "livekit_rtc.proto";
+
+option csharp_namespace = "LiveKit.Proto";
+option go_package = "github.com/livekit/protocol/livekit";
+option ruby_package = "LiveKit::Proto";
+
+enum NodeType {
+  SERVER = 0;
+  CONTROLLER = 1;
+  MEDIA = 2;
+  TURN = 4;
+  SWEEPER = 5;
+  DIRECTOR = 6;
+  HOSTED_AGENT = 7;
+  SETTINGS = 8;
+}
+
+enum NodeState {
+  STARTING_UP = 0;
+  SERVING = 1;
+  SHUTTING_DOWN = 2;
+}
+
+message Node {
+  string id = 1;
+  string ip = 2;
+  uint32 num_cpus = 3;
+  NodeStats stats = 4;
+  NodeType type = 5;
+  NodeState state = 6;
+  string region = 7;
+}
+
+message NodeStats {
+  // when server was started
+  int64 started_at = 1;
+  // when server last reported its status
+  int64 updated_at = 2;
+
+  // room
+  int32 num_rooms = 3;
+  int32 num_clients = 4;
+  int32 num_tracks_in = 5;
+  int32 num_tracks_out = 6;
+  int32 num_track_publish_attempts = 36;
+  float track_publish_attempts_per_sec = 37 [deprecated = true];
+  int32 num_track_publish_success = 38;
+  float track_publish_success_per_sec = 39 [deprecated = true];
+  int32 num_track_publish_cancels = 51;
+  int32 num_track_subscribe_attempts = 40;
+  float track_subscribe_attempts_per_sec = 41 [deprecated = true];
+  int32 num_track_subscribe_success = 42;
+  float track_subscribe_success_per_sec = 43 [deprecated = true];
+  int32 num_track_subscribe_cancels = 52;
+
+  // packet
+  uint64 bytes_in = 7;
+  uint64 bytes_out = 8;
+  uint64 packets_in = 9;
+  uint64 packets_out = 10;
+  uint64 nack_total = 11;
+  float bytes_in_per_sec = 12 [deprecated = true];
+  float bytes_out_per_sec = 13 [deprecated = true];
+  float packets_in_per_sec = 14;
+  float packets_out_per_sec = 15 [deprecated = true];
+  float nack_per_sec = 16 [deprecated = true];
+
+  // system
+  uint32 num_cpus = 17;
+  float load_avg_last1min = 18;
+  float load_avg_last5min = 19;
+  float load_avg_last15min = 20;
+  float cpu_load = 21;
+  float memory_load = 33 [deprecated = true];
+  uint64 memory_total = 34;
+  uint64 memory_used = 35;
+  uint32 sys_packets_out = 28;
+  uint32 sys_packets_dropped = 29;
+  float sys_packets_out_per_sec = 30 [deprecated = true];
+  float sys_packets_dropped_per_sec = 31 [deprecated = true];
+  float sys_packets_dropped_pct_per_sec = 32 [deprecated = true];
+
+  // retransmissions
+  uint64 retransmit_bytes_out = 22;
+  uint64 retransmit_packets_out = 23;
+  float retransmit_bytes_out_per_sec = 24 [deprecated = true];
+  float retransmit_packets_out_per_sec = 25 [deprecated = true];
+
+  // participant joins
+  uint64 participant_signal_connected = 26;
+  float participant_signal_connected_per_sec = 27 [deprecated = true];
+  uint64 participant_rtc_connected = 44;
+  float participant_rtc_connected_per_sec = 45 [deprecated = true];
+  uint64 participant_rtc_init = 46;
+  float participant_rtc_init_per_sec = 47 [deprecated = true];
+  uint64 participant_rtc_canceled = 53;
+
+  // forward metrics
+  uint32 forward_latency = 48;
+  uint32 forward_jitter = 49;
+
+  repeated NodeStatsRate rates = 50;
+
+  // NEXT ID: 54
+}
+
+// rates of different node stats (per second)
+message NodeStatsRate {
+  int64 started_at = 1;
+  int64 ended_at = 2;
+  int64 duration = 3;
+
+  float track_publish_attempts = 4;
+  float track_publish_success = 5;
+  float track_publish_cancels = 24;
+  float track_subscribe_attempts = 6;
+  float track_subscribe_success = 7;
+  float track_subscribe_cancels = 25;
+
+  float bytes_in = 8;
+  float bytes_out = 9;
+  float packets_in = 10;
+  float packets_out = 11;
+  float nack_total = 12;
+
+  float sys_packets_out = 13;
+  float sys_packets_dropped = 14;
+
+  float retransmit_bytes_out = 15;
+  float retransmit_packets_out = 16;
+
+  float participant_signal_connected = 17;
+  float participant_rtc_connected = 18;
+  float participant_rtc_init = 19;
+  float participant_rtc_canceled = 26;
+
+  // time weighted averages across stats windows forming part of a rate measurement interval
+  float cpu_load = 20;
+  float memory_load = 21;
+  float memory_used = 22;
+  float memory_total = 23;
+
+  // NEXT ID: 27
+}
+
+message StartSession {
+  string room_name = 1;
+  string identity = 2;
+  string connection_id = 3;
+  // if a client is reconnecting (i.e. resume instead of restart)
+  bool reconnect = 4;
+  bool auto_subscribe = 9;
+  optional bool auto_subscribe_data_track = 25;
+  bool hidden = 10 [deprecated = true];
+  ClientInfo client = 11;
+  bool recorder = 12 [deprecated = true];
+  string name = 13;
+  // A user's ClaimGrants serialized in JSON
+  string grants_json = 14;
+  bool adaptive_stream = 15;
+  //if reconnect, client will set current sid
+  string participant_id = 16;
+  ReconnectReason reconnect_reason = 17;
+  optional bool subscriber_allow_pause = 18;
+  bool disable_ice_lite = 19;
+  CreateRoomRequest create_room = 20;
+  repeated livekit.AddTrackRequest add_track_requests = 21;
+  SessionDescription publisher_offer = 22;
+  SyncState sync_state = 23;
+  bool use_single_peer_connection = 24;
+
+  // NEXT ID: 26
+}
+
+// room info that should not be returned to clients
+message RoomInternal {
+  AutoTrackEgress track_egress = 1;
+  AutoParticipantEgress participant_egress = 2;
+  PlayoutDelay playout_delay = 3;
+  repeated RoomAgentDispatch agent_dispatches = 5;
+  bool sync_streams = 4;
+  bool replay_enabled = 6;
+}
+
+enum ICECandidateType {
+  ICT_NONE = 0;
+  ICT_TCP = 1;
+  ICT_TLS = 2;
+}
+
+message ICEConfig {
+  ICECandidateType preference_subscriber = 1;
+  ICECandidateType preference_publisher = 2;
+}

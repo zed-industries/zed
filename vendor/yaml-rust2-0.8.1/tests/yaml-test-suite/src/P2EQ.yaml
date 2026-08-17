@@ -1,0 +1,16 @@
+---
+- name: Invalid sequene item on same line as previous item
+  from: '@perlpunk'
+  tags: error flow mapping sequence
+  fail: true
+  yaml: |
+    ---
+    - { y: z }- invalid
+  tree: |
+    +STR
+     +DOC ---
+      +SEQ
+       +MAP {}
+        =VAL :y
+        =VAL :z
+       -MAP

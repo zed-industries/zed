@@ -1,0 +1,81 @@
+error: invalid component: hour was 24
+ --> tests/integration/compile-fail/invalid_time.rs:4:19
+  |
+4 |     let _ = time!(24:00);
+  |                   ^^
+
+error: invalid component: minute was 60
+ --> tests/integration/compile-fail/invalid_time.rs:5:21
+  |
+5 |     let _ = time!(0:60);
+  |                     ^^
+
+error: invalid component: second was 60
+ --> tests/integration/compile-fail/invalid_time.rs:6:24
+  |
+6 |     let _ = time!(0:00:60);
+  |                        ^^
+
+error: unexpected token: x
+ --> tests/integration/compile-fail/invalid_time.rs:7:19
+  |
+7 |     let _ = time!(x);
+  |                   ^
+
+error: unexpected token: x
+ --> tests/integration/compile-fail/invalid_time.rs:8:27
+  |
+8 |     let _ = time!(0:00:00 x);
+  |                           ^
+
+error: invalid component: hour was ""
+ --> tests/integration/compile-fail/invalid_time.rs:9:19
+  |
+9 |     let _ = time!("");
+  |                   ^^
+
+error: unexpected end of input
+  --> tests/integration/compile-fail/invalid_time.rs:10:13
+   |
+10 |     let _ = time!(0:);
+   |             ^^^^^^^^^
+   |
+   = note: this error originates in the macro `time` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: unexpected token: ,
+  --> tests/integration/compile-fail/invalid_time.rs:11:20
+   |
+11 |     let _ = time!(0,);
+   |                    ^
+
+error: invalid component: second was 0a
+  --> tests/integration/compile-fail/invalid_time.rs:12:24
+   |
+12 |     let _ = time!(0:00:0a);
+   |                        ^^
+
+error: invalid component: hour was 0
+  --> tests/integration/compile-fail/invalid_time.rs:13:19
+   |
+13 |     let _ = time!(0:00 pm);
+   |                   ^^^^^^^
+
+error: unexpected end of input
+  --> tests/integration/compile-fail/invalid_time.rs:14:13
+   |
+14 |     let _ = time!(0);
+   |             ^^^^^^^^
+   |
+   = note: this error originates in the macro `time` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: invalid component: hour was 0
+  --> tests/integration/compile-fail/invalid_time.rs:15:19
+   |
+15 |     let _ = time!(0 pm);
+   |                   ^^^^
+
+error: unexpected token: :
+  --> tests/integration/compile-fail/invalid_time.rs:16:24
+   |
+16 |     let _ = time!(1 am :);
+   |                        ^

@@ -1,0 +1,5 @@
+interface observe {
+  record bar {
+    a : string,
+  }
+  // NB: intentionally missing a delimiter at the end of the file

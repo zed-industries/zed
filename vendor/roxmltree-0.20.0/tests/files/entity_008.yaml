@@ -1,0 +1,8 @@
+Document:
+  - Element:
+      tag_name: root
+      children:
+        - Text: "   "
+        - Element:
+            tag_name: p
+        - Text: "   "

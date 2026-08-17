@@ -1,0 +1,11 @@
+error: the associated function `T::t_method` is defined multiple times
+ --> tests/ui/duplicate_method.rs:6:9
+  |
+6 |         fn t_method(&self);
+  |         ^^^^^^^^^^^^^^^^^^^
+
+error: the associated function `U::u_method` is defined multiple times
+  --> tests/ui/duplicate_method.rs:15:9
+   |
+15 |         fn u_method(&mut self);
+   |         ^^^^^^^^^^^^^^^^^^^^^^^

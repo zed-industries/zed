@@ -1,0 +1,39 @@
+{
+  "worlds": [
+    {
+      "name": "the-world",
+      "imports": {},
+      "exports": {},
+      "package": 1
+    },
+    {
+      "name": "the-world",
+      "imports": {},
+      "exports": {},
+      "package": 2
+    }
+  ],
+  "interfaces": [],
+  "types": [],
+  "packages": [
+    {
+      "name": "a:b3",
+      "interfaces": {},
+      "worlds": {}
+    },
+    {
+      "name": "a:b2",
+      "interfaces": {},
+      "worlds": {
+        "the-world": 0
+      }
+    },
+    {
+      "name": "a:b1",
+      "interfaces": {},
+      "worlds": {
+        "the-world": 1
+      }
+    }
+  ]
+}

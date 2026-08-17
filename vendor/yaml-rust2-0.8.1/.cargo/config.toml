@@ -1,0 +1,3 @@
+[alias]
+gen_large_yaml = "run --profile=release-lto --package gen_large_yaml --bin gen_large_yaml --manifest-path tools/gen_large_yaml/Cargo.toml --"
+bench_compare = "run --package bench_compare --bin bench_compare --manifest-path tools/bench_compare/Cargo.toml --"

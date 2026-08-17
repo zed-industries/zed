@@ -1,0 +1,12 @@
+package foo:bar;
+
+world foo {
+    export foo: func() -> (%name2: float32);
+}
+
+
+world bar {
+    include foo;
+
+    record foo {}
+}

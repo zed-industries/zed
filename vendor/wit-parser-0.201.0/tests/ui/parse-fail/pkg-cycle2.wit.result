@@ -1,0 +1,8 @@
+failed to resolve directory while parsing WIT for path [tests/ui/parse-fail/pkg-cycle2]
+
+Caused by:
+    package depends on itself
+         --> tests/ui/parse-fail/pkg-cycle2/deps/a1/root.wit:3:7
+          |
+        3 |   use foo:a2/foo.{};
+          |       ^-----

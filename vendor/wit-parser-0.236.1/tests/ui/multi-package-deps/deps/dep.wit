@@ -1,0 +1,13 @@
+package foo:dep1;
+
+package foo:dep2 {
+  interface i2 {
+    type t = string;
+  }
+}
+
+interface i1 {
+  use foo:dep2/i2.{t};
+
+  type o = option<t>;
+}

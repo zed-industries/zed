@@ -1,0 +1,29 @@
+[package]
+name = "xml5ever"
+version = "0.18.1"
+authors = ["The xml5ever project developers"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/servo/html5ever"
+description = "Push based streaming parser for XML."
+documentation = "https://docs.rs/xml5ever"
+homepage = "https://github.com/servo/html5ever/blob/main/xml5ever/README.md"
+readme = "README.md"
+keywords = ["xml", "xml5", "parser", "parsing"]
+exclude = ["xml5lib-tests/*"]
+categories = ["parser-implementations", "web-programming"]
+edition = "2021"
+
+[features]
+trace_tokenizer = []
+
+[dependencies]
+log = "0.4"
+mac = "0.1"
+markup5ever = { version = "0.12", path = "../markup5ever" }
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "xml5ever"
+harness = false

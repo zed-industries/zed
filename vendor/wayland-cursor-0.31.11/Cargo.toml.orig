@@ -1,0 +1,22 @@
+[package]
+name = "wayland-cursor"
+version = "0.31.11"
+documentation = "https://docs.rs/wayland-cursor/"
+repository = "https://github.com/smithay/wayland-rs"
+authors = ["Elinor Berger <elinor@safaradeg.net>"]
+license = "MIT"
+edition = "2021"
+rust-version = "1.65"
+categories = ["gui", "api-bindings"]
+keywords = ["wayland", "client"]
+description = "Bindings to libwayland-cursor."
+readme = "README.md"
+
+[dependencies]
+wayland-client = { version = "0.31.11", path = "../wayland-client" }
+xcursor = "0.3.1"
+rustix = { version = "1.0.2", features = ["shm"] }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

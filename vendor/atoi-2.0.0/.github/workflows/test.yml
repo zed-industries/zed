@@ -1,0 +1,24 @@
+name: Build and test
+
+on: [push, pull_request]
+
+
+jobs:
+
+  linux:
+    name: Test & Bench Linux
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Test std
+        run: cargo test
+
+      - name: Test no-std
+        run: cargo test --no-default-features
+
+      - name: Bench
+        run: cargo bench
+

@@ -1,0 +1,1813 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="API Reference Documentation for FreeType-2.13.2">
+      
+      
+      
+        <meta name="author" content="FreeType Contributors">
+      
+      
+      <link rel="icon" href="images/favico.ico">
+      <meta name="generator" content="mkdocs-1.4.3, mkdocs-material-7.1.9">
+    
+    
+      
+        <title>List Processing - FreeType-2.13.2 API Reference</title>
+      
+    
+    
+      <link rel="stylesheet" href="assets/stylesheets/main.ca7ac06f.min.css">
+      
+        
+        <link rel="stylesheet" href="assets/stylesheets/palette.f1a3b89f.min.css">
+        
+          
+          
+          <meta name="theme-color" content="#4cae4f">
+        
+      
+    
+    
+    
+      
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Noto+Serif:300,400,400i,700%7CRoboto+Mono&display=fallback">
+        <style>:root{--md-text-font-family:"Noto Serif";--md-code-font-family:"Roboto Mono"}</style>
+      
+    
+    
+    
+      <link rel="stylesheet" href="stylesheets/extra.css">
+    
+    
+      
+
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <script>function __prefix(e){return new URL(".",location).pathname+"."+e}function __get(e,t=localStorage){return JSON.parse(t.getItem(__prefix(e)))}</script>
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#list-processing" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-header__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            FreeType-2.13.2 API Reference
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              List Processing
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+      </label>
+      
+<div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" data-md-state="active" required>
+      <label class="md-search__icon md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+      </label>
+      <button type="reset" class="md-search__icon md-icon" aria-label="Clear" tabindex="-1">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
+      </button>
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+  </nav>
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-nav__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    FreeType-2.13.2 API Reference
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="index.html" class="md-nav__link">
+        TOC
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-index.html" class="md-nav__link">
+        Index
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_3" type="checkbox" id="__nav_3" >
+      
+      <label class="md-nav__link" for="__nav_3">
+        General Remarks
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="General Remarks" data-md-level="1">
+        <label class="md-nav__title" for="__nav_3">
+          <span class="md-nav__icon md-icon"></span>
+          General Remarks
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-preamble.html" class="md-nav__link">
+        Preamble
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_inclusion.html" class="md-nav__link">
+        FreeType's header inclusion scheme
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-user_allocation.html" class="md-nav__link">
+        User allocation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_4" type="checkbox" id="__nav_4" >
+      
+      <label class="md-nav__link" for="__nav_4">
+        Core API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Core API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_4">
+          <span class="md-nav__icon md-icon"></span>
+          Core API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-basic_types.html" class="md-nav__link">
+        Basic Data Types
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-library_setup.html" class="md-nav__link">
+        Library Setup
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-face_creation.html" class="md-nav__link">
+        Face Creation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_testing_macros.html" class="md-nav__link">
+        Font Testing Macros
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizing_and_scaling.html" class="md-nav__link">
+        Sizing and Scaling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_retrieval.html" class="md-nav__link">
+        Glyph Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-character_mapping.html" class="md-nav__link">
+        Character Mapping
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-information_retrieval.html" class="md-nav__link">
+        Information Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-other_api_data.html" class="md-nav__link">
+        Other API Data
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_5" type="checkbox" id="__nav_5" >
+      
+      <label class="md-nav__link" for="__nav_5">
+        Extended API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Extended API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_5">
+          <span class="md-nav__icon md-icon"></span>
+          Extended API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_variants.html" class="md-nav__link">
+        Unicode Variation Sequences
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-color_management.html" class="md-nav__link">
+        Glyph Color Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-layer_management.html" class="md-nav__link">
+        Glyph Layer Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_management.html" class="md-nav__link">
+        Glyph Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-mac_specific.html" class="md-nav__link">
+        Mac Specific Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizes_management.html" class="md-nav__link">
+        Size Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_file_macros.html" class="md-nav__link">
+        Header File Macros
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_6" type="checkbox" id="__nav_6" >
+      
+      <label class="md-nav__link" for="__nav_6">
+        Format-Specific API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Format-Specific API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_6">
+          <span class="md-nav__icon md-icon"></span>
+          Format-Specific API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-multiple_masters.html" class="md-nav__link">
+        Multiple Masters
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_tables.html" class="md-nav__link">
+        TrueType Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-type1_tables.html" class="md-nav__link">
+        Type 1 Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sfnt_names.html" class="md-nav__link">
+        SFNT Names
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bdf_fonts.html" class="md-nav__link">
+        BDF and PCF Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cid_fonts.html" class="md-nav__link">
+        CID Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pfr_fonts.html" class="md-nav__link">
+        PFR Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-winfnt_fonts.html" class="md-nav__link">
+        Window FNT Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-svg_fonts.html" class="md-nav__link">
+        OpenType SVG Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_formats.html" class="md-nav__link">
+        Font Formats
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gasp_table.html" class="md-nav__link">
+        Gasp Table
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_7" type="checkbox" id="__nav_7" >
+      
+      <label class="md-nav__link" for="__nav_7">
+        Controlling FreeType Modules
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Controlling FreeType Modules" data-md-level="1">
+        <label class="md-nav__title" for="__nav_7">
+          <span class="md-nav__icon md-icon"></span>
+          Controlling FreeType Modules
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-auto_hinter.html" class="md-nav__link">
+        The auto-hinter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cff_driver.html" class="md-nav__link">
+        The CFF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-t1_cid_driver.html" class="md-nav__link">
+        The Type 1 and CID drivers
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-tt_driver.html" class="md-nav__link">
+        The TrueType driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pcf_driver.html" class="md-nav__link">
+        The PCF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_svg_driver.html" class="md-nav__link">
+        The SVG driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-properties.html" class="md-nav__link">
+        Driver properties
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-parameter_tags.html" class="md-nav__link">
+        Parameter Tags
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lcd_rendering.html" class="md-nav__link">
+        Subpixel Rendering
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_8" type="checkbox" id="__nav_8" >
+      
+      <label class="md-nav__link" for="__nav_8">
+        Cache Sub-System
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Cache Sub-System" data-md-level="1">
+        <label class="md-nav__title" for="__nav_8">
+          <span class="md-nav__icon md-icon"></span>
+          Cache Sub-System
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cache_subsystem.html" class="md-nav__link">
+        Cache Sub-System
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+    
+  
+  
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_9" type="checkbox" id="__nav_9" checked>
+      
+      <label class="md-nav__link" for="__nav_9">
+        Support API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Support API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_9">
+          <span class="md-nav__icon md-icon"></span>
+          Support API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-computations.html" class="md-nav__link">
+        Computations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+    
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" data-md-toggle="toc" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          List Processing
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="ft2-list_processing.html" class="md-nav__link md-nav__link--active">
+        List Processing
+      </a>
+      
+        
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_list" class="md-nav__link">
+    FT_List
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_listnode" class="md-nav__link">
+    FT_ListNode
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_listrec" class="md-nav__link">
+    FT_ListRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_listnoderec" class="md-nav__link">
+    FT_ListNodeRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_list_add" class="md-nav__link">
+    FT_List_Add
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_list_insert" class="md-nav__link">
+    FT_List_Insert
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_list_find" class="md-nav__link">
+    FT_List_Find
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_list_remove" class="md-nav__link">
+    FT_List_Remove
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_list_up" class="md-nav__link">
+    FT_List_Up
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_list_iterate" class="md-nav__link">
+    FT_List_Iterate
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_list_iterator" class="md-nav__link">
+    FT_List_Iterator
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_list_finalize" class="md-nav__link">
+    FT_List_Finalize
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_list_destructor" class="md-nav__link">
+    FT_List_Destructor
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-outline_processing.html" class="md-nav__link">
+        Outline Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-quick_advance.html" class="md-nav__link">
+        Quick retrieval of advance values
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bitmap_handling.html" class="md-nav__link">
+        Bitmap Handling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-raster.html" class="md-nav__link">
+        Scanline Converter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_stroker.html" class="md-nav__link">
+        Glyph Stroker
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-system_interface.html" class="md-nav__link">
+        System Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-module_management.html" class="md-nav__link">
+        Module Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gzip.html" class="md-nav__link">
+        GZIP Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lzw.html" class="md-nav__link">
+        LZW Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bzip2.html" class="md-nav__link">
+        BZIP2 Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-debugging_apis.html" class="md-nav__link">
+        External Debugging APIs
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_10" type="checkbox" id="__nav_10" >
+      
+      <label class="md-nav__link" for="__nav_10">
+        Error Codes
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Error Codes" data-md-level="1">
+        <label class="md-nav__title" for="__nav_10">
+          <span class="md-nav__icon md-icon"></span>
+          Error Codes
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_enumerations.html" class="md-nav__link">
+        Error Enumerations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_code_values.html" class="md-nav__link">
+        Error Code Values
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_11" type="checkbox" id="__nav_11" >
+      
+      <label class="md-nav__link" for="__nav_11">
+        Miscellaneous
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Miscellaneous" data-md-level="1">
+        <label class="md-nav__title" for="__nav_11">
+          <span class="md-nav__icon md-icon"></span>
+          Miscellaneous
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gx_validation.html" class="md-nav__link">
+        TrueTypeGX/AAT Validation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-incremental.html" class="md-nav__link">
+        Incremental Loading
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_engine.html" class="md-nav__link">
+        The TrueType Engine
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_validation.html" class="md-nav__link">
+        OpenType Validation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_list" class="md-nav__link">
+    FT_List
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_listnode" class="md-nav__link">
+    FT_ListNode
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_listrec" class="md-nav__link">
+    FT_ListRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_listnoderec" class="md-nav__link">
+    FT_ListNodeRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_list_add" class="md-nav__link">
+    FT_List_Add
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_list_insert" class="md-nav__link">
+    FT_List_Insert
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_list_find" class="md-nav__link">
+    FT_List_Find
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_list_remove" class="md-nav__link">
+    FT_List_Remove
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_list_up" class="md-nav__link">
+    FT_List_Up
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_list_iterate" class="md-nav__link">
+    FT_List_Iterate
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_list_iterator" class="md-nav__link">
+    FT_List_Iterator
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_list_finalize" class="md-nav__link">
+    FT_List_Finalize
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_list_destructor" class="md-nav__link">
+    FT_List_Destructor
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          <div class="md-content" data-md-component="content">
+            <article class="md-content__inner md-typeset">
+              
+                
+                
+                <p><a href="https://www.freetype.org">FreeType</a> &raquo; <a href="../">Docs</a> &raquo; <a href="index.html#support-api">Support API</a> &raquo; List Processing</p>
+<hr />
+<h1 id="list-processing">List Processing<a class="headerlink" href="#list-processing" title="Permanent link">&para;</a></h1>
+<h2 id="synopsis">Synopsis<a class="headerlink" href="#synopsis" title="Permanent link">&para;</a></h2>
+<p>This section contains various definitions related to list processing using doubly-linked nodes.</p>
+<h2 id="ft_list">FT_List<a class="headerlink" href="#ft_list" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span> FT_ListRec_*  <b>FT_List</b>;
+</code></pre></div>
+
+<p>A handle to a list record (see <code><a href="ft2-list_processing.html#ft_listrec">FT_ListRec</a></code>).</p>
+<hr>
+
+<h2 id="ft_listnode">FT_ListNode<a class="headerlink" href="#ft_listnode" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span> FT_ListNodeRec_*  <b>FT_ListNode</b>;
+</code></pre></div>
+
+<p>Many elements and objects in FreeType are listed through an <code><a href="ft2-list_processing.html#ft_list">FT_List</a></code> record (see <code><a href="ft2-list_processing.html#ft_listrec">FT_ListRec</a></code>). As its name suggests, an FT_ListNode is a handle to a single list element.</p>
+<hr>
+
+<h2 id="ft_listrec">FT_ListRec<a class="headerlink" href="#ft_listrec" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_ListRec_
+  {
+    <a href="ft2-list_processing.html#ft_listnode">FT_ListNode</a>  head;
+    <a href="ft2-list_processing.html#ft_listnode">FT_ListNode</a>  tail;
+
+  } <b>FT_ListRec</b>;
+</code></pre></div>
+
+<p>A structure used to hold a simple doubly-linked list. These are used in many parts of FreeType.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="head">head</td><td class="desc">
+<p>The head (first element) of doubly-linked list.</p>
+</td></tr>
+<tr><td class="val" id="tail">tail</td><td class="desc">
+<p>The tail (last element) of doubly-linked list.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_listnoderec">FT_ListNodeRec<a class="headerlink" href="#ft_listnoderec" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPES_H (freetype/fttypes.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_ListNodeRec_
+  {
+    <a href="ft2-list_processing.html#ft_listnode">FT_ListNode</a>  prev;
+    <a href="ft2-list_processing.html#ft_listnode">FT_ListNode</a>  next;
+    <span class="keyword">void</span>*        data;
+
+  } <b>FT_ListNodeRec</b>;
+</code></pre></div>
+
+<p>A structure used to hold a single list element.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="prev">prev</td><td class="desc">
+<p>The previous element in the list. <code>NULL</code> if first.</p>
+</td></tr>
+<tr><td class="val" id="next">next</td><td class="desc">
+<p>The next element in the list. <code>NULL</code> if last.</p>
+</td></tr>
+<tr><td class="val" id="data">data</td><td class="desc">
+<p>A typeless pointer to the listed object.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_list_add">FT_List_Add<a class="headerlink" href="#ft_list_add" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_LIST_H (freetype/ftlist.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <span class="keyword">void</span> )
+  <b>FT_List_Add</b>( <a href="ft2-list_processing.html#ft_list">FT_List</a>      list,
+               <a href="ft2-list_processing.html#ft_listnode">FT_ListNode</a>  node );
+</code></pre></div>
+
+<p>Append an element to the end of a list.</p>
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="list">list</td><td class="desc">
+<p>A pointer to the parent list.</p>
+</td></tr>
+<tr><td class="val" id="node">node</td><td class="desc">
+<p>The node to append.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_list_insert">FT_List_Insert<a class="headerlink" href="#ft_list_insert" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_LIST_H (freetype/ftlist.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <span class="keyword">void</span> )
+  <b>FT_List_Insert</b>( <a href="ft2-list_processing.html#ft_list">FT_List</a>      list,
+                  <a href="ft2-list_processing.html#ft_listnode">FT_ListNode</a>  node );
+</code></pre></div>
+
+<p>Insert an element at the head of a list.</p>
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="list">list</td><td class="desc">
+<p>A pointer to parent list.</p>
+</td></tr>
+<tr><td class="val" id="node">node</td><td class="desc">
+<p>The node to insert.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_list_find">FT_List_Find<a class="headerlink" href="#ft_list_find" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_LIST_H (freetype/ftlist.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-list_processing.html#ft_listnode">FT_ListNode</a> )
+  <b>FT_List_Find</b>( <a href="ft2-list_processing.html#ft_list">FT_List</a>  list,
+                <span class="keyword">void</span>*    data );
+</code></pre></div>
+
+<p>Find the list node for a given listed object.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="list">list</td><td class="desc">
+<p>A pointer to the parent list.</p>
+</td></tr>
+<tr><td class="val" id="data">data</td><td class="desc">
+<p>The address of the listed object.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>List node. <code>NULL</code> if it wasn't found.</p>
+<hr>
+
+<h2 id="ft_list_remove">FT_List_Remove<a class="headerlink" href="#ft_list_remove" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_LIST_H (freetype/ftlist.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <span class="keyword">void</span> )
+  <b>FT_List_Remove</b>( <a href="ft2-list_processing.html#ft_list">FT_List</a>      list,
+                  <a href="ft2-list_processing.html#ft_listnode">FT_ListNode</a>  node );
+</code></pre></div>
+
+<p>Remove a node from a list. This function doesn't check whether the node is in the list!</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="node">node</td><td class="desc">
+<p>The node to remove.</p>
+</td></tr>
+</table>
+
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="list">list</td><td class="desc">
+<p>A pointer to the parent list.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_list_up">FT_List_Up<a class="headerlink" href="#ft_list_up" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_LIST_H (freetype/ftlist.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <span class="keyword">void</span> )
+  <b>FT_List_Up</b>( <a href="ft2-list_processing.html#ft_list">FT_List</a>      list,
+              <a href="ft2-list_processing.html#ft_listnode">FT_ListNode</a>  node );
+</code></pre></div>
+
+<p>Move a node to the head/top of a list. Used to maintain LRU lists.</p>
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="list">list</td><td class="desc">
+<p>A pointer to the parent list.</p>
+</td></tr>
+<tr><td class="val" id="node">node</td><td class="desc">
+<p>The node to move.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_list_iterate">FT_List_Iterate<a class="headerlink" href="#ft_list_iterate" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_LIST_H (freetype/ftlist.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_List_Iterate</b>( <a href="ft2-list_processing.html#ft_list">FT_List</a>           list,
+                   <a href="ft2-list_processing.html#ft_list_iterator">FT_List_Iterator</a>  iterator,
+                   <span class="keyword">void</span>*             user );
+</code></pre></div>
+
+<p>Parse a list and calls a given iterator function on each element. Note that parsing is stopped as soon as one of the iterator calls returns a non-zero value.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="list">list</td><td class="desc">
+<p>A handle to the list.</p>
+</td></tr>
+<tr><td class="val" id="iterator">iterator</td><td class="desc">
+<p>An iterator function, called on each node of the list.</p>
+</td></tr>
+<tr><td class="val" id="user">user</td><td class="desc">
+<p>A user-supplied field that is passed as the second argument to the iterator.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>The result (a FreeType error code) of the last iterator call.</p>
+<hr>
+
+<h2 id="ft_list_iterator">FT_List_Iterator<a class="headerlink" href="#ft_list_iterator" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_LIST_H (freetype/ftlist.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <a href="ft2-basic_types.html#ft_error">FT_Error</a>
+  (*<b>FT_List_Iterator</b>)( <a href="ft2-list_processing.html#ft_listnode">FT_ListNode</a>  node,
+                       <span class="keyword">void</span>*        user );
+</code></pre></div>
+
+<p>An FT_List iterator function that is called during a list parse by <code><a href="ft2-list_processing.html#ft_list_iterate">FT_List_Iterate</a></code>.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="node">node</td><td class="desc">
+<p>The current iteration list node.</p>
+</td></tr>
+<tr><td class="val" id="user">user</td><td class="desc">
+<p>A typeless pointer passed to <code><a href="ft2-list_processing.html#ft_list_iterate">FT_List_Iterate</a></code>. Can be used to point to the iteration's state.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_list_finalize">FT_List_Finalize<a class="headerlink" href="#ft_list_finalize" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_LIST_H (freetype/ftlist.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <span class="keyword">void</span> )
+  <b>FT_List_Finalize</b>( <a href="ft2-list_processing.html#ft_list">FT_List</a>             list,
+                    <a href="ft2-list_processing.html#ft_list_destructor">FT_List_Destructor</a>  destroy,
+                    <a href="ft2-system_interface.html#ft_memory">FT_Memory</a>           memory,
+                    <span class="keyword">void</span>*               user );
+</code></pre></div>
+
+<p>Destroy all elements in the list as well as the list itself.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="list">list</td><td class="desc">
+<p>A handle to the list.</p>
+</td></tr>
+<tr><td class="val" id="destroy">destroy</td><td class="desc">
+<p>A list destructor that will be applied to each element of the list. Set this to <code>NULL</code> if not needed.</p>
+</td></tr>
+<tr><td class="val" id="memory">memory</td><td class="desc">
+<p>The current memory object that handles deallocation.</p>
+</td></tr>
+<tr><td class="val" id="user">user</td><td class="desc">
+<p>A user-supplied field that is passed as the last argument to the destructor.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>This function expects that all nodes added by <code><a href="ft2-list_processing.html#ft_list_add">FT_List_Add</a></code> or <code><a href="ft2-list_processing.html#ft_list_insert">FT_List_Insert</a></code> have been dynamically allocated.</p>
+<hr>
+
+<h2 id="ft_list_destructor">FT_List_Destructor<a class="headerlink" href="#ft_list_destructor" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_LIST_H (freetype/ftlist.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">void</span>
+  (*<b>FT_List_Destructor</b>)( <a href="ft2-system_interface.html#ft_memory">FT_Memory</a>  memory,
+                         <span class="keyword">void</span>*      data,
+                         <span class="keyword">void</span>*      user );
+</code></pre></div>
+
+<p>An <code><a href="ft2-list_processing.html#ft_list">FT_List</a></code> iterator function that is called during a list finalization by <code><a href="ft2-list_processing.html#ft_list_finalize">FT_List_Finalize</a></code> to destroy all elements in a given list.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="system">system</td><td class="desc">
+<p>The current system object.</p>
+</td></tr>
+<tr><td class="val" id="data">data</td><td class="desc">
+<p>The current object to destroy.</p>
+</td></tr>
+<tr><td class="val" id="user">user</td><td class="desc">
+<p>A typeless pointer passed to <code><a href="ft2-list_processing.html#ft_list_iterate">FT_List_Iterate</a></code>. It can be used to point to the iteration's state.</p>
+</td></tr>
+</table>
+
+<hr>
+                
+              
+              
+                
+
+
+              
+            </article>
+          </div>
+        </div>
+        
+      </main>
+      
+        
+<footer class="md-footer">
+  
+    <nav class="md-footer__inner md-grid" aria-label="Footer">
+      
+        
+        <a href="ft2-computations.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: Computations" rel="prev">
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+          </div>
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              Computations
+            </div>
+          </div>
+        </a>
+      
+      
+        
+        <a href="ft2-outline_processing.html" class="md-footer__link md-footer__link--next" aria-label="Next: Outline Processing" rel="next">
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              Outline Processing
+            </div>
+          </div>
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11H4z"/></svg>
+          </div>
+        </a>
+      
+    </nav>
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-footer-copyright">
+        
+          <div class="md-footer-copyright__highlight">
+            Copyright 2023 <a href = "https://www.freetype.org/license.html">The FreeType Project</a>.
+          </div>
+        
+        Made with
+        <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+          Material for MkDocs
+        </a>
+        
+      </div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    <script id="__config" type="application/json">{"base": ".", "features": [], "search": "assets/javascripts/workers/search.477d984a.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.config.lang": "en", "search.config.pipeline": "trimmer, stopWordFilter", "search.config.separator": "[\\s\\-]+", "search.placeholder": "Search", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version.title": "Select version"}, "version": null}</script>
+    
+    
+      <script src="assets/javascripts/bundle.82b56eb2.min.js"></script>
+      
+        <script src="javascripts/extra.js"></script>
+      
+    
+  </body>
+</html>

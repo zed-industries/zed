@@ -1,0 +1,8 @@
+package foo:foo;
+
+interface foo {}
+
+world bar {
+  export foo;
+  export foo;
+}

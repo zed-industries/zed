@@ -1,0 +1,47 @@
+[package]
+name = "native-tls"
+version = "0.2.18"
+authors = ["Steven Fackler <sfackler@gmail.com>"]
+license = "MIT OR Apache-2.0"
+description = "A wrapper over a platform's native TLS implementation"
+repository = "https://github.com/rust-native-tls/rust-native-tls"
+homepage = "https://lib.rs/crates/native-tls"
+categories = ["network-programming", "cryptography"]
+keywords = ["tls", "https", "secure-transport", "platform", "abstraction"]
+readme = "README.md"
+rust-version = "1.80"
+edition = "2021"
+include = ["src/**/*.rs", "build.rs", "LICENSE*"]
+
+[package.metadata.docs.rs]
+features = ["alpn"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = []
+vendored = ["openssl/vendored"]
+# Expose ALPN configuration on client side
+alpn = ["security-framework/alpn"]
+# Expose ALPN configuration on server side (not available on Apple platforms)
+alpn-accept = []
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+security-framework = "3.5.1"
+security-framework-sys = "2.15.0"
+libc = "0.2.170"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+tempfile = "3.1.0"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+schannel = "0.1.28"
+
+[target.'cfg(not(any(target_os = "windows", target_vendor = "apple")))'.dependencies]
+log = "0.4.27"
+openssl = "0.10.75"
+openssl-sys = "0.9.111"
+openssl-probe = "0.2.1"
+
+[dev-dependencies]
+tempfile = "3.0"
+test-cert-gen = "0.9"

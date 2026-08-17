@@ -1,0 +1,33 @@
+---
+source: brush-parser/src/tokenizer.rs
+expression: "test_tokenizer(\"echo $(echo !(x))\")?"
+---
+TokenizerResult(
+  input: "echo $(echo !(x))",
+  result: [
+    W("echo", Loc(
+      start: Pos(
+        idx: 0,
+        line: 1,
+        col: 1,
+      ),
+      end: Pos(
+        idx: 4,
+        line: 1,
+        col: 5,
+      ),
+    )),
+    W("$(echo !(x))", Loc(
+      start: Pos(
+        idx: 5,
+        line: 1,
+        col: 6,
+      ),
+      end: Pos(
+        idx: 17,
+        line: 1,
+        col: 18,
+      ),
+    )),
+  ],
+)

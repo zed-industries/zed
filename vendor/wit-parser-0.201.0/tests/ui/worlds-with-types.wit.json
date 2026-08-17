@@ -1,0 +1,202 @@
+{
+  "worlds": [
+    {
+      "name": "foo",
+      "imports": {
+        "a": {
+          "type": 1
+        },
+        "b": {
+          "type": 2
+        }
+      },
+      "exports": {
+        "c": {
+          "function": {
+            "name": "c",
+            "kind": "freestanding",
+            "params": [
+              {
+                "name": "a",
+                "type": 1
+              }
+            ],
+            "results": [
+              {
+                "type": 2
+              }
+            ]
+          }
+        }
+      },
+      "package": 0
+    },
+    {
+      "name": "bar",
+      "imports": {
+        "interface-0": {
+          "interface": 0
+        },
+        "t": {
+          "type": 3
+        }
+      },
+      "exports": {
+        "foo": {
+          "function": {
+            "name": "foo",
+            "kind": "freestanding",
+            "params": [],
+            "results": [
+              {
+                "type": 3
+              }
+            ]
+          }
+        }
+      },
+      "package": 0
+    },
+    {
+      "name": "the-test",
+      "imports": {
+        "a": {
+          "type": 4
+        },
+        "b": {
+          "type": 5
+        },
+        "foo": {
+          "function": {
+            "name": "foo",
+            "kind": "freestanding",
+            "params": [
+              {
+                "name": "a",
+                "type": 4
+              }
+            ],
+            "results": [
+              {
+                "type": 5
+              }
+            ]
+          }
+        }
+      },
+      "exports": {
+        "bar": {
+          "function": {
+            "name": "bar",
+            "kind": "freestanding",
+            "params": [
+              {
+                "name": "a",
+                "type": 4
+              }
+            ],
+            "results": [
+              {
+                "type": 5
+              }
+            ]
+          }
+        }
+      },
+      "package": 0
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "disambiguate",
+      "types": {
+        "t": 0
+      },
+      "functions": {},
+      "package": 0
+    }
+  ],
+  "types": [
+    {
+      "name": "t",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "a",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "world": 0
+      }
+    },
+    {
+      "name": "b",
+      "kind": {
+        "type": 1
+      },
+      "owner": {
+        "world": 0
+      }
+    },
+    {
+      "name": "t",
+      "kind": {
+        "type": 0
+      },
+      "owner": {
+        "world": 1
+      }
+    },
+    {
+      "name": "a",
+      "kind": {
+        "record": {
+          "fields": [
+            {
+              "name": "x",
+              "type": "u32"
+            }
+          ]
+        }
+      },
+      "owner": {
+        "world": 2
+      }
+    },
+    {
+      "name": "b",
+      "kind": {
+        "variant": {
+          "cases": [
+            {
+              "name": "c",
+              "type": 4
+            }
+          ]
+        }
+      },
+      "owner": {
+        "world": 2
+      }
+    }
+  ],
+  "packages": [
+    {
+      "name": "foo:foo",
+      "interfaces": {
+        "disambiguate": 0
+      },
+      "worlds": {
+        "foo": 0,
+        "bar": 1,
+        "the-test": 2
+      }
+    }
+  ]
+}

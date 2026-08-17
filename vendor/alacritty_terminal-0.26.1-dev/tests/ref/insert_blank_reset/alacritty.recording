@@ -1,0 +1,5 @@
+[?2004h[kchibisov@NightLord alacritty]$ [K[kchibisov@NightLord alacritty]$ [K[kchibisov@NightLord alacritty]$ resetprintf "\e[41;1;4;9mTEST asd\n"reset[Kprintf "\e[41;1;4;9mTEST asd\n"[C[C[C[1P[1@3
+[?2004l[31;1;4;9mTEST asd
+[?2004h[kchibisov@NightLord alacritty]$ printf "\e[31;1;4;9mTEST asd\n"reset[Kprintf "\e[41;1;4;9mTEST asd\n"reset[Kecho -e "\033[100;@"
+[?2004l[100;@
+[?2004h[kchibisov@NightLord alacritty]$ 

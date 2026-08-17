@@ -1,0 +1,10 @@
+prefix=/usr
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib/
+includedir=${prefix}/include/testlib
+
+Name: Test Library with RPATH
+Description: A fake library to test pkg-config.
+Version: 1.2.3
+Libs: -L${libdir} -ltest -F${libdir} -framework someframework -Wl,-rpath,${libdir}
+Cflags: -I${includedir} -DBADGER=yes -DAWESOME

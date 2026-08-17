@@ -1,0 +1,23 @@
+---
+- name: Doublequoted scalar starting with a tab
+  from: '@perlpunk'
+  tags: double scalar
+  yaml: |
+    ---
+    tab: "\tstring"
+  tree: |
+    +STR
+     +DOC ---
+      +MAP
+       =VAL :tab
+       =VAL "\tstring
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "tab": "\tstring"
+    }
+  dump: |
+    ---
+    tab: "\tstring"

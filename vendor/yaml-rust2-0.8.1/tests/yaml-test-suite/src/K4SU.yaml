@@ -1,0 +1,24 @@
+---
+- name: Multiple Entry Block Sequence
+  from: https://github.com/ingydotnet/yaml-pegex-pm/blob/master/test/sequence.tml
+  tags: sequence
+  yaml: |
+    - foo
+    - bar
+    - 42
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       =VAL :foo
+       =VAL :bar
+       =VAL :42
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      "foo",
+      "bar",
+      42
+    ]

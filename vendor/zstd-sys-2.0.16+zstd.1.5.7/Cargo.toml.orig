@@ -1,0 +1,89 @@
+[package]
+authors = ["Alexandre Bury <alexandre.bury@gmail.com>"]
+build = "build.rs"
+categories = [
+    "api-bindings",
+    "compression",
+]
+description = "Low-level bindings for the zstd compression library."
+keywords = [
+    "zstd",
+    "zstandard",
+    "compression",
+]
+license = "MIT/Apache-2.0"
+links = "zstd"
+name = "zstd-sys"
+readme = "Readme.md"
+repository = "https://github.com/gyscos/zstd-rs"
+version = "2.0.16+zstd.1.5.7"
+edition = "2018"
+rust-version = "1.64"
+
+# Use include instead of exclude, as a (temporary)
+# workaround for https://github.com/rust-lang/cargo/issues/9555
+include = [
+    "/LICENSE*",
+    "!/*.sh",
+    "/build.rs",
+    "/*.h",
+    "/src/",
+    "/wasm-shim/**/*.h",
+    "/zstd/LICENSE",
+    "/zstd/COPYING",
+    "/zstd/lib/**/*.c",
+    "/zstd/lib/**/*.h",
+    "/zstd/lib/**/*.S",
+    "/zstd/contrib/seekable_format/*.c",
+    "/zstd/contrib/seekable_format/*.h",
+]
+# exclude = [
+#     "zstd",
+#     "!zstd/LICENSE",
+#     "!zstd/COPYING",
+#     "!zstd/lib/**/**.h",
+#     "!zstd/lib/**/**.c",
+# ]
+
+[package.metadata.docs.rs]
+features = ["experimental"]
+
+[lib]
+doctest = false  # Documentation is for C code, good luck testing that.
+
+[build-dependencies.bindgen]
+optional = true
+version = "0.72"
+default-features = false
+features = ["runtime"]
+
+[build-dependencies.pkg-config]
+version = "0.3.28"
+
+[build-dependencies.cc]
+version = "1.0.45"
+features = ["parallel"]
+
+[features]
+default = ["legacy", "zdict_builder", "bindgen"]
+
+debug = [] # Enable zstd debug logs
+experimental = [] # Expose experimental ZSTD API
+legacy = [] # Enable legacy ZSTD support (for versions < zstd-0.8)
+non-cargo = [] # Silence cargo-specific build flags
+pkg-config = [] # Use pkg-config to build the zstd C library.
+std = [] # Deprecated: we never use types from std.
+zstdmt = [] # Enable multi-thread support (with pthread)
+thin = [] # Optimize binary by size
+no_asm = [] # Disable ASM files (only on amd64 for decompression)
+zdict_builder = [] # Enable dictionary building (dictionary _using_ is always supported).
+no_wasm_shim = [] # Disable wasm shims (in case your wasm toolchain includes a C stdlib).
+seekable = [] # Enable support of the seekable format
+
+# These two are for cross-language LTO.
+# Will only work if `clang` is used to build the C library.
+fat-lto = [] # Enable fat-lto, will override thin-lto if specified
+thin-lto = [] # Enable thin-lto, will fallback to fat-lto if not supported
+
+[lints.rust]
+non_upper_case_globals = "allow"

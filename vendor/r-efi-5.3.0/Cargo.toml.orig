@@ -1,0 +1,51 @@
+[package]
+name = "r-efi"
+version = "5.3.0"
+
+categories = [
+        "embedded",
+        "hardware-support",
+        "no-std",
+        "os",
+]
+description = "UEFI Reference Specification Protocol Constants and Definitions"
+edition = "2018"
+homepage = "https://github.com/r-efi/r-efi/wiki"
+keywords = [
+        "boot",
+        "efi",
+        "firmware",
+        "specification",
+        "uefi",
+]
+license = "MIT OR Apache-2.0 OR LGPL-2.1-or-later"
+readme = "README.md"
+repository = "https://github.com/r-efi/r-efi"
+rust-version = "1.68"
+
+[dependencies]
+# Required setup to build as part of rustc.
+core = { version = '1.0.0', optional = true, package = 'rustc-std-workspace-core' }
+
+[features]
+# No-op for backwards compatibility.
+efiapi = []
+# Maps to `native` for backwards compatibility.
+examples = ['native']
+# We feature-gate all native code, since it will not link correctly, unless you
+# use a UEFI target configuration. To make `cargo test` work, we exclude all
+# these from normal runs.
+native = []
+rustc-dep-of-std = ['core']
+
+[[example]]
+name = "freestanding"
+required-features = ["native"]
+
+[[example]]
+name = "gop-query"
+required-features = ["native"]
+
+[[example]]
+name = "hello-world"
+required-features = ["native"]

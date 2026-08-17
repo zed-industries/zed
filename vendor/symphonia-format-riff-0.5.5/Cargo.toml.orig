@@ -1,0 +1,24 @@
+[package]
+name = "symphonia-format-riff"
+version = "0.5.5"
+description = "Pure Rust RIFF demuxer (a part of project Symphonia)."
+homepage = "https://github.com/pdeljanov/Symphonia"
+repository = "https://github.com/pdeljanov/Symphonia"
+authors = ["Philip Deljanov <philip.deljanov@gmail.com>", "dedobbin <dedobbindedobbin@gmail.com>"]
+license = "MPL-2.0"
+readme = "README.md"
+categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
+keywords = ["audio", "media", "demuxer", "aiff", "wav"]
+edition = "2018"
+rust-version = "1.53"
+
+[features]
+default = ["aiff", "wav"]
+aiff = []
+wav = []
+
+[dependencies]
+extended = "0.1.0"
+log = "0.4"
+symphonia-core = { version = "0.5.5", path = "../symphonia-core" }
+symphonia-metadata = { version = "0.5.5", path = "../symphonia-metadata" }

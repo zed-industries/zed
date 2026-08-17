@@ -1,0 +1,54 @@
+[package]
+name = "sval"
+version = "2.15.0"
+authors = ["Ashley Mannix <ashleymannix@live.com.au>"]
+edition = "2021"
+license = "Apache-2.0 OR MIT"
+documentation = "https://docs.rs/sval"
+description = "Streaming, structured value serialization"
+repository = "https://github.com/sval-rs/sval"
+readme = "README.md"
+keywords = ["serialization", "no_std"]
+categories = ["encoding", "no-std"]
+
+[package.metadata.docs.rs]
+features = ["std"]
+
+[workspace]
+members = [
+    "derive_macros",
+    "derive",
+    "derive/test",
+    "dynamic",
+    "ref",
+    "buffer",
+    "fmt",
+    "fmt/test",
+    "nested",
+    "serde",
+    "serde/test",
+    "json",
+    "json/test",
+    "json/bench",
+    "flatten",
+    "flatten/bench",
+    "test",
+    "experiments",
+]
+
+[features]
+std = ["alloc"]
+alloc = []
+
+derive = ["dep:sval_derive_macros"]
+
+[dependencies.sval_derive_macros]
+version = "2.15.0"
+path = "derive_macros"
+optional = true
+
+[dev-dependencies.sval_derive_macros]
+path = "derive_macros"
+
+[dev-dependencies.humantime]
+version = "2"

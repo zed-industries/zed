@@ -1,0 +1,14 @@
+[package]
+name = "vscode_theme"
+version = "0.2.0"
+description = "A Rust representation of a Visual Studio Code theme."
+repository = "https://github.com/maxdeviant/vscode-theme"
+documentation = "https://docs.rs/vscode_theme"
+categories = ["api-bindings"]
+keywords = ["visual", "studio", "code", "vscode", "theme"]
+authors = ["Marshall Bowers <elliott.codes@gmail.com>"]
+license = "MIT"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }

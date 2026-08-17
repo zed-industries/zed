@@ -1,0 +1,17 @@
+package a:b@0.1.0;
+
+interface foo {
+  @unstable(feature = inactive)
+  use wasi:io/error@0.1.0.{error};
+
+  @unstable(feature = inactive)
+  x: func(y: borrow<error>);
+}
+
+package wasi:io@0.1.0 {
+  interface error {
+    resource error;
+  }
+}
+
+

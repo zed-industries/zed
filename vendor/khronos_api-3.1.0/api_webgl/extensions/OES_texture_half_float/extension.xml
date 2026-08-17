@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ratified href="OES_texture_half_float/">
+  <name>OES_texture_half_float</name>
+
+  <contact> <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL
+  working group</a> (public_webgl 'at' khronos.org) </contact>
+
+  <contributors>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+
+  <number>2</number>
+
+  <depends>
+    <api version="1.0"/>
+    <removed version="2.0" />
+  </depends>
+
+  <overview>
+    <mirrors href="http://www.khronos.org/registry/gles/extensions/OES/OES_texture_float.txt"
+             name="OES_texture_half_float">
+      <addendum>Optional support for <code>HALF_FLOAT</code> textures as FBO
+      attachments.</addendum>
+    </mirrors>
+
+    <features>
+      <feature> The <code>texImage2D</code> and <code>texSubImage2D</code>
+      entry points taking <code>ArrayBufferView</code> are extended to accept
+      <code>Uint16Array</code> with the pixel type <code>HALF_FLOAT_OES</code>.
+      </feature>
+
+      <feature> The <code>texImage2D</code> and <code>texSubImage2D</code>
+      entry points taking <code>ImageData</code>,
+      <code>HTMLImageElement</code>, <code>HTMLCanvasElement</code> and
+      <code>HTMLVideoElement</code> are extended to accept the pixel type
+      <code>HALF_FLOAT_OES</code>. </feature>
+
+      <feature>Upon activation of this extension, implementations supporting
+      <a href="../EXT_color_buffer_half_float/">EXT_color_buffer_half_float</a>
+      shall implicitly enable it. This requirement maintains the historical
+      behavior prior to the differentiation of float renderability from float
+      textures, so as to not break existing content.</feature>
+    </features>
+  </overview>
+
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface OES_texture_half_float {
+  const GLenum HALF_FLOAT_OES = 0x8D61;
+};
+</idl>
+
+  <history>
+    <revision date="2010/11/29">
+      <change>Initial revision.</change>
+    </revision>
+
+    <revision date="2011/09/12">
+      <change> Added similar text about <code>texImage2D</code> and
+      <code>texSubImage2D</code> as in OES_texture_float spec. </change>
+
+      <change> Added optional ability to use a HALF_FLOAT_OES type texture as
+      an FBO's color attachment. </change>
+    </revision>
+
+    <revision date="2012/01/03">
+      <change>Removed webgl module per changes to Web IDL spec.</change>
+    </revision>
+
+    <revision date="2012/12/04">
+      <change>Specify that implementations supporting HALF_FLOAT_OES color
+      attachments implicitly enable EXT_color_buffer_half_float.</change>
+    </revision>
+
+    <revision date="2013/05/15">
+      <change>Ratified by Khronos Board of Promoters.</change>
+    </revision>
+
+    <revision date="2014/02/12">
+      <change>Allow texture uploads of half-floats via Uint16Arrays.</change>
+    </revision>
+
+    <revision date="2014/07/15">
+      <change>Added NoInterfaceObject extended attribute.</change>
+    </revision>
+
+    <revision date="2014/09/11">
+      <change>Corrected link to EXT_color_buffer_half_float.</change>
+    </revision>
+
+    <revision date="2017/09/14">
+      <change>Clarify behaviors regarding EXT_color_buffer_half_float.</change>
+    </revision>
+  </history>
+</ratified>

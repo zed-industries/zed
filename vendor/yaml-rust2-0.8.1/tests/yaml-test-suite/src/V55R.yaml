@@ -1,0 +1,27 @@
+---
+- name: Aliases in Block Sequence
+  from: NimYAML tests
+  tags: alias sequence
+  yaml: |
+    - &a a
+    - &b b
+    - *a
+    - *b
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       =VAL &a :a
+       =VAL &b :b
+       =ALI *a
+       =ALI *b
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      "a",
+      "b",
+      "a",
+      "b"
+    ]

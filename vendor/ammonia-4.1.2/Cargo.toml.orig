@@ -1,0 +1,27 @@
+[package]
+name = "ammonia"
+version = "4.1.2"
+authors = ["Michael Howell <michael@notriddle.com>"]
+description = "HTML Sanitization"
+keywords = [ "sanitization", "html", "security", "xss" ]
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+documentation = "https://docs.rs/ammonia/"
+repository = "https://github.com/rust-ammonia/ammonia"
+categories = [ "web-programming", "text-processing" ]
+edition = "2021"
+rust-version = "1.80"
+
+[dependencies]
+html5ever = "0.35"
+maplit = "1.0"
+tendril = "0.4"
+url = "2"
+cssparser = "0.35.0"
+
+[dev-dependencies]
+version-sync = "0.9"
+env_logger = "0.11"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ammonia_unstable)'] }

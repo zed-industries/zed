@@ -1,0 +1,7 @@
+unstable_features = true
+max_width = 120
+comment_width = 120
+wrap_comments = true
+format_code_in_doc_comments = true
+group_imports = "StdExternalCrate"
+imports_granularity = "Crate"

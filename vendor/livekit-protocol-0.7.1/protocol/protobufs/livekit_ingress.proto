@@ -1,0 +1,222 @@
+// Copyright 2023 LiveKit, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package livekit;
+
+import "livekit_models.proto";
+import "logger/options.proto";
+
+option go_package = "github.com/livekit/protocol/livekit";
+option csharp_namespace = "LiveKit.Proto";
+option ruby_package = "LiveKit::Proto";
+
+service Ingress {
+  // Create a new Ingress
+  rpc CreateIngress(CreateIngressRequest) returns (IngressInfo);
+  // Update an existing Ingress. Ingress can only be updated when it's in ENDPOINT_WAITING state.
+  rpc UpdateIngress(UpdateIngressRequest) returns (IngressInfo);
+  rpc ListIngress(ListIngressRequest) returns (ListIngressResponse);
+  rpc DeleteIngress(DeleteIngressRequest) returns (IngressInfo);
+}
+
+message CreateIngressRequest {
+  IngressInput input_type = 1;
+  // Where to pull media from, only for URL input type
+  string url = 9;
+  // User provided identifier for the ingress
+  string name = 2;
+  // room to publish to
+  string room_name = 3;
+  // publish as participant
+  string participant_identity = 4;
+  // name of publishing participant (used for display only)
+  string participant_name = 5 [(logger.redact) = true];
+  // metadata associated with the publishing participant
+  string participant_metadata = 10 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  // [depreacted ] whether to pass through the incoming media without transcoding, only compatible with some input types. Use `enable_transcoding` instead.
+  bool bypass_transcoding = 8 [deprecated = true];
+  // Whether to transcode the ingested media. Only WHIP supports disabling transcoding currently. WHIP will default to transcoding disabled. Replaces `bypass_transcoding. 
+  optional bool enable_transcoding = 11;
+  IngressAudioOptions audio = 6;
+  IngressVideoOptions video = 7;
+  optional bool enabled = 12; // The default value is true and when set to false, the new connection attempts will be rejected
+
+   // NEXT_ID: 13
+}
+
+enum IngressInput {
+  RTMP_INPUT = 0;
+  WHIP_INPUT = 1;
+  URL_INPUT = 2; // Pull from the provided URL. Only HTTP url are supported, serving either a single media file or a HLS stream
+  //  FILE_INPUT = 3;
+  //  SRT_INPUT = 4;
+}
+
+message IngressAudioOptions {
+  string name = 1;
+  TrackSource source = 2;
+  oneof encoding_options {
+    IngressAudioEncodingPreset preset = 3;
+    IngressAudioEncodingOptions options = 4;
+  }
+}
+
+message IngressVideoOptions {
+  string name = 1;
+  TrackSource source = 2;
+  oneof encoding_options {
+    IngressVideoEncodingPreset preset = 3;
+    IngressVideoEncodingOptions options = 4;
+  }
+}
+
+enum IngressAudioEncodingPreset {
+  OPUS_STEREO_96KBPS = 0;    // OPUS, 2 channels, 96kbps
+  OPUS_MONO_64KBS = 1;       // OPUS, 1 channel, 64kbps
+}
+
+enum IngressVideoEncodingPreset {
+  H264_720P_30FPS_3_LAYERS = 0;                 // 1280x720,  30fps, 1900kbps main layer, 3 layers total
+  H264_1080P_30FPS_3_LAYERS = 1;                // 1980x1080, 30fps, 3500kbps main layer, 3 layers total
+  H264_540P_25FPS_2_LAYERS = 2;                 //  960x540,  25fps, 1000kbps  main layer, 2 layers total
+  H264_720P_30FPS_1_LAYER = 3;                  // 1280x720,  30fps, 1900kbps, no simulcast
+  H264_1080P_30FPS_1_LAYER = 4;                 // 1980x1080, 30fps, 3500kbps, no simulcast
+  H264_720P_30FPS_3_LAYERS_HIGH_MOTION = 5;     // 1280x720,  30fps, 2500kbps main layer, 3 layers total, higher bitrate for high motion, harder to encode content
+  H264_1080P_30FPS_3_LAYERS_HIGH_MOTION = 6;    // 1980x1080, 30fps, 4500kbps main layer, 3 layers total, higher bitrate for high motion, harder to encode content
+  H264_540P_25FPS_2_LAYERS_HIGH_MOTION = 7;     //  960x540,  25fps, 1300kbps  main layer, 2 layers total, higher bitrate for high motion, harder to encode content
+  H264_720P_30FPS_1_LAYER_HIGH_MOTION = 8;      // 1280x720,  30fps, 2500kbps, no simulcast, higher bitrate for high motion, harder to encode content
+  H264_1080P_30FPS_1_LAYER_HIGH_MOTION = 9;     // 1980x1080, 30fps, 4500kbps, no simulcast, higher bitrate for high motion, harder to encode content
+}
+
+message IngressAudioEncodingOptions {
+  // desired audio codec to publish to room
+  AudioCodec audio_codec = 1;
+  uint32 bitrate = 2;
+  bool disable_dtx = 3;
+  uint32 channels = 4;
+}
+
+message IngressVideoEncodingOptions {
+  // desired codec to publish to room
+  VideoCodec video_codec = 1;
+  double frame_rate = 2; 
+  // simulcast layers to publish, when empty, should usually be set to layers at 1/2 and 1/4 of the dimensions
+  repeated VideoLayer layers = 3;
+}
+
+message IngressInfo {
+  string ingress_id = 1;
+  string name = 2;
+  string stream_key = 3;
+  string url = 4; // URL to point the encoder to for push (RTMP, WHIP), or location to pull media from for pull (URL)
+  // for RTMP input, it'll be a rtmp:// URL
+  // for FILE input, it'll be a http:// URL
+  // for SRT input, it'll be a srt:// URL
+  IngressInput input_type = 5;
+  bool bypass_transcoding = 13 [deprecated = true];
+  optional bool enable_transcoding = 15;
+  IngressAudioOptions audio = 6;
+  IngressVideoOptions video = 7;
+  string room_name = 8;
+  string participant_identity = 9;
+  string participant_name = 10 [(logger.redact) = true];
+  string participant_metadata = 14 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  bool reusable = 11;
+  IngressState state = 12; // Description of error/stream non compliance and debug info for publisher otherwise (received bitrate, resolution, bandwidth)
+  optional bool enabled = 16; // The default value is true and when set to false, the new connection attempts will be rejected
+
+  // NEXT_ID: 17
+}
+
+message IngressState {
+  enum Status {
+    ENDPOINT_INACTIVE = 0;
+    ENDPOINT_BUFFERING = 1;
+    ENDPOINT_PUBLISHING = 2;
+    ENDPOINT_ERROR = 3;
+    ENDPOINT_COMPLETE = 4;
+  }
+
+  Status status = 1;
+  string error = 2; // Error/non compliance description if any
+  InputVideoState video = 3;
+  InputAudioState audio = 4;
+  string room_id = 5; // ID of the current/previous room published to
+  int64 started_at = 7;
+  int64 ended_at = 8;
+  int64 updated_at = 10;
+  string resource_id = 9;
+  repeated TrackInfo tracks = 6;
+
+  // next ID: 11
+}
+
+message InputVideoState {
+  string mime_type = 1;
+  uint32 average_bitrate = 2;
+  uint32 width = 3;
+  uint32 height = 4;
+  double framerate = 5;
+}
+
+message InputAudioState {
+  string mime_type = 1;
+  uint32 average_bitrate = 2;
+  uint32 channels = 3;
+  uint32 sample_rate = 4;
+}
+
+message UpdateIngressRequest {
+  string ingress_id = 1;
+  string name = 2;
+  string room_name = 3;
+  string participant_identity = 4;
+  string participant_name = 5 [(logger.redact) = true];
+  string participant_metadata = 9 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  optional bool bypass_transcoding = 8 [deprecated = true];
+  optional bool enable_transcoding = 10;
+  IngressAudioOptions audio = 6;
+  IngressVideoOptions video = 7;
+  optional bool enabled = 11; // The default value is true and when set to false, the new connection attempts will be rejected
+  // NEXT_ID: 12
+}
+
+message ListIngressRequest {
+  TokenPagination page_token = 3;
+  // when blank, lists all ingress endpoints
+  string room_name = 1;  // (optional, filter by room name)
+  string ingress_id = 2; // (optional, filter by ingress ID)
+  // next field id: 4
+}
+
+message ListIngressResponse {
+  TokenPagination next_page_token = 2;
+  repeated IngressInfo items = 1;
+  // next field id: 3
+}
+
+message DeleteIngressRequest {
+  string ingress_id = 1;
+}

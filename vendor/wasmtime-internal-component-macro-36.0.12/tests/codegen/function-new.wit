@@ -1,0 +1,4 @@
+package foo:foo;
+world foo {
+  export new: func();
+}

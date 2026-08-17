@@ -1,0 +1,126 @@
+---
+source: brush-parser/src/parser.rs
+expression: "ParseResult { input, result: &result }"
+---
+ParseResult(
+  input: "( : && ( (( 0 )) || : ) )",
+  result: Program(
+    cmds: [
+      List([
+        Item(AndOr(
+          first: Pipeline(
+            seq: [
+              Compound(Subshell(SubshellCommand(
+                list: List([
+                  Item(AndOr(
+                    first: Pipeline(
+                      seq: [
+                        Simple(Simple(
+                          w: Some(W(
+                            v: ":",
+                            loc: Some(Loc(
+                              start: Pos(
+                                idx: 2,
+                                line: 1,
+                                col: 3,
+                              ),
+                              end: Pos(
+                                idx: 3,
+                                line: 1,
+                                col: 4,
+                              ),
+                            )),
+                          )),
+                        )),
+                      ],
+                    ),
+                    additional: [
+                      And(Pipeline(
+                        seq: [
+                          Compound(Subshell(SubshellCommand(
+                            list: List([
+                              Item(AndOr(
+                                first: Pipeline(
+                                  seq: [
+                                    Compound(Arithmetic(ArithmeticCommand(
+                                      expr: UnexpandedArithmeticExpr(
+                                        value: "0",
+                                      ),
+                                      loc: Loc(
+                                        start: Pos(
+                                          idx: 9,
+                                          line: 1,
+                                          col: 10,
+                                        ),
+                                        end: Pos(
+                                          idx: 16,
+                                          line: 1,
+                                          col: 17,
+                                        ),
+                                      ),
+                                    )), None),
+                                  ],
+                                ),
+                                additional: [
+                                  Or(Pipeline(
+                                    seq: [
+                                      Simple(Simple(
+                                        w: Some(W(
+                                          v: ":",
+                                          loc: Some(Loc(
+                                            start: Pos(
+                                              idx: 20,
+                                              line: 1,
+                                              col: 21,
+                                            ),
+                                            end: Pos(
+                                              idx: 21,
+                                              line: 1,
+                                              col: 22,
+                                            ),
+                                          )),
+                                        )),
+                                      )),
+                                    ],
+                                  )),
+                                ],
+                              ), Sequence),
+                            ]),
+                            loc: Loc(
+                              start: Pos(
+                                idx: 7,
+                                line: 1,
+                                col: 8,
+                              ),
+                              end: Pos(
+                                idx: 23,
+                                line: 1,
+                                col: 24,
+                              ),
+                            ),
+                          )), None),
+                        ],
+                      )),
+                    ],
+                  ), Sequence),
+                ]),
+                loc: Loc(
+                  start: Pos(
+                    idx: 0,
+                    line: 1,
+                    col: 1,
+                  ),
+                  end: Pos(
+                    idx: 25,
+                    line: 1,
+                    col: 26,
+                  ),
+                ),
+              )), None),
+            ],
+          ),
+        ), Sequence),
+      ]),
+    ],
+  ),
+)

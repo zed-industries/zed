@@ -1,0 +1,36 @@
+# Run cargo tests in a NetBSD VM. This needs to run on one of the GitHub macos runners, because
+# they are currently the only ones to support virtualization.
+#
+# See https://github.com/vmactions/netbsd-vm
+#
+# The standard filesystem on NetBSD installs, ffs, doesn't support extended attributes. The
+# filesystem type needs to be set fo FFSv2ea (on NetBSD 10 or later) for this to be enabled.
+# See http://wikimirror.netbsd.de/tutorials/acls_and_extended_attributes_on_ffs/
+
+# Disabled until NetBSD 10 is released and available via vmactions
+on: workflow_dispatch
+
+name: netbsd
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v4
+    - name: Run tests in NetBSD VM
+      uses: vmactions/netbsd-vm@v1
+      with:
+        usesh: true
+        prepare: |
+          /usr/sbin/pkg_add curl
+          curl https://sh.rustup.rs -sSf --output rustup.sh
+          sh rustup.sh -y --profile minimal --default-toolchain stable
+          export PATH="${HOME}/.cargo/bin:$PATH"
+          echo "~~~~ rustc --version ~~~~"
+          rustc --version
+
+        run: |
+          export PATH="${HOME}/.cargo/bin:$PATH"
+          ls -la
+          cargo build --verbose
+          cargo test --verbose

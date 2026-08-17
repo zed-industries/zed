@@ -1,0 +1,13 @@
+package test:test;
+
+interface foo {
+  resource x {
+    constructor(v: u32);
+    get: func() -> u32;
+  }
+}
+
+world lib-foo {
+  import foo;
+  export foo;
+}

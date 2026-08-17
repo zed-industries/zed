@@ -1,0 +1,5 @@
+package some:dep;
+
+interface foo {
+  resource a;
+}

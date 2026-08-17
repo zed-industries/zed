@@ -1,0 +1,10 @@
+package root:component;
+
+world root {
+  export foo: interface {
+    resource a {
+      constructor();
+      other-new: static func() -> a;
+    }
+  }
+}

@@ -1,0 +1,45 @@
+name: Bug Report
+description: Create a report to help us improve
+labels: ["C-bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for filing a 🐛 bug report 😄!
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: >
+        Please provide a clear and concise description of what the bug is,
+        including what currently happens and what you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps
+      description: Please list the steps to reproduce the bug.
+      placeholder: |
+        1.
+        2.
+        3.
+  - type: textarea
+    id: possible-solutions
+    attributes:
+      label: Possible Solution(s)
+      description: >
+        Not obligatory, but suggest a fix/reason for the bug,
+        or ideas how to implement the addition or change.
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Provide any additional notes that might be helpful.
+  - type: textarea
+    id: version
+    attributes:
+      label: Version
+      description: >
+        Please paste the output of running `mdbook --version` or which version
+        of the library you are using.
+      render: text

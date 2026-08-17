@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- vi:set sw=2 ts=4: -->
+<?xml-stylesheet href="../../extension.xsl" type="text/xsl"?>
+<proposal href="proposals/WEBGL_texture_multisample/">
+  <name>WEBGL_texture_multisample</name>
+
+  <contact> <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL
+  working group</a> (public_webgl 'at' khronos.org) </contact>
+
+  <contributors>
+    <contributor>Jeff Gilbert, Mozilla</contributor>
+  </contributors>
+
+  <number>XYZ</number>
+
+  <depends>
+    <api version="2.0"/>
+  </depends>
+
+  <overview>
+    <features>
+      <feature>
+        Adds <code>texStorage2DMultisample()</code> and the <code>TEXTURE_2D_MULTISAMPLE</code>
+        target from OpenGL ES 3.1.
+      </feature>
+    </features>
+  </overview>
+
+  <idl xml:space="preserve">
+    [NoInterfaceObject]
+    interface WEBGL_texture_storage_multisample {
+      const GLenum TEXTURE_2D_MULTISAMPLE = 0x9100;
+
+      void texStorage2DMultisample(GLenum target,
+                                   GLsizei samples,
+                                   GLenum internalformat,
+                                   GLsizei width,
+                                   GLsizei height,
+                                   GLboolean fixedsamplelocations);
+    };
+  </idl>
+
+  <history>
+    <revision date="2017/12/18">
+      <change>Initial revision.</change>
+    </revision>
+  </history>
+</proposal>

@@ -1,0 +1,41 @@
+[package]
+name = "yeslogic-fontconfig-sys"
+version = "6.0.0"
+edition = "2021"
+rust-version = "1.77"
+authors = [
+    "Austin Bonander <austin.bonander@gmail.com>",
+    "The Servo Project Developers",
+    "YesLogic Pty. Ltd. <info@yeslogic.com>"
+]
+license = "MIT"
+
+description = "Raw bindings to Fontconfig without a vendored C library"
+keywords = ["font", "bindings", "fontconfig", "sys"]
+categories = ["text-processing"]
+
+homepage = "https://github.com/yeslogic/fontconfig-rs"
+documentation = "https://docs.rs/crate/yeslogic-fontconfig-sys"
+repository = "https://github.com/yeslogic/fontconfig-rs"
+
+links = "fontconfig"
+
+[lib]
+name = "fontconfig_sys"
+
+[dependencies]
+dlib = "0.5.0"
+# This can't be optional because build.rs can't conditionally enable an
+# optional dependency:
+#
+# > Note that this does not affect Cargo's dependency resolution. This cannot
+# > be used to enable an optional dependency, or enable other Cargo features.
+#
+# - https://doc.rust-lang.org/cargo/reference/build-scripts.html#rustc-cfg
+once_cell = "1.9.0"
+
+[features]
+dlopen = []
+
+[build-dependencies]
+pkg-config = "0.3"

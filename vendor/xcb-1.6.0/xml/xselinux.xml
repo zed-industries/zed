@@ -1,0 +1,277 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Except as contained in this notice, the names of the authors or their
+institutions shall not be used in advertising or otherwise to promote the
+sale, use or other dealings in this Software without prior written
+authorization from the authors.
+-->
+<xcb header="xselinux" extension-xname="SELinux" extension-name="SELinux" extension-multiword="false" major-version="1" minor-version="0">
+    <import>xproto</import>
+
+    <request name="QueryVersion" opcode="0">
+        <field type="CARD8" name="client_major" />
+        <field type="CARD8" name="client_minor" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD16" name="server_major" />
+            <field type="CARD16" name="server_minor" />
+        </reply>
+    </request>
+
+    <request name="SetDeviceCreateContext" opcode="1">
+        <field type="CARD32" name="context_len" />
+        <list type="char" name="context">
+            <fieldref>context_len</fieldref>
+        </list>
+    </request>
+
+    <request name="GetDeviceCreateContext" opcode="2">
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="context_len" />
+            <pad bytes="20" />
+            <list type="char" name="context">
+                <fieldref>context_len</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="SetDeviceContext" opcode="3">
+        <field type="CARD32" name="device" />
+        <field type="CARD32" name="context_len" />
+        <list type="char" name="context">
+            <fieldref>context_len</fieldref>
+        </list>
+    </request>
+
+    <request name="GetDeviceContext" opcode="4">
+        <field type="CARD32" name="device" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="context_len" />
+            <pad bytes="20" />
+            <list type="char" name="context">
+                <fieldref>context_len</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="SetWindowCreateContext" opcode="5">
+        <field type="CARD32" name="context_len" />
+        <list type="char" name="context">
+            <fieldref>context_len</fieldref>
+        </list>
+    </request>
+
+    <request name="GetWindowCreateContext" opcode="6">
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="context_len" />
+            <pad bytes="20" />
+            <list type="char" name="context">
+                <fieldref>context_len</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetWindowContext" opcode="7">
+        <field type="WINDOW" name="window" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="context_len" />
+            <pad bytes="20" />
+            <list type="char" name="context">
+                <fieldref>context_len</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <struct name="ListItem">
+        <field type="ATOM" name="name" />
+        <field type="CARD32" name="object_context_len" />
+        <field type="CARD32" name="data_context_len" />
+        <list type="char" name="object_context">
+            <fieldref>object_context_len</fieldref>
+        </list>
+        <pad align="4" />
+        <list type="char" name="data_context">
+            <fieldref>data_context_len</fieldref>
+        </list>
+        <pad align="4" />
+    </struct>
+
+    <request name="SetPropertyCreateContext" opcode="8">
+        <field type="CARD32" name="context_len" />
+        <list type="char" name="context">
+            <fieldref>context_len</fieldref>
+        </list>
+    </request>
+
+    <request name="GetPropertyCreateContext" opcode="9">
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="context_len" />
+            <pad bytes="20" />
+            <list type="char" name="context">
+                <fieldref>context_len</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="SetPropertyUseContext" opcode="10">
+        <field type="CARD32" name="context_len" />
+        <list type="char" name="context">
+            <fieldref>context_len</fieldref>
+        </list>
+    </request>
+
+    <request name="GetPropertyUseContext" opcode="11">
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="context_len" />
+            <pad bytes="20" />
+            <list type="char" name="context">
+                <fieldref>context_len</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetPropertyContext" opcode="12">
+        <field type="WINDOW" name="window" />
+        <field type="ATOM" name="property" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="context_len" />
+            <pad bytes="20" />
+            <list type="char" name="context">
+                <fieldref>context_len</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetPropertyDataContext" opcode="13">
+        <field type="WINDOW" name="window" />
+        <field type="ATOM" name="property" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="context_len" />
+            <pad bytes="20" />
+            <list type="char" name="context">
+                <fieldref>context_len</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="ListProperties" opcode="14">
+        <field type="WINDOW" name="window" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="properties_len" />
+            <pad bytes="20" />
+            <list type="ListItem" name="properties">
+                <fieldref>properties_len</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="SetSelectionCreateContext" opcode="15">
+        <field type="CARD32" name="context_len" />
+        <list type="char" name="context">
+            <fieldref>context_len</fieldref>
+        </list>
+    </request>
+
+    <request name="GetSelectionCreateContext" opcode="16">
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="context_len" />
+            <pad bytes="20" />
+            <list type="char" name="context">
+                <fieldref>context_len</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="SetSelectionUseContext" opcode="17">
+        <field type="CARD32" name="context_len" />
+        <list type="char" name="context">
+            <fieldref>context_len</fieldref>
+        </list>
+    </request>
+
+    <request name="GetSelectionUseContext" opcode="18">
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="context_len" />
+            <pad bytes="20" />
+            <list type="char" name="context">
+                <fieldref>context_len</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetSelectionContext" opcode="19">
+        <field type="ATOM" name="selection" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="context_len" />
+            <pad bytes="20" />
+            <list type="char" name="context">
+                <fieldref>context_len</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetSelectionDataContext" opcode="20">
+        <field type="ATOM" name="selection" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="context_len" />
+            <pad bytes="20" />
+            <list type="char" name="context">
+                <fieldref>context_len</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="ListSelections" opcode="21">
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="selections_len" />
+            <pad bytes="20" />
+            <list type="ListItem" name="selections">
+                <fieldref>selections_len</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetClientContext" opcode="22">
+        <field type="CARD32" name="resource" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="context_len" />
+            <pad bytes="20" />
+            <list type="char" name="context">
+                <fieldref>context_len</fieldref>
+            </list>
+        </reply>
+    </request>
+
+</xcb>

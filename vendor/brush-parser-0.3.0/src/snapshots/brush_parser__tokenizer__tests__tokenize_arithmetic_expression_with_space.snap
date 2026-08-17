@@ -1,0 +1,21 @@
+---
+source: brush-parser/src/tokenizer.rs
+expression: "test_tokenizer(\"$(( 1 ))\")?"
+---
+TokenizerResult(
+  input: "$(( 1 ))",
+  result: [
+    W("$(( 1 ))", Loc(
+      start: Pos(
+        idx: 0,
+        line: 1,
+        col: 1,
+      ),
+      end: Pos(
+        idx: 8,
+        line: 1,
+        col: 9,
+      ),
+    )),
+  ],
+)

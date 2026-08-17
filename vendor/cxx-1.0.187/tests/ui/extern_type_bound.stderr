@@ -1,0 +1,11 @@
+error: extern type bounds are not implemented yet
+ --> tests/ui/extern_type_bound.rs:4:22
+  |
+4 |         type Opaque: PartialEq + PartialOrd;
+  |                      ^^^^^^^^^^^^^^^^^^^^^^
+
+error: unsupported trait
+  --> tests/ui/extern_type_bound.rs:11:22
+   |
+11 |         type Opaque: for<'de> Deserialize<'de>;
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^

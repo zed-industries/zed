@@ -1,0 +1,87 @@
+[package]
+name = "cosmic-text"
+description = "Pure Rust multi-line text handling"
+version = "0.19.0"
+authors = ["Jeremy Soller <jeremy@system76.com>"]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+documentation = "https://docs.rs/cosmic-text/latest/cosmic_text/"
+repository = "https://github.com/pop-os/cosmic-text"
+rust-version = "1.89"
+
+[dependencies]
+bitflags = "2.10.0"
+core_maths = { version = "0.1.1", optional = true }
+cosmic_undo_2 = { version = "0.2.0", optional = true }
+fontdb = { version = "0.23", default-features = false }
+harfrust = { version = "0.5.0", default-features = false }
+hashbrown = { version = "0.17", optional = true, default-features = false }
+libm = { version = "0.2.16", optional = true }
+linebender_resource_handle = { version = "0.1.1", default-features = false }
+log = "0.4.29"
+modit = { version = "0.1.5", optional = true }
+rangemap = "1.7.1"
+rustc-hash = { version = "2.1.1", default-features = false }
+self_cell = "1.2.2"
+skrifa = { version = "0.40.0", default-features = false }
+smol_str = { version = "0.3.2", default-features = false }
+syntect = { version = "5.3.0", optional = true }
+sys-locale = { version = "0.3.2", optional = true }
+unicode-linebreak = "0.1.5"
+unicode-script = "0.5.8"
+unicode-segmentation = "1.12.0"
+
+[dependencies.swash]
+version = "0.2.6"
+default-features = false
+features = ["render", "scale"]
+optional = true
+
+[dependencies.unicode-bidi]
+version = "0.3.18"
+default-features = false
+features = ["hardcoded-data"]
+
+[features]
+default = ["std", "swash", "fontconfig"]
+fontconfig = ["fontdb/fontconfig", "std"]
+monospace_fallback = []
+no_std = ["hashbrown", "dep:libm", "skrifa/libm", "core_maths", "swash?/libm"]
+peniko = []
+shape-run-cache = []
+std = [
+    "fontdb/memmap",
+    "fontdb/std",
+    "harfrust/std",
+    "linebender_resource_handle/std",
+    "skrifa/std",
+    "swash?/std",
+    "sys-locale",
+    "unicode-bidi/std",
+]
+vi = ["modit", "syntect", "cosmic_undo_2"]
+wasm-web = ["sys-locale?/js"]
+warn_on_missing_glyphs = []
+
+[[bench]]
+name = "layout"
+harness = false
+
+[[bench]]
+name = "text_shaping_benchmarks"
+harness = false
+
+[workspace]
+members = ["examples/*"]
+
+[dev-dependencies]
+tiny-skia = "0.11.4"
+criterion = { version = "0.8.1", default-features = false, features = [
+    "cargo_bench_support",
+] }
+
+[profile.test]
+opt-level = 1
+
+[package.metadata.docs.rs]
+features = ["vi"]

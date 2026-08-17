@@ -1,0 +1,38 @@
+environment:
+
+  # At the time this was added AppVeyor was having troubles with checking
+  # revocation of SSL certificates of sites like static.rust-lang.org and what
+  # we think is crates.io. The libcurl HTTP client by default checks for
+  # revocation on Windows and according to a mailing list [1] this can be
+  # disabled.
+  #
+  # The `CARGO_HTTP_CHECK_REVOKE` env var here tells cargo to disable SSL
+  # revocation checking on Windows in libcurl. Note, though, that rustup, which
+  # we're using to download Rust here, also uses libcurl as the default backend.
+  # Unlike Cargo, however, rustup doesn't have a mechanism to disable revocation
+  # checking. To get rustup working we set `RUSTUP_USE_HYPER` which forces it to
+  # use the Hyper instead of libcurl backend. Both Hyper and libcurl use
+  # schannel on Windows but it appears that Hyper configures it slightly
+  # differently such that revocation checking isn't turned on by default.
+  #
+  # [1]: https://curl.haxx.se/mail/lib-2016-03/0202.html
+  RUSTUP_USE_HYPER: 1
+  CARGO_HTTP_CHECK_REVOKE: false
+
+  matrix:
+  - TARGET: x86_64-pc-windows-msvc
+  - TARGET: i686-pc-windows-msvc
+install:
+  - appveyor DownloadFile https://win.rustup.rs/ -FileName rustup-init.exe
+  - rustup-init.exe -y --default-host %TARGET% --default-toolchain nightly
+  - set PATH=%PATH%;C:\Users\appveyor\.cargo\bin
+  - rustc -V
+  - cargo -V
+
+build: false
+
+test_script:
+  - cargo test --benches
+  - cargo test
+  - cargo test --features nightly
+  - cargo test --manifest-path rand-derive/Cargo.toml

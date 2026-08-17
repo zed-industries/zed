@@ -1,0 +1,299 @@
+;; `icmp`-related rewrites
+
+;; `x == x` is always true for integers; `x != x` is false. Strict
+;; inequalities are false, and loose inequalities are true.
+(rule (simplify (eq  (ty_int ty) x x)) (subsume (iconst_u ty 1)))
+(rule (simplify (ne  (ty_int ty) x x)) (subsume (iconst_u ty 0)))
+(rule (simplify (ugt (ty_int ty) x x)) (subsume (iconst_u ty 0)))
+(rule (simplify (uge (ty_int ty) x x)) (subsume (iconst_u ty 1)))
+(rule (simplify (sgt (ty_int ty) x x)) (subsume (iconst_u ty 0)))
+(rule (simplify (sge (ty_int ty) x x)) (subsume (iconst_u ty 1)))
+(rule (simplify (ult (ty_int ty) x x)) (subsume (iconst_u ty 0)))
+(rule (simplify (ule (ty_int ty) x x)) (subsume (iconst_u ty 1)))
+(rule (simplify (slt (ty_int ty) x x)) (subsume (iconst_u ty 0)))
+(rule (simplify (sle (ty_int ty) x x)) (subsume (iconst_u ty 1)))
+
+;; For integers, adding the same thing on both sides of an equality check
+;; (or an inequality check) doesn't change the result.
+;; This applies for arbitrary expressions, not just constants, so we need to
+;; check all possible orderings since nothing normalizes it.
+
+(rule (simplify (eq ty (iadd _ a k) (iadd _ b k)))
+      (subsume (eq ty a b)))
+(rule (simplify (eq ty (iadd _ a k) (iadd _ k b)))
+      (subsume (eq ty a b)))
+(rule (simplify (eq ty (iadd _ k a) (iadd _ b k)))
+      (subsume (eq ty a b)))
+(rule (simplify (eq ty (iadd _ k a) (iadd _ k b)))
+      (subsume (eq ty a b)))
+(rule (simplify (ne ty (iadd _ a k) (iadd _ b k)))
+      (subsume (ne ty a b)))
+(rule (simplify (ne ty (iadd _ a k) (iadd _ k b)))
+      (subsume (ne ty a b)))
+(rule (simplify (ne ty (iadd _ k a) (iadd _ b k)))
+      (subsume (ne ty a b)))
+(rule (simplify (ne ty (iadd _ k a) (iadd _ k b)))
+      (subsume (ne ty a b)))
+
+;; To avoid repeating all the above rules again, normalize isub to iadd
+;; (a - b) == (c - d) ⟹ (a + d) == (c + b)
+
+(rule (simplify (eq ty1 (isub ty2 a b) (isub ty3 c d)))
+      (eq ty1 (iadd ty2 a d) (iadd ty3 c b)))
+(rule (simplify (ne ty1 (isub ty2 a b) (isub ty3 c d)))
+      (ne ty1 (iadd ty2 a d) (iadd ty3 c b)))
+
+;; Optimize icmp-of-icmp.
+;; ne(icmp(ty, cc, x, y), 0) == icmp(ty, cc, x, y)
+;; e.g. neq(ugt(x, y), 0) == ugt(x, y)
+(rule (simplify (ne ty
+                      (uextend_maybe _ inner @ (icmp ty _ _ _))
+                      (iconst_u _ 0)))
+      (subsume inner))
+
+;; Likewise for icmp-of-fcmp.
+;; ne(fcmp(ty, cc, x, y), 0) == fcmp(ty, cc, x, y)
+(rule (simplify (ne ty
+                      (uextend_maybe _ inner @ (fcmp ty _ _ _))
+                      (iconst_u _ 0)))
+      (subsume inner))
+
+;; eq(icmp(ty, cc, x, y), 0) == icmp(ty, cc_complement, x, y)
+;; e.g. eq(ugt(x, y), 0) == ule(x, y)
+(rule (simplify (eq ty
+                      (uextend_maybe _ (icmp ty cc x y))
+                      (iconst_u _ 0)))
+      (subsume (icmp ty (intcc_complement cc) x y)))
+
+;; ne(icmp(ty, cc, x, y), 1) == icmp(ty, cc_complement, x, y)
+;; e.g. ne(ugt(x, y), 1) == ule(x, y)
+(rule (simplify (ne ty
+                      (uextend_maybe _ (icmp ty cc x y))
+                      (iconst_u _ 1)))
+      (subsume (icmp ty (intcc_complement cc) x y)))
+
+;; eq(icmp(ty, cc, x, y), 1) == icmp(ty, cc, x, y)
+;; e.g. eq(ugt(x, y), 1) == ugt(x, y)
+(rule (simplify (eq ty
+                      (uextend_maybe _ inner @ (icmp _ _ _ _))
+                      (iconst_u _ 1)))
+      (subsume inner))
+
+;; Optimize select-of-uextend-of-icmp to select-of-icmp, because
+;; select can take an I8 condition too.
+(rule (simplify
+       (select ty (uextend _ c @ (icmp _ _ _ _)) x y))
+      (select ty c x y))
+(rule (simplify
+       (select ty (uextend _ c @ (icmp _ _ _ _)) x y))
+      (select ty c x y))
+
+;; Masking the result of a comparison with 1 always results in the comparison
+;; itself. Note that comparisons in wasm may sometimes be hidden behind
+;; extensions.
+(rule (simplify
+       (band (ty_int _)
+             cmp @ (icmp _ _ _ _)
+             (iconst_u _ 1)))
+      cmp)
+(rule (simplify
+       (band (ty_int _)
+             extend @ (uextend _ (icmp _ _ _ _))
+             (iconst_u _ 1)))
+      extend)
+
+;; Comparisons against largest/smallest signed/unsigned values:
+;; ult(x, 0) == false.
+(rule (simplify (ult (fits_in_64 (ty_int bty)) x zero @ (iconst_u _ 0)))
+      (subsume (iconst_u bty 0)))
+
+;; ule(x, 0) == eq(x, 0)
+(rule (simplify (ule (fits_in_64 (ty_int bty)) x zero @ (iconst_u _ 0)))
+      (eq bty x zero))
+
+;; ugt(x, 0) == ne(x, 0).
+(rule (simplify (ugt (fits_in_64 (ty_int bty)) x zero @ (iconst_u _ 0)))
+      (ne bty x zero))
+
+;; uge(x, 0) == true.
+(rule (simplify (uge (fits_in_64 (ty_int bty)) x zero @ (iconst_u _ 0)))
+      (subsume (iconst_u bty 1)))
+
+;; ult(x, UMAX) == ne(x, UMAX).
+(rule (simplify (ult (fits_in_64 (ty_int bty)) x umax @ (iconst_u cty y)))
+       (if-let true (u64_eq y (ty_umax cty)))
+       (ne bty x umax))
+
+;; ule(x, UMAX) == true.
+(rule (simplify (ule (fits_in_64 (ty_int bty)) x umax @ (iconst_u cty y)))
+       (if-let true (u64_eq y (ty_umax cty)))
+       (subsume (iconst_u bty 1)))
+
+;; ugt(x, UMAX) == false.
+(rule (simplify (ugt (fits_in_64 (ty_int bty)) x umax @ (iconst_u cty y)))
+       (if-let true (u64_eq y (ty_umax cty)))
+       (subsume (iconst_u bty 0)))
+
+;; uge(x, UMAX) == eq(x, UMAX).
+(rule (simplify (uge (fits_in_64 (ty_int bty)) x umax @ (iconst_u cty y)))
+       (if-let true (u64_eq y (ty_umax cty)))
+       (eq bty x umax))
+
+;; slt(x, SMIN) == false.
+(rule (simplify (slt (fits_in_64 (ty_int bty)) x smin @ (iconst_u cty y)))
+       (if-let true (u64_eq y (ty_smin cty)))
+       (subsume (iconst_u bty 0)))
+
+;; sle(x, SMIN) == eq(x, SMIN).
+(rule (simplify (sle (fits_in_64 (ty_int bty)) x smin @ (iconst_u cty y)))
+       (if-let true (u64_eq y (ty_smin cty)))
+       (eq bty x smin))
+
+;; sgt(x, SMIN) == ne(x, SMIN).
+(rule (simplify (sgt (fits_in_64 (ty_int bty)) x smin @ (iconst_u cty y)))
+       (if-let true (u64_eq y (ty_smin cty)))
+       (ne bty x smin))
+
+;; sge(x, SMIN) == true.
+(rule (simplify (sge (fits_in_64 (ty_int bty)) x smin @ (iconst_u cty y)))
+       (if-let true (u64_eq y (ty_smin cty)))
+       (subsume (iconst_u bty 1)))
+
+;; slt(x, SMAX) == ne(x, SMAX).
+(rule (simplify (slt (fits_in_64 (ty_int bty)) x smax @ (iconst_u cty y)))
+       (if-let true (u64_eq y (ty_smax cty)))
+       (ne bty x smax))
+
+;; sle(x, SMAX) == true.
+(rule (simplify (sle (fits_in_64 (ty_int bty)) x smax @ (iconst_u cty y)))
+       (if-let true (u64_eq y (ty_smax cty)))
+       (subsume (iconst_u bty 1)))
+
+;; sgt(x, SMAX) == false.
+(rule (simplify (sgt (fits_in_64 (ty_int bty)) x smax @ (iconst_u cty y)))
+       (if-let true (u64_eq y (ty_smax cty)))
+       (subsume (iconst_u bty 0)))
+
+;; sge(x, SMAX) == eq(x, SMAX).
+(rule (simplify (sge (fits_in_64 (ty_int bty)) x smax @ (iconst_u cty y)))
+       (if-let true (u64_eq y (ty_smax cty)))
+       (eq bty x smax))
+
+;; `band`/`bor` of 2 comparisons:
+(rule (simplify (band (fits_in_64 ty) (icmp ty cc1 x y) (icmp ty cc2 x y)))
+  (if-let signed (intcc_comparable cc1 cc2))
+  (compose_icmp ty (u64_and (decompose_intcc cc1) (decompose_intcc cc2)) signed x y))
+
+(rule (simplify (bor (fits_in_64 ty) (icmp ty cc1 x y) (icmp ty cc2 x y)))
+  (if-let signed (intcc_comparable cc1 cc2))
+  (compose_icmp ty (u64_or (decompose_intcc cc1) (decompose_intcc cc2)) signed x y))
+
+;; Prefer comparing against zero
+;; uge(x, 1) == ne(x, 0)
+(rule (simplify (uge ty x (iconst_u cty 1)))
+      (ne ty x (iconst_u cty 0)))
+;; ult(x, 1) == eq(x, 0)
+(rule (simplify (ult ty x (iconst_u cty 1)))
+      (eq ty x (iconst_u cty 0)))
+;; sge(x, 1) == sgt(x, 0)
+(rule (simplify (sge ty x (iconst_s cty 1)))
+      (sgt ty x (iconst_s cty 0)))
+;; slt(x, 1) == sle(x, 0)
+(rule (simplify (slt ty x (iconst_s cty 1)))
+      (sle ty x (iconst_s cty 0)))
+;; sgt(x, -1) == sge(x, 0)
+(rule (simplify (sgt ty x (iconst_s cty -1)))
+      (sge ty x (iconst_s cty 0)))
+;; sle(x, -1) == slt(x, 0)
+(rule (simplify (sle ty x (iconst_s cty -1)))
+      (slt ty x (iconst_s cty 0)))
+
+(decl pure partial intcc_comparable (IntCC IntCC) bool)
+(rule (intcc_comparable x y)
+  (if-let (u64_extract_non_zero class) (u64_and (intcc_class x) (intcc_class y)))
+  (u64_eq 2 class))
+
+(decl pure decompose_intcc (IntCC) u64)
+(rule (decompose_intcc (IntCC.Equal)) 1)
+(rule (decompose_intcc (IntCC.UnsignedLessThan)) 2)
+(rule (decompose_intcc (IntCC.SignedLessThan)) 2)
+(rule (decompose_intcc (IntCC.UnsignedLessThanOrEqual)) 3)
+(rule (decompose_intcc (IntCC.SignedLessThanOrEqual)) 3)
+(rule (decompose_intcc (IntCC.UnsignedGreaterThan)) 4)
+(rule (decompose_intcc (IntCC.SignedGreaterThan)) 4)
+(rule (decompose_intcc (IntCC.UnsignedGreaterThanOrEqual)) 5)
+(rule (decompose_intcc (IntCC.SignedGreaterThanOrEqual)) 5)
+(rule (decompose_intcc (IntCC.NotEqual)) 6)
+
+(decl compose_icmp (Type u64 bool Value Value) Value)
+(rule (compose_icmp ty 0 _ _ _) (subsume (iconst_u ty 0)))
+(rule (compose_icmp ty 1 _ x y) (icmp ty (IntCC.Equal) x y))
+(rule (compose_icmp ty 2 false x y) (icmp ty (IntCC.UnsignedLessThan) x y))
+(rule (compose_icmp ty 2 true x y) (icmp ty (IntCC.SignedLessThan) x y))
+(rule (compose_icmp ty 3 false x y) (icmp ty (IntCC.UnsignedLessThanOrEqual) x y))
+(rule (compose_icmp ty 3 true x y) (icmp ty (IntCC.SignedLessThanOrEqual) x y))
+(rule (compose_icmp ty 4 false x y) (icmp ty (IntCC.UnsignedGreaterThan) x y))
+(rule (compose_icmp ty 4 true x y) (icmp ty (IntCC.SignedGreaterThan) x y))
+(rule (compose_icmp ty 5 false x y) (icmp ty (IntCC.UnsignedGreaterThanOrEqual) x y))
+(rule (compose_icmp ty 5 true x y) (icmp ty (IntCC.SignedGreaterThanOrEqual) x y))
+(rule (compose_icmp ty 6 _ x y) (icmp ty (IntCC.NotEqual) x y))
+(rule (compose_icmp ty 7 _ _ _) (subsume (iconst_u ty 1)))
+
+(decl pure intcc_class (IntCC) u64)
+(rule (intcc_class (IntCC.UnsignedLessThan)) 1)
+(rule (intcc_class (IntCC.UnsignedLessThanOrEqual)) 1)
+(rule (intcc_class (IntCC.UnsignedGreaterThan)) 1)
+(rule (intcc_class (IntCC.UnsignedGreaterThanOrEqual)) 1)
+(rule (intcc_class (IntCC.SignedLessThan)) 2)
+(rule (intcc_class (IntCC.SignedLessThanOrEqual)) 2)
+(rule (intcc_class (IntCC.SignedGreaterThan)) 2)
+(rule (intcc_class (IntCC.SignedGreaterThanOrEqual)) 2)
+(rule (intcc_class (IntCC.Equal)) 3)
+(rule (intcc_class (IntCC.NotEqual)) 3)
+
+;; Pattern-match what LLVM emits today for 128-bit comparisons into actual
+;; 128-bit comparisons. Platforms like x64 and aarch64 have more optimal
+;; lowerings for 128-bit arithmetic than the default structure.
+(rule (simplify (select ty (eq _   a_hi @ (value_type $I64) b_hi @ (value_type $I64))
+                           (uge ty a_lo @ (value_type $I64) b_lo @ (value_type $I64))
+                           (uge ty a_hi b_hi)))
+      (uge ty (iconcat $I64 a_lo a_hi) (iconcat $I64 b_lo b_hi)))
+
+(rule (simplify (select ty (eq _   a_hi @ (value_type $I64) b_hi @ (value_type $I64))
+                           (uge ty a_lo @ (value_type $I64) b_lo @ (value_type $I64))
+                           (sge ty a_hi b_hi)))
+      (sge ty (iconcat $I64 a_lo a_hi) (iconcat $I64 b_lo b_hi)))
+
+(rule (simplify (select ty (eq _   a_hi @ (value_type $I64) b_hi @ (value_type $I64))
+                           (ugt ty a_lo @ (value_type $I64) b_lo @ (value_type $I64))
+                           (ugt ty a_hi b_hi)))
+      (ugt ty (iconcat $I64 a_lo a_hi) (iconcat $I64 b_lo b_hi)))
+
+(rule (simplify (select ty (eq _   a_hi @ (value_type $I64) b_hi @ (value_type $I64))
+                           (ugt ty a_lo @ (value_type $I64) b_lo @ (value_type $I64))
+                           (sgt ty a_hi b_hi)))
+      (sgt ty (iconcat $I64 a_lo a_hi) (iconcat $I64 b_lo b_hi)))
+
+(rule (simplify (select ty (eq _   a_hi @ (value_type $I64) b_hi @ (value_type $I64))
+                           (ule ty a_lo @ (value_type $I64) b_lo @ (value_type $I64))
+                           (ule ty a_hi b_hi)))
+      (ule ty (iconcat $I64 a_lo a_hi) (iconcat $I64 b_lo b_hi)))
+
+(rule (simplify (select ty (eq _   a_hi @ (value_type $I64) b_hi @ (value_type $I64))
+                           (ule ty a_lo @ (value_type $I64) b_lo @ (value_type $I64))
+                           (sle ty a_hi b_hi)))
+      (sle ty (iconcat $I64 a_lo a_hi) (iconcat $I64 b_lo b_hi)))
+
+(rule (simplify (select ty (eq _   a_hi @ (value_type $I64) b_hi @ (value_type $I64))
+                           (ult ty a_lo @ (value_type $I64) b_lo @ (value_type $I64))
+                           (ult ty a_hi b_hi)))
+      (ult ty (iconcat $I64 a_lo a_hi) (iconcat $I64 b_lo b_hi)))
+
+(rule (simplify (select ty (eq _   a_hi @ (value_type $I64) b_hi @ (value_type $I64))
+                           (ult ty a_lo @ (value_type $I64) b_lo @ (value_type $I64))
+                           (slt ty a_hi b_hi)))
+      (slt ty (iconcat $I64 a_lo a_hi) (iconcat $I64 b_lo b_hi)))
+
+
+(rule (simplify (eq cty x (bxor (ty_int bty) x y))) (subsume (eq cty y (iconst_u bty 0))))
+(rule (simplify (ne cty x (bxor (ty_int bty) x y))) (subsume (ne cty y (iconst_u bty 0))))

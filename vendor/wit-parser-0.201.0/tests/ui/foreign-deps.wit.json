@@ -1,0 +1,344 @@
+{
+  "worlds": [
+    {
+      "name": "my-world",
+      "imports": {
+        "interface-8": {
+          "interface": 8
+        },
+        "interface-7": {
+          "interface": 7
+        }
+      },
+      "exports": {
+        "interface-1": {
+          "interface": 1
+        }
+      },
+      "package": 6
+    },
+    {
+      "name": "my-world2",
+      "imports": {
+        "interface-8": {
+          "interface": 8
+        },
+        "interface-7": {
+          "interface": 7
+        }
+      },
+      "exports": {
+        "interface-9": {
+          "interface": 9
+        },
+        "interface-1": {
+          "interface": 1
+        }
+      },
+      "package": 6
+    },
+    {
+      "name": "bars-world",
+      "imports": {
+        "interface-4": {
+          "interface": 4
+        },
+        "interface-0": {
+          "interface": 0
+        }
+      },
+      "exports": {},
+      "package": 6
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "other-interface",
+      "types": {},
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "saas",
+      "types": {},
+      "functions": {},
+      "package": 1
+    },
+    {
+      "name": "i",
+      "types": {},
+      "functions": {},
+      "package": 2
+    },
+    {
+      "name": "the-default",
+      "types": {
+        "some-type": 0
+      },
+      "functions": {},
+      "package": 3
+    },
+    {
+      "name": "the-default",
+      "types": {
+        "from-default": 1
+      },
+      "functions": {},
+      "package": 4
+    },
+    {
+      "name": "some-interface",
+      "types": {
+        "another-type": 2
+      },
+      "functions": {},
+      "package": 4
+    },
+    {
+      "name": "another-interface",
+      "types": {
+        "yet-another-type": 3
+      },
+      "functions": {},
+      "package": 4
+    },
+    {
+      "name": "clocks",
+      "types": {
+        "timestamp": 4
+      },
+      "functions": {},
+      "package": 5
+    },
+    {
+      "name": "filesystem",
+      "types": {
+        "stat": 5
+      },
+      "functions": {},
+      "package": 5
+    },
+    {
+      "name": "foo",
+      "types": {
+        "timestamp": 6,
+        "stat": 7
+      },
+      "functions": {},
+      "package": 6
+    },
+    {
+      "name": "bar",
+      "types": {
+        "from-default": 8,
+        "another-type": 9,
+        "yet-another-type": 10
+      },
+      "functions": {},
+      "package": 6
+    },
+    {
+      "name": "use1",
+      "types": {
+        "some-type": 11
+      },
+      "functions": {},
+      "package": 6
+    },
+    {
+      "name": "use2",
+      "types": {
+        "some-type": 12
+      },
+      "functions": {},
+      "package": 6
+    }
+  ],
+  "types": [
+    {
+      "name": "some-type",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "interface": 3
+      }
+    },
+    {
+      "name": "from-default",
+      "kind": {
+        "type": "string"
+      },
+      "owner": {
+        "interface": 4
+      }
+    },
+    {
+      "name": "another-type",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "interface": 5
+      }
+    },
+    {
+      "name": "yet-another-type",
+      "kind": {
+        "type": "u8"
+      },
+      "owner": {
+        "interface": 6
+      }
+    },
+    {
+      "name": "timestamp",
+      "kind": {
+        "type": "u64"
+      },
+      "owner": {
+        "interface": 7
+      }
+    },
+    {
+      "name": "stat",
+      "kind": {
+        "record": {
+          "fields": [
+            {
+              "name": "ino",
+              "type": "u64"
+            }
+          ]
+        }
+      },
+      "owner": {
+        "interface": 8
+      }
+    },
+    {
+      "name": "timestamp",
+      "kind": {
+        "type": 4
+      },
+      "owner": {
+        "interface": 9
+      }
+    },
+    {
+      "name": "stat",
+      "kind": {
+        "type": 5
+      },
+      "owner": {
+        "interface": 9
+      }
+    },
+    {
+      "name": "from-default",
+      "kind": {
+        "type": 1
+      },
+      "owner": {
+        "interface": 10
+      }
+    },
+    {
+      "name": "another-type",
+      "kind": {
+        "type": 2
+      },
+      "owner": {
+        "interface": 10
+      }
+    },
+    {
+      "name": "yet-another-type",
+      "kind": {
+        "type": 3
+      },
+      "owner": {
+        "interface": 10
+      }
+    },
+    {
+      "name": "some-type",
+      "kind": {
+        "type": 0
+      },
+      "owner": {
+        "interface": 11
+      }
+    },
+    {
+      "name": "some-type",
+      "kind": {
+        "type": 0
+      },
+      "owner": {
+        "interface": 12
+      }
+    }
+  ],
+  "packages": [
+    {
+      "name": "foo:another-pkg",
+      "interfaces": {
+        "other-interface": 0
+      },
+      "worlds": {}
+    },
+    {
+      "name": "foo:corp",
+      "interfaces": {
+        "saas": 1
+      },
+      "worlds": {}
+    },
+    {
+      "name": "foo:different-pkg",
+      "interfaces": {
+        "i": 2
+      },
+      "worlds": {}
+    },
+    {
+      "name": "foo:foreign-pkg",
+      "interfaces": {
+        "the-default": 3
+      },
+      "worlds": {}
+    },
+    {
+      "name": "foo:some-pkg",
+      "interfaces": {
+        "the-default": 4,
+        "some-interface": 5,
+        "another-interface": 6
+      },
+      "worlds": {}
+    },
+    {
+      "name": "foo:wasi",
+      "interfaces": {
+        "clocks": 7,
+        "filesystem": 8
+      },
+      "worlds": {}
+    },
+    {
+      "name": "foo:root",
+      "interfaces": {
+        "foo": 9,
+        "bar": 10,
+        "use1": 11,
+        "use2": 12
+      },
+      "worlds": {
+        "my-world": 0,
+        "my-world2": 1,
+        "bars-world": 2
+      }
+    }
+  ]
+}

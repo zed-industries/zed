@@ -1,0 +1,30 @@
+[package]
+name = "presser"
+version = "0.3.1"
+authors = ["Embark <opensource@embark-studios.com>", "Gray Olson <gray@grayolson.com"]
+repository = "https://github.com/EmbarkStudios/presser"
+homepage = "https://github.com/EmbarkStudios/presser"
+documentation = "https://docs.rs/presser"
+license = "MIT OR Apache-2.0"
+edition = "2021"
+rust-version = "1.64"
+description = "A crate to help you copy things into raw buffers without invoking spooky action at a distance (undefined behavior)."
+keywords = ["copy", "graphics", "raw", "buffer", "memory"]
+categories = ["games", "memory-management", "graphics"]
+publish = true
+
+[lib]
+doctest = true
+test = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docs_build"]
+
+[dependencies]
+
+[dev-dependencies]
+
+[features]
+default = ["std"]
+std = []

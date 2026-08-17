@@ -1,0 +1,21 @@
+---
+- name: Backslashes in singlequotes
+  from: '@perlpunk'
+  tags: scalar single
+  yaml: |
+    'foo: bar\': baz'
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL 'foo: bar\\
+       =VAL :baz'
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "foo: bar\\": "baz'"
+    }
+  dump: |
+    'foo: bar\': baz'

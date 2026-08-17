@@ -1,0 +1,9 @@
+package foo:foo;
+
+interface foo {
+  use foo:dep/foo.{ty};
+}
+
+world bar {
+  import foo:dep/foo;
+}

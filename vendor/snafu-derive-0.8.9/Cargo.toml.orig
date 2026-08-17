@@ -1,0 +1,25 @@
+[package]
+name = "snafu-derive"
+version = "0.8.9"
+authors = ["Jake Goulding <jake.goulding@gmail.com>"]
+edition = "2018"
+rust-version = "1.56"
+
+description = "An ergonomic error handling library"
+documentation = "https://docs.rs/snafu"
+repository = "https://github.com/shepmaster/snafu"
+
+license = "MIT OR Apache-2.0"
+
+[features]
+rust_1_61 = []
+unstable-provider-api = []
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2.0", features = ["full"] }
+quote = "1.0.25"
+proc-macro2 = "1.0.52"
+heck = { version = ">= 0.4, < 0.6", default-features = false }

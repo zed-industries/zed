@@ -1,0 +1,17 @@
+---
+- name: Invalid content after document end marker
+  from: '@perlpunk'
+  tags: error footer
+  fail: true
+  yaml: |
+    ---
+    key: value
+    ... invalid
+  tree: |
+    +STR
+     +DOC ---
+      +MAP
+       =VAL :key
+       =VAL :value
+      -MAP
+     -DOC ...

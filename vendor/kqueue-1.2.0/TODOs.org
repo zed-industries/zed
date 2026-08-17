@@ -1,0 +1,29 @@
+* TODOs
+
+** Breaking
+
+*** TODO Why does ~add_pid~ take a ~filter~
+*** TODO Don't expose all of the constants from ~kqueue-sys~
+*** TODO Express which filters are appropriate for which functions in the type system
+*** TODO Watcher is a trait, ~UncheckedWatcher~ and ~UncheckedWatcher~ impl it
+*** TODO Redo API kinda like notify's
+*** TODO use ~OwnedFd~ instead of ~RawFd~
+*** TODO Use our own error type
+*** TODO ~get_event~ should return a custom error if not started, rather than ~None~
+*** TODO Why does remove_* call ~kevent~ and not add_*?
+*** TODO `Ident::Filename` should be `Ident::Filename(Arc<Path>)`
+*** TODO Remove `find_file_ident` and use another hashmap to map paths and fd's
+*** TODO ~Event.data~ may be negative in some cases
+
+** Non-breaking
+
+*** TODO Try and abstract away ~NOTE_TRACK~ and ~NOTE_CHILD~ if possible and non-breaking
+*** DONE ~get_event~ should probably check ~started~ status
+*** TODO Make sure that filters and flags are sensible
+*** TODO Why does ~as_size~ exist?
+*** TODO implement ~timer~ and ~signal~
+*** TODO ummm add ~stop~?
+*** TODO iterator with a timeout?
+*** TODO ~UncheckedWatcher~
+*** TODO async api
+*** TODO bulk api

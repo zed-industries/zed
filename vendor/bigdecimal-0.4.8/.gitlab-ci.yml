@@ -1,0 +1,397 @@
+# Gitlab CI Config
+# ================
+#
+# Defines jobs for checking/building/testing various
+# configurations of the BigDecimal crate.
+#
+# Always tests against stable and MinimumSupportedRustVersion (1.43)
+# Other random versions are available, requiring manual action to run.
+#
+# Most jobs are run upon custom rust containers I try to keep updated:
+#    https://gitlab.com/akubera/containers/-/blob/master/akubera-rust/Dockerfile.in
+#    https://hub.docker.com/r/akubera/rust/tags
+#
+# A coverage report is done via one of my rust-kcov or rust-grcov containers:
+#    https://gitlab.com/akubera/containers/-/blob/master/rust-kcov/Dockerfile.in
+#    https://gitlab.com/akubera/containers/-/blob/master/rust-grcov/Dockerfile.in
+#
+# A cargo:benchmark job is available, which saves a criterion report to gitlab,
+# manualy activated and of dubious reliability without control of target machine.
+#
+
+#----------------------------#
+#  Yaml "Template" Objects   #
+#----------------------------#
+
+.script:
+  cargo-check: &script-cargo-check
+    before_script:
+      - rustc --version && cargo --version
+    script:
+      - cargo check --all-targets
+
+.script-cargo-build: &script-cargo-build
+  before_script:
+    - rustc --version && cargo --version
+  script:
+    - cargo build --all-targets
+
+.script-cargo-test: &script-cargo-test
+  before_script:
+    - rustc --version && cargo --version
+  script:
+    - cargo test --verbose
+
+
+.cache-cargo-registry: &cache-cargo-registry
+  key: cargo-registry
+  policy: pull
+  paths:
+    - .cargo/registry/index
+    - .cargo/registry/cache
+    - target/debug/deps
+
+.cache-cargo-build: &cache-cargo-build
+  key: rustbuild-${RUST_CACHE_KEY}
+  policy: pull-push
+  paths:
+    - target/debug/deps
+    - target/debug/build
+
+.cache-cargo-semver-check: &cache-cargo-semver-check
+  key: cargo-semver-checks
+  policy: pull-push
+  paths:
+    - target/semver-checks/cache
+
+.rules.never-without-branch:
+  rules: &rules-never-without-branch
+    - if: '$CI_COMMIT_BRANCH == null'
+      when: never
+
+.rules:always-master-otherwise-manual:
+  rules: &rules-always-master-otherwise-manual
+    - if: '$CI_COMMIT_BRANCH == "master"'
+      when: always
+    - if: '$CI_COMMIT_BRANCH == null'
+      when: never
+    - when: manual
+
+
+#---------------------#
+#   Global Settings   #
+#---------------------#
+
+cache:
+  - <<: *cache-cargo-registry
+  - <<: *cache-cargo-build
+
+variables:
+  # store cargo registry in the project directory (for caching)
+  CARGO_HOME: ${CI_PROJECT_DIR}/.cargo
+
+  # this fixes an error when updating cargo registry
+  CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
+
+
+stages:
+  - check
+  - build
+  - test
+  - deploy
+
+
+#---------------------#
+#       CI Jobs       #
+#---------------------#
+
+
+cargo:check:
+  stage: check
+  image: akubera/rust:stable
+  cache:
+    - <<: *cache-cargo-registry
+      policy: pull-push
+    - <<: *cache-cargo-build
+  variables:
+    RUST_CACHE_KEY: "stable"
+  <<: *script-cargo-check
+  script:
+    # enable property tests for the stable 'pipeline'
+    - scripts/bigdecimal-property-tests run cargo check --all-targets
+
+cargo:clippy:
+  stage: check
+  image: "akubera/rust:stable"
+  needs:
+    - cargo:check
+  allow_failure: true
+  variables:
+    RUST_CACHE_KEY: "stable"
+  before_script:
+    - rustc --version && cargo --version && cargo clippy --version
+  script:
+    - cargo clippy -- -Dclippy::{dbg_macro,todo}
+
+cargo:semver-checks:
+  stage: check
+  image: "akubera/rust:stable"
+  needs:
+    - cargo:check
+  allow_failure: true
+  cache:
+    - <<: *cache-cargo-registry
+    - <<: *cache-cargo-semver-check
+  before_script:
+    - rustc --version && cargo --version && cargo semver-checks --version
+  script:
+    - cargo semver-checks
+
+
+cargo:build-stable:
+  stage: build
+  image: akubera/rust:stable
+  needs:
+    - cargo:check
+  variables:
+    RUST_CACHE_KEY: "stable"
+  <<: *script-cargo-build
+  script:
+    # enable property tests for the stable 'pipeline'
+    - scripts/bigdecimal-property-tests run cargo build --all-targets
+
+
+cargo:test-stable:
+  stage: test
+  image: akubera/rust:stable
+  needs:
+    - "cargo:build-stable"
+  variables:
+    RUST_CACHE_KEY: "stable"
+  <<: *script-cargo-test
+  script:
+    # enable property tests for the stable 'pipeline'
+    - scripts/bigdecimal-property-tests run cargo test
+
+
+cargo:build:no-std:
+  stage: build
+  image: akubera/rust:stable
+  needs:
+    - cargo:check
+  variables:
+    RUST_CACHE_KEY: "stable+no_std"
+  <<: *script-cargo-build
+  script:
+    - cargo build --no-default-features --lib
+
+cargo:test:no-std:
+  stage: test
+  image: akubera/rust:stable
+  needs:
+    - "cargo:build:no-std"
+  variables:
+    RUST_CACHE_KEY: "stable+no_std"
+  <<: *script-cargo-test
+  script:
+    - cargo test --no-default-features --lib
+
+
+cargo:build:serde:
+  stage: build
+  image: akubera/rust:stable
+  needs:
+    - cargo:check
+  variables:
+    RUST_CACHE_KEY: "stable+serde"
+  <<: *script-cargo-build
+  script:
+    - cargo build --features=serde --all-targets
+
+cargo:test:serde:
+  stage: test
+  image: akubera/rust:stable
+  needs:
+    - "cargo:build:serde"
+  variables:
+    RUST_CACHE_KEY: "stable+serde"
+  <<: *script-cargo-test
+  script:
+    - cargo test --features=serde --all-targets
+    - cargo test --features=serde --no-default-features
+
+cargo:build:serde-json:
+  stage: build
+  image: akubera/rust:stable
+  needs:
+    - cargo:check
+  variables:
+    RUST_CACHE_KEY: "stable+serde-json"
+  <<: *script-cargo-build
+  script:
+    - cargo build --features=serde-json --all-targets
+
+cargo:test:serde-json:
+  stage: test
+  image: akubera/rust:stable
+  needs:
+    - "cargo:build:serde-json"
+  variables:
+    RUST_CACHE_KEY: "stable+serde-json"
+  <<: *script-cargo-test
+  script:
+    - cargo test --features=serde-json --all-targets
+
+
+cargo:build-nightly:
+  stage: build
+  image: rustlang/rust:nightly
+  allow_failure: true
+  variables:
+    RUST_CACHE_KEY: "nightly"
+  <<: *script-cargo-build
+
+
+cargo:test-nightly:
+  stage: test
+  image: rustlang/rust:nightly
+  needs:
+    - cargo:build-nightly
+  allow_failure: true
+  variables:
+    RUST_CACHE_KEY: "nightly"
+  <<: *script-cargo-test
+
+
+cargo:check-1.43:
+  stage: check
+  image: "akubera/rust-kcov:1.43.1-buster"
+  variables:
+    RUST_CACHE_KEY: "1.43"
+  <<: *script-cargo-check
+
+cargo:build-1.43:
+  stage: build
+  image: "akubera/rust-kcov:1.43.1-buster"
+  needs:
+    - "cargo:check-1.43"
+  variables:
+    RUST_CACHE_KEY: "1.43"
+  <<: *script-cargo-build
+
+cargo:test-1.43:
+  stage: test
+  needs:
+    - "cargo:build-1.43"
+  image: "akubera/rust-kcov:1.43.1-buster"
+  variables:
+    RUST_CACHE_KEY: "1.43"
+  <<: *script-cargo-test
+
+cargo:test-1.43:serde:
+  stage: test
+  needs:
+    - "cargo:build-1.43"
+  image: "akubera/rust-kcov:1.43.1-buster"
+  variables:
+    RUST_CACHE_KEY: "1.43-serde"
+  <<: *script-cargo-test
+  script:
+    - cargo test --features=serde --all-targets
+    - cargo test --features=serde --no-default-features
+
+
+cargo:check-1.70:
+  stage: check
+  image: "akubera/rust-grcov:1.70.0-bullseye"
+  variables:
+    RUST_CACHE_KEY: "1.70"
+  <<: *script-cargo-check
+
+cargo:build-1.70:
+  stage: build
+  image: "akubera/rust-grcov:1.70.0-bullseye"
+  needs:
+    - "cargo:check-1.70"
+  variables:
+    RUST_CACHE_KEY: "1.70"
+  <<: *script-cargo-build
+
+cargo:test-1.70:
+  stage: test
+  needs:
+    - "cargo:build-1.70"
+  image: "akubera/rust-grcov:1.70.0-bullseye"
+  variables:
+    RUST_CACHE_KEY: "1.70"
+  <<: *script-cargo-test
+
+
+coverage-test:
+  stage: test
+  needs:
+    - "cargo:test-1.70"
+  image: "akubera/rust-grcov:1.70.0-bullseye"
+
+  variables:
+    RUST_CACHE_KEY: "1.70"
+    CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
+    LLVM_PROFILE_FILE: "target/coverage/%p-%m.profraw"
+    RUSTFLAGS: "-Cinstrument-coverage -Ccodegen-units=1 -Copt-level=0 -Clink-dead-code -Coverflow-checks=off "
+    # RUSTDOCFLAGS: "-Cpanic=abort"
+    CARGO_INCREMENTAL: "0"
+
+  coverage: '/Code Coverage: \d+\.\d+/'
+  before_script:
+    - rustc --version && cargo --version
+  script:
+    - cargo test
+    - ls -l target/coverage
+    - grcov target/coverage --binary-path target/debug -s . --keep-only 'src/*' -tcobertura -o cobertura.xml
+    - >
+      grep -m1 -o 'line-rate="[^"]*' cobertura.xml
+      | sed 's/[^0-9.]*//'
+      | awk '{ print "Code Coverage: " $0 * 100 }'
+
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: cobertura.xml
+
+
+cargo:benchmark:
+  stage: test
+  needs:
+    - "cargo:test-1.70"
+  image: "akubera/bigdecimal-benchmark-base:1.70.0-bullseye"
+  when: manual
+  allow_failure: true
+  # No cache as benchmark-image stores registry in different location
+  cache: []
+  variables:
+    RUST_CACHE_KEY: "1.70"
+    CARGO_HOME: /usr/local/cargo
+    BENCHMARK_EXTRAS: "1"
+  script:
+    - scripts/benchmark-bigdecimal
+  artifacts:
+    paths:
+      - target/criterion
+      - "*.html"
+
+
+cargo-publish:
+  stage: deploy
+  image: "rust:latest"
+  when: manual
+  only:
+    - master
+  allow_failure: true
+  cache: []
+  # disable downloading artifacts
+  dependencies: []
+  variables:
+    CARGO_HOME: /usr/local/cargo
+  script:
+    - cargo publish

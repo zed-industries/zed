@@ -1,0 +1,29 @@
+name: Determine MSRV for all-features
+description: Computes the maximum MSRV needed for --all-features tests (platform vs JACK)
+
+inputs:
+  platform-msrv:
+    description: The MSRV for the platform backend (e.g., ALSA, CoreAudio, Windows)
+    required: true
+  jack-msrv:
+    description: The MSRV for JACK backend
+    required: true
+
+outputs:
+  all-features:
+    description: The maximum MSRV to use for --all-features tests
+    value: ${{ steps.compare.outputs.all-features }}
+
+runs:
+  using: composite
+  steps:
+    - name: Compare versions
+      id: compare
+      shell: bash
+      run: |
+        PLATFORM_MSRV="${{ inputs.platform-msrv }}"
+        JACK_MSRV="${{ inputs.jack-msrv }}"
+        # Use sort -V to find the maximum version
+        MAX_MSRV=$(printf '%s\n' "$PLATFORM_MSRV" "$JACK_MSRV" | sort -V | tail -n1)
+        echo "all-features=$MAX_MSRV" >> $GITHUB_OUTPUT
+        echo "Platform MSRV: $PLATFORM_MSRV, JACK MSRV: $JACK_MSRV, Using for --all-features: $MAX_MSRV"

@@ -1,0 +1,15 @@
+[package]
+name = "pollster"
+version = "0.2.5"
+description = "Synchronously block the thread until a future completes"
+categories = ["asynchronous", "concurrency"]
+keywords = ["async", "minimal", "executor", "runtime", "block_on"]
+repository = "https://github.com/zesterer/pollster"
+authors = ["Joshua Barretto <joshua.s.barretto@gmail.com>"]
+edition = "2018"
+license = "Apache-2.0/MIT"
+readme = "README.md"
+
+[dev-dependencies]
+futures-timer = "3.0"
+tokio = { version = "1", features = ["sync"] }

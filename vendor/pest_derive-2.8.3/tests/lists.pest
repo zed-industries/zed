@@ -1,0 +1,18 @@
+// pest. The Elegant Parser
+// Copyright (c) 2018 Dragoș Tiselice
+//
+// Licensed under the Apache License, Version 2.0
+// <LICENSE-APACHE or http://www.apache.org/licenses/LICENSE-2.0> or the MIT
+// license <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. All files in the project carrying such notice may not be copied,
+// modified, or distributed except according to those terms.
+
+item = { (!"\n" ~ ANY)* }
+
+lists        = _{ lines ~ EOI }
+lines        = _{ top_first ~ ("\n" ~ top_continue)* }
+top_first    = _{ "- " ~ item ~ ("\n" ~ children)? }
+top_continue = _{ PEEK_ALL ~ "- " ~ item ~ ("\n" ~ children)? }
+
+indentation = _{ (" " | "\t")+ }
+children    =  { PEEK_ALL ~ PUSH(indentation) ~ lines ~ DROP }

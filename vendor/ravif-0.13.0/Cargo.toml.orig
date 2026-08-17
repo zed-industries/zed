@@ -1,0 +1,44 @@
+[package]
+name = "ravif"
+description = "rav1e-based pure Rust library for encoding images in AVIF format (powers the `cavif` tool)"
+version = "0.13.0"
+authors = ["Kornel Lesiński <kornel@geekhood.net>"]
+edition = "2024"
+license = "BSD-3-Clause"
+readme = "README.md"
+keywords = ["avif", "convert", "av1", "rav1f", "cav1f"]
+categories = ["multimedia::images", "multimedia::encoding"]
+homepage = "https://lib.rs/crates/ravif"
+repository = "https://github.com/kornelski/cavif-rs"
+include = ["README.md", "LICENSE", "Cargo.toml", "/src/*.rs"]
+rust-version = "1.85"
+
+[dependencies]
+avif-serialize = "0.8.6"
+imgref = "1.12.0"
+rav1e = { version = "0.8.1", default-features = false }
+rayon = { version = "1.11.0", optional = true }
+rgb = { version = "0.8.52", default-features = false }
+loop9 = "0.1.5"
+quick-error = "2.0.1"
+
+[target.'cfg(target = "wasm32-unknown-unknown")'.dependencies]
+rav1e = { version = "0.8", default-features = false, features = ["wasm"] }
+
+[features]
+default = ["asm", "threading"]
+asm = ["rav1e/asm"]
+threading = ["dep:rayon", "rav1e/threading"]
+
+[profile.release]
+lto = true
+
+[profile.dev.package."*"]
+debug = false
+opt-level = 2
+
+[dev-dependencies]
+avif-parse = "1.4.0"
+
+[package.metadata.release]
+tag = false

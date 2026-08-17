@@ -1,0 +1,112 @@
+---
+name: Test
+
+on:
+  workflow_call:
+  pull_request:
+    branches:
+      - '*'
+
+jobs:
+  format:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+  lint:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Clippy
+        run: cargo clippy -- -D clippy::all -D clippy::nursery -D warnings
+
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Check
+        run: cargo check
+
+  test:
+    name: Test
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - macOS-latest
+        rust:
+          - stable
+    runs-on: ${{ matrix.os }}
+    needs:
+      - format
+      - lint
+      - check
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: test
+        run: cargo test
+
+      - name: Cleanup orphaned test processes
+        if: always()
+        run: |
+          # Kill any remaining test processes
+          pkill -9 -f "fork.*debug/deps" || true
+          # Clean up test directories
+          rm -rf /tmp/fork_test* || true
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: llvm-tools-preview
+
+      - name: Run tests
+        run: cargo test --verbose -- --nocapture
+        env:
+          RUST_BACKTRACE: full
+          CARGO_INCREMENTAL: 0
+          LLVM_PROFILE_FILE: coverage-%p-%m.profraw
+          RUSTFLAGS: -Cinstrument-coverage -Ccodegen-units=1 -Clink-dead-code -Coverflow-checks=off
+          RUSTDOCFLAGS: -Cinstrument-coverage -Ccodegen-units=1 -Clink-dead-code -Coverflow-checks=off
+
+      - name: Cleanup orphaned test processes
+        if: always()
+        run: |
+          # Kill any remaining test processes
+          pkill -9 -f "fork.*debug/deps" || true
+          # Clean up test directories
+          rm -rf /tmp/fork_test* || true
+
+      - name: Install grcov
+        run: if [[ ! -e ~/.cargo/bin/grcov ]]; then cargo install grcov; fi
+
+      - name: Run grcov
+        run: grcov . --binary-path target/debug/ -s . -t lcov --branch --ignore-not-existing
+          --ignore '../**' --ignore '/*' -o coverage.lcov
+
+      - name: Upload to codecov.io
+        uses: codecov/codecov-action@v5
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        with:
+          files: coverage.lcov
+          flags: rust
+
+      - name: Coveralls GitHub Action
+        uses: coverallsapp/github-action@v2

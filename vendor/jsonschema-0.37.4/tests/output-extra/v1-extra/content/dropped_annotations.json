@@ -1,0 +1,21 @@
+[
+    {
+        "description": "dropped annotations are preserved when requested",
+        "schema": {
+            "$schema": "https://json-schema.org/v1",
+            "$id": "https://json-schema.org/tests/content/v1-extra/dropped_annotations/0",
+            "type": "object",
+            "properties": {
+                "foo": {"type": "string"},
+                "fails": false
+            }
+        },
+        "tests": [
+            {
+                "description": "hierarchical output includes droppedProperties",
+                "data": {"fails": "value"},
+                "output": {}
+            }
+        ]
+    }
+]

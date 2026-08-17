@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: ${{ matrix.channel }} Test on ${{ matrix.target.name }}
+    runs-on: ${{ matrix.target.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        channel:
+          - stable
+          - nightly
+        target:
+          #- { name: macOS-aarch64, os: macos-latest, tool: aarch64-apple-darwin }
+          - { name: macOS-x64, os: macos-latest, tool: x86_64-apple-darwin }
+          - { name: Windows-x64, os: windows-latest, tool: x86_64-pc-windows-msvc }
+          #- { name: Windows-aarch64, os: windows-latest, tool: aarch64-pc-windows-msvc }
+          - { name: Linux-x64, os: ubuntu-latest, tool: x86_64-unknown-linux-gnu }
+          - { name: Linux-aarch64, os: ubuntu-latest, tool: aarch64-unknown-linux-gnu }
+          - { name: Linux-armv7, os: ubuntu-latest, tool: armv7-unknown-linux-gnueabihf }
+          #- { name: Linux-arm, os: ubuntu-latest, tool: arm-unknown-linux-gnueabihf }
+          - { name: Linux-loong64, os: ubuntu-latest, tool: loongarch64-unknown-linux-gnu }
+          #- { name: Linux-mips64, os: ubuntu-latest, tool: mips64-unknown-linux-gnuabi64 }
+          #- { name: Linux-powerpc64, os: ubuntu-latest, tool: powerpc64-unknown-linux-gnu }
+          - { name: Linux-powerpc64le, os: ubuntu-latest, tool: powerpc64le-unknown-linux-gnu }
+          #- { name: Linux-thumbv7, os: ubuntu-latest, tool: thumbv7neon-unknown-linux-gnueabihf }
+          - { name: Linux-riscv64, os: ubuntu-latest, tool: riscv64gc-unknown-linux-gnu }
+          #- { name: Linux-s390x, os: ubuntu-latest, tool: s390x-unknown-linux-gnu }
+          #- { name: Linux-sparc64, os: ubuntu-latest, tool: sparc64-unknown-linux-gnu }
+          #- { name: iOS-aarch64, os: macos-latest, tool: aarch64-apple-ios }
+          #- { name: Android-armv7, os: ubuntu-latest, tool: armv7-linux-androideabi }
+          - { name: Android-aarch64, os: ubuntu-latest, tool: aarch64-linux-android }
+          # - { name: Android-x64, os: ubuntu-latest, tool: x86_64-linux-android }
+          #- { name: FreeBSD-x64, os: ubuntu-latest, tool: x86_64-unknown-freebsd }
+          #- { name: NetBSD-x64, os: ubuntu-latest, tool: x86_64-unknown-netbsd }
+          #- { name: Illumos-x64, os: ubuntu-latest, tool: x86_64-unknown-illumos }
+
+    env:
+      CI: 1
+      CARGO_INCREMENTAL: 0
+      CROSS_NO_WARNINGS: 0
+      windows: ${{ startsWith(matrix.target.name, 'Windows') }}
+      linux: ${{ startsWith(matrix.target.name, 'Linux') }}
+      macos: ${{ startsWith(matrix.target.name, 'macOS') }}
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup rust cross-platform toolchain
+        run: |
+          rustup default ${{ matrix.channel }}
+          rustup target add ${{ matrix.target.tool }}
+          cargo install cross --git https://github.com/cross-rs/cross --rev 4090beca3cfffa44371a5bba524de3a578aa46c3
+
+      - name: Test
+        run: cross test --target ${{ matrix.target.tool }}
+
+      - name: Test Release
+        run: cross test --target ${{ matrix.target.tool }} --release

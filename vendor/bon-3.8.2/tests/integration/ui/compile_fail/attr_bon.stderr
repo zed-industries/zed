@@ -1,0 +1,108 @@
+error: Unknown field: `attrs`
+ --> tests/integration/ui/compile_fail/attr_bon.rs:5:7
+  |
+5 | #[bon(attrs)]
+  |       ^^^^^
+
+error: #[builder] attributes on the receiver are not supported
+  --> tests/integration/ui/compile_fail/attr_bon.rs:16:12
+   |
+16 |     fn sut(#[builder] &self) {}
+   |            ^
+
+error: there are no #[builder] functions in the impl block, so there is no need for a #[bon] attribute here
+  --> tests/integration/ui/compile_fail/attr_bon.rs:21:1
+   |
+21 | #[bon]
+   | ^^^^^^
+   |
+   = note: this error originates in the attribute macro `bon` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: #[bon] macro found no #[builder] attributes in the impl block, but it looks like this attribute was meant for #[bon]; note that #[bon] expects a bare #[builder] attribute without the `foo::` prefix; #[builder] acts as a simple config attribute for the active #[bon] attribute in impl blocks; more info on inert vs active attributes: https://doc.rust-lang.org/reference/attributes.html#active-and-inert-attributes
+  --> tests/integration/ui/compile_fail/attr_bon.rs:35:7
+   |
+35 |     #[::foo::builder]
+   |       ^
+
+error: #[bon] macro found no #[builder] attributes in the impl block, but it looks like this attribute was meant for #[bon]; note that #[bon] expects a bare #[builder] attribute without the `bon::` prefix; #[builder] acts as a simple config attribute for the active #[bon] attribute in impl blocks; more info on inert vs active attributes: https://doc.rust-lang.org/reference/attributes.html#active-and-inert-attributes
+  --> tests/integration/ui/compile_fail/attr_bon.rs:43:7
+   |
+43 |     #[bon::builder]
+   |       ^^^
+
+error: this function contains a `self` parameter which likely means the builder attribute was used inside of an impl block; the impl block needs to be annotated with the #[bon] attribute and the builder attribute must be spelled as #[builder] without any additional path prefix, since it's used as a simple inert config attribute for #[bon] in impl blocks; more info on inert vs active attributes: https://doc.rust-lang.org/reference/attributes.html#active-and-inert-attributes
+  --> tests/integration/ui/compile_fail/attr_bon.rs:44:30
+   |
+44 |     fn active_bon_with_self(&self) {}
+   |                              ^^^^
+
+error: #[bon] macro found no #[builder] attributes in the impl block, but it looks like this attribute was meant for #[bon]; note that #[bon] expects a bare #[builder] attribute without the `bon::` prefix; #[builder] acts as a simple config attribute for the active #[bon] attribute in impl blocks; more info on inert vs active attributes: https://doc.rust-lang.org/reference/attributes.html#active-and-inert-attributes
+  --> tests/integration/ui/compile_fail/attr_bon.rs:55:7
+   |
+55 |     #[bon::builder]
+   |       ^^^
+
+error: struct is not supported in `trait`s or `impl`s
+  --> tests/integration/ui/compile_fail/attr_bon.rs:49:1
+   |
+49 | #[bon]
+   | ^^^^^^
+   |
+   = help: consider moving the struct out to a nearby module scope
+   = note: this error originates in the attribute macro `bon::builder` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: implementation is not supported in `trait`s or `impl`s
+  --> tests/integration/ui/compile_fail/attr_bon.rs:49:1
+   |
+49 | #[bon]
+   | ^^^^^^
+   |
+   = help: consider moving the implementation out to a nearby module scope
+   = note: this error originates in the attribute macro `bon::builder` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: module is not supported in `trait`s or `impl`s
+  --> tests/integration/ui/compile_fail/attr_bon.rs:49:1
+   |
+49 | #[bon]
+   | ^^^^^^
+   |
+   = help: consider moving the module out to a nearby module scope
+   = note: this error originates in the attribute macro `bon::builder` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: `const` items in this context need a name
+  --> tests/integration/ui/compile_fail/attr_bon.rs:41:1
+   |
+41 | #[bon]
+   | ^^^^^^ `_` is not a valid name for this `const` item
+   |
+   = note: this error originates in the attribute macro `bon::builder` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: `const` items in this context need a name
+  --> tests/integration/ui/compile_fail/attr_bon.rs:49:1
+   |
+49 | #[bon]
+   | ^^^^^^ `_` is not a valid name for this `const` item
+   |
+   = note: this error originates in the attribute macro `bon::builder` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0433]: failed to resolve: could not find `foo` in the list of imported crates
+  --> tests/integration/ui/compile_fail/attr_bon.rs:35:9
+   |
+35 |     #[::foo::builder]
+   |         ^^^ could not find `foo` in the list of imported crates
+
+error[E0412]: cannot find type `ActiveBonCluelessBuilder` in this scope
+  --> tests/integration/ui/compile_fail/attr_bon.rs:49:1
+   |
+49 | #[bon]
+   | ^^^^^^ not found in this scope
+   |
+   = note: this error originates in the attribute macro `bon::builder` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0422]: cannot find struct, variant or union type `ActiveBonCluelessBuilder` in this scope
+  --> tests/integration/ui/compile_fail/attr_bon.rs:49:1
+   |
+49 | #[bon]
+   | ^^^^^^ not found in this scope
+   |
+   = note: this error originates in the attribute macro `bon::builder` (in Nightly builds, run with -Z macro-backtrace for more info)

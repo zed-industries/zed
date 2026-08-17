@@ -1,0 +1,204 @@
+#!/usr/bin/env perl
+
+#------------------------------------------------------------------------------
+#
+# This program turns the all tests under src/ into a TSV format that can be
+# copy/pasted into a Google sheet.
+#
+# It is called by `make export` which writes the TSV into `export.tsv`.
+# If you use `make run-tests export` it will run each test against each
+# supported parser and add any failure indicators to the TSV data.
+#
+#------------------------------------------------------------------------------
+
+use strict; use warnings;
+use FindBin;
+use lib $FindBin::Bin;
+use base 'YAMLTestSuite';
+use Capture::Tiny ':all';
+use Cwd;
+use Encode;
+
+my $container_id;
+
+sub kill_docker_container {
+    if ($container_id) {
+        my ($out, $err, $rc) = capture {
+            system("docker kill $container_id");
+        };
+    }
+    exit;
+}
+
+END {
+    kill_docker_container();
+}
+
+BEGIN {
+    `rm -fr /tmp/test`;
+    mkdir "/tmp/test" or die;
+
+    if ($ENV{YTS_TEST_RUNNER}) {
+        my $cwd = getcwd;
+        my ($out, $err, $rc) = capture {
+            system(
+                "docker run -d " .
+                "-v $cwd:/host " .
+                "-v /tmp/test:/tmp/test " .
+                "yamlio/yaml-test-runtimes:$ENV{YAML_TEST_RUNTIMES_VERSION} " .
+                "sleep 600");
+        };
+        die "docker run failed" unless $rc == 0;
+        chomp $out;
+        $container_id = $out;
+        $SIG{INT} = \&kill_docker_container;
+        system("docker exec $container_id apk add bash 2>&1 >/dev/null") == 0 or die;
+    }
+}
+
+my @test_runners = (qw<
+    yaml-test-parse-refparse
+    yaml-test-parse-refhs
+    yaml-test-parse-dotnet
+    yaml-test-parse-goyaml
+    yaml-test-parse-hsyaml
+    yaml-test-parse-libfyaml
+    yaml-test-parse-libyaml
+    yaml-test-parse-luayaml
+    yaml-test-parse-nimyaml
+    yaml-test-parse-npmyaml
+    yaml-test-parse-ppyaml
+    yaml-test-parse-pyyaml
+    yaml-test-parse-ruamel
+    yaml-test-parse-rustyaml
+    yaml-test-parse-snake
+    yaml-test-parse-snakeeng
+>);
+
+my @tag_names = (qw<
+    alias
+    anchor
+    binary
+    comment
+    complex-key
+    directive
+    double
+    duplicate-key
+    edge
+    empty
+    empty-key
+    error
+    explicit-key
+    flow
+    folded
+    footer
+    header
+    indent
+    literal
+    local-tag
+    mapping
+    missing
+    scalar
+    sequence
+    simple
+    single
+    spec
+    tag
+    unknown-tag
+    whitespace
+>);
+
+main->new->run([@ARGV]);
+
+sub make {
+    my ($self) = @_;
+
+    my $id = $self->{ID};
+    my $data = $self->{data};
+
+    my $name = $data->{name};
+
+    my $skip = $data->{skip} ? 'X' : '';
+
+    my $yaml = $data->{yaml};
+    $yaml =~ s/"/""/g;
+    $yaml = qq{"$yaml"};
+
+    my $tree = $data->{tree};
+    $tree =~ s/"/""/g;
+    chomp $tree;
+    $tree = qq{"$tree"};
+    $tree = 'ERROR' if $data->{fail};
+
+    my $play = $self->play_url($data->{yaml});
+
+    print STDERR "\r\e[K$id";
+    my @test = $self->run_tests($id, $data->{yaml});
+    my @tags = $self->get_tags($data->{tags});
+
+    my $tsv = encode_utf8 join("\t",
+        (
+            $play,
+            $id,
+            $name,
+            $yaml,
+            $tree,
+            @test,
+            @tags,
+        )
+    ) . "\n";
+
+    print $tsv;
+}
+
+sub run_tests {
+    my ($self, $id, $yaml) = @_;
+    $yaml = $self->unescape($yaml);
+
+    if (not $ENV{YTS_TEST_RUNNER}) {
+        return ('') x scalar(@test_runners);
+    }
+    my ($out, $err, $rc) = capture {
+        open my $pipe, '|-',
+            "docker exec -i " .
+            "--env ID=$id " .
+            "--env RUNNERS='@test_runners' " .
+            "$container_id " .
+            "/host/bin/run-all-parsers"
+                or die;
+        print $pipe encode_utf8($yaml);
+        close $pipe;
+        return 0;
+    };
+
+    # warn "out>>$out<<";
+    # warn "err>>$err<<";
+
+    die "docker run failed:\nrc: $rc\nstdout:\n$out\nstderr:\n$err\n"
+        unless $rc == 0;
+
+    my @tests = split /\t/, $out, -1;
+
+    return @tests;
+}
+
+sub get_tags {
+    my ($self, $tags) = @_;
+    $tags ||= '';
+    my @tags = split /\s+/, $tags;
+    my @list;
+    for my $tag (@tag_names) {
+        if (grep {$_ eq $tag} @tags) {
+            push @list, 'x';
+        }
+        else {
+            push @list, '';
+        }
+    }
+    return @list;
+}
+
+sub final {
+    my ($self) = @_;
+    print STDERR "\r\e[K\n\nWrote $self->{make} rows.\n";
+}

@@ -1,0 +1,56 @@
+[package]
+name = "tracy-client-sys"
+version = "0.27.0" # AUTO-BUMP
+authors = ["Simonas Kazlauskas <tracy-client-sys@kazlauskas.me>"]
+build = "build.rs"
+license = "(MIT OR Apache-2.0) AND BSD-3-Clause"
+edition.workspace = true
+rust-version.workspace = true
+readme = "README.mkd"
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/tracy-client-sys"
+description = """
+Low level bindings to the client libraries for the Tracy profiler
+"""
+
+[[test]]
+name = "tests"
+path = "tests.rs"
+harness = false
+required-features = ["fibers"]
+
+[dependencies]
+
+[target."cfg(windows)".dependencies]
+windows-targets = ">=0.48, <0.53"
+
+[build-dependencies]
+cc = { version = "1.0.83", default-features = false }
+
+[features]
+# Refer to FEATURES.mkd for documentation on features.
+default = [ "enable", "system-tracing", "context-switch-tracing", "sampling", "code-transfer",
+            "broadcast", "callstack-inlines", "crash-handler" ]
+enable = []
+fibers = []
+system-tracing = []
+context-switch-tracing = []
+sampling = []
+code-transfer = []
+broadcast = []
+only-localhost = []
+only-ipv4 = []
+timer-fallback = []
+ondemand = []
+manual-lifetime = ["delayed-init"]
+delayed-init = []
+callstack-inlines = []
+flush-on-exit = []
+demangle = []
+verify = []
+debuginfod = []
+crash-handler = []
+
+[package.metadata.docs.rs]
+all-features = true

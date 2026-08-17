@@ -1,0 +1,24 @@
+---
+- name: Colon and adjacent value after comment on next line
+  from: <Source URL or description>
+  tags: comment flow mapping
+  yaml: |
+    ---
+    { "foo" # comment
+      :bar }
+  tree: |
+    +STR
+     +DOC ---
+      +MAP {}
+       =VAL "foo
+       =VAL :bar
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "foo": "bar"
+    }
+  dump: |
+    ---
+    "foo": bar

@@ -1,0 +1,54 @@
+r#"Common Documentation License
+
+Version 1.0 - February 16, 2001
+
+Copyright © 2001 Apple Computer, Inc.
+
+Permission is granted to copy and distribute verbatim copies of this License, but changing or adding to it in any way is not permitted.
+
+Please read this License carefully before downloading or using this material. By downloading or using this material, you are agreeing to be bound by the terms of this License. If you do not or cannot agree to the terms of this License, please do not download or use this material.
+
+0. Preamble. The Common Documentation License (CDL) provides a very simple and consistent license that allows relatively unrestricted use and redistribution of documents while still maintaining the author's credit and intent. To preserve simplicity, the License does not specify in detail how (e.g. font size) or where (e.g. title page, etc.) the author should be credited. To preserve consistency, changes to the CDL are not allowed and all derivatives of CDL documents are required to remain under the CDL. Together, these constraints enable third parties to easily and safely reuse CDL documents, making the CDL ideal for authors who desire a wide distribution of their work. However, this means the CDL does not allow authors to restrict precisely how their work is used or represented, making it inappropriate for those desiring more finely-grained control.
+
+1. General; Definitions. This License applies to any documentation, manual or other work that contains a notice placed by the Copyright Holder stating that it is subject to the terms of this Common Documentation License version 1.0 (or subsequent version thereof) ("License"). As used in this License:
+
+1.1 "Copyright Holder" means the original author(s) of the Document or other owner(s) of the copyright in the Document.
+
+1.2 "Document(s)" means any documentation, manual or other work that has been identified as being subject to the terms of this License.
+
+1.3 "Derivative Work" means a work which is based upon a pre-existing Document, such as a revision, modification, translation, abridgment, condensation, expansion, or any other form in which such pre-existing Document may be recast, transformed, or adapted.
+
+1.4 "You" or "Your" means an individual or a legal entity exercising rights under this License.
+
+2. Basic License. Subject to all the terms and conditions of this License, You may use, copy, modify, publicly display, distribute and publish the Document and your Derivative Works thereof, in any medium physical or electronic, commercially or non-commercially; provided that: (a) all copyright notices in the Document are preserved; (b) a copy of this License, or an incorporation of it by reference in proper form as indicated in Exhibit A below, is included in a conspicuous location in all copies such that it would be reasonably viewed by the recipient of the Document; and (c) You add no other terms or conditions to those of this License.
+
+3. Derivative Works. All Derivative Works are subject to the terms of this License. You may copy and distribute a Derivative Work of the Document under the conditions of Section 2 above, provided that You release the Derivative Work under the exact, verbatim terms of this License (i.e., the Derivative Work is licensed as a "Document" under the terms of this License). In addition, Derivative Works of Documents must meet the following requirements:
+
+     (a) All copyright and license notices in the original Document must be preserved.
+
+     (b) An appropriate copyright notice for your Derivative Work must be added adjacent to the other copyright notices.
+
+     (c) A statement briefly summarizing how your Derivative Work is different from the original Document must be included in the same place as your copyright notice.
+
+     (d) If it is not reasonably evident to a recipient of your Derivative Work that the Derivative Work is subject to the terms of this License, a statement indicating such fact must be included in the same place as your copyright notice.
+
+4. Compilation with Independent Works. You may compile or combine a Document or its Derivative Works with other separate and independent documents or works to create a compilation work ("Compilation"). If included in a Compilation, the Document or Derivative Work thereof must still be provided under the terms of this License, and the Compilation shall contain (a) a notice specifying the inclusion of the Document and/or Derivative Work and the fact that it is subject to the terms of this License, and (b) either a copy of the License or an incorporation by reference in proper form (as indicated in Exhibit A). Mere aggregation of a Document or Derivative Work with other documents or works on the same storage or distribution medium (e.g. a CD-ROM) will not cause this License to apply to those other works.
+
+5. NO WARRANTY. THE DOCUMENT IS PROVIDED 'AS IS' BASIS, WITHOUT WARRANTY OF ANY KIND, AND THE COPYRIGHT HOLDER EXPRESSLY DISCLAIMS ALL WARRANTIES AND/OR CONDITIONS WITH RESPECT TO THE DOCUMENT, EITHER EXPRESS, IMPLIED OR STATUTORY, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES AND/OR CONDITIONS OF MERCHANTABILITY, OF SATISFACTORY QUALITY, OF FITNESS FOR A PARTICULAR PURPOSE, OF ACCURACY, OF QUIET ENJOYMENT, AND OF NONINFRINGEMENT OF THIRD PARTY RIGHTS.
+
+6. LIMITATION OF LIABILITY. UNDER NO CIRCUMSTANCES SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY INCIDENTAL, SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES ARISING OUT OF OR RELATING TO THIS LICENSE OR YOUR USE, REPRODUCTION, MODIFICATION, DISTRIBUTION AND/OR PUBLICATION OF THE DOCUMENT, OR ANY PORTION THEREOF, WHETHER UNDER A THEORY OF CONTRACT, WARRANTY, TORT (INCLUDING NEGLIGENCE), STRICT LIABILITY OR OTHERWISE, EVEN IF THE COPYRIGHT HOLDER HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES AND NOTWITHSTANDING THE FAILURE OF ESSENTIAL PURPOSE OF ANY REMEDY.
+
+7. Trademarks. This License does not grant any rights to use any names, trademarks, service marks or logos of the Copyright Holder (collectively "Marks") and no such Marks may be used to endorse or promote works or products derived from the Document without the prior written permission of the Copyright Holder.
+
+8. Versions of the License. Apple Computer, Inc. ("Apple") may publish revised and/or new versions of this License from time to time. Each version will be given a distinguishing version number. Once a Document has been published under a particular version of this License, You may continue to use it under the terms of that version. You may also choose to use such Document under the terms of any subsequent version of this License published by Apple. No one other than Apple has the right to modify the terms applicable to Documents created under this License.
+
+9. Termination. This License and the rights granted hereunder will terminate automatically if You fail to comply with any of its terms. Upon termination, You must immediately stop any further reproduction, modification, public display, distr ibution and publication of the Document and Derivative Works. However, all sublicenses to the Document and Derivative Works which have been properly granted prior to termination shall survive any termination of this License. Provisions which, by their nat ure, must remain in effect beyond the termination of this License shall survive, including but not limited to Sections 5, 6, 7, 9 and 10.
+
+10. Waiver; Severability; Governing Law. Failure by the Copyright Holder to enforce any provision of this License will not be deemed a waiver of future enforcement of that or any other provision. If for any reason a court of competent jurisdiction finds any provision of this License, or portion thereof, to be unenforceable, that provision of the License will be enforced to the maximum extent permissible so as to effect the economic benefits and intent of the parties, and the remainder of this License will continue in full force and effect. This License shall be governed by the laws of the United States and the State of California, except that body of California law concerning conflicts of law.
+
+EXHIBIT A
+
+The proper form for an incorporation of this License by reference is as follows:
+
+"Copyright (c) [year] by [Copyright Holder's name]. This material has been released under and is subject to the terms of the Common Documentation License, v.1.0, the terms of which are hereby incorporated by reference. Please obtain a copy of the License at http://www.opensource.apple.com/cdl/ and read it before using this material. Your use of this material signifies your agreement to the terms of the License."
+"#

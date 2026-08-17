@@ -1,0 +1,82 @@
+{
+  "worlds": [
+    {
+      "name": "foo",
+      "imports": {
+        "shared-items": {
+          "interface": {
+            "id": 1
+          }
+        },
+        "interface-0": {
+          "interface": {
+            "id": 0
+          }
+        }
+      },
+      "exports": {
+        "a-name": {
+          "interface": {
+            "id": 2
+          }
+        }
+      },
+      "package": 0
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "shared-items",
+      "types": {
+        "a": 0
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": null,
+      "types": {},
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": null,
+      "types": {
+        "a": 1
+      },
+      "functions": {},
+      "package": 0
+    }
+  ],
+  "types": [
+    {
+      "name": "a",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "a",
+      "kind": {
+        "type": 0
+      },
+      "owner": {
+        "interface": 2
+      }
+    }
+  ],
+  "packages": [
+    {
+      "name": "foo:foo",
+      "interfaces": {
+        "shared-items": 0
+      },
+      "worlds": {
+        "foo": 0
+      }
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+[package]
+name = "bincode"
+version = "1.3.3" # remember to update html_root_url
+authors = ["Ty Overby <ty@pre-alpha.com>", "Francesco Mazzoli <f@mazzo.li>", "David Tolnay <dtolnay@gmail.com>", "Zoey Riordan <zoey@dos.cafe>"]
+exclude = ["logo.png", "examples/*", ".gitignore", ".travis.yml"]
+
+publish =  true
+
+repository = "https://github.com/servo/bincode"
+documentation = "https://docs.rs/bincode"
+readme = "./readme.md"
+categories = ["encoding", "network-programming"]
+keywords = ["binary", "encode", "decode", "serialize", "deserialize"]
+
+license = "MIT"
+description = "A binary serialization / deserialization strategy that uses Serde for transforming structs into bytes and vice versa!"
+
+[dependencies]
+serde = "1.0.63"
+
+[dev-dependencies]
+serde_bytes = "0.11"
+serde_derive = "1.0.27"
+
+[features]
+# This feature is no longer used and is DEPRECATED. This crate relies on the
+# serde `serde_if_integer128` macro to enable i128 support for Rust compilers
+# and targets that support it. The feature will be removed if and when a new
+# major version is released.
+i128 = []
+
+[badges]
+travis-ci = { repository = "servo/bincode" }

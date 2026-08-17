@@ -1,0 +1,223 @@
+This  file contains  a list  of various  font formats.   It gives  the
+reference document and whether it is supported in FreeType 2.
+
+Table fields
+------------
+
+  wrapper format
+    The format used to represent the font data.  In the table below it
+    is  used only  if the  font format  differs.  Possible  values are
+
+      SFNT  binary
+      PFB   binary
+      PS    a text header, followed by  binary or text data
+      LZW   compressed with  either `gzip' or `compress'
+      BZ2   compressed with `bzip2'.
+
+  font format
+    How the font is to be accessed, possibly after converting the file
+    type and wrapper  format into a generic form.   Bitmap formats are
+    `BDF',  `PCF', and  one form  of `WINFNT';  all others  are vector
+    formats.   `PS' indicates  third-order,  `TT' second-order  Bézier
+    curves.
+
+  font type
+    Sub-formats of the  font format.  `SBIT' and  `MACSBIT' are bitmap
+    formats,  `MM' and  `VAR' support  optical axes.   `CFF2' supports
+    optical axes also.
+
+  glyph access
+    If  not specified,  the glyph  access  is `standard'  to the  font
+    format.   Values are  `CID' for  CID-keyed fonts,  `SYNTHETIC' for
+    fonts that  are modified  versions of  other fonts  by means  of a
+    transformation matrix, and  `TYPE_0' for PS fonts which  are to be
+    accessed in a tree-like structure.
+
+  FreeType driver
+    The module in the FreeType library which handles the specific font
+    format.  A missing  entry means that FreeType  doesn't support the
+    font format (yet).
+
+
+Notes
+-----
+
+  The  SFNT  container  format also  provides  `collections'  (usually
+  having the file extension `.ttc'  or `.otc').  A collection contains
+  multiple font faces that share some tables to avoid redundancy, thus
+  reducing the file  size.  In FreeType, elements of  a collection can
+  be accessed with a proper face index.
+
+  Both  the GX  and the  OpenType 1.8  variation fonts  provide `named
+  instances'.  FreeType  maps them to  face indices (they can  also be
+  accessed with the standard MM interface).
+
+  Other  font  formats  (not  using the  SFNT  wrapper)  also  provide
+  multiple faces  within one  file; they are  marked with  an asterisk
+  (`*') in the table below.
+
+  FreeType can  be configured to  support Mac  files (on older  Mac OS
+  versions, a `file' is stored as a data and a resource fork, that is,
+  within two  separate data chunks).  If  a file can't be  opened as a
+  font, FreeType then checks whether it  is a resource fork, trying to
+  extract  the contained  font data  from  either a  `POST' or  `sfnt'
+  resource.
+
+
+Please  send additions  and/or  corrections to  wl@gnu.org  or to  the
+FreeType   developer's   list    at   freetype-devel@nongnu.org   (for
+subscribers only).   If you can  provide a  font example for  a format
+which isn't supported yet please send a mail too.
+
+
+  wrapper font    font    glyph      FreeType reference
+  format  format  type    access     driver   documents
+ -----------------------------------------------------------------------------
+
+  ---     BDF     ---     ---        bdf      5005.BDF_Spec.pdf, X11
+
+
+  SFNT    PS      TYPE_1  ---        type1    Type 1 GX Font Format [7]
+                                              (for the Mac; not supported)
+  SFNT    PS      TYPE_1  CID        cid      5180.sfnt.pdf (for the Mac) [3]
+  SFNT    PS      CFF     ---        cff      OT spec, 5176.CFF.pdf
+                                              (`OTTO' format)
+  SFNT    PS      CFF     CID        cff      OT spec, 5176.CFF.pdf
+  SFNT    PS      CFF     SYNTHETIC  ---      OT spec, 5176.CFF.pdf
+  SFNT    PS      CFF2    ---        cff      OT spec 1.8
+
+  SFNT    TT      SBIT    ---        sfnt     XFree86 (bitmaps only;
+                                              with `head' table)
+  SFNT    TT      MACSBIT ---        sfnt     OT spec (for the Mac;
+                                              bitmaps only; `bhed' table)
+  SFNT    TT      ---     ---        truetype OT spec (`normal' TT font)
+  SFNT    TT      VAR     ---        truetype GX spec (`?var' tables)
+  SFNT    TT      VAR     ---        truetype OT spec 1.8
+                                              (`?var' + `?VAR' tables)
+
+
+  WOFF    ---     ---     ---        cff,     Compressed SFNT, ver. 1.0 [6]
+                                     truetype
+  WOFF2   ---     ---     ---        cff,     Compressed SFNT, ver. 2.0 [6]
+                                     truetype
+
+
+  ---     PS      TYPE_1  ---        type1    T1_SPEC.pdf
+                                              (PFA, Type 1 font resource)
+  PFB     PS      TYPE_1  ---        type1    T1_SPEC.pdf,
+                                              5040.Download_Fonts.pdf
+                                              (`normal' Type 1 font)
+  ---     PS      TYPE_1  CID        cid      PLRM.pdf (CID Font Type 0;
+                                              Type 9 font)
+  ---     PS      MM      ---        type1    5015.Type1_Supp.pdf
+                                              (Multiple Masters)
+  ---     PS      CFF     ---        cff      5176.CFF.pdf (`pure' CFF)
+  ---     PS*     CFF     CID        cff      5176.CFF.pdf (`pure' CFF)
+  ---     PS      CFF     SYNTHETIC  ---      5176.CFF.pdf (`pure' CFF)
+  ---     PS      CFF/MM  ---        cff      old 5167.CFF.pdf (`pure' CFF)
+                                              [3]
+  ---     PS*     CFF/MM  CID        cff      old 5167.CFF.pdf (`pure' CFF)
+                                              [3]
+  ---     PS      CFF/MM  SYNTHETIC  ---      old 5167.CFF.pdf (`pure' CFF)
+                                              [3]
+  PS      PS      CFF     ---        ---      PLRM.pdf (Type 2) [1]
+  PS      PS*     CFF     CID        ---      PLRM.pdf (Type 2) [1]
+  PS      PS      CFF     SYNTHETIC  ---      PLRM.pdf (Type 2) [1]
+  PS      PS      CFF/MM  ---        ---      PLRM.pdf (Type 2) [1]
+  PS      PS*     CFF/MM  CID        ---      PLRM.pdf (Type 2) [1]
+  PS      PS      CFF/MM  SYNTHETIC  ---      PLRM.pdf (Type 2) [1]
+  ---     PS      ---     TYPE_0     ---      PLRM.pdf
+  ---     PS      TYPE_3  ---        ---      PLRM.pdf (never supported)
+  ---     PS      TYPE_3  CID        ---      PLRM.pdf (CID Font Type 1;
+                                              Type 10 font; never supported)
+  PS      PS      TYPE_14 ---        ---      PLRM.pdf (Chameleon font;
+                                              Type 14 font; never supported?)
+  ---     PS      TYPE_32 CID        ---      PLRM.pdf (CID Font Type 4;
+                                              Type 32 font; never supported?)
+  PS      TT      ---     ---        type42   5012.Type42_Spec.pdf
+                                              (Type 42 font)
+  PS      TT      ---     CID        ---      PLRM.pdf (CID Font Type 2;
+                                              Type 11 font)
+
+
+  ?       ?       CEF     ?          cff      ?
+
+
+  ---     PCF     ---     ---        pcf      X11 [4]
+  LZW     PCF     ---     ---        pcf      X11 [4]
+  BZ2     PCF     ---     ---        pcf      X11 [4]
+
+
+  ---     PFR*    PFR0    ---        pfr      [2]
+  ---     PFR     PFR1    ---        ---      (undocumented, proprietary;
+                                              probably never supported)
+
+
+  ---     WINFNT* ---     ---        winfonts Windows developer's notes [5]
+  ---     WINFNT  VECTOR  ---        ---      Windows developer's notes [5]
+
+
+[1] Support should  be rather simple since this is  identical to `CFF'
+    but in a PS wrapper.
+
+[2] The  official  PFR  specification  is  no  longer  available,  but
+    archive.org has archived it:
+
+      https://web.archive.org/web/20091014062300/http://www.bitstream.com/font_rendering/products/truedoc/pfrspec.html
+      https://web.archive.org/web/20081115152605/http://www.bitstream.com/font_rendering/pdfs/pfrspec1.3.pdf
+
+    The syntax  of the  auxiliary data  is not  defined there,  but is
+    partially defined in MHP 1.0.3 (also called ETSI TS 101812 V1.3.1)
+    section 7.4.
+
+      https://www.etsi.org/
+      https://webapp.etsi.org/workprogram/Report_WorkItem.asp?WKI_ID=18799
+
+[3] Support  is rudimentary  currently; some  tables or  data are  not
+    loaded yet.
+
+[4] See
+
+      THE X WINDOW SYSTEM SERVER: X VERSION 11, RELEASE 5
+      Elias Israel, Erik Fortune, Digital Press, 1992
+      ISBN 1-55558-096-3
+
+    for a specification given in Appendix D on pgs. 436-450.  However,
+    this information might be out  of date; unfortunately, there is no
+    PCF specification available online, and this book is out of print.
+    George Williams deduced  the font format from the  X11 sources and
+    documented it for his FontForge font editor:
+
+      https://fontforge.github.io/pcf-format.html
+
+[5] This is from MS Windows 3;  see Microsoft's Knowledge Base article
+    at
+
+      https://support.microsoft.com/kb/65123
+
+[6] Supported  font  formats  are   TrueType  and  OpenType  fonts  as
+    defined in the OpenType specification 1.6 and newer.
+
+[7] `The Type 1 GX Font Format' (dated 1995-09-27)  was distributed in
+    Apple Developer CD-ROM in those days.  The content of `TYP1' table
+    is a PostScript Type 1 font without the eexec encryption.  Current
+    versions of FreeType don't not support this format,  but FontForge
+    can load it.
+
+------------------------------------------------------------------------
+
+Copyright (C) 2004-2023 by
+David Turner, Robert Wilhelm, and Werner Lemberg.
+
+This  file is  part  of the  FreeType  project, and  may  only be  used,
+modified,  and  distributed under  the  terms  of  the FreeType  project
+license, LICENSE.TXT.  By continuing  to use, modify, or distribute this
+file  you indicate that  you have  read the  license and  understand and
+accept it fully.
+
+
+--- end of formats.txt ---
+
+Local Variables:
+coding: utf-8
+End:

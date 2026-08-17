@@ -1,0 +1,7 @@
+package test:%async;
+
+interface x {
+  resource z {
+    x: async static func();
+  }
+}

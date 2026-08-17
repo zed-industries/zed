@@ -1,0 +1,579 @@
+{
+  "events": [
+    {
+      "connection_id": 0,
+      "action": {
+        "Request": {
+          "request": {
+            "uri": "https://s3express-test-bucket--usw2-az1--x-s3.s3express-usw2-az1.us-west-2.amazonaws.com/?session",
+            "headers": {
+              "authorization": [
+                "AWS4-HMAC-SHA256 Credential=ANOTREAL/20090213/us-west-2/s3express/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-user-agent, Signature=41c2b04a140b0973d5f82d18c412c21a2328d86435b5568e4fbdf6af5d99ebb5"
+              ],
+              "amz-sdk-request": [
+                "attempt=1; max=3"
+              ],
+              "user-agent": [
+                "aws-sdk-rust/0.123.test os/windows/XPSP3 lang/rust/1.50.0"
+              ],
+              "x-amz-content-sha256": [
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              ],
+              "x-amz-user-agent": [
+                "aws-sdk-rust/0.123.test os/windows/XPSP3 lang/rust/1.50.0"
+              ],
+              "x-amz-date": [
+                "20090213T233130Z"
+              ]
+            },
+            "method": "GET"
+          }
+        }
+      }
+    },
+    {
+      "connection_id": 0,
+      "action": {
+        "Eof": {
+          "ok": true,
+          "direction": "Request"
+        }
+      }
+    },
+    {
+      "connection_id": 0,
+      "action": {
+        "Response": {
+          "response": {
+            "Ok": {
+              "status": 200,
+              "headers": {
+                "content-type": [
+                  "application/xml"
+                ],
+                "server": [
+                  "AmazonS3"
+                ],
+                "content-length": [
+                  "333"
+                ],
+                "date": [
+                  "Fri, 13 Feb 2009 23:31:30 GMT"
+                ],
+                "x-amz-request-id": [
+                  "0033eada6b00018d62cbbce90509fbf343a84844"
+                ],
+                "x-amz-id-2": [
+                  "ucekwm0"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "connection_id": 0,
+      "action": {
+        "Data": {
+          "data": {
+            "Utf8": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<CreateSessionResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Credentials><SessionToken>TESTSESSIONTOKEN</SessionToken><SecretAccessKey>TESTSECRETKEY</SecretAccessKey><AccessKeyId>ASIARTESTID</AccessKeyId><Expiration>2024-01-29T18:53:01Z</Expiration></Credentials></CreateSessionResult>"
+          },
+          "direction": "Response"
+        }
+      }
+    },
+    {
+      "connection_id": 0,
+      "action": {
+        "Eof": {
+          "ok": true,
+          "direction": "Response"
+        }
+      }
+    },
+    {
+      "connection_id": 1,
+      "action": {
+        "Request": {
+          "request": {
+            "uri": "https://s3express-test-bucket--usw2-az1--x-s3.s3express-usw2-az1.us-west-2.amazonaws.com/?list-type=2",
+            "headers": {
+              "user-agent": [
+                "aws-sdk-rust/0.123.test os/windows/XPSP3 lang/rust/1.50.0"
+              ],
+              "x-amz-s3session-token": [
+                "TESTSESSIONTOKEN"
+              ],
+              "authorization": [
+                "AWS4-HMAC-SHA256 Credential=ASIARTESTID/20090213/us-west-2/s3express/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-s3session-token;x-amz-user-agent, Signature=d1765aa7ec005607ba94fdda08c6739228d5ee14eb8316e80264c35649661a19"
+              ],
+              "amz-sdk-request": [
+                "attempt=1; max=3"
+              ],
+              "x-amz-date": [
+                "20090213T233130Z"
+              ],
+              "x-amz-user-agent": [
+                "aws-sdk-rust/0.123.test api/test-service/0.123 os/windows/XPSP3 lang/rust/1.50.0"
+              ],
+              "x-amz-content-sha256": [
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              ]
+            },
+            "method": "GET"
+          }
+        }
+      }
+    },
+    {
+      "connection_id": 1,
+      "action": {
+        "Eof": {
+          "ok": true,
+          "direction": "Request"
+        }
+      }
+    },
+    {
+      "connection_id": 1,
+      "action": {
+        "Response": {
+          "response": {
+            "Ok": {
+              "status": 200,
+              "headers": {
+                "server": [
+                  "AmazonS3"
+                ],
+                "x-amz-bucket-region": [
+                  "us-west-2"
+                ],
+                "x-amz-request-id": [
+                  "0033eada6b00018d62cbbd9c0509eacc646e551d"
+                ],
+                "date": [
+                  "Fri, 13 Feb 2009 23:31:30 GMT"
+                ],
+                "content-length": [
+                  "520"
+                ],
+                "content-type": [
+                  "application/xml"
+                ],
+                "x-amz-id-2": [
+                  "VLW4GcfH"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "connection_id": 1,
+      "action": {
+        "Data": {
+          "data": {
+            "Utf8": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>s3express-test-bucket--usw2-az1--x-s3</Name><Prefix/><KeyCount>1</KeyCount><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated><Contents><ChecksumAlgorithm>CRC32</ChecksumAlgorithm><ETag>&quot;b357dc928b454965a8dd11716a37dab8&quot;</ETag><Key>hello-world.txt</Key><LastModified>2024-01-29T18:32:24.000Z</LastModified><Size>14</Size><StorageClass>EXPRESS_ONEZONE</StorageClass></Contents></ListBucketResult>"
+          },
+          "direction": "Response"
+        }
+      }
+    },
+    {
+      "connection_id": 1,
+      "action": {
+        "Eof": {
+          "ok": true,
+          "direction": "Response"
+        }
+      }
+    },
+    {
+      "connection_id": 2,
+      "action": {
+        "Request": {
+          "request": {
+            "uri": "https://regular-test-bucket.s3.us-west-2.amazonaws.com/?list-type=2",
+            "headers": {
+              "x-amz-content-sha256": [
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              ],
+              "x-amz-user-agent": [
+                "aws-sdk-rust/0.123.test api/test-service/0.123 os/windows/XPSP3 lang/rust/1.50.0"
+              ],
+              "authorization": [
+                "AWS4-HMAC-SHA256 Credential=ANOTREAL/20090213/us-west-2/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-user-agent, Signature=28c4fed28f2d3ee6780b5ce36a052becdb4257e910a991467eb947aad3d7ea81"
+              ],
+              "amz-sdk-request": [
+                "attempt=1; max=3"
+              ],
+              "x-amz-date": [
+                "20090213T233130Z"
+              ],
+              "user-agent": [
+                "aws-sdk-rust/0.123.test os/windows/XPSP3 lang/rust/1.50.0"
+              ]
+            },
+            "method": "GET"
+          }
+        }
+      }
+    },
+    {
+      "connection_id": 2,
+      "action": {
+        "Eof": {
+          "ok": true,
+          "direction": "Request"
+        }
+      }
+    },
+    {
+      "connection_id": 2,
+      "action": {
+        "Response": {
+          "response": {
+            "Ok": {
+              "status": 200,
+              "headers": {
+                "x-amz-request-id": [
+                  "SCS4NK66GX0KHW8Q"
+                ],
+                "content-type": [
+                  "application/xml"
+                ],
+                "server": [
+                  "AmazonS3"
+                ],
+                "x-amz-bucket-region": [
+                  "us-west-2"
+                ],
+                "transfer-encoding": [
+                  "chunked"
+                ],
+                "x-amz-id-2": [
+                  "1TqTeHEvPfLuR0LGMqatChbIYSJm6p0VsCbdOG0HG5q3BsVhYg5RMIOzAGYSF0xBVn+SLpmTkU6m1ARguYLRnA=="
+                ],
+                "date": [
+                  "Fri, 13 Feb 2009 23:31:30 GMT"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "connection_id": 2,
+      "action": {
+        "Data": {
+          "data": {
+            "Utf8": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>regular-test-bucket</Name><Prefix></Prefix><KeyCount>1</KeyCount><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated><Contents><Key>ferris.png</Key><LastModified>2024-02-01T03:48:28.000Z</LastModified><ETag>&quot;1316cc7c39e43c50c160f0aa8168db41&quot;</ETag><Size>58413</Size><StorageClass>STANDARD</StorageClass></Contents></ListBucketResult>"
+          },
+          "direction": "Response"
+        }
+      }
+    },
+    {
+      "connection_id": 2,
+      "action": {
+        "Eof": {
+          "ok": true,
+          "direction": "Response"
+        }
+      }
+    },
+    {
+      "connection_id": 3,
+      "action": {
+        "Request": {
+          "request": {
+            "uri": "https://s3express-test-bucket-2--usw2-az3--x-s3.s3express-usw2-az3.us-west-2.amazonaws.com/?session",
+            "headers": {
+              "amz-sdk-request": [
+                "attempt=1; max=3"
+              ],
+              "user-agent": [
+                "aws-sdk-rust/0.123.test os/windows/XPSP3 lang/rust/1.50.0"
+              ],
+              "x-amz-user-agent": [
+                "aws-sdk-rust/0.123.test api/test-service/0.123 os/windows/XPSP3 lang/rust/1.50.0"
+              ],
+              "x-amz-date": [
+                "20090213T233130Z"
+              ],
+              "authorization": [
+                "AWS4-HMAC-SHA256 Credential=ANOTREAL/20090213/us-west-2/s3express/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-user-agent, Signature=44d20d3ee77ea1d7d0dd871e27b862b48803e1810ac4ae4debed958ceef3af4e"
+              ],
+              "x-amz-content-sha256": [
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              ]
+            },
+            "method": "GET"
+          }
+        }
+      }
+    },
+    {
+      "connection_id": 3,
+      "action": {
+        "Eof": {
+          "ok": true,
+          "direction": "Request"
+        }
+      }
+    },
+    {
+      "connection_id": 3,
+      "action": {
+        "Response": {
+          "response": {
+            "Ok": {
+              "status": 200,
+              "headers": {
+                "server": [
+                  "AmazonS3"
+                ],
+                "content-type": [
+                  "application/xml"
+                ],
+                "x-amz-request-id": [
+                  "0033eada6b00018d62cbc0e3050ad61d5828bce1"
+                ],
+                "content-length": [
+                  "333"
+                ],
+                "date": [
+                  "Fri, 13 Feb 2009 23:31:30 GMT"
+                ],
+                "x-amz-id-2": [
+                  "bL6uF0sLOL"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "connection_id": 3,
+      "action": {
+        "Data": {
+          "data": {
+            "Utf8": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<CreateSessionResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Credentials><SessionToken>TESTSESSIONTOKEN</SessionToken><SecretAccessKey>TESTSECRETKEY</SecretAccessKey><AccessKeyId>ASIARTESTID</AccessKeyId><Expiration>2024-01-29T18:53:01Z</Expiration></Credentials></CreateSessionResult>"
+          },
+          "direction": "Response"
+        }
+      }
+    },
+    {
+      "connection_id": 3,
+      "action": {
+        "Eof": {
+          "ok": true,
+          "direction": "Response"
+        }
+      }
+    },
+    {
+      "connection_id": 4,
+      "action": {
+        "Request": {
+          "request": {
+            "uri": "https://s3express-test-bucket-2--usw2-az3--x-s3.s3express-usw2-az3.us-west-2.amazonaws.com/?list-type=2",
+            "headers": {
+              "authorization": [
+                "AWS4-HMAC-SHA256 Credential=ASIARTESTID/20090213/us-west-2/s3express/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-s3session-token;x-amz-user-agent, Signature=53848e132e259d7dbc06eb3063d5a32a243525f4fbf2cd015d45ff03f354d6f1"
+              ],
+              "x-amz-content-sha256": [
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              ],
+              "x-amz-user-agent": [
+                "aws-sdk-rust/0.123.test api/test-service/0.123 os/windows/XPSP3 lang/rust/1.50.0"
+              ],
+              "user-agent": [
+                "aws-sdk-rust/0.123.test os/windows/XPSP3 lang/rust/1.50.0"
+              ],
+              "x-amz-date": [
+                "20090213T233130Z"
+              ],
+              "amz-sdk-request": [
+                "attempt=1; max=3"
+              ],
+              "x-amz-s3session-token": [
+                "TESTSESSIONTOKEN"
+              ]
+            },
+            "method": "GET"
+          }
+        }
+      }
+    },
+    {
+      "connection_id": 4,
+      "action": {
+        "Eof": {
+          "ok": true,
+          "direction": "Request"
+        }
+      }
+    },
+    {
+      "connection_id": 4,
+      "action": {
+        "Response": {
+          "response": {
+            "Ok": {
+              "status": 200,
+              "headers": {
+                "x-amz-request-id": [
+                  "0033eada6b00018d62cbc175050a70195c6f02fc"
+                ],
+                "content-length": [
+                  "517"
+                ],
+                "x-amz-id-2": [
+                  "PrnjEZSu97xW"
+                ],
+                "server": [
+                  "AmazonS3"
+                ],
+                "x-amz-bucket-region": [
+                  "us-west-2"
+                ],
+                "content-type": [
+                  "application/xml"
+                ],
+                "date": [
+                  "Fri, 13 Feb 2009 23:31:30 GMT"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "connection_id": 4,
+      "action": {
+        "Data": {
+          "data": {
+            "Utf8": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>s3express-test-bucket-2--usw2-az3--x-s3</Name><Prefix/><KeyCount>1</KeyCount><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated><Contents><ChecksumAlgorithm>CRC32</ChecksumAlgorithm><ETag>&quot;278b621d9c444360b3614a78cf1a64d1&quot;</ETag><Key>foobar.txt</Key><LastModified>2024-02-01T03:32:07.000Z</LastModified><Size>10</Size><StorageClass>EXPRESS_ONEZONE</StorageClass></Contents></ListBucketResult>"
+          },
+          "direction": "Response"
+        }
+      }
+    },
+    {
+      "connection_id": 4,
+      "action": {
+        "Eof": {
+          "ok": true,
+          "direction": "Response"
+        }
+      }
+    },
+    {
+      "connection_id": 5,
+      "action": {
+        "Request": {
+          "request": {
+            "uri": "https://s3express-test-bucket--usw2-az1--x-s3.s3express-usw2-az1.us-west-2.amazonaws.com/?list-type=2",
+            "headers": {
+              "x-amz-user-agent": [
+                "aws-sdk-rust/0.123.test api/test-service/0.123 os/windows/XPSP3 lang/rust/1.50.0"
+              ],
+              "x-amz-date": [
+                "20090213T233130Z"
+              ],
+              "x-amz-content-sha256": [
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              ],
+              "user-agent": [
+                "aws-sdk-rust/0.123.test os/windows/XPSP3 lang/rust/1.50.0"
+              ],
+              "x-amz-s3session-token": [
+                "TESTSESSIONTOKEN"
+              ],
+              "amz-sdk-request": [
+                "attempt=1; max=3"
+              ],
+              "authorization": [
+                "AWS4-HMAC-SHA256 Credential=ASIARTESTID/20090213/us-west-2/s3express/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-s3session-token;x-amz-user-agent, Signature=d1765aa7ec005607ba94fdda08c6739228d5ee14eb8316e80264c35649661a19"
+              ]
+            },
+            "method": "GET"
+          }
+        }
+      }
+    },
+    {
+      "connection_id": 5,
+      "action": {
+        "Eof": {
+          "ok": true,
+          "direction": "Request"
+        }
+      }
+    },
+    {
+      "connection_id": 5,
+      "action": {
+        "Response": {
+          "response": {
+            "Ok": {
+              "status": 200,
+              "headers": {
+                "x-amz-id-2": [
+                  "LX0peO7j"
+                ],
+                "x-amz-request-id": [
+                  "0033eada6b00018d62cbc1cd0509f0c8b6f330e7"
+                ],
+                "server": [
+                  "AmazonS3"
+                ],
+                "x-amz-bucket-region": [
+                  "us-west-2"
+                ],
+                "date": [
+                  "Fri, 13 Feb 2009 23:31:30 GMT"
+                ],
+                "content-type": [
+                  "application/xml"
+                ],
+                "content-length": [
+                  "520"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "connection_id": 5,
+      "action": {
+        "Data": {
+          "data": {
+            "Utf8": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>s3express-test-bucket--usw2-az1--x-s3</Name><Prefix/><KeyCount>1</KeyCount><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated><Contents><ChecksumAlgorithm>CRC32</ChecksumAlgorithm><ETag>&quot;b357dc928b454965a8dd11716a37dab8&quot;</ETag><Key>hello-world.txt</Key><LastModified>2024-01-29T18:32:24.000Z</LastModified><Size>14</Size><StorageClass>EXPRESS_ONEZONE</StorageClass></Contents></ListBucketResult>"
+          },
+          "direction": "Response"
+        }
+      }
+    },
+    {
+      "connection_id": 5,
+      "action": {
+        "Eof": {
+          "ok": true,
+          "direction": "Response"
+        }
+      }
+    }
+  ],
+  "docs": "traffic recording of listing objects in both an S3 Express One Zone bucket and a regular S3 bucket",
+  "version": "V0"
+}

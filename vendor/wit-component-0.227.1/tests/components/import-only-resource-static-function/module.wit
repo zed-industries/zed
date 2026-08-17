@@ -1,0 +1,11 @@
+package foo:bar;
+
+interface x {
+  resource a {
+    f: static func();
+  }
+}
+
+world module {
+  import x;
+}

@@ -1,0 +1,24 @@
+[package]
+name = "markup5ever"
+version = "0.12.1"
+authors = [ "The html5ever Project Developers" ]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/servo/html5ever"
+description = "Common code for xml5ever and html5ever"
+documentation = "https://docs.rs/markup5ever"
+build = "build.rs"
+categories = [ "parser-implementations", "web-programming" ]
+edition = "2021"
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+string_cache = "0.8"
+phf = "0.11"
+tendril = "0.4"
+log = "0.4"
+
+[build-dependencies]
+string_cache_codegen = "0.5.1"
+phf_codegen = "0.11"

@@ -1,0 +1,34 @@
+error: use of deprecated struct `ffi::_::StructX`:
+       Shared struct redeclared as an unsafe extern C++ type is deprecated.
+       If this is intended to be a shared struct, remove this `type StructX`.
+       If this is intended to be an extern type, change it to:
+
+           use cxx::ExternType;
+
+           #[repr(C)]
+           pub struct StructX {
+               ...
+           }
+
+           unsafe impl ExternType for StructX {
+               type Id = cxx::type_id!("mine::StructX");
+               type Kind = cxx::kind::Trivial;
+           }
+
+           pub mod ffi {
+               #[namespace = "mine"]
+               extern "C++" {
+                   type StructX = crate::StructX;
+               }
+               ...
+           }
+  --> tests/ui/extern_shared_struct.rs:11:14
+   |
+11 |         type StructX;
+   |              ^^^^^^^
+   |
+note: the lint level is defined here
+  --> tests/ui/extern_shared_struct.rs:1:9
+   |
+ 1 | #![deny(deprecated)]
+   |         ^^^^^^^^^^

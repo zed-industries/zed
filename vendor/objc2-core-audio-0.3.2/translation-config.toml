@@ -1,0 +1,23 @@
+framework = "CoreAudio"
+crate = "objc2-core-audio"
+required-crates = ["objc2-core-foundation"]
+custom-lib-rs = true
+macos = "10.0"
+maccatalyst = "13.1"
+ios = "2.0"
+tvos = "9.0"
+watchos = "3.0"
+visionos = "1.0"
+
+# Self-referential / recursive structs
+struct.AudioServerPlugInHostInterface.skipped = true
+typedef.AudioServerPlugInHostInterface.skipped = true
+typedef.AudioServerPlugInHostRef.skipped = true
+struct.AudioServerPlugInDriverInterface.skipped = true
+typedef.AudioServerPlugInDriverInterface.skipped = true
+typedef.AudioServerPlugInDriverRef.skipped = true
+
+# This is currently emitted incorrectly, the union field is
+# not included, which is an ABI mismatch.
+struct.AudioServerPlugInIOCycleInfo.skipped = true
+typedef.AudioServerPlugInIOCycleInfo.skipped = true

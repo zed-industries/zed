@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+env:
+  RUST_BACKTRACE: 1
+
+jobs:
+  ci-pass:
+    name: CI is green
+    runs-on: ubuntu-latest
+    needs:
+      - style
+      - test
+      - doc
+    steps:
+      - run: exit 0
+
+  style:
+    name: Check Style
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - run: cargo fmt --all --check
+
+  test:
+    name: Test
+    needs: [style]
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        build: [stable, beta, nightly, tls, no-default-features, compression]
+
+        include:
+          - build: beta
+            rust: beta
+          - build: nightly
+            rust: nightly
+            benches: true
+          - build: tls
+            features: "--features tls"
+          - build: no-default-features
+            features: "--no-default-features"
+          - build: compression
+            features: "--features compression"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust || 'stable' }}
+
+      - name: Test
+        run: cargo test ${{ matrix.features }}
+
+      - name: Test all benches
+        if: matrix.benches
+        run: cargo test --benches ${{ matrix.features }}
+
+  doc:
+    name: Build docs
+    needs: [style, test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: cargo doc
+        run: cargo rustdoc -- -D broken_intra_doc_links

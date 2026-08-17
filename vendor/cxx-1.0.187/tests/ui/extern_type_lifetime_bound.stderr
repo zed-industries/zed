@@ -1,0 +1,5 @@
+error: lifetime parameter with bounds is not supported yet
+ --> tests/ui/extern_type_lifetime_bound.rs:4:26
+  |
+4 |         type Complex<'a, 'b: 'a>;
+  |                          ^^^^^^

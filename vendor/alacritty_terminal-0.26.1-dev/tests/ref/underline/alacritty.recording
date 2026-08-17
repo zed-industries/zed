@@ -1,0 +1,13 @@
+[undeadleech@undeadlap underline]$ [K[undeadleech@undeadlap underline]$ echo -e "\e[4mUNDERLINED\e[0m"
+[4mUNDERLINED[0m
+[undeadleech@undeadlap underline]$ echo -e "\e[4:1mUNDERLINED\e[4:0m"
+[4:1mUNDERLINED[4:0m
+[undeadleech@undeadlap underline]$ echo -e "\e[4:2mUNDERLINED\e[24m"
+[4:2mUNDERLINED[24m
+[undeadleech@undeadlap underline]$ echo -e "\e[4:3mUNDERLINED\e[21m";mUNDERLINED\e[21m"2mUNDERLINED\e[21m"1mUNDERLINED\e[21m"[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[1Pm"[1Pm"0m"
+[4:3;21mUNDERLINED[0m
+[undeadleech@undeadlap underline]$ echo -e "\e[4;4:2mUNDERLINED\e[0m"
+[4;4:2mUNDERLINED[0m
+[undeadleech@undeadlap underline]$ echo -e "\e[4;4:2mUNDERLINED\e[0m":;4:2mUNDERLINED\e[0m"1;4:2mUNDERLINED\e[0m"[C[C[C[1P;4:2mUNDERLINED\e[0m"2;4:2mUNDERLINED\e[0m"[C[C[C[C[1PmUNDERLINED\e[0m"1mUNDERLINED\e[0m"
+[4:2;4:1mUNDERLINED[0m
+[undeadleech@undeadlap underline]$ 

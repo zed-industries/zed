@@ -1,0 +1,7 @@
+error: lifetime may not live long enough
+ --> tests/regex_compiletest/05-variance.rs:10:5
+  |
+ 9 | fn contravariance_check<'short>(input: MatchInfo<'short>) -> MatchInfo<'static> {
+   |                         ------ lifetime `'short` defined here
+10 |     input
+   |     ^^^^^ returning this value requires that `'short` must outlive `'static`

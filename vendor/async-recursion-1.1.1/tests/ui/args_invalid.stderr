@@ -1,0 +1,17 @@
+error: failed to parse macro arguments: expected `Send`
+ --> tests/ui/args_invalid.rs:3:20
+  |
+3 | #[async_recursion(?Sync)]
+  |                    ^^^^
+
+error: failed to parse macro arguments: expected `,`
+ --> tests/ui/args_invalid.rs:6:24
+  |
+6 | #[async_recursion(Sync Sync)]
+  |                        ^^^^
+
+error: failed to parse macro arguments: expected `,`
+ --> tests/ui/args_invalid.rs:9:23
+  |
+9 | #[async_recursion(Sync?Send)]
+  |                       ^

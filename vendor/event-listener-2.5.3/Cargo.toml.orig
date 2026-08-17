@@ -1,0 +1,19 @@
+[package]
+name = "event-listener"
+# When publishing a new version:
+# - Update CHANGELOG.md
+# - Create "v2.x.y" git tag
+version = "2.5.3"
+authors = ["Stjepan Glavina <stjepang@gmail.com>"]
+edition = "2018"
+rust-version = "1.36"
+description = "Notify async tasks or threads"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/smol-rs/event-listener"
+keywords = ["condvar", "eventcount", "wake", "blocking", "park"]
+categories = ["asynchronous", "concurrency"]
+exclude = ["/.*"]
+
+[dev-dependencies]
+futures = { version = "0.3", default-features = false, features = ["std"] }
+waker-fn = "1"

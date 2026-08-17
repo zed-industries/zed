@@ -1,0 +1,2153 @@
+Output of localectl status:
+System Locale: LANG=en_US.UTF-8
+    VC Keymap: us
+   X11 Layout: us
+
+Symbols from keysymdef.h:
+ 2061 keysyms are defined (longest 30)
+ 1966 keycodes are defined
+ 1624 keycodes are equated to Unicode
+
+Summary from xkbcomp:
+  256 keyNames
+   24 keyTypes
+  367 symCache
+  256 symMap
+
+Key types:
+ Type  Used Levels Name
+    0   169     1 ONE_LEVEL
+    1    30     2 TWO_LEVEL
+    2    26     2 ALPHABETIC
+    3    12     2 KEYPAD
+    6     1     2 PC_CONTROL_LEVEL2
+    7     1     2 PC_ALT_LEVEL2
+    8    16     5 CTRL_ALT
+   16     1     4 FOUR_LEVEL
+
+Key map:
+ Type Level Name   Code Symbol
+    0   1/1 ESC  0xff1b XK_Escape
+    1   1/2 AE01 0x0031 XK_1
+        2/2      0x0021 XK_exclam
+    1   1/2 AE02 0x0032 XK_2
+        2/2      0x0040 XK_at
+    1   1/2 AE03 0x0033 XK_3
+        2/2      0x0023 XK_numbersign
+    1   1/2 AE04 0x0034 XK_4
+        2/2      0x0024 XK_dollar
+    1   1/2 AE05 0x0035 XK_5
+        2/2      0x0025 XK_percent
+    1   1/2 AE06 0x0036 XK_6
+        2/2      0x005e XK_asciicircum
+    1   1/2 AE07 0x0037 XK_7
+        2/2      0x0026 XK_ampersand
+    1   1/2 AE08 0x0038 XK_8
+        2/2      0x002a XK_asterisk
+    1   1/2 AE09 0x0039 XK_9
+        2/2      0x0028 XK_parenleft
+    1   1/2 AE10 0x0030 XK_0
+        2/2      0x0029 XK_parenright
+    1   1/2 AE11 0x002d XK_minus
+        2/2      0x005f XK_underscore
+    1   1/2 AE12 0x003d XK_equal
+        2/2      0x002b XK_plus
+    1   1/2 BKSP 0xff08 XK_BackSpace
+        2/2      0xff08 XK_BackSpace
+    1   1/2 TAB  0xff09 XK_Tab
+        2/2      0xfe20 XK_ISO_Left_Tab
+    2   1/2 AD01 0x0071 XK_q
+        2/2      0x0051 XK_Q
+    2   1/2 AD02 0x0077 XK_w
+        2/2      0x0057 XK_W
+    2   1/2 AD03 0x0065 XK_e
+        2/2      0x0045 XK_E
+    2   1/2 AD04 0x0072 XK_r
+        2/2      0x0052 XK_R
+    2   1/2 AD05 0x0074 XK_t
+        2/2      0x0054 XK_T
+    2   1/2 AD06 0x0079 XK_y
+        2/2      0x0059 XK_Y
+    2   1/2 AD07 0x0075 XK_u
+        2/2      0x0055 XK_U
+    2   1/2 AD08 0x0069 XK_i
+        2/2      0x0049 XK_I
+    2   1/2 AD09 0x006f XK_o
+        2/2      0x004f XK_O
+    2   1/2 AD10 0x0070 XK_p
+        2/2      0x0050 XK_P
+    1   1/2 AD11 0x005b XK_bracketleft
+        2/2      0x007b XK_braceleft
+    1   1/2 AD12 0x005d XK_bracketright
+        2/2      0x007d XK_braceright
+    0   1/1 RTRN 0xff0d XK_Return
+    0   1/1 LCTL 0xffe3 XK_Control_L
+    2   1/2 AC01 0x0061 XK_a
+        2/2      0x0041 XK_A
+    2   1/2 AC02 0x0073 XK_s
+        2/2      0x0053 XK_S
+    2   1/2 AC03 0x0064 XK_d
+        2/2      0x0044 XK_D
+    2   1/2 AC04 0x0066 XK_f
+        2/2      0x0046 XK_F
+    2   1/2 AC05 0x0067 XK_g
+        2/2      0x0047 XK_G
+    2   1/2 AC06 0x0068 XK_h
+        2/2      0x0048 XK_H
+    2   1/2 AC07 0x006a XK_j
+        2/2      0x004a XK_J
+    2   1/2 AC08 0x006b XK_k
+        2/2      0x004b XK_K
+    2   1/2 AC09 0x006c XK_l
+        2/2      0x004c XK_L
+    1   1/2 AC10 0x003b XK_semicolon
+        2/2      0x003a XK_colon
+    1   1/2 AC11 0x0027 XK_apostrophe
+        2/2      0x0022 XK_quotedbl
+    1   1/2 TLDE 0x0060 XK_grave
+        2/2      0x007e XK_asciitilde
+    0   1/1 LFSH 0xffe1 XK_Shift_L
+    1   1/2 BKSL 0x005c XK_backslash
+        2/2      0x007c XK_bar
+    2   1/2 AB01 0x007a XK_z
+        2/2      0x005a XK_Z
+    2   1/2 AB02 0x0078 XK_x
+        2/2      0x0058 XK_X
+    2   1/2 AB03 0x0063 XK_c
+        2/2      0x0043 XK_C
+    2   1/2 AB04 0x0076 XK_v
+        2/2      0x0056 XK_V
+    2   1/2 AB05 0x0062 XK_b
+        2/2      0x0042 XK_B
+    2   1/2 AB06 0x006e XK_n
+        2/2      0x004e XK_N
+    2   1/2 AB07 0x006d XK_m
+        2/2      0x004d XK_M
+    1   1/2 AB08 0x002c XK_comma
+        2/2      0x003c XK_less
+    1   1/2 AB09 0x002e XK_period
+        2/2      0x003e XK_greater
+    1   1/2 AB10 0x002f XK_slash
+        2/2      0x003f XK_question
+    0   1/1 RTSH 0xffe2 XK_Shift_R
+    8   1/5 KPMU 0xffaa XK_KP_Multiply
+        2/5      0xffaa XK_KP_Multiply
+        3/5      0xffaa XK_KP_Multiply
+        4/5      0xffaa XK_KP_Multiply
+        5/5             XK_XF86ClearGrab
+    1   1/2 LALT 0xffe9 XK_Alt_L
+        2/2      0xffe7 XK_Meta_L
+    0   1/1 SPCE 0x0020 XK_space
+    0   1/1 CAPS 0xffe5 XK_Caps_Lock
+    8   1/5 FK01 0xffbe XK_F1
+        2/5      0xffbe XK_F1
+        3/5      0xffbe XK_F1
+        4/5      0xffbe XK_F1
+        5/5             XK_XF86Switch_VT_1
+    8   1/5 FK02 0xffbf XK_F2
+        2/5      0xffbf XK_F2
+        3/5      0xffbf XK_F2
+        4/5      0xffbf XK_F2
+        5/5             XK_XF86Switch_VT_2
+    8   1/5 FK03 0xffc0 XK_F3
+        2/5      0xffc0 XK_F3
+        3/5      0xffc0 XK_F3
+        4/5      0xffc0 XK_F3
+        5/5             XK_XF86Switch_VT_3
+    8   1/5 FK04 0xffc1 XK_F4
+        2/5      0xffc1 XK_F4
+        3/5      0xffc1 XK_F4
+        4/5      0xffc1 XK_F4
+        5/5             XK_XF86Switch_VT_4
+    8   1/5 FK05 0xffc2 XK_F5
+        2/5      0xffc2 XK_F5
+        3/5      0xffc2 XK_F5
+        4/5      0xffc2 XK_F5
+        5/5             XK_XF86Switch_VT_5
+    8   1/5 FK06 0xffc3 XK_F6
+        2/5      0xffc3 XK_F6
+        3/5      0xffc3 XK_F6
+        4/5      0xffc3 XK_F6
+        5/5             XK_XF86Switch_VT_6
+    8   1/5 FK07 0xffc4 XK_F7
+        2/5      0xffc4 XK_F7
+        3/5      0xffc4 XK_F7
+        4/5      0xffc4 XK_F7
+        5/5             XK_XF86Switch_VT_7
+    8   1/5 FK08 0xffc5 XK_F8
+        2/5      0xffc5 XK_F8
+        3/5      0xffc5 XK_F8
+        4/5      0xffc5 XK_F8
+        5/5             XK_XF86Switch_VT_8
+    8   1/5 FK09 0xffc6 XK_F9
+        2/5      0xffc6 XK_F9
+        3/5      0xffc6 XK_F9
+        4/5      0xffc6 XK_F9
+        5/5             XK_XF86Switch_VT_9
+    8   1/5 FK10 0xffc7 XK_F10
+        2/5      0xffc7 XK_F10
+        3/5      0xffc7 XK_F10
+        4/5      0xffc7 XK_F10
+        5/5             XK_XF86Switch_VT_10
+    0   1/1 NMLK 0xff7f XK_Num_Lock
+    0   1/1 SCLK 0xff14 XK_Scroll_Lock
+    3   1/2 KP7  0xff95 XK_KP_Home
+        2/2      0xffb7 XK_KP_7
+    3   1/2 KP8  0xff97 XK_KP_Up
+        2/2      0xffb8 XK_KP_8
+    3   1/2 KP9  0xff9a XK_KP_Prior
+        2/2      0xffb9 XK_KP_9
+    8   1/5 KPSU 0xffad XK_KP_Subtract
+        2/5      0xffad XK_KP_Subtract
+        3/5      0xffad XK_KP_Subtract
+        4/5      0xffad XK_KP_Subtract
+        5/5             XK_XF86Prev_VMode
+    3   1/2 KP4  0xff96 XK_KP_Left
+        2/2      0xffb4 XK_KP_4
+    3   1/2 KP5  0xff9d XK_KP_Begin
+        2/2      0xffb5 XK_KP_5
+    3   1/2 KP6  0xff98 XK_KP_Right
+        2/2      0xffb6 XK_KP_6
+    8   1/5 KPAD 0xffab XK_KP_Add
+        2/5      0xffab XK_KP_Add
+        3/5      0xffab XK_KP_Add
+        4/5      0xffab XK_KP_Add
+        5/5             XK_XF86Next_VMode
+    3   1/2 KP1  0xff9c XK_KP_End
+        2/2      0xffb1 XK_KP_1
+    3   1/2 KP2  0xff99 XK_KP_Down
+        2/2      0xffb2 XK_KP_2
+    3   1/2 KP3  0xff9b XK_KP_Next
+        2/2      0xffb3 XK_KP_3
+    3   1/2 KP0  0xff9e XK_KP_Insert
+        2/2      0xffb0 XK_KP_0
+    3   1/2 KPDL 0xff9f XK_KP_Delete
+        2/2      0xffae XK_KP_Decimal
+    0   1/1 LVL3 0xfe03 XK_ISO_Level3_Shift
+   16   1/4 LSGT 0x003c XK_less
+        2/4      0x003e XK_greater
+        3/4      0x007c XK_bar
+        4/4      0x00a6 XK_brokenbar
+    8   1/5 FK11 0xffc8 XK_F11
+        2/5      0xffc8 XK_F11
+        3/5      0xffc8 XK_F11
+        4/5      0xffc8 XK_F11
+        5/5             XK_XF86Switch_VT_11
+    8   1/5 FK12 0xffc9 XK_F12
+        2/5      0xffc9 XK_F12
+        3/5      0xffc9 XK_F12
+        4/5      0xffc9 XK_F12
+        5/5             XK_XF86Switch_VT_12
+    0   1/1 KATA 0xff26 XK_Katakana
+    0   1/1 HIRA 0xff25 XK_Hiragana
+    0   1/1 HENK 0xff23 XK_Henkan_Mode
+    0   1/1 HKTG 0xff27 XK_Hiragana_Katakana
+    0   1/1 MUHE 0xff22 XK_Muhenkan
+    0   1/1 KPEN 0xff8d XK_KP_Enter
+    0   1/1 RCTL 0xffe4 XK_Control_R
+    8   1/5 KPDV 0xffaf XK_KP_Divide
+        2/5      0xffaf XK_KP_Divide
+        3/5      0xffaf XK_KP_Divide
+        4/5      0xffaf XK_KP_Divide
+        5/5             XK_XF86Ungrab
+    7   1/2 PRSC 0xff61 XK_Print
+        2/2      0xff15 XK_Sys_Req
+    0   1/1 RALT 0xfe03 XK_ISO_Level3_Shift
+    0   1/1 LNFD 0xff0a XK_Linefeed
+    0   1/1 HOME 0xff50 XK_Home
+    0   1/1 UP   0xff52 XK_Up
+    0   1/1 PGUP 0xff55 XK_Prior
+    0   1/1 LEFT 0xff51 XK_Left
+    0   1/1 RGHT 0xff53 XK_Right
+    0   1/1 END  0xff57 XK_End
+    0   1/1 DOWN 0xff54 XK_Down
+    0   1/1 PGDN 0xff56 XK_Next
+    0   1/1 INS  0xff63 XK_Insert
+    0   1/1 DELE 0xffff XK_Delete
+    0   1/1 KPEQ 0xffbd XK_KP_Equal
+    0   1/1 I126 0x00b1 XK_plusminus
+    6   1/2 PAUS 0xff13 XK_Pause
+        2/2      0xff6b XK_Break
+    3   1/2 I129 0xffae XK_KP_Decimal
+        2/2      0xffae XK_KP_Decimal
+    0   1/1 HNGL 0xff31 XK_Hangul
+    0   1/1 HJCV 0xff34 XK_Hangul_Hanja
+    0   1/1 LWIN 0xffeb XK_Super_L
+    0   1/1 RWIN 0xffec XK_Super_R
+    0   1/1 COMP 0xff67 XK_Menu
+    0   1/1 STOP 0xff69 XK_Cancel
+    0   1/1 AGAI 0xff66 XK_Redo
+    0   1/1 UNDO 0xff65 XK_Undo
+    0   1/1 FIND 0xff68 XK_Find
+    0   1/1 HELP 0xff6a XK_Help
+    0   1/1 I187 0x0028 XK_parenleft
+    0   1/1 I188 0x0029 XK_parenright
+    0   1/1 I190 0xff66 XK_Redo
+    0   1/1 LVL5 0xfe11 XK_ISO_Level5_Shift
+    0   1/1 I218 0xff61 XK_Print
+    0   1/1 I231 0xff69 XK_Cancel
+
+Other modifiable keycodes:
+Code Symbol Actual Mode 0         Mode 1         Mode 2
+0x0020 XK_space             32     -(skip)-       --**--**       -*******
+0x0021 XK_exclam            33     -(skip)-       --******       --******
+0x0022 XK_quotedbl          34     -(skip)-       --******       --******
+0x0023 XK_numbersign        35     -(skip)-       --******       --******
+0x0024 XK_dollar            36     -(skip)-       --******       --******
+0x0025 XK_percent           37     -(skip)-       --******       --******
+0x0026 XK_ampersand         38     -(skip)-       --******       --******
+0x0027 XK_apostrophe        39     -(skip)-       --******       --******
+0x0028 XK_parenleft         40     -(skip)-       --******       --******
+0x0029 XK_parenright        41     -(skip)-       --******       --******
+0x002a XK_asterisk          42     -(skip)-       --******       --******
+0x002b XK_plus              43     -(skip)-       --******       --******
+0x002c XK_comma             44     -(skip)-       --******       --******
+0x002d XK_minus             45     -(skip)-       --******       --******
+0x002e XK_period            46     -(skip)-       --******       --******
+0x002f XK_slash             47     -(skip)-       --**-***       --******
+0x0030 XK_0                 48     -(skip)-       --******       --******
+0x0031 XK_1                 49     -(skip)-       --******       --******
+0x0032 XK_2                 50     -(skip)-       --**--**       --******
+0x0033 XK_3                 51     -(skip)-       --**-***       --******
+0x0034 XK_4                 52     -(skip)-       --**-***       --******
+0x0035 XK_5                 53     -(skip)-       --**-***       --******
+0x0036 XK_6                 54     -(skip)-       --**--**       --******
+0x0037 XK_7                 55     -(skip)-       --**-***       --******
+0x0038 XK_8                 56     -(skip)-       --**-***       --******
+0x0039 XK_9                 57     -(skip)-       --******       --******
+0x003a XK_colon             58     -(skip)-       --******       --******
+0x003b XK_semicolon         59     -(skip)-       --******       --******
+0x003c XK_less              60     -(skip)-       --******       --******
+0x003d XK_equal             61     -(skip)-       --******       --******
+0x003e XK_greater           62     -(skip)-       --******       --******
+0x003f XK_question          63     -(skip)-       --******       --******
+0x0040 XK_at                64     -(skip)-       --**--**       -*******
+0x0041 XK_A                 65     -(skip)-       --**--**       -*******
+0x0042 XK_B                 66     -(skip)-       --**--**       -*******
+0x0043 XK_C                 67     -(skip)-       --**--**       -*******
+0x0044 XK_D                 68     -(skip)-       --**--**       -*******
+0x0045 XK_E                 69     -(skip)-       --**--**       -*******
+0x0046 XK_F                 70     -(skip)-       --**--**       -*******
+0x0047 XK_G                 71     -(skip)-       --**--**       -*******
+0x0048 XK_H                 72     -(skip)-       --**--**       -*******
+0x0049 XK_I                 73     -(skip)-       --**--**       -*******
+0x004a XK_J                 74     -(skip)-       --**--**       -*******
+0x004b XK_K                 75     -(skip)-       --**--**       -*******
+0x004c XK_L                 76     -(skip)-       --**--**       -*******
+0x004d XK_M                 77     -(skip)-       --**--**       -*******
+0x004e XK_N                 78     -(skip)-       --**--**       -*******
+0x004f XK_O                 79     -(skip)-       --**--**       -*******
+0x0050 XK_P                 80     -(skip)-       --**--**       -*******
+0x0051 XK_Q                 81     -(skip)-       --**--**       -*******
+0x0052 XK_R                 82     -(skip)-       --**--**       -*******
+0x0053 XK_S                 83     -(skip)-       --**--**       -*******
+0x0054 XK_T                 84     -(skip)-       --**--**       -*******
+0x0055 XK_U                 85     -(skip)-       --**--**       -*******
+0x0056 XK_V                 86     -(skip)-       --**--**       -*******
+0x0057 XK_W                 87     -(skip)-       --**--**       -*******
+0x0058 XK_X                 88     -(skip)-       --**--**       -*******
+0x0059 XK_Y                 89     -(skip)-       --**--**       -*******
+0x005a XK_Z                 90     -(skip)-       --**--**       -*******
+0x005b XK_bracketleft       91     -(skip)-       --**--**       -*******
+0x005c XK_backslash         92     -(skip)-       --**--**       -*******
+0x005d XK_bracketright      93     -(skip)-       --**--**       -*******
+0x005e XK_asciicircum       94     -(skip)-       --**--**       -*******
+0x005f XK_underscore        95     -(skip)-       --**--**       -*******
+0x0060 XK_grave             96     -(skip)-       --**--**       -*******
+0x0061 XK_a                 97     -(skip)-       --**--**       -*******
+0x0062 XK_b                 98     -(skip)-       --**--**       -*******
+0x0063 XK_c                 99     -(skip)-       --**--**       -*******
+0x0064 XK_d                 100    -(skip)-       --**--**       -*******
+0x0065 XK_e                 101    -(skip)-       --**--**       -*******
+0x0066 XK_f                 102    -(skip)-       --**--**       -*******
+0x0067 XK_g                 103    -(skip)-       --**--**       -*******
+0x0068 XK_h                 104    -(skip)-       --**--**       -*******
+0x0069 XK_i                 105    -(skip)-       --**--**       -*******
+0x006a XK_j                 106    -(skip)-       --**--**       -*******
+0x006b XK_k                 107    -(skip)-       --**--**       -*******
+0x006c XK_l                 108    -(skip)-       --**--**       -*******
+0x006d XK_m                 109    -(skip)-       --**--**       -*******
+0x006e XK_n                 110    -(skip)-       --**--**       -*******
+0x006f XK_o                 111    -(skip)-       --**--**       -*******
+0x0070 XK_p                 112    -(skip)-       --**--**       -*******
+0x0071 XK_q                 113    -(skip)-       --**--**       -*******
+0x0072 XK_r                 114    -(skip)-       --**--**       -*******
+0x0073 XK_s                 115    -(skip)-       --**--**       -*******
+0x0074 XK_t                 116    -(skip)-       --**--**       -*******
+0x0075 XK_u                 117    -(skip)-       --**--**       -*******
+0x0076 XK_v                 118    -(skip)-       --**--**       -*******
+0x0077 XK_w                 119    -(skip)-       --**--**       -*******
+0x0078 XK_x                 120    -(skip)-       --**--**       -*******
+0x0079 XK_y                 121    -(skip)-       --**--**       -*******
+0x007a XK_z                 122    -(skip)-       --**--**       -*******
+0x007b XK_braceleft         123    -(skip)-       --**--**       -*******
+0x007c XK_bar               124    -(skip)-       --**--**       -*******
+0x007d XK_braceright        125    -(skip)-       --**--**       -*******
+0x007e XK_asciitilde        126    -(skip)-       --**--**       -*******
+0x00a6 XK_brokenbar         166    -(skip)-       --******       --******
+0x00b1 XK_plusminus         177    -(skip)-       --******       --******
+0xfe03 XK_ISO_Level3_Shift  65027  -(skip)-       -(skip)-       -(skip)-
+0xfe11 XK_ISO_Level5_Shift  65041  -(skip)-       -(skip)-       -(skip)-
+0xfe20 XK_ISO_Left_Tab      65056  -(skip)-       -(skip)-       -(skip)-
+0xff08 XK_BackSpace         65288  -(skip)-       -(skip)-       -***-***
+0xff09 XK_Tab               65289  -(skip)-       -*******       -*******
+0xff0a XK_Linefeed          65290  -(skip)-       -*******       --******
+0xff0d XK_Return            65293  -(skip)-       -*******       -*******
+0xff13 XK_Pause             65299  -(skip)-       -*******       --******
+0xff14 XK_Scroll_Lock       65300  -(skip)-       -*******       --******
+0xff15 XK_Sys_Req           65301  -(skip)-       -*******       --******
+0xff1b XK_Escape            65307  -(skip)-       --**--**       -*******
+0xff22 XK_Muhenkan          65314  -(skip)-       -*******       --******
+0xff23 XK_Henkan_Mode       65315  -(skip)-       -*******       --******
+0xff25 XK_Hiragana          65317  -(skip)-       -*******       --******
+0xff26 XK_Katakana          65318  -(skip)-       -*******       --******
+0xff27 XK_Hiragana_Katakana 65319  -(skip)-       -*******       --******
+0xff31 XK_Hangul            65329  -(skip)-       -*******       --******
+0xff34 XK_Hangul_Hanja      65332  -(skip)-       -*******       --******
+0xff50 XK_Home              65360  -(skip)-       -(skip)-       -(skip)-
+0xff51 XK_Left              65361  -(skip)-       -(skip)-       -(skip)-
+0xff52 XK_Up                65362  -(skip)-       -(skip)-       -(skip)-
+0xff53 XK_Right             65363  -(skip)-       -(skip)-       -(skip)-
+0xff54 XK_Down              65364  -(skip)-       -(skip)-       -(skip)-
+0xff55 XK_Prior             65365  -(skip)-       -(skip)-       -(skip)-
+0xff56 XK_Next              65366  -(skip)-       -(skip)-       -(skip)-
+0xff57 XK_End               65367  -(skip)-       -(skip)-       -(skip)-
+0xff61 XK_Print             65377  -(skip)-       -(skip)-       -(skip)-
+0xff63 XK_Insert            65379  -(skip)-       -(skip)-       -(skip)-
+0xff65 XK_Undo              65381  -(skip)-       -(skip)-       -(skip)-
+0xff66 XK_Redo              65382  -(skip)-       -(skip)-       -(skip)-
+0xff67 XK_Menu              65383  -(skip)-       -(skip)-       -(skip)-
+0xff68 XK_Find              65384  -(skip)-       -(skip)-       -(skip)-
+0xff69 XK_Cancel            65385  -(skip)-       -(skip)-       -(skip)-
+0xff6a XK_Help              65386  -(skip)-       -(skip)-       -(skip)-
+0xff6b XK_Break             65387  -(skip)-       -(skip)-       -(skip)-
+0xff7f XK_Num_Lock          65407  -(skip)-       -(skip)-       -(skip)-
+0xff8d XK_KP_Enter          65421  -(skip)-       -(skip)-       -(skip)-
+0xff95 XK_KP_Home           65429  -(skip)-       -(skip)-       -(skip)-
+0xff96 XK_KP_Left           65430  -(skip)-       -(skip)-       -(skip)-
+0xff97 XK_KP_Up             65431  -(skip)-       -(skip)-       -(skip)-
+0xff98 XK_KP_Right          65432  -(skip)-       -(skip)-       -(skip)-
+0xff99 XK_KP_Down           65433  -(skip)-       -(skip)-       -(skip)-
+0xff9a XK_KP_Prior          65434  -(skip)-       -(skip)-       -(skip)-
+0xff9b XK_KP_Next           65435  -(skip)-       -(skip)-       -(skip)-
+0xff9c XK_KP_End            65436  -(skip)-       -(skip)-       -(skip)-
+0xff9d XK_KP_Begin          65437  -(skip)-       -(skip)-       -(skip)-
+0xff9e XK_KP_Insert         65438  -(skip)-       -(skip)-       -(skip)-
+0xff9f XK_KP_Delete         65439  -(skip)-       -(skip)-       -(skip)-
+0xffaa XK_KP_Multiply       65450  -(skip)-       -(skip)-       -(skip)-
+0xffab XK_KP_Add            65451  -(skip)-       -(skip)-       -(skip)-
+0xffad XK_KP_Subtract       65453  -(skip)-       -(skip)-       -(skip)-
+0xffae XK_KP_Decimal        65454  -(skip)-       -(skip)-       -(skip)-
+0xffaf XK_KP_Divide         65455  -(skip)-       -(skip)-       -(skip)-
+0xffb0 XK_KP_0              65456  -(skip)-       -(skip)-       -(skip)-
+0xffb1 XK_KP_1              65457  -(skip)-       -(skip)-       -(skip)-
+0xffb2 XK_KP_2              65458  -(skip)-       -(skip)-       -(skip)-
+0xffb3 XK_KP_3              65459  -(skip)-       -(skip)-       -(skip)-
+0xffb4 XK_KP_4              65460  -(skip)-       -(skip)-       -(skip)-
+0xffb5 XK_KP_5              65461  -(skip)-       -(skip)-       -(skip)-
+0xffb6 XK_KP_6              65462  -(skip)-       -(skip)-       -(skip)-
+0xffb7 XK_KP_7              65463  -(skip)-       -(skip)-       -(skip)-
+0xffb8 XK_KP_8              65464  -(skip)-       -(skip)-       -(skip)-
+0xffb9 XK_KP_9              65465  -(skip)-       -(skip)-       -(skip)-
+0xffbd XK_KP_Equal          65469  -(skip)-       -(skip)-       -(skip)-
+0xffbe XK_F1                65470  -(skip)-       -(skip)-       -(skip)-
+0xffbf XK_F2                65471  -(skip)-       -(skip)-       -(skip)-
+0xffc0 XK_F3                65472  -(skip)-       -(skip)-       -(skip)-
+0xffc1 XK_F4                65473  -(skip)-       -(skip)-       -(skip)-
+0xffc2 XK_F5                65474  -(skip)-       -(skip)-       -(skip)-
+0xffc3 XK_F6                65475  -(skip)-       -(skip)-       -(skip)-
+0xffc4 XK_F7                65476  -(skip)-       -(skip)-       -(skip)-
+0xffc5 XK_F8                65477  -(skip)-       -(skip)-       -(skip)-
+0xffc6 XK_F9                65478  -(skip)-       -(skip)-       -(skip)-
+0xffc7 XK_F10               65479  -(skip)-       -(skip)-       -(skip)-
+0xffc8 XK_F11               65480  -(skip)-       -(skip)-       -(skip)-
+0xffc9 XK_F12               65481  -(skip)-       -(skip)-       -(skip)-
+0xffe1 XK_Shift_L           65505  -(skip)-       -(skip)-       -(skip)-
+0xffe2 XK_Shift_R           65506  -(skip)-       -(skip)-       -(skip)-
+0xffe3 XK_Control_L         65507  -(skip)-       -(skip)-       -(skip)-
+0xffe4 XK_Control_R         65508  -(skip)-       -(skip)-       -(skip)-
+0xffe5 XK_Caps_Lock         65509  -(skip)-       -(skip)-       -(skip)-
+0xffe7 XK_Meta_L            65511  -(skip)-       -(skip)-       -(skip)-
+0xffe9 XK_Alt_L             65513  -(skip)-       -(skip)-       -(skip)-
+0xffeb XK_Super_L           65515  -(skip)-       -(skip)-       -(skip)-
+0xffec XK_Super_R           65516  -(skip)-       -(skip)-       -(skip)-
+0xffff XK_Delete            65535  -(skip)-       -(skip)-       -(skip)-
+
+Modify-param to/from state:
+ PARAM 0 -> 0 -> 0 ()
+ PARAM 1 -> 0 -> 0 ()
+ PARAM 2 -> 1 -> 2 (Shift)
+ PARAM 3 -> 8 -> 3 (Alt)
+ PARAM 4 -> 9 -> 4 (Shift+Alt)
+ PARAM 5 -> 4 -> 5 (Ctrl)
+ PARAM 6 -> 5 -> 6 (Shift+Ctrl)
+ PARAM 7 -> 12 -> 7 (Alt+Ctrl)
+ PARAM 8 -> 13 -> 8 (Shift+Alt+Ctrl)
+
+State to/from modify-param:
+ STATE 0 -> 0 -> 0 ()
+ STATE 1 -> 2 -> 1 (Shift)
+ STATE 2 -> 0 -> 0 (Lock)
+ STATE 3 -> 2 -> 1 (Shift+Lock)
+ STATE 4 -> 5 -> 4 (Ctrl)
+ STATE 5 -> 6 -> 5 (Shift+Ctrl)
+ STATE 6 -> 5 -> 4 (Lock+Ctrl)
+ STATE 7 -> 6 -> 5 (Shift+Lock+Ctrl)
+ STATE 8 -> 3 -> 8 (Alt)
+ STATE 9 -> 4 -> 9 (Shift+Alt)
+ STATE 10 -> 3 -> 8 (Lock+Alt)
+ STATE 11 -> 4 -> 9 (Shift+Lock+Alt)
+ STATE 12 -> 7 -> 12 (Ctrl+Alt)
+ STATE 13 -> 8 -> 13 (Shift+Ctrl+Alt)
+ STATE 14 -> 7 -> 12 (Lock+Ctrl+Alt)
+ STATE 15 -> 8 -> 13 (Shift+Lock+Ctrl+Alt)
+
+Other modified-key escapes:
+Code Symbol Actual Mode 0         Mode 1         Mode 2
+0x0020 XK_space             32     -(skip)-       --**--**       -*******
+----                               \s             \s             \s
+s---                               \s             \s             \E[32;2u
+-a--                               \s             \E[32;3u       \E[32;3u
+sa--                               \s             \E[32;4u       \E[32;4u
+--c-                               ^@             ^@             \E[32;5u
+s-c-                               ^@             ^@             \E[32;6u
+-ac-                               ^@             \E[32;7u       \E[32;7u
+sac-                               ^@             \E[32;8u       \E[32;8u
+0x0021 XK_exclam            33     -(skip)-       --******       --******
+----                               !              !              !
+s---                               !              !              !
+-a--                               !              \E[33;3u       \E[33;3u
+sa--                               !              \E[33;4u       \E[33;4u
+--c-                               !              \E[33;5u       \E[33;5u
+s-c-                               !              \E[33;6u       \E[33;6u
+-ac-                               !              \E[33;7u       \E[33;7u
+sac-                               !              \E[33;8u       \E[33;8u
+0x0022 XK_quotedbl          34     -(skip)-       --******       --******
+----                               "              "              "
+s---                               "              "              "
+-a--                               "              \E[34;3u       \E[34;3u
+sa--                               "              \E[34;4u       \E[34;4u
+--c-                               "              \E[34;5u       \E[34;5u
+s-c-                               "              \E[34;6u       \E[34;6u
+-ac-                               "              \E[34;7u       \E[34;7u
+sac-                               "              \E[34;8u       \E[34;8u
+0x0023 XK_numbersign        35     -(skip)-       --******       --******
+----                               #              #              #
+s---                               #              #              #
+-a--                               #              \E[35;3u       \E[35;3u
+sa--                               #              \E[35;4u       \E[35;4u
+--c-                               #              \E[35;5u       \E[35;5u
+s-c-                               #              \E[35;6u       \E[35;6u
+-ac-                               #              \E[35;7u       \E[35;7u
+sac-                               #              \E[35;8u       \E[35;8u
+0x0024 XK_dollar            36     -(skip)-       --******       --******
+----                               $              $              $
+s---                               $              $              $
+-a--                               $              \E[36;3u       \E[36;3u
+sa--                               $              \E[36;4u       \E[36;4u
+--c-                               $              \E[36;5u       \E[36;5u
+s-c-                               $              \E[36;6u       \E[36;6u
+-ac-                               $              \E[36;7u       \E[36;7u
+sac-                               $              \E[36;8u       \E[36;8u
+0x0025 XK_percent           37     -(skip)-       --******       --******
+----                               %              %              %
+s---                               %              %              %
+-a--                               %              \E[37;3u       \E[37;3u
+sa--                               %              \E[37;4u       \E[37;4u
+--c-                               %              \E[37;5u       \E[37;5u
+s-c-                               %              \E[37;6u       \E[37;6u
+-ac-                               %              \E[37;7u       \E[37;7u
+sac-                               %              \E[37;8u       \E[37;8u
+0x0026 XK_ampersand         38     -(skip)-       --******       --******
+----                               &              &              &
+s---                               &              &              &
+-a--                               &              \E[38;3u       \E[38;3u
+sa--                               &              \E[38;4u       \E[38;4u
+--c-                               &              \E[38;5u       \E[38;5u
+s-c-                               &              \E[38;6u       \E[38;6u
+-ac-                               &              \E[38;7u       \E[38;7u
+sac-                               &              \E[38;8u       \E[38;8u
+0x0027 XK_apostrophe        39     -(skip)-       --******       --******
+----                               '              '              '
+s---                               "              "              "
+-a--                               '              \E[39;3u       \E[39;3u
+sa--                               "              \E[34;4u       \E[34;4u
+--c-                               '              \E[39;5u       \E[39;5u
+s-c-                               "              \E[34;6u       \E[34;6u
+-ac-                               '              \E[39;7u       \E[39;7u
+sac-                               "              \E[34;8u       \E[34;8u
+0x0028 XK_parenleft         40     -(skip)-       --******       --******
+----                               (              (              (
+s---                               (              (              (
+-a--                               (              \E[40;3u       \E[40;3u
+sa--                               (              \E[40;4u       \E[40;4u
+--c-                               (              \E[40;5u       \E[40;5u
+s-c-                               (              \E[40;6u       \E[40;6u
+-ac-                               (              \E[40;7u       \E[40;7u
+sac-                               (              \E[40;8u       \E[40;8u
+0x0029 XK_parenright        41     -(skip)-       --******       --******
+----                               )              )              )
+s---                               )              )              )
+-a--                               )              \E[41;3u       \E[41;3u
+sa--                               )              \E[41;4u       \E[41;4u
+--c-                               )              \E[41;5u       \E[41;5u
+s-c-                               )              \E[41;6u       \E[41;6u
+-ac-                               )              \E[41;7u       \E[41;7u
+sac-                               )              \E[41;8u       \E[41;8u
+0x002a XK_asterisk          42     -(skip)-       --******       --******
+----                               *              *              *
+s---                               *              *              *
+-a--                               *              \E[42;3u       \E[42;3u
+sa--                               *              \E[42;4u       \E[42;4u
+--c-                               *              \E[42;5u       \E[42;5u
+s-c-                               *              \E[42;6u       \E[42;6u
+-ac-                               *              \E[42;7u       \E[42;7u
+sac-                               *              \E[42;8u       \E[42;8u
+0x002b XK_plus              43     -(skip)-       --******       --******
+----                               +              +              +
+s---                               +              +              +
+-a--                               +              \E[43;3u       \E[43;3u
+sa--                               +              \E[43;4u       \E[43;4u
+--c-                               +              \E[43;5u       \E[43;5u
+s-c-                               +              \E[43;6u       \E[43;6u
+-ac-                               +              \E[43;7u       \E[43;7u
+sac-                               +              \E[43;8u       \E[43;8u
+0x002c XK_comma             44     -(skip)-       --******       --******
+----                               ,              ,              ,
+s---                               <              <              <
+-a--                               ,              \E[44;3u       \E[44;3u
+sa--                               <              \E[60;4u       \E[60;4u
+--c-                               ,              \E[44;5u       \E[44;5u
+s-c-                               <              \E[60;6u       \E[60;6u
+-ac-                               ,              \E[44;7u       \E[44;7u
+sac-                               <              \E[60;8u       \E[60;8u
+0x002d XK_minus             45     -(skip)-       --******       --******
+----                               -              -              -
+s---                               _              _              _
+-a--                               -              \E[45;3u       \E[45;3u
+sa--                               _              \E[95;4u       \E[95;4u
+--c-                               -              \E[45;5u       \E[45;5u
+s-c-                               ^_             \E[95;6u       \E[95;6u
+-ac-                               -              \E[45;7u       \E[45;7u
+sac-                               ^_             \E[95;8u       \E[95;8u
+0x002e XK_period            46     -(skip)-       --******       --******
+----                               .              .              .
+s---                               >              >              >
+-a--                               .              \E[46;3u       \E[46;3u
+sa--                               >              \E[62;4u       \E[62;4u
+--c-                               .              \E[46;5u       \E[46;5u
+s-c-                               >              \E[62;6u       \E[62;6u
+-ac-                               .              \E[46;7u       \E[46;7u
+sac-                               >              \E[62;8u       \E[62;8u
+0x002f XK_slash             47     -(skip)-       --**-***       --******
+----                               /              /              /
+s---                               ?              ?              ?
+-a--                               /              \E[47;3u       \E[47;3u
+sa--                               ?              \E[63;4u       \E[63;4u
+--c-                               ^_             ^_             \E[47;5u
+s-c-                               ^?             \E[63;6u       \E[63;6u
+-ac-                               ^_             \E[47;7u       \E[47;7u
+sac-                               ^?             \E[63;8u       \E[63;8u
+0x0030 XK_0                 48     -(skip)-       --******       --******
+----                               0              0              0
+s---                               )              )              )
+-a--                               0              \E[48;3u       \E[48;3u
+sa--                               )              \E[41;4u       \E[41;4u
+--c-                               0              \E[48;5u       \E[48;5u
+s-c-                               )              \E[41;6u       \E[41;6u
+-ac-                               0              \E[48;7u       \E[48;7u
+sac-                               )              \E[41;8u       \E[41;8u
+0x0031 XK_1                 49     -(skip)-       --******       --******
+----                               1              1              1
+s---                               !              !              !
+-a--                               1              \E[49;3u       \E[49;3u
+sa--                               !              \E[33;4u       \E[33;4u
+--c-                               1              \E[49;5u       \E[49;5u
+s-c-                               !              \E[33;6u       \E[33;6u
+-ac-                               1              \E[49;7u       \E[49;7u
+sac-                               !              \E[33;8u       \E[33;8u
+0x0032 XK_2                 50     -(skip)-       --**--**       --******
+----                               2              2              2
+s---                               @              @              @
+-a--                               2              \E[50;3u       \E[50;3u
+sa--                               @              \E[64;4u       \E[64;4u
+--c-                               ^@             ^@             \E[50;5u
+s-c-                               ^@             ^@             \E[64;6u
+-ac-                               ^@             \E[50;7u       \E[50;7u
+sac-                               ^@             \E[64;8u       \E[64;8u
+0x0033 XK_3                 51     -(skip)-       --**-***       --******
+----                               3              3              3
+s---                               #              #              #
+-a--                               3              \E[51;3u       \E[51;3u
+sa--                               #              \E[35;4u       \E[35;4u
+--c-                               \E             \E             \E[51;5u
+s-c-                               #              \E[35;6u       \E[35;6u
+-ac-                               \E             \E[51;7u       \E[51;7u
+sac-                               #              \E[35;8u       \E[35;8u
+0x0034 XK_4                 52     -(skip)-       --**-***       --******
+----                               4              4              4
+s---                               $              $              $
+-a--                               4              \E[52;3u       \E[52;3u
+sa--                               $              \E[36;4u       \E[36;4u
+--c-                               ^\             ^\             \E[52;5u
+s-c-                               $              \E[36;6u       \E[36;6u
+-ac-                               ^\             \E[52;7u       \E[52;7u
+sac-                               $              \E[36;8u       \E[36;8u
+0x0035 XK_5                 53     -(skip)-       --**-***       --******
+----                               5              5              5
+s---                               %              %              %
+-a--                               5              \E[53;3u       \E[53;3u
+sa--                               %              \E[37;4u       \E[37;4u
+--c-                               ^]             ^]             \E[53;5u
+s-c-                               %              \E[37;6u       \E[37;6u
+-ac-                               ^]             \E[53;7u       \E[53;7u
+sac-                               %              \E[37;8u       \E[37;8u
+0x0036 XK_6                 54     -(skip)-       --**--**       --******
+----                               6              6              6
+s---                               \^             \^             \^
+-a--                               6              \E[54;3u       \E[54;3u
+sa--                               \^             \E[94;4u       \E[94;4u
+--c-                               ^^             ^^             \E[54;5u
+s-c-                               ^^             ^^             \E[94;6u
+-ac-                               ^^             \E[54;7u       \E[54;7u
+sac-                               ^^             \E[94;8u       \E[94;8u
+0x0037 XK_7                 55     -(skip)-       --**-***       --******
+----                               7              7              7
+s---                               &              &              &
+-a--                               7              \E[55;3u       \E[55;3u
+sa--                               &              \E[38;4u       \E[38;4u
+--c-                               ^_             ^_             \E[55;5u
+s-c-                               &              \E[38;6u       \E[38;6u
+-ac-                               ^_             \E[55;7u       \E[55;7u
+sac-                               &              \E[38;8u       \E[38;8u
+0x0038 XK_8                 56     -(skip)-       --**-***       --******
+----                               8              8              8
+s---                               *              *              *
+-a--                               8              \E[56;3u       \E[56;3u
+sa--                               *              \E[42;4u       \E[42;4u
+--c-                               ^?             ^?             \E[56;5u
+s-c-                               *              \E[42;6u       \E[42;6u
+-ac-                               ^?             \E[56;7u       \E[56;7u
+sac-                               *              \E[42;8u       \E[42;8u
+0x0039 XK_9                 57     -(skip)-       --******       --******
+----                               9              9              9
+s---                               (              (              (
+-a--                               9              \E[57;3u       \E[57;3u
+sa--                               (              \E[40;4u       \E[40;4u
+--c-                               9              \E[57;5u       \E[57;5u
+s-c-                               (              \E[40;6u       \E[40;6u
+-ac-                               9              \E[57;7u       \E[57;7u
+sac-                               (              \E[40;8u       \E[40;8u
+0x003a XK_colon             58     -(skip)-       --******       --******
+----                               :              :              :
+s---                               :              :              :
+-a--                               :              \E[58;3u       \E[58;3u
+sa--                               :              \E[58;4u       \E[58;4u
+--c-                               :              \E[58;5u       \E[58;5u
+s-c-                               :              \E[58;6u       \E[58;6u
+-ac-                               :              \E[58;7u       \E[58;7u
+sac-                               :              \E[58;8u       \E[58;8u
+0x003b XK_semicolon         59     -(skip)-       --******       --******
+----                               ;              ;              ;
+s---                               :              :              :
+-a--                               ;              \E[59;3u       \E[59;3u
+sa--                               :              \E[58;4u       \E[58;4u
+--c-                               ;              \E[59;5u       \E[59;5u
+s-c-                               :              \E[58;6u       \E[58;6u
+-ac-                               ;              \E[59;7u       \E[59;7u
+sac-                               :              \E[58;8u       \E[58;8u
+0x003c XK_less              60     -(skip)-       --******       --******
+----                               <              <              <
+s---                               <              <              <
+-a--                               <              \E[60;3u       \E[60;3u
+sa--                               <              \E[60;4u       \E[60;4u
+--c-                               <              \E[60;5u       \E[60;5u
+s-c-                               <              \E[60;6u       \E[60;6u
+-ac-                               <              \E[60;7u       \E[60;7u
+sac-                               <              \E[60;8u       \E[60;8u
+0x003d XK_equal             61     -(skip)-       --******       --******
+----                               =              =              =
+s---                               +              +              +
+-a--                               =              \E[61;3u       \E[61;3u
+sa--                               +              \E[43;4u       \E[43;4u
+--c-                               =              \E[61;5u       \E[61;5u
+s-c-                               +              \E[43;6u       \E[43;6u
+-ac-                               =              \E[61;7u       \E[61;7u
+sac-                               +              \E[43;8u       \E[43;8u
+0x003e XK_greater           62     -(skip)-       --******       --******
+----                               >              >              >
+s---                               >              >              >
+-a--                               >              \E[62;3u       \E[62;3u
+sa--                               >              \E[62;4u       \E[62;4u
+--c-                               >              \E[62;5u       \E[62;5u
+s-c-                               >              \E[62;6u       \E[62;6u
+-ac-                               >              \E[62;7u       \E[62;7u
+sac-                               >              \E[62;8u       \E[62;8u
+0x003f XK_question          63     -(skip)-       --******       --******
+----                               ?              ?              ?
+s---                               ?              ?              ?
+-a--                               ?              \E[63;3u       \E[63;3u
+sa--                               ?              \E[63;4u       \E[63;4u
+--c-                               ^?             \E[63;5u       \E[63;5u
+s-c-                               ^?             \E[63;6u       \E[63;6u
+-ac-                               ^?             \E[63;7u       \E[63;7u
+sac-                               ^?             \E[63;8u       \E[63;8u
+0x0040 XK_at                64     -(skip)-       --**--**       -*******
+----                               @              @              @
+s---                               @              @              \E[64;2u
+-a--                               @              \E[64;3u       \E[64;3u
+sa--                               @              \E[64;4u       \E[64;4u
+--c-                               ^@             ^@             \E[64;5u
+s-c-                               ^@             ^@             \E[64;6u
+-ac-                               ^@             \E[64;7u       \E[64;7u
+sac-                               ^@             \E[64;8u       \E[64;8u
+0x0041 XK_A                 65     -(skip)-       --**--**       -*******
+----                               A              A              A
+s---                               A              A              \E[65;2u
+-a--                               A              \E[65;3u       \E[65;3u
+sa--                               A              \E[65;4u       \E[65;4u
+--c-                               ^A             ^A             \E[65;5u
+s-c-                               ^A             ^A             \E[65;6u
+-ac-                               ^A             \E[65;7u       \E[65;7u
+sac-                               ^A             \E[65;8u       \E[65;8u
+0x0042 XK_B                 66     -(skip)-       --**--**       -*******
+----                               B              B              B
+s---                               B              B              \E[66;2u
+-a--                               B              \E[66;3u       \E[66;3u
+sa--                               B              \E[66;4u       \E[66;4u
+--c-                               ^B             ^B             \E[66;5u
+s-c-                               ^B             ^B             \E[66;6u
+-ac-                               ^B             \E[66;7u       \E[66;7u
+sac-                               ^B             \E[66;8u       \E[66;8u
+0x0043 XK_C                 67     -(skip)-       --**--**       -*******
+----                               C              C              C
+s---                               C              C              \E[67;2u
+-a--                               C              \E[67;3u       \E[67;3u
+sa--                               C              \E[67;4u       \E[67;4u
+--c-                               ^C             ^C             \E[67;5u
+s-c-                               ^C             ^C             \E[67;6u
+-ac-                               ^C             \E[67;7u       \E[67;7u
+sac-                               ^C             \E[67;8u       \E[67;8u
+0x0044 XK_D                 68     -(skip)-       --**--**       -*******
+----                               D              D              D
+s---                               D              D              \E[68;2u
+-a--                               D              \E[68;3u       \E[68;3u
+sa--                               D              \E[68;4u       \E[68;4u
+--c-                               ^D             ^D             \E[68;5u
+s-c-                               ^D             ^D             \E[68;6u
+-ac-                               ^D             \E[68;7u       \E[68;7u
+sac-                               ^D             \E[68;8u       \E[68;8u
+0x0045 XK_E                 69     -(skip)-       --**--**       -*******
+----                               E              E              E
+s---                               E              E              \E[69;2u
+-a--                               E              \E[69;3u       \E[69;3u
+sa--                               E              \E[69;4u       \E[69;4u
+--c-                               ^E             ^E             \E[69;5u
+s-c-                               ^E             ^E             \E[69;6u
+-ac-                               ^E             \E[69;7u       \E[69;7u
+sac-                               ^E             \E[69;8u       \E[69;8u
+0x0046 XK_F                 70     -(skip)-       --**--**       -*******
+----                               F              F              F
+s---                               F              F              \E[70;2u
+-a--                               F              \E[70;3u       \E[70;3u
+sa--                               F              \E[70;4u       \E[70;4u
+--c-                               ^F             ^F             \E[70;5u
+s-c-                               ^F             ^F             \E[70;6u
+-ac-                               ^F             \E[70;7u       \E[70;7u
+sac-                               ^F             \E[70;8u       \E[70;8u
+0x0047 XK_G                 71     -(skip)-       --**--**       -*******
+----                               G              G              G
+s---                               G              G              \E[71;2u
+-a--                               G              \E[71;3u       \E[71;3u
+sa--                               G              \E[71;4u       \E[71;4u
+--c-                               ^G             ^G             \E[71;5u
+s-c-                               ^G             ^G             \E[71;6u
+-ac-                               ^G             \E[71;7u       \E[71;7u
+sac-                               ^G             \E[71;8u       \E[71;8u
+0x0048 XK_H                 72     -(skip)-       --**--**       -*******
+----                               H              H              H
+s---                               H              H              \E[72;2u
+-a--                               H              \E[72;3u       \E[72;3u
+sa--                               H              \E[72;4u       \E[72;4u
+--c-                               \b             \b             \E[72;5u
+s-c-                               \b             \b             \E[72;6u
+-ac-                               \b             \E[72;7u       \E[72;7u
+sac-                               \b             \E[72;8u       \E[72;8u
+0x0049 XK_I                 73     -(skip)-       --**--**       -*******
+----                               I              I              I
+s---                               I              I              \E[73;2u
+-a--                               I              \E[73;3u       \E[73;3u
+sa--                               I              \E[73;4u       \E[73;4u
+--c-                               \t             \t             \E[73;5u
+s-c-                               \t             \t             \E[73;6u
+-ac-                               \t             \E[73;7u       \E[73;7u
+sac-                               \t             \E[73;8u       \E[73;8u
+0x004a XK_J                 74     -(skip)-       --**--**       -*******
+----                               J              J              J
+s---                               J              J              \E[74;2u
+-a--                               J              \E[74;3u       \E[74;3u
+sa--                               J              \E[74;4u       \E[74;4u
+--c-                               \n             \n             \E[74;5u
+s-c-                               \n             \n             \E[74;6u
+-ac-                               \n             \E[74;7u       \E[74;7u
+sac-                               \n             \E[74;8u       \E[74;8u
+0x004b XK_K                 75     -(skip)-       --**--**       -*******
+----                               K              K              K
+s---                               K              K              \E[75;2u
+-a--                               K              \E[75;3u       \E[75;3u
+sa--                               K              \E[75;4u       \E[75;4u
+--c-                               ^K             ^K             \E[75;5u
+s-c-                               ^K             ^K             \E[75;6u
+-ac-                               ^K             \E[75;7u       \E[75;7u
+sac-                               ^K             \E[75;8u       \E[75;8u
+0x004c XK_L                 76     -(skip)-       --**--**       -*******
+----                               L              L              L
+s---                               L              L              \E[76;2u
+-a--                               L              \E[76;3u       \E[76;3u
+sa--                               L              \E[76;4u       \E[76;4u
+--c-                               \f             \f             \E[76;5u
+s-c-                               \f             \f             \E[76;6u
+-ac-                               \f             \E[76;7u       \E[76;7u
+sac-                               \f             \E[76;8u       \E[76;8u
+0x004d XK_M                 77     -(skip)-       --**--**       -*******
+----                               M              M              M
+s---                               M              M              \E[77;2u
+-a--                               M              \E[77;3u       \E[77;3u
+sa--                               M              \E[77;4u       \E[77;4u
+--c-                               \r             \r             \E[77;5u
+s-c-                               \r             \r             \E[77;6u
+-ac-                               \r             \E[77;7u       \E[77;7u
+sac-                               \r             \E[77;8u       \E[77;8u
+0x004e XK_N                 78     -(skip)-       --**--**       -*******
+----                               N              N              N
+s---                               N              N              \E[78;2u
+-a--                               N              \E[78;3u       \E[78;3u
+sa--                               N              \E[78;4u       \E[78;4u
+--c-                               ^N             ^N             \E[78;5u
+s-c-                               ^N             ^N             \E[78;6u
+-ac-                               ^N             \E[78;7u       \E[78;7u
+sac-                               ^N             \E[78;8u       \E[78;8u
+0x004f XK_O                 79     -(skip)-       --**--**       -*******
+----                               O              O              O
+s---                               O              O              \E[79;2u
+-a--                               O              \E[79;3u       \E[79;3u
+sa--                               O              \E[79;4u       \E[79;4u
+--c-                               ^O             ^O             \E[79;5u
+s-c-                               ^O             ^O             \E[79;6u
+-ac-                               ^O             \E[79;7u       \E[79;7u
+sac-                               ^O             \E[79;8u       \E[79;8u
+0x0050 XK_P                 80     -(skip)-       --**--**       -*******
+----                               P              P              P
+s---                               P              P              \E[80;2u
+-a--                               P              \E[80;3u       \E[80;3u
+sa--                               P              \E[80;4u       \E[80;4u
+--c-                               ^P             ^P             \E[80;5u
+s-c-                               ^P             ^P             \E[80;6u
+-ac-                               ^P             \E[80;7u       \E[80;7u
+sac-                               ^P             \E[80;8u       \E[80;8u
+0x0051 XK_Q                 81     -(skip)-       --**--**       -*******
+----                               Q              Q              Q
+s---                               Q              Q              \E[81;2u
+-a--                               Q              \E[81;3u       \E[81;3u
+sa--                               Q              \E[81;4u       \E[81;4u
+--c-                               ^Q             ^Q             \E[81;5u
+s-c-                               ^Q             ^Q             \E[81;6u
+-ac-                               ^Q             \E[81;7u       \E[81;7u
+sac-                               ^Q             \E[81;8u       \E[81;8u
+0x0052 XK_R                 82     -(skip)-       --**--**       -*******
+----                               R              R              R
+s---                               R              R              \E[82;2u
+-a--                               R              \E[82;3u       \E[82;3u
+sa--                               R              \E[82;4u       \E[82;4u
+--c-                               ^R             ^R             \E[82;5u
+s-c-                               ^R             ^R             \E[82;6u
+-ac-                               ^R             \E[82;7u       \E[82;7u
+sac-                               ^R             \E[82;8u       \E[82;8u
+0x0053 XK_S                 83     -(skip)-       --**--**       -*******
+----                               S              S              S
+s---                               S              S              \E[83;2u
+-a--                               S              \E[83;3u       \E[83;3u
+sa--                               S              \E[83;4u       \E[83;4u
+--c-                               ^S             ^S             \E[83;5u
+s-c-                               ^S             ^S             \E[83;6u
+-ac-                               ^S             \E[83;7u       \E[83;7u
+sac-                               ^S             \E[83;8u       \E[83;8u
+0x0054 XK_T                 84     -(skip)-       --**--**       -*******
+----                               T              T              T
+s---                               T              T              \E[84;2u
+-a--                               T              \E[84;3u       \E[84;3u
+sa--                               T              \E[84;4u       \E[84;4u
+--c-                               ^T             ^T             \E[84;5u
+s-c-                               ^T             ^T             \E[84;6u
+-ac-                               ^T             \E[84;7u       \E[84;7u
+sac-                               ^T             \E[84;8u       \E[84;8u
+0x0055 XK_U                 85     -(skip)-       --**--**       -*******
+----                               U              U              U
+s---                               U              U              \E[85;2u
+-a--                               U              \E[85;3u       \E[85;3u
+sa--                               U              \E[85;4u       \E[85;4u
+--c-                               ^U             ^U             \E[85;5u
+s-c-                               ^U             ^U             \E[85;6u
+-ac-                               ^U             \E[85;7u       \E[85;7u
+sac-                               ^U             \E[85;8u       \E[85;8u
+0x0056 XK_V                 86     -(skip)-       --**--**       -*******
+----                               V              V              V
+s---                               V              V              \E[86;2u
+-a--                               V              \E[86;3u       \E[86;3u
+sa--                               V              \E[86;4u       \E[86;4u
+--c-                               ^V             ^V             \E[86;5u
+s-c-                               ^V             ^V             \E[86;6u
+-ac-                               ^V             \E[86;7u       \E[86;7u
+sac-                               ^V             \E[86;8u       \E[86;8u
+0x0057 XK_W                 87     -(skip)-       --**--**       -*******
+----                               W              W              W
+s---                               W              W              \E[87;2u
+-a--                               W              \E[87;3u       \E[87;3u
+sa--                               W              \E[87;4u       \E[87;4u
+--c-                               ^W             ^W             \E[87;5u
+s-c-                               ^W             ^W             \E[87;6u
+-ac-                               ^W             \E[87;7u       \E[87;7u
+sac-                               ^W             \E[87;8u       \E[87;8u
+0x0058 XK_X                 88     -(skip)-       --**--**       -*******
+----                               X              X              X
+s---                               X              X              \E[88;2u
+-a--                               X              \E[88;3u       \E[88;3u
+sa--                               X              \E[88;4u       \E[88;4u
+--c-                               ^X             ^X             \E[88;5u
+s-c-                               ^X             ^X             \E[88;6u
+-ac-                               ^X             \E[88;7u       \E[88;7u
+sac-                               ^X             \E[88;8u       \E[88;8u
+0x0059 XK_Y                 89     -(skip)-       --**--**       -*******
+----                               Y              Y              Y
+s---                               Y              Y              \E[89;2u
+-a--                               Y              \E[89;3u       \E[89;3u
+sa--                               Y              \E[89;4u       \E[89;4u
+--c-                               ^Y             ^Y             \E[89;5u
+s-c-                               ^Y             ^Y             \E[89;6u
+-ac-                               ^Y             \E[89;7u       \E[89;7u
+sac-                               ^Y             \E[89;8u       \E[89;8u
+0x005a XK_Z                 90     -(skip)-       --**--**       -*******
+----                               Z              Z              Z
+s---                               Z              Z              \E[90;2u
+-a--                               Z              \E[90;3u       \E[90;3u
+sa--                               Z              \E[90;4u       \E[90;4u
+--c-                               ^Z             ^Z             \E[90;5u
+s-c-                               ^Z             ^Z             \E[90;6u
+-ac-                               ^Z             \E[90;7u       \E[90;7u
+sac-                               ^Z             \E[90;8u       \E[90;8u
+0x005b XK_bracketleft       91     -(skip)-       --**--**       -*******
+----                               [              [              [
+s---                               {              {              \E[123;2u
+-a--                               [              \E[91;3u       \E[91;3u
+sa--                               {              \E[123;4u      \E[123;4u
+--c-                               \E             \E             \E[91;5u
+s-c-                               \E             \E             \E[123;6u
+-ac-                               \E             \E[91;7u       \E[91;7u
+sac-                               \E             \E[123;8u      \E[123;8u
+0x005c XK_backslash         92     -(skip)-       --**--**       -*******
+----                               \\             \\             \\
+s---                               |              |              \E[124;2u
+-a--                               \\             \E[92;3u       \E[92;3u
+sa--                               |              \E[124;4u      \E[124;4u
+--c-                               ^\             ^\             \E[92;5u
+s-c-                               ^\             ^\             \E[124;6u
+-ac-                               ^\             \E[92;7u       \E[92;7u
+sac-                               ^\             \E[124;8u      \E[124;8u
+0x005d XK_bracketright      93     -(skip)-       --**--**       -*******
+----                               ]              ]              ]
+s---                               }              }              \E[125;2u
+-a--                               ]              \E[93;3u       \E[93;3u
+sa--                               }              \E[125;4u      \E[125;4u
+--c-                               ^]             ^]             \E[93;5u
+s-c-                               ^]             ^]             \E[125;6u
+-ac-                               ^]             \E[93;7u       \E[93;7u
+sac-                               ^]             \E[125;8u      \E[125;8u
+0x005e XK_asciicircum       94     -(skip)-       --**--**       -*******
+----                               \^             \^             \^
+s---                               \^             \^             \E[94;2u
+-a--                               \^             \E[94;3u       \E[94;3u
+sa--                               \^             \E[94;4u       \E[94;4u
+--c-                               ^^             ^^             \E[94;5u
+s-c-                               ^^             ^^             \E[94;6u
+-ac-                               ^^             \E[94;7u       \E[94;7u
+sac-                               ^^             \E[94;8u       \E[94;8u
+0x005f XK_underscore        95     -(skip)-       --**--**       -*******
+----                               _              _              _
+s---                               _              _              \E[95;2u
+-a--                               _              \E[95;3u       \E[95;3u
+sa--                               _              \E[95;4u       \E[95;4u
+--c-                               ^_             ^_             \E[95;5u
+s-c-                               ^_             ^_             \E[95;6u
+-ac-                               ^_             \E[95;7u       \E[95;7u
+sac-                               ^_             \E[95;8u       \E[95;8u
+0x0060 XK_grave             96     -(skip)-       --**--**       -*******
+----                               `              `              `
+s---                               ~              ~              \E[126;2u
+-a--                               `              \E[96;3u       \E[96;3u
+sa--                               ~              \E[126;4u      \E[126;4u
+--c-                               ^@             ^@             \E[96;5u
+s-c-                               ^^             ^^             \E[126;6u
+-ac-                               ^@             \E[96;7u       \E[96;7u
+sac-                               ^^             \E[126;8u      \E[126;8u
+0x0061 XK_a                 97     -(skip)-       --**--**       -*******
+----                               a              a              a
+s---                               A              A              \E[65;2u
+-a--                               a              \E[97;3u       \E[97;3u
+sa--                               A              \E[65;4u       \E[65;4u
+--c-                               ^A             ^A             \E[97;5u
+s-c-                               ^A             ^A             \E[65;6u
+-ac-                               ^A             \E[97;7u       \E[97;7u
+sac-                               ^A             \E[65;8u       \E[65;8u
+0x0062 XK_b                 98     -(skip)-       --**--**       -*******
+----                               b              b              b
+s---                               B              B              \E[66;2u
+-a--                               b              \E[98;3u       \E[98;3u
+sa--                               B              \E[66;4u       \E[66;4u
+--c-                               ^B             ^B             \E[98;5u
+s-c-                               ^B             ^B             \E[66;6u
+-ac-                               ^B             \E[98;7u       \E[98;7u
+sac-                               ^B             \E[66;8u       \E[66;8u
+0x0063 XK_c                 99     -(skip)-       --**--**       -*******
+----                               c              c              c
+s---                               C              C              \E[67;2u
+-a--                               c              \E[99;3u       \E[99;3u
+sa--                               C              \E[67;4u       \E[67;4u
+--c-                               ^C             ^C             \E[99;5u
+s-c-                               ^C             ^C             \E[67;6u
+-ac-                               ^C             \E[99;7u       \E[99;7u
+sac-                               ^C             \E[67;8u       \E[67;8u
+0x0064 XK_d                 100    -(skip)-       --**--**       -*******
+----                               d              d              d
+s---                               D              D              \E[68;2u
+-a--                               d              \E[100;3u      \E[100;3u
+sa--                               D              \E[68;4u       \E[68;4u
+--c-                               ^D             ^D             \E[100;5u
+s-c-                               ^D             ^D             \E[68;6u
+-ac-                               ^D             \E[100;7u      \E[100;7u
+sac-                               ^D             \E[68;8u       \E[68;8u
+0x0065 XK_e                 101    -(skip)-       --**--**       -*******
+----                               e              e              e
+s---                               E              E              \E[69;2u
+-a--                               e              \E[101;3u      \E[101;3u
+sa--                               E              \E[69;4u       \E[69;4u
+--c-                               ^E             ^E             \E[101;5u
+s-c-                               ^E             ^E             \E[69;6u
+-ac-                               ^E             \E[101;7u      \E[101;7u
+sac-                               ^E             \E[69;8u       \E[69;8u
+0x0066 XK_f                 102    -(skip)-       --**--**       -*******
+----                               f              f              f
+s---                               F              F              \E[70;2u
+-a--                               f              \E[102;3u      \E[102;3u
+sa--                               F              \E[70;4u       \E[70;4u
+--c-                               ^F             ^F             \E[102;5u
+s-c-                               ^F             ^F             \E[70;6u
+-ac-                               ^F             \E[102;7u      \E[102;7u
+sac-                               ^F             \E[70;8u       \E[70;8u
+0x0067 XK_g                 103    -(skip)-       --**--**       -*******
+----                               g              g              g
+s---                               G              G              \E[71;2u
+-a--                               g              \E[103;3u      \E[103;3u
+sa--                               G              \E[71;4u       \E[71;4u
+--c-                               ^G             ^G             \E[103;5u
+s-c-                               ^G             ^G             \E[71;6u
+-ac-                               ^G             \E[103;7u      \E[103;7u
+sac-                               ^G             \E[71;8u       \E[71;8u
+0x0068 XK_h                 104    -(skip)-       --**--**       -*******
+----                               h              h              h
+s---                               H              H              \E[72;2u
+-a--                               h              \E[104;3u      \E[104;3u
+sa--                               H              \E[72;4u       \E[72;4u
+--c-                               \b             \b             \E[104;5u
+s-c-                               \b             \b             \E[72;6u
+-ac-                               \b             \E[104;7u      \E[104;7u
+sac-                               \b             \E[72;8u       \E[72;8u
+0x0069 XK_i                 105    -(skip)-       --**--**       -*******
+----                               i              i              i
+s---                               I              I              \E[73;2u
+-a--                               i              \E[105;3u      \E[105;3u
+sa--                               I              \E[73;4u       \E[73;4u
+--c-                               \t             \t             \E[105;5u
+s-c-                               \t             \t             \E[73;6u
+-ac-                               \t             \E[105;7u      \E[105;7u
+sac-                               \t             \E[73;8u       \E[73;8u
+0x006a XK_j                 106    -(skip)-       --**--**       -*******
+----                               j              j              j
+s---                               J              J              \E[74;2u
+-a--                               j              \E[106;3u      \E[106;3u
+sa--                               J              \E[74;4u       \E[74;4u
+--c-                               \n             \n             \E[106;5u
+s-c-                               \n             \n             \E[74;6u
+-ac-                               \n             \E[106;7u      \E[106;7u
+sac-                               \n             \E[74;8u       \E[74;8u
+0x006b XK_k                 107    -(skip)-       --**--**       -*******
+----                               k              k              k
+s---                               K              K              \E[75;2u
+-a--                               k              \E[107;3u      \E[107;3u
+sa--                               K              \E[75;4u       \E[75;4u
+--c-                               ^K             ^K             \E[107;5u
+s-c-                               ^K             ^K             \E[75;6u
+-ac-                               ^K             \E[107;7u      \E[107;7u
+sac-                               ^K             \E[75;8u       \E[75;8u
+0x006c XK_l                 108    -(skip)-       --**--**       -*******
+----                               l              l              l
+s---                               L              L              \E[76;2u
+-a--                               l              \E[108;3u      \E[108;3u
+sa--                               L              \E[76;4u       \E[76;4u
+--c-                               \f             \f             \E[108;5u
+s-c-                               \f             \f             \E[76;6u
+-ac-                               \f             \E[108;7u      \E[108;7u
+sac-                               \f             \E[76;8u       \E[76;8u
+0x006d XK_m                 109    -(skip)-       --**--**       -*******
+----                               m              m              m
+s---                               M              M              \E[77;2u
+-a--                               m              \E[109;3u      \E[109;3u
+sa--                               M              \E[77;4u       \E[77;4u
+--c-                               \r             \r             \E[109;5u
+s-c-                               \r             \r             \E[77;6u
+-ac-                               \r             \E[109;7u      \E[109;7u
+sac-                               \r             \E[77;8u       \E[77;8u
+0x006e XK_n                 110    -(skip)-       --**--**       -*******
+----                               n              n              n
+s---                               N              N              \E[78;2u
+-a--                               n              \E[110;3u      \E[110;3u
+sa--                               N              \E[78;4u       \E[78;4u
+--c-                               ^N             ^N             \E[110;5u
+s-c-                               ^N             ^N             \E[78;6u
+-ac-                               ^N             \E[110;7u      \E[110;7u
+sac-                               ^N             \E[78;8u       \E[78;8u
+0x006f XK_o                 111    -(skip)-       --**--**       -*******
+----                               o              o              o
+s---                               O              O              \E[79;2u
+-a--                               o              \E[111;3u      \E[111;3u
+sa--                               O              \E[79;4u       \E[79;4u
+--c-                               ^O             ^O             \E[111;5u
+s-c-                               ^O             ^O             \E[79;6u
+-ac-                               ^O             \E[111;7u      \E[111;7u
+sac-                               ^O             \E[79;8u       \E[79;8u
+0x0070 XK_p                 112    -(skip)-       --**--**       -*******
+----                               p              p              p
+s---                               P              P              \E[80;2u
+-a--                               p              \E[112;3u      \E[112;3u
+sa--                               P              \E[80;4u       \E[80;4u
+--c-                               ^P             ^P             \E[112;5u
+s-c-                               ^P             ^P             \E[80;6u
+-ac-                               ^P             \E[112;7u      \E[112;7u
+sac-                               ^P             \E[80;8u       \E[80;8u
+0x0071 XK_q                 113    -(skip)-       --**--**       -*******
+----                               q              q              q
+s---                               Q              Q              \E[81;2u
+-a--                               q              \E[113;3u      \E[113;3u
+sa--                               Q              \E[81;4u       \E[81;4u
+--c-                               ^Q             ^Q             \E[113;5u
+s-c-                               ^Q             ^Q             \E[81;6u
+-ac-                               ^Q             \E[113;7u      \E[113;7u
+sac-                               ^Q             \E[81;8u       \E[81;8u
+0x0072 XK_r                 114    -(skip)-       --**--**       -*******
+----                               r              r              r
+s---                               R              R              \E[82;2u
+-a--                               r              \E[114;3u      \E[114;3u
+sa--                               R              \E[82;4u       \E[82;4u
+--c-                               ^R             ^R             \E[114;5u
+s-c-                               ^R             ^R             \E[82;6u
+-ac-                               ^R             \E[114;7u      \E[114;7u
+sac-                               ^R             \E[82;8u       \E[82;8u
+0x0073 XK_s                 115    -(skip)-       --**--**       -*******
+----                               s              s              s
+s---                               S              S              \E[83;2u
+-a--                               s              \E[115;3u      \E[115;3u
+sa--                               S              \E[83;4u       \E[83;4u
+--c-                               ^S             ^S             \E[115;5u
+s-c-                               ^S             ^S             \E[83;6u
+-ac-                               ^S             \E[115;7u      \E[115;7u
+sac-                               ^S             \E[83;8u       \E[83;8u
+0x0074 XK_t                 116    -(skip)-       --**--**       -*******
+----                               t              t              t
+s---                               T              T              \E[84;2u
+-a--                               t              \E[116;3u      \E[116;3u
+sa--                               T              \E[84;4u       \E[84;4u
+--c-                               ^T             ^T             \E[116;5u
+s-c-                               ^T             ^T             \E[84;6u
+-ac-                               ^T             \E[116;7u      \E[116;7u
+sac-                               ^T             \E[84;8u       \E[84;8u
+0x0075 XK_u                 117    -(skip)-       --**--**       -*******
+----                               u              u              u
+s---                               U              U              \E[85;2u
+-a--                               u              \E[117;3u      \E[117;3u
+sa--                               U              \E[85;4u       \E[85;4u
+--c-                               ^U             ^U             \E[117;5u
+s-c-                               ^U             ^U             \E[85;6u
+-ac-                               ^U             \E[117;7u      \E[117;7u
+sac-                               ^U             \E[85;8u       \E[85;8u
+0x0076 XK_v                 118    -(skip)-       --**--**       -*******
+----                               v              v              v
+s---                               V              V              \E[86;2u
+-a--                               v              \E[118;3u      \E[118;3u
+sa--                               V              \E[86;4u       \E[86;4u
+--c-                               ^V             ^V             \E[118;5u
+s-c-                               ^V             ^V             \E[86;6u
+-ac-                               ^V             \E[118;7u      \E[118;7u
+sac-                               ^V             \E[86;8u       \E[86;8u
+0x0077 XK_w                 119    -(skip)-       --**--**       -*******
+----                               w              w              w
+s---                               W              W              \E[87;2u
+-a--                               w              \E[119;3u      \E[119;3u
+sa--                               W              \E[87;4u       \E[87;4u
+--c-                               ^W             ^W             \E[119;5u
+s-c-                               ^W             ^W             \E[87;6u
+-ac-                               ^W             \E[119;7u      \E[119;7u
+sac-                               ^W             \E[87;8u       \E[87;8u
+0x0078 XK_x                 120    -(skip)-       --**--**       -*******
+----                               x              x              x
+s---                               X              X              \E[88;2u
+-a--                               x              \E[120;3u      \E[120;3u
+sa--                               X              \E[88;4u       \E[88;4u
+--c-                               ^X             ^X             \E[120;5u
+s-c-                               ^X             ^X             \E[88;6u
+-ac-                               ^X             \E[120;7u      \E[120;7u
+sac-                               ^X             \E[88;8u       \E[88;8u
+0x0079 XK_y                 121    -(skip)-       --**--**       -*******
+----                               y              y              y
+s---                               Y              Y              \E[89;2u
+-a--                               y              \E[121;3u      \E[121;3u
+sa--                               Y              \E[89;4u       \E[89;4u
+--c-                               ^Y             ^Y             \E[121;5u
+s-c-                               ^Y             ^Y             \E[89;6u
+-ac-                               ^Y             \E[121;7u      \E[121;7u
+sac-                               ^Y             \E[89;8u       \E[89;8u
+0x007a XK_z                 122    -(skip)-       --**--**       -*******
+----                               z              z              z
+s---                               Z              Z              \E[90;2u
+-a--                               z              \E[122;3u      \E[122;3u
+sa--                               Z              \E[90;4u       \E[90;4u
+--c-                               ^Z             ^Z             \E[122;5u
+s-c-                               ^Z             ^Z             \E[90;6u
+-ac-                               ^Z             \E[122;7u      \E[122;7u
+sac-                               ^Z             \E[90;8u       \E[90;8u
+0x007b XK_braceleft         123    -(skip)-       --**--**       -*******
+----                               {              {              {
+s---                               {              {              \E[123;2u
+-a--                               {              \E[123;3u      \E[123;3u
+sa--                               {              \E[123;4u      \E[123;4u
+--c-                               \E             \E             \E[123;5u
+s-c-                               \E             \E             \E[123;6u
+-ac-                               \E             \E[123;7u      \E[123;7u
+sac-                               \E             \E[123;8u      \E[123;8u
+0x007c XK_bar               124    -(skip)-       --**--**       -*******
+----                               |              |              |
+s---                               |              |              \E[124;2u
+-a--                               |              \E[124;3u      \E[124;3u
+sa--                               |              \E[124;4u      \E[124;4u
+--c-                               ^\             ^\             \E[124;5u
+s-c-                               ^\             ^\             \E[124;6u
+-ac-                               ^\             \E[124;7u      \E[124;7u
+sac-                               ^\             \E[124;8u      \E[124;8u
+0x007d XK_braceright        125    -(skip)-       --**--**       -*******
+----                               }              }              }
+s---                               }              }              \E[125;2u
+-a--                               }              \E[125;3u      \E[125;3u
+sa--                               }              \E[125;4u      \E[125;4u
+--c-                               ^]             ^]             \E[125;5u
+s-c-                               ^]             ^]             \E[125;6u
+-ac-                               ^]             \E[125;7u      \E[125;7u
+sac-                               ^]             \E[125;8u      \E[125;8u
+0x007e XK_asciitilde        126    -(skip)-       --**--**       -*******
+----                               ~              ~              ~
+s---                               ~              ~              \E[126;2u
+-a--                               ~              \E[126;3u      \E[126;3u
+sa--                               ~              \E[126;4u      \E[126;4u
+--c-                               ^^             ^^             \E[126;5u
+s-c-                               ^^             ^^             \E[126;6u
+-ac-                               ^^             \E[126;7u      \E[126;7u
+sac-                               ^^             \E[126;8u      \E[126;8u
+0x00a6 XK_brokenbar         166    -(skip)-       --******       --******
+----                               ¦              ¦              ¦
+s---                               ¦              ¦              ¦
+-a--                               ¦              \E[166;3u      \E[166;3u
+sa--                               ¦              \E[166;4u      \E[166;4u
+--c-                               ¦              \E[166;5u      \E[166;5u
+s-c-                               ¦              \E[166;6u      \E[166;6u
+-ac-                               ¦              \E[166;7u      \E[166;7u
+sac-                               ¦              \E[166;8u      \E[166;8u
+0x00b1 XK_plusminus         177    -(skip)-       --******       --******
+----                               ±              ±              ±
+s---                               ±              ±              ±
+-a--                               ±              \E[177;3u      \E[177;3u
+sa--                               ±              \E[177;4u      \E[177;4u
+--c-                               ±              \E[177;5u      \E[177;5u
+s-c-                               ±              \E[177;6u      \E[177;6u
+-ac-                               ±              \E[177;7u      \E[177;7u
+sac-                               ±              \E[177;8u      \E[177;8u
+0xfe03 XK_ISO_Level3_Shift  65027  -(skip)-       -(skip)-       -(skip)-
+----                               1:modifier     1:modifier     1:modifier
+s---                               2:modifier     2:modifier     2:modifier
+-a--                               3:modifier     3:modifier     3:modifier
+sa--                               4:modifier     4:modifier     4:modifier
+--c-                               5:modifier     5:modifier     5:modifier
+s-c-                               6:modifier     6:modifier     6:modifier
+-ac-                               7:modifier     7:modifier     7:modifier
+sac-                               8:modifier     8:modifier     8:modifier
+0xfe11 XK_ISO_Level5_Shift  65041  -(skip)-       -(skip)-       -(skip)-
+----                               1:modifier     1:modifier     1:modifier
+s---                               2:modifier     2:modifier     2:modifier
+-a--                               3:modifier     3:modifier     3:modifier
+sa--                               4:modifier     4:modifier     4:modifier
+--c-                               5:modifier     5:modifier     5:modifier
+s-c-                               6:modifier     6:modifier     6:modifier
+-ac-                               7:modifier     7:modifier     7:modifier
+sac-                               8:modifier     8:modifier     8:modifier
+0xfe20 XK_ISO_Left_Tab      65056  -(skip)-       -(skip)-       -(skip)-
+----                               1:edit-key     1:edit-key     1:edit-key
+s---                               2:edit-key     2:edit-key     2:edit-key
+-a--                               3:edit-key     3:edit-key     3:edit-key
+sa--                               4:edit-key     4:edit-key     4:edit-key
+--c-                               5:edit-key     5:edit-key     5:edit-key
+s-c-                               6:edit-key     6:edit-key     6:edit-key
+-ac-                               7:edit-key     7:edit-key     7:edit-key
+sac-                               8:edit-key     8:edit-key     8:edit-key
+0xff08 XK_BackSpace         65288  -(skip)-       -(skip)-       -***-***
+----                               \b             \b             \b
+s---                               \b             \b             \E[8;2u
+-a--                               \b             \b             \E[8;3u
+sa--                               \b             \b             \E[8;4u
+--c-                               \b             \b             \b
+s-c-                               \b             \b             \E[8;6u
+-ac-                               \b             \b             \E[8;7u
+sac-                               \b             \b             \E[8;8u
+0xff09 XK_Tab               65289  -(skip)-       -*******       -*******
+----                               \t             \t             \t
+s---                               \t             \E[9;2u        \E[9;2u
+-a--                               \t             \E[9;3u        \E[9;3u
+sa--                               \t             \E[9;4u        \E[9;4u
+--c-                               \t             \E[9;5u        \E[9;5u
+s-c-                               \t             \E[9;6u        \E[9;6u
+-ac-                               \t             \E[9;7u        \E[9;7u
+sac-                               \t             \E[9;8u        \E[9;8u
+0xff0a XK_Linefeed          65290  -(skip)-       -*******       --******
+----                               -ignore-       -ignore-       -ignore-
+s---                               -ignore-       -ignore-       -ignore-
+-a--                               -ignore-       -ignore-       -ignore-
+sa--                               -ignore-       -ignore-       -ignore-
+--c-                               -ignore-       -ignore-       -ignore-
+s-c-                               -ignore-       -ignore-       -ignore-
+-ac-                               -ignore-       -ignore-       -ignore-
+sac-                               -ignore-       -ignore-       -ignore-
+0xff0d XK_Return            65293  -(skip)-       -*******       -*******
+----                               \r             \r             \r
+s---                               \r             \E[13;2u       \E[13;2u
+-a--                               \r             \E[13;3u       \E[13;3u
+sa--                               \r             \E[13;4u       \E[13;4u
+--c-                               \r             \E[13;5u       \E[13;5u
+s-c-                               \r             \E[13;6u       \E[13;6u
+-ac-                               \r             \E[13;7u       \E[13;7u
+sac-                               \r             \E[13;8u       \E[13;8u
+0xff13 XK_Pause             65299  -(skip)-       -*******       --******
+----                               -ignore-       -ignore-       -ignore-
+s---                               -ignore-       -ignore-       -ignore-
+-a--                               -ignore-       -ignore-       -ignore-
+sa--                               -ignore-       -ignore-       -ignore-
+--c-                               -ignore-       -ignore-       -ignore-
+s-c-                               -ignore-       -ignore-       -ignore-
+-ac-                               -ignore-       -ignore-       -ignore-
+sac-                               -ignore-       -ignore-       -ignore-
+0xff14 XK_Scroll_Lock       65300  -(skip)-       -*******       --******
+----                               -ignore-       -ignore-       -ignore-
+s---                               -ignore-       -ignore-       -ignore-
+-a--                               -ignore-       -ignore-       -ignore-
+sa--                               -ignore-       -ignore-       -ignore-
+--c-                               -ignore-       -ignore-       -ignore-
+s-c-                               -ignore-       -ignore-       -ignore-
+-ac-                               -ignore-       -ignore-       -ignore-
+sac-                               -ignore-       -ignore-       -ignore-
+0xff15 XK_Sys_Req           65301  -(skip)-       -*******       --******
+----                               -ignore-       -ignore-       -ignore-
+s---                               -ignore-       -ignore-       -ignore-
+-a--                               -ignore-       -ignore-       -ignore-
+sa--                               -ignore-       -ignore-       -ignore-
+--c-                               -ignore-       -ignore-       -ignore-
+s-c-                               -ignore-       -ignore-       -ignore-
+-ac-                               -ignore-       -ignore-       -ignore-
+sac-                               -ignore-       -ignore-       -ignore-
+0xff1b XK_Escape            65307  -(skip)-       --**--**       -*******
+----                               \E             \E             \E
+s---                               \E             \E             \E[27;2u
+-a--                               \E             \E[27;3u       \E[27;3u
+sa--                               \E             \E[27;4u       \E[27;4u
+--c-                               \E             \E             \E[27;5u
+s-c-                               \E             \E             \E[27;6u
+-ac-                               \E             \E[27;7u       \E[27;7u
+sac-                               \E             \E[27;8u       \E[27;8u
+0xff22 XK_Muhenkan          65314  -(skip)-       -*******       --******
+----                               -ignore-       -ignore-       -ignore-
+s---                               -ignore-       -ignore-       -ignore-
+-a--                               -ignore-       -ignore-       -ignore-
+sa--                               -ignore-       -ignore-       -ignore-
+--c-                               -ignore-       -ignore-       -ignore-
+s-c-                               -ignore-       -ignore-       -ignore-
+-ac-                               -ignore-       -ignore-       -ignore-
+sac-                               -ignore-       -ignore-       -ignore-
+0xff23 XK_Henkan_Mode       65315  -(skip)-       -*******       --******
+----                               -ignore-       -ignore-       -ignore-
+s---                               -ignore-       -ignore-       -ignore-
+-a--                               -ignore-       -ignore-       -ignore-
+sa--                               -ignore-       -ignore-       -ignore-
+--c-                               -ignore-       -ignore-       -ignore-
+s-c-                               -ignore-       -ignore-       -ignore-
+-ac-                               -ignore-       -ignore-       -ignore-
+sac-                               -ignore-       -ignore-       -ignore-
+0xff25 XK_Hiragana          65317  -(skip)-       -*******       --******
+----                               -ignore-       -ignore-       -ignore-
+s---                               -ignore-       -ignore-       -ignore-
+-a--                               -ignore-       -ignore-       -ignore-
+sa--                               -ignore-       -ignore-       -ignore-
+--c-                               -ignore-       -ignore-       -ignore-
+s-c-                               -ignore-       -ignore-       -ignore-
+-ac-                               -ignore-       -ignore-       -ignore-
+sac-                               -ignore-       -ignore-       -ignore-
+0xff26 XK_Katakana          65318  -(skip)-       -*******       --******
+----                               -ignore-       -ignore-       -ignore-
+s---                               -ignore-       -ignore-       -ignore-
+-a--                               -ignore-       -ignore-       -ignore-
+sa--                               -ignore-       -ignore-       -ignore-
+--c-                               -ignore-       -ignore-       -ignore-
+s-c-                               -ignore-       -ignore-       -ignore-
+-ac-                               -ignore-       -ignore-       -ignore-
+sac-                               -ignore-       -ignore-       -ignore-
+0xff27 XK_Hiragana_Katakana 65319  -(skip)-       -*******       --******
+----                               -ignore-       -ignore-       -ignore-
+s---                               -ignore-       -ignore-       -ignore-
+-a--                               -ignore-       -ignore-       -ignore-
+sa--                               -ignore-       -ignore-       -ignore-
+--c-                               -ignore-       -ignore-       -ignore-
+s-c-                               -ignore-       -ignore-       -ignore-
+-ac-                               -ignore-       -ignore-       -ignore-
+sac-                               -ignore-       -ignore-       -ignore-
+0xff31 XK_Hangul            65329  -(skip)-       -*******       --******
+----                               -ignore-       -ignore-       -ignore-
+s---                               -ignore-       -ignore-       -ignore-
+-a--                               -ignore-       -ignore-       -ignore-
+sa--                               -ignore-       -ignore-       -ignore-
+--c-                               -ignore-       -ignore-       -ignore-
+s-c-                               -ignore-       -ignore-       -ignore-
+-ac-                               -ignore-       -ignore-       -ignore-
+sac-                               -ignore-       -ignore-       -ignore-
+0xff34 XK_Hangul_Hanja      65332  -(skip)-       -*******       --******
+----                               -ignore-       -ignore-       -ignore-
+s---                               -ignore-       -ignore-       -ignore-
+-a--                               -ignore-       -ignore-       -ignore-
+sa--                               -ignore-       -ignore-       -ignore-
+--c-                               -ignore-       -ignore-       -ignore-
+s-c-                               -ignore-       -ignore-       -ignore-
+-ac-                               -ignore-       -ignore-       -ignore-
+sac-                               -ignore-       -ignore-       -ignore-
+0xff50 XK_Home              65360  -(skip)-       -(skip)-       -(skip)-
+----                               1:cursor       1:cursor       1:cursor
+s---                               2:cursor       2:cursor       2:cursor
+-a--                               3:cursor       3:cursor       3:cursor
+sa--                               4:cursor       4:cursor       4:cursor
+--c-                               5:cursor       5:cursor       5:cursor
+s-c-                               6:cursor       6:cursor       6:cursor
+-ac-                               7:cursor       7:cursor       7:cursor
+sac-                               8:cursor       8:cursor       8:cursor
+0xff51 XK_Left              65361  -(skip)-       -(skip)-       -(skip)-
+----                               1:cursor       1:cursor       1:cursor
+s---                               2:cursor       2:cursor       2:cursor
+-a--                               3:cursor       3:cursor       3:cursor
+sa--                               4:cursor       4:cursor       4:cursor
+--c-                               5:cursor       5:cursor       5:cursor
+s-c-                               6:cursor       6:cursor       6:cursor
+-ac-                               7:cursor       7:cursor       7:cursor
+sac-                               8:cursor       8:cursor       8:cursor
+0xff52 XK_Up                65362  -(skip)-       -(skip)-       -(skip)-
+----                               1:cursor       1:cursor       1:cursor
+s---                               2:cursor       2:cursor       2:cursor
+-a--                               3:cursor       3:cursor       3:cursor
+sa--                               4:cursor       4:cursor       4:cursor
+--c-                               5:cursor       5:cursor       5:cursor
+s-c-                               6:cursor       6:cursor       6:cursor
+-ac-                               7:cursor       7:cursor       7:cursor
+sac-                               8:cursor       8:cursor       8:cursor
+0xff53 XK_Right             65363  -(skip)-       -(skip)-       -(skip)-
+----                               1:cursor       1:cursor       1:cursor
+s---                               2:cursor       2:cursor       2:cursor
+-a--                               3:cursor       3:cursor       3:cursor
+sa--                               4:cursor       4:cursor       4:cursor
+--c-                               5:cursor       5:cursor       5:cursor
+s-c-                               6:cursor       6:cursor       6:cursor
+-ac-                               7:cursor       7:cursor       7:cursor
+sac-                               8:cursor       8:cursor       8:cursor
+0xff54 XK_Down              65364  -(skip)-       -(skip)-       -(skip)-
+----                               1:cursor       1:cursor       1:cursor
+s---                               2:cursor       2:cursor       2:cursor
+-a--                               3:cursor       3:cursor       3:cursor
+sa--                               4:cursor       4:cursor       4:cursor
+--c-                               5:cursor       5:cursor       5:cursor
+s-c-                               6:cursor       6:cursor       6:cursor
+-ac-                               7:cursor       7:cursor       7:cursor
+sac-                               8:cursor       8:cursor       8:cursor
+0xff55 XK_Prior             65365  -(skip)-       -(skip)-       -(skip)-
+----                               1:edit-key     1:edit-key     1:edit-key
+s---                               2:edit-key     2:edit-key     2:edit-key
+-a--                               3:edit-key     3:edit-key     3:edit-key
+sa--                               4:edit-key     4:edit-key     4:edit-key
+--c-                               5:edit-key     5:edit-key     5:edit-key
+s-c-                               6:edit-key     6:edit-key     6:edit-key
+-ac-                               7:edit-key     7:edit-key     7:edit-key
+sac-                               8:edit-key     8:edit-key     8:edit-key
+0xff56 XK_Next              65366  -(skip)-       -(skip)-       -(skip)-
+----                               1:edit-key     1:edit-key     1:edit-key
+s---                               2:edit-key     2:edit-key     2:edit-key
+-a--                               3:edit-key     3:edit-key     3:edit-key
+sa--                               4:edit-key     4:edit-key     4:edit-key
+--c-                               5:edit-key     5:edit-key     5:edit-key
+s-c-                               6:edit-key     6:edit-key     6:edit-key
+-ac-                               7:edit-key     7:edit-key     7:edit-key
+sac-                               8:edit-key     8:edit-key     8:edit-key
+0xff57 XK_End               65367  -(skip)-       -(skip)-       -(skip)-
+----                               1:cursor       1:cursor       1:cursor
+s---                               2:cursor       2:cursor       2:cursor
+-a--                               3:cursor       3:cursor       3:cursor
+sa--                               4:cursor       4:cursor       4:cursor
+--c-                               5:cursor       5:cursor       5:cursor
+s-c-                               6:cursor       6:cursor       6:cursor
+-ac-                               7:cursor       7:cursor       7:cursor
+sac-                               8:cursor       8:cursor       8:cursor
+0xff61 XK_Print             65377  -(skip)-       -(skip)-       -(skip)-
+----                               1:misc-key     1:misc-key     1:misc-key
+s---                               2:misc-key     2:misc-key     2:misc-key
+-a--                               3:misc-key     3:misc-key     3:misc-key
+sa--                               4:misc-key     4:misc-key     4:misc-key
+--c-                               5:misc-key     5:misc-key     5:misc-key
+s-c-                               6:misc-key     6:misc-key     6:misc-key
+-ac-                               7:misc-key     7:misc-key     7:misc-key
+sac-                               8:misc-key     8:misc-key     8:misc-key
+0xff63 XK_Insert            65379  -(skip)-       -(skip)-       -(skip)-
+----                               1:edit-key     1:edit-key     1:edit-key
+s---                               2:edit-key     2:edit-key     2:edit-key
+-a--                               3:edit-key     3:edit-key     3:edit-key
+sa--                               4:edit-key     4:edit-key     4:edit-key
+--c-                               5:edit-key     5:edit-key     5:edit-key
+s-c-                               6:edit-key     6:edit-key     6:edit-key
+-ac-                               7:edit-key     7:edit-key     7:edit-key
+sac-                               8:edit-key     8:edit-key     8:edit-key
+0xff65 XK_Undo              65381  -(skip)-       -(skip)-       -(skip)-
+----                               1:misc-key     1:misc-key     1:misc-key
+s---                               2:misc-key     2:misc-key     2:misc-key
+-a--                               3:misc-key     3:misc-key     3:misc-key
+sa--                               4:misc-key     4:misc-key     4:misc-key
+--c-                               5:misc-key     5:misc-key     5:misc-key
+s-c-                               6:misc-key     6:misc-key     6:misc-key
+-ac-                               7:misc-key     7:misc-key     7:misc-key
+sac-                               8:misc-key     8:misc-key     8:misc-key
+0xff66 XK_Redo              65382  -(skip)-       -(skip)-       -(skip)-
+----                               1:misc-key     1:misc-key     1:misc-key
+s---                               2:misc-key     2:misc-key     2:misc-key
+-a--                               3:misc-key     3:misc-key     3:misc-key
+sa--                               4:misc-key     4:misc-key     4:misc-key
+--c-                               5:misc-key     5:misc-key     5:misc-key
+s-c-                               6:misc-key     6:misc-key     6:misc-key
+-ac-                               7:misc-key     7:misc-key     7:misc-key
+sac-                               8:misc-key     8:misc-key     8:misc-key
+0xff67 XK_Menu              65383  -(skip)-       -(skip)-       -(skip)-
+----                               1:misc-key     1:misc-key     1:misc-key
+s---                               2:misc-key     2:misc-key     2:misc-key
+-a--                               3:misc-key     3:misc-key     3:misc-key
+sa--                               4:misc-key     4:misc-key     4:misc-key
+--c-                               5:misc-key     5:misc-key     5:misc-key
+s-c-                               6:misc-key     6:misc-key     6:misc-key
+-ac-                               7:misc-key     7:misc-key     7:misc-key
+sac-                               8:misc-key     8:misc-key     8:misc-key
+0xff68 XK_Find              65384  -(skip)-       -(skip)-       -(skip)-
+----                               1:edit-key     1:edit-key     1:edit-key
+s---                               2:edit-key     2:edit-key     2:edit-key
+-a--                               3:edit-key     3:edit-key     3:edit-key
+sa--                               4:edit-key     4:edit-key     4:edit-key
+--c-                               5:edit-key     5:edit-key     5:edit-key
+s-c-                               6:edit-key     6:edit-key     6:edit-key
+-ac-                               7:edit-key     7:edit-key     7:edit-key
+sac-                               8:edit-key     8:edit-key     8:edit-key
+0xff69 XK_Cancel            65385  -(skip)-       -(skip)-       -(skip)-
+----                               1:misc-key     1:misc-key     1:misc-key
+s---                               2:misc-key     2:misc-key     2:misc-key
+-a--                               3:misc-key     3:misc-key     3:misc-key
+sa--                               4:misc-key     4:misc-key     4:misc-key
+--c-                               5:misc-key     5:misc-key     5:misc-key
+s-c-                               6:misc-key     6:misc-key     6:misc-key
+-ac-                               7:misc-key     7:misc-key     7:misc-key
+sac-                               8:misc-key     8:misc-key     8:misc-key
+0xff6a XK_Help              65386  -(skip)-       -(skip)-       -(skip)-
+----                               1:misc-key     1:misc-key     1:misc-key
+s---                               2:misc-key     2:misc-key     2:misc-key
+-a--                               3:misc-key     3:misc-key     3:misc-key
+sa--                               4:misc-key     4:misc-key     4:misc-key
+--c-                               5:misc-key     5:misc-key     5:misc-key
+s-c-                               6:misc-key     6:misc-key     6:misc-key
+-ac-                               7:misc-key     7:misc-key     7:misc-key
+sac-                               8:misc-key     8:misc-key     8:misc-key
+0xff6b XK_Break             65387  -(skip)-       -(skip)-       -(skip)-
+----                               1:misc-key     1:misc-key     1:misc-key
+s---                               2:misc-key     2:misc-key     2:misc-key
+-a--                               3:misc-key     3:misc-key     3:misc-key
+sa--                               4:misc-key     4:misc-key     4:misc-key
+--c-                               5:misc-key     5:misc-key     5:misc-key
+s-c-                               6:misc-key     6:misc-key     6:misc-key
+-ac-                               7:misc-key     7:misc-key     7:misc-key
+sac-                               8:misc-key     8:misc-key     8:misc-key
+0xff7f XK_Num_Lock          65407  -(skip)-       -(skip)-       -(skip)-
+----                               1:modifier     1:modifier     1:modifier
+s---                               2:modifier     2:modifier     2:modifier
+-a--                               3:modifier     3:modifier     3:modifier
+sa--                               4:modifier     4:modifier     4:modifier
+--c-                               5:modifier     5:modifier     5:modifier
+s-c-                               6:modifier     6:modifier     6:modifier
+-ac-                               7:modifier     7:modifier     7:modifier
+sac-                               8:modifier     8:modifier     8:modifier
+0xff8d XK_KP_Enter          65421  -(skip)-       -(skip)-       -(skip)-
+----                               1:keypad       1:keypad       1:keypad
+s---                               2:keypad       2:keypad       2:keypad
+-a--                               3:keypad       3:keypad       3:keypad
+sa--                               4:keypad       4:keypad       4:keypad
+--c-                               5:keypad       5:keypad       5:keypad
+s-c-                               6:keypad       6:keypad       6:keypad
+-ac-                               7:keypad       7:keypad       7:keypad
+sac-                               8:keypad       8:keypad       8:keypad
+0xff95 XK_KP_Home           65429  -(skip)-       -(skip)-       -(skip)-
+----                               1:keypad       1:keypad       1:keypad
+s---                               2:keypad       2:keypad       2:keypad
+-a--                               3:keypad       3:keypad       3:keypad
+sa--                               4:keypad       4:keypad       4:keypad
+--c-                               5:keypad       5:keypad       5:keypad
+s-c-                               6:keypad       6:keypad       6:keypad
+-ac-                               7:keypad       7:keypad       7:keypad
+sac-                               8:keypad       8:keypad       8:keypad
+0xff96 XK_KP_Left           65430  -(skip)-       -(skip)-       -(skip)-
+----                               1:keypad       1:keypad       1:keypad
+s---                               2:keypad       2:keypad       2:keypad
+-a--                               3:keypad       3:keypad       3:keypad
+sa--                               4:keypad       4:keypad       4:keypad
+--c-                               5:keypad       5:keypad       5:keypad
+s-c-                               6:keypad       6:keypad       6:keypad
+-ac-                               7:keypad       7:keypad       7:keypad
+sac-                               8:keypad       8:keypad       8:keypad
+0xff97 XK_KP_Up             65431  -(skip)-       -(skip)-       -(skip)-
+----                               1:keypad       1:keypad       1:keypad
+s---                               2:keypad       2:keypad       2:keypad
+-a--                               3:keypad       3:keypad       3:keypad
+sa--                               4:keypad       4:keypad       4:keypad
+--c-                               5:keypad       5:keypad       5:keypad
+s-c-                               6:keypad       6:keypad       6:keypad
+-ac-                               7:keypad       7:keypad       7:keypad
+sac-                               8:keypad       8:keypad       8:keypad
+0xff98 XK_KP_Right          65432  -(skip)-       -(skip)-       -(skip)-
+----                               1:keypad       1:keypad       1:keypad
+s---                               2:keypad       2:keypad       2:keypad
+-a--                               3:keypad       3:keypad       3:keypad
+sa--                               4:keypad       4:keypad       4:keypad
+--c-                               5:keypad       5:keypad       5:keypad
+s-c-                               6:keypad       6:keypad       6:keypad
+-ac-                               7:keypad       7:keypad       7:keypad
+sac-                               8:keypad       8:keypad       8:keypad
+0xff99 XK_KP_Down           65433  -(skip)-       -(skip)-       -(skip)-
+----                               1:keypad       1:keypad       1:keypad
+s---                               2:keypad       2:keypad       2:keypad
+-a--                               3:keypad       3:keypad       3:keypad
+sa--                               4:keypad       4:keypad       4:keypad
+--c-                               5:keypad       5:keypad       5:keypad
+s-c-                               6:keypad       6:keypad       6:keypad
+-ac-                               7:keypad       7:keypad       7:keypad
+sac-                               8:keypad       8:keypad       8:keypad
+0xff9a XK_KP_Prior          65434  -(skip)-       -(skip)-       -(skip)-
+----                               1:keypad       1:keypad       1:keypad
+s---                               2:keypad       2:keypad       2:keypad
+-a--                               3:keypad       3:keypad       3:keypad
+sa--                               4:keypad       4:keypad       4:keypad
+--c-                               5:keypad       5:keypad       5:keypad
+s-c-                               6:keypad       6:keypad       6:keypad
+-ac-                               7:keypad       7:keypad       7:keypad
+sac-                               8:keypad       8:keypad       8:keypad
+0xff9b XK_KP_Next           65435  -(skip)-       -(skip)-       -(skip)-
+----                               1:keypad       1:keypad       1:keypad
+s---                               2:keypad       2:keypad       2:keypad
+-a--                               3:keypad       3:keypad       3:keypad
+sa--                               4:keypad       4:keypad       4:keypad
+--c-                               5:keypad       5:keypad       5:keypad
+s-c-                               6:keypad       6:keypad       6:keypad
+-ac-                               7:keypad       7:keypad       7:keypad
+sac-                               8:keypad       8:keypad       8:keypad
+0xff9c XK_KP_End            65436  -(skip)-       -(skip)-       -(skip)-
+----                               1:keypad       1:keypad       1:keypad
+s---                               2:keypad       2:keypad       2:keypad
+-a--                               3:keypad       3:keypad       3:keypad
+sa--                               4:keypad       4:keypad       4:keypad
+--c-                               5:keypad       5:keypad       5:keypad
+s-c-                               6:keypad       6:keypad       6:keypad
+-ac-                               7:keypad       7:keypad       7:keypad
+sac-                               8:keypad       8:keypad       8:keypad
+0xff9d XK_KP_Begin          65437  -(skip)-       -(skip)-       -(skip)-
+----                               1:keypad       1:keypad       1:keypad
+s---                               2:keypad       2:keypad       2:keypad
+-a--                               3:keypad       3:keypad       3:keypad
+sa--                               4:keypad       4:keypad       4:keypad
+--c-                               5:keypad       5:keypad       5:keypad
+s-c-                               6:keypad       6:keypad       6:keypad
+-ac-                               7:keypad       7:keypad       7:keypad
+sac-                               8:keypad       8:keypad       8:keypad
+0xff9e XK_KP_Insert         65438  -(skip)-       -(skip)-       -(skip)-
+----                               1:edit-key     1:edit-key     1:edit-key
+s---                               2:edit-key     2:edit-key     2:edit-key
+-a--                               3:edit-key     3:edit-key     3:edit-key
+sa--                               4:edit-key     4:edit-key     4:edit-key
+--c-                               5:edit-key     5:edit-key     5:edit-key
+s-c-                               6:edit-key     6:edit-key     6:edit-key
+-ac-                               7:edit-key     7:edit-key     7:edit-key
+sac-                               8:edit-key     8:edit-key     8:edit-key
+0xff9f XK_KP_Delete         65439  -(skip)-       -(skip)-       -(skip)-
+----                               1:edit-key     1:edit-key     1:edit-key
+s---                               2:edit-key     2:edit-key     2:edit-key
+-a--                               3:edit-key     3:edit-key     3:edit-key
+sa--                               4:edit-key     4:edit-key     4:edit-key
+--c-                               5:edit-key     5:edit-key     5:edit-key
+s-c-                               6:edit-key     6:edit-key     6:edit-key
+-ac-                               7:edit-key     7:edit-key     7:edit-key
+sac-                               8:edit-key     8:edit-key     8:edit-key
+0xffaa XK_KP_Multiply       65450  -(skip)-       -(skip)-       -(skip)-
+----                               1:keypad       1:keypad       1:keypad
+s---                               2:keypad       2:keypad       2:keypad
+-a--                               3:keypad       3:keypad       3:keypad
+sa--                               4:keypad       4:keypad       4:keypad
+--c-                               5:keypad       5:keypad       5:keypad
+s-c-                               6:keypad       6:keypad       6:keypad
+-ac-                               7:keypad       7:keypad       7:keypad
+sac-                               8:keypad       8:keypad       8:keypad
+0xffab XK_KP_Add            65451  -(skip)-       -(skip)-       -(skip)-
+----                               1:keypad       1:keypad       1:keypad
+s---                               2:keypad       2:keypad       2:keypad
+-a--                               3:keypad       3:keypad       3:keypad
+sa--                               4:keypad       4:keypad       4:keypad
+--c-                               5:keypad       5:keypad       5:keypad
+s-c-                               6:keypad       6:keypad       6:keypad
+-ac-                               7:keypad       7:keypad       7:keypad
+sac-                               8:keypad       8:keypad       8:keypad
+0xffad XK_KP_Subtract       65453  -(skip)-       -(skip)-       -(skip)-
+----                               1:keypad       1:keypad       1:keypad
+s---                               2:keypad       2:keypad       2:keypad
+-a--                               3:keypad       3:keypad       3:keypad
+sa--                               4:keypad       4:keypad       4:keypad
+--c-                               5:keypad       5:keypad       5:keypad
+s-c-                               6:keypad       6:keypad       6:keypad
+-ac-                               7:keypad       7:keypad       7:keypad
+sac-                               8:keypad       8:keypad       8:keypad
+0xffae XK_KP_Decimal        65454  -(skip)-       -(skip)-       -(skip)-
+----                               1:keypad       1:keypad       1:keypad
+s---                               2:keypad       2:keypad       2:keypad
+-a--                               3:keypad       3:keypad       3:keypad
+sa--                               4:keypad       4:keypad       4:keypad
+--c-                               5:keypad       5:keypad       5:keypad
+s-c-                               6:keypad       6:keypad       6:keypad
+-ac-                               7:keypad       7:keypad       7:keypad
+sac-                               8:keypad       8:keypad       8:keypad
+0xffaf XK_KP_Divide         65455  -(skip)-       -(skip)-       -(skip)-
+----                               1:keypad       1:keypad       1:keypad
+s---                               2:keypad       2:keypad       2:keypad
+-a--                               3:keypad       3:keypad       3:keypad
+sa--                               4:keypad       4:keypad       4:keypad
+--c-                               5:keypad       5:keypad       5:keypad
+s-c-                               6:keypad       6:keypad       6:keypad
+-ac-                               7:keypad       7:keypad       7:keypad
+sac-                               8:keypad       8:keypad       8:keypad
+0xffb0 XK_KP_0              65456  -(skip)-       -(skip)-       -(skip)-
+----                               1:keypad       1:keypad       1:keypad
+s---                               2:keypad       2:keypad       2:keypad
+-a--                               3:keypad       3:keypad       3:keypad
+sa--                               4:keypad       4:keypad       4:keypad
+--c-                               5:keypad       5:keypad       5:keypad
+s-c-                               6:keypad       6:keypad       6:keypad
+-ac-                               7:keypad       7:keypad       7:keypad
+sac-                               8:keypad       8:keypad       8:keypad
+0xffb1 XK_KP_1              65457  -(skip)-       -(skip)-       -(skip)-
+----                               1:keypad       1:keypad       1:keypad
+s---                               2:keypad       2:keypad       2:keypad
+-a--                               3:keypad       3:keypad       3:keypad
+sa--                               4:keypad       4:keypad       4:keypad
+--c-                               5:keypad       5:keypad       5:keypad
+s-c-                               6:keypad       6:keypad       6:keypad
+-ac-                               7:keypad       7:keypad       7:keypad
+sac-                               8:keypad       8:keypad       8:keypad
+0xffb2 XK_KP_2              65458  -(skip)-       -(skip)-       -(skip)-
+----                               1:keypad       1:keypad       1:keypad
+s---                               2:keypad       2:keypad       2:keypad
+-a--                               3:keypad       3:keypad       3:keypad
+sa--                               4:keypad       4:keypad       4:keypad
+--c-                               5:keypad       5:keypad       5:keypad
+s-c-                               6:keypad       6:keypad       6:keypad
+-ac-                               7:keypad       7:keypad       7:keypad
+sac-                               8:keypad       8:keypad       8:keypad
+0xffb3 XK_KP_3              65459  -(skip)-       -(skip)-       -(skip)-
+----                               1:keypad       1:keypad       1:keypad
+s---                               2:keypad       2:keypad       2:keypad
+-a--                               3:keypad       3:keypad       3:keypad
+sa--                               4:keypad       4:keypad       4:keypad
+--c-                               5:keypad       5:keypad       5:keypad
+s-c-                               6:keypad       6:keypad       6:keypad
+-ac-                               7:keypad       7:keypad       7:keypad
+sac-                               8:keypad       8:keypad       8:keypad
+0xffb4 XK_KP_4              65460  -(skip)-       -(skip)-       -(skip)-
+----                               1:keypad       1:keypad       1:keypad
+s---                               2:keypad       2:keypad       2:keypad
+-a--                               3:keypad       3:keypad       3:keypad
+sa--                               4:keypad       4:keypad       4:keypad
+--c-                               5:keypad       5:keypad       5:keypad
+s-c-                               6:keypad       6:keypad       6:keypad
+-ac-                               7:keypad       7:keypad       7:keypad
+sac-                               8:keypad       8:keypad       8:keypad
+0xffb5 XK_KP_5              65461  -(skip)-       -(skip)-       -(skip)-
+----                               1:keypad       1:keypad       1:keypad
+s---                               2:keypad       2:keypad       2:keypad
+-a--                               3:keypad       3:keypad       3:keypad
+sa--                               4:keypad       4:keypad       4:keypad
+--c-                               5:keypad       5:keypad       5:keypad
+s-c-                               6:keypad       6:keypad       6:keypad
+-ac-                               7:keypad       7:keypad       7:keypad
+sac-                               8:keypad       8:keypad       8:keypad
+0xffb6 XK_KP_6              65462  -(skip)-       -(skip)-       -(skip)-
+----                               1:keypad       1:keypad       1:keypad
+s---                               2:keypad       2:keypad       2:keypad
+-a--                               3:keypad       3:keypad       3:keypad
+sa--                               4:keypad       4:keypad       4:keypad
+--c-                               5:keypad       5:keypad       5:keypad
+s-c-                               6:keypad       6:keypad       6:keypad
+-ac-                               7:keypad       7:keypad       7:keypad
+sac-                               8:keypad       8:keypad       8:keypad
+0xffb7 XK_KP_7              65463  -(skip)-       -(skip)-       -(skip)-
+----                               1:keypad       1:keypad       1:keypad
+s---                               2:keypad       2:keypad       2:keypad
+-a--                               3:keypad       3:keypad       3:keypad
+sa--                               4:keypad       4:keypad       4:keypad
+--c-                               5:keypad       5:keypad       5:keypad
+s-c-                               6:keypad       6:keypad       6:keypad
+-ac-                               7:keypad       7:keypad       7:keypad
+sac-                               8:keypad       8:keypad       8:keypad
+0xffb8 XK_KP_8              65464  -(skip)-       -(skip)-       -(skip)-
+----                               1:keypad       1:keypad       1:keypad
+s---                               2:keypad       2:keypad       2:keypad
+-a--                               3:keypad       3:keypad       3:keypad
+sa--                               4:keypad       4:keypad       4:keypad
+--c-                               5:keypad       5:keypad       5:keypad
+s-c-                               6:keypad       6:keypad       6:keypad
+-ac-                               7:keypad       7:keypad       7:keypad
+sac-                               8:keypad       8:keypad       8:keypad
+0xffb9 XK_KP_9              65465  -(skip)-       -(skip)-       -(skip)-
+----                               1:keypad       1:keypad       1:keypad
+s---                               2:keypad       2:keypad       2:keypad
+-a--                               3:keypad       3:keypad       3:keypad
+sa--                               4:keypad       4:keypad       4:keypad
+--c-                               5:keypad       5:keypad       5:keypad
+s-c-                               6:keypad       6:keypad       6:keypad
+-ac-                               7:keypad       7:keypad       7:keypad
+sac-                               8:keypad       8:keypad       8:keypad
+0xffbd XK_KP_Equal          65469  -(skip)-       -(skip)-       -(skip)-
+----                               1:keypad       1:keypad       1:keypad
+s---                               2:keypad       2:keypad       2:keypad
+-a--                               3:keypad       3:keypad       3:keypad
+sa--                               4:keypad       4:keypad       4:keypad
+--c-                               5:keypad       5:keypad       5:keypad
+s-c-                               6:keypad       6:keypad       6:keypad
+-ac-                               7:keypad       7:keypad       7:keypad
+sac-                               8:keypad       8:keypad       8:keypad
+0xffbe XK_F1                65470  -(skip)-       -(skip)-       -(skip)-
+----                               1:func-key     1:func-key     1:func-key
+s---                               2:func-key     2:func-key     2:func-key
+-a--                               3:func-key     3:func-key     3:func-key
+sa--                               4:func-key     4:func-key     4:func-key
+--c-                               5:func-key     5:func-key     5:func-key
+s-c-                               6:func-key     6:func-key     6:func-key
+-ac-                               7:func-key     7:func-key     7:func-key
+sac-                               8:func-key     8:func-key     8:func-key
+0xffbf XK_F2                65471  -(skip)-       -(skip)-       -(skip)-
+----                               1:func-key     1:func-key     1:func-key
+s---                               2:func-key     2:func-key     2:func-key
+-a--                               3:func-key     3:func-key     3:func-key
+sa--                               4:func-key     4:func-key     4:func-key
+--c-                               5:func-key     5:func-key     5:func-key
+s-c-                               6:func-key     6:func-key     6:func-key
+-ac-                               7:func-key     7:func-key     7:func-key
+sac-                               8:func-key     8:func-key     8:func-key
+0xffc0 XK_F3                65472  -(skip)-       -(skip)-       -(skip)-
+----                               1:func-key     1:func-key     1:func-key
+s---                               2:func-key     2:func-key     2:func-key
+-a--                               3:func-key     3:func-key     3:func-key
+sa--                               4:func-key     4:func-key     4:func-key
+--c-                               5:func-key     5:func-key     5:func-key
+s-c-                               6:func-key     6:func-key     6:func-key
+-ac-                               7:func-key     7:func-key     7:func-key
+sac-                               8:func-key     8:func-key     8:func-key
+0xffc1 XK_F4                65473  -(skip)-       -(skip)-       -(skip)-
+----                               1:func-key     1:func-key     1:func-key
+s---                               2:func-key     2:func-key     2:func-key
+-a--                               3:func-key     3:func-key     3:func-key
+sa--                               4:func-key     4:func-key     4:func-key
+--c-                               5:func-key     5:func-key     5:func-key
+s-c-                               6:func-key     6:func-key     6:func-key
+-ac-                               7:func-key     7:func-key     7:func-key
+sac-                               8:func-key     8:func-key     8:func-key
+0xffc2 XK_F5                65474  -(skip)-       -(skip)-       -(skip)-
+----                               1:func-key     1:func-key     1:func-key
+s---                               2:func-key     2:func-key     2:func-key
+-a--                               3:func-key     3:func-key     3:func-key
+sa--                               4:func-key     4:func-key     4:func-key
+--c-                               5:func-key     5:func-key     5:func-key
+s-c-                               6:func-key     6:func-key     6:func-key
+-ac-                               7:func-key     7:func-key     7:func-key
+sac-                               8:func-key     8:func-key     8:func-key
+0xffc3 XK_F6                65475  -(skip)-       -(skip)-       -(skip)-
+----                               1:func-key     1:func-key     1:func-key
+s---                               2:func-key     2:func-key     2:func-key
+-a--                               3:func-key     3:func-key     3:func-key
+sa--                               4:func-key     4:func-key     4:func-key
+--c-                               5:func-key     5:func-key     5:func-key
+s-c-                               6:func-key     6:func-key     6:func-key
+-ac-                               7:func-key     7:func-key     7:func-key
+sac-                               8:func-key     8:func-key     8:func-key
+0xffc4 XK_F7                65476  -(skip)-       -(skip)-       -(skip)-
+----                               1:func-key     1:func-key     1:func-key
+s---                               2:func-key     2:func-key     2:func-key
+-a--                               3:func-key     3:func-key     3:func-key
+sa--                               4:func-key     4:func-key     4:func-key
+--c-                               5:func-key     5:func-key     5:func-key
+s-c-                               6:func-key     6:func-key     6:func-key
+-ac-                               7:func-key     7:func-key     7:func-key
+sac-                               8:func-key     8:func-key     8:func-key
+0xffc5 XK_F8                65477  -(skip)-       -(skip)-       -(skip)-
+----                               1:func-key     1:func-key     1:func-key
+s---                               2:func-key     2:func-key     2:func-key
+-a--                               3:func-key     3:func-key     3:func-key
+sa--                               4:func-key     4:func-key     4:func-key
+--c-                               5:func-key     5:func-key     5:func-key
+s-c-                               6:func-key     6:func-key     6:func-key
+-ac-                               7:func-key     7:func-key     7:func-key
+sac-                               8:func-key     8:func-key     8:func-key
+0xffc6 XK_F9                65478  -(skip)-       -(skip)-       -(skip)-
+----                               1:func-key     1:func-key     1:func-key
+s---                               2:func-key     2:func-key     2:func-key
+-a--                               3:func-key     3:func-key     3:func-key
+sa--                               4:func-key     4:func-key     4:func-key
+--c-                               5:func-key     5:func-key     5:func-key
+s-c-                               6:func-key     6:func-key     6:func-key
+-ac-                               7:func-key     7:func-key     7:func-key
+sac-                               8:func-key     8:func-key     8:func-key
+0xffc7 XK_F10               65479  -(skip)-       -(skip)-       -(skip)-
+----                               1:func-key     1:func-key     1:func-key
+s---                               2:func-key     2:func-key     2:func-key
+-a--                               3:func-key     3:func-key     3:func-key
+sa--                               4:func-key     4:func-key     4:func-key
+--c-                               5:func-key     5:func-key     5:func-key
+s-c-                               6:func-key     6:func-key     6:func-key
+-ac-                               7:func-key     7:func-key     7:func-key
+sac-                               8:func-key     8:func-key     8:func-key
+0xffc8 XK_F11               65480  -(skip)-       -(skip)-       -(skip)-
+----                               1:func-key     1:func-key     1:func-key
+s---                               2:func-key     2:func-key     2:func-key
+-a--                               3:func-key     3:func-key     3:func-key
+sa--                               4:func-key     4:func-key     4:func-key
+--c-                               5:func-key     5:func-key     5:func-key
+s-c-                               6:func-key     6:func-key     6:func-key
+-ac-                               7:func-key     7:func-key     7:func-key
+sac-                               8:func-key     8:func-key     8:func-key
+0xffc9 XK_F12               65481  -(skip)-       -(skip)-       -(skip)-
+----                               1:func-key     1:func-key     1:func-key
+s---                               2:func-key     2:func-key     2:func-key
+-a--                               3:func-key     3:func-key     3:func-key
+sa--                               4:func-key     4:func-key     4:func-key
+--c-                               5:func-key     5:func-key     5:func-key
+s-c-                               6:func-key     6:func-key     6:func-key
+-ac-                               7:func-key     7:func-key     7:func-key
+sac-                               8:func-key     8:func-key     8:func-key
+0xffe1 XK_Shift_L           65505  -(skip)-       -(skip)-       -(skip)-
+----                               1:modifier     1:modifier     1:modifier
+s---                               2:modifier     2:modifier     2:modifier
+-a--                               3:modifier     3:modifier     3:modifier
+sa--                               4:modifier     4:modifier     4:modifier
+--c-                               5:modifier     5:modifier     5:modifier
+s-c-                               6:modifier     6:modifier     6:modifier
+-ac-                               7:modifier     7:modifier     7:modifier
+sac-                               8:modifier     8:modifier     8:modifier
+0xffe2 XK_Shift_R           65506  -(skip)-       -(skip)-       -(skip)-
+----                               1:modifier     1:modifier     1:modifier
+s---                               2:modifier     2:modifier     2:modifier
+-a--                               3:modifier     3:modifier     3:modifier
+sa--                               4:modifier     4:modifier     4:modifier
+--c-                               5:modifier     5:modifier     5:modifier
+s-c-                               6:modifier     6:modifier     6:modifier
+-ac-                               7:modifier     7:modifier     7:modifier
+sac-                               8:modifier     8:modifier     8:modifier
+0xffe3 XK_Control_L         65507  -(skip)-       -(skip)-       -(skip)-
+----                               1:modifier     1:modifier     1:modifier
+s---                               2:modifier     2:modifier     2:modifier
+-a--                               3:modifier     3:modifier     3:modifier
+sa--                               4:modifier     4:modifier     4:modifier
+--c-                               5:modifier     5:modifier     5:modifier
+s-c-                               6:modifier     6:modifier     6:modifier
+-ac-                               7:modifier     7:modifier     7:modifier
+sac-                               8:modifier     8:modifier     8:modifier
+0xffe4 XK_Control_R         65508  -(skip)-       -(skip)-       -(skip)-
+----                               1:modifier     1:modifier     1:modifier
+s---                               2:modifier     2:modifier     2:modifier
+-a--                               3:modifier     3:modifier     3:modifier
+sa--                               4:modifier     4:modifier     4:modifier
+--c-                               5:modifier     5:modifier     5:modifier
+s-c-                               6:modifier     6:modifier     6:modifier
+-ac-                               7:modifier     7:modifier     7:modifier
+sac-                               8:modifier     8:modifier     8:modifier
+0xffe5 XK_Caps_Lock         65509  -(skip)-       -(skip)-       -(skip)-
+----                               1:modifier     1:modifier     1:modifier
+s---                               2:modifier     2:modifier     2:modifier
+-a--                               3:modifier     3:modifier     3:modifier
+sa--                               4:modifier     4:modifier     4:modifier
+--c-                               5:modifier     5:modifier     5:modifier
+s-c-                               6:modifier     6:modifier     6:modifier
+-ac-                               7:modifier     7:modifier     7:modifier
+sac-                               8:modifier     8:modifier     8:modifier
+0xffe7 XK_Meta_L            65511  -(skip)-       -(skip)-       -(skip)-
+----                               1:modifier     1:modifier     1:modifier
+s---                               2:modifier     2:modifier     2:modifier
+-a--                               3:modifier     3:modifier     3:modifier
+sa--                               4:modifier     4:modifier     4:modifier
+--c-                               5:modifier     5:modifier     5:modifier
+s-c-                               6:modifier     6:modifier     6:modifier
+-ac-                               7:modifier     7:modifier     7:modifier
+sac-                               8:modifier     8:modifier     8:modifier
+0xffe9 XK_Alt_L             65513  -(skip)-       -(skip)-       -(skip)-
+----                               1:modifier     1:modifier     1:modifier
+s---                               2:modifier     2:modifier     2:modifier
+-a--                               3:modifier     3:modifier     3:modifier
+sa--                               4:modifier     4:modifier     4:modifier
+--c-                               5:modifier     5:modifier     5:modifier
+s-c-                               6:modifier     6:modifier     6:modifier
+-ac-                               7:modifier     7:modifier     7:modifier
+sac-                               8:modifier     8:modifier     8:modifier
+0xffeb XK_Super_L           65515  -(skip)-       -(skip)-       -(skip)-
+----                               1:modifier     1:modifier     1:modifier
+s---                               2:modifier     2:modifier     2:modifier
+-a--                               3:modifier     3:modifier     3:modifier
+sa--                               4:modifier     4:modifier     4:modifier
+--c-                               5:modifier     5:modifier     5:modifier
+s-c-                               6:modifier     6:modifier     6:modifier
+-ac-                               7:modifier     7:modifier     7:modifier
+sac-                               8:modifier     8:modifier     8:modifier
+0xffec XK_Super_R           65516  -(skip)-       -(skip)-       -(skip)-
+----                               1:modifier     1:modifier     1:modifier
+s---                               2:modifier     2:modifier     2:modifier
+-a--                               3:modifier     3:modifier     3:modifier
+sa--                               4:modifier     4:modifier     4:modifier
+--c-                               5:modifier     5:modifier     5:modifier
+s-c-                               6:modifier     6:modifier     6:modifier
+-ac-                               7:modifier     7:modifier     7:modifier
+sac-                               8:modifier     8:modifier     8:modifier
+0xffff XK_Delete            65535  -(skip)-       -(skip)-       -(skip)-
+----                               1:edit-key     1:edit-key     1:edit-key
+s---                               2:edit-key     2:edit-key     2:edit-key
+-a--                               3:edit-key     3:edit-key     3:edit-key
+sa--                               4:edit-key     4:edit-key     4:edit-key
+--c-                               5:edit-key     5:edit-key     5:edit-key
+s-c-                               6:edit-key     6:edit-key     6:edit-key
+-ac-                               7:edit-key     7:edit-key     7:edit-key
+sac-                               8:edit-key     8:edit-key     8:edit-key

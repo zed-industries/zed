@@ -1,0 +1,282 @@
+// Copyright 2023 LiveKit, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package rpc;
+
+option go_package = "github.com/livekit/protocol/rpc";
+
+import "livekit_egress.proto";
+import "livekit_ingress.proto";
+import "livekit_sip.proto";
+import "livekit_room.proto";
+import "logger/options.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/duration.proto";
+
+service IOInfo {
+  // egress
+  rpc CreateEgress(livekit.EgressInfo) returns (google.protobuf.Empty);
+  rpc UpdateEgress(livekit.EgressInfo) returns (google.protobuf.Empty);
+  rpc GetEgress(GetEgressRequest) returns (livekit.EgressInfo);
+  rpc ListEgress(livekit.ListEgressRequest) returns (livekit.ListEgressResponse);
+  rpc UpdateMetrics(UpdateMetricsRequest) returns (google.protobuf.Empty);
+
+  // ingress
+  rpc CreateIngress(livekit.IngressInfo) returns (google.protobuf.Empty);
+  rpc GetIngressInfo(GetIngressInfoRequest) returns (GetIngressInfoResponse);
+  rpc UpdateIngressState(UpdateIngressStateRequest) returns (google.protobuf.Empty);
+
+  // sip
+  rpc GetSIPTrunkAuthentication(GetSIPTrunkAuthenticationRequest) returns (GetSIPTrunkAuthenticationResponse);
+  rpc EvaluateSIPDispatchRules(EvaluateSIPDispatchRulesRequest) returns (EvaluateSIPDispatchRulesResponse);
+  rpc UpdateSIPCallState(UpdateSIPCallStateRequest) returns (google.protobuf.Empty);
+  rpc RecordCallContext(RecordCallContextRequest) returns (google.protobuf.Empty);
+}
+
+message GetEgressRequest {
+  string egress_id = 1;
+}
+
+message UpdateMetricsRequest {
+  livekit.EgressInfo info = 1;
+  float avg_cpu_usage = 3;
+  float max_cpu_usage = 4;
+}
+
+// Query an ingress info from an ingress ID or stream key
+message GetIngressInfoRequest {
+  string ingress_id = 1;
+  string stream_key = 2;
+}
+
+message GetIngressInfoResponse {
+  livekit.IngressInfo info = 1;
+  string token = 2;
+  string ws_url = 3;
+  string project_id = 6;
+  map<string, string> logging_fields = 4;
+  map<string, string> feature_flags = 5;
+}
+
+// Request to store an update to the ingress state ingress -> service
+message UpdateIngressStateRequest {
+  string ingress_id = 1;
+  livekit.IngressState state = 2;
+}
+
+message GetSIPTrunkAuthenticationRequest {
+  string sip_call_id = 6 [deprecated = true];
+
+  // What Number is calling
+  string from = 2 [deprecated = true];
+  // What Host is calling
+  string from_host = 7 [deprecated = true];
+
+  // What Number was called
+  string to = 3 [deprecated = true];
+  // What Host was called
+  string to_host = 5 [deprecated = true];
+
+  // What is the IP address of the called number
+  string src_address = 4 [deprecated = true];
+
+  SIPCall call = 8;
+
+  // NEXT ID: 9
+}
+
+message GetSIPTrunkAuthenticationResponse {
+  // Expected username and password
+  string username = 1 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  string password = 2 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  bool drop = 3;
+  // Trunk used to fulfill this request
+  string sip_trunk_id = 4;
+  // Used in Cloud only
+  string project_id = 5;
+  livekit.ProviderInfo provider_info = 6;
+  // Error code if authentication failed
+  SIPTrunkAuthenticationError error_code = 7;
+
+  // Optional per-project feature flag set
+  map<string, string> feature_flags = 8;
+}
+
+message EvaluateSIPDispatchRulesRequest {
+  string sip_call_id = 8 [deprecated = true];
+  string sip_participant_id = 1 [deprecated = true];
+  // Trunk from the auth response, if any
+  string sip_trunk_id = 10;
+
+  // What Number is calling
+  string calling_number = 2 [deprecated = true];
+
+  // What Host is calling
+  string calling_host = 11 [deprecated = true];
+
+  // What Number was called
+  string called_number = 3 [deprecated = true];
+
+  // What is the IP address of the called number
+  string src_address = 4 [deprecated = true];
+
+  // What pin has been entered if any
+  string pin = 5;
+
+  // Caller rejected pin prompt, only try public rooms
+  bool no_pin = 6;
+
+  // What Host was called
+  string called_host = 7 [deprecated = true];
+
+  // Extra participant attributes added for this call.
+  // Usually include provider-specific metadata.
+  map<string, string> extra_attributes = 9 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+
+  SIPCall call = 12;
+
+  // NEXT ID: 13
+}
+
+message EvaluateSIPDispatchRulesResponse {
+  // non-empty string if SIPParticipant should be placed a room
+  string room_name = 1;
+
+  // What should be used for the LiveKit participant identity
+  string participant_identity = 2;
+  // What should be used for the LiveKit participant name
+  string participant_name = 7 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  // What should be used for the LiveKit participant metadata
+  string participant_metadata = 8 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  // What should be used for the LiveKit participant attributes
+  map<string, string> participant_attributes = 11 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+
+  bool request_pin = 3 [deprecated = true];  // see result
+
+  // optional token that should be used when creating LiveKit participant
+  string token = 4 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+
+  // optional websocket url that should be used when creating LiveKit participant
+  string ws_url = 5;
+
+  SIPDispatchResult result = 6;
+
+  // Trunk used to fulfill this request
+  string sip_trunk_id = 9;
+  // Dispatch Rule used to fulfill this request
+  string sip_dispatch_rule_id = 10;
+
+  // Used in Cloud only
+  string project_id = 12;
+
+  // Include these SIP X-* headers in 200 OK response to INVITE.
+  // These headers are included as-is and may help identify triggered LiveKit Dispatch Rule for the other SIP endpoint.
+  map<string, string> headers = 13 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  // Map SIP X-* headers from INVITE to SIP participant attributes.
+  // Keys are the names of X-* headers and values are the names of attributes they will be mapped to.
+  map<string, string> headers_to_attributes = 14;
+  // Map LiveKit attributes to SIP X-* headers when sending BYE or REFER requests.
+  // Keys are the names of attributes and values are the names of X-* headers they will be mapped to.
+  map<string, string> attributes_to_headers = 18;
+  // Map SIP headers from INVITE to sip.h.* participant attributes automatically.
+  //
+  // When the names of required headers is known, using headers_to_attributes is strongly recommended.
+  //
+  // When mapping INVITE headers to response headers with attributes_to_headers map,
+  // lowercase header names should be used, for example: sip.h.x-custom-header.
+  livekit.SIPHeaderOptions include_headers = 19;
+
+  repeated livekit.SIPFeature enabled_features = 15;
+
+  // Max time for the caller to wait for track subscription.
+  google.protobuf.Duration ringing_timeout = 16;
+  // Max call duration.
+  google.protobuf.Duration max_call_duration = 17;
+
+  // Room preset and config are used only to generate tokens
+  // once tokens are returned by this response consistently, it will no longer
+  // be needed
+  string room_preset = 20;
+  livekit.RoomConfiguration room_config = 21;
+
+  livekit.SIPMediaEncryption media_encryption = 22;
+
+  map<string, string> feature_flags = 23;
+
+  // NEXT ID: 24
+}
+
+message UpdateSIPCallStateRequest {
+  livekit.SIPCallInfo call_info = 1;
+  livekit.SIPTransferInfo transfer_info = 2;
+
+  // NEXT ID: 3
+}
+
+message RecordCallContextRequest {
+  livekit.SIPCallInfo call_info = 1;
+
+  // NEXT ID: 2
+}
+
+enum SIPDispatchResult {
+  LEGACY_ACCEPT_OR_PIN = 0;  // check request_pin field
+  ACCEPT = 1;
+  REQUEST_PIN = 2;
+  REJECT = 3;
+  DROP = 4;
+}
+
+enum SIPTrunkAuthenticationError {
+  SIP_TRUNK_AUTH_ERROR_NONE = 0;
+  SIP_TRUNK_AUTH_ERROR_QUOTA_EXCEEDED = 1;
+  SIP_TRUNK_AUTH_ERROR_NO_TRUNK_FOUND = 2;
+}
+
+message SIPCall {
+  string lk_call_id = 1;
+  string source_ip = 2;             // source ip (without port)
+  livekit.SIPUri address = 3;       // address in the request line (INVITE)
+  livekit.SIPUri from = 4;          // From header
+  livekit.SIPUri to = 5;            // To header
+  repeated livekit.SIPUri via = 6;  // Via headers
+  string sip_call_id = 7;           // SIP protocol generated call ID
+  string project_id = 8;            // LiveKit project ID (Cloud only)
+}

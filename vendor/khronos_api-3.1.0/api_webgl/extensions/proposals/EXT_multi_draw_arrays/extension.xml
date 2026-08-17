@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<proposal href="proposals/EXT_multi_draw_arrays/">
+  <name>EXT_multi_draw_arrays</name>
+
+  <contact> <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL
+  working group</a> (public_webgl 'at' khronos.org) </contact>
+  
+  <contributors>
+    <contributor>Contributors to the EXT_multi_draw_arrays specification</contributor>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+
+  <number>NN</number>
+
+  <depends>
+    <api version="1.0"/>
+  </depends>
+
+  <overview>
+    <mirrors href="https://www.khronos.org/registry/OpenGL/extensions/EXT/EXT_multi_draw_arrays.txt"
+             name="EXT_multi_draw_arrays">
+    </mirrors>
+	
+    <div class="nonnormative">
+      <p>This extension exposes the EXT_multi_draw_arrays functionality to WebGL.</p>
+
+      <p>CAD vendors rendering large models comprised of many individual parts face scalability issues issuing large numbers of draw calls from WebGL. This extension reduces draw call overhead by allowing better batching.</p>
+    </div>
+
+    <features>
+      <feature>The <code>multiDrawArraysEXT</code> and <code>multiDrawElementsEXT</code> entry points are added. These provide a counterpoint to instanced rendering and are more flexible for certain scenarios.</feature>
+
+      <feature>The <code>offset</code> arguments to <code>multiDrawArraysEXT</code> and <code>multiDrawElementsEXT</code> choose the starting offset into their respective typed arrays or sequences. This primarily avoids allocation of temporary typed array views.</feature>
+    </features>
+  </overview>
+
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface EXT_multi_draw_arrays  {
+  void multiDrawArraysEXT(GLenum mode, 
+                          (Int32Array or sequence&lt;GLint&gt;) firstsList, GLuint firstsOffset,
+                          (Int32Array or sequence&lt;GLsizei&gt;) countsList, GLuint countsOffset,
+                          GLsizei drawcount);
+  void multiDrawElementsEXT(GLenum mode,
+                            (Int32Array or sequence&lt;GLint&gt;) countsList, GLuint countsOffset,
+                            GLenum type,
+                            (Int32Array or sequence&lt;GLsizei&gt;) offsetsList, GLuint offsetsOffset,
+                            GLsizei drawcount);
+};
+  </idl>
+
+  <security>
+    The multi-draw APIs are subject to all of the same rules regarding <a href="https://www.khronos.org/registry/webgl/specs/latest/1.0/#4.5">out-of-range array accesses</a> as the core WebGL APIs.
+  </security>
+
+  <ipstatus/>
+
+  <additions/>
+
+  <!-- Additions to the WebGL Specification -->
+
+  <errors/>
+
+  <newstate/>
+
+  <newimplstate/>
+
+  <!-- New Implementation-Dependent State -->
+
+  <samplecode xml:space="preserve">
+
+    <pre>
+var ext = gl.getExtension("EXT_multi_draw_arrays");
+{
+  // multiDrawArrays variant.
+  let firsts = new Int32Array(...);
+  let counts = new Int32Array(...);
+  ext.multiDrawArraysEXT(gl.TRIANGLES, firsts, 0, counts, 0, firsts.length);
+}
+
+{
+  // multiDrawElements variant.
+  // Assumes that the indices which have been previously uploaded to the
+  // ELEMENT_ARRAY_BUFFER are to be treated as UNSIGNED_SHORT.
+  let counts = new Int32Array(...);
+  let offsets = new Int32Array(...);
+  ext.multiDrawElementsEXT(gl.TRIANGLES, counts, 0, gl.UNSIGNED_SHORT, offsets, 0,
+                           counts.length);
+}
+    </pre>
+  </samplecode>
+
+  <tests/>
+
+  <issues/>
+
+  <history>
+    <revision date="2018/09/25">
+      <change>Initial version.</change>
+    </revision>
+  </history>
+</proposal>

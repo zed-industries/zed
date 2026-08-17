@@ -1,0 +1,95 @@
+workspace = { members = ["app", "fuzz"] }
+
+[package]
+name = "moxcms"
+version = "0.8.1"
+edition = "2024"
+description = "Simple Color Management in Rust"
+readme = "./README.md"
+keywords = ["icc", "cms", "color", "cmyk"]
+license = "BSD-3-Clause OR Apache-2.0"
+authors = ["Radzivon Bartoshyk"]
+documentation = "https://github.com/awxkee/moxcms"
+categories = ["multimedia::images"]
+homepage = "https://github.com/awxkee/moxcms"
+repository = "https://github.com/awxkee/moxcms.git"
+exclude = ["*.jpg", "../../assets/*", "*.png", "*.icc", "./assets/*"]
+rust-version = "1.85.0"
+
+[dependencies]
+num-traits = "0.2"
+pxfm = "^0.1.1"
+
+[dev-dependencies]
+rand = "0.10.0"
+
+[features]
+# If no unsafe intrinsics active then `forbid(unsafe)` will be used.
+default = ["avx_shaper_paths", "sse_shaper_paths", "neon_shaper_paths", "avx_shaper_fixed_point_paths", "avx_luts", "sse_shaper_fixed_point_paths", "sse_luts", "neon_shaper_fixed_point_paths", "neon_luts", "lut"]
+
+# Enables AVX-512 acceleration where possible. This will work only from 1.89 on stable.
+avx512 = []
+# Enables optimize matrix shaper AVX512 paths where all TRC are the same.
+avx512_shaper_optimized_paths = ["avx512"]
+# Enables optimize matrix shaper AVX512 fixed point paths.
+avx512_shaper_fixed_point_paths = ["avx512"]
+
+# Enables AVX2 acceleration where possible
+avx = []
+# Enables common matrix shaper AVX paths.
+avx_shaper_paths = ["avx"]
+# Enables optimize matrix shaper AVX paths where all TRC are the same.
+avx_shaper_optimized_paths = ["avx"]
+# Enables optimize matrix shaper AVX fixed point paths.
+avx_shaper_fixed_point_paths = ["avx"]
+# Enables AVX optimized LUT paths. This includes fixes point paths and commons paths.
+avx_luts = ["lut", "avx"]
+
+# Enables SSE4.1 acceleration where possible.
+sse = []
+# Enables common matrix shaper SSE paths.
+sse_shaper_paths = ["sse"]
+# Enables optimize matrix shaper SSE paths where all TRC are the same
+sse_shaper_optimized_paths = ["sse"]
+# Enables optimize matrix shaper SSE fixed point paths.
+sse_shaper_fixed_point_paths = ["sse"]
+# Enables SSE optimized LUT paths. This includes fixes point paths and commons paths.
+sse_luts = ["lut", "sse"]
+
+# Enables NEON intrinsics where possible
+neon = []
+# Enables common matrix shaper NEON paths
+neon_shaper_paths = ["neon"]
+# Enables optimize matrix shaper NEON paths where all TRC are the same.
+neon_shaper_optimized_paths = ["neon"]
+# Enables optimize matrix shaper NEON fixed point paths.
+neon_shaper_fixed_point_paths = ["neon"]
+# Enables NEON optimized LUT paths. This includes fixes point paths and commons paths.
+neon_luts = ["lut", "neon"]
+
+# Allows configuring interpolation methods and LUT weights precision.
+# Disabled by default to prevent binary bloat.
+options = ["lut"]
+# All LUT are gated by this feature. This is basic feature to work with CMYKs profiles.
+lut = []
+# This feature is required for one who wants to work with more than 4 channels ICC profiles, except CMYKA.
+# This is required as for handling unusual 1-2 channels LUTs.
+# Optimizations in this library heavily depends on curves quantizing and fuzing many curves into one using interpolation.
+# That places a requirement that curves in profile should be monothonic and continious, and do not have long
+# degenerations at boundaries. Many CMYK have curves that do not fall under those requiremenent, so if accurate
+# color reproduction is neccessary for broad amount of LUT profiles, this feature is mandatory.
+any_to_any = ["lut"]
+# This allows extended range on `f32`/`f64` to work with HDR/WideGamut if neccessary
+extended_range = []
+# Enables in-place transforms.
+in_place = []
+
+[package.metadata.docs.rs]
+# To build locally:
+# RUSTDOCFLAGS="--cfg docsrs" cargo +nightly doc --all-features --no-deps --open --manifest-path ./Cargo.toml
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[profile.profiling]
+inherits = "release"
+debug = true

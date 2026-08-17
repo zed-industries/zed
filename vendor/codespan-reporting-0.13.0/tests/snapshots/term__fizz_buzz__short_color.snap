@@ -1,0 +1,7 @@
+---
+source: codespan-reporting/tests/term.rs
+expression: TEST_DATA.emit_color(&config)
+---
+FizzBuzz.fun:8:12: {fg:Red bold bright}error[E0308]{bold bright}: `case` clauses have incompatible types{/}
+FizzBuzz.fun:16:16: {fg:Red bold bright}error[E0308]{bold bright}: `case` clauses have incompatible types{/}
+

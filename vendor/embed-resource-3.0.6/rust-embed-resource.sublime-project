@@ -1,0 +1,36 @@
+{
+	"build_systems":
+	[
+		{
+			"working_dir": "$project_path",
+			"shell_cmd": "cargo build --color always && cargo test --color always && cargo run --color always -- empty-resource.rc",
+			"name": "Build rust-embed-resource",
+
+			"target": "ansi_color_build",
+			"syntax": "Packages/ANSIescape/ANSI.sublime-syntax"
+		},
+		{
+			"working_dir": "$project_path",
+			"shell_cmd": "cargo doc --color always",
+			"name": "Document rust-embed-resource",
+
+			"target": "ansi_color_build",
+			"syntax": "Packages/ANSIescape/ANSI.sublime-syntax"
+		}
+	],
+	"folders":
+	[
+		{
+			"follow_symlinks": true,
+			"name": "Source",
+			"path": "src"
+		},
+		{
+			"follow_symlinks": true,
+			"name": "Build scripts",
+			"path": ".",
+			"file_include_patterns": ["Cargo.*", "*.yml", "build.rs", ".github"],
+			"folder_exclude_patterns": [".git", "target", "src"]
+		},
+	]
+}

@@ -1,0 +1,18 @@
+package foo:multiuse;
+
+interface foo {
+  type t1 = u8;
+
+  type t2 = u8;
+}
+
+interface bar {
+  type u = u8;
+}
+
+interface baz {
+  use foo.{t1};
+  use bar.{u};
+  use foo.{t2};
+}
+

@@ -1,0 +1,6 @@
+# Before upgrading check that everything is available on all tier1 targets here:
+# https://rust-lang.github.io/rustup-components-history
+[toolchain]
+channel = "nightly-2024-03-16"
+components = ["rust-src", "rustfmt"]
+targets = ["wasm32-unknown-unknown"]

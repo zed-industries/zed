@@ -1,0 +1,14 @@
+diff --git a/build/config/compiler/BUILD.gn b/build/config/compiler/BUILD.gn
+index 8048ec5e8..4e00f7e53 100644
+--- a/build/config/compiler/BUILD.gn
++++ b/build/config/compiler/BUILD.gn
+@@ -1424,6 +1424,9 @@ config("default_warnings") {
+       # gethostbyname. Fires mostly in non-Chromium code. We probably
+       # want to remove this define eventually.
+       "_WINSOCK_DEPRECATED_NO_WARNINGS",
++
++      "_SILENCE_ALL_CXX17_DEPRECATION_WARNINGS",
++      "_SILENCE_ALL_CXX20_DEPRECATION_WARNINGS",
+     ]
+     if (!is_clang) {
+       # TODO(thakis): Remove this once

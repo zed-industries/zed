@@ -1,0 +1,18 @@
+[package]
+name = "svg_path_ops"
+version = "0.11.0"
+edition = "2021"
+authors = ["orhanbalci@gmail.com <orhanbalci@gmail.com>"]
+description = "SVG Path Manipulation Utilities"
+repository = "https://github.com/orhanbalci/rough-rs.git"
+homepage = "https://github.com/orhanbalci"
+keywords = ["graphics", "bezier", "sketch", "2D", "svg"]
+categories = ["graphics"]
+license = "MIT"
+readme = "README.md"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+svgtypes = "0.11"
+cgmath = "0.18"

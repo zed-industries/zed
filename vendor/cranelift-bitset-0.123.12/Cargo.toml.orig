@@ -1,0 +1,22 @@
+[package]
+authors = ["The Cranelift Project Developers"]
+name = "cranelift-bitset"
+version = "0.123.12"
+description = "Various bitset stuff for use inside Cranelift"
+license = "Apache-2.0 WITH LLVM-exception"
+documentation = "https://docs.rs/cranelift-bitset"
+repository = "https://github.com/bytecodealliance/wasmtime"
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+arbitrary = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+serde_derive = { workspace = true, optional = true }
+
+[features]
+enable-serde = ["dep:serde", "dep:serde_derive"]
+arbitrary = ["dep:arbitrary"]

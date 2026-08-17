@@ -1,0 +1,56 @@
+[package]
+name = "hdrhistogram"
+version = "7.5.4"
+edition = "2018"
+
+description = "A port of HdrHistogram to Rust"
+readme = "README.md"
+
+authors = [
+	"Jon Gjengset <jon@thesquareplanet.com>",
+	"Marshall Pierce <marshall@mpierce.org>",
+]
+
+documentation = "https://docs.rs/hdrhistogram"
+homepage = "https://github.com/HdrHistogram/HdrHistogram_rust"
+repository = "https://github.com/HdrHistogram/HdrHistogram_rust.git"
+
+keywords = ["sampling", "statistics", "analytics"]
+categories = ["data-structures", "development-tools::profiling"]
+
+license = "MIT/Apache-2.0"
+
+[features]
+bench_private = [] # for enabling nightly-only feature(test) on the main crate to allow benchmarking private code
+serialization = [ "flate2", "nom", "base64" ]
+sync = [ "crossbeam-channel" ]
+default = [ "serialization", "sync" ]
+
+[dependencies]
+num-traits = "0.2"
+byteorder = "1.0.0"
+flate2 = { version = "1.0.3", optional = true }
+nom = { version = "7.0.0", optional = true }
+base64 = { version = "0.21", optional = true }
+crossbeam-channel = { version = "0.5", optional = true }
+
+[dev-dependencies]
+rand = { version = "0.8", features = ["small_rng"] }
+ieee754 = "0.2.2"
+clap = { version = "4", features = ["string"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+rug = "1.2"
+
+[lib]
+path = "src/lib.rs"
+
+[profile.release]
+debug=true
+
+[profile.bench]
+debug=true
+
+[[example]]
+name = "cli"
+required-features = ["serialization"]

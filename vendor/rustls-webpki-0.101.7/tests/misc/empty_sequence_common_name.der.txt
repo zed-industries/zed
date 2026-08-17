@@ -1,0 +1,104 @@
+SEQUENCE {
+  SEQUENCE {
+    [0] {
+      INTEGER { 2 }
+    }
+    INTEGER { `7214c2cb574538a4d63af28bb25140821cd3c528` }
+    SEQUENCE {
+      # ecdsa-with-SHA256
+      OBJECT_IDENTIFIER { 1.2.840.10045.4.3.2 }
+    }
+    SEQUENCE {
+      SET {
+        SEQUENCE {
+          # organizationUnitName
+          OBJECT_IDENTIFIER { 2.5.4.11 }
+          PrintableString { "None" }
+        }
+      }
+    }
+    SEQUENCE {
+      UTCTime { "230906172100Z" }
+      UTCTime { "330903172100Z" }
+    }
+    SEQUENCE {}
+    SEQUENCE {
+      SEQUENCE {
+        # ecPublicKey
+        OBJECT_IDENTIFIER { 1.2.840.10045.2.1 }
+        # secp256r1
+        OBJECT_IDENTIFIER { 1.2.840.10045.3.1.7 }
+      }
+      BIT_STRING { `00` `04681e0d5d4e66ff6f0cc3a9f0e1ba6114d647e9dfc2ee23418d56ad58edfb78cfe4ec8dadf856fde5a890799753bcd2a9380896701b7c13e49ec2e097f8ee3421` }
+    }
+    [3] {
+      SEQUENCE {
+        SEQUENCE {
+          # keyUsage
+          OBJECT_IDENTIFIER { 2.5.29.15 }
+          BOOLEAN { TRUE }
+          OCTET_STRING {
+            BIT_STRING { b`101` }
+          }
+        }
+        SEQUENCE {
+          # extKeyUsage
+          OBJECT_IDENTIFIER { 2.5.29.37 }
+          OCTET_STRING {
+            SEQUENCE {
+              # serverAuth
+              OBJECT_IDENTIFIER { 1.3.6.1.5.5.7.3.1 }
+              # clientAuth
+              OBJECT_IDENTIFIER { 1.3.6.1.5.5.7.3.2 }
+            }
+          }
+        }
+        SEQUENCE {
+          # basicConstraints
+          OBJECT_IDENTIFIER { 2.5.29.19 }
+          BOOLEAN { TRUE }
+          OCTET_STRING {
+            SEQUENCE {}
+          }
+        }
+        SEQUENCE {
+          # subjectKeyIdentifier
+          OBJECT_IDENTIFIER { 2.5.29.14 }
+          OCTET_STRING {
+            OCTET_STRING { `8f8c61be7ce4c34689e2618034581e34ef88b24c` }
+          }
+        }
+        SEQUENCE {
+          # authorityKeyIdentifier
+          OBJECT_IDENTIFIER { 2.5.29.35 }
+          OCTET_STRING {
+            SEQUENCE {
+              [0 PRIMITIVE] { `c9a3daf11d035f6eab28e2ea195c677568b0adea` }
+            }
+          }
+        }
+        SEQUENCE {
+          # subjectAltName
+          OBJECT_IDENTIFIER { 2.5.29.17 }
+          BOOLEAN { TRUE }
+          OCTET_STRING {
+            SEQUENCE {
+              [2 PRIMITIVE] { "example.com" }
+            }
+          }
+        }
+      }
+    }
+  }
+  SEQUENCE {
+    # ecdsa-with-SHA256
+    OBJECT_IDENTIFIER { 1.2.840.10045.4.3.2 }
+  }
+  BIT_STRING {
+    `00`
+    SEQUENCE {
+      INTEGER { `00f1891fc58e16c37752bf64d58999f703c8d458b1d22d8291292ce2ad87042990` }
+      INTEGER { `00a6f16e39c83ba001f7f6aae73aaad0aea46d596800746887fe4567a4ffe88f9b` }
+    }
+  }
+}

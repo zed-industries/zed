@@ -1,0 +1,7 @@
+cache-dir = "/path/to/cache/directory"
+
+[virtualenvs]
+in-project = true              # Some comments
+create = false                 # Some comments
+path = "some/path/virtualenvs" # Some comments
+    

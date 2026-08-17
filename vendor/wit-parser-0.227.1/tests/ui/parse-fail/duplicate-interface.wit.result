@@ -1,0 +1,5 @@
+duplicate item named `foo`
+     --> tests/ui/parse-fail/duplicate-interface.wit:6:11
+      |
+    6 | interface foo {}
+      |           ^--

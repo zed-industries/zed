@@ -1,0 +1,19 @@
+[package]
+name = "markup5ever"
+description = "Common code for xml5ever and html5ever"
+documentation = "https://docs.rs/markup5ever"
+categories = [ "parser-implementations", "web-programming" ]
+version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+web_atoms = { workspace = true }
+tendril = { workspace = true }
+log = { workspace = true }

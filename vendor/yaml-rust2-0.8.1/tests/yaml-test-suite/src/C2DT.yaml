@@ -1,0 +1,33 @@
+---
+- name: Spec Example 7.18. Flow Mapping Adjacent Values
+  from: http://www.yaml.org/spec/1.2/spec.html#id2792073
+  tags: spec flow mapping
+  yaml: |
+    {
+    "adjacent":value,
+    "readable": value,
+    "empty":
+    }
+  tree: |
+    +STR
+     +DOC
+      +MAP {}
+       =VAL "adjacent
+       =VAL :value
+       =VAL "readable
+       =VAL :value
+       =VAL "empty
+       =VAL :
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "adjacent": "value",
+      "readable": "value",
+      "empty": null
+    }
+  dump: |
+    "adjacent": value
+    "readable": value
+    "empty":

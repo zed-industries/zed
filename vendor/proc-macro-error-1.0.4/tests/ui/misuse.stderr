@@ -1,0 +1,13 @@
+error[E0599]: no method named `FIRST_ARG_MUST_EITHER_BE_Span_OR_IMPLEMENT_ToTokens_OR_BE_SpanRange` found for reference `&Foo` in the current scope
+ --> $DIR/misuse.rs:8:5
+  |
+4 | struct Foo;
+  | ----------- doesn't satisfy `Foo: quote::to_tokens::ToTokens`
+...
+8 |     abort!(Foo, "BOOM");
+  |     ^^^^^^^^^^^^^^^^^^^^ method not found in `&Foo`
+  |
+  = note: the method `FIRST_ARG_MUST_EITHER_BE_Span_OR_IMPLEMENT_ToTokens_OR_BE_SpanRange` exists but the following trait bounds were not satisfied:
+          `Foo: quote::to_tokens::ToTokens`
+          which is required by `&Foo: proc_macro_error::__export::ToTokensAsSpanRange`
+  = note: this error originates in a macro (in Nightly builds, run with -Z macro-backtrace for more info)

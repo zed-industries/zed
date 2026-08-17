@@ -1,0 +1,83 @@
+error: expected parameters in parentheses
+ --> tests/integration/ui/compile_fail/attr_top_level_start_finish_fn.rs:4:19
+  |
+4 | #[builder(start_fn())]
+  |                   ^^
+
+error: expected parameters in parentheses
+ --> tests/integration/ui/compile_fail/attr_top_level_start_finish_fn.rs:8:20
+  |
+8 | #[builder(finish_fn())]
+  |                    ^^
+
+error: this empty `start_fn` attribute is unexpected; remove it or pass parameters in parentheses: `start_fn(...)`
+  --> tests/integration/ui/compile_fail/attr_top_level_start_finish_fn.rs:12:11
+   |
+12 | #[builder(start_fn)]
+   |           ^^^^^^^^
+
+error: this empty `start_fn` attribute is unexpected; remove it or pass parameters in parentheses: `start_fn(...)`
+  --> tests/integration/ui/compile_fail/attr_top_level_start_finish_fn.rs:15:11
+   |
+15 | #[builder(start_fn)]
+   |           ^^^^^^^^
+
+error: expected parameters in parentheses
+  --> tests/integration/ui/compile_fail/attr_top_level_start_finish_fn.rs:18:19
+   |
+18 | #[builder(start_fn())]
+   |                   ^^
+
+error: #[builder(start_fn(vis))] requires that you also specify #[builder(start_fn(name))] which makes the starting function not to replace the positional function under the #[builder] attribute; by default (without the explicit #[builder(start_fn(name))]) the name, visibility and documentation of the positional function are all copied to the starting function, and the positional function under the #[builder] attribute becomes private with #[doc(hidden)] and it's renamed (the name is not guaranteed to be stable) to make it inaccessible even within the current module
+  --> tests/integration/ui/compile_fail/attr_top_level_start_finish_fn.rs:21:20
+   |
+21 | #[builder(start_fn(vis = ""))]
+   |                    ^^^
+
+error: #[builder(start_fn(doc))] requires that you also specify #[builder(start_fn(name))] which makes the starting function not to replace the positional function under the #[builder] attribute; by default (without the explicit #[builder(start_fn(name))]) the name, visibility and documentation of the positional function are all copied to the starting function, and the positional function under the #[builder] attribute becomes private with #[doc(hidden)] and it's renamed (the name is not guaranteed to be stable) to make it inaccessible even within the current module
+  --> tests/integration/ui/compile_fail/attr_top_level_start_finish_fn.rs:24:20
+   |
+24 | #[builder(start_fn(doc {}))]
+   |                    ^^^
+
+error: this empty `start_fn` attribute is unexpected; remove it or pass parameters in parentheses: `start_fn(...)`
+  --> tests/integration/ui/compile_fail/attr_top_level_start_finish_fn.rs:34:15
+   |
+34 |     #[builder(start_fn)]
+   |               ^^^^^^^^
+
+error: expected parameters in parentheses
+  --> tests/integration/ui/compile_fail/attr_top_level_start_finish_fn.rs:40:23
+   |
+40 |     #[builder(start_fn())]
+   |                       ^^
+
+error: #[builder(start_fn(vis))] requires that you also specify #[builder(start_fn(name))] which makes the starting function not to replace the positional function under the #[builder] attribute; by default (without the explicit #[builder(start_fn(name))]) the name, visibility and documentation of the positional function are all copied to the starting function, and the positional function under the #[builder] attribute becomes private with #[doc(hidden)] and it's renamed (the name is not guaranteed to be stable) to make it inaccessible even within the current module
+  --> tests/integration/ui/compile_fail/attr_top_level_start_finish_fn.rs:46:24
+   |
+46 |     #[builder(start_fn(vis = ""))]
+   |                        ^^^
+
+error: #[builder(start_fn(doc))] requires that you also specify #[builder(start_fn(name))] which makes the starting function not to replace the positional function under the #[builder] attribute; by default (without the explicit #[builder(start_fn(name))]) the name, visibility and documentation of the positional function are all copied to the starting function, and the positional function under the #[builder] attribute becomes private with #[doc(hidden)] and it's renamed (the name is not guaranteed to be stable) to make it inaccessible even within the current module
+  --> tests/integration/ui/compile_fail/attr_top_level_start_finish_fn.rs:52:24
+   |
+52 |     #[builder(start_fn(doc {}))]
+   |                        ^^^
+
+error: this empty `start_fn` attribute is unexpected; remove it or pass parameters in parentheses: `start_fn(...)`
+  --> tests/integration/ui/compile_fail/attr_top_level_start_finish_fn.rs:58:15
+   |
+58 |     #[builder(start_fn)]
+   |               ^^^^^^^^
+
+error: #[builder(start_fn(vis))] requires that you also specify #[builder(start_fn(name))] which makes the starting function not to replace the positional function under the #[builder] attribute; by default (without the explicit #[builder(start_fn(name))]) the name, visibility and documentation of the positional function are all copied to the starting function, and the positional function under the #[builder] attribute becomes private with #[doc(hidden)] and it's renamed (the name is not guaranteed to be stable) to make it inaccessible even within the current module
+  --> tests/integration/ui/compile_fail/attr_top_level_start_finish_fn.rs:64:24
+   |
+64 |     #[builder(start_fn(vis = ""))]
+   |                        ^^^
+
+error: #[builder(start_fn(doc))] requires that you also specify #[builder(start_fn(name))] which makes the starting function not to replace the positional function under the #[builder] attribute; by default (without the explicit #[builder(start_fn(name))]) the name, visibility and documentation of the positional function are all copied to the starting function, and the positional function under the #[builder] attribute becomes private with #[doc(hidden)] and it's renamed (the name is not guaranteed to be stable) to make it inaccessible even within the current module
+  --> tests/integration/ui/compile_fail/attr_top_level_start_finish_fn.rs:70:24
+   |
+70 |     #[builder(start_fn(doc {}))]
+   |                        ^^^

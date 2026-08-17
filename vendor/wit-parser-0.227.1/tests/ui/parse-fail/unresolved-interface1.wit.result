@@ -1,0 +1,5 @@
+name `foo` is defined as a world, not an interface
+     --> tests/ui/parse-fail/unresolved-interface1.wit:6:10
+      |
+    6 |   import foo;
+      |          ^--

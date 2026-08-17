@@ -1,0 +1,569 @@
+;; Prelude definitions specific to the mid-end.
+
+;; Any `extern` definitions here are generally implemented in `src/opts.rs`.
+
+;;;;; eclass and enode access ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Extract any node(s) for the given eclass ID.
+(decl multi inst_data_value (Type InstructionData) Value)
+(extern extractor inst_data_value inst_data_value_etor)
+
+;; An extractor from an `Inst` to its `InstructionData`.
+(decl inst_data (InstructionData) Inst)
+(extern extractor inst_data inst_data_etor)
+
+;; Identical to `inst_data_value`, just with a different ISLE type.  This is
+;; basically a manual version of `curry`/`uncurry` in Haskell: to compose
+;; extractors the outer one needs to be single-parameter, so this combines the
+;; two parameters of `inst_data_value` into one.
+(type TypeAndInstructionData (primitive TypeAndInstructionData))
+(decl multi inst_data_value_tupled (TypeAndInstructionData) Value)
+(extern extractor inst_data_value_tupled inst_data_value_tupled_etor)
+
+;; Construct a pure node, returning a new (or deduplicated
+;; already-existing) eclass ID.
+(decl make_inst (Type InstructionData) Value)
+(extern constructor make_inst make_inst_ctor)
+
+;; Make a new side-effectful instruction, do not insert it into the layout, and
+;; return its `Inst`.
+(decl make_skeleton_inst (InstructionData) Inst)
+(extern constructor make_skeleton_inst make_skeleton_inst_ctor)
+
+;; Constructors for value arrays.
+(decl value_array_2_ctor (Value Value) ValueArray2)
+(extern constructor value_array_2_ctor value_array_2_ctor)
+(decl value_array_3_ctor (Value Value Value) ValueArray3)
+(extern constructor value_array_3_ctor value_array_3_ctor)
+
+(rule (eq ty x y) (icmp ty (IntCC.Equal) x y))
+(rule (ne ty x y) (icmp ty (IntCC.NotEqual) x y))
+(rule (ult ty x y) (icmp ty (IntCC.UnsignedLessThan) x y))
+(rule (ule ty x y) (icmp ty (IntCC.UnsignedLessThanOrEqual) x y))
+(rule (ugt ty x y) (icmp ty (IntCC.UnsignedGreaterThan) x y))
+(rule (uge ty x y) (icmp ty (IntCC.UnsignedGreaterThanOrEqual) x y))
+(rule (slt ty x y) (icmp ty (IntCC.SignedLessThan) x y))
+(rule (sle ty x y) (icmp ty (IntCC.SignedLessThanOrEqual) x y))
+(rule (sgt ty x y) (icmp ty (IntCC.SignedGreaterThan) x y))
+(rule (sge ty x y) (icmp ty (IntCC.SignedGreaterThanOrEqual) x y))
+
+;; 3-way comparison, returning -1/0/+1 in I8
+(decl spaceship_s (Type Value Value) Value)
+(rule (spaceship_s ty x y) (isub $I8 (sgt ty x y) (slt ty x y)))
+(extractor (spaceship_s ty x y) (isub $I8 (sgt ty x y) (slt ty x y)))
+(decl spaceship_u (Type Value Value) Value)
+(rule (spaceship_u ty x y) (isub $I8 (ugt ty x y) (ult ty x y)))
+(extractor (spaceship_u ty x y) (isub $I8 (ugt ty x y) (ult ty x y)))
+
+;;;;; optimization toplevel ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; The main matcher rule invoked by the toplevel driver.
+(decl multi simplify (Value) Value)
+
+;; The kind of simplification to perform on a skeleton instruction.
+(type SkeletonInstSimplification
+      (enum
+        ;; Remove the instruction being simplified from the skeleton, it is
+        ;; unnecessary.
+        ;;
+        ;; The instruction must not define any results.
+        (Remove)
+
+        ;; Remove the instruction being simplified from the skeleton, and
+        ;; replace its result value with the given `val`.
+        (RemoveWithVal (val Value))
+
+        ;; Replace the instruction being simplified with the given instruction.
+        ;;
+        ;; The given instruction must not already be in a block and must define
+        ;; the same number and types of results as the old instruction that it
+        ;; is replacing.
+        (Replace (inst Inst))
+
+        ;; Like `Replace` but replace the old instruction's result value with
+        ;; the given `val`.
+        ;;
+        ;; The old instruction must define a single result value and `val` must
+        ;; match its type. The new instruction need not define the same number
+        ;; or types of results as the old instruction.
+        (ReplaceWithVal (inst Inst) (val Value))))
+
+(decl pure inst_to_skeleton_inst_simplification (Inst) SkeletonInstSimplification)
+(rule (inst_to_skeleton_inst_simplification inst)
+      (SkeletonInstSimplification.Replace inst))
+
+(decl pure value_to_skeleton_inst_simplification (Value) SkeletonInstSimplification)
+(rule (value_to_skeleton_inst_simplification val)
+      (SkeletonInstSimplification.RemoveWithVal val))
+
+(decl pure remove_inst () SkeletonInstSimplification)
+(rule (remove_inst) (SkeletonInstSimplification.Remove))
+
+(decl pure replace_with_val (Inst Value) SkeletonInstSimplification)
+(rule (replace_with_val inst val) (SkeletonInstSimplification.ReplaceWithVal inst val))
+
+(convert Inst SkeletonInstSimplification inst_to_skeleton_inst_simplification)
+(convert Value SkeletonInstSimplification value_to_skeleton_inst_simplification)
+
+;; The main term for simplifying side-effectful instructions, invoked by the
+;; egraph driver.
+(decl multi simplify_skeleton (Inst) SkeletonInstSimplification)
+
+;; Mark a node as requiring remat when used in a different block.
+(decl remat (Value) Value)
+(extern constructor remat remat)
+
+;; Mark a node as subsuming whatever else it's rewritten from -- this
+;; is definitely preferable, not just a possible option. Useful for,
+;; e.g., constant propagation where we arrive at a definite "final
+;; answer".
+(decl subsume (Value) Value)
+(extern constructor subsume subsume)
+
+;;;;; constructors ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(decl iconst_sextend_etor (Type i64) TypeAndInstructionData)
+(extern extractor iconst_sextend_etor iconst_sextend_etor)
+
+;; Construct an `iconst` from an `i64` or Extract an `i64` from an `iconst`
+;; by treating the constant as signed.
+;; When extracting, smaller types get their value sign-extended to 64-bits,
+;; so that `iconst.i8 255` will give you a `-1_i64`.
+;; When constructing, the rule will fail if the value cannot be represented in
+;; the target type.  If it fits, it'll be masked accordingly in the constant.
+(decl iconst_s (Type i64) Value)
+(extractor (iconst_s ty c) (inst_data_value_tupled (iconst_sextend_etor ty c)))
+(rule 0 (iconst_s ty c)
+    (if-let c_masked (u64_and (i64_cast_unsigned c)
+                              (ty_umax ty)))
+    (if-let c_reextended (i64_sextend_u64 ty c_masked))
+    (if-let true (i64_eq c c_reextended))
+    (iconst ty (imm64 c_masked)))
+(rule 1 (iconst_s $I128 c) (sextend $I128 (iconst_s $I64 c)))
+
+;; Construct an `iconst` from a `u64` or Extract a `u64` from an `iconst`
+;; by treating the constant as unsigned.
+;; When extracting, smaller types get their value zero-extended to 64-bits,
+;; so that `iconst.i8 255` will give you a `255_u64`.
+;; When constructing, the rule will fail if the value cannot be represented in
+;; the target type.
+(decl iconst_u (Type u64) Value)
+(extractor (iconst_u ty c) (iconst ty (u64_from_imm64 c)))
+(rule 0 (iconst_u ty c)
+    (if-let true (u64_lt_eq c (ty_umax ty)))
+    (iconst ty (imm64 c)))
+(rule 1 (iconst_u $I128 c) (uextend $I128 (iconst_u $I64 c)))
+
+;; These take `Value`, rather than going through `inst_data_value_tupled`,
+;; because most of the time they want to return the original `Value`, and it
+;; would be a waste to need to re-GVN the instruction data in those cases.
+(decl multi sextend_maybe_etor (Type Value) Value)
+(extern extractor infallible sextend_maybe_etor sextend_maybe_etor)
+(decl multi uextend_maybe_etor (Type Value) Value)
+(extern extractor infallible uextend_maybe_etor uextend_maybe_etor)
+
+;; Match or Construct a possibly-`uextend`ed value.
+;; Gives the extended-to type and inner value when matching something that was
+;; extended, or the input value and its type when the value isn't an extension.
+;; Useful to write a single pattern that can match things that may or may not
+;; have undergone C's "usual arithmetic conversions".
+;; When generating values, extending to the same type is invalid CLIF,
+;; so this avoids doing that where there's no extension actually needed.
+(decl uextend_maybe (Type Value) Value)
+(extractor (uextend_maybe ty val) (uextend_maybe_etor ty val))
+(rule 0 (uextend_maybe ty val) (uextend ty val))
+(rule 1 (uextend_maybe ty val@(value_type ty)) val)
+
+;; Same as `uextend_maybe` above, just for `sextend`.
+(decl sextend_maybe (Type Value) Value)
+(extractor (sextend_maybe ty val) (sextend_maybe_etor ty val))
+(rule 0 (sextend_maybe ty val) (sextend ty val))
+(rule 1 (sextend_maybe ty val@(value_type ty)) val)
+
+;;;;;; Helper CLIF Extractors ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(decl eq (Type Value Value) Value)
+(extractor (eq ty x y) (icmp ty (IntCC.Equal) x y))
+
+(decl ne (Type Value Value) Value)
+(extractor (ne ty x y) (icmp ty (IntCC.NotEqual) x y))
+
+(decl ult (Type Value Value) Value)
+(extractor (ult ty x y) (icmp ty (IntCC.UnsignedLessThan) x y))
+
+(decl ule (Type Value Value) Value)
+(extractor (ule ty x y) (icmp ty (IntCC.UnsignedLessThanOrEqual) x y))
+
+(decl ugt (Type Value Value) Value)
+(extractor (ugt ty x y) (icmp ty (IntCC.UnsignedGreaterThan) x y))
+
+(decl uge (Type Value Value) Value)
+(extractor (uge ty x y) (icmp ty (IntCC.UnsignedGreaterThanOrEqual) x y))
+
+(decl slt (Type Value Value) Value)
+(extractor (slt ty x y) (icmp ty (IntCC.SignedLessThan) x y))
+
+(decl sle (Type Value Value) Value)
+(extractor (sle ty x y) (icmp ty (IntCC.SignedLessThanOrEqual) x y))
+
+(decl sgt (Type Value Value) Value)
+(extractor (sgt ty x y) (icmp ty (IntCC.SignedGreaterThan) x y))
+
+(decl sge (Type Value Value) Value)
+(extractor (sge ty x y) (icmp ty (IntCC.SignedGreaterThanOrEqual) x y))
+
+;;;;;; Divison-By-Constant Helpers ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(decl pure i64_is_negative_power_of_two (i64) bool)
+(rule (i64_is_negative_power_of_two x)
+      (u64_is_power_of_two (i64_cast_unsigned (i64_wrapping_neg x))))
+
+(decl pure i64_is_any_sign_power_of_two (i64) bool)
+(rule 2 (i64_is_any_sign_power_of_two x)
+      (if-let true (u64_is_power_of_two (i64_cast_unsigned x)))
+      true)
+(rule 1 (i64_is_any_sign_power_of_two x)
+      (if-let true (i64_is_negative_power_of_two x))
+      true)
+(rule 0 (i64_is_any_sign_power_of_two _) false)
+
+(type DivConstMagicU32 (enum (U32 (mul_by u32)
+                                  (do_add bool)
+                                  (shift_by u32))))
+(type DivConstMagicU64 (enum (U64 (mul_by u64)
+                                  (do_add bool)
+                                  (shift_by u32))))
+(type DivConstMagicS32 (enum (S32 (mul_by i32)
+                                  (shift_by u32))))
+(type DivConstMagicS64 (enum (S64 (mul_by i64)
+                                  (shift_by u32))))
+
+;; Extern magic-const constructors and accessors.
+
+(decl div_const_magic_u32 (u32) DivConstMagicU32)
+(extern constructor div_const_magic_u32 div_const_magic_u32)
+
+(decl div_const_magic_u64 (u64) DivConstMagicU64)
+(extern constructor div_const_magic_u64 div_const_magic_u64)
+
+(decl div_const_magic_s32 (i32) DivConstMagicS32)
+(extern constructor div_const_magic_s32 div_const_magic_s32)
+
+(decl div_const_magic_s64 (i64) DivConstMagicS64)
+(extern constructor div_const_magic_s64 div_const_magic_s64)
+
+;; Applying div-const magic for u32.
+(decl apply_div_const_magic_u32 (Opcode Value u32) Value)
+(rule (apply_div_const_magic_u32 opcode numerator divisor)
+      (apply_div_const_magic_u32_inner opcode numerator divisor (div_const_magic_u32 divisor)))
+
+;; q0 = umuli numerator, mul_by
+(decl apply_div_const_magic_u32_inner (Opcode Value u32 DivConstMagicU32) Value)
+(rule (apply_div_const_magic_u32_inner opcode
+                                       numerator
+                                       divisor
+                                       magic @ (DivConstMagicU32.U32 mul_by _do_add _shift_by))
+      (let ((q0 Value (umulhi $I32 numerator (iconst_u $I32 mul_by))))
+        (apply_div_const_magic_u32_maybe_add opcode numerator divisor magic q0)))
+
+;; qf = if do_add {
+;;     q1 = isub numerator, q0
+;;     q2 = ushr q1, 1
+;;     q3 = iadd q0, q2
+;;     maybe_shift(q3)
+;; } else {
+;;     ushr q0, shift_by
+;; };
+(decl apply_div_const_magic_u32_maybe_add (Opcode Value u32 DivConstMagicU32 Value) Value)
+(rule (apply_div_const_magic_u32_maybe_add opcode
+                                           numerator
+                                           divisor
+                                           magic @ (DivConstMagicU32.U32 _mul_by true _shift_by)
+                                           q0)
+      (let ((q1 Value (isub $I32 numerator q0))
+            (q2 Value (ushr $I32 q1 (iconst_u $I32 1)))
+            (q3 Value (iadd $I32 q0 q2)))
+        (apply_div_const_magic_u32_maybe_shift opcode numerator divisor magic q3)))
+(rule (apply_div_const_magic_u32_maybe_add opcode
+                                           numerator
+                                           divisor
+                                           magic @ (DivConstMagicU32.U32 _mul_by false shift_by)
+                                           q0)
+      (let ((q3 Value (ushr $I32 q0 (iconst_u $I32 shift_by))))
+        (apply_div_const_magic_u32_finish opcode numerator divisor q3)))
+
+;; qf = if shift_by == 0 {
+;;     q3
+;; } else {
+;;     ushr q3, shift_by - 1
+;; };
+(decl apply_div_const_magic_u32_maybe_shift (Opcode Value u32 DivConstMagicU32 Value) Value)
+(rule 2 (apply_div_const_magic_u32_maybe_shift opcode
+                                                          numerator
+                                                          divisor
+                                                          (DivConstMagicU32.U32 _mul_by _do_add 0)
+                                                          q3)
+      (apply_div_const_magic_u32_finish opcode numerator divisor q3))
+(rule 1 (apply_div_const_magic_u32_maybe_shift opcode
+                                               numerator
+                                               divisor
+                                               (DivConstMagicU32.U32 _mul_by
+                                                                     _do_add
+                                                                     (u32_extract_non_zero shift_by))
+                                               q3)
+      (let ((qf Value (ushr $I32 q3 (iconst_u $I32 (u32_sub shift_by 1)))))
+        (apply_div_const_magic_u32_finish opcode numerator divisor qf)))
+
+;; Now `qf` holds the final quotient. If necessary calculate the remainder
+;; instead.
+;;
+;; if Opcode == Urem {
+;;     tt = imul qf, divisor
+;;     isub numerator, tt
+;; } else {
+;;     qf
+;; }
+(decl apply_div_const_magic_u32_finish (Opcode Value u32 Value) Value)
+(rule (apply_div_const_magic_u32_finish (Opcode.Udiv) _ _ qf) qf)
+(rule (apply_div_const_magic_u32_finish (Opcode.Urem) numerator divisor qf)
+      (let ((tt Value (imul $I32 qf (iconst_u $I32 divisor))))
+        (isub $I32 numerator tt)))
+
+;; Applying div-const magic for u64.
+(decl apply_div_const_magic_u64 (Opcode Value u64) Value)
+(rule (apply_div_const_magic_u64 opcode numerator divisor)
+      (apply_div_const_magic_u64_inner opcode numerator divisor (div_const_magic_u64 divisor)))
+
+;; q0 = umuli numerator, mul_by
+(decl apply_div_const_magic_u64_inner (Opcode Value u64 DivConstMagicU64) Value)
+(rule (apply_div_const_magic_u64_inner opcode
+                                       numerator
+                                       divisor
+                                       magic @ (DivConstMagicU64.U64 mul_by _do_add _shift_by))
+      (let ((q0 Value (umulhi $I64 numerator (iconst_u $I64 mul_by))))
+        (apply_div_const_magic_u64_maybe_add opcode numerator divisor magic q0)))
+
+;; qf = if do_add {
+;;     q1 = isub numerator, q0
+;;     q2 = ushr q1, 1
+;;     q3 = iadd q0, q2
+;;     maybe_shift(q3)
+;; } else {
+;;     ushr q0, shift_by
+;; };
+(decl apply_div_const_magic_u64_maybe_add (Opcode Value u64 DivConstMagicU64 Value) Value)
+(rule (apply_div_const_magic_u64_maybe_add opcode
+                                           numerator
+                                           divisor
+                                           magic @ (DivConstMagicU64.U64 _mul_by true _shift_by)
+                                           q0)
+      (let ((q1 Value (isub $I64 numerator q0))
+            (q2 Value (ushr $I64 q1 (iconst_u $I64 1)))
+            (q3 Value (iadd $I64 q0 q2)))
+        (apply_div_const_magic_u64_maybe_shift opcode numerator divisor magic q3)))
+(rule (apply_div_const_magic_u64_maybe_add opcode
+                                           numerator
+                                           divisor
+                                           magic @ (DivConstMagicU64.U64 _mul_by false shift_by)
+                                           q0)
+      (let ((q3 Value (ushr $I64 q0 (iconst_u $I64 shift_by))))
+        (apply_div_const_magic_u64_finish opcode numerator divisor q3)))
+
+;; qf = if shift_by == 0 {
+;;     q3
+;; } else {
+;;     ushr q3, shift_by - 1
+;; };
+(decl apply_div_const_magic_u64_maybe_shift (Opcode Value u64 DivConstMagicU64 Value) Value)
+(rule 2 (apply_div_const_magic_u64_maybe_shift opcode
+                                                          numerator
+                                                          divisor
+                                                          (DivConstMagicU64.U64 _mul_by _do_add 0)
+                                                          q3)
+      (apply_div_const_magic_u64_finish opcode numerator divisor q3))
+(rule 1 (apply_div_const_magic_u64_maybe_shift opcode
+                                               numerator
+                                               divisor
+                                               (DivConstMagicU64.U64 _mul_by
+                                                                     _do_add
+                                                                     (u32_extract_non_zero shift_by))
+                                               q3)
+      (let ((qf Value (ushr $I64 q3 (iconst_u $I64 (u64_sub shift_by 1)))))
+        (apply_div_const_magic_u64_finish opcode numerator divisor qf)))
+
+;; Now `qf` holds the final quotient. If necessary calculate the remainder
+;; instead.
+;;
+;; if Opcode == Urem {
+;;     tt = imul qf, divisor
+;;     isub numerator, tt
+;; } else {
+;;     qf
+;; }
+(decl apply_div_const_magic_u64_finish (Opcode Value u64 Value) Value)
+(rule (apply_div_const_magic_u64_finish (Opcode.Udiv) _ _ qf) qf)
+(rule (apply_div_const_magic_u64_finish (Opcode.Urem) numerator divisor qf)
+      (let ((tt Value (imul $I64 qf (iconst_u $I64 divisor))))
+        (isub $I64 numerator tt)))
+
+;; Applying div-const magic for s32.
+
+(decl apply_div_const_magic_s32 (Opcode Value i32) Value)
+(rule (apply_div_const_magic_s32 opcode numerator divisor)
+      (apply_div_const_magic_s32_inner opcode numerator divisor (div_const_magic_s32 divisor)))
+
+;; q0 = iconst.i32 mul_by
+;; q1 = smulhi numerator, q0
+(decl apply_div_const_magic_s32_inner (Opcode Value i32 DivConstMagicS32) Value)
+(rule (apply_div_const_magic_s32_inner opcode
+                                       numerator
+                                       divisor
+                                       magic @ (DivConstMagicS32.S32 mul_by _shift_by))
+      (let ((q0 Value (iconst_s $I32 mul_by))
+            (q1 Value (smulhi $I32 numerator q0)))
+        (apply_div_const_magic_s32_add_sub opcode numerator divisor magic q1)))
+
+;; q2 = if divisor > 0 && mul_by < 0 {
+;;     iadd q1, numerator
+;; } else if divisor < 0 && mul_by > 0 {
+;;     isub q1, numerator
+;; } else {
+;;     q1
+;; };
+(decl apply_div_const_magic_s32_add_sub (Opcode Value i32 DivConstMagicS32 Value) Value)
+(rule 2 (apply_div_const_magic_s32_add_sub opcode
+                                           numerator
+                                           divisor
+                                           magic @ (DivConstMagicS32.S32 mul_by _shift_by)
+                                           q1)
+      (if-let true (i32_gt divisor 0))
+      (if-let true (i32_lt mul_by 0))
+      (let ((q2 Value (iadd $I32 q1 numerator)))
+        (apply_div_const_magic_s32_shift opcode numerator divisor magic q2)))
+(rule 1 (apply_div_const_magic_s32_add_sub opcode
+                                           numerator
+                                           divisor
+                                           magic @ (DivConstMagicS32.S32 mul_by _shift_by)
+                                           q1)
+      (if-let true (i32_lt divisor 0))
+      (if-let true (i32_gt mul_by 0))
+      (let ((q2 Value (isub $I32 q1 numerator)))
+        (apply_div_const_magic_s32_shift opcode numerator divisor magic q2)))
+(rule 0 (apply_div_const_magic_s32_add_sub opcode
+                                           numerator
+                                           divisor
+                                           magic
+                                           q1)
+      (apply_div_const_magic_s32_shift opcode numerator divisor magic q1))
+
+;; q3 = sshr q2, shift_by
+;; t1 = ushr q3, 31
+;; qf = iadd q3, t1
+(decl apply_div_const_magic_s32_shift (Opcode Value i32 DivConstMagicS32 Value) Value)
+(rule (apply_div_const_magic_s32_shift opcode
+                                       numerator
+                                       divisor
+                                       magic @ (DivConstMagicS32.S32 _mul_by shift_by)
+                                       q2)
+      ;; Note: let other rules clean up `q2` when `shift_by == 0`.
+      (let ((q3 Value (sshr $I32 q2 (iconst_s $I32 shift_by)))
+            (t1 Value (ushr $I32 q3 (iconst_s $I32 31)))
+            (qf Value (iadd $I32 q3 t1)))
+        (apply_div_const_magic_s32_finish opcode numerator divisor qf)))
+
+;; Now `qf` holds the final quotient. If necessary, produce the remainder
+;; instead.
+;;
+;; if Opcode == Srem {
+;;     tt = imul qf, divisor
+;;     isub numerator, tt
+;; } else {
+;;     qf
+;; }
+(decl apply_div_const_magic_s32_finish (Opcode Value i32 Value) Value)
+(rule (apply_div_const_magic_s32_finish (Opcode.Srem) numerator divisor qf)
+      (let ((tt Value (imul $I32 qf (iconst_s $I32 divisor))))
+        (isub $I32 numerator tt)))
+(rule (apply_div_const_magic_s32_finish (Opcode.Sdiv) _numerator _divisor qf)
+      qf)
+
+;; Applying div-const magic for s64.
+
+(decl apply_div_const_magic_s64 (Opcode Value i64) Value)
+(rule (apply_div_const_magic_s64 opcode numerator divisor)
+      (apply_div_const_magic_s64_inner opcode numerator divisor (div_const_magic_s64 divisor)))
+
+;; q0 = iconst.i64 mul_by
+;; q1 = smulhi numerator, q0
+(decl apply_div_const_magic_s64_inner (Opcode Value i64 DivConstMagicS64) Value)
+(rule (apply_div_const_magic_s64_inner opcode
+                                       numerator
+                                       divisor
+                                       magic @ (DivConstMagicS64.S64 mul_by _shift_by))
+      (let ((q0 Value (iconst_s $I64 mul_by))
+            (q1 Value (smulhi $I64 numerator q0)))
+        (apply_div_const_magic_s64_add_sub opcode numerator divisor magic q1)))
+
+;; q2 = if divisor > 0 && mul_by < 0 {
+;;     iadd q1, numerator
+;; } else if divisor < 0 && mul_by > 0 {
+;;     isub q1, numerator
+;; } else {
+;;     q1
+;; };
+(decl apply_div_const_magic_s64_add_sub (Opcode Value i64 DivConstMagicS64 Value) Value)
+(rule 2 (apply_div_const_magic_s64_add_sub opcode
+                                           numerator
+                                           divisor
+                                           magic @ (DivConstMagicS64.S64 mul_by _shift_by)
+                                           q1)
+      (if-let true (i64_gt divisor 0))
+      (if-let true (i64_lt mul_by 0))
+      (let ((q2 Value (iadd $I64 q1 numerator)))
+        (apply_div_const_magic_s64_shift opcode numerator divisor magic q2)))
+(rule 1 (apply_div_const_magic_s64_add_sub opcode
+                                           numerator
+                                           divisor
+                                           magic @ (DivConstMagicS64.S64 mul_by _shift_by)
+                                           q1)
+      (if-let true (i64_lt divisor 0))
+      (if-let true (i64_gt mul_by 0))
+      (let ((q2 Value (isub $I64 q1 numerator)))
+        (apply_div_const_magic_s64_shift opcode numerator divisor magic q2)))
+(rule 0 (apply_div_const_magic_s64_add_sub opcode
+                                           numerator
+                                           divisor
+                                           magic
+                                           q1)
+      (apply_div_const_magic_s64_shift opcode numerator divisor magic q1))
+
+;; q3 = sshr q2, shift_by
+;; t1 = ushr q3, 63
+;; qf = iadd q3, t1
+(decl apply_div_const_magic_s64_shift (Opcode Value i64 DivConstMagicS64 Value) Value)
+(rule (apply_div_const_magic_s64_shift opcode
+                                       numerator
+                                       divisor
+                                       magic @ (DivConstMagicS64.S64 _mul_by shift_by)
+                                       q2)
+      ;; Note: let other rules clean up `q2` when `shift_by == 0`.
+      (let ((q3 Value (sshr $I64 q2 (iconst_s $I64 shift_by)))
+            (t1 Value (ushr $I64 q3 (iconst_s $I64 63)))
+            (qf Value (iadd $I64 q3 t1)))
+        (apply_div_const_magic_s64_finish opcode numerator divisor qf)))
+
+;; Now `qf` holds the final quotient. If necessary, produce the remainder
+;; instead.
+;;
+;; if Opcode == Srem {
+;;     tt = imul qf, divisor
+;;     isub numerator, tt
+;; } else {
+;;     qf
+;; }
+(decl apply_div_const_magic_s64_finish (Opcode Value i64 Value) Value)
+(rule (apply_div_const_magic_s64_finish (Opcode.Srem) numerator divisor qf)
+      (let ((tt Value (imul $I64 qf (iconst_s $I64 divisor))))
+        (isub $I64 numerator tt)))
+(rule (apply_div_const_magic_s64_finish (Opcode.Sdiv) _numerator _divisor qf)
+      qf)

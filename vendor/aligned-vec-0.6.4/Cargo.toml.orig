@@ -1,0 +1,26 @@
+[package]
+name = "aligned-vec"
+version = "0.6.4"
+edition = "2021"
+authors = ["sarah <>"]
+description = "Aligned vector and box containers"
+readme = "README.md"
+repository = "https://github.com/sarah-ek/aligned-vec/"
+license = "MIT"
+keywords = ["vec", "allocation", "box", "slice", "alignment"]
+
+[dependencies]
+equator = "0.4.1"
+serde = { version = "1.0", optional = true, default-features = false }
+
+[dev-dependencies]
+bincode = { version = "1" }
+
+[features]
+default = ["std"]
+std = []
+serde = ["dep:serde"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

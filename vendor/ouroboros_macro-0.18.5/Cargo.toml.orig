@@ -1,0 +1,22 @@
+[package]
+name = "ouroboros_macro"
+version = "0.18.5"
+authors = ["Josh <someguynamedjosh@github.com>"]
+edition = "2018"
+license = "MIT OR Apache-2.0"
+description = "Proc macro for ouroboros crate."
+documentation = "https://docs.rs/ouroboros_macro"
+repository = "https://github.com/someguynamedjosh/ouroboros"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+heck = "0.4.1"
+proc-macro2 = "1.0"
+proc-macro2-diagnostics = "0.10"
+quote = "1.0"
+syn = { version = "2.0", features = ["full"] }
+
+[features]
+std = []

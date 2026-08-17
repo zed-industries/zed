@@ -1,0 +1,7 @@
+package foo:error-contexts;
+
+interface error-contexts {
+  type t1 = error-context;
+
+  foo: func(x: error-context, y: t1) -> result<_, error-context>;
+}

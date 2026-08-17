@@ -1,0 +1,38 @@
+on: [push, pull_request]
+
+name: CI
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      RUSTFLAGS: -Dwarnings
+      RUST_BACKTRACE: full
+    steps:
+      - uses: actions/checkout@v3
+      - name: Clippy
+        run: |
+          cargo clippy -- -Dwarnings
+      - name: Test
+        run: |
+          cargo test
+      - name: Check (big-endian)
+        run: |
+          rustup target add powerpc64-unknown-linux-gnu
+          cargo check --target powerpc64-unknown-linux-gnu
+
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install rustfmt
+        run: |
+          rustup component add rustfmt
+      - name: Rustfmt
+        run: |
+          cargo fmt --check
+

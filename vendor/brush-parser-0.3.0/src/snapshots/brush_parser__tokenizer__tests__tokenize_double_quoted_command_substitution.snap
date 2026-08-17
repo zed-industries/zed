@@ -1,0 +1,21 @@
+---
+source: brush-parser/src/tokenizer.rs
+expression: "test_tokenizer(r#\"x\"$(echo hi)\"y\"#)?"
+---
+TokenizerResult(
+  input: "x\"$(echo hi)\"y",
+  result: [
+    W("x\"$(echo hi)\"y", Loc(
+      start: Pos(
+        idx: 0,
+        line: 1,
+        col: 1,
+      ),
+      end: Pos(
+        idx: 14,
+        line: 1,
+        col: 15,
+      ),
+    )),
+  ],
+)

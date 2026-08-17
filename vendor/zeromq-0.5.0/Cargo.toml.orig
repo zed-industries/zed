@@ -1,0 +1,66 @@
+[package]
+name = "zeromq"
+version = "0.5.0"
+authors = [
+    "Alexei Kornienko <alexei.kornienko@gmail.com>",
+    "Ryan Butler <thebutlah@gmail.com>",
+    "Kyle Kelley <rgbkrk@gmail.com>",
+]
+edition = "2021"
+description = "A native Rust implementation of ZeroMQ"
+license = "MIT"
+repository = "https://github.com/zeromq/zmq.rs"
+rust-version = "1.62.0"
+
+[features]
+default = ["tokio-runtime", "all-transport"]
+tokio-runtime = ["tokio", "tokio-util"]
+async-std-runtime = ["async-std"]
+async-dispatcher-runtime = ["async-std", "async-dispatcher"]
+async-dispatcher-macros = ["async-dispatcher/macros"]
+all-transport = ["ipc-transport", "tcp-transport"]
+ipc-transport = []
+tcp-transport = []
+
+[dependencies]
+async-dispatcher = { version = "0.1", optional = true }
+thiserror = "1"
+futures = "0.3"
+async-trait = "0.1"
+parking_lot = "0.12"
+rand = "0.9"
+bytes = "1"
+tokio = { version = "1", features = ["full"], optional = true }
+tokio-util = { version = "0.7", features = ["compat"], optional = true }
+num-traits = "0.2"
+scc = "3.4.4"
+crossbeam-queue = "0.3"
+uuid = { version = "1", features = ["v4"] }
+regex = { version = "1", default-features = false, features = [
+    "std",
+    "unicode-perl",
+] }
+once_cell = "1"
+log = "0.4"
+asynchronous-codec = "0.7"
+async-std = { version = "1", features = ["attributes"], optional = true }
+
+[dev-dependencies]
+async-dispatcher = { version = "0.1", features = ["macros"] }
+chrono = "0.4"
+criterion = "0.5"
+pretty_env_logger = "0.5"
+zmq2 = "0.5"
+hex = "0.4"
+
+[lib]
+bench = false
+
+[[bench]]
+name = "pub_sub"
+harness = false
+bench = false
+
+[[bench]]
+name = "req_rep"
+harness = false

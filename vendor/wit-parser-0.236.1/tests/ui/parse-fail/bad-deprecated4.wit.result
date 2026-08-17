@@ -1,0 +1,5 @@
+expected `version`, found `since`
+     --> tests/ui/parse-fail/bad-deprecated4.wit:3:13
+      |
+    3 | @deprecated(since = 1.2.3)
+      |             ^----

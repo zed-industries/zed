@@ -1,0 +1,22 @@
+---
+- name: Spec Example 6.9. Separated Comment
+  from: http://www.yaml.org/spec/1.2/spec.html#id2780342
+  tags: mapping spec comment
+  yaml: |
+    key:    # Comment
+      value
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :key
+       =VAL :value
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "key": "value"
+    }
+  dump: |
+    key: value

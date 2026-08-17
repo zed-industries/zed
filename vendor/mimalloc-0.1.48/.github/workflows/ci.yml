@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  # Run daily to catch when Rust updates cause problems to happen.
+  schedule:
+    - cron: '00 01 * * *'
+
+jobs:
+  rust:
+    name: Rust
+
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        toolchain: ["stable"]
+
+    runs-on: ${{ matrix.os }}
+
+    env:
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 1
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+
+      - name: Build (secure)
+        run: cargo build --features secure
+
+      - name: Test (secure)
+        run: cargo test --features secure
+
+      - name: Test libmimalloc-sys crate bindings (secure)
+        run: cargo run --features libmimalloc-sys-test/secure -p libmimalloc-sys-test
+
+      - name: Build (no secure)
+        run: cargo build
+
+      - name: Test (no secure)
+        run: cargo test
+
+      - name: Test libmimalloc-sys crate bindings (no secure)
+        run: cargo run -p libmimalloc-sys-test
+        
+      - name: Build (extended)
+        run: cargo build --features extended
+
+      - name: Test (extended)
+        run: cargo test --features extended
+
+      - name: Test libmimalloc-sys crate bindings (extended)
+        run: cargo run --features libmimalloc-sys-test/extended -p libmimalloc-sys-test
+
+      - name: Build (v3, secure)
+        run: cargo build --features v3,secure
+
+      - name: Test (v3, secure)
+        run: cargo test --features v3,secure
+
+      - name: Test libmimalloc-sys crate bindings (v3, secure)
+        run: cargo run --features libmimalloc-sys-test/v3,libmimalloc-sys-test/secure -p libmimalloc-sys-test
+
+      - name: Build (v3, no secure)
+        run: cargo build --features v3
+
+      - name: Test (v3, no secure)
+        run: cargo test --features v3
+
+      - name: Test libmimalloc-sys crate bindings (v3, no secure)
+        run: cargo run --features libmimalloc-sys-test/v3 -p libmimalloc-sys-test
+
+      - name: Build (v3, extended)
+        run: cargo build --features v3,extended
+
+      - name: Test (v3, extended)
+        run: cargo test --features v3,extended
+
+      - name: Test libmimalloc-sys crate bindings (v3, extended)
+        run: cargo run --features libmimalloc-sys-test/v3,libmimalloc-sys-test/extended -p libmimalloc-sys-test
+
+  lint:
+    name: Rustfmt / Clippy
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Fmt
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace -- -D warnings
+
+  # Detect cases where documentation links would be dead
+  doc:
+    name: Check documentation
+    runs-on: ubuntu-latest
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@nightly
+
+      # Note: We need to use nightly rust, and `cargo rustdoc` (yes, not `cargo
+      # doc`) to actually get it to respect -D warnings... Using nightly also
+      # gets us the nicer syntax for linking to functions, and is in-line with
+      # what docs.rs uses.
+
+      - name: 'Check documentation links in `mimalloc`'
+        run: cargo rustdoc -- -D warnings
+
+      - name: 'Check documentation links in `libmimalloc-sys`'
+        run: cargo rustdoc -p libmimalloc-sys -- -D warnings

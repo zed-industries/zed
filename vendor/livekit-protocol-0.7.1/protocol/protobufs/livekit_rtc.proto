@@ -1,0 +1,626 @@
+// Copyright 2023 LiveKit, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package livekit;
+
+import "livekit_models.proto";
+import "logger/options.proto";
+
+option csharp_namespace = "LiveKit.Proto";
+option go_package = "github.com/livekit/protocol/livekit";
+option ruby_package = "LiveKit::Proto";
+
+message SignalRequest {
+  oneof message {
+    // participant offer for publisher
+    SessionDescription offer = 1;
+    // participant answering subscriber offer
+    SessionDescription answer = 2;
+    TrickleRequest trickle = 3;
+    AddTrackRequest add_track = 4;
+    // mute the participant's published tracks
+    MuteTrackRequest mute = 5;
+    // Subscribe or unsubscribe from tracks
+    UpdateSubscription subscription = 6;
+    // Update settings of subscribed tracks
+    UpdateTrackSettings track_setting = 7;
+    // Immediately terminate session
+    LeaveRequest leave = 8;
+    // Update published video layers
+    UpdateVideoLayers update_layers = 10 [deprecated = true];
+    // Update subscriber permissions
+    SubscriptionPermission subscription_permission = 11;
+    // sync client's subscribe state to server during reconnect
+    SyncState sync_state = 12;
+    // Simulate conditions, for client validations
+    SimulateScenario simulate = 13;
+    // client triggered ping to server
+    int64 ping = 14; // deprecated by ping_req (message Ping)
+    // update a participant's own metadata, name, or attributes
+    // requires canUpdateOwnParticipantMetadata permission
+    UpdateParticipantMetadata update_metadata = 15;
+    Ping ping_req = 16;
+    // Update local audio track settings
+    UpdateLocalAudioTrack update_audio_track = 17;
+    // Update local video track settings
+    UpdateLocalVideoTrack update_video_track = 18;
+    // Publish a data track
+    PublishDataTrackRequest publish_data_track_request = 19;
+    // Unpublish a data track
+    UnpublishDataTrackRequest unpublish_data_track_request = 20;
+    // Update subscription state for one or more data tracks
+    UpdateDataSubscription update_data_subscription = 21;
+  }
+}
+
+message SignalResponse {
+  oneof message {
+    // sent when join is accepted
+    JoinResponse join = 1;
+    // sent when server answers publisher
+    SessionDescription answer = 2;
+    // sent when server is sending subscriber an offer
+    SessionDescription offer = 3;
+    // sent when an ICE candidate is available
+    TrickleRequest trickle = 4;
+    // sent when participants in the room has changed
+    ParticipantUpdate update = 5;
+    // sent to the participant when their track has been published
+    TrackPublishedResponse track_published = 6;
+    // Immediately terminate session
+    LeaveRequest leave = 8;
+    // server initiated mute
+    MuteTrackRequest mute = 9;
+    // indicates changes to speaker status, including when they've gone to not speaking
+    SpeakersChanged speakers_changed = 10;
+    // sent when metadata of the room has changed
+    RoomUpdate room_update = 11;
+    // when connection quality changed
+    ConnectionQualityUpdate connection_quality = 12;
+    // when streamed tracks state changed, used to notify when any of the streams were paused due to
+    // congestion
+    StreamStateUpdate stream_state_update = 13;
+    // when max subscribe quality changed, used by dynamic broadcasting to disable unused layers
+    SubscribedQualityUpdate subscribed_quality_update = 14;
+    // when subscription permission changed
+    SubscriptionPermissionUpdate subscription_permission_update = 15;
+    // update the token the client was using, to prevent an active client from using an expired token
+    string refresh_token = 16;
+    // server initiated track unpublish
+    TrackUnpublishedResponse track_unpublished = 17;
+    // respond to ping
+    int64 pong = 18; // deprecated by pong_resp (message Pong)
+    // sent when client reconnects
+    ReconnectResponse reconnect = 19;
+    // respond to Ping
+    Pong pong_resp = 20;
+    // Subscription response, client should not expect any media from this subscription if it fails
+    SubscriptionResponse subscription_response = 21;
+    // Response relating to user inititated requests that carry a `request_id`
+    RequestResponse request_response = 22;
+    // notify to the publisher when a published track has been subscribed for the first time
+    TrackSubscribed track_subscribed = 23;
+    // notify to the participant when they have been moved to a new room
+    RoomMovedResponse room_moved = 24;
+    // notify number of required media sections to satisfy subscribed tracks
+    MediaSectionsRequirement media_sections_requirement = 25;
+    // when audio subscription changes, used to enable simulcasting of audio codecs based on subscriptions
+    SubscribedAudioCodecUpdate subscribed_audio_codec_update = 26;
+    // Sent in response to `PublishDataTrackRequest`.
+    PublishDataTrackResponse publish_data_track_response = 27;
+    // Sent in response to `UnpublishDataTrackRequest` or SFU-initiated unpublish.
+    UnpublishDataTrackResponse unpublish_data_track_response = 28;
+    // Sent to data track subscribers to provide mapping from track SIDs to handles.
+    DataTrackSubscriberHandles data_track_subscriber_handles = 29;
+  }
+}
+
+enum SignalTarget {
+  PUBLISHER = 0;
+  SUBSCRIBER = 1;
+}
+
+message SimulcastCodec {
+  string codec = 1;
+  string cid = 2;
+  repeated VideoLayer layers = 4;
+  VideoLayer.Mode video_layer_mode = 5;
+
+  // NEXT-ID: 6
+}
+
+message AddTrackRequest {
+  // client ID of track, to match it when RTC track is received
+  string cid = 1;
+  string name = 2;
+  TrackType type = 3;
+  uint32 width = 4;
+  uint32 height = 5;
+  // true to add track and initialize to muted
+  bool muted = 6;
+  // true if DTX (Discontinuous Transmission) is disabled for audio
+  bool disable_dtx = 7 [deprecated = true]; // deprecated in favor of audio_features
+  TrackSource source = 8;
+  repeated VideoLayer layers = 9;
+
+  repeated SimulcastCodec simulcast_codecs = 10;
+
+  // server ID of track, publish new codec to exist track
+  string sid = 11;
+
+  bool stereo = 12 [deprecated = true]; // deprecated in favor of audio_features
+  // true if RED (Redundant Encoding) is disabled for audio
+  bool disable_red = 13;
+
+  Encryption.Type encryption = 14;
+  // which stream the track belongs to, used to group tracks together.
+  // if not specified, server will infer it from track source to bundle camera/microphone, screenshare/audio together
+  string stream = 15;
+  BackupCodecPolicy backup_codec_policy = 16;
+
+  repeated AudioTrackFeature audio_features = 17;
+}
+
+message PublishDataTrackRequest {
+  // Client-assigned, 16-bit identifier that will be attached to packets sent by the publisher.
+  // This must be non-zero and unique for each data track published by the publisher.
+  uint32 pub_handle = 1;
+
+  // Human-readable identifier (e.g., `geoLocation`, `servoPosition.x`, etc.), unique per publisher.
+  // This must be non-empty and no longer than 256 characters.
+  string name = 2;
+
+  // Method used for end-to-end encryption (E2EE) on frame payloads.
+  Encryption.Type encryption = 3;
+}
+
+message PublishDataTrackResponse {
+  // Information about the published track.
+  DataTrackInfo info = 1;
+}
+
+message UnpublishDataTrackRequest {
+  // Publisher handle of the track to unpublish.
+  uint32 pub_handle = 1;
+}
+
+message UnpublishDataTrackResponse {
+  // Information about the unpublished track.
+  DataTrackInfo info = 1;
+}
+
+message DataTrackSubscriberHandles {
+  message PublishedDataTrack {
+    string publisher_identity = 1;
+    string publisher_sid = 2;
+    string track_sid = 3;
+  }
+
+  // Maps handles from incoming packets to the track SIDs that the packets belong to.
+  map<uint32, PublishedDataTrack> sub_handles = 1;
+}
+
+message TrickleRequest {
+  string candidateInit = 1;
+  SignalTarget target = 2;
+  bool final = 3;
+}
+
+message MuteTrackRequest {
+  string sid = 1;
+  bool muted = 2;
+}
+
+message JoinResponse {
+  Room room = 1;
+  ParticipantInfo participant = 2;
+  repeated ParticipantInfo other_participants = 3;
+  // deprecated. use server_info.version instead.
+  string server_version = 4;
+  repeated ICEServer ice_servers = 5;
+  // use subscriber as the primary PeerConnection
+  bool subscriber_primary = 6;
+  // when the current server isn't available, return alternate url to retry connection
+  // when this is set, the other fields will be largely empty
+  string alternative_url = 7;
+  ClientConfiguration client_configuration = 8;
+  // deprecated. use server_info.region instead.
+  string server_region = 9;
+  int32 ping_timeout = 10;
+  int32 ping_interval = 11;
+  ServerInfo server_info = 12;
+  // Server-Injected-Frame byte trailer, used to identify unencrypted frames when e2ee is enabled
+  bytes sif_trailer = 13;
+  repeated Codec enabled_publish_codecs = 14;
+  // when set, client should attempt to establish publish peer connection when joining room to speed up publishing
+  bool fast_publish = 15;
+}
+
+message ReconnectResponse {
+  repeated ICEServer ice_servers = 1;
+  ClientConfiguration client_configuration = 2;
+  ServerInfo server_info = 3;
+
+  // last sequence number of reliable message received before resuming
+  uint32 last_message_seq = 4;
+}
+
+message TrackPublishedResponse {
+  string cid = 1;
+  TrackInfo track = 2;
+}
+
+message TrackUnpublishedResponse {
+  string track_sid = 1;
+}
+
+message SessionDescription {
+  string type = 1; // "answer" | "offer" | "pranswer" | "rollback"
+  string sdp = 2;
+  uint32 id = 3;
+  map<string, string> mid_to_track_id = 4;
+}
+
+message ParticipantUpdate {
+  repeated ParticipantInfo participants = 1;
+}
+
+message UpdateSubscription {
+  repeated string track_sids = 1;
+  bool subscribe = 2;
+  repeated ParticipantTracks participant_tracks = 3;
+}
+
+message UpdateDataSubscription {
+  message Update {
+    string track_sid = 1;
+    bool subscribe = 2;
+    // Options to apply when initially subscribing or updating an existing subscription.
+    // When unsubscribing, this field is ignored.
+    DataTrackSubscriptionOptions options = 3;
+  }
+  repeated Update updates = 1;
+}
+
+message UpdateTrackSettings {
+  repeated string track_sids = 1;
+  // when true, the track is placed in a paused state, with no new data returned
+  bool disabled = 3;
+  // deprecated in favor of width & height
+  VideoQuality quality = 4;
+  // for video, width to receive
+  uint32 width = 5;
+  // for video, height to receive
+  uint32 height = 6;
+  uint32 fps = 7;
+  // subscription priority. 1 being the highest (0 is unset)
+  // when unset, server sill assign priority based on the order of subscription
+  // server will use priority in the following ways:
+  // 1. when subscribed tracks exceed per-participant subscription limit, server will
+  //    pause the lowest priority tracks
+  // 2. when the network is congested, server will assign available bandwidth to
+  //    higher priority tracks first. lowest priority tracks can be paused
+  uint32 priority = 8;
+}
+
+message UpdateLocalAudioTrack {
+  string track_sid = 1;
+  repeated AudioTrackFeature features = 2;
+}
+
+message UpdateLocalVideoTrack {
+  string track_sid = 1;
+  uint32 width = 2;
+  uint32 height = 3;
+}
+
+message LeaveRequest {
+  // indicates action clients should take on receiving this message
+  enum Action {
+    DISCONNECT = 0; // should disconnect
+    RESUME = 1; // should attempt a resume with `reconnect=1` in join URL
+    RECONNECT = 2; // should attempt a reconnect, i. e. no `reconnect=1`
+  }
+
+  // sent when server initiates the disconnect due to server-restart
+  // indicates clients should attempt full-reconnect sequence
+  // NOTE: `can_reconnect` obsoleted by `action` starting in protocol version 13
+  bool can_reconnect = 1;
+  DisconnectReason reason = 2;
+  Action action = 3;
+  RegionSettings regions = 4;
+}
+
+// message to indicate published video track dimensions are changing
+message UpdateVideoLayers {
+  option deprecated = true;
+  string track_sid = 1;
+  repeated VideoLayer layers = 2;
+}
+
+message UpdateParticipantMetadata {
+  string metadata = 1 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  string name = 2 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  // attributes to update. it only updates attributes that have been set
+  // to delete attributes, set the value to an empty string
+  map<string, string> attributes = 3 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  uint32 request_id = 4;
+}
+
+message ICEServer {
+  repeated string urls = 1;
+  string username = 2;
+  string credential = 3;
+}
+
+message SpeakersChanged {
+  repeated SpeakerInfo speakers = 1;
+}
+
+message RoomUpdate {
+  Room room = 1;
+}
+
+message ConnectionQualityInfo {
+  string participant_sid = 1;
+  ConnectionQuality quality = 2;
+  float score = 3;
+}
+
+message ConnectionQualityUpdate {
+  repeated ConnectionQualityInfo updates = 1;
+}
+
+enum StreamState {
+  ACTIVE = 0;
+  PAUSED = 1;
+}
+
+message StreamStateInfo {
+  string participant_sid = 1;
+  string track_sid = 2;
+  StreamState state = 3;
+}
+
+message StreamStateUpdate {
+  repeated StreamStateInfo stream_states = 1;
+}
+
+message SubscribedQuality {
+  VideoQuality quality = 1;
+  bool enabled = 2;
+}
+
+message SubscribedCodec {
+  string codec = 1;
+  repeated SubscribedQuality qualities = 2;
+}
+
+message SubscribedQualityUpdate {
+  string track_sid = 1;
+  repeated SubscribedQuality subscribed_qualities = 2 [deprecated = true];
+  repeated SubscribedCodec subscribed_codecs = 3;
+}
+
+message SubscribedAudioCodecUpdate {
+  string track_sid = 1;
+  repeated SubscribedAudioCodec subscribed_audio_codecs = 2;
+}
+
+message TrackPermission {
+  // permission could be granted either by participant sid or identity
+  string participant_sid = 1;
+  bool all_tracks = 2;
+  repeated string track_sids = 3;
+  string participant_identity = 4;
+}
+
+message SubscriptionPermission {
+  bool all_participants = 1;
+  repeated TrackPermission track_permissions = 2;
+}
+
+message SubscriptionPermissionUpdate {
+  string participant_sid = 1;
+  string track_sid = 2;
+  bool allowed = 3;
+}
+
+message RoomMovedResponse {
+  // information about the new room
+  Room room = 1;
+  // new reconnect token that can be used to reconnect to the new room
+  string token = 2;
+  ParticipantInfo participant = 3;
+  repeated ParticipantInfo other_participants = 4;
+}
+
+message SyncState {
+  // last subscribe/publish answer before reconnecting
+  // subscribe answer if using dual peer connection
+  // publish answer if using single peer connection
+  SessionDescription answer = 1;
+  UpdateSubscription subscription = 2;
+  repeated TrackPublishedResponse publish_tracks = 3;
+  repeated DataChannelInfo data_channels = 4;
+  // last received server side offer/sent client side offer before reconnecting
+  // received server side offer if using dual peer connection
+  // sent client side offer if using single peer connection
+  SessionDescription offer = 5;
+  repeated string track_sids_disabled = 6;
+  repeated DataChannelReceiveState datachannel_receive_states = 7;
+  repeated PublishDataTrackResponse publish_data_tracks = 8;
+}
+
+message DataChannelReceiveState {
+  string publisher_sid = 1;
+  uint32 last_seq = 2;
+}
+
+message DataChannelInfo {
+  string label = 1;
+  uint32 id = 2;
+  SignalTarget target = 3;
+}
+
+enum CandidateProtocol {
+  UDP = 0;
+  TCP = 1;
+  TLS = 2;
+}
+
+message SimulateScenario {
+  oneof scenario {
+    // simulate N seconds of speaker activity
+    int32 speaker_update = 1;
+    // simulate local node failure
+    bool node_failure = 2;
+    // simulate migration
+    bool migration = 3;
+    // server to send leave
+    bool server_leave = 4;
+    // switch candidate protocol to tcp
+    CandidateProtocol switch_candidate_protocol = 5;
+    // maximum bandwidth for subscribers, in bps
+    // when zero, clears artificial bandwidth limit
+    int64 subscriber_bandwidth = 6;
+    // disconnect signal on resume
+    bool disconnect_signal_on_resume = 7;
+    // disconnect signal on resume before sending any messages from server
+    bool disconnect_signal_on_resume_no_messages = 8;
+    // full reconnect leave request
+    bool leave_request_full_reconnect = 9;
+  }
+}
+
+message Ping {
+  int64 timestamp = 1;
+  // rtt in milliseconds calculated by client
+  int64 rtt = 2;
+}
+
+message Pong {
+  // timestamp field of last received ping request
+  int64 last_ping_timestamp = 1;
+  int64 timestamp = 2;
+}
+
+message RegionSettings {
+  repeated RegionInfo regions = 1;
+}
+
+message RegionInfo {
+  string region = 1;
+  string url = 2;
+  int64 distance = 3;
+}
+
+message SubscriptionResponse {
+  string track_sid = 1;
+  SubscriptionError err = 2;
+}
+
+message RequestResponse {
+  enum Reason {
+    OK = 0;
+    NOT_FOUND = 1;
+    NOT_ALLOWED = 2;
+    LIMIT_EXCEEDED = 3;
+    QUEUED = 4;
+    UNSUPPORTED_TYPE = 5;
+    UNCLASSIFIED_ERROR = 6;
+    INVALID_HANDLE = 7;
+    INVALID_NAME = 8;
+    DUPLICATE_HANDLE = 9;
+    DUPLICATE_NAME = 10;
+  }
+
+  uint32 request_id = 1;
+  Reason reason = 2;
+  string message = 3;
+  oneof request {
+    TrickleRequest trickle = 4;
+    AddTrackRequest add_track = 5;
+    MuteTrackRequest mute = 6;
+    UpdateParticipantMetadata update_metadata = 7;
+    UpdateLocalAudioTrack update_audio_track = 8;
+    UpdateLocalVideoTrack update_video_track = 9;
+    PublishDataTrackRequest publish_data_track = 10;
+    UnpublishDataTrackRequest unpublish_data_track = 11;
+  }
+}
+
+message TrackSubscribed {
+  string track_sid = 1;
+}
+
+message ConnectionSettings {
+  bool auto_subscribe = 1;
+  bool adaptive_stream = 2;
+  optional bool subscriber_allow_pause = 3;
+  bool disable_ice_lite = 4;
+  optional bool auto_subscribe_data_track = 5;
+}
+
+message JoinRequest {
+  ClientInfo client_info = 1;
+  ConnectionSettings connection_settings = 2;
+
+  string metadata = 3 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ]; // if not empty, will overwrite `metadata` in token
+
+  // will set keys provided via this
+  // will overwrite if the same key is in the token
+  // will not delete keys from token if there is a key collision and this sets that key to empty value
+  map<string, string> participant_attributes = 4 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+
+  repeated AddTrackRequest add_track_requests = 5;
+  SessionDescription publisher_offer = 6;
+
+  bool reconnect = 7;
+  ReconnectReason reconnect_reason = 8;
+  string participant_sid = 9;
+  SyncState sync_state = 10;
+}
+
+message WrappedJoinRequest {
+  enum Compression {
+    NONE = 0;
+    GZIP = 1;
+  }
+
+  Compression compression = 1;
+  bytes join_request = 2; // marshalled JoinRequest + potentially compressed
+}
+
+message MediaSectionsRequirement {
+  uint32 num_audios = 1;
+  uint32 num_videos = 2;
+}

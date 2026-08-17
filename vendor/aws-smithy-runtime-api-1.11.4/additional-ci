@@ -1,0 +1,17 @@
+#!/bin/bash
+#
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+
+# This script contains additional CI checks to run for this specific package
+
+set -e
+
+# NOTE: (rcoh) This seems to be pulling in workspace settings that pull in this dependency, but it passes if
+# no other crates enable this dependency
+# echo "### Checking external types w/ HTTP feature disabled"
+# RUSTDOCFLAGS="" cargo +"${RUST_NIGHTLY_VERSION}" check-external-types --config external-types-no-http.toml --no-default-features
+
+echo "### Testing every combination of features (excluding --all-features)"
+cargo hack test --feature-powerset --exclude-all-features

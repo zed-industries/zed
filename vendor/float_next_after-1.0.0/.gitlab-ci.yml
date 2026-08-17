@@ -1,0 +1,54 @@
+image: "rust:latest"
+
+default:
+  before_script:
+    - rustc --version 
+    - cargo --version
+
+stages:
+  - test
+  - formatting
+  - security
+  - report
+
+test-code:
+  stage: test
+  script:
+    - cargo test --verbose
+  
+lint-code:
+  stage: formatting
+  script:
+    - rustup component add rustfmt
+    - cargo fmt -- --check
+    - rustup component add clippy
+    - cargo clippy -- -D warnings
+
+audit-code:
+  stage: security
+  script:
+    - cargo install cargo-audit
+    - cargo audit
+
+coverage:
+  image: "rustdocker/rust:nightly"
+  stage: report
+  variables:
+    CARGO_INCREMENTAL: "0"
+    RUSTFLAGS: "-Cinstrument-coverage"
+    LLVM_PROFILE_FILE: "cargo-test-%p-%m.profraw"
+  script:
+    - rustup component add llvm-tools-preview
+    - apt-get update && apt-get install -y python3 python3-pip
+    - cargo test
+    # generate html report
+    - cargo install grcov
+    - mkdir -p coverage/html
+    - grcov . --binary-path ./target/debug/deps/ -s . -t html --branch --ignore-not-existing --ignore '../*' --ignore "/*" -o coverage/html
+    - grcov . --binary-path ./target/debug/deps/ -s . -t lcov --branch --ignore-not-existing --ignore '../*' --ignore "/*" -o coverage/tests.lcov
+    # output coverage summary for gitlab parsing
+    - apt-get update && apt-get install -y lcov
+    - lcov --summary coverage/tests.lcov
+    - curl -Os https://uploader.codecov.io/latest/linux/codecov
+    - chmod +x codecov
+    - ./codecov

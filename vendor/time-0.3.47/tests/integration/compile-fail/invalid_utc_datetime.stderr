@@ -1,0 +1,29 @@
+error: invalid component: ordinal was 0
+ --> tests/integration/compile-fail/invalid_utc_datetime.rs:4:32
+  |
+4 |     let _ = utc_datetime!(2021-000 0:00);
+  |                                ^^^
+
+error: invalid component: hour was 24
+ --> tests/integration/compile-fail/invalid_utc_datetime.rs:5:36
+  |
+5 |     let _ = utc_datetime!(2021-001 24:00);
+  |                                    ^^
+
+error: unexpected token: 0
+ --> tests/integration/compile-fail/invalid_utc_datetime.rs:6:41
+  |
+6 |     let _ = utc_datetime!(2021-001 0:00 0);
+  |                                         ^
+
+error: unexpected token: UTC
+ --> tests/integration/compile-fail/invalid_utc_datetime.rs:7:41
+  |
+7 |     let _ = utc_datetime!(2021-001 0:00 UTC);
+  |                                         ^^^
+
+error: unexpected token: UTC
+ --> tests/integration/compile-fail/invalid_utc_datetime.rs:8:41
+  |
+8 |     let _ = utc_datetime!(2021-001 0:00 UTC x);
+  |                                         ^^^

@@ -1,0 +1,100 @@
+[package]
+name = "gpu-allocator"
+version = "0.28.0"
+authors = ["Traverse Research <opensource@traverseresearch.nl>"]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Memory allocator for GPU memory in Vulkan and DirectX 12"
+categories = ["rendering", "rendering::graphics-api"]
+homepage = "https://github.com/Traverse-Research/gpu-allocator"
+repository = "https://github.com/Traverse-Research/gpu-allocator"
+keywords = ["vulkan", "memory", "allocator"]
+documentation = "https://docs.rs/gpu-allocator/"
+rust-version = "1.71"
+
+include = [
+    "/README.md",
+    "/LICENSE-*",
+    "/src",
+    "/examples",
+]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[dependencies]
+log = { version = "0.4", default-features = false }
+thiserror = { version = "2.0", default-features = false }
+presser = { version = "0.3", default-features = false }
+# Only needed for Vulkan.  Disable all default features as good practice,
+# such as the ability to link/load a Vulkan library.
+ash = { version = "0.38", optional = true, default-features = false, features = ["debug"] }
+# Only needed for visualizer.
+egui = { version = ">=0.24, <=0.27", optional = true, default-features = false }
+egui_extras = { version = ">=0.24, <=0.27", optional = true, default-features = false }
+hashbrown = { version = "0.16.0", optional = true }
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+objc2 = { version = "0.6", default-features = false, optional = true }
+objc2-foundation = { version = "0.3", default-features = false, optional = true }
+objc2-metal = { version = "0.3", default-features = false, features = [
+    "MTLAccelerationStructure",
+    "MTLAllocation",
+    "MTLBuffer",
+    "MTLDevice",
+    "MTLHeap",
+    "MTLResidencySet",
+    "MTLResource",
+    "MTLTexture",
+    "std",
+], optional = true }
+
+[target.'cfg(windows)'.dependencies.windows]
+version = ">=0.53, <=0.62"
+features = [
+    "Win32_Graphics_Direct3D12",
+    "Win32_Graphics_Dxgi_Common",
+]
+optional = true
+
+[dev-dependencies]
+# Enable the "loaded" feature to be able to access the Vulkan entrypoint.
+ash = { version = "0.38", default-features = false, features = ["debug", "loaded"] }
+env_logger = "0.11"
+
+[target.'cfg(windows)'.dev-dependencies.windows]
+# API-breaks since Windows 0.58 only affect our examples
+version = ">=0.58, <=0.62"
+features = [
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D12",
+    "Win32_Graphics_Dxgi_Common",
+]
+
+[target.'cfg(target_vendor = "apple")'.dev-dependencies]
+objc2-metal = { version = "0.3", default-features = false, features = [
+    "MTLPixelFormat",
+] }
+
+[[example]]
+name = "vulkan-buffer"
+required-features = ["vulkan", "ash/loaded"]
+
+[[example]]
+name = "d3d12-buffer-winrs"
+required-features = ["d3d12"]
+
+[[example]]
+name = "metal-buffer"
+required-features = ["metal"]
+
+[features]
+std = ["presser/std"]
+visualizer = ["dep:egui", "dep:egui_extras"]
+vulkan = ["dep:ash"]
+d3d12 = ["dep:windows"]
+metal = ["dep:objc2", "dep:objc2-metal", "dep:objc2-foundation"]
+# Enables the FreeListAllocator when `std` is not enabled by using the `hashbrown` crate
+hashbrown = ["dep:hashbrown"]
+
+default = ["std", "d3d12", "vulkan", "metal"]

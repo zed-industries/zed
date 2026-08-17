@@ -1,0 +1,36 @@
+[package]
+name = "wasmtime-internal-winch"
+description = "INTERNAL: Integration between Wasmtime and Winch"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "Apache-2.0 WITH LLVM-exception"
+repository = "https://github.com/bytecodealliance/wasmtime"
+
+[lints]
+workspace = true
+
+[dependencies]
+winch-codegen = { workspace = true }
+target-lexicon = { workspace = true }
+wasmtime-environ = { workspace = true }
+anyhow = { workspace = true }
+object = { workspace = true, features = ['std'] }
+cranelift-codegen = { workspace = true }
+wasmtime-cranelift = { workspace = true }
+wasmparser = { workspace = true }
+gimli = { workspace = true, features = ['std'] }
+
+[features]
+component-model = [
+    "wasmtime-environ/component-model",
+    "wasmtime-cranelift/component-model",
+]
+all-arch = ["winch-codegen/all-arch"]
+gc = ['winch-codegen/gc']
+gc-drc = ['winch-codegen/gc-drc']
+gc-null = ['winch-codegen/gc-null']
+stack-switching = ['winch-codegen/stack-switching']
+threads = ['winch-codegen/threads']
+wmemcheck = ['winch-codegen/wmemcheck']

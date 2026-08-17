@@ -1,0 +1,11 @@
+package wasi:sockets@0.2.0-rc-2023-11-10;
+
+world imports {
+    import instance-network;
+    import network;
+    import udp;
+    import udp-create-socket;
+    import tcp;
+    import tcp-create-socket;
+    import ip-name-lookup;
+}

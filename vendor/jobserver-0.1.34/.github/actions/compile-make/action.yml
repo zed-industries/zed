@@ -1,0 +1,36 @@
+name: Compile make
+description: compile-make
+inputs:
+  version:
+    description: make version
+    required: true
+  workaround:
+    description: enable workaround for _alloc bug
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Cache make compiled
+      if: ${{ !startsWith(runner.os, 'windows') }}
+      id: cache-maka
+      uses: actions/cache@v4
+      with:
+        path: /usr/local/bin/make-${{ inputs.version }}
+        key: v1-${{ runner.os }}-make-${{ inputs.version }}
+
+    - name: Make GNU Make from source
+      if: ${{ !startsWith(runner.os, 'windows') && steps.cache-make.outputs.cache-hit != 'true' }}
+      env:
+        VERSION: ${{ inputs.version }}
+        WORKAROUND: ${{ inputs.workaround }}
+      shell: bash
+      run: |
+        curl "https://ftp.gnu.org/gnu/make/make-${VERSION}.tar.gz" | tar xz
+        pushd "make-${VERSION}"
+        ./configure
+        [[ "$WORKAROUND" = "true" ]] && sed -i 's/#if !defined __alloca \&\& !defined __GNU_LIBRARY__/#if !defined __alloca \&\& defined __GNU_LIBRARY__/g; s/#ifndef __GNU_LIBRARY__/#ifdef __GNU_LIBRARY__/g' "./glob/glob.c"
+        make -j 4
+        popd
+        cp -p "make-${VERSION}/make" "/usr/local/bin/make-${VERSION}"

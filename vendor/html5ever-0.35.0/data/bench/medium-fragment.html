@@ -1,0 +1,24 @@
+<h2><span class="mw-headline" id="History">History</span><span class="mw-editsection"><span class="mw-editsection-bracket">[</span><a href="http://en.wikipedia.org/w/index.php?title=UTF-8&amp;action=edit&amp;section=1" title="Edit section: History">edit</a><span class="mw-editsection-bracket">]</span></span></h2>
+<p>By early 1992 the search was on for a good byte-stream encoding of multi-byte character sets. The draft <a href="http://en.wikipedia.org/wiki/Universal_Character_Set" title="Universal Character Set">ISO 10646</a> standard contained a non-required <a href="http://en.wikipedia.org/wiki/Addendum" title="Addendum">annex</a> called <a href="http://en.wikipedia.org/wiki/UTF-1" title="UTF-1">UTF-1</a>
+ that provided a byte-stream encoding of its 32-bit code points. This 
+encoding was not satisfactory on performance grounds, but did introduce 
+the notion that bytes in the range of 0–127 continue representing the 
+ASCII characters in UTF, thereby providing backward compatibility with 
+ASCII.</p>
+<p>In July 1992, the <a href="http://en.wikipedia.org/wiki/X/Open" title="X/Open">X/Open</a> committee XoJIG was looking for a better encoding. Dave Prosser of <a href="http://en.wikipedia.org/wiki/Unix_System_Laboratories" title="Unix System Laboratories">Unix System Laboratories</a>
+ submitted a proposal for one that had faster implementation 
+characteristics and introduced the improvement that 7-bit ASCII 
+characters would <i>only</i> represent themselves; all multibyte 
+sequences would include only bytes where the high bit was set. This 
+original proposal, FSS-UTF (File System Safe UCS Transformation Format),
+ was similar in concept to UTF-8, but lacked the crucial property of <a href="http://en.wikipedia.org/wiki/Self-synchronizing_code" title="Self-synchronizing code">self-synchronization</a>.<sup id="cite_ref-pikeviacambridge_7-0" class="reference"><a href="#cite_note-pikeviacambridge-7"><span>[</span>7<span>]</span></a></sup><sup id="cite_ref-8" class="reference"><a href="#cite_note-8"><span>[</span>8<span>]</span></a></sup></p>
+<p>In August 1992, this proposal was circulated by an <a href="http://en.wikipedia.org/wiki/IBM" title="IBM">IBM</a> X/Open representative to interested parties. <a href="http://en.wikipedia.org/wiki/Ken_Thompson" title="Ken Thompson">Ken Thompson</a> of the <a href="http://en.wikipedia.org/wiki/Plan_9_from_Bell_Labs" title="Plan 9 from Bell Labs">Plan 9</a> <a href="http://en.wikipedia.org/wiki/Operating_system" title="Operating system">operating system</a> group at <a href="http://en.wikipedia.org/wiki/Bell_Labs" title="Bell Labs">Bell Labs</a>
+ then made a small but crucial modification to the encoding, making it 
+very slightly less bit-efficient than the previous proposal but allowing
+ it to be <a href="http://en.wikipedia.org/wiki/Self-synchronizing_code" title="Self-synchronizing code">self-synchronizing</a>,
+ meaning that it was no longer necessary to read from the beginning of 
+the string to find code point boundaries. Thompson's design was outlined
+ on September 2, 1992, on a placemat in a New Jersey diner with <a href="http://en.wikipedia.org/wiki/Rob_Pike" title="Rob Pike">Rob Pike</a>. In the following days, Pike and Thompson implemented it and updated <a href="http://en.wikipedia.org/wiki/Plan_9_from_Bell_Labs" title="Plan 9 from Bell Labs">Plan 9</a> to use it throughout, and then communicated their success back to X/Open.<sup id="cite_ref-pikeviacambridge_7-1" class="reference"><a href="#cite_note-pikeviacambridge-7"><span>[</span>7<span>]</span></a></sup></p>
+<p>UTF-8 was first officially presented at the <a href="http://en.wikipedia.org/wiki/USENIX" title="USENIX">USENIX</a> conference in <a href="http://en.wikipedia.org/wiki/San_Diego" title="San Diego">San Diego</a>, from January 25 to 29, 1993.</p>
+<p>Google reported that in 2008 UTF-8 (misleadingly labelled "Unicode") became the most common encoding for HTML files.<sup id="cite_ref-markdavis_9-0" class="reference"><a href="#cite_note-markdavis-9"><span>[</span>9<span>]</span></a></sup><sup id="cite_ref-davidgoodger_10-0" class="reference"><a href="#cite_note-davidgoodger-10"><span>[</span>10<span>]</span></a></sup></p>
+<h2><span class="mw-headline" id="Description">Description</span><span class="mw-editsection"><span class="mw-editsection-bracket">[</span><a href="http://en.wikipedia.org/w/index.php?title=UTF-8&amp;action=edit&amp;section=2" title="Edit section: Description">edit</a><span class="mw-editsection-bracket">]</span></span></h2>

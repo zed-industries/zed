@@ -1,0 +1,25 @@
+header = """
+#if 0
+DEF PLATFORM_UNIX = 0
+DEF PLATFORM_WIN = 0
+DEF X11 = 0
+DEF M_32 = 0
+#endif
+"""
+
+[defines]
+"unix" = "PLATFORM_UNIX"
+"windows" = "PLATFORM_WIN"
+"x11" = "X11"
+"target_pointer_width = 32" = "M_32"
+
+[enum]
+derive_tagged_enum_destructor = true
+derive_tagged_enum_copy_constructor = true
+derive_tagged_enum_copy_assignment = true
+derive_helper_methods = true
+private_default_tagged_enum_constructor = true
+
+[struct]
+derive_eq = true
+derive_neq = true

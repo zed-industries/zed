@@ -1,0 +1,26 @@
+@since(version = 0.2.0)
+interface stdin {
+  @since(version = 0.2.0)
+  use wasi:io/streams@0.2.4.{input-stream};
+
+  @since(version = 0.2.0)
+  get-stdin: func() -> input-stream;
+}
+
+@since(version = 0.2.0)
+interface stdout {
+  @since(version = 0.2.0)
+  use wasi:io/streams@0.2.4.{output-stream};
+
+  @since(version = 0.2.0)
+  get-stdout: func() -> output-stream;
+}
+
+@since(version = 0.2.0)
+interface stderr {
+  @since(version = 0.2.0)
+  use wasi:io/streams@0.2.4.{output-stream};
+
+  @since(version = 0.2.0)
+  get-stderr: func() -> output-stream;
+}

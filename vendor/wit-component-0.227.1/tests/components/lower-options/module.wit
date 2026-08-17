@@ -1,0 +1,40 @@
+package foo:foo;
+
+interface foo {
+  record r {
+      s: string
+  }
+
+  record r-no-string {
+      s: u32
+  }
+
+  variant v {
+      s(string)
+  }
+
+  variant v-no-string {
+      s(u32)
+  }
+
+  a: func();
+  b: func(x: list<string>);
+  c: func(x: r);
+  d: func(x: v);
+  e: func(x: r-no-string);
+  f: func(x: v-no-string);
+  g: func(x: list<r>);
+  h: func(x: list<v>);
+  i: func(x: list<u32>);
+  j: func(x: u32);
+  k: func() -> tuple<u32, u32>;
+  l: func() -> string;
+  m: func() -> list<u32>;
+  n: func() -> u32;
+  o: func() -> v;
+  p: func() -> list<v-no-string>;
+}
+
+world module {
+  import foo;
+}

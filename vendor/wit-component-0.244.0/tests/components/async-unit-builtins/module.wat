@@ -1,0 +1,18 @@
+(module
+  (func (import "$root" "[future-new-unit]foo") (result i64))
+  (func (import "$root" "[future-read-unit]foo") (param i32 i32) (result i32))
+  (func (import "$root" "[future-write-unit]foo") (param i32 i32) (result i32))
+  (func (import "$root" "[future-cancel-read-unit]foo") (param i32) (result i32))
+  (func (import "$root" "[future-cancel-write-unit]foo") (param i32) (result i32))
+  (func (import "$root" "[future-drop-readable-unit]foo") (param i32))
+  (func (import "$root" "[future-drop-writable-unit]foo") (param i32))
+  (func (import "$root" "[stream-new-unit]foo") (result i64))
+  (func (import "$root" "[stream-read-unit]foo") (param i32 i32 i32) (result i32))
+  (func (import "$root" "[stream-write-unit]foo") (param i32 i32 i32) (result i32))
+  (func (import "$root" "[stream-cancel-read-unit]foo") (param i32) (result i32))
+  (func (import "$root" "[stream-cancel-write-unit]foo") (param i32) (result i32))
+  (func (import "$root" "[stream-drop-readable-unit]foo") (param i32))
+  (func (import "$root" "[stream-drop-writable-unit]foo") (param i32))
+
+  (memory (export "memory") 1)
+)

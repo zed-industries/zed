@@ -1,0 +1,23 @@
+---
+source: codespan-reporting/tests/term.rs
+expression: TEST_DATA.emit_no_color(&config)
+---
+warning: tab test
+  ┌─ tab_columns:1:2
+  │
+1 │     hello
+  │     ^^^^^
+2 │ ∙   hello
+  │     ^^^^^
+3 │ ∙∙  hello
+  │     ^^^^^
+4 │ ∙∙∙ hello
+  │     ^^^^^
+5 │ ∙∙∙∙    hello
+  │         ^^^^^
+6 │ ∙∙∙∙∙   hello
+  │         ^^^^^
+7 │ ∙∙∙∙∙∙  hello
+  │         ^^^^^
+
+

@@ -1,0 +1,11 @@
+---
+- name: Invalid tag
+  from: '@perlpunk'
+  tags: error tag
+  fail: true
+  yaml: |
+    ---
+    !invalid{}tag scalar
+  tree: |
+    +STR
+     +DOC ---

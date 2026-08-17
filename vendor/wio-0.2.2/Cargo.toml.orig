@@ -1,0 +1,19 @@
+[package]
+name = "wio"
+version = "0.2.2"
+authors = ["Peter Atashian <retep998@gmail.com>"]
+license = "MIT/Apache-2.0"
+description = "Windows IO wrapper"
+repository = "https://github.com/retep998/wio-rs"
+readme = "README.md"
+keywords = ["windows", "ffi", "win32", "com"]
+categories = ["api-bindings", "os::windows-apis"]
+include = ["/src/**/*", "/Cargo.toml", "/LICENSE-MIT", "/LICENSE-APACHE", "/build.rs", "/README.md"]
+
+[dependencies]
+winapi = { version = "0.3", features = [
+    "consoleapi", "errhandlingapi", "fileapi", "handleapi", "minwindef", "processthreadsapi", "std", "unknwnbase", "wincon", "winnt",
+] }
+
+[dev-dependencies]
+rand = "0.4"

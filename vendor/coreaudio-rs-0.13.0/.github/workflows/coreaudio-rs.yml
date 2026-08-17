@@ -1,0 +1,70 @@
+name: coreaudio-rs
+on: [push, pull_request]
+jobs:
+  # Run cargo test with default, no and all features.
+  macos-test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macOS-latest]
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: stable
+    - name: cargo test
+      run: cargo test --verbose
+    # TODO: These don't work as of 2020-12-06, but they should.
+    # - name: cargo test - no features
+    #   run: cargo test --no-default-features --verbose
+    # - name: cargo test - all features
+    #   run: cargo test --all-features --verbose
+
+  security-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v1.4.1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  ios-build:
+    runs-on: macOS-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: stable
+    - name: Add iOS targets
+      run: rustup target add aarch64-apple-ios x86_64-apple-ios
+    - name: Install cargo lipo
+      run: cargo install cargo-lipo
+    - name: Build iphonesimulator feedback example
+      run: cd examples/ios && xcodebuild ONLY_ACTIVE_ARCH=NO ARCHS=x86_64 -scheme coreaudio-ios-example -configuration Debug -derivedDataPath build -sdk iphonesimulator
+
+  # Build the docs with all features to make sure docs.rs will work.
+  macos-docs:
+    runs-on: macOS-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: stable
+    - name: cargo doc - all features
+      run: cargo doc --all-features --verbose
+
+  # Publish a new version when pushing to master.
+  # Will succeed if the version has been updated, otherwise silently fails.
+  cargo-publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    env:
+      CRATESIO_TOKEN: ${{ secrets.CRATESIO_TOKEN }}
+    runs-on: macOS-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: stable
+    - name: cargo publish
+      continue-on-error: true
+      run: cargo publish --token $CRATESIO_TOKEN

@@ -1,0 +1,117 @@
+[
+  {
+    "connection_id": 0,
+    "action": {
+      "Request": {
+        "request": {
+          "uri": "https://aws-rust-sdk.s3.us-east-2.amazonaws.com/sample_data.csv?select&select-type=2",
+          "headers": {
+            "x-amz-date": [
+              "20211126T205841Z"
+            ],
+            "x-amz-content-sha256": [
+              "591d6c5a9bb1019b499d65fb01a6e473346ad65f2b513f03e17e388b3c788f53"
+            ],
+            "content-type": [
+              "application/xml"
+            ],
+            "user-agent": [
+              "aws-sdk-rust/0.0.26-alpha os/macos lang/rust/1.53.0"
+            ],
+            "x-amz-user-agent": [
+              "aws-sdk-rust/0.0.26-alpha api/s3/0.0.26-alpha os/macos lang/rust/1.53.0"
+            ],
+            "authorization": [
+              "AWS4-HMAC-SHA256 Credential=test/20211126/us-east-2/s3/aws4_request, SignedHeaders=content-length;content-type;host;x-amz-content-sha256;x-amz-date;x-amz-user-agent, Signature=c7fd94cc4ec7b902c0d606919a350927c0cdcd625e7a0135c4bfa213dcedd4c1"
+            ],
+            "content-length": [
+              "415"
+            ]
+          },
+          "method": "POST"
+        }
+      }
+    }
+  },
+  {
+    "connection_id": 0,
+    "action": {
+      "Data": {
+        "data": {
+          "Utf8": "<SelectObjectContentRequest xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Expression>SELECT * FROM s3object s WHERE s.&quot;Name&quot; = &apos;Jane&apos;</Expression><ExpressionType>SQL</ExpressionType><InputSerialization><CSV><FileHeaderInfo>USE</FileHeaderInfo></CSV><CompressionType>NONE</CompressionType></InputSerialization><OutputSerialization><CSV></CSV></OutputSerialization></SelectObjectContentRequest>"
+        },
+        "direction": "Request"
+      }
+    }
+  },
+  {
+    "connection_id": 0,
+    "action": {
+      "Eof": {
+        "ok": true,
+        "direction": "Request"
+      }
+    }
+  },
+  {
+    "connection_id": 0,
+    "action": {
+      "Response": {
+        "response": {
+          "Ok": {
+            "status": 200,
+            "version": "HTTP/1.1",
+            "headers": {
+              "server": [
+                "AmazonS3"
+              ],
+              "x-amz-id-2": [
+                "geaWcKlzoJpu+EJLNG+t9uaD/9EOuQzGqcxL41SguR9xoDOVMFnjw7CFLm/yHQc3AVpHqHCo3a0="
+              ],
+              "date": [
+                "Tue, 31 Aug 2021 01:00:52 GMT"
+              ],
+              "transfer-encoding": [
+                "chunked"
+              ],
+              "x-amz-request-id": [
+                "NVKMNP55BP15194G"
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "connection_id": 0,
+    "action": {
+      "Data": {
+        "data": {
+          "Base64": "AAAAjAAAAFUKNSeBDTptZXNzYWdlLXR5cGUHAAVldmVudAs6ZXZlbnQtdHlwZQcAB1JlY29yZHMNOmNvbnRlbnQtdHlwZQcAGGFwcGxpY2F0aW9uL29jdGV0LXN0cmVhbUphbmUsKDk0OSkgNTU1LTY3MDQsQ2hpY2FnbyxEZXZlbG9wZXINCuadLyI="
+        },
+        "direction": "Response"
+      }
+    }
+  },
+  {
+    "connection_id": 0,
+    "action": {
+      "Data": {
+        "data": {
+          "Base64": "AAAA0AAAAEMDArAaDTptZXNzYWdlLXR5cGUHAAVldmVudAs6ZXZlbnQtdHlwZQcABVN0YXRzDTpjb250ZW50LXR5cGUHAAh0ZXh0L3htbDxTdGF0cyB4bWxucz0iIj48Qnl0ZXNTY2FubmVkPjMzMzwvQnl0ZXNTY2FubmVkPjxCeXRlc1Byb2Nlc3NlZD4zMzM8L0J5dGVzUHJvY2Vzc2VkPjxCeXRlc1JldHVybmVkPjM5PC9CeXRlc1JldHVybmVkPjwvU3RhdHM+Ey79egAAADgAAAAowcaE1A06bWVzc2FnZS10eXBlBwAFZXZlbnQLOmV2ZW50LXR5cGUHAANFbmTPl9OS"
+        },
+        "direction": "Response"
+      }
+    }
+  },
+  {
+    "connection_id": 0,
+    "action": {
+      "Eof": {
+        "ok": true,
+        "direction": "Response"
+      }
+    }
+  }
+]

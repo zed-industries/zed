@@ -1,0 +1,198 @@
+[package]
+name = "cpal"
+version = "0.17.1"
+description = "Low-level cross-platform audio I/O library in pure Rust."
+repository = "https://github.com/RustAudio/cpal"
+documentation = "https://docs.rs/cpal"
+license = "Apache-2.0"
+keywords = ["audio", "sound"]
+edition = "2021"
+rust-version = "1.77"
+
+[features]
+# ASIO backend for Windows
+# Provides low-latency audio I/O by bypassing the Windows audio stack
+# Requires: ASIO drivers and LLVM/Clang for build-time bindings
+# See README for detailed setup instructions
+asio = [
+    "dep:asio-sys",
+    "dep:num-traits",
+]
+
+# JACK Audio Connection Kit backend
+# Provides low-latency connections between applications and audio hardware
+# Requires: JACK server and client libraries installed on the system
+# Platform: Linux, DragonFly BSD, FreeBSD, NetBSD, macOS, Windows
+# Note: JACK must be installed separately on all platforms
+jack = ["dep:jack"]
+
+# WebAssembly backend using wasm-bindgen
+# Enables the Web Audio API backend for browser-based audio
+# Required for any WebAssembly audio support
+# Platform: WebAssembly (wasm32-unknown-unknown)
+# Note: This is typically enabled automatically when targeting wasm32
+wasm-bindgen = ["dep:wasm-bindgen", "dep:wasm-bindgen-futures"]
+
+# Audio Worklet backend for WebAssembly
+# Provides lower-latency web audio processing compared to default Web Audio API
+# Requires: Build with atomics support and Cross-Origin headers for SharedArrayBuffer
+# Platform: WebAssembly (wasm32-unknown-unknown)
+audioworklet = [
+    "wasm-bindgen",
+    "web-sys/Blob",
+    "web-sys/BlobPropertyBag",
+    "web-sys/Url",
+    "web-sys/AudioWorklet",
+    "web-sys/AudioWorkletNode",
+    "web-sys/AudioWorkletNodeOptions",
+]
+
+# Support for user-defined custom hosts, devices, and streams
+# Allows integration with audio systems not natively supported by CPAL
+# See examples/custom.rs for usage
+# Platform: All platforms
+custom = []
+
+[dependencies]
+dasp_sample = "0.11"
+
+[dev-dependencies]
+anyhow = "1.0"
+hound = "3.5"
+ringbuf = "0.4"
+clap = { version = ">=4.0, <=4.5", features = ["derive"] }
+
+# Support a range of versions in order to avoid duplication of this crate. Make sure to test all
+# versions when bumping to a new release, and only increase the minimum when absolutely necessary.
+# When updating this, also update the "windows-version" matrix in the CI workflow.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = ">=0.59, <=0.62", features = [
+    "Win32_Media_Audio",
+    "Win32_Foundation",
+    "Win32_Devices_Properties",
+    "Win32_Media_KernelStreaming",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Threading",
+    "Win32_Security",
+    "Win32_System_SystemServices",
+    "Win32_System_Variant",
+    "Win32_Media_Multimedia",
+    "Win32_UI_Shell_PropertiesSystem",
+] }
+audio_thread_priority = { version = "0.34", optional = true }
+asio-sys = { version = "0.2", path = "asio-sys", optional = true }
+num-traits = { version = "0.2", optional = true }
+jack = { version = "0.13", optional = true }
+
+[target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd"))'.dependencies]
+alsa = "0.10"
+libc = "0.2"
+audio_thread_priority = { version = "0.34", optional = true }
+jack = { version = "0.13", optional = true }
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+mach2 = "0.5"
+coreaudio-rs = { version = "0.13", default-features = false, features = [
+    "core_audio",
+    "audio_toolbox",
+] }
+objc2-core-audio = { version = "0.3", default-features = false, features = [
+    "std",
+    "AudioHardware",
+    "AudioHardwareDeprecated",
+    "objc2",
+    "objc2-foundation",
+] }
+objc2-audio-toolbox = { version = "0.3", default-features = false, features = [
+    "std",
+    "AUComponent",
+    "AudioUnitProperties",
+] }
+objc2-core-audio-types = { version = "0.3", default-features = false, features = [
+    "std",
+    "CoreAudioBaseTypes",
+] }
+objc2-core-foundation = { version = "0.3" }
+objc2-foundation = { version = "0.3" }
+objc2 = { version = "0.6" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+jack = { version = "0.13", optional = true }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2-avf-audio = { version = "0.3", default-features = false, features = [
+    "std",
+    "AVAudioSession",
+] }
+
+[target.'cfg(target_os = "emscripten")'.dependencies]
+wasm-bindgen = { version = "0.2" }
+wasm-bindgen-futures = "0.4"
+js-sys = { version = "0.3" }
+web-sys = { version = "0.3", features = [
+    "AudioContext",
+    "AudioContextOptions",
+    "AudioBuffer",
+    "AudioBufferSourceNode",
+    "AudioNode",
+    "AudioDestinationNode",
+    "Window",
+    "AudioContextState",
+] }
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+wasm-bindgen = { version = "0.2", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+js-sys = { version = "0.3" }
+web-sys = { version = "0.3", features = [
+    "AudioContext",
+    "AudioContextOptions",
+    "AudioBuffer",
+    "AudioBufferSourceNode",
+    "AudioNode",
+    "AudioDestinationNode",
+    "Window",
+    "AudioContextState",
+] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+ndk = { version = "0.9", default-features = false, features = [
+    "audio",
+    "api-level-26",
+] }
+ndk-context = "0.1"
+jni = "0.21"
+num-derive = "0.4"
+num-traits = "0.2"
+
+[[example]]
+name = "beep"
+
+[[example]]
+name = "enumerate"
+
+[[example]]
+name = "feedback"
+
+[[example]]
+name = "record_wav"
+
+[[example]]
+name = "synth_tones"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "aarch64-apple-ios",
+    "wasm32-unknown-unknown",
+    "wasm32-unknown-emscripten",
+    "aarch64-linux-android",
+    "x86_64-unknown-freebsd",
+    "x86_64-unknown-netbsd",
+    "x86_64-unknown-dragonfly",
+]

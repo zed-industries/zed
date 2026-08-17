@@ -1,0 +1,312 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches:
+    - master
+  pull_request:
+
+jobs:
+
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout sources
+        uses: taiki-e/checkout-action@v1
+
+      - uses: taiki-e/install-action@cargo-binstall
+
+      - name: Get date for registry cache
+        id: date
+        run: echo "::set-output name=date::$(date +'%Y-%m-%d')"
+
+      - name: Cargo registry cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ steps.date.outputs.date }}
+          restore-keys: ${{ runner.os }}-cargo-registry-
+
+      - name: Rust toolchain
+        run: |
+          rustup default stable
+          rustup component add rustfmt clippy
+
+      - name: Get cargo-cache latest version
+        id: cargocacheversion
+        run: echo "::set-output name=version::$(cargo search 'cargo-cache' --limit 1 | head -n 1 | cut -d ' ' -f 3 | cut -d '"' -f 2)"
+
+      - name: Cargo binaries cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-cache
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
+          key: ${{ runner.os }}-cargo-binaries-${{ steps.cargocacheversion.outputs.version }}
+
+      - name: Install cargo-cache
+        run: cargo binstall cargo-cache --version ${{ steps.cargocacheversion.outputs.version }}
+
+      - name: Clean cargo cache of old items
+        run: cargo cache clean-unref
+
+      - name: Get rustc version for caching
+        id: rustcversion
+        run: echo "::set-output name=version::$(rustc --version | cut -d ' ' -f 2)"
+
+      - name: Build cache
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-lint-${{ steps.rustcversion.outputs.version }}-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Cargo fmt
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --features "block_on executor" -- -D warnings
+
+  ci-linux:
+    name: CI
+
+    needs:
+      - lint
+
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: ['1.63.0', '1.69.0', 'stable', 'beta']
+
+    runs-on: 'ubuntu-latest'
+
+    steps:
+      - name: Checkout sources
+        uses: taiki-e/checkout-action@v1
+
+      - name: Get date for registry cache
+        id: date
+        run: echo "::set-output name=date::$(date +'%Y-%m-%d')"
+
+      - name: Cargo registry cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ steps.date.outputs.date }}
+          restore-keys: ${{ runner.os }}-cargo-registry-
+
+      - name: Rust toolchain
+        run: rustup default ${{ matrix.rust }}
+
+      - name: Get rustc version for caching
+        id: rustcversion
+        run: echo "::set-output name=version::$(rustc --version | cut -d ' ' -f 2)"
+
+      - name: Build cache
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-test-${{ steps.rustcversion.outputs.version }}-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Downgrade tracing
+        if: ${{ matrix.rust == '1.63.0' }}
+        run: cargo update --package tracing --precise 0.1.40
+
+      - name: Downgrade tracing-core
+        if: ${{ matrix.rust == '1.63.0' }}
+        run: cargo update --package tracing-core --precise 0.1.32
+
+      - name: Downgrade regex
+        if: ${{ matrix.rust == '1.63.0' }}
+        run: cargo update --package regex --precise 1.9.6
+
+      - name: Downgrade half
+        if: ${{ matrix.rust == '1.63.0' || matrix.rust == '1.69.0' }}
+        run: cargo update --package half --precise 2.2.1
+
+      - name: Downgrade textwrap
+        if: ${{ matrix.rust == '1.63.0' || matrix.rust == '1.69.0' }}
+        run: cargo update --package textwrap --precise 0.16.0
+
+      - name: Run tests
+        run: cargo test --features "block_on executor"
+
+      - name: Run tests with signals
+        run: cargo test --features "block_on executor signals"
+        if: ${{ matrix.rust != '1.63.0' }}
+
+      - name: Run book tests
+        run: cargo test --all-features --manifest-path ./doc/Cargo.toml
+        if: ${{ matrix.rust == 'stable' || matrix.rust == 'beta' }}
+
+  ci-windows:
+    name: CI (Windows)
+
+    needs:
+      - lint
+
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: ['1.63.0', 'stable']
+
+    runs-on: 'windows-latest'
+
+    steps:
+      - name: Checkout sources
+        uses: taiki-e/checkout-action@v1
+
+      - name: Rust toolchain
+        run: rustup default ${{ matrix.rust }}
+
+      - name: Downgrade tracing
+        if: ${{ matrix.rust == '1.63.0' }}
+        run: cargo update --package tracing --precise 0.1.40
+
+      - name: Downgrade tracing-core
+        if: ${{ matrix.rust == '1.63.0' }}
+        run: cargo update --package tracing-core --precise 0.1.32
+
+      - name: Downgrade regex
+        if: ${{ matrix.rust == '1.63.0' }}
+        run: cargo update --package regex --precise 1.9.6
+
+      - name: Downgrade half
+        if: ${{ matrix.rust == '1.63.0' }}
+        run: cargo update --package half --precise 2.2.1
+
+      - name: Downgrade textwrap
+        if: ${{ matrix.rust == '1.63.0' }}
+        run: cargo update --package textwrap --precise 0.16.0
+
+      - name: Run tests
+        run: cargo test --features "block_on executor"
+
+  coverage:
+    name: Coverage
+
+    needs:
+      - ci-linux
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ['ubuntu-latest', 'macos-latest']
+
+    runs-on: ${{ matrix.os }}
+
+    env:
+      GRCOV_VERSION: "0.8.10"
+
+    steps:
+      - name: Checkout sources
+        uses: taiki-e/checkout-action@v1
+
+      - name: Get date for registry cache
+        id: date
+        run: echo "::set-output name=date::$(date +'%Y-%m-%d')"
+
+      - name: Cargo registry cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ steps.date.outputs.date }}
+          restore-keys: ${{ runner.os }}-cargo-registry-
+
+      - name: Rust toolchain
+        run: |
+          rustup default nightly
+          rustup component add llvm-tools-preview
+      
+      - name: Get grcov latest version
+        id: grcovversion
+        run: echo "::set-output name=version::$(cargo search 'grcov' --limit 1 | head -n 1 | cut -d ' ' -f 3 | cut -d '"' -f 2)"
+      
+      - name: grcov cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/grcov
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
+          key: ${{ runner.os }}-grcov-${{ steps.grcovversion.outputs.version }}
+
+      - name: Install grcov
+        run: cargo install grcov --version ${{ steps.grcovversion.outputs.version }}
+
+      - name: Run tests
+        run: cargo test --all-features
+        env:
+          LLVM_PROFILE_FILE: "calloop-%p-%m.profraw"
+          RUSTFLAGS: "-Cinstrument-coverage --cfg coverage"
+
+      - name: Coverage
+        run: grcov . --binary-path ./target/debug -s . -t lcov --branch --llvm --ignore-not-existing --ignore 'examples/*' --ignore 'tests/*' --ignore '*/.cargo/registry/*' --excl-br-start "mod tests \{" --excl-start "mod tests \{" --excl-br-line "#\[derive\(" --excl-line "#\[derive\(" -o lcov.info
+    
+      - name: Upload to codecov.io
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./lcov.info
+          flags: ${{ matrix.os }}
+
+  doc:
+    name: Documentation on Github Pages
+    runs-on: ubuntu-latest
+
+    needs:
+      - ci-linux
+
+    steps:
+      - name: Checkout sources
+        uses: taiki-e/checkout-action@v1
+
+      - name: Get date for registry cache
+        id: date
+        run: echo "::set-output name=date::$(date +'%Y-%m-%d')"
+
+      - name: Cargo registry cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ steps.date.outputs.date }}
+          restore-keys: ${{ runner.os }}-cargo-registry-
+
+      - name: Rust toolchain
+        run: rustup default beta
+
+      # Combining these docs is order-dependent. The API docs must be copied
+      # into mdBook's source directory for it to copy it to the output directory
+      # as static content.
+
+      - name: Build Documentation
+        run: cargo doc --no-deps --features "block_on executor"
+
+      - run: rsync -r target/doc/ doc/src/api
+
+      - name: Build mdBook
+        uses: peaceiris/actions-mdbook@v2
+        with:
+          mdbook-version: '0.4.8'
+
+      - run: mdbook build doc
+
+      - name: Deploy
+        uses: peaceiris/actions-gh-pages@v4
+        if: ${{ github.event_name == 'push' }}
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./doc/book
+          force_orphan: true

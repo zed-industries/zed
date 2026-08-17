@@ -1,0 +1,13 @@
+diff --git a/dav1d/BUILD.gn b/dav1d/BUILD.gn
+index 9348e15c3c..f34db7ff98 100644
+--- a/dav1d/BUILD.gn
++++ b/dav1d/BUILD.gn
+@@ -101,7 +101,7 @@ if (is_win) {
+     dav1d_copts += [ "-D_DARWIN_C_SOURCE" ]
+   }
+   if (is_linux || is_chromeos || is_android || current_os == "aix") {
+-    if (!is_clang) {
++    if (!is_clang && (current_cpu == "x86" || current_cpu == "x64")) {
+       dav1d_copts += [ "-D_GNU_SOURCE" ]
+     }
+   }

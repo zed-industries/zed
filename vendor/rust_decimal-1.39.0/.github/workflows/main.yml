@@ -1,0 +1,361 @@
+on:
+  pull_request:
+    types: [ opened, synchronize, reopened ]
+  push:
+    branches:
+      - master
+      - "[1-9].x"
+
+name: CI
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    # Keep this the same as this is what Github looks for to determine if the build passed
+    name: "Pass"
+    needs:
+      - check_style
+      - minimum_rust_version
+      - docs
+      - test
+    steps:
+      - run: exit 0
+
+  check_style:
+    name: Check file formatting and style
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: clippy-cargo-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install libpq-dev
+
+      - name: Check file formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy --workspace --all-features
+
+  minimum_rust_version:
+    name: Check minimum rust version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.67.1
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: minimal_rust_version-cargo-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install libpq-dev
+
+      - name: Use minimal dependencies
+        run: |
+          RUSTC_BOOTSTRAP=1 cargo update -Z minimal-versions
+
+      - name: Check build
+        run: cargo check --workspace
+
+  docs:
+    name: "Check documentation"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: docs-cargo-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Check documentation
+        env:
+          RUSTDOCFLAGS: --cfg docsrs
+        run: cargo doc --no-deps --all-features
+
+  test:
+    name: "Test"
+    runs-on: ubuntu-latest
+    needs:
+      - standard_tests
+      - dependency_tests
+      - database_tests
+      - fuzz_tests
+    steps:
+      - run: exit 0
+
+  standard_tests:
+    name: "Standard Tests"
+    runs-on: ubuntu-latest
+    strategy:
+      # There doesn't seem to be a way to share the matrix between jobs
+      matrix:
+        name:
+          - stable
+          - beta
+        include:
+          # This allows us to define targets in the future (e.g. wasm32-unknown-unknown)
+          - name: stable
+            rust: stable
+          - name: beta
+            rust: beta
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: tests-std-${{ matrix.rust }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+
+      - uses: davidB/rust-cargo-make@v1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install libpq-dev
+
+      - name: Run no_std tests
+        run: cargo make test-no-std
+        env:
+          CI_DECIMAL_TEST_TARGET: ${{ matrix.target }}
+
+      - name: Run default tests
+        run: cargo make test-default
+        env:
+          CI_DECIMAL_TEST_TARGET: ${{ matrix.target }}
+
+      - name: Run legacy operation tests
+        run: cargo make test-legacy-ops
+        env:
+          CI_DECIMAL_TEST_TARGET: ${{ matrix.target }}
+
+      - name: Run mathematical function tests
+        run: cargo make test-maths
+        env:
+          CI_DECIMAL_TEST_TARGET: ${{ matrix.target }}
+
+      - name: Run macro tests
+        run: cargo make test-macros
+        env:
+          CI_DECIMAL_TEST_TARGET: ${{ matrix.target }}
+
+  dependency_tests:
+    name: "Dependency Tests"
+    runs-on: ubuntu-latest
+    strategy:
+      # There doesn't seem to be a way to share the matrix between jobs
+      matrix:
+        name:
+          - stable
+          - beta
+        include:
+          # This allows us to define targets in the future (e.g. wasm32-unknown-unknown)
+          - name: stable
+            rust: stable
+          - name: beta
+            rust: beta
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: tests-dep-${{ matrix.rust }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+
+      - uses: davidB/rust-cargo-make@v1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install libpq-dev
+
+      - name: Run serde tests
+        run: cargo make test-serde
+        env:
+          CI_DECIMAL_TEST_TARGET: ${{ matrix.target }}
+
+      - name: Run miscellaneous dependency tests
+        run: cargo make test-misc
+        env:
+          CI_DECIMAL_TEST_TARGET: ${{ matrix.target }}
+
+  database_tests:
+    name: "Database Tests"
+    runs-on: ubuntu-latest
+    needs:
+      - postgres_tests
+      - mysql_tests
+    steps:
+      - run: exit 0
+
+  postgres_tests:
+    name: "Database Tests - PostgreSQL"
+    runs-on: ubuntu-latest
+    strategy:
+      # There doesn't seem to be a way to share the matrix between jobs
+      matrix:
+        name:
+          - stable
+          - beta
+        include:
+          # This allows us to define targets in the future (e.g. wasm32-unknown-unknown)
+          - name: stable
+            rust: stable
+          - name: beta
+            rust: beta
+    services:
+      postgres:
+        image: postgres:11.6
+        env:
+          POSTGRES_PASSWORD: ''
+        ports:
+          - 5432:5432
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: tests-pgsql-${{ matrix.rust }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+
+      - uses: davidB/rust-cargo-make@v1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install libpq-dev
+
+      - name: Run database tests
+        run: cargo make test-db-postgres-all
+        env:
+          CI_DECIMAL_TEST_TARGET: ${{ matrix.target }}
+
+  mysql_tests:
+    name: "Database Tests - MySQL"
+    runs-on: ubuntu-latest
+    strategy:
+      # There doesn't seem to be a way to share the matrix between jobs
+      matrix:
+        name:
+          - stable
+          - beta
+        include:
+          # This allows us to define targets in the future (e.g. wasm32-unknown-unknown)
+          - name: stable
+            rust: stable
+          - name: beta
+            rust: beta
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: ''
+          MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
+        ports:
+          - 3306:3306
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: tests-mysql-${{ matrix.rust }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+
+      - uses: davidB/rust-cargo-make@v1
+
+      - name: Run database tests
+        run: cargo make test-db-mysql-all
+        env:
+          CI_DECIMAL_TEST_TARGET: ${{ matrix.target }}
+
+  fuzz_tests:
+    name: Fuzz Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: tests-fuzz-${{ matrix.rust }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Install Cargo Fuzz
+        run: cargo install cargo-fuzz
+
+      - uses: davidB/rust-cargo-make@v1
+
+      - name: Run fuzz tests
+        run: cargo make fuzz

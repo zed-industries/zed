@@ -1,0 +1,4 @@
+<!DOCTYPE test [
+    <!ENTITY ns 'http://www.w3.org'>
+]>
+<p xmlns='&ns;' xmlns:t='&ns;'/>

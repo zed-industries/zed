@@ -1,0 +1,7 @@
+use_try_shorthand = true
+edition = "2018"
+max_width = 80
+comment_width = 80
+wrap_comments = true
+tab_spaces = 2
+imports_granularity="Crate"

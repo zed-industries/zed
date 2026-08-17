@@ -1,0 +1,1 @@
+failed to decode world from module: module was not valid: failed to find export of interface `foo` function `a`

@@ -1,0 +1,688 @@
+/// This interface defines all of the types and methods for implementing
+/// HTTP Requests and Responses, both incoming and outgoing, as well as
+/// their headers, trailers, and bodies.
+@since(version = 0.2.0)
+interface types {
+  @since(version = 0.2.0)
+  use wasi:clocks/monotonic-clock@0.2.4.{duration};
+  @since(version = 0.2.0)
+  use wasi:io/streams@0.2.4.{input-stream, output-stream};
+  @since(version = 0.2.0)
+  use wasi:io/error@0.2.4.{error as io-error};
+  @since(version = 0.2.0)
+  use wasi:io/poll@0.2.4.{pollable};
+
+  /// This type corresponds to HTTP standard Methods.
+  @since(version = 0.2.0)
+  variant method {
+    get,
+    head,
+    post,
+    put,
+    delete,
+    connect,
+    options,
+    trace,
+    patch,
+    other(string)
+  }
+
+  /// This type corresponds to HTTP standard Related Schemes.
+  @since(version = 0.2.0)
+  variant scheme {
+    HTTP,
+    HTTPS,
+    other(string)
+  }
+
+  /// These cases are inspired by the IANA HTTP Proxy Error Types:
+  ///   <https://www.iana.org/assignments/http-proxy-status/http-proxy-status.xhtml#table-http-proxy-error-types>
+  @since(version = 0.2.0)
+  variant error-code {
+    DNS-timeout,
+    DNS-error(DNS-error-payload),
+    destination-not-found,
+    destination-unavailable,
+    destination-IP-prohibited,
+    destination-IP-unroutable,
+    connection-refused,
+    connection-terminated,
+    connection-timeout,
+    connection-read-timeout,
+    connection-write-timeout,
+    connection-limit-reached,
+    TLS-protocol-error,
+    TLS-certificate-error,
+    TLS-alert-received(TLS-alert-received-payload),
+    HTTP-request-denied,
+    HTTP-request-length-required,
+    HTTP-request-body-size(option<u64>),
+    HTTP-request-method-invalid,
+    HTTP-request-URI-invalid,
+    HTTP-request-URI-too-long,
+    HTTP-request-header-section-size(option<u32>),
+    HTTP-request-header-size(option<field-size-payload>),
+    HTTP-request-trailer-section-size(option<u32>),
+    HTTP-request-trailer-size(field-size-payload),
+    HTTP-response-incomplete,
+    HTTP-response-header-section-size(option<u32>),
+    HTTP-response-header-size(field-size-payload),
+    HTTP-response-body-size(option<u64>),
+    HTTP-response-trailer-section-size(option<u32>),
+    HTTP-response-trailer-size(field-size-payload),
+    HTTP-response-transfer-coding(option<string>),
+    HTTP-response-content-coding(option<string>),
+    HTTP-response-timeout,
+    HTTP-upgrade-failed,
+    HTTP-protocol-error,
+    loop-detected,
+    configuration-error,
+    /// This is a catch-all error for anything that doesn't fit cleanly into a
+    /// more specific case. It also includes an optional string for an
+    /// unstructured description of the error. Users should not depend on the
+    /// string for diagnosing errors, as it's not required to be consistent
+    /// between implementations.
+    internal-error(option<string>)
+  }
+
+  /// Defines the case payload type for `DNS-error` above:
+  @since(version = 0.2.0)
+  record DNS-error-payload {
+    rcode: option<string>,
+    info-code: option<u16>
+  }
+
+  /// Defines the case payload type for `TLS-alert-received` above:
+  @since(version = 0.2.0)
+  record TLS-alert-received-payload {
+    alert-id: option<u8>,
+    alert-message: option<string>
+  }
+
+  /// Defines the case payload type for `HTTP-response-{header,trailer}-size` above:
+  @since(version = 0.2.0)
+  record field-size-payload {
+    field-name: option<string>,
+    field-size: option<u32>
+  }
+
+  /// Attempts to extract a http-related `error` from the wasi:io `error`
+  /// provided.
+  ///
+  /// Stream operations which return
+  /// `wasi:io/stream/stream-error::last-operation-failed` have a payload of
+  /// type `wasi:io/error/error` with more information about the operation
+  /// that failed. This payload can be passed through to this function to see
+  /// if there's http-related information about the error to return.
+  ///
+  /// Note that this function is fallible because not all io-errors are
+  /// http-related errors.
+  @since(version = 0.2.0)
+  http-error-code: func(err: borrow<io-error>) -> option<error-code>;
+
+  /// This type enumerates the different kinds of errors that may occur when
+  /// setting or appending to a `fields` resource.
+  @since(version = 0.2.0)
+  variant header-error {
+    /// This error indicates that a `field-name` or `field-value` was
+    /// syntactically invalid when used with an operation that sets headers in a
+    /// `fields`.
+    invalid-syntax,
+
+    /// This error indicates that a forbidden `field-name` was used when trying
+    /// to set a header in a `fields`.
+    forbidden,
+
+    /// This error indicates that the operation on the `fields` was not
+    /// permitted because the fields are immutable.
+    immutable,
+  }
+
+  /// Field names are always strings.
+  ///
+  /// Field names should always be treated as case insensitive by the `fields`
+  /// resource for the purposes of equality checking.
+  @since(version = 0.2.1)
+  type field-name = field-key;
+
+  /// Field keys are always strings.
+  ///
+  /// Field keys should always be treated as case insensitive by the `fields`
+  /// resource for the purposes of equality checking.
+  /// 
+  /// # Deprecation
+  /// 
+  /// This type has been deprecated in favor of the `field-name` type.
+  @since(version = 0.2.0)
+  @deprecated(version = 0.2.2)
+  type field-key = string;
+
+  /// Field values should always be ASCII strings. However, in
+  /// reality, HTTP implementations often have to interpret malformed values,
+  /// so they are provided as a list of bytes.
+  @since(version = 0.2.0)
+  type field-value = list<u8>;
+
+  /// This following block defines the `fields` resource which corresponds to
+  /// HTTP standard Fields. Fields are a common representation used for both
+  /// Headers and Trailers.
+  ///
+  /// A `fields` may be mutable or immutable. A `fields` created using the
+  /// constructor, `from-list`, or `clone` will be mutable, but a `fields`
+  /// resource given by other means (including, but not limited to,
+  /// `incoming-request.headers`, `outgoing-request.headers`) might be
+  /// immutable. In an immutable fields, the `set`, `append`, and `delete`
+  /// operations will fail with `header-error.immutable`.
+  @since(version = 0.2.0)
+  resource fields {
+
+    /// Construct an empty HTTP Fields.
+    ///
+    /// The resulting `fields` is mutable.
+    @since(version = 0.2.0)
+    constructor();
+
+    /// Construct an HTTP Fields.
+    ///
+    /// The resulting `fields` is mutable.
+    ///
+    /// The list represents each name-value pair in the Fields. Names
+    /// which have multiple values are represented by multiple entries in this
+    /// list with the same name.
+    ///
+    /// The tuple is a pair of the field name, represented as a string, and
+    /// Value, represented as a list of bytes.
+    ///
+    /// An error result will be returned if any `field-name` or `field-value` is
+    /// syntactically invalid, or if a field is forbidden.
+    @since(version = 0.2.0)
+    from-list: static func(
+      entries: list<tuple<field-name,field-value>>
+    ) -> result<fields, header-error>;
+
+    /// Get all of the values corresponding to a name. If the name is not present
+    /// in this `fields` or is syntactically invalid, an empty list is returned.
+    /// However, if the name is present but empty, this is represented by a list
+    /// with one or more empty field-values present.
+    @since(version = 0.2.0)
+    get: func(name: field-name) -> list<field-value>;
+
+    /// Returns `true` when the name is present in this `fields`. If the name is
+    /// syntactically invalid, `false` is returned.
+    @since(version = 0.2.0)
+    has: func(name: field-name) -> bool;
+
+    /// Set all of the values for a name. Clears any existing values for that
+    /// name, if they have been set.
+    ///
+    /// Fails with `header-error.immutable` if the `fields` are immutable.
+    ///
+    /// Fails with `header-error.invalid-syntax` if the `field-name` or any of
+    /// the `field-value`s are syntactically invalid.
+    @since(version = 0.2.0)
+    set: func(name: field-name, value: list<field-value>) -> result<_, header-error>;
+
+    /// Delete all values for a name. Does nothing if no values for the name
+    /// exist.
+    ///
+    /// Fails with `header-error.immutable` if the `fields` are immutable.
+    ///
+    /// Fails with `header-error.invalid-syntax` if the `field-name` is
+    /// syntactically invalid.
+    @since(version = 0.2.0)
+    delete: func(name: field-name) -> result<_, header-error>;
+
+    /// Append a value for a name. Does not change or delete any existing
+    /// values for that name.
+    ///
+    /// Fails with `header-error.immutable` if the `fields` are immutable.
+    ///
+    /// Fails with `header-error.invalid-syntax` if the `field-name` or
+    /// `field-value` are syntactically invalid.
+    @since(version = 0.2.0)
+    append: func(name: field-name, value: field-value) -> result<_, header-error>;
+
+    /// Retrieve the full set of names and values in the Fields. Like the
+    /// constructor, the list represents each name-value pair.
+    ///
+    /// The outer list represents each name-value pair in the Fields. Names
+    /// which have multiple values are represented by multiple entries in this
+    /// list with the same name.
+    ///
+    /// The names and values are always returned in the original casing and in
+    /// the order in which they will be serialized for transport.
+    @since(version = 0.2.0)
+    entries: func() -> list<tuple<field-name,field-value>>;
+
+    /// Make a deep copy of the Fields. Equivalent in behavior to calling the
+    /// `fields` constructor on the return value of `entries`. The resulting
+    /// `fields` is mutable.
+    @since(version = 0.2.0)
+    clone: func() -> fields;
+  }
+
+  /// Headers is an alias for Fields.
+  @since(version = 0.2.0)
+  type headers = fields;
+
+  /// Trailers is an alias for Fields.
+  @since(version = 0.2.0)
+  type trailers = fields;
+
+  /// Represents an incoming HTTP Request.
+  @since(version = 0.2.0)
+  resource incoming-request {
+
+    /// Returns the method of the incoming request.
+    @since(version = 0.2.0)
+    method: func() -> method;
+
+    /// Returns the path with query parameters from the request, as a string.
+    @since(version = 0.2.0)
+    path-with-query: func() -> option<string>;
+
+    /// Returns the protocol scheme from the request.
+    @since(version = 0.2.0)
+    scheme: func() -> option<scheme>;
+
+    /// Returns the authority of the Request's target URI, if present.
+    @since(version = 0.2.0)
+    authority: func() -> option<string>;
+
+    /// Get the `headers` associated with the request.
+    ///
+    /// The returned `headers` resource is immutable: `set`, `append`, and
+    /// `delete` operations will fail with `header-error.immutable`.
+    ///
+    /// The `headers` returned are a child resource: it must be dropped before
+    /// the parent `incoming-request` is dropped. Dropping this
+    /// `incoming-request` before all children are dropped will trap.
+    @since(version = 0.2.0)
+    headers: func() -> headers;
+
+    /// Gives the `incoming-body` associated with this request. Will only
+    /// return success at most once, and subsequent calls will return error.
+    @since(version = 0.2.0)
+    consume: func() -> result<incoming-body>;
+  }
+
+  /// Represents an outgoing HTTP Request.
+  @since(version = 0.2.0)
+  resource outgoing-request {
+
+    /// Construct a new `outgoing-request` with a default `method` of `GET`, and
+    /// `none` values for `path-with-query`, `scheme`, and `authority`.
+    ///
+    /// * `headers` is the HTTP Headers for the Request.
+    ///
+    /// It is possible to construct, or manipulate with the accessor functions
+    /// below, an `outgoing-request` with an invalid combination of `scheme`
+    /// and `authority`, or `headers` which are not permitted to be sent.
+    /// It is the obligation of the `outgoing-handler.handle` implementation
+    /// to reject invalid constructions of `outgoing-request`.
+    @since(version = 0.2.0)
+    constructor(
+      headers: headers
+    );
+
+    /// Returns the resource corresponding to the outgoing Body for this
+    /// Request.
+    ///
+    /// Returns success on the first call: the `outgoing-body` resource for
+    /// this `outgoing-request` can be retrieved at most once. Subsequent
+    /// calls will return error.
+    @since(version = 0.2.0)
+    body: func() -> result<outgoing-body>;
+
+    /// Get the Method for the Request.
+    @since(version = 0.2.0)
+    method: func() -> method;
+    /// Set the Method for the Request. Fails if the string present in a
+    /// `method.other` argument is not a syntactically valid method.
+    @since(version = 0.2.0)
+    set-method: func(method: method) -> result;
+
+    /// Get the combination of the HTTP Path and Query for the Request.
+    /// When `none`, this represents an empty Path and empty Query.
+    @since(version = 0.2.0)
+    path-with-query: func() -> option<string>;
+    /// Set the combination of the HTTP Path and Query for the Request.
+    /// When `none`, this represents an empty Path and empty Query. Fails is the
+    /// string given is not a syntactically valid path and query uri component.
+    @since(version = 0.2.0)
+    set-path-with-query: func(path-with-query: option<string>) -> result;
+
+    /// Get the HTTP Related Scheme for the Request. When `none`, the
+    /// implementation may choose an appropriate default scheme.
+    @since(version = 0.2.0)
+    scheme: func() -> option<scheme>;
+    /// Set the HTTP Related Scheme for the Request. When `none`, the
+    /// implementation may choose an appropriate default scheme. Fails if the
+    /// string given is not a syntactically valid uri scheme.
+    @since(version = 0.2.0)
+    set-scheme: func(scheme: option<scheme>) -> result;
+
+    /// Get the authority of the Request's target URI. A value of `none` may be used
+    /// with Related Schemes which do not require an authority. The HTTP and
+    /// HTTPS schemes always require an authority.
+    @since(version = 0.2.0)
+    authority: func() -> option<string>;
+    /// Set the authority of the Request's target URI. A value of `none` may be used
+    /// with Related Schemes which do not require an authority. The HTTP and
+    /// HTTPS schemes always require an authority. Fails if the string given is
+    /// not a syntactically valid URI authority.
+    @since(version = 0.2.0)
+    set-authority: func(authority: option<string>) -> result;
+
+    /// Get the headers associated with the Request.
+    ///
+    /// The returned `headers` resource is immutable: `set`, `append`, and
+    /// `delete` operations will fail with `header-error.immutable`.
+    ///
+    /// This headers resource is a child: it must be dropped before the parent
+    /// `outgoing-request` is dropped, or its ownership is transferred to
+    /// another component by e.g. `outgoing-handler.handle`.
+    @since(version = 0.2.0)
+    headers: func() -> headers;
+  }
+
+  /// Parameters for making an HTTP Request. Each of these parameters is
+  /// currently an optional timeout applicable to the transport layer of the
+  /// HTTP protocol.
+  ///
+  /// These timeouts are separate from any the user may use to bound a
+  /// blocking call to `wasi:io/poll.poll`.
+  @since(version = 0.2.0)
+  resource request-options {
+    /// Construct a default `request-options` value.
+    @since(version = 0.2.0)
+    constructor();
+
+    /// The timeout for the initial connect to the HTTP Server.
+    @since(version = 0.2.0)
+    connect-timeout: func() -> option<duration>;
+
+    /// Set the timeout for the initial connect to the HTTP Server. An error
+    /// return value indicates that this timeout is not supported.
+    @since(version = 0.2.0)
+    set-connect-timeout: func(duration: option<duration>) -> result;
+
+    /// The timeout for receiving the first byte of the Response body.
+    @since(version = 0.2.0)
+    first-byte-timeout: func() -> option<duration>;
+
+    /// Set the timeout for receiving the first byte of the Response body. An
+    /// error return value indicates that this timeout is not supported.
+    @since(version = 0.2.0)
+    set-first-byte-timeout: func(duration: option<duration>) -> result;
+
+    /// The timeout for receiving subsequent chunks of bytes in the Response
+    /// body stream.
+    @since(version = 0.2.0)
+    between-bytes-timeout: func() -> option<duration>;
+
+    /// Set the timeout for receiving subsequent chunks of bytes in the Response
+    /// body stream. An error return value indicates that this timeout is not
+    /// supported.
+    @since(version = 0.2.0)
+    set-between-bytes-timeout: func(duration: option<duration>) -> result;
+  }
+
+  /// Represents the ability to send an HTTP Response.
+  ///
+  /// This resource is used by the `wasi:http/incoming-handler` interface to
+  /// allow a Response to be sent corresponding to the Request provided as the
+  /// other argument to `incoming-handler.handle`.
+  @since(version = 0.2.0)
+  resource response-outparam {
+    /// Send an HTTP 1xx response.
+    ///
+    /// Unlike `response-outparam.set`, this does not consume the
+    /// `response-outparam`, allowing the guest to send an arbitrary number of
+    /// informational responses before sending the final response using
+    /// `response-outparam.set`.
+    ///
+    /// This will return an `HTTP-protocol-error` if `status` is not in the
+    /// range [100-199], or an `internal-error` if the implementation does not
+    /// support informational responses.
+    @unstable(feature = informational-outbound-responses)
+    send-informational: func(
+      status: u16,
+      headers: headers
+    ) -> result<_, error-code>;
+
+    /// Set the value of the `response-outparam` to either send a response,
+    /// or indicate an error.
+    ///
+    /// This method consumes the `response-outparam` to ensure that it is
+    /// called at most once. If it is never called, the implementation
+    /// will respond with an error.
+    ///
+    /// The user may provide an `error` to `response` to allow the
+    /// implementation determine how to respond with an HTTP error response.
+    @since(version = 0.2.0)
+    set: static func(
+      param: response-outparam,
+      response: result<outgoing-response, error-code>,
+    );
+  }
+
+  /// This type corresponds to the HTTP standard Status Code.
+  @since(version = 0.2.0)
+  type status-code = u16;
+
+  /// Represents an incoming HTTP Response.
+  @since(version = 0.2.0)
+  resource incoming-response {
+
+    /// Returns the status code from the incoming response.
+    @since(version = 0.2.0)
+    status: func() -> status-code;
+
+    /// Returns the headers from the incoming response.
+    ///
+    /// The returned `headers` resource is immutable: `set`, `append`, and
+    /// `delete` operations will fail with `header-error.immutable`.
+    ///
+    /// This headers resource is a child: it must be dropped before the parent
+    /// `incoming-response` is dropped.
+    @since(version = 0.2.0)
+    headers: func() -> headers;
+
+    /// Returns the incoming body. May be called at most once. Returns error
+    /// if called additional times.
+    @since(version = 0.2.0)
+    consume: func() -> result<incoming-body>;
+  }
+
+  /// Represents an incoming HTTP Request or Response's Body.
+  ///
+  /// A body has both its contents - a stream of bytes - and a (possibly
+  /// empty) set of trailers, indicating that the full contents of the
+  /// body have been received. This resource represents the contents as
+  /// an `input-stream` and the delivery of trailers as a `future-trailers`,
+  /// and ensures that the user of this interface may only be consuming either
+  /// the body contents or waiting on trailers at any given time.
+  @since(version = 0.2.0)
+  resource incoming-body {
+
+    /// Returns the contents of the body, as a stream of bytes.
+    ///
+    /// Returns success on first call: the stream representing the contents
+    /// can be retrieved at most once. Subsequent calls will return error.
+    ///
+    /// The returned `input-stream` resource is a child: it must be dropped
+    /// before the parent `incoming-body` is dropped, or consumed by
+    /// `incoming-body.finish`.
+    ///
+    /// This invariant ensures that the implementation can determine whether
+    /// the user is consuming the contents of the body, waiting on the
+    /// `future-trailers` to be ready, or neither. This allows for network
+    /// backpressure is to be applied when the user is consuming the body,
+    /// and for that backpressure to not inhibit delivery of the trailers if
+    /// the user does not read the entire body.
+    @since(version = 0.2.0)
+    %stream: func() -> result<input-stream>;
+
+    /// Takes ownership of `incoming-body`, and returns a `future-trailers`.
+    /// This function will trap if the `input-stream` child is still alive.
+    @since(version = 0.2.0)
+    finish: static func(this: incoming-body) -> future-trailers;
+  }
+
+  /// Represents a future which may eventually return trailers, or an error.
+  ///
+  /// In the case that the incoming HTTP Request or Response did not have any
+  /// trailers, this future will resolve to the empty set of trailers once the
+  /// complete Request or Response body has been received.
+  @since(version = 0.2.0)
+  resource future-trailers {
+
+    /// Returns a pollable which becomes ready when either the trailers have
+    /// been received, or an error has occurred. When this pollable is ready,
+    /// the `get` method will return `some`.
+    @since(version = 0.2.0)
+    subscribe: func() -> pollable;
+
+    /// Returns the contents of the trailers, or an error which occurred,
+    /// once the future is ready.
+    ///
+    /// The outer `option` represents future readiness. Users can wait on this
+    /// `option` to become `some` using the `subscribe` method.
+    ///
+    /// The outer `result` is used to retrieve the trailers or error at most
+    /// once. It will be success on the first call in which the outer option
+    /// is `some`, and error on subsequent calls.
+    ///
+    /// The inner `result` represents that either the HTTP Request or Response
+    /// body, as well as any trailers, were received successfully, or that an
+    /// error occurred receiving them. The optional `trailers` indicates whether
+    /// or not trailers were present in the body.
+    ///
+    /// When some `trailers` are returned by this method, the `trailers`
+    /// resource is immutable, and a child. Use of the `set`, `append`, or
+    /// `delete` methods will return an error, and the resource must be
+    /// dropped before the parent `future-trailers` is dropped.
+    @since(version = 0.2.0)
+    get: func() -> option<result<result<option<trailers>, error-code>>>;
+  }
+
+  /// Represents an outgoing HTTP Response.
+  @since(version = 0.2.0)
+  resource outgoing-response {
+
+    /// Construct an `outgoing-response`, with a default `status-code` of `200`.
+    /// If a different `status-code` is needed, it must be set via the
+    /// `set-status-code` method.
+    ///
+    /// * `headers` is the HTTP Headers for the Response.
+    @since(version = 0.2.0)
+    constructor(headers: headers);
+
+    /// Get the HTTP Status Code for the Response.
+    @since(version = 0.2.0)
+    status-code: func() -> status-code;
+
+    /// Set the HTTP Status Code for the Response. Fails if the status-code
+    /// given is not a valid http status code.
+    @since(version = 0.2.0)
+    set-status-code: func(status-code: status-code) -> result;
+
+    /// Get the headers associated with the Request.
+    ///
+    /// The returned `headers` resource is immutable: `set`, `append`, and
+    /// `delete` operations will fail with `header-error.immutable`.
+    ///
+    /// This headers resource is a child: it must be dropped before the parent
+    /// `outgoing-request` is dropped, or its ownership is transferred to
+    /// another component by e.g. `outgoing-handler.handle`.
+    @since(version = 0.2.0)
+    headers: func() -> headers;
+
+    /// Returns the resource corresponding to the outgoing Body for this Response.
+    ///
+    /// Returns success on the first call: the `outgoing-body` resource for
+    /// this `outgoing-response` can be retrieved at most once. Subsequent
+    /// calls will return error.
+    @since(version = 0.2.0)
+    body: func() -> result<outgoing-body>;
+  }
+
+  /// Represents an outgoing HTTP Request or Response's Body.
+  ///
+  /// A body has both its contents - a stream of bytes - and a (possibly
+  /// empty) set of trailers, inducating the full contents of the body
+  /// have been sent. This resource represents the contents as an
+  /// `output-stream` child resource, and the completion of the body (with
+  /// optional trailers) with a static function that consumes the
+  /// `outgoing-body` resource, and ensures that the user of this interface
+  /// may not write to the body contents after the body has been finished.
+  ///
+  /// If the user code drops this resource, as opposed to calling the static
+  /// method `finish`, the implementation should treat the body as incomplete,
+  /// and that an error has occurred. The implementation should propagate this
+  /// error to the HTTP protocol by whatever means it has available,
+  /// including: corrupting the body on the wire, aborting the associated
+  /// Request, or sending a late status code for the Response.
+  @since(version = 0.2.0)
+  resource outgoing-body {
+
+    /// Returns a stream for writing the body contents.
+    ///
+    /// The returned `output-stream` is a child resource: it must be dropped
+    /// before the parent `outgoing-body` resource is dropped (or finished),
+    /// otherwise the `outgoing-body` drop or `finish` will trap.
+    ///
+    /// Returns success on the first call: the `output-stream` resource for
+    /// this `outgoing-body` may be retrieved at most once. Subsequent calls
+    /// will return error.
+    @since(version = 0.2.0)
+    write: func() -> result<output-stream>;
+
+    /// Finalize an outgoing body, optionally providing trailers. This must be
+    /// called to signal that the response is complete. If the `outgoing-body`
+    /// is dropped without calling `outgoing-body.finalize`, the implementation
+    /// should treat the body as corrupted.
+    ///
+    /// Fails if the body's `outgoing-request` or `outgoing-response` was
+    /// constructed with a Content-Length header, and the contents written
+    /// to the body (via `write`) does not match the value given in the
+    /// Content-Length.
+    @since(version = 0.2.0)
+    finish: static func(
+      this: outgoing-body,
+      trailers: option<trailers>
+    ) -> result<_, error-code>;
+  }
+
+  /// Represents a future which may eventually return an incoming HTTP
+  /// Response, or an error.
+  ///
+  /// This resource is returned by the `wasi:http/outgoing-handler` interface to
+  /// provide the HTTP Response corresponding to the sent Request.
+  @since(version = 0.2.0)
+  resource future-incoming-response {
+    /// Returns a pollable which becomes ready when either the Response has
+    /// been received, or an error has occurred. When this pollable is ready,
+    /// the `get` method will return `some`.
+    @since(version = 0.2.0)
+    subscribe: func() -> pollable;
+
+    /// Returns the incoming HTTP Response, or an error, once one is ready.
+    ///
+    /// The outer `option` represents future readiness. Users can wait on this
+    /// `option` to become `some` using the `subscribe` method.
+    ///
+    /// The outer `result` is used to retrieve the response or error at most
+    /// once. It will be success on the first call in which the outer option
+    /// is `some`, and error on subsequent calls.
+    ///
+    /// The inner `result` represents that either the incoming HTTP Response
+    /// status and headers have received successfully, or that an error
+    /// occurred. Errors may also occur while consuming the response body,
+    /// but those will be reported by the `incoming-body` and its
+    /// `output-stream` child.
+    @since(version = 0.2.0)
+    get: func() -> option<result<result<incoming-response, error-code>>>;
+  }
+}

@@ -1,0 +1,95 @@
+{
+  "worlds": [
+    {
+      "name": "a",
+      "imports": {
+        "interface-2": {
+          "interface": {
+            "id": 2
+          }
+        },
+        "interface-3": {
+          "interface": {
+            "id": 3
+          }
+        },
+        "interface-0": {
+          "interface": {
+            "id": 0
+          }
+        },
+        "interface-1": {
+          "interface": {
+            "id": 1
+          }
+        }
+      },
+      "exports": {},
+      "package": 4
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "d",
+      "types": {},
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "e",
+      "types": {},
+      "functions": {},
+      "package": 1
+    },
+    {
+      "name": "b",
+      "types": {},
+      "functions": {},
+      "package": 2
+    },
+    {
+      "name": "c",
+      "types": {},
+      "functions": {},
+      "package": 3
+    }
+  ],
+  "types": [],
+  "packages": [
+    {
+      "name": "d:d",
+      "interfaces": {
+        "d": 0
+      },
+      "worlds": {}
+    },
+    {
+      "name": "e:e",
+      "interfaces": {
+        "e": 1
+      },
+      "worlds": {}
+    },
+    {
+      "name": "b:b",
+      "interfaces": {
+        "b": 2
+      },
+      "worlds": {}
+    },
+    {
+      "name": "c:c",
+      "interfaces": {
+        "c": 3
+      },
+      "worlds": {}
+    },
+    {
+      "name": "a:a",
+      "interfaces": {},
+      "worlds": {
+        "a": 0
+      }
+    }
+  ]
+}

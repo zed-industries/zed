@@ -1,0 +1,6989 @@
+{
+  "name": "yaml",
+  "rules": {
+    "stream": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "SEQ",
+                  "members": [
+                    {
+                      "type": "CHOICE",
+                      "members": [
+                        {
+                          "type": "ALIAS",
+                          "content": {
+                            "type": "SYMBOL",
+                            "name": "_bgn_imp_doc"
+                          },
+                          "named": true,
+                          "value": "document"
+                        },
+                        {
+                          "type": "ALIAS",
+                          "content": {
+                            "type": "SYMBOL",
+                            "name": "_drs_doc"
+                          },
+                          "named": true,
+                          "value": "document"
+                        },
+                        {
+                          "type": "ALIAS",
+                          "content": {
+                            "type": "SYMBOL",
+                            "name": "_exp_doc"
+                          },
+                          "named": true,
+                          "value": "document"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "CHOICE",
+                      "members": [
+                        {
+                          "type": "CHOICE",
+                          "members": [
+                            {
+                              "type": "SYMBOL",
+                              "name": "_doc_w_bgn_w_end_seq"
+                            },
+                            {
+                              "type": "SYMBOL",
+                              "name": "_doc_w_bgn_wo_end_seq"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "BLANK"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "SEQ",
+                  "members": [
+                    {
+                      "type": "CHOICE",
+                      "members": [
+                        {
+                          "type": "ALIAS",
+                          "content": {
+                            "type": "SYMBOL",
+                            "name": "_bgn_imp_doc_end"
+                          },
+                          "named": true,
+                          "value": "document"
+                        },
+                        {
+                          "type": "ALIAS",
+                          "content": {
+                            "type": "SYMBOL",
+                            "name": "_drs_doc_end"
+                          },
+                          "named": true,
+                          "value": "document"
+                        },
+                        {
+                          "type": "ALIAS",
+                          "content": {
+                            "type": "SYMBOL",
+                            "name": "_exp_doc_end"
+                          },
+                          "named": true,
+                          "value": "document"
+                        },
+                        {
+                          "type": "ALIAS",
+                          "content": {
+                            "type": "SYMBOL",
+                            "name": "_doc_end"
+                          },
+                          "named": true,
+                          "value": "document"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "CHOICE",
+                      "members": [
+                        {
+                          "type": "CHOICE",
+                          "members": [
+                            {
+                              "type": "SYMBOL",
+                              "name": "_doc_w_bgn_w_end_seq"
+                            },
+                            {
+                              "type": "SYMBOL",
+                              "name": "_doc_w_bgn_wo_end_seq"
+                            },
+                            {
+                              "type": "SYMBOL",
+                              "name": "_doc_wo_bgn_w_end_seq"
+                            },
+                            {
+                              "type": "SYMBOL",
+                              "name": "_doc_wo_bgn_wo_end_seq"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "BLANK"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_eof"
+        }
+      ]
+    },
+    "_doc_w_bgn_w_end_seq": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_doc_w_bgn_w_end"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "SYMBOL",
+                  "name": "_doc_w_bgn_w_end_seq"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "_doc_w_bgn_wo_end_seq"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "_doc_wo_bgn_w_end_seq"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "_doc_wo_bgn_wo_end_seq"
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "_doc_w_bgn_wo_end_seq": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_doc_w_bgn_wo_end"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "SYMBOL",
+                  "name": "_doc_w_bgn_w_end_seq"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "_doc_w_bgn_wo_end_seq"
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "_doc_wo_bgn_w_end_seq": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_doc_wo_bgn_w_end"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "SYMBOL",
+                  "name": "_doc_w_bgn_w_end_seq"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "_doc_w_bgn_wo_end_seq"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "_doc_wo_bgn_w_end_seq"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "_doc_wo_bgn_wo_end_seq"
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "_doc_wo_bgn_wo_end_seq": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_doc_wo_bgn_wo_end"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "SYMBOL",
+                  "name": "_doc_w_bgn_w_end_seq"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "_doc_w_bgn_wo_end_seq"
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "_doc_w_bgn_w_end": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_exp_doc_end"
+          },
+          "named": true,
+          "value": "document"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_doc_end"
+          },
+          "named": true,
+          "value": "document"
+        }
+      ]
+    },
+    "_doc_w_bgn_wo_end": {
+      "type": "ALIAS",
+      "content": {
+        "type": "SYMBOL",
+        "name": "_exp_doc"
+      },
+      "named": true,
+      "value": "document"
+    },
+    "_doc_wo_bgn_w_end": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_drs_doc_end"
+          },
+          "named": true,
+          "value": "document"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_imp_doc_end"
+          },
+          "named": true,
+          "value": "document"
+        }
+      ]
+    },
+    "_doc_wo_bgn_wo_end": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_drs_doc"
+          },
+          "named": true,
+          "value": "document"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_imp_doc"
+          },
+          "named": true,
+          "value": "document"
+        }
+      ]
+    },
+    "_bgn_imp_doc": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_exp_doc_tal"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_blk_seq_r_val"
+          },
+          "named": true,
+          "value": "block_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_blk_map_r_val"
+          },
+          "named": true,
+          "value": "block_node"
+        }
+      ]
+    },
+    "_drs_doc": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "REPEAT1",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_s_dir"
+          }
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_exp_doc"
+        }
+      ]
+    },
+    "_exp_doc": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_s_drs_end"
+          },
+          "named": false,
+          "value": "---"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_exp_doc_tal"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "_imp_doc": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_blk_seq_val"
+          },
+          "named": true,
+          "value": "block_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_blk_map_val"
+          },
+          "named": true,
+          "value": "block_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_blk_str_val"
+          },
+          "named": true,
+          "value": "block_node"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_br_flw_val_blk"
+        }
+      ]
+    },
+    "_drs_doc_end": {
+      "type": "PREC",
+      "value": 1,
+      "content": {
+        "type": "SEQ",
+        "members": [
+          {
+            "type": "SYMBOL",
+            "name": "_drs_doc"
+          },
+          {
+            "type": "ALIAS",
+            "content": {
+              "type": "SYMBOL",
+              "name": "_s_doc_end"
+            },
+            "named": false,
+            "value": "..."
+          }
+        ]
+      }
+    },
+    "_exp_doc_end": {
+      "type": "PREC",
+      "value": 1,
+      "content": {
+        "type": "SEQ",
+        "members": [
+          {
+            "type": "SYMBOL",
+            "name": "_exp_doc"
+          },
+          {
+            "type": "ALIAS",
+            "content": {
+              "type": "SYMBOL",
+              "name": "_s_doc_end"
+            },
+            "named": false,
+            "value": "..."
+          }
+        ]
+      }
+    },
+    "_imp_doc_end": {
+      "type": "PREC",
+      "value": 1,
+      "content": {
+        "type": "SEQ",
+        "members": [
+          {
+            "type": "SYMBOL",
+            "name": "_imp_doc"
+          },
+          {
+            "type": "ALIAS",
+            "content": {
+              "type": "SYMBOL",
+              "name": "_s_doc_end"
+            },
+            "named": false,
+            "value": "..."
+          }
+        ]
+      }
+    },
+    "_bgn_imp_doc_end": {
+      "type": "PREC",
+      "value": 1,
+      "content": {
+        "type": "SEQ",
+        "members": [
+          {
+            "type": "SYMBOL",
+            "name": "_bgn_imp_doc"
+          },
+          {
+            "type": "ALIAS",
+            "content": {
+              "type": "SYMBOL",
+              "name": "_s_doc_end"
+            },
+            "named": false,
+            "value": "..."
+          }
+        ]
+      }
+    },
+    "_doc_end": {
+      "type": "ALIAS",
+      "content": {
+        "type": "SYMBOL",
+        "name": "_s_doc_end"
+      },
+      "named": false,
+      "value": "..."
+    },
+    "_exp_doc_tal": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_blk_seq_br_val"
+          },
+          "named": true,
+          "value": "block_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_blk_seq_val"
+          },
+          "named": true,
+          "value": "block_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_blk_map_br_val"
+          },
+          "named": true,
+          "value": "block_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_blk_map_val"
+          },
+          "named": true,
+          "value": "block_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_blk_str_val"
+          },
+          "named": true,
+          "value": "block_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_blk_str_val"
+          },
+          "named": true,
+          "value": "block_node"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_r_flw_val_blk"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_br_flw_val_blk"
+        }
+      ]
+    },
+    "_s_dir": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_s_dir_yml"
+          },
+          "named": true,
+          "value": "yaml_directive"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_s_dir_tag"
+          },
+          "named": true,
+          "value": "tag_directive"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_s_dir_rsv"
+          },
+          "named": true,
+          "value": "reserved_directive"
+        }
+      ]
+    },
+    "_s_dir_yml": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_s_dir_yml_bgn"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_dir_yml_ver"
+          },
+          "named": true,
+          "value": "yaml_version"
+        }
+      ]
+    },
+    "_s_dir_tag": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_s_dir_tag_bgn"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_dir_tag_hdl"
+          },
+          "named": true,
+          "value": "tag_handle"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_dir_tag_pfx"
+          },
+          "named": true,
+          "value": "tag_prefix"
+        }
+      ]
+    },
+    "_s_dir_rsv": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_s_dir_rsv_bgn"
+          },
+          "named": true,
+          "value": "directive_name"
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "ALIAS",
+            "content": {
+              "type": "SYMBOL",
+              "name": "_r_dir_rsv_prm"
+            },
+            "named": true,
+            "value": "directive_parameter"
+          }
+        }
+      ]
+    },
+    "_r_prp_val": {
+      "type": "SYMBOL",
+      "name": "_r_prp"
+    },
+    "_br_prp_val": {
+      "type": "SYMBOL",
+      "name": "_br_prp"
+    },
+    "_r_sgl_prp_val": {
+      "type": "SYMBOL",
+      "name": "_r_sgl_prp"
+    },
+    "_br_sgl_prp_val": {
+      "type": "SYMBOL",
+      "name": "_br_sgl_prp"
+    },
+    "_b_sgl_prp_val": {
+      "type": "SYMBOL",
+      "name": "_b_sgl_prp"
+    },
+    "_r_prp": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_acr"
+              },
+              "named": true,
+              "value": "anchor"
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "CHOICE",
+                  "members": [
+                    {
+                      "type": "ALIAS",
+                      "content": {
+                        "type": "SYMBOL",
+                        "name": "_r_tag"
+                      },
+                      "named": true,
+                      "value": "tag"
+                    },
+                    {
+                      "type": "ALIAS",
+                      "content": {
+                        "type": "SYMBOL",
+                        "name": "_br_tag"
+                      },
+                      "named": true,
+                      "value": "tag"
+                    }
+                  ]
+                },
+                {
+                  "type": "BLANK"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_tag"
+              },
+              "named": true,
+              "value": "tag"
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "CHOICE",
+                  "members": [
+                    {
+                      "type": "ALIAS",
+                      "content": {
+                        "type": "SYMBOL",
+                        "name": "_r_acr"
+                      },
+                      "named": true,
+                      "value": "anchor"
+                    },
+                    {
+                      "type": "ALIAS",
+                      "content": {
+                        "type": "SYMBOL",
+                        "name": "_br_acr"
+                      },
+                      "named": true,
+                      "value": "anchor"
+                    }
+                  ]
+                },
+                {
+                  "type": "BLANK"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "_br_prp": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_br_acr"
+              },
+              "named": true,
+              "value": "anchor"
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "CHOICE",
+                  "members": [
+                    {
+                      "type": "ALIAS",
+                      "content": {
+                        "type": "SYMBOL",
+                        "name": "_r_tag"
+                      },
+                      "named": true,
+                      "value": "tag"
+                    },
+                    {
+                      "type": "ALIAS",
+                      "content": {
+                        "type": "SYMBOL",
+                        "name": "_br_tag"
+                      },
+                      "named": true,
+                      "value": "tag"
+                    }
+                  ]
+                },
+                {
+                  "type": "BLANK"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_br_tag"
+              },
+              "named": true,
+              "value": "tag"
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "CHOICE",
+                  "members": [
+                    {
+                      "type": "ALIAS",
+                      "content": {
+                        "type": "SYMBOL",
+                        "name": "_r_acr"
+                      },
+                      "named": true,
+                      "value": "anchor"
+                    },
+                    {
+                      "type": "ALIAS",
+                      "content": {
+                        "type": "SYMBOL",
+                        "name": "_br_acr"
+                      },
+                      "named": true,
+                      "value": "anchor"
+                    }
+                  ]
+                },
+                {
+                  "type": "BLANK"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "_r_sgl_prp": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_acr"
+              },
+              "named": true,
+              "value": "anchor"
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_r_tag"
+                  },
+                  "named": true,
+                  "value": "tag"
+                },
+                {
+                  "type": "BLANK"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_tag"
+              },
+              "named": true,
+              "value": "tag"
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_r_acr"
+                  },
+                  "named": true,
+                  "value": "anchor"
+                },
+                {
+                  "type": "BLANK"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "_br_sgl_prp": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_br_acr"
+              },
+              "named": true,
+              "value": "anchor"
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_r_tag"
+                  },
+                  "named": true,
+                  "value": "tag"
+                },
+                {
+                  "type": "BLANK"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_br_tag"
+              },
+              "named": true,
+              "value": "tag"
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_r_acr"
+                  },
+                  "named": true,
+                  "value": "anchor"
+                },
+                {
+                  "type": "BLANK"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "_b_sgl_prp": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_b_acr"
+              },
+              "named": true,
+              "value": "anchor"
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_r_tag"
+                  },
+                  "named": true,
+                  "value": "tag"
+                },
+                {
+                  "type": "BLANK"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_b_tag"
+              },
+              "named": true,
+              "value": "tag"
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_r_acr"
+                  },
+                  "named": true,
+                  "value": "anchor"
+                },
+                {
+                  "type": "BLANK"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "_r_blk_seq_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_blk_seq_r_val"
+          },
+          "named": true,
+          "value": "block_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_blk_seq_br_val"
+          },
+          "named": true,
+          "value": "block_node"
+        }
+      ]
+    },
+    "_r_blk_seq_r_val": {
+      "type": "ALIAS",
+      "content": {
+        "type": "SYMBOL",
+        "name": "_r_blk_seq"
+      },
+      "named": true,
+      "value": "block_sequence"
+    },
+    "_r_blk_seq_br_val": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_r_prp"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_blk_seq"
+          },
+          "named": true,
+          "value": "block_sequence"
+        }
+      ]
+    },
+    "_br_blk_seq_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_blk_seq"
+          },
+          "named": true,
+          "value": "block_sequence"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_br_prp"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_br_blk_seq"
+              },
+              "named": true,
+              "value": "block_sequence"
+            }
+          ]
+        }
+      ]
+    },
+    "_r_blk_seq_spc_val": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_r_prp"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_blk_seq_spc"
+          },
+          "named": true,
+          "value": "block_sequence"
+        }
+      ]
+    },
+    "_br_blk_seq_spc_val": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_br_prp"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_blk_seq_spc"
+          },
+          "named": true,
+          "value": "block_sequence"
+        }
+      ]
+    },
+    "_b_blk_seq_spc_val": {
+      "type": "ALIAS",
+      "content": {
+        "type": "SYMBOL",
+        "name": "_b_blk_seq_spc"
+      },
+      "named": true,
+      "value": "block_sequence"
+    },
+    "_r_blk_seq": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_blk_seq_itm"
+          },
+          "named": true,
+          "value": "block_sequence_item"
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "ALIAS",
+            "content": {
+              "type": "SYMBOL",
+              "name": "_b_blk_seq_itm"
+            },
+            "named": true,
+            "value": "block_sequence_item"
+          }
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_bl"
+        }
+      ]
+    },
+    "_br_blk_seq": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_blk_seq_itm"
+          },
+          "named": true,
+          "value": "block_sequence_item"
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "ALIAS",
+            "content": {
+              "type": "SYMBOL",
+              "name": "_b_blk_seq_itm"
+            },
+            "named": true,
+            "value": "block_sequence_item"
+          }
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_bl"
+        }
+      ]
+    },
+    "_b_blk_seq_spc": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "REPEAT1",
+          "content": {
+            "type": "ALIAS",
+            "content": {
+              "type": "SYMBOL",
+              "name": "_b_blk_seq_itm"
+            },
+            "named": true,
+            "value": "block_sequence_item"
+          }
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_bl"
+        }
+      ]
+    },
+    "_r_blk_seq_itm": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_blk_seq_bgn"
+          },
+          "named": false,
+          "value": "-"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_blk_seq_itm_tal"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "_br_blk_seq_itm": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_blk_seq_bgn"
+          },
+          "named": false,
+          "value": "-"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_blk_seq_itm_tal"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "_b_blk_seq_itm": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_blk_seq_bgn"
+          },
+          "named": false,
+          "value": "-"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_blk_seq_itm_tal"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "_blk_seq_itm_tal": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_r_blk_seq_val"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_blk_seq_val"
+          },
+          "named": true,
+          "value": "block_node"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_r_blk_map_val"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_blk_map_val"
+          },
+          "named": true,
+          "value": "block_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_blk_str_val"
+          },
+          "named": true,
+          "value": "block_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_blk_str_val"
+          },
+          "named": true,
+          "value": "block_node"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_r_flw_val_blk"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_br_flw_val_blk"
+        }
+      ]
+    },
+    "_r_blk_map_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_blk_map_r_val"
+          },
+          "named": true,
+          "value": "block_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_blk_map_br_val"
+          },
+          "named": true,
+          "value": "block_node"
+        }
+      ]
+    },
+    "_r_blk_map_r_val": {
+      "type": "ALIAS",
+      "content": {
+        "type": "SYMBOL",
+        "name": "_r_blk_map"
+      },
+      "named": true,
+      "value": "block_mapping"
+    },
+    "_r_blk_map_br_val": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_r_prp"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_blk_map"
+          },
+          "named": true,
+          "value": "block_mapping"
+        }
+      ]
+    },
+    "_br_blk_map_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_blk_map"
+          },
+          "named": true,
+          "value": "block_mapping"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_br_prp"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_br_blk_map"
+              },
+              "named": true,
+              "value": "block_mapping"
+            }
+          ]
+        }
+      ]
+    },
+    "_r_blk_map": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_r_blk_map_itm"
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_blk_map_itm"
+          }
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_bl"
+        }
+      ]
+    },
+    "_br_blk_map": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_br_blk_map_itm"
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_blk_map_itm"
+          }
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_bl"
+        }
+      ]
+    },
+    "_r_blk_map_itm": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_blk_exp_itm"
+          },
+          "named": true,
+          "value": "block_mapping_pair"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_blk_imp_itm"
+          },
+          "named": true,
+          "value": "block_mapping_pair"
+        }
+      ]
+    },
+    "_br_blk_map_itm": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_blk_exp_itm"
+          },
+          "named": true,
+          "value": "block_mapping_pair"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_blk_imp_itm"
+          },
+          "named": true,
+          "value": "block_mapping_pair"
+        }
+      ]
+    },
+    "_b_blk_map_itm": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_blk_exp_itm"
+          },
+          "named": true,
+          "value": "block_mapping_pair"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_blk_imp_itm"
+          },
+          "named": true,
+          "value": "block_mapping_pair"
+        }
+      ]
+    },
+    "_r_blk_exp_itm": {
+      "type": "PREC_RIGHT",
+      "value": 0,
+      "content": {
+        "type": "CHOICE",
+        "members": [
+          {
+            "type": "SEQ",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "_r_blk_key_itm"
+              },
+              {
+                "type": "CHOICE",
+                "members": [
+                  {
+                    "type": "SYMBOL",
+                    "name": "_b_blk_val_itm"
+                  },
+                  {
+                    "type": "BLANK"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "SYMBOL",
+            "name": "_r_blk_val_itm"
+          }
+        ]
+      }
+    },
+    "_br_blk_exp_itm": {
+      "type": "PREC_RIGHT",
+      "value": 0,
+      "content": {
+        "type": "CHOICE",
+        "members": [
+          {
+            "type": "SEQ",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "_br_blk_key_itm"
+              },
+              {
+                "type": "CHOICE",
+                "members": [
+                  {
+                    "type": "SYMBOL",
+                    "name": "_b_blk_val_itm"
+                  },
+                  {
+                    "type": "BLANK"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "SYMBOL",
+            "name": "_br_blk_val_itm"
+          }
+        ]
+      }
+    },
+    "_b_blk_exp_itm": {
+      "type": "PREC_RIGHT",
+      "value": 0,
+      "content": {
+        "type": "CHOICE",
+        "members": [
+          {
+            "type": "SEQ",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "_b_blk_key_itm"
+              },
+              {
+                "type": "CHOICE",
+                "members": [
+                  {
+                    "type": "SYMBOL",
+                    "name": "_b_blk_val_itm"
+                  },
+                  {
+                    "type": "BLANK"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "SYMBOL",
+            "name": "_b_blk_val_itm"
+          }
+        ]
+      }
+    },
+    "_r_blk_key_itm": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_blk_key_bgn"
+          },
+          "named": false,
+          "value": "?"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "key",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_blk_exp_itm_tal"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "_br_blk_key_itm": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_blk_key_bgn"
+          },
+          "named": false,
+          "value": "?"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "key",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_blk_exp_itm_tal"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "_b_blk_key_itm": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_blk_key_bgn"
+          },
+          "named": false,
+          "value": "?"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "key",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_blk_exp_itm_tal"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "_r_blk_val_itm": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_blk_val_bgn"
+          },
+          "named": false,
+          "value": ":"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "value",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_blk_exp_itm_tal"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "_br_blk_val_itm": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_blk_val_bgn"
+          },
+          "named": false,
+          "value": ":"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "value",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_blk_exp_itm_tal"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "_b_blk_val_itm": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_blk_val_bgn"
+          },
+          "named": false,
+          "value": ":"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "value",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_blk_exp_itm_tal"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "_r_blk_imp_itm": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "FIELD",
+          "name": "key",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_flw_val_blk"
+          }
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_blk_imp_itm_tal"
+        }
+      ]
+    },
+    "_br_blk_imp_itm": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "FIELD",
+          "name": "key",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_sgl_flw_val_blk"
+          }
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_blk_imp_itm_tal"
+        }
+      ]
+    },
+    "_b_blk_imp_itm": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "FIELD",
+          "name": "key",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_sgl_flw_val_blk"
+          }
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_blk_imp_itm_tal"
+        }
+      ]
+    },
+    "_blk_exp_itm_tal": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_blk_seq_itm_tal"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_blk_seq_spc_val"
+          },
+          "named": true,
+          "value": "block_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_blk_seq_spc_val"
+          },
+          "named": true,
+          "value": "block_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_blk_seq_spc_val"
+          },
+          "named": true,
+          "value": "block_node"
+        }
+      ]
+    },
+    "_blk_imp_itm_tal": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_blk_imp_bgn"
+          },
+          "named": false,
+          "value": ":"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "value",
+              "content": {
+                "type": "CHOICE",
+                "members": [
+                  {
+                    "type": "ALIAS",
+                    "content": {
+                      "type": "SYMBOL",
+                      "name": "_r_blk_seq_br_val"
+                    },
+                    "named": true,
+                    "value": "block_node"
+                  },
+                  {
+                    "type": "ALIAS",
+                    "content": {
+                      "type": "SYMBOL",
+                      "name": "_br_blk_seq_val"
+                    },
+                    "named": true,
+                    "value": "block_node"
+                  },
+                  {
+                    "type": "ALIAS",
+                    "content": {
+                      "type": "SYMBOL",
+                      "name": "_r_blk_seq_spc_val"
+                    },
+                    "named": true,
+                    "value": "block_node"
+                  },
+                  {
+                    "type": "ALIAS",
+                    "content": {
+                      "type": "SYMBOL",
+                      "name": "_br_blk_seq_spc_val"
+                    },
+                    "named": true,
+                    "value": "block_node"
+                  },
+                  {
+                    "type": "ALIAS",
+                    "content": {
+                      "type": "SYMBOL",
+                      "name": "_b_blk_seq_spc_val"
+                    },
+                    "named": true,
+                    "value": "block_node"
+                  },
+                  {
+                    "type": "ALIAS",
+                    "content": {
+                      "type": "SYMBOL",
+                      "name": "_r_blk_map_br_val"
+                    },
+                    "named": true,
+                    "value": "block_node"
+                  },
+                  {
+                    "type": "ALIAS",
+                    "content": {
+                      "type": "SYMBOL",
+                      "name": "_br_blk_map_val"
+                    },
+                    "named": true,
+                    "value": "block_node"
+                  },
+                  {
+                    "type": "ALIAS",
+                    "content": {
+                      "type": "SYMBOL",
+                      "name": "_r_blk_str_val"
+                    },
+                    "named": true,
+                    "value": "block_node"
+                  },
+                  {
+                    "type": "ALIAS",
+                    "content": {
+                      "type": "SYMBOL",
+                      "name": "_br_blk_str_val"
+                    },
+                    "named": true,
+                    "value": "block_node"
+                  },
+                  {
+                    "type": "SYMBOL",
+                    "name": "_r_flw_val_blk"
+                  },
+                  {
+                    "type": "SYMBOL",
+                    "name": "_br_flw_val_blk"
+                  }
+                ]
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "_r_blk_str_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_blk_str"
+          },
+          "named": true,
+          "value": "block_scalar"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_r_prp"
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_r_blk_str"
+                  },
+                  "named": true,
+                  "value": "block_scalar"
+                },
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_br_blk_str"
+                  },
+                  "named": true,
+                  "value": "block_scalar"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "_br_blk_str_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_blk_str"
+          },
+          "named": true,
+          "value": "block_scalar"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_br_prp"
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_r_blk_str"
+                  },
+                  "named": true,
+                  "value": "block_scalar"
+                },
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_br_blk_str"
+                  },
+                  "named": true,
+                  "value": "block_scalar"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "_r_blk_str": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_blk_lit_bgn"
+              },
+              "named": false,
+              "value": "|"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_blk_fld_bgn"
+              },
+              "named": false,
+              "value": ">"
+            }
+          ]
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_blk_str_ctn"
+          }
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_bl"
+        }
+      ]
+    },
+    "_br_blk_str": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_br_blk_lit_bgn"
+              },
+              "named": false,
+              "value": "|"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_br_blk_fld_bgn"
+              },
+              "named": false,
+              "value": ">"
+            }
+          ]
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_blk_str_ctn"
+          }
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_bl"
+        }
+      ]
+    },
+    "_r_flw_val_blk": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_r_flw_jsl_val"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_r_flw_njl_val_blk"
+        }
+      ]
+    },
+    "_br_flw_val_blk": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_br_flw_jsl_val"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_br_flw_njl_val_blk"
+        }
+      ]
+    },
+    "_r_sgl_flw_val_blk": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_r_sgl_flw_jsl_val"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_r_sgl_flw_njl_val_blk"
+        }
+      ]
+    },
+    "_br_sgl_flw_val_blk": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_br_sgl_flw_jsl_val"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_br_sgl_flw_njl_val_blk"
+        }
+      ]
+    },
+    "_b_sgl_flw_val_blk": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_b_sgl_flw_jsl_val"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_b_sgl_flw_njl_val_blk"
+        }
+      ]
+    },
+    "_r_flw_val_flw": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_r_flw_jsl_val"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_r_flw_njl_val_flw"
+        }
+      ]
+    },
+    "_br_flw_val_flw": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_br_flw_jsl_val"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_br_flw_njl_val_flw"
+        }
+      ]
+    },
+    "_r_sgl_flw_val_flw": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_r_sgl_flw_jsl_val"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_r_sgl_flw_njl_val_flw"
+        }
+      ]
+    },
+    "_r_flw_jsl_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_flw_seq_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_flw_map_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_dqt_str_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sqt_str_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        }
+      ]
+    },
+    "_br_flw_jsl_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_flw_seq_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_flw_map_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_dqt_str_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_sqt_str_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        }
+      ]
+    },
+    "_r_sgl_flw_jsl_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_flw_seq_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_flw_map_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_dqt_str_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_sqt_str_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        }
+      ]
+    },
+    "_br_sgl_flw_jsl_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_sgl_flw_seq_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_sgl_flw_map_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_sgl_dqt_str_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_sgl_sqt_str_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        }
+      ]
+    },
+    "_b_sgl_flw_jsl_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_sgl_flw_seq_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_sgl_flw_map_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_sgl_dqt_str_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_sgl_sqt_str_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        }
+      ]
+    },
+    "_r_flw_njl_val_blk": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_als_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_prp_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_pln_blk_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        }
+      ]
+    },
+    "_br_flw_njl_val_blk": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_als_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_prp_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_pln_blk_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        }
+      ]
+    },
+    "_r_sgl_flw_njl_val_blk": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_als_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_prp_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_pln_blk_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        }
+      ]
+    },
+    "_br_sgl_flw_njl_val_blk": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_als_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_sgl_prp_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_sgl_pln_blk_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        }
+      ]
+    },
+    "_b_sgl_flw_njl_val_blk": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_als_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_sgl_prp_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_sgl_pln_blk_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        }
+      ]
+    },
+    "_r_flw_njl_val_flw": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_als_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_prp_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_pln_flw_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        }
+      ]
+    },
+    "_br_flw_njl_val_flw": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_als_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_prp_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_pln_flw_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        }
+      ]
+    },
+    "_r_sgl_flw_njl_val_flw": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_als_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_prp_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_pln_flw_val"
+          },
+          "named": true,
+          "value": "flow_node"
+        }
+      ]
+    },
+    "_r_flw_seq_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_flw_seq"
+          },
+          "named": true,
+          "value": "flow_sequence"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_r_prp"
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_r_flw_seq"
+                  },
+                  "named": true,
+                  "value": "flow_sequence"
+                },
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_br_flw_seq"
+                  },
+                  "named": true,
+                  "value": "flow_sequence"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "_br_flw_seq_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_flw_seq"
+          },
+          "named": true,
+          "value": "flow_sequence"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_br_prp"
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_r_flw_seq"
+                  },
+                  "named": true,
+                  "value": "flow_sequence"
+                },
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_br_flw_seq"
+                  },
+                  "named": true,
+                  "value": "flow_sequence"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "_r_sgl_flw_seq_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_flw_seq"
+          },
+          "named": true,
+          "value": "flow_sequence"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_r_sgl_prp"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_sgl_flw_seq"
+              },
+              "named": true,
+              "value": "flow_sequence"
+            }
+          ]
+        }
+      ]
+    },
+    "_br_sgl_flw_seq_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_sgl_flw_seq"
+          },
+          "named": true,
+          "value": "flow_sequence"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_br_sgl_prp"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_sgl_flw_seq"
+              },
+              "named": true,
+              "value": "flow_sequence"
+            }
+          ]
+        }
+      ]
+    },
+    "_b_sgl_flw_seq_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_sgl_flw_seq"
+          },
+          "named": true,
+          "value": "flow_sequence"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_b_sgl_prp"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_sgl_flw_seq"
+              },
+              "named": true,
+              "value": "flow_sequence"
+            }
+          ]
+        }
+      ]
+    },
+    "_r_flw_seq": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_flw_seq_bgn"
+          },
+          "named": false,
+          "value": "["
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_flw_seq_tal"
+        }
+      ]
+    },
+    "_br_flw_seq": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_flw_seq_bgn"
+          },
+          "named": false,
+          "value": "["
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_flw_seq_tal"
+        }
+      ]
+    },
+    "_r_sgl_flw_seq": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_flw_seq_bgn"
+          },
+          "named": false,
+          "value": "["
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_sgl_flw_seq_tal"
+        }
+      ]
+    },
+    "_br_sgl_flw_seq": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_flw_seq_bgn"
+          },
+          "named": false,
+          "value": "["
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_sgl_flw_seq_tal"
+        }
+      ]
+    },
+    "_b_sgl_flw_seq": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_flw_seq_bgn"
+          },
+          "named": false,
+          "value": "["
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_sgl_flw_seq_tal"
+        }
+      ]
+    },
+    "_flw_seq_tal": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "SYMBOL",
+                  "name": "_r_flw_seq_dat"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "_br_flw_seq_dat"
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_flw_seq_end"
+              },
+              "named": false,
+              "value": "]"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_br_flw_seq_end"
+              },
+              "named": false,
+              "value": "]"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_b_flw_seq_end"
+              },
+              "named": false,
+              "value": "]"
+            }
+          ]
+        }
+      ]
+    },
+    "_sgl_flw_seq_tal": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_r_sgl_flw_col_dat"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_flw_seq_end"
+          },
+          "named": false,
+          "value": "]"
+        }
+      ]
+    },
+    "_r_flw_map_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_flw_map"
+          },
+          "named": true,
+          "value": "flow_mapping"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_r_prp"
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_r_flw_map"
+                  },
+                  "named": true,
+                  "value": "flow_mapping"
+                },
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_br_flw_map"
+                  },
+                  "named": true,
+                  "value": "flow_mapping"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "_br_flw_map_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_flw_map"
+          },
+          "named": true,
+          "value": "flow_mapping"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_br_prp"
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_r_flw_map"
+                  },
+                  "named": true,
+                  "value": "flow_mapping"
+                },
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_br_flw_map"
+                  },
+                  "named": true,
+                  "value": "flow_mapping"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "_r_sgl_flw_map_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_flw_map"
+          },
+          "named": true,
+          "value": "flow_mapping"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_r_sgl_prp"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_sgl_flw_map"
+              },
+              "named": true,
+              "value": "flow_mapping"
+            }
+          ]
+        }
+      ]
+    },
+    "_br_sgl_flw_map_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_sgl_flw_map"
+          },
+          "named": true,
+          "value": "flow_mapping"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_br_sgl_prp"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_sgl_flw_map"
+              },
+              "named": true,
+              "value": "flow_mapping"
+            }
+          ]
+        }
+      ]
+    },
+    "_b_sgl_flw_map_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_sgl_flw_map"
+          },
+          "named": true,
+          "value": "flow_mapping"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_b_sgl_prp"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_sgl_flw_map"
+              },
+              "named": true,
+              "value": "flow_mapping"
+            }
+          ]
+        }
+      ]
+    },
+    "_r_flw_map": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_flw_map_bgn"
+          },
+          "named": false,
+          "value": "{"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_flw_map_tal"
+        }
+      ]
+    },
+    "_br_flw_map": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_flw_map_bgn"
+          },
+          "named": false,
+          "value": "{"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_flw_map_tal"
+        }
+      ]
+    },
+    "_r_sgl_flw_map": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_flw_map_bgn"
+          },
+          "named": false,
+          "value": "{"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_sgl_flw_map_tal"
+        }
+      ]
+    },
+    "_br_sgl_flw_map": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_flw_map_bgn"
+          },
+          "named": false,
+          "value": "{"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_sgl_flw_map_tal"
+        }
+      ]
+    },
+    "_b_sgl_flw_map": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_flw_map_bgn"
+          },
+          "named": false,
+          "value": "{"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_sgl_flw_map_tal"
+        }
+      ]
+    },
+    "_flw_map_tal": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "SYMBOL",
+                  "name": "_r_flw_map_dat"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "_br_flw_map_dat"
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_flw_map_end"
+              },
+              "named": false,
+              "value": "}"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_br_flw_map_end"
+              },
+              "named": false,
+              "value": "}"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_b_flw_map_end"
+              },
+              "named": false,
+              "value": "}"
+            }
+          ]
+        }
+      ]
+    },
+    "_sgl_flw_map_tal": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_r_sgl_flw_col_dat"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_flw_map_end"
+          },
+          "named": false,
+          "value": "}"
+        }
+      ]
+    },
+    "_r_flw_seq_dat": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_r_flw_seq_itm"
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_flw_seq_dat_rpt"
+          }
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_r_flw_sep_bgn"
+                  },
+                  "named": false,
+                  "value": ","
+                },
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_br_flw_sep_bgn"
+                  },
+                  "named": false,
+                  "value": ","
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "_br_flw_seq_dat": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_br_flw_seq_itm"
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_flw_seq_dat_rpt"
+          }
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_r_flw_sep_bgn"
+                  },
+                  "named": false,
+                  "value": ","
+                },
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_br_flw_sep_bgn"
+                  },
+                  "named": false,
+                  "value": ","
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "_r_flw_map_dat": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_r_flw_map_itm"
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_flw_map_dat_rpt"
+          }
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_r_flw_sep_bgn"
+                  },
+                  "named": false,
+                  "value": ","
+                },
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_br_flw_sep_bgn"
+                  },
+                  "named": false,
+                  "value": ","
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "_br_flw_map_dat": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_br_flw_map_itm"
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_flw_map_dat_rpt"
+          }
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_r_flw_sep_bgn"
+                  },
+                  "named": false,
+                  "value": ","
+                },
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_br_flw_sep_bgn"
+                  },
+                  "named": false,
+                  "value": ","
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "_r_sgl_flw_col_dat": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_r_sgl_flw_col_itm"
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_sgl_flw_col_dat_rpt"
+          }
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_flw_sep_bgn"
+              },
+              "named": false,
+              "value": ","
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "_flw_seq_dat_rpt": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_flw_sep_bgn"
+              },
+              "named": false,
+              "value": ","
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_br_flw_sep_bgn"
+              },
+              "named": false,
+              "value": ","
+            }
+          ]
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_r_flw_seq_itm"
+            },
+            {
+              "type": "SYMBOL",
+              "name": "_br_flw_seq_itm"
+            }
+          ]
+        }
+      ]
+    },
+    "_flw_map_dat_rpt": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_flw_sep_bgn"
+              },
+              "named": false,
+              "value": ","
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_br_flw_sep_bgn"
+              },
+              "named": false,
+              "value": ","
+            }
+          ]
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_r_flw_map_itm"
+            },
+            {
+              "type": "SYMBOL",
+              "name": "_br_flw_map_itm"
+            }
+          ]
+        }
+      ]
+    },
+    "_sgl_flw_col_dat_rpt": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_flw_sep_bgn"
+          },
+          "named": false,
+          "value": ","
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_r_sgl_flw_col_itm"
+        }
+      ]
+    },
+    "_r_flw_seq_itm": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_r_flw_val_flw"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_flw_exp_par"
+          },
+          "named": true,
+          "value": "flow_pair"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_flw_imp_r_par"
+          },
+          "named": true,
+          "value": "flow_pair"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_flw_njl_ann_par"
+          },
+          "named": true,
+          "value": "flow_pair"
+        }
+      ]
+    },
+    "_br_flw_seq_itm": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_br_flw_val_flw"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_flw_exp_par"
+          },
+          "named": true,
+          "value": "flow_pair"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_flw_imp_r_par"
+          },
+          "named": true,
+          "value": "flow_pair"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_flw_njl_ann_par"
+          },
+          "named": true,
+          "value": "flow_pair"
+        }
+      ]
+    },
+    "_r_flw_map_itm": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_r_flw_val_flw"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_flw_exp_par"
+          },
+          "named": true,
+          "value": "flow_pair"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_flw_imp_r_par"
+          },
+          "named": true,
+          "value": "flow_pair"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_flw_imp_br_par"
+          },
+          "named": true,
+          "value": "flow_pair"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_flw_njl_ann_par"
+          },
+          "named": true,
+          "value": "flow_pair"
+        }
+      ]
+    },
+    "_br_flw_map_itm": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_br_flw_val_flw"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_flw_exp_par"
+          },
+          "named": true,
+          "value": "flow_pair"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_flw_imp_r_par"
+          },
+          "named": true,
+          "value": "flow_pair"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_flw_imp_br_par"
+          },
+          "named": true,
+          "value": "flow_pair"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_flw_njl_ann_par"
+          },
+          "named": true,
+          "value": "flow_pair"
+        }
+      ]
+    },
+    "_r_sgl_flw_col_itm": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_r_sgl_flw_val_flw"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_flw_exp_par"
+          },
+          "named": true,
+          "value": "flow_pair"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_flw_imp_par"
+          },
+          "named": true,
+          "value": "flow_pair"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_flw_njl_ann_par"
+          },
+          "named": true,
+          "value": "flow_pair"
+        }
+      ]
+    },
+    "_r_flw_exp_par": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_flw_key_bgn"
+          },
+          "named": false,
+          "value": "?"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "SYMBOL",
+                  "name": "_r_flw_imp_r_par"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "_r_flw_imp_br_par"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "_br_flw_imp_r_par"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "_br_flw_imp_br_par"
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "_br_flw_exp_par": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_flw_key_bgn"
+          },
+          "named": false,
+          "value": "?"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "SYMBOL",
+                  "name": "_r_flw_imp_r_par"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "_r_flw_imp_br_par"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "_br_flw_imp_r_par"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "_br_flw_imp_br_par"
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "_r_sgl_flw_exp_par": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_flw_key_bgn"
+          },
+          "named": false,
+          "value": "?"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_r_sgl_flw_imp_par"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "_r_flw_imp_r_par": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "key",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_flw_jsl_val"
+              }
+            },
+            {
+              "type": "SYMBOL",
+              "name": "_r_flw_jsl_ann_par"
+            }
+          ]
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "key",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_flw_njl_val_flw"
+              }
+            },
+            {
+              "type": "SYMBOL",
+              "name": "_r_flw_njl_ann_par"
+            }
+          ]
+        }
+      ]
+    },
+    "_r_flw_imp_br_par": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "key",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_flw_jsl_val"
+              }
+            },
+            {
+              "type": "SYMBOL",
+              "name": "_br_flw_jsl_ann_par"
+            }
+          ]
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "key",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_flw_njl_val_flw"
+              }
+            },
+            {
+              "type": "SYMBOL",
+              "name": "_br_flw_njl_ann_par"
+            }
+          ]
+        }
+      ]
+    },
+    "_br_flw_imp_r_par": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "key",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_br_flw_jsl_val"
+              }
+            },
+            {
+              "type": "SYMBOL",
+              "name": "_r_flw_jsl_ann_par"
+            }
+          ]
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "key",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_br_flw_njl_val_flw"
+              }
+            },
+            {
+              "type": "SYMBOL",
+              "name": "_r_flw_njl_ann_par"
+            }
+          ]
+        }
+      ]
+    },
+    "_br_flw_imp_br_par": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "key",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_br_flw_jsl_val"
+              }
+            },
+            {
+              "type": "SYMBOL",
+              "name": "_br_flw_jsl_ann_par"
+            }
+          ]
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "key",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_br_flw_njl_val_flw"
+              }
+            },
+            {
+              "type": "SYMBOL",
+              "name": "_br_flw_njl_ann_par"
+            }
+          ]
+        }
+      ]
+    },
+    "_r_sgl_flw_imp_par": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "key",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_sgl_flw_jsl_val"
+              }
+            },
+            {
+              "type": "SYMBOL",
+              "name": "_r_sgl_flw_jsl_ann_par"
+            }
+          ]
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "key",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_sgl_flw_njl_val_flw"
+              }
+            },
+            {
+              "type": "SYMBOL",
+              "name": "_r_sgl_flw_njl_ann_par"
+            }
+          ]
+        }
+      ]
+    },
+    "_r_flw_jsl_ann_par": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_flw_jsv_bgn"
+          },
+          "named": false,
+          "value": ":"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "value",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_flw_ann_par_tal"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "_br_flw_jsl_ann_par": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_flw_jsv_bgn"
+          },
+          "named": false,
+          "value": ":"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "value",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_flw_ann_par_tal"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "_r_sgl_flw_jsl_ann_par": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_flw_jsv_bgn"
+          },
+          "named": false,
+          "value": ":"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "value",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_sgl_flw_ann_par_tal"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "_r_flw_njl_ann_par": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_flw_njv_bgn"
+          },
+          "named": false,
+          "value": ":"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "value",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_flw_ann_par_tal"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "_br_flw_njl_ann_par": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_flw_njv_bgn"
+          },
+          "named": false,
+          "value": ":"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "value",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_flw_ann_par_tal"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "_r_sgl_flw_njl_ann_par": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_flw_njv_bgn"
+          },
+          "named": false,
+          "value": ":"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "value",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_sgl_flw_ann_par_tal"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "_flw_ann_par_tal": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_r_flw_val_flw"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_br_flw_val_flw"
+        }
+      ]
+    },
+    "_sgl_flw_ann_par_tal": {
+      "type": "SYMBOL",
+      "name": "_r_sgl_flw_val_flw"
+    },
+    "_r_dqt_str_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_dqt_str"
+          },
+          "named": true,
+          "value": "double_quote_scalar"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_r_prp"
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_r_dqt_str"
+                  },
+                  "named": true,
+                  "value": "double_quote_scalar"
+                },
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_br_dqt_str"
+                  },
+                  "named": true,
+                  "value": "double_quote_scalar"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "_br_dqt_str_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_dqt_str"
+          },
+          "named": true,
+          "value": "double_quote_scalar"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_br_prp"
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_r_dqt_str"
+                  },
+                  "named": true,
+                  "value": "double_quote_scalar"
+                },
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_br_dqt_str"
+                  },
+                  "named": true,
+                  "value": "double_quote_scalar"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "_r_sgl_dqt_str_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_dqt_str"
+          },
+          "named": true,
+          "value": "double_quote_scalar"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_r_sgl_prp"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_sgl_dqt_str"
+              },
+              "named": true,
+              "value": "double_quote_scalar"
+            }
+          ]
+        }
+      ]
+    },
+    "_br_sgl_dqt_str_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_sgl_dqt_str"
+          },
+          "named": true,
+          "value": "double_quote_scalar"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_br_sgl_prp"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_sgl_dqt_str"
+              },
+              "named": true,
+              "value": "double_quote_scalar"
+            }
+          ]
+        }
+      ]
+    },
+    "_b_sgl_dqt_str_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_sgl_dqt_str"
+          },
+          "named": true,
+          "value": "double_quote_scalar"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_b_sgl_prp"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_sgl_dqt_str"
+              },
+              "named": true,
+              "value": "double_quote_scalar"
+            }
+          ]
+        }
+      ]
+    },
+    "_r_dqt_str": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_dqt_str_bgn"
+          },
+          "named": false,
+          "value": "\""
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_r_sgl_dqt_ctn"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_dqt_esc_nwl"
+              },
+              "named": true,
+              "value": "escape_sequence"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_mtl_dqt_ctn"
+          }
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_dqt_str_end"
+              },
+              "named": false,
+              "value": "\""
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_br_dqt_str_end"
+              },
+              "named": false,
+              "value": "\""
+            }
+          ]
+        }
+      ]
+    },
+    "_br_dqt_str": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_dqt_str_bgn"
+          },
+          "named": false,
+          "value": "\""
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_r_sgl_dqt_ctn"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_dqt_esc_nwl"
+              },
+              "named": true,
+              "value": "escape_sequence"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_mtl_dqt_ctn"
+          }
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_dqt_str_end"
+              },
+              "named": false,
+              "value": "\""
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_br_dqt_str_end"
+              },
+              "named": false,
+              "value": "\""
+            }
+          ]
+        }
+      ]
+    },
+    "_r_sgl_dqt_str": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_dqt_str_bgn"
+          },
+          "named": false,
+          "value": "\""
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_r_sgl_dqt_ctn"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_dqt_str_end"
+          },
+          "named": false,
+          "value": "\""
+        }
+      ]
+    },
+    "_br_sgl_dqt_str": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_dqt_str_bgn"
+          },
+          "named": false,
+          "value": "\""
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_r_sgl_dqt_ctn"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_dqt_str_end"
+          },
+          "named": false,
+          "value": "\""
+        }
+      ]
+    },
+    "_b_sgl_dqt_str": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_dqt_str_bgn"
+          },
+          "named": false,
+          "value": "\""
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_r_sgl_dqt_ctn"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_dqt_str_end"
+          },
+          "named": false,
+          "value": "\""
+        }
+      ]
+    },
+    "_r_sgl_dqt_ctn": {
+      "type": "REPEAT1",
+      "content": {
+        "type": "CHOICE",
+        "members": [
+          {
+            "type": "SYMBOL",
+            "name": "_r_dqt_str_ctn"
+          },
+          {
+            "type": "ALIAS",
+            "content": {
+              "type": "SYMBOL",
+              "name": "_r_dqt_esc_seq"
+            },
+            "named": true,
+            "value": "escape_sequence"
+          }
+        ]
+      }
+    },
+    "_br_mtl_dqt_ctn": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_dqt_esc_nwl"
+          },
+          "named": true,
+          "value": "escape_sequence"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "SYMBOL",
+                  "name": "_br_dqt_str_ctn"
+                },
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_br_dqt_esc_seq"
+                  },
+                  "named": true,
+                  "value": "escape_sequence"
+                }
+              ]
+            },
+            {
+              "type": "REPEAT",
+              "content": {
+                "type": "CHOICE",
+                "members": [
+                  {
+                    "type": "SYMBOL",
+                    "name": "_r_dqt_str_ctn"
+                  },
+                  {
+                    "type": "ALIAS",
+                    "content": {
+                      "type": "SYMBOL",
+                      "name": "_r_dqt_esc_seq"
+                    },
+                    "named": true,
+                    "value": "escape_sequence"
+                  }
+                ]
+              }
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_r_dqt_esc_nwl"
+                  },
+                  "named": true,
+                  "value": "escape_sequence"
+                },
+                {
+                  "type": "BLANK"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "_r_sqt_str_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sqt_str"
+          },
+          "named": true,
+          "value": "single_quote_scalar"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_r_prp"
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_r_sqt_str"
+                  },
+                  "named": true,
+                  "value": "single_quote_scalar"
+                },
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_br_sqt_str"
+                  },
+                  "named": true,
+                  "value": "single_quote_scalar"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "_br_sqt_str_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_sqt_str"
+          },
+          "named": true,
+          "value": "single_quote_scalar"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_br_prp"
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_r_sqt_str"
+                  },
+                  "named": true,
+                  "value": "single_quote_scalar"
+                },
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_br_sqt_str"
+                  },
+                  "named": true,
+                  "value": "single_quote_scalar"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "_r_sgl_sqt_str_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_sqt_str"
+          },
+          "named": true,
+          "value": "single_quote_scalar"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_r_sgl_prp"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_sgl_sqt_str"
+              },
+              "named": true,
+              "value": "single_quote_scalar"
+            }
+          ]
+        }
+      ]
+    },
+    "_br_sgl_sqt_str_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_sgl_sqt_str"
+          },
+          "named": true,
+          "value": "single_quote_scalar"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_br_sgl_prp"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_sgl_sqt_str"
+              },
+              "named": true,
+              "value": "single_quote_scalar"
+            }
+          ]
+        }
+      ]
+    },
+    "_b_sgl_sqt_str_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_sgl_sqt_str"
+          },
+          "named": true,
+          "value": "single_quote_scalar"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_b_sgl_prp"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_sgl_sqt_str"
+              },
+              "named": true,
+              "value": "single_quote_scalar"
+            }
+          ]
+        }
+      ]
+    },
+    "_r_sqt_str": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sqt_str_bgn"
+          },
+          "named": false,
+          "value": "'"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_r_sgl_sqt_ctn"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_mtl_sqt_ctn"
+          }
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_sqt_str_end"
+              },
+              "named": false,
+              "value": "'"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_br_sqt_str_end"
+              },
+              "named": false,
+              "value": "'"
+            }
+          ]
+        }
+      ]
+    },
+    "_br_sqt_str": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_sqt_str_bgn"
+          },
+          "named": false,
+          "value": "'"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_r_sgl_sqt_ctn"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_mtl_sqt_ctn"
+          }
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_sqt_str_end"
+              },
+              "named": false,
+              "value": "'"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_br_sqt_str_end"
+              },
+              "named": false,
+              "value": "'"
+            }
+          ]
+        }
+      ]
+    },
+    "_r_sgl_sqt_str": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sqt_str_bgn"
+          },
+          "named": false,
+          "value": "'"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_r_sgl_sqt_ctn"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sqt_str_end"
+          },
+          "named": false,
+          "value": "'"
+        }
+      ]
+    },
+    "_br_sgl_sqt_str": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_sqt_str_bgn"
+          },
+          "named": false,
+          "value": "'"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_r_sgl_sqt_ctn"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sqt_str_end"
+          },
+          "named": false,
+          "value": "'"
+        }
+      ]
+    },
+    "_b_sgl_sqt_str": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_sqt_str_bgn"
+          },
+          "named": false,
+          "value": "'"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_r_sgl_sqt_ctn"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sqt_str_end"
+          },
+          "named": false,
+          "value": "'"
+        }
+      ]
+    },
+    "_r_sgl_sqt_ctn": {
+      "type": "REPEAT1",
+      "content": {
+        "type": "CHOICE",
+        "members": [
+          {
+            "type": "SYMBOL",
+            "name": "_r_sqt_str_ctn"
+          },
+          {
+            "type": "ALIAS",
+            "content": {
+              "type": "SYMBOL",
+              "name": "_r_sqt_esc_sqt"
+            },
+            "named": true,
+            "value": "escape_sequence"
+          }
+        ]
+      }
+    },
+    "_br_mtl_sqt_ctn": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_br_sqt_str_ctn"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_br_sqt_esc_sqt"
+              },
+              "named": true,
+              "value": "escape_sequence"
+            }
+          ]
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "_r_sqt_str_ctn"
+              },
+              {
+                "type": "ALIAS",
+                "content": {
+                  "type": "SYMBOL",
+                  "name": "_r_sqt_esc_sqt"
+                },
+                "named": true,
+                "value": "escape_sequence"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "_r_pln_blk_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_r_pln_blk"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_r_prp"
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "SYMBOL",
+                  "name": "_r_pln_blk"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "_br_pln_blk"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "_br_pln_blk_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_br_pln_blk"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_br_prp"
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "SYMBOL",
+                  "name": "_r_pln_blk"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "_br_pln_blk"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "_r_sgl_pln_blk_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_pln_blk"
+          },
+          "named": true,
+          "value": "plain_scalar"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_r_sgl_prp"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_sgl_pln_blk"
+              },
+              "named": true,
+              "value": "plain_scalar"
+            }
+          ]
+        }
+      ]
+    },
+    "_br_sgl_pln_blk_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_sgl_pln_blk"
+          },
+          "named": true,
+          "value": "plain_scalar"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_br_sgl_prp"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_sgl_pln_blk"
+              },
+              "named": true,
+              "value": "plain_scalar"
+            }
+          ]
+        }
+      ]
+    },
+    "_b_sgl_pln_blk_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_sgl_pln_blk"
+          },
+          "named": true,
+          "value": "plain_scalar"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_b_sgl_prp"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_sgl_pln_blk"
+              },
+              "named": true,
+              "value": "plain_scalar"
+            }
+          ]
+        }
+      ]
+    },
+    "_r_pln_blk": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_pln_blk"
+          },
+          "named": true,
+          "value": "plain_scalar"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_mtl_pln_blk"
+          },
+          "named": true,
+          "value": "plain_scalar"
+        }
+      ]
+    },
+    "_br_pln_blk": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_sgl_pln_blk"
+          },
+          "named": true,
+          "value": "plain_scalar"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_mtl_pln_blk"
+          },
+          "named": true,
+          "value": "plain_scalar"
+        }
+      ]
+    },
+    "_r_pln_flw_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_r_pln_flw"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_r_prp"
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "SYMBOL",
+                  "name": "_r_pln_flw"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "_br_pln_flw"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "_br_pln_flw_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_br_pln_flw"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_br_prp"
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "SYMBOL",
+                  "name": "_r_pln_flw"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "_br_pln_flw"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "_r_sgl_pln_flw_val": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_pln_flw"
+          },
+          "named": true,
+          "value": "plain_scalar"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_r_sgl_prp"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_r_sgl_pln_flw"
+              },
+              "named": true,
+              "value": "plain_scalar"
+            }
+          ]
+        }
+      ]
+    },
+    "_r_pln_flw": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_pln_flw"
+          },
+          "named": true,
+          "value": "plain_scalar"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_mtl_pln_flw"
+          },
+          "named": true,
+          "value": "plain_scalar"
+        }
+      ]
+    },
+    "_br_pln_flw": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_sgl_pln_flw"
+          },
+          "named": true,
+          "value": "plain_scalar"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_mtl_pln_flw"
+          },
+          "named": true,
+          "value": "plain_scalar"
+        }
+      ]
+    },
+    "_r_sgl_pln_blk": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_pln_nul_blk"
+          },
+          "named": true,
+          "value": "null_scalar"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_pln_bol_blk"
+          },
+          "named": true,
+          "value": "boolean_scalar"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_pln_int_blk"
+          },
+          "named": true,
+          "value": "integer_scalar"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_pln_flt_blk"
+          },
+          "named": true,
+          "value": "float_scalar"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_pln_str_blk"
+          },
+          "named": true,
+          "value": "string_scalar"
+        }
+      ]
+    },
+    "_br_sgl_pln_blk": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_sgl_pln_nul_blk"
+          },
+          "named": true,
+          "value": "null_scalar"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_sgl_pln_bol_blk"
+          },
+          "named": true,
+          "value": "boolean_scalar"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_sgl_pln_int_blk"
+          },
+          "named": true,
+          "value": "integer_scalar"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_sgl_pln_flt_blk"
+          },
+          "named": true,
+          "value": "float_scalar"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_sgl_pln_str_blk"
+          },
+          "named": true,
+          "value": "string_scalar"
+        }
+      ]
+    },
+    "_b_sgl_pln_blk": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_sgl_pln_nul_blk"
+          },
+          "named": true,
+          "value": "null_scalar"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_sgl_pln_bol_blk"
+          },
+          "named": true,
+          "value": "boolean_scalar"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_sgl_pln_int_blk"
+          },
+          "named": true,
+          "value": "integer_scalar"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_sgl_pln_flt_blk"
+          },
+          "named": true,
+          "value": "float_scalar"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_sgl_pln_str_blk"
+          },
+          "named": true,
+          "value": "string_scalar"
+        }
+      ]
+    },
+    "_r_sgl_pln_flw": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_pln_nul_flw"
+          },
+          "named": true,
+          "value": "null_scalar"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_pln_bol_flw"
+          },
+          "named": true,
+          "value": "boolean_scalar"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_pln_int_flw"
+          },
+          "named": true,
+          "value": "integer_scalar"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_pln_flt_flw"
+          },
+          "named": true,
+          "value": "float_scalar"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_sgl_pln_str_flw"
+          },
+          "named": true,
+          "value": "string_scalar"
+        }
+      ]
+    },
+    "_br_sgl_pln_flw": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_sgl_pln_nul_flw"
+          },
+          "named": true,
+          "value": "null_scalar"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_sgl_pln_bol_flw"
+          },
+          "named": true,
+          "value": "boolean_scalar"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_sgl_pln_int_flw"
+          },
+          "named": true,
+          "value": "integer_scalar"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_sgl_pln_flt_flw"
+          },
+          "named": true,
+          "value": "float_scalar"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_sgl_pln_str_flw"
+          },
+          "named": true,
+          "value": "string_scalar"
+        }
+      ]
+    },
+    "_r_mtl_pln_blk": {
+      "type": "ALIAS",
+      "content": {
+        "type": "SYMBOL",
+        "name": "_r_mtl_pln_str_blk"
+      },
+      "named": true,
+      "value": "string_scalar"
+    },
+    "_br_mtl_pln_blk": {
+      "type": "ALIAS",
+      "content": {
+        "type": "SYMBOL",
+        "name": "_br_mtl_pln_str_blk"
+      },
+      "named": true,
+      "value": "string_scalar"
+    },
+    "_r_mtl_pln_flw": {
+      "type": "ALIAS",
+      "content": {
+        "type": "SYMBOL",
+        "name": "_r_mtl_pln_str_flw"
+      },
+      "named": true,
+      "value": "string_scalar"
+    },
+    "_br_mtl_pln_flw": {
+      "type": "ALIAS",
+      "content": {
+        "type": "SYMBOL",
+        "name": "_br_mtl_pln_str_flw"
+      },
+      "named": true,
+      "value": "string_scalar"
+    },
+    "_r_als_val": {
+      "type": "ALIAS",
+      "content": {
+        "type": "SYMBOL",
+        "name": "_r_als"
+      },
+      "named": true,
+      "value": "alias"
+    },
+    "_br_als_val": {
+      "type": "ALIAS",
+      "content": {
+        "type": "SYMBOL",
+        "name": "_br_als"
+      },
+      "named": true,
+      "value": "alias"
+    },
+    "_b_als_val": {
+      "type": "ALIAS",
+      "content": {
+        "type": "SYMBOL",
+        "name": "_b_als"
+      },
+      "named": true,
+      "value": "alias"
+    },
+    "_r_als": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_als_bgn"
+          },
+          "named": false,
+          "value": "*"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_als_ctn"
+          },
+          "named": true,
+          "value": "alias_name"
+        }
+      ]
+    },
+    "_br_als": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_als_bgn"
+          },
+          "named": false,
+          "value": "*"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_als_ctn"
+          },
+          "named": true,
+          "value": "alias_name"
+        }
+      ]
+    },
+    "_b_als": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_als_bgn"
+          },
+          "named": false,
+          "value": "*"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_als_ctn"
+          },
+          "named": true,
+          "value": "alias_name"
+        }
+      ]
+    },
+    "_r_acr": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_acr_bgn"
+          },
+          "named": false,
+          "value": "&"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_acr_ctn"
+          },
+          "named": true,
+          "value": "anchor_name"
+        }
+      ]
+    },
+    "_br_acr": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_br_acr_bgn"
+          },
+          "named": false,
+          "value": "&"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_acr_ctn"
+          },
+          "named": true,
+          "value": "anchor_name"
+        }
+      ]
+    },
+    "_b_acr": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_b_acr_bgn"
+          },
+          "named": false,
+          "value": "&"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_r_acr_ctn"
+          },
+          "named": true,
+          "value": "anchor_name"
+        }
+      ]
+    }
+  },
+  "extras": [
+    {
+      "type": "SYMBOL",
+      "name": "comment"
+    }
+  ],
+  "conflicts": [
+    [
+      "_r_prp",
+      "_r_sgl_prp"
+    ],
+    [
+      "_br_prp",
+      "_br_sgl_prp"
+    ],
+    [
+      "_flw_seq_tal",
+      "_sgl_flw_seq_tal"
+    ],
+    [
+      "_flw_map_tal",
+      "_sgl_flw_map_tal"
+    ],
+    [
+      "_flw_ann_par_tal",
+      "_sgl_flw_ann_par_tal"
+    ],
+    [
+      "_r_flw_seq_itm",
+      "_r_sgl_flw_col_itm"
+    ],
+    [
+      "_r_flw_map_itm",
+      "_r_sgl_flw_col_itm"
+    ],
+    [
+      "_r_flw_njl_ann_par",
+      "_r_sgl_flw_njl_ann_par"
+    ],
+    [
+      "_r_flw_exp_par",
+      "_r_sgl_flw_exp_par"
+    ],
+    [
+      "_r_dqt_str",
+      "_r_sgl_dqt_str"
+    ],
+    [
+      "_r_sqt_str",
+      "_r_sgl_sqt_str"
+    ],
+    [
+      "_r_pln_flw_val",
+      "_r_sgl_pln_flw_val"
+    ],
+    [
+      "_r_prp"
+    ],
+    [
+      "_br_prp"
+    ]
+  ],
+  "precedences": [],
+  "externals": [
+    {
+      "type": "SYMBOL",
+      "name": "_eof"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_s_dir_yml_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_dir_yml_ver"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_s_dir_tag_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_dir_tag_hdl"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_dir_tag_pfx"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_s_dir_rsv_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_dir_rsv_prm"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_s_drs_end"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_s_doc_end"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_blk_seq_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_blk_seq_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_b_blk_seq_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_blk_key_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_blk_key_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_b_blk_key_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_blk_val_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_blk_val_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_b_blk_val_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_blk_imp_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_blk_lit_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_blk_lit_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_blk_fld_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_blk_fld_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_blk_str_ctn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_flw_seq_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_flw_seq_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_b_flw_seq_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_flw_seq_end"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_flw_seq_end"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_b_flw_seq_end"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_flw_map_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_flw_map_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_b_flw_map_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_flw_map_end"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_flw_map_end"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_b_flw_map_end"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_flw_sep_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_flw_sep_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_flw_key_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_flw_key_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_flw_jsv_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_flw_jsv_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_flw_njv_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_flw_njv_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_dqt_str_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_dqt_str_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_b_dqt_str_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_dqt_str_ctn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_dqt_str_ctn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_dqt_esc_nwl"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_dqt_esc_nwl"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_dqt_esc_seq"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_dqt_esc_seq"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_dqt_str_end"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_dqt_str_end"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_sqt_str_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_sqt_str_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_b_sqt_str_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_sqt_str_ctn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_sqt_str_ctn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_sqt_esc_sqt"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_sqt_esc_sqt"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_sqt_str_end"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_sqt_str_end"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_sgl_pln_nul_blk"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_sgl_pln_nul_blk"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_b_sgl_pln_nul_blk"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_sgl_pln_nul_flw"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_sgl_pln_nul_flw"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_sgl_pln_bol_blk"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_sgl_pln_bol_blk"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_b_sgl_pln_bol_blk"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_sgl_pln_bol_flw"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_sgl_pln_bol_flw"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_sgl_pln_int_blk"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_sgl_pln_int_blk"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_b_sgl_pln_int_blk"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_sgl_pln_int_flw"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_sgl_pln_int_flw"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_sgl_pln_flt_blk"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_sgl_pln_flt_blk"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_b_sgl_pln_flt_blk"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_sgl_pln_flt_flw"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_sgl_pln_flt_flw"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_sgl_pln_str_blk"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_sgl_pln_str_blk"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_b_sgl_pln_str_blk"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_sgl_pln_str_flw"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_sgl_pln_str_flw"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_mtl_pln_str_blk"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_mtl_pln_str_blk"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_mtl_pln_str_flw"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_mtl_pln_str_flw"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_tag"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_tag"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_b_tag"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_acr_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_acr_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_b_acr_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_acr_ctn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_als_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_br_als_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_b_als_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_r_als_ctn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_bl"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "comment"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_err_rec"
+    }
+  ],
+  "inline": [
+    "_r_pln_blk",
+    "_br_pln_blk",
+    "_r_pln_flw",
+    "_br_pln_flw",
+    "_r_blk_seq_val",
+    "_r_blk_map_val",
+    "_r_flw_val_blk",
+    "_br_flw_val_blk",
+    "_r_sgl_flw_val_blk",
+    "_br_sgl_flw_val_blk",
+    "_b_sgl_flw_val_blk",
+    "_r_flw_val_flw",
+    "_br_flw_val_flw",
+    "_r_sgl_flw_val_flw",
+    "_r_flw_jsl_val",
+    "_br_flw_jsl_val",
+    "_r_sgl_flw_jsl_val",
+    "_br_sgl_flw_jsl_val",
+    "_b_sgl_flw_jsl_val",
+    "_r_flw_njl_val_blk",
+    "_br_flw_njl_val_blk",
+    "_r_sgl_flw_njl_val_blk",
+    "_br_sgl_flw_njl_val_blk",
+    "_b_sgl_flw_njl_val_blk",
+    "_r_flw_njl_val_flw",
+    "_br_flw_njl_val_flw",
+    "_r_sgl_flw_njl_val_flw"
+  ],
+  "supertypes": []
+}

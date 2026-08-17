@@ -1,0 +1,34 @@
+allowed_external_types = [
+    "aws_smithy_runtime_api::*",
+    "aws_smithy_async::*",
+    "aws_smithy_types::*",
+
+    # Used for creating hyper connectors in the hyper feature and test-util features
+    "tower_service::Service",
+
+    # TODO(https://github.com/smithy-lang/smithy-rs/issues/1193): Once tooling permits it, only allow the following types in the `test-util` feature
+    "bytes::bytes::Bytes",
+    "serde::ser::Serialize",
+    "serde::de::Deserialize",
+    "hyper::client::connect::dns::Name",
+    # used by dvr
+    "http::request::Request",
+    "http::response::Response",
+    "http::uri::Uri",
+
+
+
+    # TODO(https://github.com/smithy-lang/smithy-rs/issues/1193): Once tooling permits it, only allow the following types in the `connector-hyper-0-14-x` feature
+    "hyper::client::client::Builder",
+    "hyper::client::connect::Connection",
+    "tokio::io::async_read::AsyncRead",
+    "tokio::io::async_write::AsyncWrite",
+    "aws_smithy_http_client::hyper_014",
+    "aws_smithy_http_client::test_util::*",
+    "aws_smithy_http_client::ev",
+    "aws_smithy_http_client::match_events",
+    "aws_smithy_http_client::matcher",
+
+    # TODO(https://github.com/smithy-lang/smithy-rs/issues/1193): Once tooling permits it, only allow the following types in the `http-0-x` feature
+    "http_body::Body"
+]

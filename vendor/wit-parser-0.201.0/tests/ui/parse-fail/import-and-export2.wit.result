@@ -1,0 +1,5 @@
+interface transitively depends on an interface in incompatible ways
+     --> tests/ui/parse-fail/import-and-export2.wit:14:10
+      |
+   14 |   export anon: interface {
+      |          ^---

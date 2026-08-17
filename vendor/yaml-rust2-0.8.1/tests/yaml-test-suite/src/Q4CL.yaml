@@ -1,0 +1,17 @@
+---
+- name: Trailing content after quoted value
+  from: '@perlpunk'
+  tags: error mapping double
+  fail: true
+  yaml: |
+    key1: "quoted1"
+    key2: "quoted2" trailing content
+    key3: "quoted3"
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :key1
+       =VAL "quoted1
+       =VAL :key2
+       =VAL "quoted2

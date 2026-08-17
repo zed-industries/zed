@@ -1,0 +1,13 @@
+# https://docs.codecov.com/docs/quick-start#tips-and-tricks
+# https://docs.codecov.com/docs/codecovyml-reference
+
+coverage:
+  status:
+    project:
+      default:
+        informational: true
+    patch: false
+
+comment:
+  layout: "diff"
+  require_changes: true

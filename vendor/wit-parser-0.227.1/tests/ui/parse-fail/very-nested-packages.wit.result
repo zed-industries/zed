@@ -1,0 +1,5 @@
+failed to handle nested package in: tests/ui/parse-fail/very-nested-packages.wit: nested packages must be placed at the top-level
+     --> tests/ui/parse-fail/very-nested-packages.wit:4:11
+      |
+    4 |   package a:c2 {
+      |           ^---

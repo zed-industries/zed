@@ -1,0 +1,6 @@
+---
+source: codespan-reporting/tests/term.rs
+expression: TEST_DATA.emit_no_color(&config)
+---
+codespan/src/file.rs:4:34: error[E0308]: match arms have incompatible types
+

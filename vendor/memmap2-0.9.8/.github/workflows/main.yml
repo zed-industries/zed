@@ -1,0 +1,129 @@
+name: Rust
+
+on: [push, pull_request]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Install toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: x86_64-pc-windows-gnu
+        components: clippy, rustfmt
+
+    - name: Run checks
+      env:
+        CLIPPY_OPTS: --all-targets
+      run: |
+        cargo fmt --check
+        cargo clippy $CLIPPY_OPTS
+        cargo clippy --target x86_64-pc-windows-gnu $CLIPPY_OPTS
+
+  test-win:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        target:
+          - i686-pc-windows-gnu
+          - i686-pc-windows-msvc
+          - x86_64-pc-windows-gnu
+          - x86_64-pc-windows-msvc
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Install toolchain
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: stable-${{ matrix.target }}
+
+    - name: Run tests
+      run: cargo test --all-features
+
+  test-macos:
+    runs-on: macos-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Install toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Run tests
+      run: cargo test --all-features
+
+  test-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - i686-unknown-linux-gnu
+          - i686-unknown-linux-musl
+          - x86_64-unknown-linux-gnu
+          - x86_64-unknown-linux-musl
+          - x86_64-linux-android
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    # We need nightly for -Zminimal-versions
+    - name: Install nightly toolchain
+      uses: dtolnay/rust-toolchain@nightly
+
+    - name: Install toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        target: ${{ matrix.target }}
+
+    - name: Install multilib
+      if: ${{ contains(matrix.target, 'i686-unknown-linux-') }}
+      run: |
+        sudo apt update -yqq
+        sudo apt install gcc-multilib
+
+    # Make sure we're testing against the minimal libc version.
+    - name: Generate Cargo.lock
+      run: cargo +nightly update -Zminimal-versions
+
+    - name: Run tests
+      if: ${{ !contains(matrix.target, 'android') }}
+      run: cargo test --locked --all-features --target ${{ matrix.target }}
+
+    # Just make sure it builds. Not tests running.
+    - name: Run tests
+      if: ${{ contains(matrix.target, 'android') }}
+      run: cargo build --locked --all-features --target ${{ matrix.target }}
+
+  check-stub:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Install toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: wasm32-unknown-unknown
+
+    - name: Run check
+      run: cargo check --all-features --target wasm32-unknown-unknown
+
+  test-msrv:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Install toolchain
+      uses: dtolnay/rust-toolchain@1.63.0
+
+    # do not test, because dev-dependencies do not follow MSRV
+    - name: Build
+      run: cargo build --all-features

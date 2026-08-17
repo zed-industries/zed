@@ -1,0 +1,62 @@
+[package]
+name = "borsh"
+version.workspace = true
+rust-version.workspace = true
+authors = ["Near Inc <hello@near.org>"]
+edition = "2018"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+categories = ["encoding", "network-programming"]
+repository = "https://github.com/near/borsh-rs"
+homepage = "https://borsh.io"
+description = """
+Binary Object Representation Serializer for Hashing
+"""
+exclude = ["*.snap"]
+
+[lib]
+name = "borsh"
+path = "src/lib.rs"
+
+[[example]]
+name = "serde_json_value"
+required-features = ["std", "derive"]
+
+[[bin]]
+name = "generate_schema_schema"
+path = "src/generate_schema_schema.rs"
+required-features = ["std", "unstable__schema"]
+
+[build-dependencies]
+cfg_aliases = "0.2.1"
+
+[dependencies]
+ascii = { version = "1.1", optional = true }
+borsh-derive = { path = "../borsh-derive", version = "~1.5.7", optional = true }
+
+# hashbrown can be used in no-std context.
+# NOTE: There is no reason to restrict use of older versions, but we don't want to get
+# sudden breaking changes with an open range of versions, so we limit the range by not yet released 0.16.0 version:
+hashbrown = { version = ">=0.11,<0.16.0", optional = true }
+bytes = { version = "1", optional = true }
+indexmap = { version = "2", optional = true }
+bson = { version = "2", optional = true }
+
+[dev-dependencies]
+insta = "1.29.0"
+serde_json = { version = "1" }
+
+[package.metadata.docs.rs]
+features = ["derive", "unstable__schema", "rc"]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+default = ["std"]
+derive = ["borsh-derive"]
+unstable__schema = ["derive", "borsh-derive/schema"]
+std = []
+# Opt into impls for Rc<T> and Arc<T>. Serializing and deserializing these types
+# does not preserve identity and may result in multiple copies of the same data.
+# Be sure that this is what you want before enabling this feature.
+rc = []
+de_strict_order = []

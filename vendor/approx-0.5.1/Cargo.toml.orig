@@ -1,0 +1,33 @@
+[package]
+name = "approx"
+version = "0.5.1"
+authors = ["Brendan Zabarauskas <bjzaba@yahoo.com.au>"]
+license = "Apache-2.0"
+description = "Approximate floating point equality comparisons and assertions."
+
+documentation = "https://docs.rs/approx"
+homepage = "https://github.com/brendanzab/approx"
+repository = "https://github.com/brendanzab/approx"
+readme = "README.md"
+
+keywords = [
+    "approximate",
+    "assert",
+    "comparison",
+    "equality",
+    "float",
+]
+
+[package.metadata.docs.rs]
+features = ["std", "num-complex"]
+
+[lib]
+name = "approx"
+
+[features]
+default = ["std"]
+std = []
+
+[dependencies]
+num-traits = { version = "0.2.0", default_features = false }
+num-complex = { version = "0.4.0", optional = true }

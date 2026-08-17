@@ -1,0 +1,25 @@
+package foo:foo;
+
+interface shared-only-from {
+  variant v {
+    c1,
+  }
+
+  bar: func(x: v);
+
+  use foo:only-from-dep/a.{a};
+}
+
+interface shared-items {
+  type a = u32;
+}
+
+world shared-world {
+  import shared-items;
+
+  export shared-items;
+
+  type c = u32;
+
+  import d: interface {}
+}

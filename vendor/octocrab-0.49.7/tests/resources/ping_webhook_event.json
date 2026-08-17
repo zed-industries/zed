@@ -1,0 +1,30 @@
+{
+  "zen": "Design for failure.",
+  "hook_id": 423885699,
+  "hook": {
+    "type": "App",
+    "id": 423885699,
+    "name": "web",
+    "active": true,
+    "events": [
+      "issues",
+      "issue_comment",
+      "meta",
+      "pull_request",
+      "pull_request_review",
+      "pull_request_review_comment",
+      "pull_request_review_thread",
+      "repository"
+    ],
+    "config": {
+      "content_type": "json",
+      "insecure_ssl": "0",
+      "secret": "********",
+      "url": "https://smee.io/R"
+    },
+    "updated_at": "2023-07-13T09:30:45Z",
+    "created_at": "2023-07-13T09:30:45Z",
+    "app_id": 360617,
+    "deliveries_url": "https://api.github.com/app/hook/deliveries"
+  }
+}

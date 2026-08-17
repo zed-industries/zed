@@ -1,0 +1,13 @@
+interface bar {
+  use other.{name as the-name};
+
+  enum name {
+    a
+  }
+}
+
+interface other {
+  record name {
+    f: u8,
+  }
+}

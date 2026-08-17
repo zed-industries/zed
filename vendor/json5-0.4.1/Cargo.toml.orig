@@ -1,0 +1,20 @@
+[package]
+name = "json5"
+version = "0.4.1"
+authors = ["Callum Oakley <hello@callumoakley.net>"]
+description = "A Rust JSON5 serializer and deserializer which speaks Serde."
+license = "ISC"
+repository = "https://github.com/callum-oakley/json5-rs"
+readme = "README.md"
+keywords = ["json5", "parse", "parser", "serde", "json"]
+edition = "2018"
+
+[dependencies]
+pest = "2.0"
+pest_derive = "2.0"
+serde = "1.0"
+
+[dev-dependencies]
+matches = "0.1.8"
+serde_derive = "1.0"
+serde_json = "1.0"

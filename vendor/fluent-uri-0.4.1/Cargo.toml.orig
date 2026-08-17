@@ -1,0 +1,38 @@
+[package]
+name = "fluent-uri"
+version = "0.4.1"
+authors = ["Scallop Ye <yescallop@gmail.com>"]
+edition = "2021"
+rust-version = "1.68"
+description = "A generic URI/IRI handling library compliant with RFC 3986/3987."
+documentation = "https://docs.rs/fluent-uri"
+repository = "https://github.com/yescallop/fluent-uri-rs"
+license = "MIT"
+keywords = ["builder", "parser", "uri", "iri"]
+categories = ["encoding", "parser-implementations"]
+
+[features]
+default = ["std"]
+std = ["alloc", "impl-error"]
+alloc = ["borrow-or-share/alloc", "serde?/alloc"]
+impl-error = []
+net = []
+
+[dependencies]
+borrow-or-share = { version = "0.2.4", default-features = false }
+ref-cast = "1.0"
+
+[dependencies.serde]
+version = "1.0"
+default-features = false
+optional = true
+
+[package.metadata.docs.rs]
+all-features = true
+targets = ["x86_64-unknown-linux-gnu"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(fluent_uri_unstable, fuzzing)',
+] }

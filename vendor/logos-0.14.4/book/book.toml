@@ -1,0 +1,15 @@
+[book]
+authors = ["Maciej Hirsz <hello@maciej.codes>", "Jérome Eertmans (maintainer) <jeertmans@icloud.com>"]
+language = "en"
+multilingual = false
+src = "src"
+title = "Logos Handbook"
+
+[preprocessor.admonish]
+command = "mdbook-admonish"
+assets_version = "3.0.2" # do not edit: managed by `mdbook-admonish install`
+
+[output]
+
+[output.html]
+additional-css = ["./mdbook-admonish.css"]

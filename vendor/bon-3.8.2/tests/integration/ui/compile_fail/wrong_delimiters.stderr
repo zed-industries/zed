@@ -1,0 +1,107 @@
+error: wrong delimiter, expected parentheses e.g. `builder_type(...)`, but got curly braces: `builder_type{...}`
+ --> tests/integration/ui/compile_fail/wrong_delimiters.rs:3:5
+  |
+3 |     builder_type{},
+  |     ^^^^^^^^^^^^
+
+error: wrong delimiter, expected parentheses e.g. `state_mod(...)`, but got curly braces: `state_mod{...}`
+ --> tests/integration/ui/compile_fail/wrong_delimiters.rs:4:5
+  |
+4 |     state_mod{},
+  |     ^^^^^^^^^
+
+error: wrong delimiter, expected parentheses e.g. `start_fn(...)`, but got curly braces: `start_fn{...}`
+ --> tests/integration/ui/compile_fail/wrong_delimiters.rs:5:5
+  |
+5 |     start_fn{},
+  |     ^^^^^^^^
+
+error: wrong delimiter, expected parentheses e.g. `finish_fn(...)`, but got curly braces: `finish_fn{...}`
+ --> tests/integration/ui/compile_fail/wrong_delimiters.rs:6:5
+  |
+6 |     finish_fn{},
+  |     ^^^^^^^^^
+
+error: wrong delimiter, expected parentheses e.g. `setters(...)`, but got curly braces: `setters{...}`
+  --> tests/integration/ui/compile_fail/wrong_delimiters.rs:12:15
+   |
+12 |     #[builder(setters{})]
+   |               ^^^^^^^
+
+error: wrong delimiter, expected parentheses e.g. `builder_type(...)`, but got square brackets: `builder_type[...]`
+  --> tests/integration/ui/compile_fail/wrong_delimiters.rs:18:5
+   |
+18 |     builder_type[doc[]],
+   |     ^^^^^^^^^^^^
+
+error: wrong delimiter, expected parentheses e.g. `state_mod(...)`, but got square brackets: `state_mod[...]`
+  --> tests/integration/ui/compile_fail/wrong_delimiters.rs:19:5
+   |
+19 |     state_mod[doc[]],
+   |     ^^^^^^^^^
+
+error: wrong delimiter, expected parentheses e.g. `start_fn(...)`, but got square brackets: `start_fn[...]`
+  --> tests/integration/ui/compile_fail/wrong_delimiters.rs:20:5
+   |
+20 |     start_fn[doc[]],
+   |     ^^^^^^^^
+
+error: wrong delimiter, expected parentheses e.g. `finish_fn(...)`, but got square brackets: `finish_fn[...]`
+  --> tests/integration/ui/compile_fail/wrong_delimiters.rs:21:5
+   |
+21 |     finish_fn[doc[]],
+   |     ^^^^^^^^^
+
+error: wrong delimiter, expected parentheses e.g. `setters(...)`, but got square brackets: `setters[...]`
+  --> tests/integration/ui/compile_fail/wrong_delimiters.rs:30:15
+   |
+30 |     #[builder(setters[])]
+   |               ^^^^^^^
+
+error: wrong delimiter, expected curly braces e.g. `doc{...}`, but got square brackets: `doc[...]`
+  --> tests/integration/ui/compile_fail/wrong_delimiters.rs:36:18
+   |
+36 |     builder_type(doc[]),
+   |                  ^^^
+
+error: wrong delimiter, expected curly braces e.g. `doc{...}`, but got square brackets: `doc[...]`
+  --> tests/integration/ui/compile_fail/wrong_delimiters.rs:37:15
+   |
+37 |     state_mod(doc[]),
+   |               ^^^
+
+error: wrong delimiter, expected curly braces e.g. `doc{...}`, but got square brackets: `doc[...]`
+  --> tests/integration/ui/compile_fail/wrong_delimiters.rs:38:14
+   |
+38 |     start_fn(doc[]),
+   |              ^^^
+
+error: wrong delimiter, expected curly braces e.g. `doc{...}`, but got square brackets: `doc[...]`
+  --> tests/integration/ui/compile_fail/wrong_delimiters.rs:39:15
+   |
+39 |     finish_fn(doc[]),
+   |               ^^^
+
+error: wrong delimiter, expected curly braces e.g. `doc{...}`, but got parentheses: `doc(...)`
+  --> tests/integration/ui/compile_fail/wrong_delimiters.rs:48:18
+   |
+48 |     builder_type(doc()),
+   |                  ^^^
+
+error: wrong delimiter, expected curly braces e.g. `doc{...}`, but got parentheses: `doc(...)`
+  --> tests/integration/ui/compile_fail/wrong_delimiters.rs:49:15
+   |
+49 |     state_mod(doc()),
+   |               ^^^
+
+error: wrong delimiter, expected curly braces e.g. `doc{...}`, but got parentheses: `doc(...)`
+  --> tests/integration/ui/compile_fail/wrong_delimiters.rs:50:14
+   |
+50 |     start_fn(doc()),
+   |              ^^^
+
+error: wrong delimiter, expected curly braces e.g. `doc{...}`, but got parentheses: `doc(...)`
+  --> tests/integration/ui/compile_fail/wrong_delimiters.rs:51:15
+   |
+51 |     finish_fn(doc())
+   |               ^^^

@@ -1,0 +1,27 @@
+(decl pure partial A (u32 u32) u32)
+(extern constructor A A)
+
+(decl B (u32 u32) u32)
+(extern extractor B B)
+
+(decl partial C (u32 u32 u32 u32) u32)
+
+(decl pure predicate () u32)
+(rule (predicate) 1)
+
+(rule 2 (C a b c (B d e))
+      (if-let (B f g) d)
+      (if-let h (A a b))
+      (A h a))
+
+(rule (C a b c d)
+      (if (predicate))
+      42)
+
+(rule 1 (C a b a b)
+      (if-let x (D a b))
+      x)
+
+(decl pure D (u32 u32) u32)
+(rule (D x 0) x)
+(rule 1 (D 0 x) x)

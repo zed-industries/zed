@@ -1,0 +1,17 @@
+[package]
+name = "renderdoc-sys"
+version = "1.1.0"
+authors = ["Eyal Kalderon <ebkalderon@gmail.com>"]
+description = "Low-level bindings to the RenderDoc API"
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/ebkalderon/renderdoc-rs/tree/master/renderdoc-sys"
+repository = "https://github.com/ebkalderon/renderdoc-rs"
+documentation = "https://docs.rs/renderdoc-sys"
+readme = "README.md"
+keywords = ["ffi", "graphics", "profiling", "renderdoc", "tracing"]
+categories = ["development-tools::debugging", "external-ffi-bindings", "rendering"]
+
+[badges]
+maintenance = { status = "passively-maintained" }
+
+[dependencies]

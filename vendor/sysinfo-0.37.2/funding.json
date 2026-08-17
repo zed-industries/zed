@@ -1,0 +1,68 @@
+{
+    "version": "v1.0.0",
+    "entity": {
+        "type": "individual",
+        "role": "owner",
+        "name": "Guillaume Gomez",
+        "email": "guillaume1.gomez@gmail.com",
+        "phone": "",
+        "description": "Contributor on multiple open-source projects in the Rust ecosystem, including the Rust compiler itself.",
+        "webpageUrl": {
+            "url": "https://github.com/GuillaumeGomez/sysinfo"
+        }
+    },
+    "projects": [
+        {
+            "guid": "sysinfo-crate",
+            "name": "sysinfo",
+            "description": "Cross-platform library to fetch system information.",
+            "webpageUrl": {
+                "url": "https://github.com/GuillaumeGomez/sysinfo"
+            },
+            "repositoryUrl": {
+                "url": "https://github.com/GuillaumeGomez/sysinfo"
+            },
+            "licenses": ["spdx:MIT"],
+            "tags": ["rust", "system", "CPU", "process"]
+        }
+    ],
+    "funding": {
+        "channels": [
+            {
+                "guid": "github-sponsors",
+                "type": "payment-provider",
+                "address": "https://github.com/sponsors/GuillaumeGomez",
+                "description": "Sponsor me through Github."
+            },
+            {
+                "guid": "paypal-sponsors",
+                "type": "payment-provider",
+                "address": "https://www.paypal.com/paypalme/imperioland",
+                "description": "Sponsor me through Paypal."
+            }
+        ],
+        "plans": [
+            {
+                "guid": "developer-time",
+                "status": "active",
+                "name": "Developer compensation",
+                "description": "This will cover the cost of one developer working part-time on the projects.",
+                "amount": 0,
+                "currency": "USD",
+                "frequency": "monthly",
+                "channels": ["github-sponsors", "paypal-sponsors"]
+            },
+            {
+                "guid": "support-plan",
+                "status": "active",
+                "name": "Support plan",
+                "description": "Pay anything you wish/can to show your support for the projects.",
+                "amount": 0,
+                "currency": "USD",
+                "frequency": "one-time",
+                "channels": ["github-sponsors", "paypal-sponsors"]
+            }
+        ],
+        "history": []
+    }
+}

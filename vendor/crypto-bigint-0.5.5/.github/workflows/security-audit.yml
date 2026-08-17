@@ -1,0 +1,24 @@
+name: Security Audit
+on:
+  pull_request:
+    paths: Cargo.lock
+  push:
+    branches: master
+    paths: Cargo.lock
+  schedule:
+    - cron: "0 0 * * *"
+
+jobs:
+  security_audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache cargo bin
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/bin
+          key: ${{ runner.os }}-cargo-audit-v0.13.0
+      - uses: actions-rs/audit-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

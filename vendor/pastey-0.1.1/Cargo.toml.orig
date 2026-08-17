@@ -1,0 +1,21 @@
+[package]
+name = "pastey"
+version = "0.1.1"
+authors = [
+    "Aditya Kumar <git@adityais.dev>",
+    "David Tolnay <dtolnay@gmail.com>",
+]
+categories = ["development-tools", "no-std", "no-std::no-alloc"]
+description = "Macros for all your token pasting needs. Successor of paste."
+edition = "2018"
+keywords = ["macros"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/as1100k/pastey"
+rust-version = "1.54"
+
+[lib]
+proc-macro = true
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+rustdoc-args = ["--generate-link-to-definition"]

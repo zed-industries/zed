@@ -1,0 +1,5 @@
+package my:dep@0.2.0;
+
+interface a {
+  x: func();
+}

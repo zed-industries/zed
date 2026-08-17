@@ -1,0 +1,13 @@
+[package]
+name = "take-until"
+version = "0.2.0"
+authors = ["Hannes De Valkeneer <hannes@de-valkeneer.be>"]
+edition = "2021"
+license = "MIT"
+description = "A take_until extension for iterators"
+homepage = "https://github.com/hdevalke/take-until"
+repository = "https://github.com/hdevalke/take-until.git"
+keywords = ["iterator", "take", "until"]
+categories = ["rust-patterns"]
+
+[dependencies]

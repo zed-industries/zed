@@ -1,0 +1,60 @@
+---
+- name: Empty keys in block and flow mapping
+  from: '@perlpunk'
+  tags: empty-key mapping
+  yaml: |
+    ---
+    key: value
+    : empty key
+    ---
+    {
+     key: value, : empty key
+    }
+    ---
+    # empty key and value
+    :
+    ---
+    # empty key and value
+    { : }
+  tree: |
+    +STR
+     +DOC ---
+      +MAP
+       =VAL :key
+       =VAL :value
+       =VAL :
+       =VAL :empty key
+      -MAP
+     -DOC
+     +DOC ---
+      +MAP {}
+       =VAL :key
+       =VAL :value
+       =VAL :
+       =VAL :empty key
+      -MAP
+     -DOC
+     +DOC ---
+      +MAP
+       =VAL :
+       =VAL :
+      -MAP
+     -DOC
+     +DOC ---
+      +MAP {}
+       =VAL :
+       =VAL :
+      -MAP
+     -DOC
+    -STR
+  emit: |
+    ---
+    key: value
+    : empty key
+    ---
+    key: value
+    : empty key
+    ---
+    :
+    ---
+    :

@@ -1,0 +1,21 @@
+name: coverage
+on: [push]
+jobs:
+  coverage:
+    container:
+      image: xd009642/tarpaulin:develop-nightly
+      options: --security-opt seccomp=unconfined
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      # - name: Install tarpaulin
+      #   run: cargo install cargo-tarpaulin
+
+      - name: Generate code coverage
+        run: cargo +nightly tarpaulin --timeout 120 --out Lcov --output-dir ./coverage
+
+      - name: Upload to coveralls.io
+        uses: coverallsapp/github-action@master
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}

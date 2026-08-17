@@ -1,0 +1,6 @@
+{
+  "git": {
+    "sha1": "5888c8c472ab9b35c3159c2912bb045dc3020a82"
+  },
+  "path_in_vcs": "crates/libs/registry"
+}

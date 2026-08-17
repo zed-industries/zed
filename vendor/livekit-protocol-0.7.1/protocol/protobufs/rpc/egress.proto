@@ -1,0 +1,72 @@
+// Copyright 2023 LiveKit, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package rpc;
+
+option go_package = "github.com/livekit/protocol/rpc";
+
+import "options.proto";
+import "logger/options.proto";
+import "livekit_egress.proto";
+
+service EgressInternal {
+  rpc StartEgress(StartEgressRequest) returns (livekit.EgressInfo) {
+    option (psrpc.options).affinity_func = true;
+    option (psrpc.options).topics = true;
+  };
+  rpc ListActiveEgress(ListActiveEgressRequest) returns (ListActiveEgressResponse) {
+    option (psrpc.options).multi = true;
+    option (psrpc.options).topics = true;
+  }
+}
+
+service EgressHandler {
+  rpc UpdateStream(livekit.UpdateStreamRequest) returns (livekit.EgressInfo) {
+    option (psrpc.options).topics = true;
+  }
+  rpc StopEgress(livekit.StopEgressRequest) returns (livekit.EgressInfo) {
+    option (psrpc.options).topics = true;
+  }
+}
+
+message StartEgressRequest {
+  // request metadata
+  string egress_id = 1;
+
+  // request
+  oneof request {
+    livekit.RoomCompositeEgressRequest room_composite = 5;
+    livekit.WebEgressRequest web = 11;
+    livekit.ParticipantEgressRequest participant = 13;
+    livekit.TrackCompositeEgressRequest track_composite = 6;
+    livekit.TrackEgressRequest track = 7;
+  }
+
+  // connection info
+  string room_id = 3;
+  string token = 8 [(logger.redact) = true];
+  string ws_url = 9;
+
+  // cloud only
+  bool cloud_backup_enabled = 10;
+  double estimated_cpu = 14;
+}
+
+message ListActiveEgressRequest {}
+
+message ListActiveEgressResponse {
+  repeated string egress_ids = 1;
+}

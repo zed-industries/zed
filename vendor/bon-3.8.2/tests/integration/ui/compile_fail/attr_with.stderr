@@ -1,0 +1,236 @@
+error: expected a closure e.g. `#[builder(with = |param: T| expression)]` or a well-known function path which could be one of:
+       - #[builder(with = Some)]
+       - #[builder(with = FromIterator::from_iter)]
+       - #[builder(with = <_>::from_iter)] (same as above, but shorter)
+ --> tests/integration/ui/compile_fail/attr_with.rs:5:15
+  |
+5 |     #[builder(with = 42)]
+  |               ^^^^
+
+error: `with` attribute can't be specified together with `into`
+  --> tests/integration/ui/compile_fail/attr_with.rs:11:21
+   |
+11 |     #[builder(into, with = |x: u32| x + 1)]
+   |                     ^^^^
+
+error: `for<...>` syntax is not allowed here
+  --> tests/integration/ui/compile_fail/attr_with.rs:17:22
+   |
+17 |     #[builder(with = for<'a> |x: &'a u32| -> u32 { x + 1 })]
+   |                      ^^^
+
+error: `const` keyword is not allowed here
+  --> tests/integration/ui/compile_fail/attr_with.rs:23:22
+   |
+23 |     #[builder(with = const || 1)]
+   |                      ^^^^^
+
+error: `static` keyword is not allowed here
+  --> tests/integration/ui/compile_fail/attr_with.rs:29:22
+   |
+29 |     #[builder(with = static || 1)]
+   |                      ^^^^^^
+
+error: `async` keyword is not allowed here
+  --> tests/integration/ui/compile_fail/attr_with.rs:35:22
+   |
+35 |     #[builder(with = async || 1)]
+   |                      ^^^^^
+
+error: `move` keyword is not allowed here
+  --> tests/integration/ui/compile_fail/attr_with.rs:41:22
+   |
+41 |     #[builder(with = move || 1)]
+   |                      ^^^^
+
+error: expected one of the following:
+
+       (1) no return type annotation;
+           this means the closure is expected to return a value of the same type
+           as the member's underlying type(*);
+
+       (2) `-> *Result<_, {{ErrorType}}>` or `-> *Result<_>` return type annotation;
+           this means the closure is expected to return a `Result` where the `Ok`
+           variant is of the same type as the member's underlying type(*); this syntax
+           allows you to define a fallbile setter (one that returns a `Result<Builder>`);
+
+           the `_` placeholder must be spelled literally to mark the underlying type(*)
+           of the member; an optional second generic parameter for the error type is allowed;
+
+           the return type doesn't have to be named `Result` exactly, the only requirement is
+           that it must have the `Result` suffix; for example if you have a type alias
+           `ApiResult<_>`, then it'll work fine;
+
+       (*) underlying type is the type of the member stripped from the `Option<T>` wrapper
+           if this member is of `Option<T>` type and no `#[builder(required)]` annotation
+           is present
+  --> tests/integration/ui/compile_fail/attr_with.rs:47:34
+   |
+47 |     #[builder(with = |x: u32| -> u32 { x + 1 })]
+   |                                  ^^^
+
+error: expected one of the following:
+
+       (1) no return type annotation;
+           this means the closure is expected to return a value of the same type
+           as the member's underlying type(*);
+
+       (2) `-> *Result<_, {{ErrorType}}>` or `-> *Result<_>` return type annotation;
+           this means the closure is expected to return a `Result` where the `Ok`
+           variant is of the same type as the member's underlying type(*); this syntax
+           allows you to define a fallbile setter (one that returns a `Result<Builder>`);
+
+           the `_` placeholder must be spelled literally to mark the underlying type(*)
+           of the member; an optional second generic parameter for the error type is allowed;
+
+           the return type doesn't have to be named `Result` exactly, the only requirement is
+           that it must have the `Result` suffix; for example if you have a type alias
+           `ApiResult<_>`, then it'll work fine;
+
+       (*) underlying type is the type of the member stripped from the `Option<T>` wrapper
+           if this member is of `Option<T>` type and no `#[builder(required)]` annotation
+           is present
+  --> tests/integration/ui/compile_fail/attr_with.rs:67:38
+   |
+67 |     #[builder(with = |value: u32| -> Result {})]
+   |                                      ^^^^^^
+
+error: expected one of the following:
+
+       (1) no return type annotation;
+           this means the closure is expected to return a value of the same type
+           as the member's underlying type(*);
+
+       (2) `-> *Result<_, {{ErrorType}}>` or `-> *Result<_>` return type annotation;
+           this means the closure is expected to return a `Result` where the `Ok`
+           variant is of the same type as the member's underlying type(*); this syntax
+           allows you to define a fallbile setter (one that returns a `Result<Builder>`);
+
+           the `_` placeholder must be spelled literally to mark the underlying type(*)
+           of the member; an optional second generic parameter for the error type is allowed;
+
+           the return type doesn't have to be named `Result` exactly, the only requirement is
+           that it must have the `Result` suffix; for example if you have a type alias
+           `ApiResult<_>`, then it'll work fine;
+
+       (*) underlying type is the type of the member stripped from the `Option<T>` wrapper
+           if this member is of `Option<T>` type and no `#[builder(required)]` annotation
+           is present
+  --> tests/integration/ui/compile_fail/attr_with.rs:73:38
+   |
+73 |     #[builder(with = |value: u32| -> Result<> {})]
+   |                                      ^^^^^^
+
+error: expected one of the following:
+
+       (1) no return type annotation;
+           this means the closure is expected to return a value of the same type
+           as the member's underlying type(*);
+
+       (2) `-> *Result<_, {{ErrorType}}>` or `-> *Result<_>` return type annotation;
+           this means the closure is expected to return a `Result` where the `Ok`
+           variant is of the same type as the member's underlying type(*); this syntax
+           allows you to define a fallbile setter (one that returns a `Result<Builder>`);
+
+           the `_` placeholder must be spelled literally to mark the underlying type(*)
+           of the member; an optional second generic parameter for the error type is allowed;
+
+           the return type doesn't have to be named `Result` exactly, the only requirement is
+           that it must have the `Result` suffix; for example if you have a type alias
+           `ApiResult<_>`, then it'll work fine;
+
+       (*) underlying type is the type of the member stripped from the `Option<T>` wrapper
+           if this member is of `Option<T>` type and no `#[builder(required)]` annotation
+           is present
+  --> tests/integration/ui/compile_fail/attr_with.rs:79:38
+   |
+79 |     #[builder(with = |value: u32| -> ::core::result::Result<A, B, C> {})]
+   |                                      ^
+
+error: `with = Some` only works for members with the underlying type of `Option`;
+  --> tests/integration/ui/compile_fail/attr_with.rs:86:12
+   |
+86 |     value: u32,
+   |            ^^^
+
+error: the underlying type of this member is not `Option`; by default, members of type `Option` are optional and their 'underlying type' is the type under the `Option`; you might be missing #[builder(required)]` annotation for this member
+  --> tests/integration/ui/compile_fail/attr_with.rs:91:22
+   |
+91 |     #[builder(with = Some)]
+   |                      ^^^^
+
+error: the underlying type of this member is not a known collection type; only a collection type that matches the following patterns will be accepted by `#[builder(with = FromIterator::from_iter)], where * at the beginning means the collection type may start with any prefix:
+       - *Map<K, V>
+       - *Vec<T>
+       - *Set<T>
+       - *Deque<T>
+       - *Heap<T>
+       - *List<T>
+  --> tests/integration/ui/compile_fail/attr_with.rs:98:19
+   |
+98 |     value: Option<u32>,
+   |                   ^^^
+
+error: the underlying type of this member is not a known collection type; only a collection type that matches the following patterns will be accepted by `#[builder(with = <_>::from_iter)], where * at the beginning means the collection type may start with any prefix:
+       - *Map<K, V>
+       - *Vec<T>
+       - *Set<T>
+       - *Deque<T>
+       - *Heap<T>
+       - *List<T>
+   --> tests/integration/ui/compile_fail/attr_with.rs:104:19
+    |
+104 |     value: Option<u32>,
+    |                   ^^^
+
+error: `start_fn` attribute can't be specified together with `with`
+   --> tests/integration/ui/compile_fail/attr_with.rs:109:38
+    |
+109 |     #[builder(with = |x: u32| x + 1, start_fn)]
+    |                                      ^^^^^^^^
+
+error: `finish_fn` attribute can't be specified together with `with`
+   --> tests/integration/ui/compile_fail/attr_with.rs:115:38
+    |
+115 |     #[builder(with = |x: u32| x + 1, finish_fn)]
+    |                                      ^^^^^^^^^
+
+error: `with` attribute can't be specified together with `into`
+   --> tests/integration/ui/compile_fail/attr_with.rs:121:15
+    |
+121 |     #[builder(with = |x: u32| x + 1, into)]
+    |               ^^^^
+
+error[E0308]: mismatched types
+  --> tests/integration/ui/compile_fail/attr_with.rs:54:12
+   |
+54 |         Ok(value)
+   |         -- ^^^^^ expected `u32`, found `&str`
+   |         |
+   |         arguments to this enum variant are incorrect
+   |
+help: the type constructed contains `&str` due to the type of the argument passed
+  --> tests/integration/ui/compile_fail/attr_with.rs:54:9
+   |
+54 |         Ok(value)
+   |         ^^^-----^
+   |            |
+   |            this argument influences the type of `Ok`
+note: tuple variant defined here
+  --> $RUST/core/src/result.rs
+   |
+   |     Ok(#[stable(feature = "rust1", since = "1.0.0")] T),
+   |     ^^
+
+error[E0308]: mismatched types
+  --> tests/integration/ui/compile_fail/attr_with.rs:61:62
+   |
+61 |     #[builder(with = |value: impl Into<::core::net::IpAddr>| value)]
+   |                              ------------------------------  ^^^^^ expected `u32`, found type parameter `impl Into<::core::net::IpAddr>`
+   |                              |
+   |                              found this type parameter
+62 |     value: u32,
+   |            --- expected `u32` because of return type
+   |
+   = note:        expected type `u32`
+           found type parameter `impl Into<::core::net::IpAddr>`

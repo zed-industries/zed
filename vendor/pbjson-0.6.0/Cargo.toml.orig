@@ -1,0 +1,19 @@
+[package]
+name = "pbjson"
+version = "0.6.0"
+authors = ["Raphael Taylor-Davies <r.taylordavies@googlemail.com>"]
+edition = "2021"
+description = "Utilities for pbjson conversion"
+license = "MIT"
+keywords = ["protobuf", "json", "serde"]
+categories = ["encoding"]
+repository = "https://github.com/influxdata/pbjson"
+
+[dependencies]
+
+serde = { version = "1.0", features = ["derive"] }
+base64 = "0.21"
+
+[dev-dependencies]
+bytes = "1.0"
+rand = "0.8"

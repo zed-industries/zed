@@ -1,0 +1,63 @@
+---
+- name: Empty flow collections
+  from: '@perlpunk'
+  tags: flow mapping sequence
+  yaml: |
+    ---
+    nested sequences:
+    - - - []
+    - - - {}
+    key1: []
+    key2: {}
+  tree: |
+    +STR
+     +DOC ---
+      +MAP
+       =VAL :nested sequences
+       +SEQ
+        +SEQ
+         +SEQ
+          +SEQ []
+          -SEQ
+         -SEQ
+        -SEQ
+        +SEQ
+         +SEQ
+          +MAP {}
+          -MAP
+         -SEQ
+        -SEQ
+       -SEQ
+       =VAL :key1
+       +SEQ []
+       -SEQ
+       =VAL :key2
+       +MAP {}
+       -MAP
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "nested sequences": [
+        [
+          [
+            []
+          ]
+        ],
+        [
+          [
+            {}
+          ]
+        ]
+      ],
+      "key1": [],
+      "key2": {}
+    }
+  dump: |
+    ---
+    nested sequences:
+    - - - []
+    - - - {}
+    key1: []
+    key2: {}

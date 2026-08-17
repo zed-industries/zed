@@ -1,0 +1,8 @@
+---
+source: codespan-reporting/tests/term.rs
+expression: TEST_DATA.emit_no_color(&config)
+---
+Data/Nat.fun:7:13: error: unknown builtin: `NATRAL`
+Data/Nat.fun:17:16: warning: unused parameter pattern: `n₂`
+Test.fun:4:11: error[E0001]: unexpected type in application of `_+_`
+

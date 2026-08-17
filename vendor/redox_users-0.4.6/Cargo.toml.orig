@@ -1,0 +1,28 @@
+[package]
+name = "redox_users"
+version = "0.4.6"
+authors = ["Jose Narvaez <goyox86@gmail.com>", "Wesley Hershberger <mggmugginsmc@gmail.com>"]
+description = "A Rust library to access Redox users and groups functionality"
+license = "MIT"
+repository = "https://gitlab.redox-os.org/redox-os/users"
+documentation = "https://docs.rs/redox_users"
+readme = "README.md"
+keywords = ["redox", "auth"]
+edition = "2021"
+
+[dependencies]
+getrandom = { version = "0.2", features = ["std"] }
+libredox = { version = "0.1.3", default-features = false, features = ["std", "call"] }
+rust-argon2 = { version = "0.8", optional = true }
+thiserror = "1.0"
+zeroize = { version = "1.4", features = ["zeroize_derive"], optional = true }
+
+#[target.'cfg(not(target_os = "redox"))'.dependencies]
+#nix = "0.19"
+
+[features]
+default = ["auth"]
+
+# Enable password authentication using argon2. Some API may not be available
+# without default features.
+auth = ["rust-argon2", "zeroize"]

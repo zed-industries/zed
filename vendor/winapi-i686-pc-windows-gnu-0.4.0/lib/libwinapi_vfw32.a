@@ -1,0 +1,5 @@
+INPUT(
+libwinapi_vfw32-msvfw32.a
+libwinapi_vfw32-avicap32.a
+libwinapi_vfw32-avifil32.a
+)

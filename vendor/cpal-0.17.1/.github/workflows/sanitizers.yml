@@ -1,0 +1,126 @@
+name: Sanitizers
+
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE*"
+      - ".gitignore"
+  pull_request:
+    branches: [master]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE*"
+      - ".gitignore"
+  workflow_dispatch:
+
+jobs:
+  sanitizers:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macOS-latest
+            target: aarch64-apple-darwin
+            sanitizer: address
+            name: ASAN-macOS
+
+          - os: macOS-latest
+            target: aarch64-apple-darwin
+            sanitizer: thread
+            name: TSAN-macOS
+
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            sanitizer: address
+            name: ASAN-Linux
+
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            sanitizer: thread
+            name: TSAN-Linux
+
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    env:
+      RUSTFLAGS: -Zsanitizer=${{ matrix.sanitizer }}
+      RUSTDOCFLAGS: -Zsanitizer=${{ matrix.sanitizer }}
+      TSAN_OPTIONS: ${{ matrix.sanitizer == 'thread' && 'halt_on_error=0:history_size=7:second_deadlock_stack=1' || '' }}
+      ASAN_OPTIONS: ${{ matrix.sanitizer == 'address' && 'halt_on_error=0:detect_stack_use_after_return=1:check_initialization_order=1:strict_string_checks=1:detect_invalid_pointer_pairs=2:print_summary=1' || '' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Cache Linux audio packages
+        if: runner.os == 'Linux'
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: libasound2-dev libjack-jackd2-dev libjack-jackd2-0 libdbus-1-dev
+
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew install llvm
+
+      - name: Install nightly Rust with rust-src
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.name }}
+
+      - name: Run tests with sanitizer
+        run: |
+          cargo +nightly test \
+            -Zbuild-std \
+            --target ${{ matrix.target }} \
+            --lib --tests \
+            --verbose
+
+      - name: Check all examples with sanitizer
+        run: |
+          cargo +nightly check \
+            -Zbuild-std \
+            --target ${{ matrix.target }} \
+            --examples \
+            --verbose
+
+      - name: Build and run enumerate example with sanitizer
+        run: |
+          cargo +nightly run \
+            -Zbuild-std \
+            --target ${{ matrix.target }} \
+            --example enumerate \
+            --verbose
+
+      - name: Build and run beep example with sanitizer
+        run: |
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            cargo +nightly run \
+              -Zbuild-std \
+              --target ${{ matrix.target }} \
+              --example beep \
+              --verbose \
+              -- --device "alsa:null"
+          else
+            cargo +nightly run \
+              -Zbuild-std \
+              --target ${{ matrix.target }} \
+              --example beep \
+              --verbose
+          fi
+
+      - name: Upload sanitizer logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}-logs
+          path: |
+            *.log.*
+            /tmp/asan.*
+            /tmp/tsan.*
+          if-no-files-found: ignore

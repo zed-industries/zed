@@ -1,0 +1,21 @@
+error[E0271]: type mismatch resolving `<C as ExternType>::Kind == Trivial`
+  --> tests/ui/unique_ptr_to_opaque.rs:22:25
+   |
+22 |     cxx::UniquePtr::new(outside::C { a: 4 });
+   |     ------------------- ^^^^^^^^^^^^^^^^^^^ type mismatch resolving `<C as ExternType>::Kind == Trivial`
+   |     |
+   |     required by a bound introduced by this call
+   |
+note: expected this to be `Trivial`
+  --> tests/ui/unique_ptr_to_opaque.rs:8:21
+   |
+ 8 |         type Kind = cxx::kind::Opaque;
+   |                     ^^^^^^^^^^^^^^^^^
+note: required by a bound in `UniquePtr::<T>::new`
+  --> src/unique_ptr.rs
+   |
+   |     pub fn new(value: T) -> Self
+   |            --- required by a bound in this associated function
+   |     where
+   |         T: ExternType<Kind = Trivial>,
+   |                       ^^^^^^^^^^^^^^ required by this bound in `UniquePtr::<T>::new`

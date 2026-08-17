@@ -1,0 +1,476 @@
+# GitHub Actions with Conditional Job Running Based on Commit Message
+# 
+# --------------------------------------------------------------------------------
+# 
+# Following jobs will always run
+# 
+#   - `clippy`
+#   - `test`
+#   - `examples`
+# 
+# Following jobs will be run when no keywords were found in commit message)
+# 
+#   - `compile-sqlite`
+#   - `sqlite`
+#   - `compile-mysql`
+#   - `mysql`
+#   - `mariadb`
+#   - `compile-postgres`
+#   - `postgres`
+# 
+# Following jobs will be run if keywords `[issues]` were found in commit message
+# 
+#   - Jobs that will always run
+#   - `issues`
+# 
+# Following jobs will be run if keywords `[cli]` were found in commit message
+# 
+#   - Jobs that will always run
+#   - `cli`
+# 
+# Following jobs will be run if keywords `[sqlite]` were found in commit message
+# 
+#   - Jobs that will always run
+#   - `compile-sqlite`
+#   - `sqlite`
+# 
+# Following jobs will be run if keywords `[mysql]` were found in commit message
+# 
+#   - Jobs that will always run
+#   - `compile-mysql`
+#   - `mysql`
+#   - `mariadb`
+# 
+# Following jobs will be run if keywords `[postgres]` were found in commit message
+# 
+#   - Jobs that will always run
+#   - `compile-postgres`
+#   - `postgres`
+
+
+name: tests
+
+on:
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - '.github/ISSUE_TEMPLATE/**'
+  push:
+    paths-ignore:
+      - '**.md'
+      - '.github/ISSUE_TEMPLATE/**'
+    branches:
+      - master
+      - 1.*.x
+      - 0.*.x
+      - pr/**/ci
+      - ci-*
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+
+  init:
+    name: Init
+    runs-on: ubuntu-latest
+    outputs:
+      run-sqlite: ${{ contains(steps.git-log.outputs.message, '[sqlite]') }}
+      run-mysql: ${{ contains(steps.git-log.outputs.message, '[mysql]') }}
+      run-postgres: ${{ contains(steps.git-log.outputs.message, '[postgres]') }}
+      run-cli: ${{ contains(steps.git-log.outputs.message, '[cli]') }}
+      run-issues: ${{ contains(steps.git-log.outputs.message, '[issues]') }}
+      run-partial: >-
+        ${{
+          contains(steps.git-log.outputs.message, '[sqlite]') ||
+          contains(steps.git-log.outputs.message, '[mysql]') ||
+          contains(steps.git-log.outputs.message, '[postgres]') ||
+          contains(steps.git-log.outputs.message, '[cli]') ||
+          contains(steps.git-log.outputs.message, '[issues]')
+        }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: git-log
+        run: echo "message=$(git log --no-merges -1 --oneline)" >> $GITHUB_OUTPUT
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: clippy
+      - run: cargo clippy --all -- -D warnings
+      - run: cargo clippy --all --features runtime-async-std-native-tls,sqlx-all -- -D warnings
+      # Disable clippy checks on `sea-orm-cli` until we upgraded `clap` to v4. https://github.com/clap-rs/clap/issues/4849
+      # - run: cargo clippy --manifest-path sea-orm-cli/Cargo.toml -- -D warnings
+      - run: cargo clippy --manifest-path sea-orm-migration/Cargo.toml -- -D warnings
+
+  rustfmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+      - run: cargo fmt --manifest-path sea-orm-cli/Cargo.toml --all -- --check
+      - run: cargo fmt --manifest-path sea-orm-migration/Cargo.toml --all -- --check
+
+  compile-sqlite:
+    name: Compile SQLite
+    needs: init
+    if: >-
+      ${{
+        needs.init.outputs.run-partial == 'false' ||
+        (needs.init.outputs.run-partial == 'true' && needs.init.outputs.run-sqlite == 'true')
+      }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [async-std]
+        tls: [native-tls, rustls]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            Cargo.lock
+            target
+          key: ${{ github.sha }}-${{ github.run_id }}-${{ runner.os }}-sqlite-${{ matrix.runtime }}-${{ matrix.tls }}
+      - run: cargo test --test '*' --features default,sqlx-sqlite,runtime-${{ matrix.runtime }}-${{ matrix.tls }} --no-run
+
+  compile-mysql:
+    name: Compile MySQL
+    needs: init
+    if: >-
+      ${{
+        needs.init.outputs.run-partial == 'false' ||
+        (needs.init.outputs.run-partial == 'true' && needs.init.outputs.run-mysql == 'true')
+      }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [actix]
+        tls: [native-tls, rustls]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            Cargo.lock
+            target
+          key: ${{ github.sha }}-${{ github.run_id }}-${{ runner.os }}-mysql-${{ matrix.runtime }}-${{ matrix.tls }}
+      - run: cargo test --test '*' --features default,sqlx-mysql,runtime-${{ matrix.runtime }}-${{ matrix.tls }} --no-run
+
+  compile-postgres:
+    name: Compile PostgreSQL
+    needs: init
+    if: >-
+      ${{
+        needs.init.outputs.run-partial == 'false' ||
+        (needs.init.outputs.run-partial == 'true' && needs.init.outputs.run-postgres == 'true')
+      }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [tokio]
+        tls: [native-tls, rustls]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            Cargo.lock
+            target
+          key: ${{ github.sha }}-${{ github.run_id }}-${{ runner.os }}-postgres-${{ matrix.runtime }}-${{ matrix.tls }}
+      - run: cargo test --test '*' --features default,sqlx-postgres,runtime-${{ matrix.runtime }}-${{ matrix.tls }} --no-run
+
+  test:
+    name: Unit Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --workspace
+      - run: cargo test --manifest-path sea-orm-cli/Cargo.toml
+
+  cli:
+    name: CLI
+    needs: init
+    if: ${{ (needs.init.outputs.run-partial == 'true' && needs.init.outputs.run-cli == 'true') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install --path sea-orm-cli --debug
+
+  examples:
+    name: Examples
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        path: [
+          examples/actix_example,
+          examples/axum_example,
+          examples/basic,
+          examples/graphql_example,
+          examples/jsonrpsee_example,
+          examples/loco_example,
+          examples/loco_starter,
+          examples/loco_seaography,
+          examples/poem_example,
+          examples/proxy_gluesql_example,
+          examples/react_admin,
+          examples/rocket_example,
+          examples/rocket_okapi_example,
+          examples/salvo_example,
+          examples/seaography_example,
+          examples/tonic_example,
+        ]
+    steps:
+      - uses: actions/checkout@v4
+      - if: ${{ contains(matrix.path, 'tonic_example') }}
+        uses: arduino/setup-protoc@v3
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          components: rustfmt
+      - run: find ${{ matrix.path }} -type f -name 'Cargo.toml' -print0 | xargs -t -0 -I {} cargo fmt --manifest-path {} -- --check
+      - uses: dtolnay/rust-toolchain@stable
+      - run: find ${{ matrix.path }} -type f -name 'Cargo.toml' -print0 | xargs -t -0 -I {} cargo update --manifest-path {}
+      - run: find ${{ matrix.path }} -type f -name 'Cargo.toml' -print0 | xargs -t -0 -I {} cargo build --manifest-path {}
+      - run: find ${{ matrix.path }} -type f -name 'Cargo.toml' -print0 | xargs -t -0 -I {} cargo test --manifest-path {}
+      - run: ${{'! '}}${{ '[ -d "' }}${{ matrix.path }}${{ '/service" ]' }} || find ${{ matrix.path }}/service -type f -name 'Cargo.toml' -print0 | xargs -t -0 -I {} cargo test --manifest-path {} --features mock
+
+  issues-matrix:
+    name: Issues Matrix
+    needs: init
+    if: ${{ (needs.init.outputs.run-partial == 'true' && needs.init.outputs.run-issues == 'true') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: set-matrix
+        run: echo "path_matrix=$(find issues -type f -name 'Cargo.toml' -printf '%P\0' | jq -Rc '[  split("\u0000") | .[] | "issues/\(.)" ]')" >> $GITHUB_OUTPUT
+    outputs:
+      path_matrix: ${{ steps.set-matrix.outputs.path_matrix }}
+
+  issues:
+    name: Issues
+    needs:
+      - init
+      - issues-matrix
+    if: ${{ (needs.init.outputs.run-partial == 'true' && needs.init.outputs.run-issues == 'true') }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        path: ${{ fromJson(needs.issues-matrix.outputs.path_matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --manifest-path ${{ matrix.path }}
+      - run: cargo test --manifest-path ${{ matrix.path }}
+
+  sqlite:
+    name: SQLite
+    needs:
+      - init
+      - compile-sqlite
+    if: >-
+      ${{
+        needs.init.outputs.run-partial == 'false' ||
+        (needs.init.outputs.run-partial == 'true' && needs.init.outputs.run-sqlite == 'true')
+      }}
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: "sqlite::memory:"
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [async-std]
+        tls: [native-tls, rustls]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            Cargo.lock
+            target
+          key: ${{ github.sha }}-${{ github.run_id }}-${{ runner.os }}-sqlite-${{ matrix.runtime }}-${{ matrix.tls }}
+      - run: cargo test --test '*' --features default,sqlx-sqlite,runtime-${{ matrix.runtime }}-${{ matrix.tls }}
+      - run: cargo test --manifest-path sea-orm-migration/Cargo.toml --test '*' --features sqlx-sqlite,runtime-${{ matrix.runtime }}-${{ matrix.tls }}
+      - run: cargo test --test '*' --features default,sqlx-sqlite,runtime-${{ matrix.runtime }}-${{ matrix.tls }},sqlite-use-returning-for-3_35
+      - run: cargo test --manifest-path sea-orm-migration/Cargo.toml --test '*' --features sqlx-sqlite,runtime-${{ matrix.runtime }}-${{ matrix.tls }},sqlite-use-returning-for-3_35
+
+  mysql:
+    name: MySQL
+    needs:
+      - init
+      - compile-mysql
+    if: >-
+      ${{
+        needs.init.outputs.run-partial == 'false' ||
+        (needs.init.outputs.run-partial == 'true' && needs.init.outputs.run-mysql == 'true')
+      }}
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: "mysql://root:@localhost"
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [lts, 5.7]
+        runtime: [actix]
+        tls: [native-tls]
+    services:
+      mysql:
+        image: mysql:${{ matrix.version }}
+        env:
+          MYSQL_HOST: 127.0.0.1
+          MYSQL_DB: mysql
+          MYSQL_USER: sea
+          MYSQL_PASSWORD: sea
+          MYSQL_ALLOW_EMPTY_PASSWORD: yes
+        ports:
+          - "3306:3306"
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            Cargo.lock
+            target
+          key: ${{ github.sha }}-${{ github.run_id }}-${{ runner.os }}-mysql-${{ matrix.runtime }}-${{ matrix.tls }}
+      - run: cargo test --test '*' --features default,sqlx-mysql,runtime-${{ matrix.runtime }}-${{ matrix.tls }}
+      - run: cargo test --manifest-path sea-orm-migration/Cargo.toml --test '*' --features sqlx-mysql,runtime-${{ matrix.runtime }}-${{ matrix.tls }}
+
+  mariadb:
+    name: MariaDB
+    needs:
+      - init
+      - compile-mysql
+    if: >-
+      ${{
+        needs.init.outputs.run-partial == 'false' ||
+        (needs.init.outputs.run-partial == 'true' && needs.init.outputs.run-mysql == 'true')
+      }}
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: "mysql://root:@localhost"
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [lts]
+        runtime: [actix]
+        tls: [native-tls]
+    services:
+      mariadb:
+        image: mariadb:${{ matrix.version }}
+        env:
+          MARIADB_HOST: 127.0.0.1
+          MARIADB_DB: mysql
+          MARIADB_USER: sea
+          MARIADB_PASSWORD: sea
+          MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: yes
+        ports:
+          - "3306:3306"
+        options: >-
+          --health-cmd="healthcheck.sh
+          --connect
+          --innodb_initialized"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            Cargo.lock
+            target
+          key: ${{ github.sha }}-${{ github.run_id }}-${{ runner.os }}-mysql-${{ matrix.runtime }}-${{ matrix.tls }}
+      - run: cargo test --test '*' --features default,sqlx-mysql,runtime-${{ matrix.runtime }}-${{ matrix.tls }}
+
+  postgres:
+    name: Postgres
+    needs:
+      - init
+      - compile-postgres
+    if: >-
+      ${{
+        needs.init.outputs.run-partial == 'false' ||
+        (needs.init.outputs.run-partial == 'true' && needs.init.outputs.run-postgres == 'true')
+      }}
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: "postgres://root:root@localhost"
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [14, 16]
+        runtime: [tokio]
+        tls: [native-tls]
+    services:
+      postgres:
+        image: postgres:${{ matrix.version }}
+        env:
+          POSTGRES_HOST: 127.0.0.1
+          POSTGRES_USER: root
+          POSTGRES_PASSWORD: root
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            Cargo.lock
+            target
+          key: ${{ github.sha }}-${{ github.run_id }}-${{ runner.os }}-postgres-${{ matrix.runtime }}-${{ matrix.tls }}
+      - run: cargo test --test '*' --features default,sqlx-postgres,runtime-${{ matrix.runtime }}-${{ matrix.tls }}
+      - run: cargo test --manifest-path sea-orm-migration/Cargo.toml --test '*' --features sqlx-postgres,runtime-${{ matrix.runtime }}-${{ matrix.tls }}

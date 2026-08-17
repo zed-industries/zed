@@ -1,0 +1,1 @@
+failed to register indirect shims for main module: missing component metadata for import of `new::log`

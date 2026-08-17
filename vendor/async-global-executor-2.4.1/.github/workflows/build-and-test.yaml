@@ -1,0 +1,43 @@
+name: Build and test
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 12 * * 1"
+
+jobs:
+  build_and_test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        rust: [nightly, beta, stable, 1.60.0]
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install latest ${{ matrix.rust }}
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: ${{ matrix.rust }}
+            profile: minimal
+            override: true
+
+      - name: Run cargo check
+        uses: actions-rs/cargo@v1
+        with:
+          command: check
+          args: --all --bins --examples --tests --all-features
+
+      - name: Run cargo check (without dev-dependencies to catch missing feature flags)
+        if: startsWith(matrix.rust, 'nightly')
+        uses: actions-rs/cargo@v1
+        with:
+          command: check
+          args: -Z features=dev_dep
+
+      - name: Run cargo test
+        uses: actions-rs/cargo@v1
+        with:
+          command: test

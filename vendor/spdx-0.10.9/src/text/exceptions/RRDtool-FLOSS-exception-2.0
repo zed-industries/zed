@@ -1,0 +1,67 @@
+r#"FLOSS License Exception 
+=======================
+(Adapted from http://www.mysql.com/company/legal/licensing/foss-exception.html)
+
+I want specified Free/Libre and Open Source Software ("FLOSS")
+applications to be able to use specified GPL-licensed RRDtool
+libraries (the "Program") despite the fact that not all FLOSS licenses are
+compatible with version 2 of the GNU General Public License (the "GPL").
+
+As a special exception to the terms and conditions of version 2.0 of the GPL:
+
+You are free to distribute a Derivative Work that is formed entirely from
+the Program and one or more works (each, a "FLOSS Work") licensed under one
+or more of the licenses listed below, as long as:
+
+1. You obey the GPL in all respects for the Program and the Derivative
+Work, except for identifiable sections of the Derivative Work which are
+not derived from the Program, and which can reasonably be considered
+independent and separate works in themselves,
+
+2. all identifiable sections of the Derivative Work which are not derived
+from the Program, and which can reasonably be considered independent and
+separate works in themselves,
+
+1. are distributed subject to one of the FLOSS licenses listed
+below, and
+
+2. the object code or executable form of those sections are
+accompanied by the complete corresponding machine-readable source
+code for those sections on the same medium and under the same FLOSS
+license as the corresponding object code or executable forms of
+those sections, and
+
+3. any works which are aggregated with the Program or with a Derivative
+Work on a volume of a storage or distribution medium in accordance with
+the GPL, can reasonably be considered independent and separate works in
+themselves which are not derivatives of either the Program, a Derivative
+Work or a FLOSS Work.
+
+If the above conditions are not met, then the Program may only be copied,
+modified, distributed or used under the terms and conditions of the GPL.
+
+FLOSS License List
+==================
+License name	Version(s)/Copyright Date
+Academic Free License		2.0
+Apache Software License	1.0/1.1/2.0
+Apple Public Source License	2.0
+Artistic license		From Perl 5.8.0
+BSD license			"July 22 1999"
+Common Public License		1.0
+GNU Library or "Lesser" General Public License (LGPL)	2.0/2.1
+IBM Public License, Version    1.0
+Jabber Open Source License	1.0
+MIT License (As listed in file MIT-License.txt)	-
+Mozilla Public License (MPL)	1.0/1.1
+Open Software License		2.0
+OpenSSL license (with original SSLeay license)	"2003" ("1998")
+PHP License			3.01
+Python license (CNRI Python License)	-
+Python Software Foundation License	2.1.1
+Sleepycat License		"1999"
+W3C License			"2001"
+X11 License			"2001"
+Zlib/libpng License		-
+Zope Public License		2.0/2.1
+"#

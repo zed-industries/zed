@@ -1,0 +1,11 @@
+package foo:name;
+
+interface foo {
+  record foo {}
+}
+
+use foo as bar;
+
+interface name {
+  use bar.{foo};
+}

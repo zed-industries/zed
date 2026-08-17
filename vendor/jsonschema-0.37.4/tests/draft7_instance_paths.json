@@ -1,0 +1,2257 @@
+{
+  "additionalItems.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": [
+            "3"
+          ]
+        }
+      ]
+    },
+    {
+      "suite_id": 3,
+      "tests": [
+        {
+          "id": 4,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 7,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": [
+            "1"
+          ]
+        }
+      ]
+    },
+    {
+      "suite_id": 8,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": [
+            "1"
+          ]
+        }
+      ]
+    }
+  ],
+  "additionalProperties.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 1,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 2,
+      "tests": [
+        {
+          "id": 2,
+          "instance_path": [
+            "quux"
+          ]
+        }
+      ]
+    },
+    {
+      "suite_id": 3,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": [
+            "foo"
+          ]
+        }
+      ]
+    },
+    {
+      "suite_id": 5,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": [
+            "foo"
+          ]
+        }
+      ]
+    }
+  ],
+  "allOf.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 2,
+          "instance_path": []
+        },
+        {
+          "id": 3,
+          "instance_path": [
+            "bar"
+          ]
+        }
+      ]
+    },
+    {
+      "suite_id": 1,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 2,
+          "instance_path": []
+        },
+        {
+          "id": 3,
+          "instance_path": []
+        },
+        {
+          "id": 4,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 2,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 4,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 5,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 8,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 9,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 10,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 11,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        },
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 2,
+          "instance_path": []
+        },
+        {
+          "id": 3,
+          "instance_path": []
+        },
+        {
+          "id": 4,
+          "instance_path": []
+        },
+        {
+          "id": 5,
+          "instance_path": []
+        },
+        {
+          "id": 6,
+          "instance_path": []
+        }
+      ]
+    }
+  ],
+  "anyOf.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 3,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 1,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        },
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 4,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 5,
+      "tests": [
+        {
+          "id": 3,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 7,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    }
+  ],
+  "boolean_schema.json": [
+    {
+      "suite_id": 1,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        },
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 2,
+          "instance_path": []
+        },
+        {
+          "id": 3,
+          "instance_path": []
+        },
+        {
+          "id": 4,
+          "instance_path": []
+        },
+        {
+          "id": 5,
+          "instance_path": []
+        },
+        {
+          "id": 6,
+          "instance_path": []
+        },
+        {
+          "id": 7,
+          "instance_path": []
+        },
+        {
+          "id": 8,
+          "instance_path": []
+        }
+      ]
+    }
+  ],
+  "const.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 1,
+      "tests": [
+        {
+          "id": 2,
+          "instance_path": []
+        },
+        {
+          "id": 3,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 2,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 3,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 4,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 5,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 6,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 7,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 8,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 9,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 10,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        },
+        {
+          "id": 3,
+          "instance_path": []
+        },
+        {
+          "id": 4,
+          "instance_path": []
+        },
+        {
+          "id": 5,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 11,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 12,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 3,
+          "instance_path": []
+        },
+        {
+          "id": 4,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 13,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 3,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 14,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    }
+  ],
+  "contains.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 3,
+          "instance_path": []
+        },
+        {
+          "id": 4,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 1,
+      "tests": [
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 2,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 3,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        },
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 4,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        },
+        {
+          "id": 1,
+          "instance_path": [
+            "0"
+          ]
+        },
+        {
+          "id": 3,
+          "instance_path": []
+        }
+      ]
+    }
+  ],
+  "default.json": [
+    {
+      "suite_id": 2,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": [
+            "alpha"
+          ]
+        }
+      ]
+    }
+  ],
+  "definitions.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": [
+            "definitions",
+            "foo",
+            "type"
+          ]
+        }
+      ]
+    }
+  ],
+  "dependencies.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 3,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 2,
+      "tests": [
+        {
+          "id": 3,
+          "instance_path": []
+        },
+        {
+          "id": 4,
+          "instance_path": []
+        },
+        {
+          "id": 5,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 3,
+      "tests": [
+        {
+          "id": 2,
+          "instance_path": [
+            "foo"
+          ]
+        },
+        {
+          "id": 3,
+          "instance_path": [
+            "bar"
+          ]
+        },
+        {
+          "id": 4,
+          "instance_path": [
+            "bar"
+          ]
+        }
+      ]
+    },
+    {
+      "suite_id": 4,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 5,
+      "tests": [
+        {
+          "id": 3,
+          "instance_path": []
+        },
+        {
+          "id": 4,
+          "instance_path": []
+        },
+        {
+          "id": 5,
+          "instance_path": []
+        },
+        {
+          "id": 6,
+          "instance_path": []
+        }
+      ]
+    }
+  ],
+  "enum.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 1,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 2,
+          "instance_path": []
+        },
+        {
+          "id": 4,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 2,
+      "tests": [
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 3,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": [
+            "foo"
+          ]
+        },
+        {
+          "id": 2,
+          "instance_path": [
+            "bar"
+          ]
+        },
+        {
+          "id": 4,
+          "instance_path": []
+        },
+        {
+          "id": 5,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 4,
+      "tests": [
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 5,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 6,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 9,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 11,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 13,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    }
+  ],
+  "exclusiveMaximum.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    }
+  ],
+  "exclusiveMinimum.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    }
+  ],
+  "if-then-else.json": [
+    {
+      "suite_id": 3,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 4,
+      "tests": [
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 5,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 3,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 7,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 8,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 9,
+      "tests": [
+        {
+          "id": 2,
+          "instance_path": []
+        },
+        {
+          "id": 3,
+          "instance_path": []
+        }
+      ]
+    }
+  ],
+  "infinite-loop-detection.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": [
+            "foo"
+          ]
+        }
+      ]
+    }
+  ],
+  "items.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": [
+            "1"
+          ]
+        }
+      ]
+    },
+    {
+      "suite_id": 1,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": [
+            "0"
+          ]
+        }
+      ]
+    },
+    {
+      "suite_id": 3,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": [
+            "0"
+          ]
+        }
+      ]
+    },
+    {
+      "suite_id": 4,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": [
+            "1"
+          ]
+        }
+      ]
+    },
+    {
+      "suite_id": 5,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 2,
+          "instance_path": [
+            "0"
+          ]
+        },
+        {
+          "id": 3,
+          "instance_path": [
+            "0"
+          ]
+        },
+        {
+          "id": 4,
+          "instance_path": [
+            "0",
+            "0"
+          ]
+        }
+      ]
+    },
+    {
+      "suite_id": 6,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": [
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "id": 2,
+          "instance_path": [
+            "0",
+            "0",
+            "0"
+          ]
+        }
+      ]
+    }
+  ],
+  "maxItems.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    }
+  ],
+  "maxLength.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    }
+  ],
+  "maxProperties.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 1,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    }
+  ],
+  "maximum.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 1,
+      "tests": [
+        {
+          "id": 3,
+          "instance_path": []
+        }
+      ]
+    }
+  ],
+  "minItems.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    }
+  ],
+  "minLength.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 2,
+          "instance_path": []
+        },
+        {
+          "id": 4,
+          "instance_path": []
+        }
+      ]
+    }
+  ],
+  "minProperties.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    }
+  ],
+  "minimum.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 1,
+      "tests": [
+        {
+          "id": 4,
+          "instance_path": []
+        },
+        {
+          "id": 5,
+          "instance_path": []
+        }
+      ]
+    }
+  ],
+  "multipleOf.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 1,
+      "tests": [
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 2,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 3,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        }
+      ]
+    }
+  ],
+  "not.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 1,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 2,
+      "tests": [
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 3,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": [
+            "foo"
+          ]
+        }
+      ]
+    },
+    {
+      "suite_id": 4,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        }
+      ]
+    }
+  ],
+  "oneOf.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 2,
+          "instance_path": []
+        },
+        {
+          "id": 3,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 1,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        },
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 2,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 4,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 5,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 6,
+      "tests": [
+        {
+          "id": 2,
+          "instance_path": []
+        },
+        {
+          "id": 3,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 7,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 8,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        },
+        {
+          "id": 3,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 9,
+      "tests": [
+        {
+          "id": 2,
+          "instance_path": []
+        },
+        {
+          "id": 3,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 10,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    }
+  ],
+  "optional/bignum.json": [
+    {
+      "suite_id": 4,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 6,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        }
+      ]
+    }
+  ],
+  "optional/content.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 1,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 2,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    }
+  ],
+  "optional/ecmascript-regex.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 1,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 2,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 3,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 4,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 2,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 5,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 6,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 7,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 8,
+      "tests": [
+        {
+          "id": 9,
+          "instance_path": []
+        },
+        {
+          "id": 10,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 9,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        },
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 2,
+          "instance_path": []
+        },
+        {
+          "id": 3,
+          "instance_path": []
+        },
+        {
+          "id": 4,
+          "instance_path": []
+        },
+        {
+          "id": 5,
+          "instance_path": []
+        },
+        {
+          "id": 6,
+          "instance_path": []
+        },
+        {
+          "id": 7,
+          "instance_path": []
+        },
+        {
+          "id": 8,
+          "instance_path": []
+        }
+      ]
+    }
+  ],
+  "pattern.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    }
+  ],
+  "patternProperties.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 2,
+          "instance_path": [
+            "foo"
+          ]
+        },
+        {
+          "id": 3,
+          "instance_path": [
+            "foo"
+          ]
+        }
+      ]
+    },
+    {
+      "suite_id": 1,
+      "tests": [
+        {
+          "id": 3,
+          "instance_path": [
+            "a"
+          ]
+        },
+        {
+          "id": 4,
+          "instance_path": [
+            "aaaa"
+          ]
+        },
+        {
+          "id": 5,
+          "instance_path": [
+            "aaa"
+          ]
+        }
+      ]
+    },
+    {
+      "suite_id": 2,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": [
+            "a31b"
+          ]
+        },
+        {
+          "id": 3,
+          "instance_path": [
+            "a_X_3"
+          ]
+        }
+      ]
+    },
+    {
+      "suite_id": 3,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": [
+            "bar"
+          ]
+        },
+        {
+          "id": 2,
+          "instance_path": [
+            "bar"
+          ]
+        },
+        {
+          "id": 3,
+          "instance_path": [
+            "foobar"
+          ]
+        }
+      ]
+    }
+  ],
+  "properties.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": [
+            "bar"
+          ]
+        },
+        {
+          "id": 2,
+          "instance_path": [
+            "bar"
+          ]
+        }
+      ]
+    },
+    {
+      "suite_id": 1,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": [
+            "foo"
+          ]
+        },
+        {
+          "id": 2,
+          "instance_path": [
+            "foo"
+          ]
+        },
+        {
+          "id": 4,
+          "instance_path": [
+            "fxo"
+          ]
+        },
+        {
+          "id": 7,
+          "instance_path": [
+            "quux"
+          ]
+        }
+      ]
+    },
+    {
+      "suite_id": 2,
+      "tests": [
+        {
+          "id": 2,
+          "instance_path": [
+            "bar"
+          ]
+        },
+        {
+          "id": 3,
+          "instance_path": [
+            "bar"
+          ]
+        }
+      ]
+    },
+    {
+      "suite_id": 3,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": [
+            "foo\tbar"
+          ]
+        }
+      ]
+    }
+  ],
+  "propertyNames.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 3,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        }
+      ]
+    }
+  ],
+  "ref.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 2,
+          "instance_path": []
+        },
+        {
+          "id": 3,
+          "instance_path": [
+            "foo"
+          ]
+        }
+      ]
+    },
+    {
+      "suite_id": 1,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": [
+            "bar"
+          ]
+        }
+      ]
+    },
+    {
+      "suite_id": 2,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": [
+            "1"
+          ]
+        }
+      ]
+    },
+    {
+      "suite_id": 3,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": [
+            "slash"
+          ]
+        },
+        {
+          "id": 1,
+          "instance_path": [
+            "tilde"
+          ]
+        },
+        {
+          "id": 2,
+          "instance_path": [
+            "percent"
+          ]
+        }
+      ]
+    },
+    {
+      "suite_id": 4,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 5,
+      "tests": [
+        {
+          "id": 2,
+          "instance_path": [
+            "foo"
+          ]
+        }
+      ]
+    },
+    {
+      "suite_id": 7,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": [
+            "minLength"
+          ]
+        }
+      ]
+    },
+    {
+      "suite_id": 8,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": [
+            "$ref"
+          ]
+        }
+      ]
+    },
+    {
+      "suite_id": 9,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": [
+            "$ref"
+          ]
+        }
+      ]
+    },
+    {
+      "suite_id": 11,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 12,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": [
+            "nodes",
+            "0",
+            "subtree",
+            "nodes",
+            "0",
+            "value"
+          ]
+        }
+      ]
+    },
+    {
+      "suite_id": 13,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": [
+            "foo\"bar"
+          ]
+        }
+      ]
+    },
+    {
+      "suite_id": 14,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 15,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 16,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 17,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        },
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    }
+  ],
+  "refRemote.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 1,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 2,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    }
+  ],
+  "required.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 3,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    }
+  ],
+  "type.json": [
+    {
+      "suite_id": 0,
+      "tests": [
+        {
+          "id": 2,
+          "instance_path": []
+        },
+        {
+          "id": 3,
+          "instance_path": []
+        },
+        {
+          "id": 4,
+          "instance_path": []
+        },
+        {
+          "id": 5,
+          "instance_path": []
+        },
+        {
+          "id": 6,
+          "instance_path": []
+        },
+        {
+          "id": 7,
+          "instance_path": []
+        },
+        {
+          "id": 8,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 1,
+      "tests": [
+        {
+          "id": 3,
+          "instance_path": []
+        },
+        {
+          "id": 4,
+          "instance_path": []
+        },
+        {
+          "id": 5,
+          "instance_path": []
+        },
+        {
+          "id": 6,
+          "instance_path": []
+        },
+        {
+          "id": 7,
+          "instance_path": []
+        },
+        {
+          "id": 8,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 2,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        },
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 5,
+          "instance_path": []
+        },
+        {
+          "id": 6,
+          "instance_path": []
+        },
+        {
+          "id": 7,
+          "instance_path": []
+        },
+        {
+          "id": 8,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 3,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        },
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 2,
+          "instance_path": []
+        },
+        {
+          "id": 4,
+          "instance_path": []
+        },
+        {
+          "id": 5,
+          "instance_path": []
+        },
+        {
+          "id": 6,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 4,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        },
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 2,
+          "instance_path": []
+        },
+        {
+          "id": 3,
+          "instance_path": []
+        },
+        {
+          "id": 5,
+          "instance_path": []
+        },
+        {
+          "id": 6,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 5,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        },
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 2,
+          "instance_path": []
+        },
+        {
+          "id": 3,
+          "instance_path": []
+        },
+        {
+          "id": 4,
+          "instance_path": []
+        },
+        {
+          "id": 5,
+          "instance_path": []
+        },
+        {
+          "id": 6,
+          "instance_path": []
+        },
+        {
+          "id": 9,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 6,
+      "tests": [
+        {
+          "id": 0,
+          "instance_path": []
+        },
+        {
+          "id": 1,
+          "instance_path": []
+        },
+        {
+          "id": 2,
+          "instance_path": []
+        },
+        {
+          "id": 3,
+          "instance_path": []
+        },
+        {
+          "id": 4,
+          "instance_path": []
+        },
+        {
+          "id": 5,
+          "instance_path": []
+        },
+        {
+          "id": 6,
+          "instance_path": []
+        },
+        {
+          "id": 7,
+          "instance_path": []
+        },
+        {
+          "id": 8,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 7,
+      "tests": [
+        {
+          "id": 2,
+          "instance_path": []
+        },
+        {
+          "id": 3,
+          "instance_path": []
+        },
+        {
+          "id": 4,
+          "instance_path": []
+        },
+        {
+          "id": 5,
+          "instance_path": []
+        },
+        {
+          "id": 6,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 8,
+      "tests": [
+        {
+          "id": 1,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 9,
+      "tests": [
+        {
+          "id": 2,
+          "instance_path": []
+        },
+        {
+          "id": 3,
+          "instance_path": []
+        },
+        {
+          "id": 4,
+          "instance_path": []
+        }
+      ]
+    },
+    {
+      "suite_id": 10,
+      "tests": [
+        {
+          "id": 3,
+          "instance_path": []
+        },
+        {
+          "id": 4,
+          "instance_path": []
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+[package]
+name = "matrixmultiply"
+edition = "2018"
+version = "0.3.10"
+authors = [
+    "bluss",
+    "R. Janis Goldschmidt"
+]
+
+license = "MIT/Apache-2.0"
+
+repository = "https://github.com/bluss/matrixmultiply/"
+documentation = "https://docs.rs/matrixmultiply/"
+
+description = """
+General matrix multiplication for f32 and f64 matrices. Operates on matrices with general layout (they can use arbitrary row and column stride). Detects and uses AVX or SSE2 on x86 platforms transparently for higher performance. Uses a microkernel strategy, so that the implementation is easy to parallelize and optimize.
+
+Supports multithreading."""
+
+keywords = ["matrix", "sgemm", "dgemm"]
+categories = ["science"]
+
+exclude = ["docs/*"]
+
+build = "build.rs"
+
+[lib]
+bench = false
+
+[[bench]]
+name = "benchmarks"
+harness = false
+
+[dependencies]
+rawpointer = "0.2"
+
+thread-tree = { version = "0.3.2", optional = true }
+once_cell = { version = "1.7", optional = true }
+num_cpus = { version = "1.13", optional = true }
+
+[dev-dependencies]
+bencher = "0.1.2"
+itertools = "0.8"
+
+[features]
+default = ["std"]
+
+# support for complex f32, complex f64
+cgemm = []
+
+threading = ["thread-tree", "std", "once_cell", "num_cpus"]
+std = []
+
+# support for compile-time configuration
+constconf = []
+
+[build-dependencies]
+autocfg = "1"
+
+[profile.release]
+debug = true
+[profile.bench]
+debug = true
+
+[package.metadata.release]
+no-dev-version = true
+tag-name = "{{version}}"
+
+[package.metadata.docs.rs]
+features = ["cgemm"]
+# defines the configuration attribute `docsrs`
+rustdoc-args = ["--cfg", "docsrs"]

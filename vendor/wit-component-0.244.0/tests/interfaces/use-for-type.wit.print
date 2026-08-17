@@ -1,0 +1,17 @@
+package foo:foo;
+
+interface foo {
+}
+
+interface bar {
+  type t = u8;
+}
+
+interface baz {
+  use bar.{t};
+
+  record bar {
+    a: t,
+  }
+}
+

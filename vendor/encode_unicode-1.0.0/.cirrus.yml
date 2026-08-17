@@ -1,0 +1,90 @@
+task:
+  name: stable
+  container:
+    image: rust
+    cpu: 1
+    memory: 1G
+  allow_failures: false
+  env:
+    RUST_BACKTRACE: 1
+  cargo_cache:
+    folder: $HOME/.cargo/registry
+    fingerprint_script: cat Cargo.lock 2> /dev/null || true
+  target_cache:
+    folder: target
+    fingerprint_script: cat Cargo.lock 2> /dev/null || true
+  setup_script:
+    - rustup component add clippy
+  info_script:
+    - rustc --version
+  check_script:
+    - cargo check --examples --tests --no-default-features
+    - cargo check --examples --tests --no-default-features --features std
+    - cargo check --examples --tests --no-default-features --features ascii
+    - cargo build --examples --tests --all-features
+    - cargo clippy --tests --examples --all-features
+  test_script:
+    - cargo test --all-features --no-fail-fast -- --test-threads=1
+  before_cache_script:
+    - rm -rf $HOME/.cargo/registry/index
+
+task:
+  name: MSRV
+  container:
+    image: rust:1.56
+    cpu: 1
+    memory: 1G
+  allow_failures: false
+  env:
+    RUST_BACKTRACE: 1
+  cargo_cache:
+    folder: $HOME/.cargo/registry
+    fingerprint_script: cat Cargo.lock 2> /dev/null || true
+  target_cache:
+    folder: target
+    fingerprint_script: cat Cargo.lock 2> /dev/null || true
+  info_script:
+    - rustc --version
+  build_script:
+    # Lock to the specified minor versions of dependencies
+    # to test that they work with our MSRV.
+    # But that doesn't cover recursive dependencies,
+    # so avoid checking examples and tests because they build dev dependencies.
+    # Tests and examples don't need to work at MSRV anyway.
+    - sed -i 's/"^/"~/' Cargo.toml
+    - cargo check --no-default-features
+    - cargo check --no-default-features --features std
+    - cargo check --no-default-features --features ascii
+    - cargo check --all-features
+  before_cache_script:
+    - rm -rf $HOME/.cargo/registry/index
+
+task:
+  name: nightly
+  container:
+    image: rustlang/rust:nightly
+    cpu: 1
+    memory: 1G
+  allow_failures: false
+  cargo_cache:
+    folder: $HOME/.cargo/registry
+    fingerprint_script: cat Cargo.lock 2> /dev/null || true
+  # rustc version is so likely to have changed that build artefacts are not worth caching
+  setup_script:
+    - cargo install cargo-fuzz
+    - rustup component add miri
+  info_script:
+    - rustc --version
+  check_script:
+    - cargo check --benches --no-default-features
+    - cargo check --benches --no-default-features --features std
+    - cargo check --benches --no-default-features --features ascii
+    - cargo build --benches --all-features
+    - cargo fuzz build
+    # fuzz supports feature selection,
+    # but --no-default-features doesn't seem to have any effect
+  test_script:
+    # the doc tets are fast and should cover a lot of code
+    - cargo miri test --all-features --doc -- --test-threads=1
+  before_cache_script:
+    - rm -rf $HOME/.cargo/registry/index

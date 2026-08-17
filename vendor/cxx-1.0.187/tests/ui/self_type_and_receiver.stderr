@@ -1,0 +1,5 @@
+error: function with Self type must not have a `self` argument
+ --> tests/ui/self_type_and_receiver.rs:6:18
+  |
+6 |         #[Self = "T"]
+  |                  ^^^

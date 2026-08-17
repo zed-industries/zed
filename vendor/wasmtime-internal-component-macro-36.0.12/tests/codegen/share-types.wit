@@ -1,0 +1,21 @@
+package foo:foo;
+
+interface http-types{
+  record request {
+    method: string
+  }
+  record response {
+    body: string
+  }
+}
+
+world http-interface {
+  export http-handler: interface {
+    use http-types.{request,response};
+    handle-request: func(request: request) -> response;
+  }
+  import http-fetch: interface {
+    use http-types.{request,response};
+    fetch-request: func(request: request) -> response;
+  }
+}

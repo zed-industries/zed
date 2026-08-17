@@ -1,0 +1,216 @@
+// ER diagram grammar (phase 1), based on Mermaid 11.12.2 `erDiagram.jison`.
+
+grammar;
+
+use crate::diagrams::er::{Action, Attribute, RelSpec, Tok};
+
+extern {
+  type Location = usize;
+  type Error = crate::diagrams::er::LexError;
+
+  enum Tok {
+    Newline => Tok::Newline,
+
+    "erDiagram" => Tok::ErDiagram,
+
+    Name => Tok::Name(<String>),
+    Str => Tok::Str(<String>),
+    IdList => Tok::IdList(<Vec<String>>),
+    RestOfLine => Tok::RestOfLine(<String>),
+
+    AccTitle => Tok::AccTitle(<String>),
+    AccDescr => Tok::AccDescr(<String>),
+    AccDescrMultiline => Tok::AccDescrMultiline(<String>),
+
+    Direction => Tok::Direction(<String>),
+
+    BlockStart => Tok::BlockStart,
+    BlockStop => Tok::BlockStop,
+    SquareStart => Tok::SquareStart,
+    SquareStop => Tok::SquareStop,
+    StyleSeparator => Tok::StyleSeparator,
+    Colon => Tok::Colon,
+    Comma => Tok::Comma,
+
+    "style" => Tok::StyleKw,
+    "classDef" => Tok::ClassDefKw,
+    "class" => Tok::ClassKw,
+
+    ZeroOrOne => Tok::ZeroOrOne,
+    ZeroOrMore => Tok::ZeroOrMore,
+    OneOrMore => Tok::OneOrMore,
+    OnlyOne => Tok::OnlyOne,
+    MdParent => Tok::MdParent,
+    Identifying => Tok::Identifying,
+    NonIdentifying => Tok::NonIdentifying,
+
+    AttrWord => Tok::AttrWord(<String>),
+    AttrKey => Tok::AttrKey(<String>),
+    Comment => Tok::Comment(<String>),
+  }
+}
+
+pub Actions: Vec<Action> = {
+  <_n:Newlines> "erDiagram" <_n1:Newlines1> <s:Statements> => s
+};
+
+Newlines: () = {
+  => (),
+  Newline <rest:Newlines> => rest,
+};
+
+Newlines1: () = {
+  Newline <_n:Newlines> => ()
+};
+
+Statements: Vec<Action> = {
+  => Vec::new(),
+  <s:Statement> <_n:Newlines> <rest:Statements> => {
+    let mut v = s;
+    v.extend(rest);
+    v
+  },
+};
+
+Statement: Vec<Action> = {
+  <v:RelationshipStatement> => v,
+  <v:EntityStatement> => v,
+  <a:AccStatement> => vec![a],
+  <a:DirectionStatement> => vec![a],
+  <a:ClassDefStatement> => vec![a],
+  <a:ClassStatement> => vec![a],
+  <a:StyleStatement> => vec![a],
+};
+
+AccStatement: Action = {
+  AccTitle => Action::SetAccTitle(<>),
+  AccDescr => Action::SetAccDescr(<>),
+  AccDescrMultiline => Action::SetAccDescr(<>),
+};
+
+DirectionStatement: Action = {
+  Direction => Action::SetDirection(<>),
+};
+
+StyleStatement: Action = {
+  "style" <ids:IdList> <raw:RestOfLine> => Action::AddCssStyles { entities: ids, raw },
+};
+
+ClassDefStatement: Action = {
+  "classDef" <ids:IdList> <raw:RestOfLine> => Action::AddClassDef { classes: ids, raw },
+};
+
+ClassStatement: Action = {
+  "class" <entities:IdList> <classes:IdList> => Action::SetClass { entities, classes },
+};
+
+RelationshipStatement: Vec<Action> = {
+  <a:Name> <spec:RelSpec> <b:Name> Colon <role:Role> => vec![
+    Action::AddEntity { name: a.clone(), alias: None },
+    Action::AddEntity { name: b.clone(), alias: None },
+    Action::AddRelationship { a, role, b, spec },
+  ],
+
+  <a:Name> StyleSeparator <classes_a:IdList> <spec:RelSpec> <b:Name> StyleSeparator <classes_b:IdList> Colon <role:Role> => vec![
+    Action::AddEntity { name: a.clone(), alias: None },
+    Action::AddEntity { name: b.clone(), alias: None },
+    Action::AddRelationship { a: a.clone(), role, b: b.clone(), spec },
+    Action::SetClass { entities: vec![a], classes: classes_a },
+    Action::SetClass { entities: vec![b], classes: classes_b },
+  ],
+
+  <a:Name> StyleSeparator <classes_a:IdList> <spec:RelSpec> <b:Name> Colon <role:Role> => vec![
+    Action::AddEntity { name: a.clone(), alias: None },
+    Action::AddEntity { name: b.clone(), alias: None },
+    Action::AddRelationship { a: a.clone(), role, b: b.clone(), spec },
+    Action::SetClass { entities: vec![a], classes: classes_a },
+  ],
+
+  <a:Name> <spec:RelSpec> <b:Name> StyleSeparator <classes_b:IdList> Colon <role:Role> => vec![
+    Action::AddEntity { name: a.clone(), alias: None },
+    Action::AddEntity { name: b.clone(), alias: None },
+    Action::AddRelationship { a: a.clone(), role, b: b.clone(), spec },
+    Action::SetClass { entities: vec![b], classes: classes_b },
+  ],
+};
+
+EntityStatement: Vec<Action> = {
+  <name:Name> BlockStart <attrs:Attributes> BlockStop => vec![
+    Action::AddEntity { name: name.clone(), alias: None },
+    Action::AddAttributes { entity: name, attributes: attrs },
+  ],
+  <name:Name> StyleSeparator <classes:IdList> BlockStart <attrs:Attributes> BlockStop => vec![
+    Action::AddEntity { name: name.clone(), alias: None },
+    Action::AddAttributes { entity: name.clone(), attributes: attrs },
+    Action::SetClass { entities: vec![name], classes },
+  ],
+  <name:Name> StyleSeparator <classes:IdList> => vec![
+    Action::AddEntity { name: name.clone(), alias: None },
+    Action::SetClass { entities: vec![name], classes },
+  ],
+  <name:Name> => vec![
+    Action::AddEntity { name, alias: None },
+  ],
+
+  // alias forms
+  <name:Name> SquareStart <alias:Name> SquareStop BlockStart <attrs:Attributes> BlockStop => vec![
+    Action::AddEntity { name: name.clone(), alias: Some(alias) },
+    Action::AddAttributes { entity: name, attributes: attrs },
+  ],
+  <name:Name> SquareStart <alias:Name> SquareStop => vec![
+    Action::AddEntity { name, alias: Some(alias) },
+  ],
+
+  <name:Name> SquareStart <alias:Name> SquareStop StyleSeparator <classes:IdList> BlockStart <attrs:Attributes> BlockStop => vec![
+    Action::AddEntity { name: name.clone(), alias: Some(alias) },
+    Action::AddAttributes { entity: name.clone(), attributes: attrs },
+    Action::SetClass { entities: vec![name], classes },
+  ],
+  <name:Name> SquareStart <alias:Name> SquareStop StyleSeparator <classes:IdList> => vec![
+    Action::AddEntity { name: name.clone(), alias: Some(alias) },
+    Action::SetClass { entities: vec![name], classes },
+  ],
+};
+
+Role: String = {
+  Name => <>,
+  Str => <>,
+};
+
+RelSpec: RelSpec = {
+  <left:Cardinality> <t:RelType> <right:Cardinality> => RelSpec { card_a: right, card_b: left, rel_type: t }
+};
+
+Cardinality: String = {
+  ZeroOrOne => "ZERO_OR_ONE".to_string(),
+  ZeroOrMore => "ZERO_OR_MORE".to_string(),
+  OneOrMore => "ONE_OR_MORE".to_string(),
+  OnlyOne => "ONLY_ONE".to_string(),
+  MdParent => "MD_PARENT".to_string(),
+};
+
+RelType: String = {
+  Identifying => "IDENTIFYING".to_string(),
+  NonIdentifying => "NON_IDENTIFYING".to_string(),
+};
+
+Attributes: Vec<Attribute> = {
+  => Vec::new(),
+  <a:Attribute> <rest:Attributes> => {
+    let mut v = vec![a];
+    v.extend(rest);
+    v
+  }
+};
+
+Attribute: Attribute = {
+  <ty:AttrWord> <name:AttrWord> => Attribute { ty, name, keys: Vec::new(), comment: String::new() },
+  <ty:AttrWord> <name:AttrWord> <keys:AttributeKeys> => Attribute { ty, name, keys, comment: String::new() },
+  <ty:AttrWord> <name:AttrWord> <c:Comment> => Attribute { ty, name, keys: Vec::new(), comment: c },
+  <ty:AttrWord> <name:AttrWord> <keys:AttributeKeys> <c:Comment> => Attribute { ty, name, keys, comment: c },
+};
+
+AttributeKeys: Vec<String> = {
+  <k:AttrKey> => vec![k],
+  <ks:AttributeKeys> Comma <k:AttrKey> => { let mut v = ks; v.push(k); v },
+};

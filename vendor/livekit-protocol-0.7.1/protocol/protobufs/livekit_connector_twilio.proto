@@ -1,0 +1,65 @@
+// Copyright 2025 LiveKit, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package livekit;
+option go_package = "github.com/livekit/protocol/livekit";
+option csharp_namespace = "LiveKit.Proto";
+option ruby_package = "LiveKit::Proto";
+
+import "livekit_agent_dispatch.proto";
+import "logger/options.proto";
+
+message ConnectTwilioCallRequest {
+
+  enum TwilioCallDirection {
+    // Call is inbound to LiveKit from Twilio
+    TWILIO_CALL_DIRECTION_INBOUND = 0;
+    // Call is outbound from LiveKit to Twilio
+    TWILIO_CALL_DIRECTION_OUTBOUND = 1;
+  }
+
+  // The Direction of the call
+  TwilioCallDirection twilio_call_direction = 1;
+  // What LiveKit room should this call be connected to
+  string room_name = 2;
+  // Optional agents to dispatch the call to
+  repeated RoomAgentDispatch agents = 3;
+  // Optional identity of the participant in LiveKit room
+  // This is used for logging purposes, so it is advised to not put PII in this field.
+  string participant_identity= 4;
+  // Optional name of the participant in LiveKit room
+  string participant_name = 5 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  // Optional user-defined metadata. Will be attached to a created Participant in the room.
+  string participant_metadata = 6 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  // Optional user-defined attributes. Will be attached to a created Participant in the room.
+  map<string, string> participant_attributes = 7 [
+    (logger.redact) = true,
+    (logger.redact_format) = "<redacted ({{ .Size }} bytes)>"
+  ];
+  // Country where the call terminates as ISO 3166-1 alpha-2 (https://en.wikipedia.org/wiki/ISO_3166-1_alpha-2). This will be used by the livekit infrastructure to route calls.
+  string destination_country = 8;
+}
+
+message ConnectTwilioCallResponse {
+  // The websocket URL which twilio media stream will connect to
+  string connect_url = 1;
+}

@@ -1,0 +1,18 @@
+language: rust
+rust:
+  - nightly
+
+before_script: |
+  rustup component add rustfmt-preview;
+  if ! rustup component add rustfmt; then
+    target=`curl https://rust-lang.github.io/rustup-components-history/x86_64-unknown-linux-gnu/rustfmt`;
+    echo "'rustfmt' is unavailable on the toolchain 'nightly', use the toolchain 'nightly-$target' instead";
+    rustup toolchain install nightly-$target;
+    rustup default nightly-$target;
+    rustup component add rustfmt;
+  fi
+script: |
+  cargo fmt -- --check &&
+  cargo build --verbose &&
+  cargo test  --verbose
+cache: cargo

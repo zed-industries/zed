@@ -1,0 +1,12 @@
+{
+    "credentials": {
+        "access_key_id": "AKIDEXAMPLE",
+        "secret_access_key": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
+    },
+    "expiration_in_seconds": 3600,
+    "normalize": true,
+    "region": "us-east-1",
+    "service": "service",
+    "sign_body": false,
+    "timestamp": "2015-08-30T12:36:00Z"
+}

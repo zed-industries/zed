@@ -1,0 +1,49 @@
+[package]
+name = "wasip3"
+version = "0.4.0+wasi-0.3.0-rc-2026-01-06"
+description = "WASIp3 API bindings for Rust"
+categories = ["no-std", "wasm"]
+keywords = ["webassembly", "wasm"]
+documentation = "https://docs.rs/wasip3"
+readme = "README.md"
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+http-compat = [
+    "dep:bytes",
+    "dep:http-body",
+    "dep:http",
+    "dep:thiserror",
+    "wit-bindgen/async-spawn",
+]
+
+[dependencies]
+# NB: async bindings require `std` right now so this doesn't optionally disable
+# `std`, it's intentionally always enabled.
+wit-bindgen = { workspace = true, features = ['async'] }
+# Optional dependencies for extending http types.
+bytes = { version = "1.10.1", optional = true }
+http-body = { version = "1.0.1", optional = true }
+http = { version = "1.3.1", optional = true }
+thiserror = { version = "2.0.17", optional = true }
+
+[dev-dependencies]
+futures = "0.3.31"
+http = "1.3.1"
+wit-bindgen = { workspace = true, features = ['async-spawn'] }
+
+[[example]]
+name = "cli-command"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "http-proxy"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "http-proxy-compat"
+crate-type = ["cdylib"]
+required-features = ["http-compat"]

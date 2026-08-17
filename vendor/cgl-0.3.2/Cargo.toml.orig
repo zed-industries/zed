@@ -1,0 +1,10 @@
+[package]
+name = "cgl"
+license = "MIT / Apache-2.0"
+version = "0.3.2"
+authors = ["The Servo Project Developers"]
+description = "Rust bindings for CGL on Mac"
+repository = "https://github.com/servo/cgl-rs"
+
+[dependencies]
+libc = "0.2"

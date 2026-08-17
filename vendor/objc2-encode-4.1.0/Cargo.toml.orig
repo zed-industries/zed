@@ -1,0 +1,46 @@
+[package]
+name = "objc2-encode"
+version = "4.1.0" # Remember to update html_root_url in lib.rs
+description = "Objective-C type-encoding representation and parsing"
+keywords = ["objective-c", "macos", "ios", "encode"]
+categories = [
+    "development-tools::ffi",
+    "encoding",
+    "no-std",
+    "os::macos-apis",
+]
+# https://github.com/madsmtm/objc2/issues/23
+# All future contributions are licensed under "Zlib OR Apache-2.0 OR MIT".
+license = "MIT"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["std"]
+
+std = ["alloc"]
+# Currently not possible to turn off, put here for forwards compatibility
+alloc = []
+
+[package.metadata.docs.rs]
+default-target = "aarch64-apple-darwin"
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "aarch64-apple-ios",
+    "aarch64-apple-tvos",
+    "aarch64-apple-watchos",
+    "aarch64-apple-ios-macabi",
+    "aarch64-apple-visionos",
+    "x86_64-unknown-linux-gnu",
+    "i686-unknown-linux-gnu",
+]
+
+[package.metadata.release]
+shared-version = false
+tag-prefix = "objc-encode"

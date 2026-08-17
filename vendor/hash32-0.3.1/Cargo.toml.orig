@@ -1,0 +1,13 @@
+[package]
+authors = ["Jorge Aparicio <jorge@japaric.io>"]
+categories = ["no-std"]
+description = "32-bit hashing algorithms"
+keywords = ["32-bit", "hash", "fnv", "murmur3"]
+license = "MIT OR Apache-2.0"
+name = "hash32"
+repository = "https://github.com/japaric/hash32"
+version = "0.3.1"
+
+[dependencies.byteorder]
+default-features = false
+version = "1.2.2"

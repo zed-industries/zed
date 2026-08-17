@@ -1,0 +1,21 @@
+[package]
+name = "ptr_meta"
+version = "0.1.4"
+authors = ["David Koloski <djkoloski@gmail.com>"]
+edition = "2018"
+description = "A radioactive stabilization of the ptr_meta rfc"
+license = "MIT"
+documentation = "https://docs.rs/ptr_meta"
+repository = "https://github.com/djkoloski/ptr_meta"
+keywords = ["ptr", "meta", "no_std"]
+categories = ["no-std"]
+readme = "crates-io.md"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ptr_meta_derive = { version = "=0.1.4", path = "../ptr_meta_derive" }
+
+[features]
+default = ["std"]
+std = []

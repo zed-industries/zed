@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<proposal href="proposals/WEBGL_video_texture/">
+  <name>WEBGL_video_texture</name>
+
+  <contact> <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL
+  working group</a> (public_webgl 'at' khronos.org) </contact>
+
+  <contributors>
+    <contributor>Byungseon Shin (sun.shin 'at' lge.com)</contributor>
+    <contributor>Andrey Volykhin (andrey.volykhin 'at' lge.com)</contributor>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+
+  <number>NN</number>
+
+  <depends>
+    <api version="1.0"/>
+  </depends>
+
+  <overview>
+    <mirrors href="https://www.khronos.org/registry/gles/extensions/OES/OES_EGL_image_external.txt"
+             name="OES_EGL_image_external">
+      <addendum>Defines a new texture target <code>TEXTURE_VIDEO_IMAGE</code>.</addendum>
+      <addendum>Provides a mechanism for binding <code>HTMLVideoElement</code> stream to video texture targets.</addendum>
+      <addendum>Provides time of frame, texture width and height of <code>HTMLVideoElement</code>'s texture binding.</addendum>
+    </mirrors>
+
+    <features>
+      <feature>Add support for <code>WEBGL_video_texture</code>
+      binding of HTMLVideoElement.</feature>
+
+      <glsl extname="WEBGL_video_texture">
+        <stage type="fragment"/>
+        <type name="samplerVideoWEBGL"/>
+
+        <function name="texture2D" type="vec4">
+          <param name="sampler" type="samplerVideoWEBGL"/>
+
+          <param name="coord" type="vec2"/>
+        </function>
+
+      </glsl>
+    </features>
+  </overview>
+
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface WebGLVideoFrameInfo {
+  readonly attribute double currentTime;
+  readonly attribute unsigned long textureWidth;
+  readonly attribute unsigned long textureHeight;
+};
+
+[NoInterfaceObject]
+interface WEBGL_video_texture {
+    const GLenum TEXTURE_VIDEO_IMAGE             = 0x851D;
+    const GLenum SAMPLER_VIDEO_IMAGE             = 0x8B61;
+
+    [RaisesException] WebGLVideoFrameInfo VideoElementTargetVideoTexture(
+        GLenum target, HTMLVideoElement video);
+};
+  </idl>
+
+  <samplecode xml:space="preserve">
+
+    <p> This a fragment shader that samples a video texture.</p>
+    <pre>
+    #extension GL_WEBGL_video_texture : require
+    precision mediump float;
+    varying vec2 v_texCoord;
+
+    uniform samplerVideoWEBGL uSampler;
+
+    void main(void) {
+      gl_FragColor = texture2D(uSampler, v_texCoord);
+    }
+    </pre>
+
+    <p> This shows application that renders video using proposed extension.  </p>
+    <pre>
+    var videoElement = document.getElementById("video");
+    var videoTexture = gl.createTexture();
+
+    function update() {
+        var ext = gl.getExtension('WEBGL_video_texture');
+        if(ext !=== null){
+            gl.bindTexture(ext.TEXTURE_VIDEO_IMAGE, videoTexture);
+            ext.VideoElementTargetVideoTexture(ext.TEXTURE_VIDEO_IMAGE, videoElement);
+            gl.bindTexture(ext.TEXTURE_VIDEO_IMAGE, null);
+        }
+    }
+
+    function render() {
+        gl.clearColor(0.0, 0.0, 1.0, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, squareVerticesBuffer);
+        gl.vertexAttribPointer(vertexPositionAttribute, 3, gl.FLOAT, false, 0, 0);
+
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(ext.TEXTURE_VIDEO_IMAGE, videoTexture);
+        gl.uniform1i(gl.getUniformLocation(shaderProgram, "uSampler"), 0);
+
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    }
+    </pre>
+
+    <p> Application renders each video frames into WebGL canvas based on game-loop pattern. </p>
+    <pre>
+
+    while (true) {
+       update();
+       processInput();
+       render();
+    }
+    </pre>
+
+  </samplecode>
+
+  <tests/>
+
+  <issues/>
+
+  <history>
+    <revision date="2016/11/05">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2017/01/10">
+      <change>Change EGLImageTargetTexture2DOES to be called at every WebGL rendering cycle.</change>
+      <change>Add VideoFrameInfo interface.</change>
+      <change>Change EGLImageTargetTexture2DOES to return VideoFrameInfo as a currently mapped frame.</change>
+    </revision>
+    <revision date="2017/08/03">
+      <change>Change Extension name to WEBGL_video_texture for abstracion of OES_EGL_image_external extension.</change>
+      <change>Define new sampler and texture type, TEXTURE_VIDEO_IMAGE and SAMPLER_VIDEO_IMAGE.</change>
+      <change>Change EGLImageTargetTexture2DOES to VideoElementTargetVideoTexture.</change>
+    </revision>
+  </history>
+</proposal>

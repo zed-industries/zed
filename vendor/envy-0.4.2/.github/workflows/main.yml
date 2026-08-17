@@ -1,0 +1,111 @@
+
+name: Main
+
+on:
+  workflow_dispatch:
+  push:
+    paths-ignore:
+      - '*.md'
+    branches:
+      - main
+      - master
+    tags:
+      - '**'
+  pull_request:
+    paths-ignore:
+      - '*.md'
+    branches:
+      - main
+      - master
+
+env:
+  CARGO_TERM_COLOR:  always
+
+jobs:
+  codestyle:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Rust
+        uses: hecrj/setup-rust-action@v1
+        with:
+          components: rustfmt
+          rust-version: nightly
+      - uses: actions/checkout@v2
+      - run: cargo fmt --all -- --check
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Rust
+        uses: hecrj/setup-rust-action@v1
+        with:
+          components: clippy
+      - uses: actions/checkout@v2
+      - run: cargo clippy --all-targets -- -D clippy::all
+
+  compile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Rust
+        uses: hecrj/setup-rust-action@v1
+      - uses: actions/checkout@master
+      - run: cargo check --all
+
+  test:
+    needs: [codestyle, lint, compile]
+    strategy:
+      matrix:
+        rust: [stable, beta, nightly]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Setup Rust
+      uses: hecrj/setup-rust-action@v1
+      with:
+        rust-version: ${{ matrix.rust }}
+    - name: Checkout
+      uses: actions/checkout@v2
+    - name: Test
+      run: cargo test
+    - name: Coverage
+      if: matrix.rust == 'stable'
+      run: |
+        # tarpaulin knows how to extract data from ci
+        # ci services and GitHub actions is not one of them
+        # work around that by masquerading as travis
+        # https://github.com/xd009642/coveralls-api/blob/6da4ccd7c6eaf1df04cfd1e560362de70fa80605/src/lib.rs#L247-L262
+        export TRAVIS_JOB_ID=${GITHUB_SHA}
+        export TRAVIS_PULL_REQUEST=false
+        export TRAVIS_BRANCH=${GITHUB_REF##*/}
+        cargo install cargo-tarpaulin
+        cargo tarpaulin --ciserver travis-ci --coveralls $TRAVIS_JOB_ID
+
+  publish-docs:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+      - name: Set up Rust
+        uses: hecrj/setup-rust-action@v1
+      - uses: actions/checkout@v2
+      - name: Generate Docs
+        shell: bash
+        run: |
+          cargo doc --no-deps
+          echo "<meta http-equiv=refresh content=0;url=`echo ${{ github.repository  }} | cut -d / -f 2 | tr '-' '_'`/index.html>" > target/doc/index.html
+      - name: Publish
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./target/doc
+
+  publish-crate:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [test]
+    steps:
+      - name: Set up Rust
+        uses: hecrj/setup-rust-action@v1
+      - uses: actions/checkout@v2
+      - name: Publish
+        shell: bash
+        run: cargo publish --token ${{ secrets.CRATES_TOKEN }}

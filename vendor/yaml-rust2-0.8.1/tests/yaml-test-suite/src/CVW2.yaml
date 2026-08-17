@@ -1,0 +1,16 @@
+---
+- name: Invalid comment after comma
+  from: '@perlpunk'
+  tags: comment error flow sequence
+  fail: true
+  yaml: |
+    ---
+    [ a, b, c,#invalid
+    ]
+  tree: |
+    +STR
+     +DOC ---
+      +SEQ []
+       =VAL :a
+       =VAL :b
+       =VAL :c

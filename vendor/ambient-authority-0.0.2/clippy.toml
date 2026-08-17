@@ -1,0 +1,197 @@
+# This is a clippy.toml file for the [`disallowed_method`] clippy lint which
+# disallows functions in `std` and a few other crates which utilize ambient
+# authority.
+#
+# To use it, copy this [clippy.toml] file into the top level source directory,
+# add `#![deny(clippy::disallowed_method)]` to the root module (main.rs or
+# lib.rs), and run `cargo clippy`.
+#
+# The Rust standard library is pretty big, and this list is currently
+# maintained by hand, so it's possible there are errors and omissions.
+# Corrections welcome!
+#
+# [`disallowed_method`] https://rust-lang.github.io/rust-clippy/master/index.html#disallowed_method
+disallowed-methods = [
+  # Crates that explicitly declare their ambient authorities require this.
+  "ambient_authority::ambient_authority",
+
+  # By default we warn about ambient authorities known at compile time as well;
+  # comment this out if you're only interested in dynamic ambient authority.
+  "ambient_authority::ambient_authority_known_at_compile_time",
+
+  # Use cap-std instead.
+  "std::fs::canonicalize",
+  "std::fs::copy",
+  "std::fs::create_dir",
+  "std::fs::create_dir_all",
+  "std::fs::hard_link",
+  "std::fs::metadata",
+  "std::fs::read",
+  "std::fs::read_dir",
+  "std::fs::read_link",
+  "std::fs::read_to_string",
+  "std::fs::remove_dir",
+  "std::fs::remove_dir_all",
+  "std::fs::remove_file",
+  "std::fs::rename",
+  "std::fs::set_permissions",
+  "std::fs::soft_link",
+  "std::fs::symlink_metadata",
+  "std::fs::try_exists",
+  "std::fs::write",
+  "std::fs::DirBuilder::create",
+  "std::fs::File::open",
+  "std::fs::File::create",
+  "std::fs::OpenOptions::open",
+  "std::path::Path::metadata",
+  "std::path::Path::symlink_metadata",
+  "std::path::Path::canonicalize",
+  "std::path::Path::read_link",
+  "std::path::Path::read_dir",
+  "std::path::Path::exists",
+  "std::path::Path::try_exists",
+  "std::path::Path::is_file",
+  "std::path::Path::is_dir",
+  "std::time::Instant::now",
+  "std::time::Instant::elapsed",
+  "std::time::SystemTime::now",
+  "std::time::SystemTime::elapsed",
+  "std::net::TcpListener::bind",
+  "std::net::TcpStream::connect",
+  "std::net::UdpSocket::bind",
+  "std::net::UdpSocket::connect",
+  "std::net::UdpSocket::send_to",
+  "std::os::unix::net::UnixStream::connect",
+  "std::os::unix::net::UnixListener::bind",
+  "std::os::unix::net::UnixDatagram::bind",
+  "std::os::unix::net::UnixDatagram::connect",
+  "std::os::unix::net::UnixDatagram::send_to",
+  "std::os::unix::net::UnixDatagram::send_vectored_with_ancillary_to",
+
+  # Use cap-std instead; specifically, `cap_std::fs_utf8`.
+  "camino::Utf8Path::metadata",
+  "camino::Utf8Path::symlink_metadata",
+  "camino::Utf8Path::canonicalize",
+  "camino::Utf8Path::read_link",
+  "camino::Utf8Path::read_dir",
+  "camino::Utf8Path::exists",
+  "camino::Utf8Path::try_exists",
+  "camino::Utf8Path::is_file",
+  "camino::Utf8Path::is_dir",
+
+  # No replacement available for these yet.
+  "std::process::abort",
+  "std::process::exit",
+  "std::process::id",
+  "std::process::Command::new",
+
+  # Use io-streams instead.
+  "std::io::stdin",
+  "std::io::stdout",
+  "std::io::stderr",
+
+  # Use cap-async-std instead.
+  "async_std::fs::canonicalize",
+  "async_std::fs::copy",
+  "async_std::fs::create_dir",
+  "async_std::fs::create_dir_all",
+  "async_std::fs::hard_link",
+  "async_std::fs::metadata",
+  "async_std::fs::read",
+  "async_std::fs::read_dir",
+  "async_std::fs::read_link",
+  "async_std::fs::read_to_string",
+  "async_std::fs::remove_dir",
+  "async_std::fs::remove_dir_all",
+  "async_std::fs::remove_file",
+  "async_std::fs::rename",
+  "async_std::fs::set_permissions",
+  "async_std::fs::soft_link",
+  "async_std::fs::symlink_metadata",
+  "async_std::fs::write",
+  "async_std::fs::DirBuilder::create",
+  "async_std::fs::File::open",
+  "async_std::fs::File::create",
+  "async_std::fs::OpenOptions::open",
+  "async_std::io::stdin",
+  "async_std::io::stdout",
+  "async_std::io::stderr",
+  "async_std::path::Path::metadata",
+  "async_std::path::Path::symlink_metadata",
+  "async_std::path::Path::canonicalize",
+  "async_std::path::Path::read_link",
+  "async_std::path::Path::read_dir",
+  "async_std::path::Path::exists",
+  "async_std::path::Path::is_file",
+  "async_std::path::Path::is_dir",
+  "async_std::process::abort",
+  "async_std::process::exit",
+  "async_std::process::id",
+  "async_std::process::Command::new",
+  "async_std::time::Instant::now",
+  "async_std::time::Instant::elapsed",
+  "async_std::time::SystemTime::now",
+  "async_std::time::SystemTime::elapsed",
+  "async_std::net::TcpListener::bind",
+  "async_std::net::TcpStream::connect",
+  "async_std::net::UdpSocket::bind",
+  "async_std::net::UdpSocket::connect",
+  "async_std::net::UdpSocket::send_to",
+  "async_std::os::unix::net::UnixStream::connect",
+  "async_std::os::unix::net::UnixListener::bind",
+  "async_std::os::unix::net::UnixDatagram::bind",
+  "async_std::os::unix::net::UnixDatagram::connect",
+  "async_std::os::unix::net::UnixDatagram::send_to",
+  "async_std::os::unix::net::UnixDatagram::send_vectored_with_ancillary_to",
+
+  # Use cap-directories instead.
+  "std::env::home_dir",
+  "directories_next::BaseDirs::new",
+  "directories_next::ProjectDirs::from_path",
+  "directories_next::ProjectDirs::from",
+  "directories_next::UserDirs::new",
+
+  # Use cap-rand instead.
+  "rand::rngs::OsRng::next_u32",
+  "rand::rngs::OsRng::next_u64",
+  "rand::rngs::OsRng::fill_bytes",
+  "rand::rngs::OsRng::try_fill_bytes",
+  "rand::rngs::ThreadRng::default",
+  "rand::thread_rng",
+  "rand::random",
+  "rand::SeedableRng::from_entropy",
+
+  # Use cap-tempfile instead.
+  "std::env::temp_dir",
+  "tempfile::spooled_tempfile",
+  "tempfile::tempdir",
+  "tempfile::tempdir_in",
+  "tempfile::tempfile",
+  "tempfile::tempfile_in",
+  "tempfile::NamedTempFile::new",
+  "tempfile::NamedTempFile::new_in",
+  "tempfile::SpooledTempFile::new",
+  "tempfile::TempDir::new",
+  "tempfile::TempDir::new_in",
+
+  # Use cap-fs-ext instead.
+  "fs_set_times::set_atime",
+  "fs_set_times::set_mtime",
+  "fs_set_times::set_times",
+  "fs_set_times::set_symlink_times",
+
+  # rustix::net things that can reference specific addresses. For other
+  # rustix modules, we don't have all the functions listed out, so just...
+  # don't use the other modules.
+  "rustix::net::bind",
+  "rustix::net::bind_v6",
+  "rustix::net::bind_v4",
+  "rustix::net::bind_unix",
+  "rustix::net::bind_any",
+  "rustix::net::connect",
+  "rustix::net::connect_v6",
+  "rustix::net::connect_v4",
+  "rustix::net::connect_unix",
+  "rustix::net::connect_any",
+  "rustix::net::sendto",
+]

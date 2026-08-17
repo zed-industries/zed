@@ -1,0 +1,5 @@
+error: unrecognized receiver type
+ --> tests/ui/unrecognized_receiver.rs:4:20
+  |
+4 |         fn f(self: &Unrecognized);
+  |                    ^^^^^^^^^^^^^

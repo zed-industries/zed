@@ -1,0 +1,49 @@
+{
+    "id": "15016647271",
+    "type": "MemberEvent",
+    "actor": {
+        "id": 11861072,
+        "login": "yanndouze",
+        "display_login": "yanndouze",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/yanndouze",
+        "avatar_url": "https://avatars.githubusercontent.com/u/11861072?"
+    },
+    "repo": {
+        "id": 334901668,
+        "name": "Polytech-Sorbonne/EI-SE5_2020-2021_TrackChip",
+        "url": "https://api.github.com/repos/Polytech-Sorbonne/EI-SE5_2020-2021_TrackChip"
+    },
+    "payload": {
+        "member": {
+            "login": "EnzoPolytech",
+            "id": 58522265,
+            "node_id": "MDQ6VXNlcjU4NTIyMjY1",
+            "avatar_url": "https://avatars.githubusercontent.com/u/58522265?v=4",
+            "gravatar_id": "",
+            "url": "https://api.github.com/users/EnzoPolytech",
+            "html_url": "https://github.com/EnzoPolytech",
+            "followers_url": "https://api.github.com/users/EnzoPolytech/followers",
+            "following_url": "https://api.github.com/users/EnzoPolytech/following{/other_user}",
+            "gists_url": "https://api.github.com/users/EnzoPolytech/gists{/gist_id}",
+            "starred_url": "https://api.github.com/users/EnzoPolytech/starred{/owner}{/repo}",
+            "subscriptions_url": "https://api.github.com/users/EnzoPolytech/subscriptions",
+            "organizations_url": "https://api.github.com/users/EnzoPolytech/orgs",
+            "repos_url": "https://api.github.com/users/EnzoPolytech/repos",
+            "events_url": "https://api.github.com/users/EnzoPolytech/events{/privacy}",
+            "received_events_url": "https://api.github.com/users/EnzoPolytech/received_events",
+            "type": "User",
+            "site_admin": false
+        },
+        "action": "added"
+    },
+    "public": true,
+    "created_at": "2021-02-01T09:51:17Z",
+    "org": {
+        "id": 57939017,
+        "login": "Polytech-Sorbonne",
+        "gravatar_id": "",
+        "url": "https://api.github.com/orgs/Polytech-Sorbonne",
+        "avatar_url": "https://avatars.githubusercontent.com/u/57939017?"
+    }
+}

@@ -1,0 +1,65 @@
+[package]
+name = "agent-client-protocol-schema"
+authors = ["Zed <hi@zed.dev>"]
+version = "1.5.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "A protocol for standardizing communication between code editors and AI coding agents"
+repository = "https://github.com/agentclientprotocol/agent-client-protocol"
+homepage = "https://github.com/agentclientprotocol/agent-client-protocol"
+documentation = "https://docs.rs/agent-client-protocol-schema"
+readme = "../README.md"
+keywords = ["agent", "client", "protocol", "ai", "editor"]
+categories = ["development-tools", "api-bindings"]
+include = ["/src/**/*.rs", "/Cargo.toml"]
+rust-version = "1.88.0"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints]
+workspace = true
+
+[features]
+unstable = [
+    "unstable_auth_methods",
+    "unstable_elicitation",
+    "unstable_llm_providers",
+    "unstable_mcp_over_acp",
+    "unstable_nes",
+    "unstable_plan_operations",
+    "unstable_session_fork",
+    "unstable_end_turn_token_usage",
+]
+# Protocol v2 is intentionally NOT part of the `unstable` umbrella.
+# It introduces a parallel `v2` module and (eventually) a different wire
+# version, so it must be opted into explicitly.
+unstable_protocol_v2 = ["dep:diffy"]
+unstable_auth_methods = []
+unstable_elicitation = []
+unstable_llm_providers = []
+unstable_mcp_over_acp = []
+unstable_nes = []
+unstable_plan_operations = []
+unstable_session_fork = []
+unstable_end_turn_token_usage = []
+
+# Emit `tracing::warn!` events when `VecSkipError` drops a malformed list
+# entry during deserialization. When disabled (the default), the inspector
+# hook compiles down to serde_with's built-in no-op and has zero runtime cost.
+tracing = ["dep:tracing"]
+
+[dependencies]
+anyhow = "1"
+derive_more = { version = "2", features = ["from", "display"] }
+diffy = { version = "0.5.0", optional = true }
+schemars = { version = "1" }
+# `rc` is required for Arc-based protocol strings and RawValue payloads.
+serde = { version = "1", features = ["derive", "rc"] }
+# `raw_value` powers extension passthrough payloads; `preserve_order` keeps
+# caller-supplied object key order in arbitrary JSON values and maps.
+serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
+serde_with = { version = "3.20.0", features = ["json", "schemars_1"] }
+strum = { version = "0.28", features = ["derive"] }
+tracing = { version = "0.1", default-features = false, optional = true }

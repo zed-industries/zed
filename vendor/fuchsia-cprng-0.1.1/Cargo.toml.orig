@@ -1,0 +1,20 @@
+# Copyright 2019 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+[package]
+name = "fuchsia-cprng"
+version = "0.1.1"
+license-file = "LICENSE"
+authors = ["Erick Tryzelaar <etryzelaar@google.com>"]
+description = "Rust crate for the Fuchsia cryptographically secure pseudorandom number generator"
+repository = "https://fuchsia.googlesource.com/fuchsia/+/master/garnet/public/rust/fuchsia-cprng"
+edition = "2018"
+readme = "README.md"
+include = [
+    "src/*.rs",
+    "Cargo.toml",
+    "AUTHORS",
+    "LICENSE",
+    "PATENTS",
+]

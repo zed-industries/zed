@@ -1,0 +1,31 @@
+[package]
+name = "plotters-svg"
+version = "0.3.7"
+authors = ["Hao Hou <haohou302@gmail.com>"]
+edition = "2018"
+license = "MIT"
+description = "Plotters SVG backend"
+homepage = "https://plotters-rs.github.io"
+repository = "https://github.com/plotters-rs/plotters.git"
+readme = "README.md"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies.plotters-backend]
+version = "0.3.6"
+path = "../plotters-backend"
+
+[dependencies.image]
+version = "0.24.2"
+optional = true
+default-features = false
+features = ["jpeg", "png", "bmp"]
+
+[features]
+debug = []
+bitmap_encoder = ["image"]
+
+[dev-dependencies.plotters]
+default-features = false
+features = ["ttf"]
+path = "../plotters"

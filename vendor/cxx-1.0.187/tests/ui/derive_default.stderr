@@ -1,0 +1,23 @@
+error: derive(Default) on enum requires exactly one variant to be marked with #[default]
+ --> tests/ui/derive_default.rs:3:14
+  |
+3 |     #[derive(Default)]
+  |              ^^^^^^^
+
+error: derive(Default) on enum requires exactly one variant to be marked with #[default] (found 2)
+  --> tests/ui/derive_default.rs:11:14
+   |
+11 |     #[derive(Default)]
+   |              ^^^^^^^
+
+error: #[default] attribute does not accept an argument
+  --> tests/ui/derive_default.rs:26:18
+   |
+26 |         #[default(repr)]
+   |                  ^
+
+error: #[default] attribute does not accept an argument
+  --> tests/ui/derive_default.rs:28:19
+   |
+28 |         #[default = 3]
+   |                   ^

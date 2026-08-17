@@ -1,0 +1,3 @@
+envs_dirs:
+  - /Users/donjayamanne/sample-conda-envs-folder2-from_conda_root
+  - /Users/donjayamanne/sample-conda-envs-folder-from_conda_root

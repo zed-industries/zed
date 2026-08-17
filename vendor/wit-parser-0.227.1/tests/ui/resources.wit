@@ -1,0 +1,47 @@
+package foo:bar;
+
+interface foo {
+  resource a {
+  }
+
+  resource b {
+    constructor();
+  }
+
+  resource c {
+    constructor(x: u32);
+  }
+
+  resource d {
+    constructor(x: u32);
+
+    a: func();
+
+    b: static func();
+  }
+
+  resource e {
+    constructor(other: own<e>, other2: borrow<e>);
+
+    method: func(thing: own<e>, thing2: borrow<e>);
+  }
+}
+
+world w {
+  resource a;
+
+  resource b {
+  }
+
+  resource c {
+    constructor();
+  }
+}
+
+interface i {
+  resource a;
+
+  type t1 = a;
+  type t2 = borrow<a>;
+  type t3 = borrow<t1>;
+}

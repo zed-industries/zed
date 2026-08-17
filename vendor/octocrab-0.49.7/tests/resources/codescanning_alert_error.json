@@ -1,0 +1,5 @@
+{
+  "message": "No alert found for alert number 2",
+  "documentation_url": "https://docs.github.com/rest/code-scanning/code-scanning#get-a-code-scanning-alert",
+  "status": "404"
+}

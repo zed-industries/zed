@@ -1,0 +1,8 @@
+package foo:bar;
+
+interface foo {
+  resource y {
+    x: func() -> borrow<y>;
+  }
+}
+

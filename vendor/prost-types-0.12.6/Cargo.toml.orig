@@ -1,0 +1,29 @@
+[package]
+name = "prost-types"
+version = "0.12.6"
+authors = [
+  "Dan Burkert <dan@danburkert.com>",
+  "Lucio Franco <luciofranco14@gmail.com>",
+  "Casper Meijn <casper@meijn.net>",
+  "Tokio Contributors <team@tokio.rs>",
+]
+license = "Apache-2.0"
+repository = "https://github.com/tokio-rs/prost"
+documentation = "https://docs.rs/prost-types"
+readme = "README.md"
+description = "Prost definitions of Protocol Buffers well known types."
+edition = "2021"
+rust-version = "1.70"
+
+[lib]
+doctest = false
+
+[features]
+default = ["std"]
+std = ["prost/std"]
+
+[dependencies]
+prost = { version = "0.12.6", path = "../prost", default-features = false, features = ["prost-derive"] }
+
+[dev-dependencies]
+proptest = "1"

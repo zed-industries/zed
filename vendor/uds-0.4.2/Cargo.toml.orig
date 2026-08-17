@@ -1,0 +1,29 @@
+[package]
+name = "uds"
+version = "0.4.2"
+description = """
+A unix domain socket crate that supports abstract addresses, fd-passing and seqpacket sockets.
+"""
+readme = "README.md"
+repository = "https://github.com/tormol/uds"
+license = "Apache-2.0 OR MIT"
+authors = ["Torbjørn Birch Moltu <t.b.moltu@lyse.net>"]
+keywords = ["unix", "socket", "seqpacket", "abstract", "fdpassing"]
+categories = ["os::unix-apis", "asynchronous"]
+edition = "2021"
+exclude = ["tests", "src/bin", ".vscode"]
+
+[target."cfg(unix)".dependencies]
+libc = "0.2.90" # peer credentials for DragonFly BSD and NetBSD, SO_PEERSEC on all Linux architectures
+# enabling this feature implements the extension traits for mio 0.8's unix socket types
+# and Source for this crate's non-blocking seqpacket types.
+mio_08 = { package = "mio", version = "0.8", features = ["os-ext", "net"], optional = true }
+# .28 for AsyncFd.async_io() helper
+tokio = { version = "1.28", features = ["net"], optional=true }
+
+[target."cfg(unix)".dev-dependencies]
+# rt-multi-thread is required for #[tokio::main] in doctests
+tokio = { version = "1.28", features = ["io-util", "macros", "rt", 'rt-multi-thread'] }
+
+[package.metadata.docs.rs]
+features = ["mio_08", "tokio"]

@@ -1,0 +1,5 @@
+type `t` used in a handle must be a resource
+     --> tests/ui/parse-fail/bad-resource5.wit:6:19
+      |
+    6 |   type b = borrow<t>;
+      |                   ^

@@ -1,0 +1,419 @@
+framework = "AppKit"
+crate = "objc2-app-kit"
+required-dependencies = ["objc2-foundation"]
+custom-lib-rs = true
+macos = "10.0"
+maccatalyst = "13.0"
+gnustep = true
+
+# `objc_ownership` in .apinotes
+class.NSBundle.methods."loadNibNamed:owner:topLevelObjects:".skipped = true
+class.NSNib.methods."instantiateWithOwner:topLevelObjects:".skipped = true
+
+# Return type `oneway void`
+class.NSPasteboard.methods.releaseGlobally.skipped = true
+class.NSView.methods.releaseGState.skipped = true
+# + some more in IMServicePlugIn.framework
+
+# Uses `NS_SWIFT_UI_ACTOR` on a static, which is hard to support.
+#
+# Will have to be a method that takes `MainThreadMarker`.
+static.NSApp.skipped = true
+
+# These protocol impls would return the wrong types
+class.NSTextStorage.skipped-protocols = ["NSCopying", "NSMutableCopying"]
+
+# Typedef that uses a generic from a class
+typedef.NSCollectionViewDiffableDataSourceItemProvider.skipped = true
+class.NSCollectionViewDiffableDataSource.methods."initWithCollectionView:itemProvider:".skipped = true
+
+# Requires `MainThreadOnly`, which I'm not sure is a good idea here?
+class.NSCollectionViewDiffableDataSource.skipped-protocols = ["NSCollectionViewDataSource"]
+class.NSManagedObjectContext.skipped-protocols = ["NSEditor", "NSEditorRegistration"]
+
+# Both protocols and classes
+protocol.NSTextAttachmentCell.renamed = "NSTextAttachmentCellProtocol"
+protocol.NSAccessibilityElement.renamed = "NSAccessibilityElementProtocol"
+
+# Both property and method
+class.NSDocument.methods."setDisplayName:".skipped = true
+
+# Wrong type for enum
+enum.anonymous.constants.NSOKButton.skipped = true
+enum.anonymous.constants.NSCancelButton.skipped = true
+enum.anonymous.constants.NSFileHandlingPanelCancelButton.skipped = true
+enum.anonymous.constants.NSFileHandlingPanelOKButton.skipped = true
+
+# These subclass a generic struct, and hence the type parameter defaults to
+# `AnyObject`, which is not PartialEq, Eq nor Hash.
+class.NSLayoutXAxisAnchor.derives = "Debug"
+class.NSLayoutYAxisAnchor.derives = "Debug"
+class.NSLayoutDimension.derives = "Debug"
+
+# Different definitions depending on target
+enum.NSImageResizingMode.skipped = true
+enum.NSTextAlignment.skipped = true
+
+# I'm unsure of the ABI of the array this takes
+fn.NSDrawBitmap.skipped = true
+class.NSView.methods."getRectsExposedDuringLiveResize:count:".skipped = true
+
+# Uses a pointer to SEL, which doesn't implement Encode yet
+protocol.NSMenuDelegate.methods."menuHasKeyEquivalent:forEvent:target:action:".skipped = true
+
+# Uses `CADisplayLink`, which is only available in CoreAnimation
+class.NSView.methods."displayLinkWithTarget:selector:".skipped = true
+class.NSWindow.methods."displayLinkWithTarget:selector:".skipped = true
+class.NSScreen.methods."displayLinkWithTarget:selector:".skipped = true
+
+# Duplicated method
+class.NSSlider.methods.isVertical.skipped = true
+class.NSSliderCell.methods.isVertical.skipped = true
+class.NSGestureRecognizer.methods.state.skipped = true
+
+# Needs `Symbols` framework
+class.NSImageView.categories.NSSymbolEffect.skipped = true
+
+# Needs CoreGraphics
+class.NSColor.methods.CGColor.skipped = true
+class.NSColor.methods."colorWithCGColor:".skipped = true
+class.NSColorSpace.methods."initWithCGColorSpace:".skipped = true
+class.NSColorSpace.methods.CGColorSpace.skipped = true
+class.NSLayoutManager.methods."CGGlyphAtIndex:isValidIndex:".skipped = true
+class.NSLayoutManager.methods."CGGlyphAtIndex:".skipped = true
+class.NSLayoutManager.methods."showCGGlyphs:positions:count:font:textMatrix:attributes:inContext:".skipped = true
+class.NSLayoutManager.methods."showCGGlyphs:positions:count:font:matrix:attributes:inContext:".skipped = true
+class.NSImage.methods."initWithCGImage:size:".skipped = true
+class.NSImage.methods."CGImageForProposedRect:context:hints:".skipped = true
+class.NSImage.methods."initWithIconRef:".skipped = true
+class.NSImageRep.methods."CGImageForProposedRect:context:hints:".skipped = true
+class.NSBitmapImageRep.methods."initWithCGImage:".skipped = true
+class.NSBitmapImageRep.methods.CGImage.skipped = true
+class.NSEvent.methods.CGEvent.skipped = true
+class.NSEvent.methods."eventWithCGEvent:".skipped = true
+class.NSBezierPath.methods."appendBezierPathWithCGGlyph:inFont:".skipped = true
+class.NSBezierPath.methods."appendBezierPathWithCGGlyphs:count:inFont:".skipped = true
+class.NSBezierPath.methods."bezierPathWithCGPath:".skipped = true
+class.NSBezierPath.methods.CGPath.skipped = true
+class.NSBezierPath.methods."setCGPath:".skipped = true
+class.NSFont.methods."boundingRectForCGGlyph:".skipped = true
+class.NSFont.methods."advancementForCGGlyph:".skipped = true
+class.NSFont.methods."getBoundingRects:forCGGlyphs:count:".skipped = true
+class.NSFont.methods."getAdvancements:forCGGlyphs:count:".skipped = true
+class.NSGlyphInfo.methods."glyphInfoWithCGGlyph:forFont:baseString:".skipped = true
+class.NSGraphicsContext.methods."graphicsContextWithCGContext:flipped:".skipped = true
+class.NSGraphicsContext.methods.CGContext.skipped = true
+
+# OpenGL
+class.NSOpenGLContext.skipped = true
+class.NSOpenGLLayer.skipped = true
+class.NSOpenGLPixelFormat.skipped = true
+class.NSOpenGLPixelBuffer.skipped = true
+class.NSOpenGLView.skipped = true
+fn.NSOpenGLSetOption.skipped = true
+fn.NSOpenGLGetOption.skipped = true
+fn.NSOpenGLGetVersion.skipped = true
+
+# Uses `CKShare` from CloudKit
+protocol.NSCloudSharingValidation.skipped = true
+protocol.NSCloudSharingServiceDelegate.methods."sharingService:didSaveShare:".skipped = true
+protocol.NSCloudSharingServiceDelegate.methods."sharingService:didStopSharing:".skipped = true
+
+# Uses stuff from different frameworks / system libraries
+class.NSAnimationContext.methods.timingFunction.skipped = true
+class.NSAnimationContext.methods."setTimingFunction:".skipped = true
+class.NSLayoutManager.methods."setGlyphs:properties:characterIndexes:font:forGlyphRange:".skipped = true
+class.NSLayoutManager.methods."getGlyphsInRange:glyphs:properties:characterIndexes:bidiLevels:".skipped = true
+class.NSLayoutManager.methods."glyphIndexForPoint:inTextContainer:fractionOfDistanceThroughGlyph:".skipped = true
+class.NSLayoutManagerDelegate.methods."layoutManager:shouldGenerateGlyphs:properties:characterIndexes:font:forGlyphRange:".skipped = true
+class.NSMovie.methods."initWithMovie:".skipped = true
+class.NSMovie.methods.QTMovie.skipped = true
+class.NSTextLayoutFragment.methods."drawAtPoint:inContext:".skipped = true
+class.NSTextLineFragment.methods."drawAtPoint:inContext:".skipped = true
+class.NSTextView.methods."quickLookPreviewableItemsInRanges:".skipped = true
+class.NSSavePanel.methods.allowedContentTypes.skipped = true
+class.NSSavePanel.methods."setAllowedContentTypes:".skipped = true
+class.NSView.methods.backgroundFilters.skipped = true
+class.NSView.methods."setBackgroundFilters:".skipped = true
+class.NSView.methods.compositingFilter.skipped = true
+class.NSView.methods."setCompositingFilter:".skipped = true
+class.NSView.methods.contentFilters.skipped = true
+class.NSView.methods."setContentFilters:".skipped = true
+class.NSWorkspace.methods."iconForContentType:".skipped = true
+class.NSWorkspace.methods."URLForApplicationToOpenContentType:".skipped = true
+class.NSWorkspace.methods."URLsForApplicationsToOpenContentType:".skipped = true
+class.NSWorkspace.methods."setDefaultApplicationAtURL:toOpenContentType:completionHandler:".skipped = true
+class.NSWorkspaceOpenConfiguration.methods.architecture.skipped = true
+class.NSWorkspaceOpenConfiguration.methods."setArchitecture:".skipped = true
+protocol.NSApplicationDelegate.methods."application:handlerForIntent:".skipped = true
+protocol.NSApplicationDelegate.methods."application:userDidAcceptCloudKitShareWithMetadata:".skipped = true
+protocol.NSLayoutManagerDelegate.methods."layoutManager:shouldGenerateGlyphs:properties:characterIndexes:font:forGlyphRange:".skipped = true
+class.NSItemProvider.methods."registerCloudKitShareWithPreparationHandler:".skipped = true
+class.NSItemProvider.methods."registerCloudKitShare:container:".skipped = true
+class.NSGlyphInfo.methods.glyphID.skipped = true
+
+###
+### Mutability
+###
+
+# Most things in AppKit is marked as MainThreadOnly automatically, but there are a few things we have to tweak
+class.NSColorPicker.mutability = "MainThreadOnly"
+class.NSController.mutability = "MainThreadOnly"
+class.NSObjectController.mutability = "MainThreadOnly"
+class.NSArrayController.mutability = "MainThreadOnly"
+class.NSDictionaryController.mutability = "MainThreadOnly"
+class.NSTreeController.mutability = "MainThreadOnly"
+class.NSUserDefaultsController.mutability = "MainThreadOnly"
+class.NSFontManager.mutability = "MainThreadOnly"
+class.NSMenu.mutability = "MainThreadOnly"
+class.NSMenuItem.mutability = "MainThreadOnly"
+class.NSWindowTabGroup.mutability = "MainThreadOnly"
+class.NSTextInputContext.mutability = "MainThreadOnly"
+
+# Most methods on these require MainThreadMarker anyhow
+protocol.NSDraggingInfo.requires-mainthreadonly = true
+protocol.NSBrowserDelegate.requires-mainthreadonly = true
+protocol.NSSplitViewDelegate.requires-mainthreadonly = true
+
+# Accesses the shared application, and hence is main thread only (even though not marked so in Swift).
+class.NSScreen.mutability = "MainThreadOnly"
+
+# Documented as "Main Thread Only".
+# > generally thread safe, although operations on views such as creating,
+# > resizing, and moving should happen on the main thread.
+# <https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/CocoaFundamentals/AddingBehaviortoaCocoaProgram/AddingBehaviorCocoa.html#//apple_ref/doc/uid/TP40002974-CH5-SW47>
+#
+# > If you want to use a thread to draw to a view, bracket all drawing code
+# > between the lockFocusIfCanDraw and unlockFocus methods of NSView.
+# <https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/Multithreading/ThreadSafetySummary/ThreadSafetySummary.html#//apple_ref/doc/uid/10000057i-CH12-123351-BBCFIIEB>
+class.NSView.mutability = "MainThreadOnly"
+
+# Documented as "Main Thread Only", but:
+# > Thread safe in that you can create and manage them on a secondary
+# > thread.
+# <https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/CocoaFundamentals/AddingBehaviortoaCocoaProgram/AddingBehaviorCocoa.html#//apple_ref/doc/uid/TP40002974-CH5-SW47>
+# <https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/Multithreading/ThreadSafetySummary/ThreadSafetySummary.html#//apple_ref/doc/uid/10000057i-CH12-123364>
+#
+# So could in theory be `Send`, and perhaps also `Sync` - but we would
+# like interior mutability on windows, since that's just much easier, and
+# in that case, they can't be!
+class.NSWindow.mutability = "MainThreadOnly"
+
+# TODO: This should be one of MainThreadOnly or Immutable (+Send/Sync)
+# class.NSAppearance.mutability = "MainThreadOnly"
+
+# Documented Thread-Unsafe, but:
+# > One thread can create an NSImage object, draw to the image buffer,
+# > and pass it off to the main thread for drawing. The underlying image
+# > cache is shared among all threads.
+# <https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/Multithreading/ThreadSafetySummary/ThreadSafetySummary.html#//apple_ref/doc/uid/10000057i-CH12-126728>
+#
+# So really only unsafe to mutate on several threads.
+#
+# Unsure yet if it would be beneficial to mark this as `Mutable`, or if
+# we should just keep it as interiormutable?
+# class.NSImage.mutability = "?"
+
+# Documented as "Thread-Unsafe"
+# class.NSResponder.mutability = "InteriorMutable"
+
+# Documentation says:
+# > Color objects are immutable and thread-safe
+#
+# TODO: Send + Sync
+class.NSColor.mutability = "Immutable"
+
+# NSCursor is immutable, stated here:
+# https://developer.apple.com/documentation/appkit/nscursor/1527062-image?language=objc
+#
+# TODO: Send + Sync
+class.NSCursor.mutability = "Immutable"
+
+# Since this is immutable, it _may_ be possible to make Send+Sync, but
+# let's refrain from doing so, because of:
+# > Safely handled only on the same thread, whether that be the main
+# > thread or a secondary thread; otherwise you run the risk of having
+# > events get out of sequence.
+# <https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/CocoaFundamentals/AddingBehaviortoaCocoaProgram/AddingBehaviorCocoa.html#//apple_ref/doc/uid/TP40002974-CH5-SW47>
+# <https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/Multithreading/ThreadSafetySummary/ThreadSafetySummary.html#//apple_ref/doc/uid/10000057i-CH12-123383>
+class.NSEvent.mutability = "Immutable"
+
+class.NSTouch.mutability = "Immutable"
+class.NSUserInterfaceCompressionOptions.mutability = "Immutable"
+
+# Subclasses `NSMutableAttributedString`, though I think this should
+# actually be `InteriorMutable`?
+class.NSTextStorage.mutability = "Mutable"
+
+###
+### Safety
+###
+
+class.NSAppearance.methods."appearanceNamed:".unsafe = false
+class.NSAppearance.methods."bestMatchFromAppearancesWithNames:".unsafe = false
+
+class.NSApplication.methods.sharedApplication.unsafe = false
+class.NSApplication.methods.currentEvent.unsafe = false
+class.NSApplication.methods."postEvent:atStart:".unsafe = false
+class.NSApplication.methods.presentationOptions.unsafe = false
+class.NSApplication.methods.windows.unsafe = false
+class.NSApplication.methods.keyWindow.unsafe = false
+class.NSApplication.methods."setDelegate:".unsafe = false
+class.NSApplication.methods."setPresentationOptions:".unsafe = false
+class.NSApplication.methods."hide:".unsafe = false
+class.NSApplication.methods."orderFrontCharacterPalette:".unsafe = false
+class.NSApplication.methods."hideOtherApplications:".unsafe = false
+class.NSApplication.methods."stop:".unsafe = false
+class.NSApplication.methods."activateIgnoringOtherApps:".unsafe = false
+class.NSApplication.methods."requestUserAttention:".unsafe = false
+class.NSApplication.methods."setActivationPolicy:".unsafe = false
+class.NSApplication.methods."setMainMenu:".unsafe = false
+class.NSApplication.methods.effectiveAppearance.unsafe = false
+class.NSApplication.methods."setAppearance:".unsafe = false
+# Cannot be safe, the user must ensure there is no re-entrancy.
+class.NSApplication.methods.run.unsafe = true
+
+class.NSColor.methods.clear.unsafe = false
+
+class.NSControl.methods.isEnabled.unsafe = false
+class.NSControl.methods."setEnabled:".unsafe = false
+
+class.NSCursor.methods."initWithImage:hotSpot:".unsafe = false
+class.NSCursor.methods.arrowCursor.unsafe = false
+class.NSCursor.methods.IBeamCursor.unsafe = false
+class.NSCursor.methods.pointingHandCursor.unsafe = false
+class.NSCursor.methods.closedHandCursor.unsafe = false
+class.NSCursor.methods.openHandCursor.unsafe = false
+class.NSCursor.methods.resizeLeftCursor.unsafe = false
+class.NSCursor.methods.resizeRightCursor.unsafe = false
+class.NSCursor.methods.resizeLeftRightCursor.unsafe = false
+class.NSCursor.methods.resizeUpCursor.unsafe = false
+class.NSCursor.methods.resizeDownCursor.unsafe = false
+class.NSCursor.methods.resizeUpDownCursor.unsafe = false
+class.NSCursor.methods.crosshairCursor.unsafe = false
+class.NSCursor.methods.disappearingItemCursor.unsafe = false
+class.NSCursor.methods.operationNotAllowedCursor.unsafe = false
+class.NSCursor.methods.dragLinkCursor.unsafe = false
+class.NSCursor.methods.dragCopyCursor.unsafe = false
+class.NSCursor.methods.contextualMenuCursor.unsafe = false
+class.NSCursor.methods.IBeamCursorForVerticalLayout.unsafe = false
+
+class.NSImage.methods."initWithData:".unsafe = false
+class.NSImage.methods."initByReferencingFile:".unsafe = false
+
+class.NSMenu.methods.init.unsafe = false
+class.NSMenu.methods.new.unsafe = false
+class.NSMenu.methods."addItem:".unsafe = false
+
+# Any modification of the target or the action has to remain `unsafe`
+class.NSMenuItem.methods.init.unsafe = false
+class.NSMenuItem.methods.new.unsafe = false
+class.NSMenuItem.methods.separatorItem.unsafe = false
+class.NSMenuItem.methods."setKeyEquivalentModifierMask:".unsafe = false
+class.NSMenuItem.methods."setSubmenu:".unsafe = false
+
+class.NSPasteboard.methods."propertyListForType:".unsafe = false
+
+class.NSScreen.methods.mainScreen.unsafe = false
+class.NSScreen.methods.screens.unsafe = false
+class.NSScreen.methods.frame.unsafe = false
+class.NSScreen.methods.visibleFrame.unsafe = false
+class.NSScreen.methods.deviceDescription.unsafe = false
+class.NSScreen.methods.backingScaleFactor.unsafe = false
+
+class.NSWindowTabGroup.methods.windows.unsafe = false
+class.NSWindowTabGroup.methods."setSelectedWindow:".unsafe = false
+
+class.NSTextInputContext.methods.invalidateCharacterCoordinates.unsafe = false
+class.NSTextInputContext.methods.discardMarkedText.unsafe = false
+class.NSTextInputContext.methods.selectedKeyboardInputSource.unsafe = false
+
+class.NSView.methods.frame.unsafe = false
+class.NSView.methods.bounds.unsafe = false
+class.NSView.methods.inputContext.unsafe = false
+class.NSView.methods.visibleRect.unsafe = false
+class.NSView.methods.hasMarkedText.unsafe = false
+class.NSView.methods."convertPoint:fromView:".unsafe = false
+class.NSView.methods.window.unsafe = false
+class.NSView.methods."setWantsBestResolutionOpenGLSurface:".unsafe = false
+class.NSView.methods."setWantsLayer:".unsafe = false
+class.NSView.methods."setPostsFrameChangedNotifications:".unsafe = false
+class.NSView.methods."removeTrackingRect:".unsafe = false
+class.NSView.methods."addCursorRect:cursor:".unsafe = false
+class.NSView.methods."setHidden:".unsafe = false
+class.NSView.methods."convertRect:toView:".unsafe = false
+class.NSView.methods.isFlipped.unsafe = false
+
+# NSWindow initializers are not safe, since it is critical to memory
+# safety that `window.setReleasedWhenClosed(false)` is called.
+class.NSWindow.methods.frame.unsafe = false
+class.NSWindow.methods.backingScaleFactor.unsafe = false
+class.NSWindow.methods.contentView.unsafe = false
+class.NSWindow.methods."setContentView:".unsafe = false
+class.NSWindow.methods."setInitialFirstResponder:".unsafe = false
+class.NSWindow.methods."makeFirstResponder:".unsafe = false
+class.NSWindow.methods."contentRectForFrameRect:".unsafe = false
+class.NSWindow.methods.screen.unsafe = false
+class.NSWindow.methods."setContentSize:".unsafe = false
+class.NSWindow.methods."setFrameTopLeftPoint:".unsafe = false
+class.NSWindow.methods."setMinSize:".unsafe = false
+class.NSWindow.methods."setMaxSize:".unsafe = false
+class.NSWindow.methods."setResizeIncrements:".unsafe = false
+class.NSWindow.methods.contentResizeIncrements.unsafe = false
+class.NSWindow.methods."setContentResizeIncrements:".unsafe = false
+class.NSWindow.methods."setFrame:display:".unsafe = false
+class.NSWindow.methods."setMovable:".unsafe = false
+class.NSWindow.methods."setSharingType:".unsafe = false
+class.NSWindow.methods."setTabbingMode:".unsafe = false
+class.NSWindow.methods."setOpaque:".unsafe = false
+class.NSWindow.methods.hasShadow.unsafe = false
+class.NSWindow.methods."setHasShadow:".unsafe = false
+class.NSWindow.methods."setIgnoresMouseEvents:".unsafe = false
+class.NSWindow.methods."setBackgroundColor:".unsafe = false
+class.NSWindow.methods.styleMask.unsafe = false
+class.NSWindow.methods."setStyleMask:".unsafe = false
+class.NSWindow.methods."registerForDraggedTypes:".unsafe = false
+class.NSWindow.methods."makeKeyAndOrderFront:".unsafe = false
+class.NSWindow.methods."orderFront:".unsafe = false
+class.NSWindow.methods."miniaturize:".unsafe = false
+# TODO: class.NSWindow.methods."deminiaturize:".unsafe = false
+class.NSWindow.methods."toggleFullScreen:".unsafe = false
+class.NSWindow.methods."orderOut:".unsafe = false
+class.NSWindow.methods."zoom:".unsafe = false
+class.NSWindow.methods."selectNextKeyView:".unsafe = false
+class.NSWindow.methods."selectPreviousKeyView:".unsafe = false
+class.NSWindow.methods.firstResponder.unsafe = false
+class.NSWindow.methods."standardWindowButton:".unsafe = false
+class.NSWindow.methods."setTitle:".unsafe = false
+class.NSWindow.methods.title.unsafe = false
+class.NSWindow.methods."setAcceptsMouseMovedEvents:".unsafe = false
+class.NSWindow.methods."setTitlebarAppearsTransparent:".unsafe = false
+class.NSWindow.methods."setTitleVisibility:".unsafe = false
+class.NSWindow.methods."setMovableByWindowBackground:".unsafe = false
+class.NSWindow.methods."setLevel:".unsafe = false
+class.NSWindow.methods."setAllowsAutomaticWindowTabbing:".unsafe = false
+class.NSWindow.methods."setTabbingIdentifier:".unsafe = false
+class.NSWindow.methods."setDocumentEdited:".unsafe = false
+class.NSWindow.methods.occlusionState.unsafe = false
+class.NSWindow.methods.center.unsafe = false
+class.NSWindow.methods.isResizable.unsafe = false
+class.NSWindow.methods.isMiniaturizable.unsafe = false
+class.NSWindow.methods.hasCloseBox.unsafe = false
+class.NSWindow.methods.isMiniaturized.unsafe = false
+class.NSWindow.methods.isVisible.unsafe = false
+class.NSWindow.methods.isKeyWindow.unsafe = false
+class.NSWindow.methods.isZoomed.unsafe = false
+class.NSWindow.methods.allowsAutomaticWindowTabbing.unsafe = false
+class.NSWindow.methods."selectNextTab:".unsafe = false
+class.NSWindow.methods.tabbingIdentifier.unsafe = false
+class.NSWindow.methods.tabGroup.unsafe = false
+class.NSWindow.methods.isDocumentEdited.unsafe = false
+class.NSWindow.methods.close.unsafe = false
+class.NSWindow.methods."performWindowDragWithEvent:".unsafe = false
+class.NSWindow.methods."invalidateCursorRectsForView:".unsafe = false
+class.NSWindow.methods."setDelegate:".unsafe = false
+class.NSWindow.methods."sendEvent:".unsafe = false
+class.NSWindow.methods."convertPointFromScreen:".unsafe = false
+class.NSWindow.methods."convertRectToScreen:".unsafe = false
+# Cycles must be prevented
+class.NSWindow.methods."addChildWindow:ordered:".unsafe = true

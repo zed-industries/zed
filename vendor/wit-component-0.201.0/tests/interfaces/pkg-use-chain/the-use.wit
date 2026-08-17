@@ -1,0 +1,5 @@
+package foo:chain;
+
+interface foo {
+  use def.{name};
+}

@@ -1,0 +1,3 @@
+interface types {
+  type a-typedef = u32;
+}

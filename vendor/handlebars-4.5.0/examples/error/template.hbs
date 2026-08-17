@@ -1,0 +1,19 @@
+<html>
+  <head>
+    <title>中超联赛 {{year}}</title>
+  </head>
+  <body>
+    <h1>CSL {{year}}</h1>
+    <ul>
+      {{#each teams as |t|}}
+      {{! ranking_label will produce a render error when first parameter is not a number }}
+      <li class="{{ranking_label true ../teams}}">
+      {{~log @index~}}
+      <b>{{t.name}}</b>: {{format t.pts ~}}
+      </li>
+    {{/each}}
+    </ul>
+
+    <p>Rendered by Handlebars from {{engine}} data.</p>
+  </body>
+</html>

@@ -1,0 +1,19 @@
+package foo:foo;
+
+interface foo {
+  a: func();
+}
+
+interface bar {
+  a: func(x: u64, y: string);
+}
+
+interface baz {
+  baz: func(x: list<u8>) -> list<u8>;
+}
+
+world module {
+  import bar;
+  import baz;
+  import foo;
+}

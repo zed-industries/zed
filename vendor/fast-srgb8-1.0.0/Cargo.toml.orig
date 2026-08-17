@@ -1,0 +1,15 @@
+[package]
+name = "fast-srgb8"
+version = "1.0.0"
+edition = "2018"
+authors = ["Thom Chiovoloni <chiovolonit@gmail.com>"]
+readme = "README.md"
+description = "Very fast conversions between linear float and 8-bit sRGB (with no_std support)."
+keywords = ["srgb", "simd", "color", "rgb", "convert"]
+categories = ["graphics", "no-std", "mathematics", "rendering"]
+repository = "https://github.com/thomcc/fast-srgb8"
+documentation = "https://docs.rs/fast-srgb8"
+homepage = "https://github.com/thomcc/fast-srgb8"
+license = "MIT OR Apache-2.0 OR CC0-1.0"
+
+[dependencies]

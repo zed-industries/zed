@@ -1,0 +1,5 @@
+type `t` used in a handle must be a resource
+     --> tests/ui/parse-fail/bad-resource14.wit:6:16
+      |
+    6 |   type b = own<t>;
+      |                ^

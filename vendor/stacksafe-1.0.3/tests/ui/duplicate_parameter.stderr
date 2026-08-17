@@ -1,0 +1,5 @@
+error: duplicate attribute parameter `crate`
+  --> tests/ui/duplicate_parameter.rs:17:32
+   |
+17 | #[stacksafe(crate = stacksafe, crate = stacksafe)]
+   |                                ^^^^^

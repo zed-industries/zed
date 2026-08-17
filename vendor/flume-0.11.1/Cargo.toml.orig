@@ -1,0 +1,50 @@
+[package]
+name = "flume"
+version = "0.11.1"
+authors = ["Joshua Barretto <joshua.s.barretto@gmail.com>"]
+edition = "2018"
+description = "A blazingly fast multi-producer channel"
+repository = "https://github.com/zesterer/flume"
+documentation = "https://docs.rs/flume"
+keywords = ["mpsc", "fifo", "channel", "thread", "mpmc"]
+categories = ["concurrency", "data-structures"]
+license = "Apache-2.0/MIT"
+readme = "README.md"
+exclude = [
+    "/.github",
+    "/misc",
+]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+# Use a spinlock internally (may be faster on some platforms)
+spin = []
+select = []
+async = ["futures-sink", "futures-core"]
+eventual-fairness = ["select", "nanorand"]
+default = ["async", "select", "eventual-fairness"]
+
+[dependencies]
+spin1 = { package = "spin", version = "0.9.8", features = ["mutex"] }
+futures-sink = { version = "0.3", default_features = false, optional = true }
+futures-core = { version = "0.3", default_features = false, optional = true }
+nanorand = { version = "0.7", features = ["getrandom"], optional = true }
+
+[dev-dependencies]
+#flume-test = { path = "../flume-test" }
+crossbeam-channel = "0.5.5"
+crossbeam-utils = "0.8.10"
+criterion = { version = "0.5.1", default-features = false }
+rand = "0.8.3"
+async-std = { version = "1.13.0", features = ["attributes", "unstable"] }
+futures = { version = "^0.3", features = ["std"] }
+waker-fn = "1.1.0"
+tokio = { version = "^1.16.1", features = ["rt", "macros"] }
+getrandom = { version = "0.2.15", features = ["js"] }
+
+[[bench]]
+name = "basic"
+harness = false

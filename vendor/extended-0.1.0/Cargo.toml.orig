@@ -1,0 +1,14 @@
+[package]
+name = "extended"
+version = "0.1.0"
+edition = "2021"
+authors = ["Dietrich Epp <depp@zdome.net>"]
+readme = "README.md"
+repository = "https://github.com/depp/extended-rs"
+homepage = "https://github.com/depp/extended-rs"
+license = "MIT"
+description = """
+Extended precision 80-bit floating-point numbers (f80).
+"""
+keywords = ["float"]
+categories = ["mathematics"]

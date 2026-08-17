@@ -1,0 +1,10 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+libdir=@LIBDIR_FOR_PC_FILE@
+includedir=@INCLUDEDIR_FOR_PC_FILE@
+
+Name: AWS-LC
+Description: AWS-LC (@SOFTWARE_VERSION@)
+URL: https://github.com/aws/aws-lc
+Version: @REPORTED_PKGCONFIG_VERSION@
+Requires: lib@SSL_LIB_NAME@ lib@CRYPTO_LIB_NAME@
+

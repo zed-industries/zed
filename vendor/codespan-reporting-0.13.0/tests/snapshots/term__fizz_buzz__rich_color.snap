@@ -1,0 +1,40 @@
+---
+source: codespan-reporting/tests/term.rs
+expression: TEST_DATA.emit_color(& config)
+---
+{fg:Red bold bright}error[E0308]{bold bright}: `case` clauses have incompatible types{/}
+  {fg:Cyan}┌─{/} FizzBuzz.fun:8:12
+  {fg:Cyan}│{/}  
+{fg:Cyan}3{/} {fg:Cyan}│{/}   fizz₁ : Nat → String
+  {fg:Cyan}│{/}                 {fg:Cyan}------{/} {fg:Cyan}expected type `String` found here{/}
+{fg:Cyan}4{/} {fg:Cyan}│{/}   fizz₁ num = case (mod num 5) (mod num 3) of
+  {fg:Cyan}│{/} {fg:Cyan}╭{/}{fg:Cyan}─────────────'{/}
+{fg:Cyan}5{/} {fg:Cyan}│{/} {fg:Cyan}│{/}     0 0 => "FizzBuzz"
+{fg:Cyan}6{/} {fg:Cyan}│{/} {fg:Cyan}│{/}     0 _ => "Fizz"
+{fg:Cyan}7{/} {fg:Cyan}│{/} {fg:Cyan}│{/}     _ 0 => "Buzz"
+{fg:Cyan}8{/} {fg:Cyan}│{/} {fg:Cyan}│{/}     _ _ => {fg:Red}num{/}
+  {fg:Cyan}│{/} {fg:Cyan}│{/}            {fg:Red}^^^{/} {fg:Red}expected `String`, found `Nat`{/}
+  {fg:Cyan}│{/} {fg:Cyan}╰{/}{fg:Cyan}──────────────' `case` clauses have incompatible types{/}
+  {fg:Cyan}│{/}  
+  {fg:Cyan}={/} expected type `String`
+       found type `Nat`
+
+{fg:Red bold bright}error[E0308]{bold bright}: `case` clauses have incompatible types{/}
+   {fg:Cyan}┌─{/} FizzBuzz.fun:16:16
+   {fg:Cyan}│{/}  
+{fg:Cyan}10{/} {fg:Cyan}│{/}   fizz₂ : Nat → String
+   {fg:Cyan}│{/}                 {fg:Cyan}------{/} {fg:Cyan}expected type `String` found here{/}
+{fg:Cyan}11{/} {fg:Cyan}│{/}   fizz₂ num =
+{fg:Cyan}12{/} {fg:Cyan}│{/} {fg:Cyan}╭{/}     case (mod num 5) (mod num 3) of
+{fg:Cyan}13{/} {fg:Cyan}│{/} {fg:Cyan}│{/}         0 0 => "FizzBuzz"
+   {fg:Cyan}│{/} {fg:Cyan}│{/}                {fg:Cyan}----------{/} {fg:Cyan}this is found to be of type `String`{/}
+{fg:Cyan}14{/} {fg:Cyan}│{/} {fg:Cyan}│{/}         0 _ => "Fizz"
+   {fg:Cyan}│{/} {fg:Cyan}│{/}                {fg:Cyan}------{/} {fg:Cyan}this is found to be of type `String`{/}
+{fg:Cyan}15{/} {fg:Cyan}│{/} {fg:Cyan}│{/}         _ 0 => "Buzz"
+   {fg:Cyan}│{/} {fg:Cyan}│{/}                {fg:Cyan}------{/} {fg:Cyan}this is found to be of type `String`{/}
+{fg:Cyan}16{/} {fg:Cyan}│{/} {fg:Cyan}│{/}         _ _ => {fg:Red}num{/}
+   {fg:Cyan}│{/} {fg:Cyan}│{/}                {fg:Red}^^^{/} {fg:Red}expected `String`, found `Nat`{/}
+   {fg:Cyan}│{/} {fg:Cyan}╰{/}{fg:Cyan}──────────────────' `case` clauses have incompatible types{/}
+   {fg:Cyan}│{/}  
+   {fg:Cyan}={/} expected type `String`
+        found type `Nat`

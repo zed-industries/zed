@@ -1,0 +1,10 @@
+package foo:resources1;
+
+interface resources1 {
+  t1: func(a: borrow<r1>) -> ();
+
+  resource r1 {
+    f1: func() -> borrow<r1>;
+  }
+}
+

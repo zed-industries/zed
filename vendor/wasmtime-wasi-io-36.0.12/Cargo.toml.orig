@@ -1,0 +1,30 @@
+[package]
+name = "wasmtime-wasi-io"
+version.workspace = true
+authors.workspace = true
+description = "wasi-io common traits to be shared among other wasi implementations"
+license = "Apache-2.0 WITH LLVM-exception"
+categories = ["wasm"]
+keywords = ["webassembly", "wasm"]
+repository = "https://github.com/bytecodealliance/wasmtime"
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+wasmtime = { workspace = true, features = ["component-model", "async", "runtime"] }
+anyhow = { workspace = true }
+bytes = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+[features]
+default = [ "std" ]
+std = [
+    "bytes/std",
+    "anyhow/std",
+    "wasmtime/std",
+]
+

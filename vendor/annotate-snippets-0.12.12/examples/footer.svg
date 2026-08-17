@@ -1,0 +1,43 @@
+<svg width="844px" height="182px" xmlns="http://www.w3.org/2000/svg">
+  <style>
+    .fg { fill: #AAAAAA }
+    .bg { fill: #000000 }
+    .fg-bright-blue { fill: #5555FF }
+    .fg-bright-green { fill: #55FF55 }
+    .fg-bright-red { fill: #FF5555 }
+    .container {
+      padding: 0 10px;
+      line-height: 18px;
+    }
+    .bold { font-weight: bold; }
+    tspan {
+      font: 14px SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace;
+      white-space: pre;
+      line-height: 18px;
+    }
+  </style>
+
+  <rect width="100%" height="100%" y="0" rx="4.5" class="bg" />
+
+  <text xml:space="preserve" class="container fg">
+    <tspan x="10px" y="28px"><tspan class="fg-bright-red bold">error[E0308]</tspan><tspan class="bold">: mismatched types</tspan>
+</tspan>
+    <tspan x="10px" y="46px"><tspan>  </tspan><tspan class="fg-bright-blue bold"> ╭▸ </tspan><tspan>src/multislice.rs:13:22</tspan>
+</tspan>
+    <tspan x="10px" y="64px"><tspan>   </tspan><tspan class="fg-bright-blue bold">│</tspan>
+</tspan>
+    <tspan x="10px" y="82px"><tspan class="fg-bright-blue bold">13</tspan><tspan> </tspan><tspan class="fg-bright-blue bold">│</tspan><tspan>         slices: vec!["A",</tspan>
+</tspan>
+    <tspan x="10px" y="100px"><tspan>   </tspan><tspan class="fg-bright-blue bold">│</tspan><tspan>                      </tspan><tspan class="fg-bright-red bold">━━━</tspan><tspan> </tspan><tspan class="fg-bright-red bold">expected struct `annotate_snippets::snippet::Slice`, found reference</tspan>
+</tspan>
+    <tspan x="10px" y="118px"><tspan>   </tspan><tspan class="fg-bright-blue bold">╰╴</tspan>
+</tspan>
+    <tspan x="10px" y="136px"><tspan class="fg-bright-green bold">note</tspan><tspan>: expected type: `snippet::Annotation`</tspan>
+</tspan>
+    <tspan x="10px" y="154px"><tspan>         found type: `__&amp;__snippet::Annotation`</tspan>
+</tspan>
+    <tspan x="10px" y="172px">
+</tspan>
+  </text>
+
+</svg>

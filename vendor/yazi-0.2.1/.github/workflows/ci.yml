@@ -1,0 +1,83 @@
+name: CI
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '0 2 * * 0'
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  CARGO_NET_RETRY: 10
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: -D warnings
+  RUSTDOCFLAGS: -D warnings
+  RUSTUP_MAX_RETRIES: 10
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rust: stable
+          - rust: beta
+          - rust: nightly
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup update ${{ matrix.rust }} && rustup default ${{ matrix.rust }}
+      - run: cargo build --all --all-features --all-targets
+      - run: cargo test --all
+      - run: cargo test --no-default-features --tests
+      - name: Install cargo-hack
+        uses: taiki-e/install-action@cargo-hack
+      - run: rustup target add thumbv7m-none-eabi
+      - name: Run cargo check (without dev-dependencies to catch missing feature flags)
+        run: cargo hack build --all --no-dev-deps
+      - run: cargo hack build --all --target thumbv7m-none-eabi --no-default-features --no-dev-deps
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@wasm-pack
+      - run: wasm-pack test --node
+      - run: wasm-pack test --node --no-default-features
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup update stable
+      - run: cargo clippy --all --all-features --all-targets
+
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup update stable
+      - run: cargo fmt --all --check
+
+  miri:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup toolchain install nightly --component miri && rustup default nightly
+      - run: |
+          echo "MIRIFLAGS=-Zmiri-strict-provenance -Zmiri-symbolic-alignment-check -Zmiri-disable-isolation" >>"${GITHUB_ENV}"
+          echo "RUSTFLAGS=${RUSTFLAGS} -Z randomize-layout" >>"${GITHUB_ENV}"
+      - run: cargo miri test --all
+      - run: cargo miri test --no-default-features --tests
+

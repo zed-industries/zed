@@ -1,0 +1,7 @@
+package test:test;
+world lib-foo {
+  import foo1: func();
+  import bar: func() -> string;
+  export baz: func();
+  export foo2: func(x: string) -> option<list<u8>>;
+}

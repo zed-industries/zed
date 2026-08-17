@@ -1,0 +1,23 @@
+---
+- name: Spec Example 6.22. Global Tag Prefix
+  from: http://www.yaml.org/spec/1.2/spec.html#id2783726
+  tags: spec header tag unknown-tag
+  yaml: |
+    %TAG !e! tag:example.com,2000:app/
+    ---
+    - !e!foo "bar"
+  tree: |
+    +STR
+     +DOC ---
+      +SEQ
+       =VAL <tag:example.com,2000:app/foo> "bar
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      "bar"
+    ]
+  dump: |
+    ---
+    - !<tag:example.com,2000:app/foo> "bar"

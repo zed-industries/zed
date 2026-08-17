@@ -1,0 +1,10 @@
+language: rust
+os: osx
+rust:
+  - nightly
+  - beta
+  - stable
+
+script:
+  - cargo test
+  - cargo test --features="elcapitan"

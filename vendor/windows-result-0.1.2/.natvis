@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+  <Type Name="windows_result::error::Error">
+    <Expand>
+      <ExpandedItem>code</ExpandedItem>
+      <Item Name="[info]">info</Item>
+    </Expand>
+  </Type>
+
+  <Type Name="windows_result::hresult::HRESULT">
+    <DisplayString>{(HRESULT)__0}</DisplayString>
+  </Type>
+</AutoVisualizer>

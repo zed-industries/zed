@@ -1,0 +1,29 @@
+---
+- name: Folded Block Scalar [1.3]
+  from: TS54, modified for YAML 1.3
+  tags: folded scalar 1.3-mod whitespace
+  yaml: |
+    --- >
+     ab
+     cd
+    ␣
+     ef
+
+
+     gh
+  tree: |
+    +STR
+     +DOC ---
+      =VAL >ab cd\nef\n\ngh\n
+     -DOC
+    -STR
+  json: |
+    "ab cd\nef\n\ngh\n"
+  dump: |
+    --- >
+      ab cd
+
+      ef
+
+
+      gh

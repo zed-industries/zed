@@ -1,0 +1,21 @@
+language: rust
+sudo: false
+
+cache:
+  - cargo
+
+matrix:
+  include:
+    - name: "test"
+      rust: stable
+      before_script:
+        - (test -x $HOME/.cargo/bin/cargo-install-update || cargo install cargo-update)
+        - (test -x $HOME/.cargo/bin/cargo-readme || cargo install --vers "^3" cargo-readme)
+        - cargo install-update -a
+      script:
+        - cargo test
+        - cargo test --features rayon
+    - name: "check no_std"
+      rust: nightly
+      script:
+        - cargo check --no-default-features

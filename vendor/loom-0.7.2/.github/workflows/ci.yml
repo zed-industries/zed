@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - master
+  push:
+    branches:
+      - master
+  schedule:
+    - cron: '0 2 * * 0'
+
+env:
+  RUSTFLAGS: -Dwarnings
+  RUST_BACKTRACE: 1
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # Check formatting
+  rustfmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Rust
+      run: rustup update stable && rustup default stable
+    - name: Check formatting
+      run: cargo fmt --all --check
+
+  # This represents the minimum Rust version supported by
+  # Loom. Updating this should be done in a dedicated PR.
+  #
+  # Tests are not run as tests may require newer versions of
+  # rust.
+  minrust:
+    name: minrust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cargo-hack
+        uses: taiki-e/install-action@cargo-hack
+      - name: Check
+        run: cargo hack check --all-features --rust-version
+
+  # Minimal dependency versions
+  minimal-dependency-versions:
+    name: minimal dependency versions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup update stable && rustup default stable
+      - name: Install nightly Rust
+        run: rustup update nightly
+      - name: Set all dependencies to lowest allowed versions
+        run: cargo +nightly update -Z minimal-versions
+      - name: Test
+        run: cargo test
+      - name: Check --features checkpoint
+        run: cargo check --features checkpoint
+      - name: Test --features futures
+        run: cargo test --features futures
+
+  # Stable
+  stable:
+    name: stable
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup update stable && rustup default stable
+      - name: Test
+        run: cargo test
+      - name: Check --features checkpoint
+        run: cargo check --features checkpoint
+      - name: Test --features futures
+        run: cargo test --features futures
+
+  # check docs
+  docs:
+    name: build docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup update nightly && rustup default nightly
+      - name: cargo doc
+        run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: "--cfg docsrs -Dwarnings"

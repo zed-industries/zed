@@ -1,0 +1,706 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows: [Tests]
+    types:
+      - completed
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check-trigger:
+    name: Check if triggered by tag
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    outputs:
+      is_tag: ${{ steps.check.outputs.is_tag }}
+      tag_name: ${{ steps.check.outputs.tag_name }}
+    steps:
+      - name: Check if workflow was triggered by a version tag
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Workflow run event: ${{ github.event.workflow_run.event }}"
+          echo "Head branch: ${{ github.event.workflow_run.head_branch }}"
+          echo "Head SHA: ${{ github.event.workflow_run.head_sha }}"
+          
+          # Get tags for this commit
+          TAGS=$(gh api repos/${{ github.repository }}/git/refs/tags --jq '.[] | select(.object.sha == "${{ github.event.workflow_run.head_sha }}") | .ref' | sed 's|refs/tags/||')
+          
+          if [ -z "$TAGS" ]; then
+            echo "No tags found for this commit"
+            echo "is_tag=false" >> $GITHUB_OUTPUT
+          else
+            # Check if any tag matches version pattern
+            VERSION_TAG=$(echo "$TAGS" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1)
+            if [ -n "$VERSION_TAG" ]; then
+              echo "Found version tag: $VERSION_TAG"
+              echo "is_tag=true" >> $GITHUB_OUTPUT
+              echo "tag_name=$VERSION_TAG" >> $GITHUB_OUTPUT
+            else
+              echo "Tags found but none match version pattern"
+              echo "is_tag=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+  validate:
+    name: Validate
+    needs: check-trigger
+    if: needs.check-trigger.outputs.is_tag == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      tag_name: ${{ needs.check-trigger.outputs.tag_name }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4 # not pinning to commit hash since this is a GitHub action, which we trust
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Setup Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # pinned commit for 1.15.2
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Check code formatting
+        run: cargo fmt --check
+
+      - name: Run clippy
+        run: cargo clippy -- -D warnings
+
+      - name: Run tests
+        run: cargo test
+
+  build:
+    name: Build ${{ matrix.platform }}-${{ matrix.arch }}
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    env:
+      TAG_NAME: ${{ needs.validate.outputs.tag_name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+            platform: linux
+            arch: x86_64
+            ext: tar.gz
+
+          - target: i686-unknown-linux-gnu
+            os: ubuntu-22.04
+            platform: linux
+            arch: x86
+            ext: tar.gz
+
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04-arm
+            platform: linux
+            arch: aarch64
+            ext: tar.gz
+
+          - target: aarch64-apple-darwin
+            os: macos-14
+            platform: macos
+            arch: aarch64
+            ext: tar.gz
+
+          - target: x86_64-pc-windows-msvc
+            os: windows-2022
+            platform: windows
+            arch: x86_64
+            ext: zip
+
+          - target: i686-pc-windows-msvc
+            os: windows-2022
+            platform: windows
+            arch: x86
+            ext: zip
+
+          - target: aarch64-pc-windows-msvc
+            os: windows-11-arm
+            platform: windows
+            arch: aarch64
+            ext: zip
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4 # not pinning to commit hash since this is a GitHub action, which we trust
+
+      - name: Setup Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # pinned commit for 1.15.2
+        with:
+          toolchain: stable
+
+      - name: Install cross
+        if: matrix.target == 'i686-unknown-linux-gnu'
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build release binaries (native)
+        if: matrix.target != 'i686-unknown-linux-gnu'
+        run: cargo build --all-features --release --target ${{ matrix.target }}
+
+      - name: Build release binaries (cross)
+        if: matrix.target == 'i686-unknown-linux-gnu'
+        run: cross build --all-features --release --target ${{ matrix.target }}
+
+      - name: Verify library files (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          echo "Verifying library files..."
+          if [ "${{ matrix.platform }}" = "linux" ]; then
+            test -f target/${{ matrix.target }}/release/libcrc_fast.so || { echo "Missing libcrc_fast.so"; exit 1; }
+            test -f target/${{ matrix.target }}/release/libcrc_fast.a || { echo "Missing libcrc_fast.a"; exit 1; }
+            echo "✓ Found libcrc_fast.so and libcrc_fast.a"
+          elif [ "${{ matrix.platform }}" = "macos" ]; then
+            test -f target/${{ matrix.target }}/release/libcrc_fast.dylib || { echo "Missing libcrc_fast.dylib"; exit 1; }
+            test -f target/${{ matrix.target }}/release/libcrc_fast.a || { echo "Missing libcrc_fast.a"; exit 1; }
+            echo "✓ Found libcrc_fast.dylib and libcrc_fast.a"
+          fi
+
+      - name: Verify library files (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Write-Host "Verifying library files..."
+          if (-not (Test-Path "target/${{ matrix.target }}/release/crc_fast.dll")) {
+            Write-Error "Missing crc_fast.dll"
+            exit 1
+          }
+          if (-not (Test-Path "target/${{ matrix.target }}/release/crc_fast.dll.lib")) {
+            Write-Error "Missing crc_fast.dll.lib"
+            exit 1
+          }
+          if (-not (Test-Path "target/${{ matrix.target }}/release/crc_fast.lib")) {
+            Write-Error "Missing crc_fast.lib"
+            exit 1
+          }
+          Write-Host "✓ Found crc_fast.dll, crc_fast.dll.lib, and crc_fast.lib"
+
+      - name: Verify CLI binaries (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          echo "Verifying CLI binaries..."
+          test -f target/${{ matrix.target }}/release/checksum || { echo "Missing checksum"; exit 1; }
+          test -f target/${{ matrix.target }}/release/arch-check || { echo "Missing arch-check"; exit 1; }
+          test -f target/${{ matrix.target }}/release/get-custom-params || { echo "Missing get-custom-params"; exit 1; }
+          echo "✓ Found checksum, arch-check, and get-custom-params"
+
+      - name: Verify CLI binaries (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Write-Host "Verifying CLI binaries..."
+          if (-not (Test-Path "target/${{ matrix.target }}/release/checksum.exe")) {
+            Write-Error "Missing checksum.exe"
+            exit 1
+          }
+          if (-not (Test-Path "target/${{ matrix.target }}/release/arch-check.exe")) {
+            Write-Error "Missing arch-check.exe"
+            exit 1
+          }
+          if (-not (Test-Path "target/${{ matrix.target }}/release/get-custom-params.exe")) {
+            Write-Error "Missing get-custom-params.exe"
+            exit 1
+          }
+          Write-Host "✓ Found checksum.exe, arch-check.exe, and get-custom-params.exe"
+
+      - name: Stage Linux package
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          PKG_NAME="crc-fast-$TAG_NAME-${{ matrix.platform }}-${{ matrix.arch }}"
+          echo "Creating package directory structure for $PKG_NAME..."
+          
+          mkdir -p "$PKG_NAME/lib"
+          mkdir -p "$PKG_NAME/include"
+          mkdir -p "$PKG_NAME/bin"
+          
+          echo "Copying library files..."
+          cp target/${{ matrix.target }}/release/libcrc_fast.so "$PKG_NAME/lib/"
+          cp target/${{ matrix.target }}/release/libcrc_fast.a "$PKG_NAME/lib/"
+          
+          echo "Copying header file..."
+          cp libcrc_fast.h "$PKG_NAME/include/"
+          
+          echo "Copying CLI binaries..."
+          cp target/${{ matrix.target }}/release/checksum "$PKG_NAME/bin/"
+          cp target/${{ matrix.target }}/release/arch-check "$PKG_NAME/bin/"
+          cp target/${{ matrix.target }}/release/get-custom-params "$PKG_NAME/bin/"
+          
+          echo "Setting executable permissions on binaries..."
+          chmod +x "$PKG_NAME/bin/checksum"
+          chmod +x "$PKG_NAME/bin/arch-check"
+          chmod +x "$PKG_NAME/bin/get-custom-params"
+          
+          echo "Creating VERSION file..."
+          echo "$TAG_NAME" > "$PKG_NAME/VERSION"
+          
+          echo "Creating README.txt..."
+          cat > "$PKG_NAME/README.txt" <<EOF
+          crc-fast Binary Distribution
+          Version: $TAG_NAME
+          Platform: Linux ${{ matrix.arch }}
+          
+          CONTENTS
+          ========
+          This package contains:
+          - Dynamic library (libcrc_fast.so) and static library (libcrc_fast.a)
+          - C/C++ header file (libcrc_fast.h)
+          - Command-line utilities (checksum, arch-check, get-custom-params)
+          
+          INSTALLATION
+          ============
+          1. Extract this archive to your desired location
+          2. Add the lib/ directory to your library path:
+             export LD_LIBRARY_PATH=/path/to/crc-fast/lib:$LD_LIBRARY_PATH
+          3. Add the bin/ directory to your PATH:
+             export PATH=/path/to/crc-fast/bin:$PATH
+          
+          For system-wide installation (requires root):
+            sudo cp lib/* /usr/local/lib/
+            sudo cp include/* /usr/local/include/
+            sudo cp bin/* /usr/local/bin/
+            sudo ldconfig
+          
+          LINKING
+          =======
+          Dynamic linking:
+            gcc your_program.c -lcrc_fast -L/path/to/crc-fast/lib -I/path/to/crc-fast/include
+          
+          Static linking:
+            gcc your_program.c /path/to/crc-fast/lib/libcrc_fast.a -I/path/to/crc-fast/include
+          
+          USAGE
+          =====
+          Command-line tools:
+            checksum --help           # Calculate CRC checksums
+            arch-check                # Display CPU architecture features
+            get-custom-params --help  # Generate CRC parameters
+          
+          DOCUMENTATION
+          =============
+          Full documentation: https://github.com/awesomized/crc-fast-rust
+          
+          LICENSE
+          =======
+          This software is dual-licensed under MIT OR Apache-2.0.
+          See LICENSE-MIT and LICENSE-Apache files for details.
+          EOF
+          
+          echo "Copying license files..."
+          cp LICENSE-MIT "$PKG_NAME/"
+          cp LICENSE-Apache "$PKG_NAME/"
+          
+          echo "✓ Linux package staged successfully"
+          ls -lR "$PKG_NAME"
+
+      - name: Create tar.gz package (Linux)
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          PKG_NAME="crc-fast-$TAG_NAME-${{ matrix.platform }}-${{ matrix.arch }}"
+          ARCHIVE_NAME="${PKG_NAME}.tar.gz"
+          
+          echo "Creating compressed archive: $ARCHIVE_NAME"
+          tar -czf "$ARCHIVE_NAME" "$PKG_NAME"
+          
+          echo "Verifying archive was created..."
+          test -f "$ARCHIVE_NAME" || { echo "Failed to create $ARCHIVE_NAME"; exit 1; }
+          
+          echo "Archive details:"
+          ls -lh "$ARCHIVE_NAME"
+          
+          echo "✓ tar.gz package created successfully"
+
+      - name: Generate SHA256 checksum (Linux)
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          ARCHIVE_NAME="crc-fast-$TAG_NAME-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz"
+          CHECKSUM_FILE="${ARCHIVE_NAME}.sha256"
+          
+          echo "Generating SHA256 checksum for $ARCHIVE_NAME..."
+          sha256sum "$ARCHIVE_NAME" > "$CHECKSUM_FILE"
+          
+          echo "Verifying checksum file was created..."
+          test -f "$CHECKSUM_FILE" || { echo "Failed to create $CHECKSUM_FILE"; exit 1; }
+          
+          echo "Checksum file contents:"
+          cat "$CHECKSUM_FILE"
+          
+          echo "✓ SHA256 checksum generated successfully"
+
+      - name: Stage macOS package
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          PKG_NAME="crc-fast-$TAG_NAME-${{ matrix.platform }}-${{ matrix.arch }}"
+          echo "Creating package directory structure for $PKG_NAME..."
+          
+          mkdir -p "$PKG_NAME/lib"
+          mkdir -p "$PKG_NAME/include"
+          mkdir -p "$PKG_NAME/bin"
+          
+          echo "Copying library files..."
+          cp target/${{ matrix.target }}/release/libcrc_fast.dylib "$PKG_NAME/lib/"
+          cp target/${{ matrix.target }}/release/libcrc_fast.a "$PKG_NAME/lib/"
+          
+          echo "Copying header file..."
+          cp libcrc_fast.h "$PKG_NAME/include/"
+          
+          echo "Copying CLI binaries..."
+          cp target/${{ matrix.target }}/release/checksum "$PKG_NAME/bin/"
+          cp target/${{ matrix.target }}/release/arch-check "$PKG_NAME/bin/"
+          cp target/${{ matrix.target }}/release/get-custom-params "$PKG_NAME/bin/"
+          
+          echo "Setting executable permissions on binaries..."
+          chmod +x "$PKG_NAME/bin/checksum"
+          chmod +x "$PKG_NAME/bin/arch-check"
+          chmod +x "$PKG_NAME/bin/get-custom-params"
+          
+          echo "Creating VERSION file..."
+          echo "$TAG_NAME" > "$PKG_NAME/VERSION"
+          
+          echo "Creating README.txt..."
+          cat > "$PKG_NAME/README.txt" <<EOF
+          crc-fast Binary Distribution
+          Version: $TAG_NAME
+          Platform: macOS ${{ matrix.arch }}
+          
+          CONTENTS
+          ========
+          This package contains:
+          - Dynamic library (libcrc_fast.dylib) and static library (libcrc_fast.a)
+          - C/C++ header file (libcrc_fast.h)
+          - Command-line utilities (checksum, arch-check, get-custom-params)
+          
+          INSTALLATION
+          ============
+          1. Extract this archive to your desired location
+          2. Add the lib/ directory to your library path:
+             export DYLD_LIBRARY_PATH=/path/to/crc-fast/lib:$DYLD_LIBRARY_PATH
+          3. Add the bin/ directory to your PATH:
+             export PATH=/path/to/crc-fast/bin:$PATH
+          
+          For system-wide installation:
+            sudo cp lib/* /usr/local/lib/
+            sudo cp include/* /usr/local/include/
+            sudo cp bin/* /usr/local/bin/
+          
+          LINKING
+          =======
+          Dynamic linking:
+            clang your_program.c -lcrc_fast -L/path/to/crc-fast/lib -I/path/to/crc-fast/include
+          
+          Static linking:
+            clang your_program.c /path/to/crc-fast/lib/libcrc_fast.a -I/path/to/crc-fast/include
+          
+          USAGE
+          =====
+          Command-line tools:
+            checksum --help           # Calculate CRC checksums
+            arch-check                # Display CPU architecture features
+            get-custom-params --help  # Generate CRC parameters
+          
+          DOCUMENTATION
+          =============
+          Full documentation: https://github.com/awesomized/crc-fast-rust
+          
+          LICENSE
+          =======
+          This software is dual-licensed under MIT OR Apache-2.0.
+          See LICENSE-MIT and LICENSE-Apache files for details.
+          EOF
+          
+          echo "Copying license files..."
+          cp LICENSE-MIT "$PKG_NAME/"
+          cp LICENSE-Apache "$PKG_NAME/"
+          
+          echo "✓ macOS package staged successfully"
+          ls -lR "$PKG_NAME"
+
+      - name: Create tar.gz package (macOS)
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          PKG_NAME="crc-fast-$TAG_NAME-${{ matrix.platform }}-${{ matrix.arch }}"
+          ARCHIVE_NAME="${PKG_NAME}.tar.gz"
+          
+          echo "Creating compressed archive: $ARCHIVE_NAME"
+          tar -czf "$ARCHIVE_NAME" "$PKG_NAME"
+          
+          echo "Verifying archive was created..."
+          test -f "$ARCHIVE_NAME" || { echo "Failed to create $ARCHIVE_NAME"; exit 1; }
+          
+          echo "Archive details:"
+          ls -lh "$ARCHIVE_NAME"
+          
+          echo "✓ tar.gz package created successfully"
+
+      - name: Generate SHA256 checksum (macOS)
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          ARCHIVE_NAME="crc-fast-$TAG_NAME-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz"
+          CHECKSUM_FILE="${ARCHIVE_NAME}.sha256"
+          
+          echo "Generating SHA256 checksum for $ARCHIVE_NAME..."
+          shasum -a 256 "$ARCHIVE_NAME" > "$CHECKSUM_FILE"
+          
+          echo "Verifying checksum file was created..."
+          test -f "$CHECKSUM_FILE" || { echo "Failed to create $CHECKSUM_FILE"; exit 1; }
+          
+          echo "Checksum file contents:"
+          cat "$CHECKSUM_FILE"
+          
+          echo "✓ SHA256 checksum generated successfully"
+
+      - name: Stage Windows package
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $PKG_NAME = "crc-fast-$env:TAG_NAME-${{ matrix.platform }}-${{ matrix.arch }}"
+          Write-Host "Creating package directory structure for $PKG_NAME..."
+          
+          New-Item -ItemType Directory -Path "$PKG_NAME/bin" -Force | Out-Null
+          New-Item -ItemType Directory -Path "$PKG_NAME/lib" -Force | Out-Null
+          New-Item -ItemType Directory -Path "$PKG_NAME/include" -Force | Out-Null
+          
+          Write-Host "Copying library files..."
+          Copy-Item "target/${{ matrix.target }}/release/crc_fast.dll" "$PKG_NAME/bin/"
+          Copy-Item "target/${{ matrix.target }}/release/crc_fast.dll.lib" "$PKG_NAME/lib/"
+          Copy-Item "target/${{ matrix.target }}/release/crc_fast.lib" "$PKG_NAME/lib/"
+          
+          Write-Host "Copying header file..."
+          Copy-Item "libcrc_fast.h" "$PKG_NAME/include/"
+          
+          Write-Host "Copying CLI binaries..."
+          Copy-Item "target/${{ matrix.target }}/release/checksum.exe" "$PKG_NAME/bin/"
+          Copy-Item "target/${{ matrix.target }}/release/arch-check.exe" "$PKG_NAME/bin/"
+          Copy-Item "target/${{ matrix.target }}/release/get-custom-params.exe" "$PKG_NAME/bin/"
+          
+          Write-Host "Creating VERSION file..."
+          "$env:TAG_NAME" | Out-File -FilePath "$PKG_NAME/VERSION" -Encoding utf8 -NoNewline
+          
+          Write-Host "Creating README.txt..."
+          @"
+          crc-fast Binary Distribution
+          Version: $env:TAG_NAME
+          Platform: Windows ${{ matrix.arch }}
+          
+          CONTENTS
+          ========
+          This package contains:
+          - Dynamic library (crc_fast.dll) with import library (crc_fast.dll.lib)
+          - Static library (crc_fast.lib)
+          - C/C++ header file (libcrc_fast.h)
+          - Command-line utilities (checksum.exe, arch-check.exe, get-custom-params.exe)
+          
+          INSTALLATION
+          ============
+          1. Extract this archive to your desired location
+          2. Add the bin\ directory to your PATH environment variable:
+             - Open System Properties > Environment Variables
+             - Edit the PATH variable and add: C:\path\to\crc-fast\bin
+          
+          For development:
+            - Add lib\ directory to your linker library path
+            - Add include\ directory to your compiler include path
+          
+          LINKING
+          =======
+          Dynamic linking (MSVC):
+            cl your_program.c /I"C:\path\to\crc-fast\include" /link crc_fast.dll.lib /LIBPATH:"C:\path\to\crc-fast\lib"
+            Note: crc_fast.dll must be in PATH or same directory as your executable
+          
+          Static linking (MSVC):
+            cl your_program.c /I"C:\path\to\crc-fast\include" /link crc_fast.lib /LIBPATH:"C:\path\to\crc-fast\lib"
+          
+          Dynamic linking (MinGW):
+            gcc your_program.c -I"C:\path\to\crc-fast\include" -L"C:\path\to\crc-fast\lib" -lcrc_fast
+          
+          USAGE
+          =====
+          Command-line tools:
+            checksum.exe --help           # Calculate CRC checksums
+            arch-check.exe                # Display CPU architecture features
+            get-custom-params.exe --help  # Generate CRC parameters
+          
+          DOCUMENTATION
+          =============
+          Full documentation: https://github.com/awesomized/crc-fast-rust
+          
+          LICENSE
+          =======
+          This software is dual-licensed under MIT OR Apache-2.0.
+          See LICENSE-MIT and LICENSE-Apache files for details.
+          "@ | Out-File -FilePath "$PKG_NAME/README.txt" -Encoding utf8
+          
+          Write-Host "Copying license files..."
+          Copy-Item "LICENSE-MIT" "$PKG_NAME/"
+          Copy-Item "LICENSE-Apache" "$PKG_NAME/"
+          
+          Write-Host "✓ Windows package staged successfully"
+          Get-ChildItem -Recurse "$PKG_NAME"
+
+      - name: Create zip package (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $PKG_NAME = "crc-fast-$env:TAG_NAME-${{ matrix.platform }}-${{ matrix.arch }}"
+          $ARCHIVE_NAME = "${PKG_NAME}.zip"
+          
+          Write-Host "Creating compressed archive: $ARCHIVE_NAME"
+          Compress-Archive -Path "$PKG_NAME" -DestinationPath "$ARCHIVE_NAME" -CompressionLevel Optimal
+          
+          Write-Host "Verifying archive was created..."
+          if (-not (Test-Path "$ARCHIVE_NAME")) {
+            Write-Error "Failed to create $ARCHIVE_NAME"
+            exit 1
+          }
+          
+          Write-Host "Archive details:"
+          Get-Item "$ARCHIVE_NAME" | Format-List Name, Length, LastWriteTime
+          
+          Write-Host "✓ zip package created successfully"
+
+      - name: Generate SHA256 checksum (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $ARCHIVE_NAME = "crc-fast-$env:TAG_NAME-${{ matrix.platform }}-${{ matrix.arch }}.zip"
+          $CHECKSUM_FILE = "${ARCHIVE_NAME}.sha256"
+          
+          Write-Host "Generating SHA256 checksum for $ARCHIVE_NAME..."
+          $hash = (Get-FileHash -Path "$ARCHIVE_NAME" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $ARCHIVE_NAME" | Out-File -FilePath "$CHECKSUM_FILE" -Encoding utf8 -NoNewline
+          
+          Write-Host "Verifying checksum file was created..."
+          if (-not (Test-Path "$CHECKSUM_FILE")) {
+            Write-Error "Failed to create $CHECKSUM_FILE"
+            exit 1
+          }
+          
+          Write-Host "Checksum file contents:"
+          Get-Content "$CHECKSUM_FILE"
+          
+          Write-Host "✓ SHA256 checksum generated successfully"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4 # not pinning to commit hash since this is a GitHub action, which we trust
+        with:
+          name: crc-fast-${{ needs.validate.outputs.tag_name }}-${{ matrix.platform }}-${{ matrix.arch }}.${{ matrix.ext }}
+          path: crc-fast-${{ needs.validate.outputs.tag_name }}-${{ matrix.platform }}-${{ matrix.arch }}.${{ matrix.ext }}
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload checksum artifact
+        uses: actions/upload-artifact@v4 # not pinning to commit hash since this is a GitHub action, which we trust
+        with:
+          name: crc-fast-${{ needs.validate.outputs.tag_name }}-${{ matrix.platform }}-${{ matrix.arch }}.${{ matrix.ext }}.sha256
+          path: crc-fast-${{ needs.validate.outputs.tag_name }}-${{ matrix.platform }}-${{ matrix.arch }}.${{ matrix.ext }}.sha256
+          if-no-files-found: error
+          retention-days: 90
+
+  publish:
+    name: Publish
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    env:
+      TAG_NAME: ${{ needs.validate.outputs.tag_name }}
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4 # not pinning to commit hash since this is a GitHub action, which we trust
+        with:
+          path: artifacts
+          merge-multiple: false
+
+      - name: Check for existing release
+        id: check_release
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Checking if release exists for tag: $TAG_NAME"
+          
+          RELEASE_DATA=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/$TAG_NAME")
+          
+          if echo "$RELEASE_DATA" | jq -e '.id' > /dev/null 2>&1; then
+            RELEASE_ID=$(echo "$RELEASE_DATA" | jq -r '.id')
+            echo "release_exists=true" >> $GITHUB_OUTPUT
+            echo "release_id=$RELEASE_ID" >> $GITHUB_OUTPUT
+            echo "✓ Release already exists with ID: $RELEASE_ID"
+          else
+            echo "release_exists=false" >> $GITHUB_OUTPUT
+            echo "release_id=" >> $GITHUB_OUTPUT
+            echo "✓ No existing release found for this tag"
+          fi
+
+      - name: Organize files for upload
+        shell: bash
+        run: |
+          echo "Organizing downloaded artifacts..."
+          
+          mkdir -p release-assets
+          
+          echo "Moving packages and checksums to release-assets directory..."
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.sha256" \) -exec mv {} release-assets/ \;
+          
+          echo "Release assets ready for upload:"
+          ls -lh release-assets/
+          
+          echo "Verifying all expected files are present..."
+          EXPECTED_FILES=(
+            "crc-fast-$TAG_NAME-linux-x86_64.tar.gz"
+            "crc-fast-$TAG_NAME-linux-x86_64.tar.gz.sha256"
+            "crc-fast-$TAG_NAME-linux-x86.tar.gz"
+            "crc-fast-$TAG_NAME-linux-x86.tar.gz.sha256"
+            "crc-fast-$TAG_NAME-linux-aarch64.tar.gz"
+            "crc-fast-$TAG_NAME-linux-aarch64.tar.gz.sha256"
+            "crc-fast-$TAG_NAME-macos-aarch64.tar.gz"
+            "crc-fast-$TAG_NAME-macos-aarch64.tar.gz.sha256"
+            "crc-fast-$TAG_NAME-windows-x86_64.zip"
+            "crc-fast-$TAG_NAME-windows-x86_64.zip.sha256"
+            "crc-fast-$TAG_NAME-windows-x86.zip"
+            "crc-fast-$TAG_NAME-windows-x86.zip.sha256"
+            "crc-fast-$TAG_NAME-windows-aarch64.zip"
+            "crc-fast-$TAG_NAME-windows-aarch64.zip.sha256"
+          )
+          
+          MISSING_FILES=()
+          for file in "${EXPECTED_FILES[@]}"; do
+            if [ ! -f "release-assets/$file" ]; then
+              MISSING_FILES+=("$file")
+            fi
+          done
+          
+          if [ ${#MISSING_FILES[@]} -gt 0 ]; then
+            echo "ERROR: Missing expected files:"
+            printf '%s\n' "${MISSING_FILES[@]}"
+            exit 1
+          fi
+          
+          echo "✓ All expected files are present"
+          
+          echo "Total number of files: $(ls -1 release-assets/ | wc -l)"
+          echo "Total size: $(du -sh release-assets/ | cut -f1)"
+
+      - name: Create or update GitHub release
+        uses: softprops/action-gh-release@6da8fa9354ddfdc4aeace5fc48d7f679b5214090 # pinned commit for 2.4.1
+        with:
+          files: release-assets/*
+          draft: true
+          prerelease: false
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,22 @@
+;; B uses A, and C uses A.
+(witx $multi
+  (load "multimodule/type_b.witx" "multimodule/type_c.witx")
+)
+
+(witx $reference
+  (typename $a u32)
+  (typename $b (record (field $member_a $a)))
+  (typename $c (record (field $first_a $a) (field $second_a $a)))
+)
+
+(assert_representable eq $reference "a" $multi "a")
+(assert_representable eq $reference "b" $multi "b")
+(assert_representable eq $reference "c" $multi "c")
+
+(assert_invalid
+  (witx
+    (load
+          "multimodule/type_a.witx"
+          "multimodule/redefine_a.witx")
+  )
+  "Redefinition of name `a`")

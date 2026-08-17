@@ -1,0 +1,100 @@
+---
+source: brush-parser/src/parser.rs
+expression: "ParseResult { input, result: &command }"
+---
+ParseResult(
+  input: "\\\ncase x in\nx)\n    echo y;;\nesac\\\n",
+  result: CaseClauseCommand(
+    value: W(
+      v: "x",
+      loc: Some(Loc(
+        start: Pos(
+          idx: 7,
+          line: 2,
+          col: 6,
+        ),
+        end: Pos(
+          idx: 8,
+          line: 2,
+          col: 7,
+        ),
+      )),
+    ),
+    cases: [
+      CaseItem(
+        patterns: [
+          W(
+            v: "x",
+            loc: Some(Loc(
+              start: Pos(
+                idx: 12,
+                line: 3,
+                col: 1,
+              ),
+              end: Pos(
+                idx: 13,
+                line: 3,
+                col: 2,
+              ),
+            )),
+          ),
+        ],
+        cmd: Some(List([
+          Item(AndOr(
+            first: Pipeline(
+              seq: [
+                Simple(Simple(
+                  w: Some(W(
+                    v: "echo",
+                    loc: Some(Loc(
+                      start: Pos(
+                        idx: 19,
+                        line: 4,
+                        col: 5,
+                      ),
+                      end: Pos(
+                        idx: 23,
+                        line: 4,
+                        col: 9,
+                      ),
+                    )),
+                  )),
+                  suffix: Some(Suffix([
+                    Word(W(
+                      v: "y",
+                      loc: Some(Loc(
+                        start: Pos(
+                          idx: 24,
+                          line: 4,
+                          col: 10,
+                        ),
+                        end: Pos(
+                          idx: 25,
+                          line: 4,
+                          col: 11,
+                        ),
+                      )),
+                    )),
+                  ])),
+                )),
+              ],
+            ),
+          ), Sequence),
+        ])),
+        post_action: ExitCase,
+        loc: Some(Loc(
+          start: Pos(
+            idx: 12,
+            line: 3,
+            col: 1,
+          ),
+          end: Pos(
+            idx: 27,
+            line: 4,
+            col: 13,
+          ),
+        )),
+      ),
+    ],
+  ),
+)

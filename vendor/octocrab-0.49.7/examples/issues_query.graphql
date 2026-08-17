@@ -1,0 +1,14 @@
+query IssuesQuery($owner: String!, $name: String!, $pageSize: Int!, $before: String) {
+    repository(owner: $owner, name: $name) {
+        issues(last: $pageSize, before: $before, states: OPEN) {
+            nodes {
+                title
+                url
+            }
+            pageInfo {
+                hasPreviousPage
+                startCursor
+            }
+        }
+    }
+}

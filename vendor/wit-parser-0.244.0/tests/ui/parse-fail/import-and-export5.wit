@@ -1,0 +1,18 @@
+package foo:bar;
+
+interface a {
+  record x {
+  }
+}
+
+interface b {
+  use a.{x};
+}
+
+world w {
+  export anon: interface {
+    use b.{x as x2};
+    use a.{x};
+  }
+  export a;
+}

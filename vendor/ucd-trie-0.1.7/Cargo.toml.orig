@@ -1,0 +1,21 @@
+[package]
+name = "ucd-trie"
+version = "0.1.7"  #:version
+authors = ["Andrew Gallant <jamslam@gmail.com>"]
+description = """
+A trie for storing Unicode codepoint sets and maps.
+"""
+documentation = "https://docs.rs/ucd-trie"
+homepage = "https://github.com/BurntSushi/ucd-generate"
+repository = "https://github.com/BurntSushi/ucd-generate"
+readme = "README.md"
+keywords = ["unicode", "database", "character", "codepoint", "trie"]
+license = "MIT OR Apache-2.0"
+edition = "2021"
+
+[dev-dependencies]
+once_cell = "1"
+
+[features]
+default = ["std"]
+std = []

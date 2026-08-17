@@ -1,0 +1,21 @@
+language: rust
+rust:
+  - stable
+  - beta
+  - nightly
+jobs:
+  allow_failures:
+    - rust: nightly
+  fast_finish: true
+
+os:
+  - osx
+  - freebsd
+
+env:
+  global:
+    - RUST_BACKTRACE=1
+
+before_script:
+  - git config --global user.name travis
+  - git config --global user.email travis@travis.travis

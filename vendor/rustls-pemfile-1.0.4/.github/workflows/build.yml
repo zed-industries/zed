@@ -1,0 +1,62 @@
+on: [push, pull_request, merge_group]
+name: rustls-pemfile
+
+jobs:
+  rustfmt:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: actions/checkout@v3
+      - run: cargo fmt --all -- --check
+  clippy:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: actions/checkout@v3
+      - run: cargo clippy --all-features --all-targets
+  rustdoc:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v3
+      - run: cargo doc --all-features
+  build:
+    name: "Build and test"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        # test a bunch of toolchains on ubuntu
+        rust:
+          - stable
+          - beta
+          - nightly
+        os: [ubuntu-20.04]
+        # but only stable on macos/windows (slower platforms)
+        include:
+          - os: macos-latest
+            rust: stable
+          - os: windows-latest
+            rust: stable
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v3
+
+      - name: Install ${{ matrix.rust }} toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+
+      - name: cargo test (debug)
+        run: cargo test
+        env:
+          RUST_BACKTRACE: 1
+          RUSTFLAGS: "-D warnings"
+
+      - name: cargo test (release)
+        run: cargo test --release
+        env:
+          RUSTFLAGS: "-D warnings"

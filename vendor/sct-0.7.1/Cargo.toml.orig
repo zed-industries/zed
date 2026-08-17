@@ -1,0 +1,17 @@
+[package]
+name = "sct"
+version = "0.7.1"
+edition = "2021"
+rust-version = "1.61"
+authors = ["Joseph Birr-Pixton <jpixton@gmail.com>"]
+description = "Certificate transparency SCT verification library"
+license = "Apache-2.0 OR ISC OR MIT"
+readme = "README.md"
+homepage = "https://github.com/rustls/sct.rs"
+repository = "https://github.com/rustls/sct.rs"
+categories = ["network-programming", "cryptography"]
+exclude = ["/admin/"]
+
+[dependencies]
+ring = "0.17.0"
+untrusted = "0.9.0" # stick with the version that's used by current ring

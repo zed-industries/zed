@@ -1,0 +1,96 @@
+framework = "CoreServices"
+crate = "objc2-core-services"
+required-crates = ["objc2-core-foundation"]
+custom-lib-rs = true
+macos = "10.0"
+maccatalyst = "13.0"
+ios = "12.0"
+tvos = "12.0"
+watchos = "5.0"
+visionos = "1.0"
+
+# CarbonCore is deprecated, and very C-centric, which header-translator has
+# trouble with. Recursive structs are especially problematic currently.
+#
+# So for now, we completely disable CarbonCore. This does lead to a lot of
+# unused code, since other parts of CoreServices still tries to depend on
+# CarbonCore, but we'll live with that for now.
+module.CarbonCore.skipped = true
+
+# Deprecated, replaced with functionality in Security.
+module.OSServices.module.KeychainCore.skipped = true
+# Deprecated, replaced with functionality in IOKit.
+module.OSServices.module.Power.skipped = true
+# Deprecated, replaced with other LSOpen functions.
+module.LaunchServices.module.LSOpenDeprecated.skipped = true
+# Deprecated, replaced with other LSInfo functions.
+module.LaunchServices.module.LSInfoDeprecated.skipped = true
+
+# Affects CarbonCore.Files, and unclear why this is even created?
+module.Files.skipped = true
+
+# Needs acl_t from include/sys/acl.h
+fn.FSFileSecurityCopyAccessControlList.skipped = true
+fn.FSFileSecuritySetAccessControlList.skipped = true
+
+# Ends up declaring __FSEventStream twice.
+typedef.ConstFSEventStreamRef.skipped = true
+
+# Needs va_list
+fn.vAEBuildDesc.skipped = true
+fn.vAEBuildParameters.skipped = true
+fn.vAEBuildAppleEvent.skipped = true
+
+# Uses Str255 (an array) directly in parameter, which is unclear ABI-wise.
+fn.GetComponentPublicIndString.skipped = true
+fn.GetComponentIndString.skipped = true
+
+# Dependent on target endianness
+typedef.WideChar.skipped = true # union+typedef
+
+# Needs mach_msg_header_t
+fn.AEDecodeMessage.skipped = true
+fn.AEProcessMessage.skipped = true
+
+# Kinda weird, uses UniversalProcPtr, which is defined in MacTypes.h,
+# which points to RoutineDescriptor, which is defined in CoreServices.
+typedef.ComponentFunctionUPP.skipped = true
+fn.NewComponentFunctionUPP.skipped = true
+fn.DisposeComponentFunctionUPP.skipped = true
+fn.CallComponentFunction.skipped = true
+fn.CallComponentFunctionWithStorage.skipped = true
+
+# Defaults to c_ulong, which is wrong on 32-bit targets.
+const.kFSEventStreamEventIdSinceNow.skipped = true
+
+# Tries to OR u32s and i32s.
+const.kIconServicesCatalogInfoMask.use-value = true
+
+# Literals are out of the i32 range.
+const.kFSCatInfoReserved.use-value = true
+const.kFSIterateReserved.use-value = true
+const.kioACAccessOwnerMask.use-value = true
+const.kHelpFolderIcon.use-value = true
+const.kInternetPlugInFolderIcon.use-value = true
+const.kLocalesFolderIcon.use-value = true
+const.kPrinterDriverFolderIcon.use-value = true
+const.kScriptingAdditionsFolderIcon.use-value = true
+const.kSharedLibrariesFolderIcon.use-value = true
+const.kTextEncodingsFolderIcon.use-value = true
+const.kAEDebugXMLDebugAll.use-value = true
+
+# Deprecated and only defined on 32-bit architectures
+const.typeSMInt.skipped = true
+const.typeShortInteger.skipped = true
+const.typeInteger.skipped = true
+const.typeLongInteger.skipped = true
+const.typeMagnitude.skipped = true
+const.typeComp.skipped = true
+const.typeSMFloat.skipped = true
+const.typeShortFloat.skipped = true
+const.typeFloat.skipped = true
+const.typeLongFloat.skipped = true
+const.typeExtended.skipped = true
+const.typeFSS.skipped = true
+
+fn.SKDocumentGetTypeID.unsafe = false

@@ -1,0 +1,306 @@
+{
+  "events": [
+    {
+      "connection_id": 0,
+      "action": {
+        "Request": {
+          "request": {
+            "uri": "https://test-bucket.s3.us-east-1.amazonaws.com/?list-type=2&prefix=prefix~",
+            "headers": {
+              "x-amz-security-token": [
+                "notarealsessiontoken"
+              ],
+              "authorization": [
+                "AWS4-HMAC-SHA256 Credential=ANOTREAL/20190601/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-user-agent, Signature=43970cfd0324cb28a86459789b7a1c7684cf54b0b3c9842a84f3b24343fa038a"
+              ],
+              "x-amz-user-agent": [
+                "aws-sdk-rust/0.123.test api/test-service/0.123 os/windows/XPSP3 lang/rust/1.50.0"
+              ],
+              "x-amz-date": [
+                "20190601T000000Z"
+              ],
+              "x-amz-content-sha256": [
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              ],
+              "amz-sdk-invocation-id": [
+                "00000000-0000-4000-8000-000000000000"
+              ],
+              "amz-sdk-request": [
+                "attempt=1; max=3"
+              ],
+              "user-agent": [
+                "aws-sdk-rust/0.123.test os/windows/XPSP3 lang/rust/1.50.0"
+              ]
+            },
+            "method": "GET"
+          }
+        }
+      }
+    },
+    {
+      "connection_id": 0,
+      "action": {
+        "Eof": {
+          "ok": true,
+          "direction": "Request"
+        }
+      }
+    },
+    {
+      "connection_id": 0,
+      "action": {
+        "Response": {
+          "response": {
+            "Ok": {
+              "status": 500,
+              "version": "HTTP/1.1",
+              "headers": {
+                "x-amz-request-id": [
+                  "foo-id"
+                ],
+                "x-amz-id-2": [
+                  "foo-id"
+                ],
+                "content-type": [
+                  "application/xml"
+                ],
+                "transfer-encoding": [
+                  "chunked"
+                ],
+                "server": [
+                  "AmazonS3"
+                ],
+                "date": [
+                  "Sat, 01 Jun 2019 00:00:00 GMT"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "connection_id": 0,
+      "action": {
+        "Data": {
+          "data": {
+            "Utf8": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n    <Error>\n    <Type>Server</Type>\n    <Code>InternalError</Code>\n    <Message>We encountered an internal error. Please try again.</Message>\n    <RequestId>foo-id</RequestId>\n</Error>"
+          },
+          "direction": "Response"
+        }
+      }
+    },
+    {
+      "connection_id": 0,
+      "action": {
+        "Eof": {
+          "ok": true,
+          "direction": "Response"
+        }
+      }
+    },
+    {
+      "connection_id": 1,
+      "action": {
+        "Request": {
+          "request": {
+            "uri": "https://test-bucket.s3.us-east-1.amazonaws.com/?list-type=2&prefix=prefix~",
+            "headers": {
+              "x-amz-security-token": [
+                "notarealsessiontoken"
+              ],
+              "authorization": [
+                "AWS4-HMAC-SHA256 Credential=ANOTREAL/20190601/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-user-agent, Signature=6d0f0da831a7d3ad1bde4e98580177bc0ef0acc21064dd26394006006392cb14"
+              ],
+              "x-amz-user-agent": [
+                "aws-sdk-rust/0.123.test api/test-service/0.123 os/windows/XPSP3 lang/rust/1.50.0"
+              ],
+              "x-amz-date": [
+                "20190601T000001Z"
+              ],
+              "x-amz-content-sha256": [
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              ],
+              "amz-sdk-invocation-id": [
+                "00000000-0000-4000-8000-000000000000"
+              ],
+              "amz-sdk-request": [
+                "ttl=20190601T000011Z; attempt=2; max=3"
+              ],
+              "user-agent": [
+                "aws-sdk-rust/0.123.test os/windows/XPSP3 lang/rust/1.50.0"
+              ]
+            },
+            "method": "GET"
+          }
+        }
+      }
+    },
+    {
+      "connection_id": 1,
+      "action": {
+        "Eof": {
+          "ok": true,
+          "direction": "Request"
+        }
+      }
+    },
+    {
+      "connection_id": 1,
+      "action": {
+        "Response": {
+          "response": {
+            "Ok": {
+              "status": 500,
+              "version": "HTTP/1.1",
+              "headers": {
+                "x-amz-request-id": [
+                  "foo-id"
+                ],
+                "x-amz-id-2": [
+                  "foo-id"
+                ],
+                "content-type": [
+                  "application/xml"
+                ],
+                "transfer-encoding": [
+                  "chunked"
+                ],
+                "server": [
+                  "AmazonS3"
+                ],
+                "date": [
+                  "Sat, 01 Jun 2019 00:00:01 GMT"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "connection_id": 1,
+      "action": {
+        "Data": {
+          "data": {
+            "Utf8": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n    <Error>\n    <Type>Server</Type>\n    <Code>InternalError</Code>\n    <Message>We encountered an internal error. Please try again.</Message>\n    <RequestId>foo-id</RequestId>\n</Error>"
+          },
+          "direction": "Response"
+        }
+      }
+    },
+    {
+      "connection_id": 1,
+      "action": {
+        "Eof": {
+          "ok": true,
+          "direction": "Response"
+        }
+      }
+    },
+    {
+      "connection_id": 2,
+      "action": {
+        "Request": {
+          "request": {
+            "uri": "https://test-bucket.s3.us-east-1.amazonaws.com/?list-type=2&prefix=prefix~",
+            "headers": {
+              "x-amz-security-token": [
+                "notarealsessiontoken"
+              ],
+              "authorization": [
+                "AWS4-HMAC-SHA256 Credential=ANOTREAL/20190601/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-user-agent, Signature=8160b1d1200c10cde681ac6f4490c98023af9c4b3b8fd8a82e7560f87c126a53"
+              ],
+              "x-amz-user-agent": [
+                "aws-sdk-rust/0.123.test api/test-service/0.123 os/windows/XPSP3 lang/rust/1.50.0"
+              ],
+              "x-amz-date": [
+                "20190601T000002Z"
+              ],
+              "x-amz-content-sha256": [
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              ],
+              "amz-sdk-invocation-id": [
+                "00000000-0000-4000-8000-000000000000"
+              ],
+              "amz-sdk-request": [
+                "ttl=20190601T000012Z; attempt=3; max=3"
+              ],
+              "user-agent": [
+                "aws-sdk-rust/0.123.test os/windows/XPSP3 lang/rust/1.50.0"
+              ]
+            },
+            "method": "GET"
+          }
+        }
+      }
+    },
+    {
+      "connection_id": 2,
+      "action": {
+        "Eof": {
+          "ok": true,
+          "direction": "Request"
+        }
+      }
+    },
+    {
+      "connection_id": 2,
+      "action": {
+        "Response": {
+          "response": {
+            "Ok": {
+              "status": 200,
+              "version": "HTTP/1.1",
+              "headers": {
+                "x-amz-request-id": [
+                  "9X5E7C9EAB6AQEP2"
+                ],
+                "x-amz-id-2": [
+                  "gZsrBxajPyo1Q0DE2plGf7T6kAnxd4Xx7/S+8lq18GegL6kFbnVXLLh1LnBzpEpFiHN9XoNHkeA="
+                ],
+                "content-type": [
+                  "application/xml"
+                ],
+                "transfer-encoding": [
+                  "chunked"
+                ],
+                "server": [
+                  "AmazonS3"
+                ],
+                "date": [
+                  "Sat, 01 Jun 2019 00:00:02 GMT"
+                ],
+                "x-amz-bucket-region": [
+                  "us-east-1"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "connection_id": 2,
+      "action": {
+        "Data": {
+          "data": {
+            "Utf8": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListBucketResult>\n    <Name>test-bucket</Name>\n    <Prefix>prefix~</Prefix>\n    <KeyCount>1</KeyCount>\n    <MaxKeys>1000</MaxKeys>\n    <IsTruncated>false</IsTruncated>\n    <Contents>\n        <Key>some-file.file</Key>\n        <LastModified>2009-10-12T17:50:30.000Z</LastModified>\n        <Size>434234</Size>\n        <StorageClass>STANDARD</StorageClass>\n    </Contents>\n</ListBucketResult>"
+          },
+          "direction": "Response"
+        }
+      }
+    },
+    {
+      "connection_id": 2,
+      "action": {
+        "Eof": {
+          "ok": true,
+          "direction": "Response"
+        }
+      }
+    }
+  ],
+  "docs": "One SDK operation invocation. Client retries 3 times, successful response on 3rd attempt. Fast network, latency + server time is less than one second. No clock skew. Client waits 1 second between retry attempts.",
+  "version": "V0"
+}

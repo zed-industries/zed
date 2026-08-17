@@ -1,0 +1,16 @@
+---
+- name: Block scalar with more spaces than first content line
+  from: '@perlpunk'
+  tags: error folded comment scalar whitespace
+  fail: true
+  yaml: |
+    empty block scalar: >
+    ␣
+    ␣␣
+    ␣␣␣
+     # comment
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :empty block scalar

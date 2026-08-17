@@ -1,0 +1,13 @@
+[package]
+categories = ["embedded", "memory-management", "no-std"]
+description = "A newtype with alignment of at least `A` bytes"
+documentation = "https://docs.rs/aligned"
+edition = "2024"
+keywords = ["alignment", "aligned", "array", "static"]
+license = "MIT OR Apache-2.0"
+name = "aligned"
+repository = "https://github.com/rust-embedded-community/aligned"
+version = "0.4.3"
+
+[dependencies]
+as-slice = "0.2.1"

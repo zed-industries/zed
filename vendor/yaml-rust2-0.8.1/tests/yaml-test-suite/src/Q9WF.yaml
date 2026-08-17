@@ -1,0 +1,35 @@
+---
+- name: Spec Example 6.12. Separation Spaces
+  from: http://www.yaml.org/spec/1.2/spec.html#id2780989
+  tags: complex-key flow spec comment whitespace 1.3-err
+  yaml: |
+    { first: Sammy, last: Sosa }:
+    # Statistics:
+      hr:  # Home runs
+         65
+      avg: # Average
+       0.278
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       +MAP {}
+        =VAL :first
+        =VAL :Sammy
+        =VAL :last
+        =VAL :Sosa
+       -MAP
+       +MAP
+        =VAL :hr
+        =VAL :65
+        =VAL :avg
+        =VAL :0.278
+       -MAP
+      -MAP
+     -DOC
+    -STR
+  dump: |
+    ? first: Sammy
+      last: Sosa
+    : hr: 65
+      avg: 0.278

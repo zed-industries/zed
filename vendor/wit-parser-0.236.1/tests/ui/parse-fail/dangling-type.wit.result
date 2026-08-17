@@ -1,0 +1,5 @@
+expected an identifier or string, found eof
+     --> tests/ui/parse-fail/dangling-type.wit:6:1
+      |
+    6 | 
+      | ^

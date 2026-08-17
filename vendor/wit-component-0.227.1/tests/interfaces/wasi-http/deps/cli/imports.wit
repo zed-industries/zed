@@ -1,0 +1,20 @@
+package wasi:cli@0.2.0-rc-2023-12-05;
+
+world imports {
+  include wasi:clocks/imports@0.2.0-rc-2023-11-10;
+  include wasi:filesystem/imports@0.2.0-rc-2023-11-10;
+  include wasi:sockets/imports@0.2.0-rc-2023-11-10;
+  include wasi:random/imports@0.2.0-rc-2023-11-10;
+  include wasi:io/imports@0.2.0-rc-2023-11-10;
+
+  import environment;
+  import exit;
+  import stdin;
+  import stdout;
+  import stderr;
+  import terminal-input;
+  import terminal-output;
+  import terminal-stdin;
+  import terminal-stdout;
+  import terminal-stderr;
+}

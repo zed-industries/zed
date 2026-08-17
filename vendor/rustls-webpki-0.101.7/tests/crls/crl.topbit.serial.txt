@@ -1,0 +1,95 @@
+SEQUENCE {
+  SEQUENCE {
+    INTEGER { 1 }
+    SEQUENCE {
+      # ecdsa-with-SHA384
+      OBJECT_IDENTIFIER { 1.2.840.10045.4.3.3 }
+    }
+    SEQUENCE {
+      SET {
+        SEQUENCE {
+          # countryName
+          OBJECT_IDENTIFIER { 2.5.4.6 }
+          PrintableString { "XX" }
+        }
+      }
+      SET {
+        SEQUENCE {
+          # organizationName
+          OBJECT_IDENTIFIER { 2.5.4.10 }
+          PrintableString { "Boulder Test" }
+        }
+      }
+      SET {
+        SEQUENCE {
+          # commonName
+          OBJECT_IDENTIFIER { 2.5.4.3 }
+          PrintableString { "(TEST) Elegant Elephant E1" }
+        }
+      }
+    }
+    UTCTime { "221010201207Z" }
+    UTCTime { "221019201206Z" }
+    SEQUENCE {
+      SEQUENCE {
+        INTEGER { `0080feedf00d` }
+        UTCTime { "221010191207Z" }
+        SEQUENCE {
+          SEQUENCE {
+            # reasonCode
+            OBJECT_IDENTIFIER { 2.5.29.21 }
+            OCTET_STRING {
+              ENUMERATED { `01` }
+            }
+          }
+        }
+      }
+    }
+    [0] {
+      SEQUENCE {
+        SEQUENCE {
+          # authorityKeyIdentifier
+          OBJECT_IDENTIFIER { 2.5.29.35 }
+          OCTET_STRING {
+            SEQUENCE {
+              [0 PRIMITIVE] { `01dabb7acb25208e5e79d6f996422f02412907be` }
+            }
+          }
+        }
+        SEQUENCE {
+          # cRLNumber
+          OBJECT_IDENTIFIER { 2.5.29.20 }
+          OCTET_STRING {
+            INTEGER { `171cce3de482ba61` }
+          }
+        }
+        SEQUENCE {
+          # issuingDistributionPoint
+          OBJECT_IDENTIFIER { 2.5.29.28 }
+          BOOLEAN { TRUE }
+          OCTET_STRING {
+            SEQUENCE {
+              [0] {
+                [0] {
+                  [6 PRIMITIVE] { "http://c.boulder.test/66283756913588288/0.crl" }
+                }
+              }
+              [1 PRIMITIVE] { `ff` }
+            }
+          }
+        }
+      }
+    }
+  }
+  SEQUENCE {
+    # ecdsa-with-SHA384
+    OBJECT_IDENTIFIER { 1.2.840.10045.4.3.3 }
+  }
+  BIT_STRING {
+    `00`
+    SEQUENCE {
+      INTEGER { `2f0e42149d361abc9ea1f3ad3a303c85876bb0fdc17e3959cce2c13c9d4746cb45d88348467db478318fa44714506b22` }
+      INTEGER { `57903e972922bd33817a4fea5517534adc2d2bdab6e69e41256bdb89c68d9ecfcb4bdcf78c349fb89d67cc237b9fbf33` }
+    }
+  }
+}

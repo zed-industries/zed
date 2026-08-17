@@ -1,0 +1,81 @@
+framework = "QuartzCore"
+crate = "objc2-quartz-core"
+required-crates = ["objc2", "objc2-foundation"]
+undesired-default-dependencies = ["objc2-open-gl"] # OpenGL is deprecated
+custom-lib-rs = true
+macos = "10.3"
+maccatalyst = "13.0"
+ios = "2.0"
+tvos = "9.0"
+visionos = "1.0"
+
+# I'm unsure of the ABI of the array this takes
+class.CAMediaTimingFunction.methods."getControlPointAtIndex:values:".skipped = true
+
+###
+### Safety
+###
+
+# SAFETY: Core Animation is generally well-behaved, it's only CALayer and
+# CATransaction that are doing weird things.
+#
+# Note that most CATransaction methods access thread-local state, apart from
+# (maybe?) `lock` and `unlock`, so these are thread-safe.
+unsafe-default-safety.documentation-is-reviewed = true
+
+# Must be called in a specific context
+class.CALayer.methods."initWithLayer:".unsafe = true
+class.CALayer.methods.modelLayer.unsafe = true
+# Return value may not be safe to modify
+class.CALayer.methods.presentationLayer.unsafe = true
+
+# The returned array is not guaranteed to retain its elements
+class.CALayer.methods.sublayers.unsafe = true
+# Requires all layers to have a `nil` superlayer
+class.CALayer.methods."setSublayers:".unsafe = true
+# Requires `oldlayer` to exist in the current layer
+class.CALayer.methods."replaceSublayer:".unsafe = true
+# UB if old layer is not in `sublayers`.
+class.CALayer.methods."replaceSublayer:with:".unsafe = true
+# If the layer already has a superlayer, it will be changed appropriately by
+# these methods (`removeFromSuperlayer` is called on the given layer inside these).
+class.CALayer.methods.removeFromSuperlayer.unsafe = false
+class.CALayer.methods."addSublayer:".unsafe = false
+class.CALayer.methods."insertSublayer:atIndex:".unsafe = false
+class.CALayer.methods."insertSublayer:below:".unsafe = false
+class.CALayer.methods."insertSublayer:above:".unsafe = false
+
+# Argument must have a `nil` superlayer.
+class.CALayer.methods."setMask:".unsafe = true
+# No type set.
+class.CALayer.methods.contents.unsafe = true
+class.CALayer.methods."setContents:".unsafe = true
+
+# Gives "undefined results" outside [0; 1], but by this the authors
+# very likely didn't mean "violates memory safety".
+class.CALayer.methods."setOpacity:".unsafe = false
+class.CALayer.methods."setShadowOpacity:".unsafe = false
+
+# Modifying the returned animation is UB.
+class.CALayer.methods."animationForKey:".unsafe = true
+# Copies the animation.
+class.CALayer.methods."addAnimation:forKey:".unsafe = false
+
+# Documentation says the return value is "undefined" if given an unknown key,
+# unsure if this just means a weird `NSValue` or `nil` or what it means?
+class.CALayer.methods."defaultValueForKey:".unsafe = true
+
+# The completion block is intended to be main-thread only.
+class.CATransaction.methods.completionBlock.unsafe = true
+class.CATransaction.methods."setCompletionBlock:".unsafe = true
+
+# Unsure if it's sound to over-unlock?
+class.CATransaction.methods.lock.unsafe = true
+class.CATransaction.methods.unlock.unsafe = true
+
+# HACK: Should really not be emitted, `CATransaction` is a singleton.
+class.CATransaction.methods.init.unsafe = true
+class.CATransaction.methods.new.unsafe = true
+
+# Breaks type-safety, you must check encodings before accessing a value.
+class.NSValue.unsafe = true

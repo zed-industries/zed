@@ -1,0 +1,45 @@
+name: Rust
+
+on:
+  push: {}
+  pull_request: {}
+  schedule:
+    #       Min Hr Day Month Weekday; so this should be 1:05am each day.
+    - cron: '5  1  *   *     *'
+
+jobs:
+  build_test:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        rust:
+        # x86 without sse/sse2 on by default
+        - { target: i586-pc-windows-msvc, toolchain: 1.51.0 }
+        - { target: i586-pc-windows-msvc, toolchain: stable }
+        - { target: i586-pc-windows-msvc, toolchain: beta }
+        - { target: i586-pc-windows-msvc, toolchain: nightly }
+        # x86
+        - { target: i686-pc-windows-msvc, toolchain: 1.51.0 }
+        - { target: i686-pc-windows-msvc, toolchain: stable }
+        - { target: i686-pc-windows-msvc, toolchain: beta }
+        - { target: i686-pc-windows-msvc, toolchain: nightly }
+        # x86_64
+        - { target: x86_64-pc-windows-msvc, toolchain: 1.51.0 }
+        - { target: x86_64-pc-windows-msvc, toolchain: stable }
+        - { target: x86_64-pc-windows-msvc, toolchain: beta }
+        - { target: x86_64-pc-windows-msvc, toolchain: nightly }
+    steps:
+    - uses: actions/checkout@v1
+    - uses: actions-rs/toolchain@v1
+      with:
+        toolchain: ${{ matrix.rust.toolchain }}
+        target:  ${{ matrix.rust.target }}
+        profile: minimal
+        default: true
+    - name: suppress target-cpu=native on i586
+      if: matrix.rust.target == 'i586-pc-windows-msvc'
+      run: rm .cargo/config.toml
+    - name: Run tests with default features
+      run: cargo test --target ${{ matrix.rust.target }}
+    - name: Run tests with all features
+      run: cargo test --target ${{ matrix.rust.target }} --all-features

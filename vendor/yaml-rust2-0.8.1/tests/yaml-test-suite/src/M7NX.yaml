@@ -1,0 +1,53 @@
+---
+- name: Nested flow collections
+  from: '@perlpunk'
+  tags: flow mapping sequence
+  yaml: |
+    ---
+    {
+     a: [
+      b, c, {
+       d: [e, f]
+      }
+     ]
+    }
+  tree: |
+    +STR
+     +DOC ---
+      +MAP {}
+       =VAL :a
+       +SEQ []
+        =VAL :b
+        =VAL :c
+        +MAP {}
+         =VAL :d
+         +SEQ []
+          =VAL :e
+          =VAL :f
+         -SEQ
+        -MAP
+       -SEQ
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "a": [
+        "b",
+        "c",
+        {
+          "d": [
+            "e",
+            "f"
+          ]
+        }
+      ]
+    }
+  dump: |
+    ---
+    a:
+    - b
+    - c
+    - d:
+      - e
+      - f

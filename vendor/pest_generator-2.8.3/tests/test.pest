@@ -1,0 +1,23 @@
+//! A parser for JSON file.
+//! And this is a example for JSON parser.
+//!
+//!     indent-4-space
+//!
+
+/// Matches foo str, e.g.: `foo`
+foo = { "foo" }
+
+/// Matches bar str
+///
+///   Indent 2, e.g: `bar` or `foobar`
+
+bar = { "bar" | "foobar" }
+
+bar1 = { "bar1" }
+
+/// Matches dar
+/// 
+/// Match dar description
+/// 
+
+dar = { "da" }

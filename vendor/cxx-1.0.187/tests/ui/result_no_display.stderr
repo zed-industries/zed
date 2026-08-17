@@ -1,0 +1,11 @@
+error[E0277]: `NonError` doesn't implement `std::fmt::Display`
+ --> tests/ui/result_no_display.rs:4:19
+  |
+4 |         fn f() -> Result<()>;
+  |                   ^^^^^^^^^^ unsatisfied trait bound
+  |
+help: the trait `std::fmt::Display` is not implemented for `NonError`
+ --> tests/ui/result_no_display.rs:8:1
+  |
+8 | pub struct NonError;
+  | ^^^^^^^^^^^^^^^^^^^

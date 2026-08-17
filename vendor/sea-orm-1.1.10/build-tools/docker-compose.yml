@@ -1,0 +1,93 @@
+version: "3"
+
+services:
+    # 
+    # MariaDB
+    # 
+
+    mariadb_10_6:
+        image: mariadb:10.6
+        ports:
+            - 3306
+        environment:
+            MYSQL_DB: mysql
+            MYSQL_USER: sea
+            MYSQL_PASSWORD: sea
+            MYSQL_ALLOW_EMPTY_PASSWORD: yes
+            MYSQL_ROOT_PASSWORD: root
+
+    mariadb_10_5:
+        image: mariadb:10.5
+        ports:
+            - 3306
+        environment:
+            MYSQL_DB: mysql
+            MYSQL_USER: sea
+            MYSQL_PASSWORD: sea
+            MYSQL_ALLOW_EMPTY_PASSWORD: yes
+            MYSQL_ROOT_PASSWORD: root
+
+    mariadb_10_4:
+        image: mariadb:10.4
+        ports:
+            - 3306
+        environment:
+            MYSQL_DB: mysql
+            MYSQL_USER: sea
+            MYSQL_PASSWORD: sea
+            MYSQL_ALLOW_EMPTY_PASSWORD: yes
+            MYSQL_ROOT_PASSWORD: root
+
+    # 
+    # MySQL
+    # 
+
+    mysql_8_0:
+        image: mysql:8.0
+        ports:
+            - 3306
+        environment:
+            MYSQL_DB: mysql
+            MYSQL_USER: sea
+            MYSQL_PASSWORD: sea
+            MYSQL_ALLOW_EMPTY_PASSWORD: yes
+            MYSQL_ROOT_PASSWORD: root
+
+    mysql_5_7:
+        image: mysql:5.7
+        ports:
+            - 3306
+        environment:
+            MYSQL_DB: mysql
+            MYSQL_USER: sea
+            MYSQL_PASSWORD: sea
+            MYSQL_ALLOW_EMPTY_PASSWORD: yes
+            MYSQL_ROOT_PASSWORD: root
+
+    # 
+    # PostgreSQL
+    # 
+
+    postgres_13:
+        image: postgres:13
+        ports:
+            - 5432
+        environment:
+            POSTGRES_USER: root
+            POSTGRES_PASSWORD: root
+
+    postgres_12:
+        image: postgres:12
+        ports:
+            - 5432
+        environment:
+            POSTGRES_USER: root
+            POSTGRES_PASSWORD: root
+
+    postgres_11:
+        image: postgres:11
+        ports:
+            - 5432
+        environment:
+            POSTGRES_USER: root
+            POSTGRES_PASSWORD: root

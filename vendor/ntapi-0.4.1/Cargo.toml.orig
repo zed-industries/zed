@@ -1,0 +1,28 @@
+[package]
+name = "ntapi"
+version = "0.4.1"
+authors = ["MSxDOS <melcodos@gmail.com>"]
+description = "FFI bindings for Native API"
+license = "Apache-2.0 OR MIT"
+documentation = "https://docs.rs/ntapi/*/x86_64-pc-windows-msvc/ntapi/"
+repository = "https://github.com/MSxDOS/ntapi"
+readme = "README.md"
+categories = ["external-ffi-bindings", "no-std", "os::windows-apis"]
+keywords = ["windows", "ffi", "ntapi", "native", "win32"]
+include = ["src/**/*", "Cargo.toml", "build.rs", "README.md", "LICENSE-APACHE", "LICENSE-MIT"]
+edition = "2018"
+
+[package.metadata.docs.rs]
+default-target = "x86_64-pc-windows-msvc"
+targets = ["aarch64-pc-windows-msvc", "i686-pc-windows-msvc", "x86_64-pc-windows-msvc"]
+
+[dependencies.winapi]
+version = "0.3.9"
+features = ["cfg", "evntrace", "in6addr", "inaddr", "minwinbase", "ntsecapi", "windef", "winioctl"]
+
+[features]
+default = ["user"]
+func-types = []
+impl-default = ["winapi/impl-default"]
+user = []
+kernel = []

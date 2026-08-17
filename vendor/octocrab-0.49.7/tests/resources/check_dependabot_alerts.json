@@ -1,0 +1,802 @@
+[
+  {
+    "number": 5,
+    "state": "open",
+    "dependency": {
+      "package": {
+        "ecosystem": "npm",
+        "name": "lodash"
+      },
+      "manifest_path": "javascript/yarn.lock",
+      "scope": "runtime"
+    },
+    "security_advisory": {
+      "ghsa_id": "GHSA-35jh-r3h4-6jhm",
+      "cve_id": "CVE-2021-23337",
+      "summary": "Command Injection in lodash",
+      "description": "`lodash` versions prior to 4.17.21 are vulnerable to Command Injection via the template function.",
+      "severity": "high",
+      "identifiers": [
+        {
+          "value": "GHSA-35jh-r3h4-6jhm",
+          "type": "GHSA"
+        },
+        {
+          "value": "CVE-2021-23337",
+          "type": "CVE"
+        }
+      ],
+      "references": [
+        {
+          "url": "https://nvd.nist.gov/vuln/detail/CVE-2021-23337"
+        },
+        {
+          "url": "https://github.com/lodash/lodash/commit/3469357cff396a26c363f8c1b5a91dde28ba4b1c"
+        },
+        {
+          "url": "https://snyk.io/vuln/SNYK-JS-LODASH-1040724"
+        },
+        {
+          "url": "https://github.com/lodash/lodash/blob/ddfd9b11a0126db2302cb70ec9973b66baec0975/lodash.js#L14851"
+        },
+        {
+          "url": "https://github.com/lodash/lodash/blob/ddfd9b11a0126db2302cb70ec9973b66baec0975/lodash.js%23L14851"
+        },
+        {
+          "url": "https://snyk.io/vuln/SNYK-JAVA-ORGFUJIONWEBJARS-1074932"
+        },
+        {
+          "url": "https://snyk.io/vuln/SNYK-JAVA-ORGWEBJARS-1074930"
+        },
+        {
+          "url": "https://snyk.io/vuln/SNYK-JAVA-ORGWEBJARSBOWER-1074928"
+        },
+        {
+          "url": "https://snyk.io/vuln/SNYK-JAVA-ORGWEBJARSBOWERGITHUBLODASH-1074931"
+        },
+        {
+          "url": "https://snyk.io/vuln/SNYK-JAVA-ORGWEBJARSNPM-1074929"
+        },
+        {
+          "url": "https://www.oracle.com//security-alerts/cpujul2021.html"
+        },
+        {
+          "url": "https://www.oracle.com/security-alerts/cpuoct2021.html"
+        },
+        {
+          "url": "https://www.oracle.com/security-alerts/cpujan2022.html"
+        },
+        {
+          "url": "https://www.oracle.com/security-alerts/cpujul2022.html"
+        },
+        {
+          "url": "https://cert-portal.siemens.com/productcert/pdf/ssa-637483.pdf"
+        },
+        {
+          "url": "https://security.netapp.com/advisory/ntap-20210312-0006"
+        },
+        {
+          "url": "https://github.com/advisories/GHSA-35jh-r3h4-6jhm"
+        }
+      ],
+      "published_at": "2021-05-06T16:05:51Z",
+      "updated_at": "2024-04-17T18:39:19Z",
+      "withdrawn_at": null,
+      "vulnerabilities": [
+        {
+          "package": {
+            "ecosystem": "npm",
+            "name": "lodash"
+          },
+          "severity": "high",
+          "vulnerable_version_range": "< 4.17.21",
+          "first_patched_version": {
+            "identifier": "4.17.21"
+          }
+        },
+        {
+          "package": {
+            "ecosystem": "npm",
+            "name": "lodash-es"
+          },
+          "severity": "high",
+          "vulnerable_version_range": "< 4.17.21",
+          "first_patched_version": {
+            "identifier": "4.17.21"
+          }
+        },
+        {
+          "package": {
+            "ecosystem": "npm",
+            "name": "lodash.template"
+          },
+          "severity": "high",
+          "vulnerable_version_range": "<= 4.5.0",
+          "first_patched_version": null
+        },
+        {
+          "package": {
+            "ecosystem": "npm",
+            "name": "lodash-template"
+          },
+          "severity": "high",
+          "vulnerable_version_range": "<= 1.0.0",
+          "first_patched_version": null
+        }
+      ],
+      "cvss": {
+        "vector_string": "CVSS:3.1/AV:N/AC:L/PR:H/UI:N/S:U/C:H/I:H/A:H",
+        "score": 7.2
+      },
+      "cvss_severities": {
+        "cvss_v3": {
+          "vector_string": "CVSS:3.1/AV:N/AC:L/PR:H/UI:N/S:U/C:H/I:H/A:H",
+          "score": 7.2
+        },
+        "cvss_v4": {
+          "vector_string": null,
+          "score": 0.0
+        }
+      },
+      "cwes": [
+        {
+          "cwe_id": "CWE-77",
+          "name": "Improper Neutralization of Special Elements used in a Command ('Command Injection')"
+        },
+        {
+          "cwe_id": "CWE-94",
+          "name": "Improper Control of Generation of Code ('Code Injection')"
+        }
+      ]
+    },
+    "security_vulnerability": {
+      "package": {
+        "ecosystem": "npm",
+        "name": "lodash"
+      },
+      "severity": "high",
+      "vulnerable_version_range": "< 4.17.21",
+      "first_patched_version": {
+        "identifier": "4.17.21"
+      }
+    },
+    "url": "https://api.github.com/repos/octocat/hello-world/dependabot/alerts/5",
+    "html_url": "https://github.com/octocat/hello-world/security/dependabot/5",
+    "created_at": "2024-10-07T11:59:33Z",
+    "updated_at": "2024-10-07T11:59:33Z",
+    "dismissed_at": null,
+    "dismissed_by": null,
+    "dismissed_reason": null,
+    "dismissed_comment": null,
+    "fixed_at": null,
+    "auto_dismissed_at": null
+  },
+  {
+    "number": 4,
+    "state": "open",
+    "dependency": {
+      "package": {
+        "ecosystem": "npm",
+        "name": "lodash"
+      },
+      "manifest_path": "javascript/yarn.lock",
+      "scope": "runtime"
+    },
+    "security_advisory": {
+      "ghsa_id": "GHSA-29mw-wpgm-hmr9",
+      "cve_id": "CVE-2020-28500",
+      "summary": "Regular Expression Denial of Service (ReDoS) in lodash",
+      "description": "All versions of package lodash prior to 4.17.21 are vulnerable to Regular Expression Denial of Service (ReDoS) via the `toNumber`, `trim` and `trimEnd` functions. \n\nSteps to reproduce (provided by reporter Liyuan Chen):\n```js\nvar lo = require('lodash');\n\nfunction build_blank(n) {\n    var ret = \"1\"\n    for (var i = 0; i < n; i++) {\n        ret += \" \"\n    }\n    return ret + \"1\";\n}\nvar s = build_blank(50000) var time0 = Date.now();\nlo.trim(s) \nvar time_cost0 = Date.now() - time0;\nconsole.log(\"time_cost0: \" + time_cost0);\nvar time1 = Date.now();\nlo.toNumber(s) var time_cost1 = Date.now() - time1;\nconsole.log(\"time_cost1: \" + time_cost1);\nvar time2 = Date.now();\nlo.trimEnd(s);\nvar time_cost2 = Date.now() - time2;\nconsole.log(\"time_cost2: \" + time_cost2);\n```",
+      "severity": "medium",
+      "identifiers": [
+        {
+          "value": "GHSA-29mw-wpgm-hmr9",
+          "type": "GHSA"
+        },
+        {
+          "value": "CVE-2020-28500",
+          "type": "CVE"
+        }
+      ],
+      "references": [
+        {
+          "url": "https://nvd.nist.gov/vuln/detail/CVE-2020-28500"
+        },
+        {
+          "url": "https://github.com/lodash/lodash/pull/5065"
+        },
+        {
+          "url": "https://github.com/lodash/lodash/pull/5065/commits/02906b8191d3c100c193fe6f7b27d1c40f200bb7"
+        },
+        {
+          "url": "https://github.com/lodash/lodash/blob/npm/trimEnd.js%23L8"
+        },
+        {
+          "url": "https://security.netapp.com/advisory/ntap-20210312-0006/"
+        },
+        {
+          "url": "https://snyk.io/vuln/SNYK-JS-LODASH-1018905"
+        },
+        {
+          "url": "https://snyk.io/vuln/SNYK-JAVA-ORGFUJIONWEBJARS-1074896"
+        },
+        {
+          "url": "https://snyk.io/vuln/SNYK-JAVA-ORGWEBJARS-1074894"
+        },
+        {
+          "url": "https://snyk.io/vuln/SNYK-JAVA-ORGWEBJARSBOWER-1074892"
+        },
+        {
+          "url": "https://snyk.io/vuln/SNYK-JAVA-ORGWEBJARSBOWERGITHUBLODASH-1074895"
+        },
+        {
+          "url": "https://snyk.io/vuln/SNYK-JAVA-ORGWEBJARSNPM-1074893"
+        },
+        {
+          "url": "https://www.oracle.com//security-alerts/cpujul2021.html"
+        },
+        {
+          "url": "https://www.oracle.com/security-alerts/cpuoct2021.html"
+        },
+        {
+          "url": "https://www.oracle.com/security-alerts/cpujan2022.html"
+        },
+        {
+          "url": "https://www.oracle.com/security-alerts/cpujul2022.html"
+        },
+        {
+          "url": "https://cert-portal.siemens.com/productcert/pdf/ssa-637483.pdf"
+        },
+        {
+          "url": "https://github.com/lodash/lodash/commit/c4847ebe7d14540bb28a8b932a9ce1b9ecbfee1a"
+        },
+        {
+          "url": "https://github.com/advisories/GHSA-29mw-wpgm-hmr9"
+        }
+      ],
+      "published_at": "2022-01-06T20:30:46Z",
+      "updated_at": "2023-11-01T23:21:12Z",
+      "withdrawn_at": null,
+      "vulnerabilities": [
+        {
+          "package": {
+            "ecosystem": "npm",
+            "name": "lodash"
+          },
+          "severity": "medium",
+          "vulnerable_version_range": "< 4.17.21",
+          "first_patched_version": {
+            "identifier": "4.17.21"
+          }
+        },
+        {
+          "package": {
+            "ecosystem": "npm",
+            "name": "lodash-es"
+          },
+          "severity": "medium",
+          "vulnerable_version_range": "< 4.17.21",
+          "first_patched_version": {
+            "identifier": "4.17.21"
+          }
+        },
+        {
+          "package": {
+            "ecosystem": "npm",
+            "name": "lodash.trimend"
+          },
+          "severity": "medium",
+          "vulnerable_version_range": "<= 4.5.1",
+          "first_patched_version": null
+        },
+        {
+          "package": {
+            "ecosystem": "npm",
+            "name": "lodash.trim"
+          },
+          "severity": "medium",
+          "vulnerable_version_range": "<= 4.5.1",
+          "first_patched_version": null
+        }
+      ],
+      "cvss": {
+        "vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L",
+        "score": 5.3
+      },
+      "cvss_severities": {
+        "cvss_v3": {
+          "vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L",
+          "score": 5.3
+        },
+        "cvss_v4": {
+          "vector_string": null,
+          "score": 0.0
+        }
+      },
+      "cwes": [
+        {
+          "cwe_id": "CWE-400",
+          "name": "Uncontrolled Resource Consumption"
+        },
+        {
+          "cwe_id": "CWE-1333",
+          "name": "Inefficient Regular Expression Complexity"
+        }
+      ]
+    },
+    "security_vulnerability": {
+      "package": {
+        "ecosystem": "npm",
+        "name": "lodash"
+      },
+      "severity": "medium",
+      "vulnerable_version_range": "< 4.17.21",
+      "first_patched_version": {
+        "identifier": "4.17.21"
+      }
+    },
+    "url": "https://api.github.com/repos/octocat/hello-world/dependabot/alerts/4",
+    "html_url": "https://github.com/octocat/hello-world/security/dependabot/4",
+    "created_at": "2024-10-07T11:59:33Z",
+    "updated_at": "2024-10-07T11:59:33Z",
+    "dismissed_at": null,
+    "dismissed_by": null,
+    "dismissed_reason": null,
+    "dismissed_comment": null,
+    "fixed_at": null,
+    "auto_dismissed_at": null
+  },
+  {
+    "number": 3,
+    "state": "open",
+    "dependency": {
+      "package": {
+        "ecosystem": "npm",
+        "name": "lodash"
+      },
+      "manifest_path": "javascript/package-lock.json",
+      "scope": "runtime"
+    },
+    "security_advisory": {
+      "ghsa_id": "GHSA-35jh-r3h4-6jhm",
+      "cve_id": "CVE-2021-23337",
+      "summary": "Command Injection in lodash",
+      "description": "`lodash` versions prior to 4.17.21 are vulnerable to Command Injection via the template function.",
+      "severity": "high",
+      "identifiers": [
+        {
+          "value": "GHSA-35jh-r3h4-6jhm",
+          "type": "GHSA"
+        },
+        {
+          "value": "CVE-2021-23337",
+          "type": "CVE"
+        }
+      ],
+      "references": [
+        {
+          "url": "https://nvd.nist.gov/vuln/detail/CVE-2021-23337"
+        },
+        {
+          "url": "https://github.com/lodash/lodash/commit/3469357cff396a26c363f8c1b5a91dde28ba4b1c"
+        },
+        {
+          "url": "https://snyk.io/vuln/SNYK-JS-LODASH-1040724"
+        },
+        {
+          "url": "https://github.com/lodash/lodash/blob/ddfd9b11a0126db2302cb70ec9973b66baec0975/lodash.js#L14851"
+        },
+        {
+          "url": "https://github.com/lodash/lodash/blob/ddfd9b11a0126db2302cb70ec9973b66baec0975/lodash.js%23L14851"
+        },
+        {
+          "url": "https://snyk.io/vuln/SNYK-JAVA-ORGFUJIONWEBJARS-1074932"
+        },
+        {
+          "url": "https://snyk.io/vuln/SNYK-JAVA-ORGWEBJARS-1074930"
+        },
+        {
+          "url": "https://snyk.io/vuln/SNYK-JAVA-ORGWEBJARSBOWER-1074928"
+        },
+        {
+          "url": "https://snyk.io/vuln/SNYK-JAVA-ORGWEBJARSBOWERGITHUBLODASH-1074931"
+        },
+        {
+          "url": "https://snyk.io/vuln/SNYK-JAVA-ORGWEBJARSNPM-1074929"
+        },
+        {
+          "url": "https://www.oracle.com//security-alerts/cpujul2021.html"
+        },
+        {
+          "url": "https://www.oracle.com/security-alerts/cpuoct2021.html"
+        },
+        {
+          "url": "https://www.oracle.com/security-alerts/cpujan2022.html"
+        },
+        {
+          "url": "https://www.oracle.com/security-alerts/cpujul2022.html"
+        },
+        {
+          "url": "https://cert-portal.siemens.com/productcert/pdf/ssa-637483.pdf"
+        },
+        {
+          "url": "https://security.netapp.com/advisory/ntap-20210312-0006"
+        },
+        {
+          "url": "https://github.com/advisories/GHSA-35jh-r3h4-6jhm"
+        }
+      ],
+      "published_at": "2021-05-06T16:05:51Z",
+      "updated_at": "2024-04-17T18:39:19Z",
+      "withdrawn_at": null,
+      "vulnerabilities": [
+        {
+          "package": {
+            "ecosystem": "npm",
+            "name": "lodash"
+          },
+          "severity": "high",
+          "vulnerable_version_range": "< 4.17.21",
+          "first_patched_version": {
+            "identifier": "4.17.21"
+          }
+        },
+        {
+          "package": {
+            "ecosystem": "npm",
+            "name": "lodash-es"
+          },
+          "severity": "high",
+          "vulnerable_version_range": "< 4.17.21",
+          "first_patched_version": {
+            "identifier": "4.17.21"
+          }
+        },
+        {
+          "package": {
+            "ecosystem": "npm",
+            "name": "lodash.template"
+          },
+          "severity": "high",
+          "vulnerable_version_range": "<= 4.5.0",
+          "first_patched_version": null
+        },
+        {
+          "package": {
+            "ecosystem": "npm",
+            "name": "lodash-template"
+          },
+          "severity": "high",
+          "vulnerable_version_range": "<= 1.0.0",
+          "first_patched_version": null
+        }
+      ],
+      "cvss": {
+        "vector_string": "CVSS:3.1/AV:N/AC:L/PR:H/UI:N/S:U/C:H/I:H/A:H",
+        "score": 7.2
+      },
+      "cvss_severities": {
+        "cvss_v3": {
+          "vector_string": "CVSS:3.1/AV:N/AC:L/PR:H/UI:N/S:U/C:H/I:H/A:H",
+          "score": 7.2
+        },
+        "cvss_v4": {
+          "vector_string": null,
+          "score": 0.0
+        }
+      },
+      "cwes": [
+        {
+          "cwe_id": "CWE-77",
+          "name": "Improper Neutralization of Special Elements used in a Command ('Command Injection')"
+        },
+        {
+          "cwe_id": "CWE-94",
+          "name": "Improper Control of Generation of Code ('Code Injection')"
+        }
+      ]
+    },
+    "security_vulnerability": {
+      "package": {
+        "ecosystem": "npm",
+        "name": "lodash"
+      },
+      "severity": "high",
+      "vulnerable_version_range": "< 4.17.21",
+      "first_patched_version": {
+        "identifier": "4.17.21"
+      }
+    },
+    "url": "https://api.github.com/repos/octocat/hello-world/dependabot/alerts/3",
+    "html_url": "https://github.com/octocat/hello-world/security/dependabot/3",
+    "created_at": "2024-10-07T11:59:33Z",
+    "updated_at": "2024-10-07T11:59:33Z",
+    "dismissed_at": null,
+    "dismissed_by": null,
+    "dismissed_reason": null,
+    "dismissed_comment": null,
+    "fixed_at": null,
+    "auto_dismissed_at": null
+  },
+  {
+    "number": 2,
+    "state": "open",
+    "dependency": {
+      "package": {
+        "ecosystem": "npm",
+        "name": "lodash"
+      },
+      "manifest_path": "javascript/package-lock.json",
+      "scope": "runtime"
+    },
+    "security_advisory": {
+      "ghsa_id": "GHSA-29mw-wpgm-hmr9",
+      "cve_id": "CVE-2020-28500",
+      "summary": "Regular Expression Denial of Service (ReDoS) in lodash",
+      "description": "All versions of package lodash prior to 4.17.21 are vulnerable to Regular Expression Denial of Service (ReDoS) via the `toNumber`, `trim` and `trimEnd` functions. \n\nSteps to reproduce (provided by reporter Liyuan Chen):\n```js\nvar lo = require('lodash');\n\nfunction build_blank(n) {\n    var ret = \"1\"\n    for (var i = 0; i < n; i++) {\n        ret += \" \"\n    }\n    return ret + \"1\";\n}\nvar s = build_blank(50000) var time0 = Date.now();\nlo.trim(s) \nvar time_cost0 = Date.now() - time0;\nconsole.log(\"time_cost0: \" + time_cost0);\nvar time1 = Date.now();\nlo.toNumber(s) var time_cost1 = Date.now() - time1;\nconsole.log(\"time_cost1: \" + time_cost1);\nvar time2 = Date.now();\nlo.trimEnd(s);\nvar time_cost2 = Date.now() - time2;\nconsole.log(\"time_cost2: \" + time_cost2);\n```",
+      "severity": "medium",
+      "identifiers": [
+        {
+          "value": "GHSA-29mw-wpgm-hmr9",
+          "type": "GHSA"
+        },
+        {
+          "value": "CVE-2020-28500",
+          "type": "CVE"
+        }
+      ],
+      "references": [
+        {
+          "url": "https://nvd.nist.gov/vuln/detail/CVE-2020-28500"
+        },
+        {
+          "url": "https://github.com/lodash/lodash/pull/5065"
+        },
+        {
+          "url": "https://github.com/lodash/lodash/pull/5065/commits/02906b8191d3c100c193fe6f7b27d1c40f200bb7"
+        },
+        {
+          "url": "https://github.com/lodash/lodash/blob/npm/trimEnd.js%23L8"
+        },
+        {
+          "url": "https://security.netapp.com/advisory/ntap-20210312-0006/"
+        },
+        {
+          "url": "https://snyk.io/vuln/SNYK-JS-LODASH-1018905"
+        },
+        {
+          "url": "https://snyk.io/vuln/SNYK-JAVA-ORGFUJIONWEBJARS-1074896"
+        },
+        {
+          "url": "https://snyk.io/vuln/SNYK-JAVA-ORGWEBJARS-1074894"
+        },
+        {
+          "url": "https://snyk.io/vuln/SNYK-JAVA-ORGWEBJARSBOWER-1074892"
+        },
+        {
+          "url": "https://snyk.io/vuln/SNYK-JAVA-ORGWEBJARSBOWERGITHUBLODASH-1074895"
+        },
+        {
+          "url": "https://snyk.io/vuln/SNYK-JAVA-ORGWEBJARSNPM-1074893"
+        },
+        {
+          "url": "https://www.oracle.com//security-alerts/cpujul2021.html"
+        },
+        {
+          "url": "https://www.oracle.com/security-alerts/cpuoct2021.html"
+        },
+        {
+          "url": "https://www.oracle.com/security-alerts/cpujan2022.html"
+        },
+        {
+          "url": "https://www.oracle.com/security-alerts/cpujul2022.html"
+        },
+        {
+          "url": "https://cert-portal.siemens.com/productcert/pdf/ssa-637483.pdf"
+        },
+        {
+          "url": "https://github.com/lodash/lodash/commit/c4847ebe7d14540bb28a8b932a9ce1b9ecbfee1a"
+        },
+        {
+          "url": "https://github.com/advisories/GHSA-29mw-wpgm-hmr9"
+        }
+      ],
+      "published_at": "2022-01-06T20:30:46Z",
+      "updated_at": "2023-11-01T23:21:12Z",
+      "withdrawn_at": null,
+      "vulnerabilities": [
+        {
+          "package": {
+            "ecosystem": "npm",
+            "name": "lodash"
+          },
+          "severity": "medium",
+          "vulnerable_version_range": "< 4.17.21",
+          "first_patched_version": {
+            "identifier": "4.17.21"
+          }
+        },
+        {
+          "package": {
+            "ecosystem": "npm",
+            "name": "lodash-es"
+          },
+          "severity": "medium",
+          "vulnerable_version_range": "< 4.17.21",
+          "first_patched_version": {
+            "identifier": "4.17.21"
+          }
+        },
+        {
+          "package": {
+            "ecosystem": "npm",
+            "name": "lodash.trimend"
+          },
+          "severity": "medium",
+          "vulnerable_version_range": "<= 4.5.1",
+          "first_patched_version": null
+        },
+        {
+          "package": {
+            "ecosystem": "npm",
+            "name": "lodash.trim"
+          },
+          "severity": "medium",
+          "vulnerable_version_range": "<= 4.5.1",
+          "first_patched_version": null
+        }
+      ],
+      "cvss": {
+        "vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L",
+        "score": 5.3
+      },
+      "cvss_severities": {
+        "cvss_v3": {
+          "vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L",
+          "score": 5.3
+        },
+        "cvss_v4": {
+          "vector_string": null,
+          "score": 0.0
+        }
+      },
+      "cwes": [
+        {
+          "cwe_id": "CWE-400",
+          "name": "Uncontrolled Resource Consumption"
+        },
+        {
+          "cwe_id": "CWE-1333",
+          "name": "Inefficient Regular Expression Complexity"
+        }
+      ]
+    },
+    "security_vulnerability": {
+      "package": {
+        "ecosystem": "npm",
+        "name": "lodash"
+      },
+      "severity": "medium",
+      "vulnerable_version_range": "< 4.17.21",
+      "first_patched_version": {
+        "identifier": "4.17.21"
+      }
+    },
+    "url": "https://api.github.com/repos/octocat/hello-world/dependabot/alerts/2",
+    "html_url": "https://github.com/octocat/hello-world/security/dependabot/2",
+    "created_at": "2024-10-07T11:59:32Z",
+    "updated_at": "2024-10-07T11:59:32Z",
+    "dismissed_at": null,
+    "dismissed_by": null,
+    "dismissed_reason": null,
+    "dismissed_comment": null,
+    "fixed_at": null,
+    "auto_dismissed_at": null
+  },
+  {
+    "number": 1,
+    "state": "open",
+    "dependency": {
+      "package": {
+        "ecosystem": "npm",
+        "name": "hot-formula-parser"
+      },
+      "manifest_path": "javascript/package-lock.json",
+      "scope": "runtime"
+    },
+    "security_advisory": {
+      "ghsa_id": "GHSA-rc77-xxq6-4mff",
+      "cve_id": "CVE-2020-6836",
+      "summary": "Command Injection in hot-formula-parser",
+      "description": "Versions of `hot-formula-parser` prior to 3.0.1 are vulnerable to Command Injection. The package fails to sanitize values passed to the  `parse` function and concatenates it in an `eval` call. If a value of the formula is supplied by user-controlled input it may allow attackers to run arbitrary commands in the server.  \nParsing the following formula creates a `test` file in the present directory:  \n`\"SUM([(function(){require('child_process').execSync('touch test')})(),2])\"`\n\n\n## Recommendation\n\nUpgrade to version 3.0.1 or later.",
+      "severity": "critical",
+      "identifiers": [
+        {
+          "value": "GHSA-rc77-xxq6-4mff",
+          "type": "GHSA"
+        },
+        {
+          "value": "CVE-2020-6836",
+          "type": "CVE"
+        }
+      ],
+      "references": [
+        {
+          "url": "https://nvd.nist.gov/vuln/detail/CVE-2020-6836"
+        },
+        {
+          "url": "https://github.com/handsontable/formula-parser/pull/58"
+        },
+        {
+          "url": "https://github.com/handsontable/formula-parser/commit/396b089738d4bf30eb570a4fe6a188affa95cd5e"
+        },
+        {
+          "url": "https://blog.truesec.com/2020/01/17/reverse-shell-through-a-node-js-math-parser/"
+        },
+        {
+          "url": "https://www.npmjs.com/advisories/1439"
+        },
+        {
+          "url": "https://github.com/advisories/GHSA-rc77-xxq6-4mff"
+        }
+      ],
+      "published_at": "2020-05-06T19:32:33Z",
+      "updated_at": "2023-01-09T05:02:15Z",
+      "withdrawn_at": null,
+      "vulnerabilities": [
+        {
+          "package": {
+            "ecosystem": "npm",
+            "name": "hot-formula-parser"
+          },
+          "severity": "critical",
+          "vulnerable_version_range": "< 3.0.1",
+          "first_patched_version": {
+            "identifier": "3.0.1"
+          }
+        }
+      ],
+      "cvss": {
+        "vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        "score": 9.8
+      },
+      "cvss_severities": {
+        "cvss_v3": {
+          "vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+          "score": 9.8
+        },
+        "cvss_v4": {
+          "vector_string": null,
+          "score": 0.0
+        }
+      },
+      "cwes": [
+        {
+          "cwe_id": "CWE-94",
+          "name": "Improper Control of Generation of Code ('Code Injection')"
+        }
+      ]
+    },
+    "security_vulnerability": {
+      "package": {
+        "ecosystem": "npm",
+        "name": "hot-formula-parser"
+      },
+      "severity": "critical",
+      "vulnerable_version_range": "< 3.0.1",
+      "first_patched_version": {
+        "identifier": "3.0.1"
+      }
+    },
+    "url": "https://api.github.com/repos/octocat/hello-world/dependabot/alerts/1",
+    "html_url": "https://github.com/octocat/hello-world/security/dependabot/1",
+    "created_at": "2024-10-07T11:59:32Z",
+    "updated_at": "2024-10-07T11:59:32Z",
+    "dismissed_at": null,
+    "dismissed_by": null,
+    "dismissed_reason": null,
+    "dismissed_comment": null,
+    "fixed_at": null,
+    "auto_dismissed_at": null
+  }
+]

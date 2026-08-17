@@ -1,0 +1,3 @@
+[submodule "ext/qoi"]
+	path = ext/qoi
+	url = https://github.com/phoboslab/qoi.git

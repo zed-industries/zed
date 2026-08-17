@@ -1,0 +1,53 @@
+stages:
+  - test
+
+
+.setup_template: &setup_template
+  stage: test
+  image: debian:stable-slim
+  before_script:
+    - export CARGO_HOME="$CI_PROJECT_DIR/.cargo"
+    - export PATH="$PATH:$CARGO_HOME/bin"
+    - export RUST_BACKTRACE=full
+    - apt-get update > /dev/null
+    - apt-get install -y curl build-essential > /dev/null
+    - curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain $RUST_VERSION
+    - rustup --version
+    - rustc --version
+    - cargo --version
+
+.test_all_template: &test_all_template
+  <<: *setup_template
+  script:
+    - cargo test --all
+
+
+test-stable:
+  <<: *test_all_template
+  variables:
+    RUST_VERSION: stable
+
+test-beta:
+  <<: *test_all_template
+  variables:
+    RUST_VERSION: beta
+
+test-nightly:
+  <<: *test_all_template
+  variables:
+    RUST_VERSION: nightly
+
+
+test-1.31.0:
+  <<: *setup_template
+  script:
+    - cargo test --tests # skip doctests
+  variables:
+    RUST_VERSION: 1.31.0
+
+test-fmt:
+  <<: *setup_template
+  script:
+    - cargo fmt --all -- --check
+  variables:
+    RUST_VERSION: stable

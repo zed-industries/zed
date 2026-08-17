@@ -1,0 +1,55 @@
+version: 2
+
+jobs:
+  build:
+    docker:
+      - image: cimg/rust:1.65.0
+    steps:
+      - checkout
+      - run:
+          name: Setup Rust
+          command: |
+            rustup toolchain uninstall nightly
+            rustup toolchain install nightly -c miri rust-src rustfmt
+      - run:
+          name: Version information
+          command: |
+            rustc --version
+            cargo --version
+            rustc +nightly --version
+            cargo +nightly --version
+            rustup --version
+      - run:
+          name: Calculate dependencies
+          command: cargo generate-lockfile
+      - restore_cache:
+          keys:
+            - cargo-cache-{{ arch }}-{{ checksum "Cargo.lock" }}
+      - run:
+          name: Check Formatting
+          command: |
+            rustfmt --version
+            cargo fmt --all -- --check --color=auto
+      - run:
+          name: Build all targets
+          command: cargo build --all --all-targets
+      - run:
+          name: Run all tests
+          command: cargo test --all --all-features
+      - run:
+          name: Run all tests under miri
+          command: |
+            cargo +nightly miri test --all-features
+      - run:
+          name: Run all tests under sanitizers
+          command: |
+            RUSTFLAGS="-Z sanitizer=address" cargo +nightly -Z build-std test --target x86_64-unknown-linux-gnu --all-features
+            RUSTFLAGS="-Z sanitizer=leak" cargo +nightly test -Z build-std --target x86_64-unknown-linux-gnu --all-features
+            RUSTFLAGS="-Z sanitizer=memory" cargo +nightly test -Z build-std --target x86_64-unknown-linux-gnu --all-features
+      - save_cache:
+          paths:
+            - /usr/local/cargo/registry
+            - target/debug/.fingerprint
+            - target/debug/build
+            - target/debug/deps
+          key: cargo-cache-{{ arch }}-{{ checksum "Cargo.lock" }}

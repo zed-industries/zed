@@ -1,0 +1,15 @@
+---
+- name: Invalid scalar after sequence
+  from: '@perlpunk'
+  tags: error sequence scalar
+  fail: true
+  yaml: |
+    - item1
+    - item2
+    invalid
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       =VAL :item1
+       =VAL :item2

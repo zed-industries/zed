@@ -1,0 +1,32 @@
+---
+- name: Tags in Block Sequence
+  from: NimYAML tests
+  tags: tag sequence
+  yaml: |2
+     - !!str a
+     - b
+     - !!int 42
+     - d
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       =VAL <tag:yaml.org,2002:str> :a
+       =VAL :b
+       =VAL <tag:yaml.org,2002:int> :42
+       =VAL :d
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      "a",
+      "b",
+      42,
+      "d"
+    ]
+  dump: |
+    - !!str a
+    - b
+    - !!int 42
+    - d

@@ -1,0 +1,114 @@
+package wasmtime:test;
+
+world test{
+    @unstable(feature = active)
+    include wasi:unstable/imports@0.2.3; 
+    include wasi:foo/imports@0.2.3;
+    include wasi:someother/imports@0.2.3;
+}
+
+world test-ordered {
+    include wasi:someother/imports@0.2.3;
+    include wasi:foo/imports@0.2.3;
+    @unstable(feature = active)
+    include wasi:unstable/imports@0.2.3; 
+}
+
+world test-no-stability {
+    include wasi:someother/imports@0.2.3;
+    include wasi:foo/imports@0.2.3;
+    include wasi:unstable/imports@0.2.3; 
+}
+
+world test-only-stable {
+    include wasi:foo/imports@0.2.3;
+}
+
+world test-only-stable-with-feature {
+    @unstable(feature = active)
+    include wasi:foo/imports@0.2.3;
+}
+
+// in test this results in world with nothing
+world test-only-stable-with-in-active-feature {
+    @unstable(feature = in-active)
+    include wasi:foo/imports@0.2.3;
+}
+
+package wasi:unstable@0.2.3 {
+    @unstable(feature = active)
+    world imports {
+        @unstable(feature = active)
+        use wasi:dep2/stable@0.2.3.{stable-resource};
+        @unstable(feature = active)
+        use wasi:dep-unversioned/unversioned.{unversioned-resource};
+        @unstable(feature = active)
+        use wasi:dep-unstable/unstable.{unstable-resource};
+    }
+}
+
+package wasi:someother@0.2.3 {
+    @since(version = 0.2.0)
+    world imports {
+        import someother;
+    }
+
+    @since(version = 0.2.0)
+    interface someother {
+        @since(version = 0.2.0)
+        resource someother-resource {
+        }
+    }
+}
+
+
+
+package wasi:foo@0.2.3 {
+    @since(version = 0.2.0)
+    world imports {
+        @since(version = 0.2.0)
+        include wasi:dep2/imports@0.2.3;
+        include wasi:dep-unversioned/imports;
+        include wasi:dep-unstable/imports;
+    }
+}
+
+package wasi:dep2@0.2.3 {
+    @since(version = 0.2.0)
+    world imports {
+        @since(version = 0.2.0)
+        import stable;
+    }
+    @since(version = 0.2.0)
+    interface stable {
+        resource stable-resource {
+        }
+    }
+}
+
+package wasi:dep-unversioned{
+    world imports {
+        import unversioned;
+    }
+    interface unversioned {
+        resource unversioned-resource {
+
+        }
+    }
+}
+
+package wasi:dep-unstable{
+    @unstable(feature = active)
+    world imports {
+        @unstable(feature = active)
+        import unstable;
+    }
+    @unstable(feature = active)
+    interface unstable {
+        @unstable(feature = active)
+        resource unstable-resource {
+
+        }
+    }
+}
+

@@ -1,0 +1,2 @@
+[workspace]
+pr_labels = ["release"]

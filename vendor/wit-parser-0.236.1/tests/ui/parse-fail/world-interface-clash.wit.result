@@ -1,0 +1,5 @@
+duplicate item named `foo`
+     --> tests/ui/parse-fail/world-interface-clash.wit:3:7
+      |
+    3 | world foo {}
+      |       ^--

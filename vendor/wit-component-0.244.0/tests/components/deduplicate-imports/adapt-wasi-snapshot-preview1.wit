@@ -1,0 +1,10 @@
+/// This is the interface imported by the `adapt-*.wat` file which is used
+/// to implement the `wasi_snapshot_preview1` interface.
+
+interface my-wasi {
+  proc-exit: func(code: u32);
+}
+
+world adapt-wasi-snapshot-preview1 {
+  import my-wasi;
+}

@@ -1,0 +1,7 @@
+error[E0204]: the trait `std::marker::Copy` cannot be implemented for this type
+ --> tests/ui/derive_noncopy.rs:4:12
+  |
+4 |     struct TryCopy {
+  |            ^^^^^^^
+5 |         other: Other,
+  |         ------------ this field does not implement `std::marker::Copy`

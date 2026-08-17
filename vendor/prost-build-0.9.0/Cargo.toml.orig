@@ -1,0 +1,33 @@
+[package]
+name = "prost-build"
+version = "0.9.0"
+authors = [
+    "Dan Burkert <dan@danburkert.com>",
+    "Tokio Contributors <team@tokio.rs>",
+]
+license = "Apache-2.0"
+repository = "https://github.com/tokio-rs/prost"
+documentation = "https://docs.rs/prost-build"
+readme = "README.md"
+description = "A Protocol Buffers implementation for the Rust Language."
+edition = "2018"
+
+[dependencies]
+bytes = { version = "1", default-features = false }
+heck = "0.3"
+itertools = "0.10"
+log = "0.4"
+multimap = { version = "0.8", default-features = false }
+petgraph = { version = "0.6", default-features = false }
+prost = { version = "0.9.0", path = "..", default-features = false }
+prost-types = { version = "0.9.0", path = "../prost-types", default-features = false }
+tempfile = "3"
+lazy_static = "1.4.0"
+regex = "1.5.4"
+
+[build-dependencies]
+which = { version = "4", default-features = false }
+
+[dev-dependencies]
+env_logger = { version = "0.8", default-features = false }
+

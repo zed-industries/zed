@@ -1,0 +1,25 @@
+package foo:comments;
+
+// hello
+// world
+// why, yes
+// this is a comment
+/* this too */ /* is a comment */
+/* this /* is /* a */ nested */ comment */
+
+interface foo {
+  type x = u32;
+
+  type /* foo */ bar /* baz */ = //
+  stream < //
+  //
+  //
+
+
+
+
+  x
+
+  >;
+
+}

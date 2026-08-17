@@ -1,0 +1,2527 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="API Reference Documentation for FreeType-2.13.2">
+      
+      
+      
+        <meta name="author" content="FreeType Contributors">
+      
+      
+      <link rel="icon" href="images/favico.ico">
+      <meta name="generator" content="mkdocs-1.4.3, mkdocs-material-7.1.9">
+    
+    
+      
+        <title>Cache Sub-System - FreeType-2.13.2 API Reference</title>
+      
+    
+    
+      <link rel="stylesheet" href="assets/stylesheets/main.ca7ac06f.min.css">
+      
+        
+        <link rel="stylesheet" href="assets/stylesheets/palette.f1a3b89f.min.css">
+        
+          
+          
+          <meta name="theme-color" content="#4cae4f">
+        
+      
+    
+    
+    
+      
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Noto+Serif:300,400,400i,700%7CRoboto+Mono&display=fallback">
+        <style>:root{--md-text-font-family:"Noto Serif";--md-code-font-family:"Roboto Mono"}</style>
+      
+    
+    
+    
+      <link rel="stylesheet" href="stylesheets/extra.css">
+    
+    
+      
+
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <script>function __prefix(e){return new URL(".",location).pathname+"."+e}function __get(e,t=localStorage){return JSON.parse(t.getItem(__prefix(e)))}</script>
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#cache-sub-system" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-header__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            FreeType-2.13.2 API Reference
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Cache Sub-System
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+      </label>
+      
+<div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" data-md-state="active" required>
+      <label class="md-search__icon md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+      </label>
+      <button type="reset" class="md-search__icon md-icon" aria-label="Clear" tabindex="-1">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
+      </button>
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+  </nav>
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-nav__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    FreeType-2.13.2 API Reference
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="index.html" class="md-nav__link">
+        TOC
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-index.html" class="md-nav__link">
+        Index
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_3" type="checkbox" id="__nav_3" >
+      
+      <label class="md-nav__link" for="__nav_3">
+        General Remarks
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="General Remarks" data-md-level="1">
+        <label class="md-nav__title" for="__nav_3">
+          <span class="md-nav__icon md-icon"></span>
+          General Remarks
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-preamble.html" class="md-nav__link">
+        Preamble
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_inclusion.html" class="md-nav__link">
+        FreeType's header inclusion scheme
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-user_allocation.html" class="md-nav__link">
+        User allocation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_4" type="checkbox" id="__nav_4" >
+      
+      <label class="md-nav__link" for="__nav_4">
+        Core API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Core API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_4">
+          <span class="md-nav__icon md-icon"></span>
+          Core API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-basic_types.html" class="md-nav__link">
+        Basic Data Types
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-library_setup.html" class="md-nav__link">
+        Library Setup
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-face_creation.html" class="md-nav__link">
+        Face Creation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_testing_macros.html" class="md-nav__link">
+        Font Testing Macros
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizing_and_scaling.html" class="md-nav__link">
+        Sizing and Scaling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_retrieval.html" class="md-nav__link">
+        Glyph Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-character_mapping.html" class="md-nav__link">
+        Character Mapping
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-information_retrieval.html" class="md-nav__link">
+        Information Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-other_api_data.html" class="md-nav__link">
+        Other API Data
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_5" type="checkbox" id="__nav_5" >
+      
+      <label class="md-nav__link" for="__nav_5">
+        Extended API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Extended API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_5">
+          <span class="md-nav__icon md-icon"></span>
+          Extended API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_variants.html" class="md-nav__link">
+        Unicode Variation Sequences
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-color_management.html" class="md-nav__link">
+        Glyph Color Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-layer_management.html" class="md-nav__link">
+        Glyph Layer Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_management.html" class="md-nav__link">
+        Glyph Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-mac_specific.html" class="md-nav__link">
+        Mac Specific Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizes_management.html" class="md-nav__link">
+        Size Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_file_macros.html" class="md-nav__link">
+        Header File Macros
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_6" type="checkbox" id="__nav_6" >
+      
+      <label class="md-nav__link" for="__nav_6">
+        Format-Specific API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Format-Specific API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_6">
+          <span class="md-nav__icon md-icon"></span>
+          Format-Specific API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-multiple_masters.html" class="md-nav__link">
+        Multiple Masters
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_tables.html" class="md-nav__link">
+        TrueType Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-type1_tables.html" class="md-nav__link">
+        Type 1 Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sfnt_names.html" class="md-nav__link">
+        SFNT Names
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bdf_fonts.html" class="md-nav__link">
+        BDF and PCF Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cid_fonts.html" class="md-nav__link">
+        CID Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pfr_fonts.html" class="md-nav__link">
+        PFR Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-winfnt_fonts.html" class="md-nav__link">
+        Window FNT Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-svg_fonts.html" class="md-nav__link">
+        OpenType SVG Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_formats.html" class="md-nav__link">
+        Font Formats
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gasp_table.html" class="md-nav__link">
+        Gasp Table
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_7" type="checkbox" id="__nav_7" >
+      
+      <label class="md-nav__link" for="__nav_7">
+        Controlling FreeType Modules
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Controlling FreeType Modules" data-md-level="1">
+        <label class="md-nav__title" for="__nav_7">
+          <span class="md-nav__icon md-icon"></span>
+          Controlling FreeType Modules
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-auto_hinter.html" class="md-nav__link">
+        The auto-hinter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cff_driver.html" class="md-nav__link">
+        The CFF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-t1_cid_driver.html" class="md-nav__link">
+        The Type 1 and CID drivers
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-tt_driver.html" class="md-nav__link">
+        The TrueType driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pcf_driver.html" class="md-nav__link">
+        The PCF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_svg_driver.html" class="md-nav__link">
+        The SVG driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-properties.html" class="md-nav__link">
+        Driver properties
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-parameter_tags.html" class="md-nav__link">
+        Parameter Tags
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lcd_rendering.html" class="md-nav__link">
+        Subpixel Rendering
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+    
+  
+  
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_8" type="checkbox" id="__nav_8" checked>
+      
+      <label class="md-nav__link" for="__nav_8">
+        Cache Sub-System
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Cache Sub-System" data-md-level="1">
+        <label class="md-nav__title" for="__nav_8">
+          <span class="md-nav__icon md-icon"></span>
+          Cache Sub-System
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+    
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" data-md-toggle="toc" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          Cache Sub-System
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="ft2-cache_subsystem.html" class="md-nav__link md-nav__link--active">
+        Cache Sub-System
+      </a>
+      
+        
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_manager" class="md-nav__link">
+    FTC_Manager
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_faceid" class="md-nav__link">
+    FTC_FaceID
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_face_requester" class="md-nav__link">
+    FTC_Face_Requester
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_manager_new" class="md-nav__link">
+    FTC_Manager_New
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_manager_reset" class="md-nav__link">
+    FTC_Manager_Reset
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_manager_done" class="md-nav__link">
+    FTC_Manager_Done
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_manager_lookupface" class="md-nav__link">
+    FTC_Manager_LookupFace
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_manager_lookupsize" class="md-nav__link">
+    FTC_Manager_LookupSize
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_manager_removefaceid" class="md-nav__link">
+    FTC_Manager_RemoveFaceID
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_node" class="md-nav__link">
+    FTC_Node
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_node_unref" class="md-nav__link">
+    FTC_Node_Unref
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_imagecache" class="md-nav__link">
+    FTC_ImageCache
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_imagecache_new" class="md-nav__link">
+    FTC_ImageCache_New
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_imagecache_lookup" class="md-nav__link">
+    FTC_ImageCache_Lookup
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_sbit" class="md-nav__link">
+    FTC_SBit
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_sbitcache" class="md-nav__link">
+    FTC_SBitCache
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_sbitcache_new" class="md-nav__link">
+    FTC_SBitCache_New
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_sbitcache_lookup" class="md-nav__link">
+    FTC_SBitCache_Lookup
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_cmapcache" class="md-nav__link">
+    FTC_CMapCache
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_cmapcache_new" class="md-nav__link">
+    FTC_CMapCache_New
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_cmapcache_lookup" class="md-nav__link">
+    FTC_CMapCache_Lookup
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_scalerrec" class="md-nav__link">
+    FTC_ScalerRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_scaler" class="md-nav__link">
+    FTC_Scaler
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_imagetyperec" class="md-nav__link">
+    FTC_ImageTypeRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_imagetype" class="md-nav__link">
+    FTC_ImageType
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_imagecache_lookupscaler" class="md-nav__link">
+    FTC_ImageCache_LookupScaler
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_sbitrec" class="md-nav__link">
+    FTC_SBitRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_sbitcache_lookupscaler" class="md-nav__link">
+    FTC_SBitCache_LookupScaler
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_9" type="checkbox" id="__nav_9" >
+      
+      <label class="md-nav__link" for="__nav_9">
+        Support API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Support API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_9">
+          <span class="md-nav__icon md-icon"></span>
+          Support API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-computations.html" class="md-nav__link">
+        Computations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-list_processing.html" class="md-nav__link">
+        List Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-outline_processing.html" class="md-nav__link">
+        Outline Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-quick_advance.html" class="md-nav__link">
+        Quick retrieval of advance values
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bitmap_handling.html" class="md-nav__link">
+        Bitmap Handling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-raster.html" class="md-nav__link">
+        Scanline Converter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_stroker.html" class="md-nav__link">
+        Glyph Stroker
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-system_interface.html" class="md-nav__link">
+        System Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-module_management.html" class="md-nav__link">
+        Module Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gzip.html" class="md-nav__link">
+        GZIP Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lzw.html" class="md-nav__link">
+        LZW Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bzip2.html" class="md-nav__link">
+        BZIP2 Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-debugging_apis.html" class="md-nav__link">
+        External Debugging APIs
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_10" type="checkbox" id="__nav_10" >
+      
+      <label class="md-nav__link" for="__nav_10">
+        Error Codes
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Error Codes" data-md-level="1">
+        <label class="md-nav__title" for="__nav_10">
+          <span class="md-nav__icon md-icon"></span>
+          Error Codes
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_enumerations.html" class="md-nav__link">
+        Error Enumerations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_code_values.html" class="md-nav__link">
+        Error Code Values
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_11" type="checkbox" id="__nav_11" >
+      
+      <label class="md-nav__link" for="__nav_11">
+        Miscellaneous
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Miscellaneous" data-md-level="1">
+        <label class="md-nav__title" for="__nav_11">
+          <span class="md-nav__icon md-icon"></span>
+          Miscellaneous
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gx_validation.html" class="md-nav__link">
+        TrueTypeGX/AAT Validation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-incremental.html" class="md-nav__link">
+        Incremental Loading
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_engine.html" class="md-nav__link">
+        The TrueType Engine
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_validation.html" class="md-nav__link">
+        OpenType Validation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_manager" class="md-nav__link">
+    FTC_Manager
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_faceid" class="md-nav__link">
+    FTC_FaceID
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_face_requester" class="md-nav__link">
+    FTC_Face_Requester
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_manager_new" class="md-nav__link">
+    FTC_Manager_New
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_manager_reset" class="md-nav__link">
+    FTC_Manager_Reset
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_manager_done" class="md-nav__link">
+    FTC_Manager_Done
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_manager_lookupface" class="md-nav__link">
+    FTC_Manager_LookupFace
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_manager_lookupsize" class="md-nav__link">
+    FTC_Manager_LookupSize
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_manager_removefaceid" class="md-nav__link">
+    FTC_Manager_RemoveFaceID
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_node" class="md-nav__link">
+    FTC_Node
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_node_unref" class="md-nav__link">
+    FTC_Node_Unref
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_imagecache" class="md-nav__link">
+    FTC_ImageCache
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_imagecache_new" class="md-nav__link">
+    FTC_ImageCache_New
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_imagecache_lookup" class="md-nav__link">
+    FTC_ImageCache_Lookup
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_sbit" class="md-nav__link">
+    FTC_SBit
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_sbitcache" class="md-nav__link">
+    FTC_SBitCache
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_sbitcache_new" class="md-nav__link">
+    FTC_SBitCache_New
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_sbitcache_lookup" class="md-nav__link">
+    FTC_SBitCache_Lookup
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_cmapcache" class="md-nav__link">
+    FTC_CMapCache
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_cmapcache_new" class="md-nav__link">
+    FTC_CMapCache_New
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_cmapcache_lookup" class="md-nav__link">
+    FTC_CMapCache_Lookup
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_scalerrec" class="md-nav__link">
+    FTC_ScalerRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_scaler" class="md-nav__link">
+    FTC_Scaler
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_imagetyperec" class="md-nav__link">
+    FTC_ImageTypeRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_imagetype" class="md-nav__link">
+    FTC_ImageType
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_imagecache_lookupscaler" class="md-nav__link">
+    FTC_ImageCache_LookupScaler
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_sbitrec" class="md-nav__link">
+    FTC_SBitRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ftc_sbitcache_lookupscaler" class="md-nav__link">
+    FTC_SBitCache_LookupScaler
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          <div class="md-content" data-md-component="content">
+            <article class="md-content__inner md-typeset">
+              
+                
+                
+                <p><a href="https://www.freetype.org">FreeType</a> &raquo; <a href="../">Docs</a> &raquo; <a href="index.html#cache-sub-system">Cache Sub-System</a> &raquo; Cache Sub-System</p>
+<hr />
+<h1 id="cache-sub-system">Cache Sub-System<a class="headerlink" href="#cache-sub-system" title="Permanent link">&para;</a></h1>
+<h2 id="synopsis">Synopsis<a class="headerlink" href="#synopsis" title="Permanent link">&para;</a></h2>
+<p>This section describes the FreeType&nbsp;2 cache sub-system, which is used to limit the number of concurrently opened <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code> and <code><a href="ft2-sizing_and_scaling.html#ft_size">FT_Size</a></code> objects, as well as caching information like character maps and glyph images while limiting their maximum memory usage.</p>
+<p>Note that all types and functions begin with the <code>FTC_</code> prefix rather than the usual <code>FT_</code> prefix in the rest of FreeType.</p>
+<p>The cache is highly portable and, thus, doesn't know anything about the fonts installed on your system, or how to access them. Therefore, it requires the following.</p>
+<ul>
+<li>
+<p><code><a href="ft2-cache_subsystem.html#ftc_faceid">FTC_FaceID</a></code>, an arbitrary non-zero value that uniquely identifies available or installed font faces, has to be provided to the cache by the client. Note that the cache only stores and compares these values and doesn't try to interpret them in any way, but they have to be persistent on the client side.</p>
+</li>
+<li>
+<p><code><a href="ft2-cache_subsystem.html#ftc_face_requester">FTC_Face_Requester</a></code>, a method to convert an <code><a href="ft2-cache_subsystem.html#ftc_faceid">FTC_FaceID</a></code> into a new <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code> object when necessary, has to be provided to the cache by the client. The <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code> object is completely managed by the cache, including its termination through <code><a href="ft2-face_creation.html#ft_done_face">FT_Done_Face</a></code>. To monitor termination of face objects, the finalizer callback in the <code>generic</code> field of the <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code> object can be used, which might also be used to store the <code><a href="ft2-cache_subsystem.html#ftc_faceid">FTC_FaceID</a></code> of the face.</p>
+</li>
+</ul>
+<p>Clients are free to map face IDs to anything useful. The most simple usage is, for example, to associate them to a <code>{pathname,face_index}</code> pair that is then used by <code><a href="ft2-cache_subsystem.html#ftc_face_requester">FTC_Face_Requester</a></code> to call <code><a href="ft2-face_creation.html#ft_new_face">FT_New_Face</a></code>. However, more complex schemes are also possible.</p>
+<p>Note that for the cache to work correctly, the face ID values must be <strong>persistent</strong>, which means that the contents they point to should not change at runtime, or that their value should not become invalid. If this is unavoidable (e.g., when a font is uninstalled at runtime), you should call <code><a href="ft2-cache_subsystem.html#ftc_manager_removefaceid">FTC_Manager_RemoveFaceID</a></code> as soon as possible to let the cache get rid of any references to the old <code><a href="ft2-cache_subsystem.html#ftc_faceid">FTC_FaceID</a></code> it may keep internally. Failure to do so will lead to incorrect behaviour or even crashes in <code><a href="ft2-cache_subsystem.html#ftc_face_requester">FTC_Face_Requester</a></code>.</p>
+<p>To use the cache, start with calling <code><a href="ft2-cache_subsystem.html#ftc_manager_new">FTC_Manager_New</a></code> to create a new <code><a href="ft2-cache_subsystem.html#ftc_manager">FTC_Manager</a></code> object, which models a single cache instance. You can then look up <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code> and <code><a href="ft2-sizing_and_scaling.html#ft_size">FT_Size</a></code> objects with <code><a href="ft2-cache_subsystem.html#ftc_manager_lookupface">FTC_Manager_LookupFace</a></code> and <code><a href="ft2-cache_subsystem.html#ftc_manager_lookupsize">FTC_Manager_LookupSize</a></code>, respectively, and use them in any FreeType work stream. You can also cache other FreeType objects as follows.</p>
+<ul>
+<li>
+<p>If you want to use the charmap caching, call <code><a href="ft2-cache_subsystem.html#ftc_cmapcache_new">FTC_CMapCache_New</a></code>, then later use <code><a href="ft2-cache_subsystem.html#ftc_cmapcache_lookup">FTC_CMapCache_Lookup</a></code> to perform the equivalent of <code><a href="ft2-character_mapping.html#ft_get_char_index">FT_Get_Char_Index</a></code>, only much faster.</p>
+</li>
+<li>
+<p>If you want to use the <code><a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a></code> caching, call <code><a href="ft2-cache_subsystem.html#ftc_imagecache_new">FTC_ImageCache_New</a></code>, then later use <code><a href="ft2-cache_subsystem.html#ftc_imagecache_lookup">FTC_ImageCache_Lookup</a></code> to retrieve the corresponding <code><a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a></code> objects from the cache.</p>
+</li>
+<li>
+<p>If you need lots of small bitmaps, it is much more memory-efficient to call <code><a href="ft2-cache_subsystem.html#ftc_sbitcache_new">FTC_SBitCache_New</a></code> followed by <code><a href="ft2-cache_subsystem.html#ftc_sbitcache_lookup">FTC_SBitCache_Lookup</a></code>. This returns <code><a href="ft2-cache_subsystem.html#ftc_sbitrec">FTC_SBitRec</a></code> structures, which are used to store small bitmaps directly. (A small bitmap is one whose metrics and dimensions all fit into 8-bit integers).</p>
+</li>
+</ul>
+<h2 id="ftc_manager">FTC_Manager<a class="headerlink" href="#ftc_manager" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_CACHE_H (freetype/ftcache.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span> FTC_ManagerRec_*  <b>FTC_Manager</b>;
+</code></pre></div>
+
+<p>This object corresponds to one instance of the cache-subsystem. It is used to cache one or more <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code> objects, along with corresponding <code><a href="ft2-sizing_and_scaling.html#ft_size">FT_Size</a></code> objects.</p>
+<p>The manager intentionally limits the total number of opened <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code> and <code><a href="ft2-sizing_and_scaling.html#ft_size">FT_Size</a></code> objects to control memory usage. See the <code>max_faces</code> and <code>max_sizes</code> parameters of <code><a href="ft2-cache_subsystem.html#ftc_manager_new">FTC_Manager_New</a></code>.</p>
+<p>The manager is also used to cache &lsquo;nodes&rsquo; of various types while limiting their total memory usage.</p>
+<p>All limitations are enforced by keeping lists of managed objects in most-recently-used order, and flushing old nodes to make room for new ones.</p>
+<hr>
+
+<h2 id="ftc_faceid">FTC_FaceID<a class="headerlink" href="#ftc_faceid" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_CACHE_H (freetype/ftcache.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <a href="ft2-basic_types.html#ft_pointer">FT_Pointer</a>  <b>FTC_FaceID</b>;
+</code></pre></div>
+
+<p>An opaque pointer type that is used to identity face objects. The contents of such objects is application-dependent.</p>
+<p>These pointers are typically used to point to a user-defined structure containing a font file path, and face index.</p>
+<h4>note</h4>
+
+<p>Never use <code>NULL</code> as a valid <code><a href="ft2-cache_subsystem.html#ftc_faceid">FTC_FaceID</a></code>.</p>
+<p>Face IDs are passed by the client to the cache manager that calls, when needed, the <code><a href="ft2-cache_subsystem.html#ftc_face_requester">FTC_Face_Requester</a></code> to translate them into new <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code> objects.</p>
+<p>If the content of a given face ID changes at runtime, or if the value becomes invalid (e.g., when uninstalling a font), you should immediately call <code><a href="ft2-cache_subsystem.html#ftc_manager_removefaceid">FTC_Manager_RemoveFaceID</a></code> before any other cache function.</p>
+<p>Failure to do so will result in incorrect behaviour or even memory leaks and crashes.</p>
+<hr>
+
+<h2 id="ftc_face_requester">FTC_Face_Requester<a class="headerlink" href="#ftc_face_requester" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_CACHE_H (freetype/ftcache.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <a href="ft2-basic_types.html#ft_error">FT_Error</a>
+  (*<b>FTC_Face_Requester</b>)( <a href="ft2-cache_subsystem.html#ftc_faceid">FTC_FaceID</a>  face_id,
+                         <a href="ft2-library_setup.html#ft_library">FT_Library</a>  library,
+                         <a href="ft2-basic_types.html#ft_pointer">FT_Pointer</a>  req_data,
+                         <a href="ft2-face_creation.html#ft_face">FT_Face</a>*    aface );
+</code></pre></div>
+
+<p>A callback function provided by client applications. It is used by the cache manager to translate a given <code><a href="ft2-cache_subsystem.html#ftc_faceid">FTC_FaceID</a></code> into a new valid <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code> object, on demand.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="face_id">face_id</td><td class="desc">
+<p>The face ID to resolve.</p>
+</td></tr>
+<tr><td class="val" id="library">library</td><td class="desc">
+<p>A handle to a FreeType library object.</p>
+</td></tr>
+<tr><td class="val" id="req_data">req_data</td><td class="desc">
+<p>Application-provided request data (see note below).</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="aface">aface</td><td class="desc">
+<p>A new <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code> handle.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>The third parameter <code>req_data</code> is the same as the one passed by the client when <code><a href="ft2-cache_subsystem.html#ftc_manager_new">FTC_Manager_New</a></code> is called.</p>
+<p>The face requester should not perform funny things on the returned face object, like creating a new <code><a href="ft2-sizing_and_scaling.html#ft_size">FT_Size</a></code> for it, or setting a transformation through <code><a href="ft2-sizing_and_scaling.html#ft_set_transform">FT_Set_Transform</a></code>!</p>
+<hr>
+
+<h2 id="ftc_manager_new">FTC_Manager_New<a class="headerlink" href="#ftc_manager_new" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_CACHE_H (freetype/ftcache.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FTC_Manager_New</b>( <a href="ft2-library_setup.html#ft_library">FT_Library</a>          library,
+                   <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>             max_faces,
+                   <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>             max_sizes,
+                   <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>            max_bytes,
+                   <a href="ft2-cache_subsystem.html#ftc_face_requester">FTC_Face_Requester</a>  requester,
+                   <a href="ft2-basic_types.html#ft_pointer">FT_Pointer</a>          req_data,
+                   <a href="ft2-cache_subsystem.html#ftc_manager">FTC_Manager</a>        *amanager );
+</code></pre></div>
+
+<p>Create a new cache manager.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="library">library</td><td class="desc">
+<p>The parent FreeType library handle to use.</p>
+</td></tr>
+<tr><td class="val" id="max_faces">max_faces</td><td class="desc">
+<p>Maximum number of opened <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code> objects managed by this cache instance. Use&nbsp;0 for defaults.</p>
+</td></tr>
+<tr><td class="val" id="max_sizes">max_sizes</td><td class="desc">
+<p>Maximum number of opened <code><a href="ft2-sizing_and_scaling.html#ft_size">FT_Size</a></code> objects managed by this cache instance. Use&nbsp;0 for defaults.</p>
+</td></tr>
+<tr><td class="val" id="max_bytes">max_bytes</td><td class="desc">
+<p>Maximum number of bytes to use for cached data nodes. Use&nbsp;0 for defaults. Note that this value does not account for managed <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code> and <code><a href="ft2-sizing_and_scaling.html#ft_size">FT_Size</a></code> objects.</p>
+</td></tr>
+<tr><td class="val" id="requester">requester</td><td class="desc">
+<p>An application-provided callback used to translate face IDs into real <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code> objects.</p>
+</td></tr>
+<tr><td class="val" id="req_data">req_data</td><td class="desc">
+<p>A generic pointer that is passed to the requester each time it is called (see <code><a href="ft2-cache_subsystem.html#ftc_face_requester">FTC_Face_Requester</a></code>).</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="amanager">amanager</td><td class="desc">
+<p>A handle to a new manager object. 0&nbsp;in case of failure.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<hr>
+
+<h2 id="ftc_manager_reset">FTC_Manager_Reset<a class="headerlink" href="#ftc_manager_reset" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_CACHE_H (freetype/ftcache.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <span class="keyword">void</span> )
+  <b>FTC_Manager_Reset</b>( <a href="ft2-cache_subsystem.html#ftc_manager">FTC_Manager</a>  manager );
+</code></pre></div>
+
+<p>Empty a given cache manager. This simply gets rid of all the currently cached <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code> and <code><a href="ft2-sizing_and_scaling.html#ft_size">FT_Size</a></code> objects within the manager.</p>
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="manager">manager</td><td class="desc">
+<p>A handle to the manager.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ftc_manager_done">FTC_Manager_Done<a class="headerlink" href="#ftc_manager_done" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_CACHE_H (freetype/ftcache.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <span class="keyword">void</span> )
+  <b>FTC_Manager_Done</b>( <a href="ft2-cache_subsystem.html#ftc_manager">FTC_Manager</a>  manager );
+</code></pre></div>
+
+<p>Destroy a given manager after emptying it.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="manager">manager</td><td class="desc">
+<p>A handle to the target cache manager object.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ftc_manager_lookupface">FTC_Manager_LookupFace<a class="headerlink" href="#ftc_manager_lookupface" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_CACHE_H (freetype/ftcache.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FTC_Manager_LookupFace</b>( <a href="ft2-cache_subsystem.html#ftc_manager">FTC_Manager</a>  manager,
+                          <a href="ft2-cache_subsystem.html#ftc_faceid">FTC_FaceID</a>   face_id,
+                          <a href="ft2-face_creation.html#ft_face">FT_Face</a>     *aface );
+</code></pre></div>
+
+<p>Retrieve the <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code> object that corresponds to a given face ID through a cache manager.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="manager">manager</td><td class="desc">
+<p>A handle to the cache manager.</p>
+</td></tr>
+<tr><td class="val" id="face_id">face_id</td><td class="desc">
+<p>The ID of the face object.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="aface">aface</td><td class="desc">
+<p>A handle to the face object.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>The returned <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code> object is always owned by the manager. You should never try to discard it yourself.</p>
+<p>The <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code> object doesn't necessarily have a current size object (i.e., face-&gt;size can be&nbsp;0). If you need a specific &lsquo;font size&rsquo;, use <code><a href="ft2-cache_subsystem.html#ftc_manager_lookupsize">FTC_Manager_LookupSize</a></code> instead.</p>
+<p>Never change the face's transformation matrix (i.e., never call the <code><a href="ft2-sizing_and_scaling.html#ft_set_transform">FT_Set_Transform</a></code> function) on a returned face! If you need to transform glyphs, do it yourself after glyph loading.</p>
+<p>When you perform a lookup, out-of-memory errors are detected <em>within</em> the lookup and force incremental flushes of the cache until enough memory is released for the lookup to succeed.</p>
+<p>If a lookup fails with <code>FT_Err_Out_Of_Memory</code> the cache has already been completely flushed, and still no memory was available for the operation.</p>
+<hr>
+
+<h2 id="ftc_manager_lookupsize">FTC_Manager_LookupSize<a class="headerlink" href="#ftc_manager_lookupsize" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_CACHE_H (freetype/ftcache.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FTC_Manager_LookupSize</b>( <a href="ft2-cache_subsystem.html#ftc_manager">FTC_Manager</a>  manager,
+                          <a href="ft2-cache_subsystem.html#ftc_scaler">FTC_Scaler</a>   scaler,
+                          <a href="ft2-sizing_and_scaling.html#ft_size">FT_Size</a>     *asize );
+</code></pre></div>
+
+<p>Retrieve the <code><a href="ft2-sizing_and_scaling.html#ft_size">FT_Size</a></code> object that corresponds to a given <code><a href="ft2-cache_subsystem.html#ftc_scalerrec">FTC_ScalerRec</a></code> pointer through a cache manager.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="manager">manager</td><td class="desc">
+<p>A handle to the cache manager.</p>
+</td></tr>
+<tr><td class="val" id="scaler">scaler</td><td class="desc">
+<p>A scaler handle.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="asize">asize</td><td class="desc">
+<p>A handle to the size object.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>The returned <code><a href="ft2-sizing_and_scaling.html#ft_size">FT_Size</a></code> object is always owned by the manager. You should never try to discard it by yourself.</p>
+<p>You can access the parent <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code> object simply as <code>size-&gt;face</code> if you need it. Note that this object is also owned by the manager.</p>
+<h4>note</h4>
+
+<p>When you perform a lookup, out-of-memory errors are detected <em>within</em> the lookup and force incremental flushes of the cache until enough memory is released for the lookup to succeed.</p>
+<p>If a lookup fails with <code>FT_Err_Out_Of_Memory</code> the cache has already been completely flushed, and still no memory is available for the operation.</p>
+<hr>
+
+<h2 id="ftc_manager_removefaceid">FTC_Manager_RemoveFaceID<a class="headerlink" href="#ftc_manager_removefaceid" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_CACHE_H (freetype/ftcache.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <span class="keyword">void</span> )
+  <b>FTC_Manager_RemoveFaceID</b>( <a href="ft2-cache_subsystem.html#ftc_manager">FTC_Manager</a>  manager,
+                            <a href="ft2-cache_subsystem.html#ftc_faceid">FTC_FaceID</a>   face_id );
+</code></pre></div>
+
+<p>A special function used to indicate to the cache manager that a given <code><a href="ft2-cache_subsystem.html#ftc_faceid">FTC_FaceID</a></code> is no longer valid, either because its content changed, or because it was deallocated or uninstalled.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="manager">manager</td><td class="desc">
+<p>The cache manager handle.</p>
+</td></tr>
+<tr><td class="val" id="face_id">face_id</td><td class="desc">
+<p>The <code><a href="ft2-cache_subsystem.html#ftc_faceid">FTC_FaceID</a></code> to be removed.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>This function flushes all nodes from the cache corresponding to this <code>face_id</code>, with the exception of nodes with a non-null reference count.</p>
+<p>Such nodes are however modified internally so as to never appear in later lookups with the same <code>face_id</code> value, and to be immediately destroyed when released by all their users.</p>
+<hr>
+
+<h2 id="ftc_node">FTC_Node<a class="headerlink" href="#ftc_node" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_CACHE_H (freetype/ftcache.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span> FTC_NodeRec_*  <b>FTC_Node</b>;
+</code></pre></div>
+
+<p>An opaque handle to a cache node object. Each cache node is reference-counted. A node with a count of&nbsp;0 might be flushed out of a full cache whenever a lookup request is performed.</p>
+<p>If you look up nodes, you have the ability to &lsquo;acquire&rsquo; them, i.e., to increment their reference count. This will prevent the node from being flushed out of the cache until you explicitly &lsquo;release&rsquo; it (see <code><a href="ft2-cache_subsystem.html#ftc_node_unref">FTC_Node_Unref</a></code>).</p>
+<p>See also <code><a href="ft2-cache_subsystem.html#ftc_sbitcache_lookup">FTC_SBitCache_Lookup</a></code> and <code><a href="ft2-cache_subsystem.html#ftc_imagecache_lookup">FTC_ImageCache_Lookup</a></code>.</p>
+<hr>
+
+<h2 id="ftc_node_unref">FTC_Node_Unref<a class="headerlink" href="#ftc_node_unref" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_CACHE_H (freetype/ftcache.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <span class="keyword">void</span> )
+  <b>FTC_Node_Unref</b>( <a href="ft2-cache_subsystem.html#ftc_node">FTC_Node</a>     node,
+                  <a href="ft2-cache_subsystem.html#ftc_manager">FTC_Manager</a>  manager );
+</code></pre></div>
+
+<p>Decrement a cache node's internal reference count. When the count reaches 0, it is not destroyed but becomes eligible for subsequent cache flushes.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="node">node</td><td class="desc">
+<p>The cache node handle.</p>
+</td></tr>
+<tr><td class="val" id="manager">manager</td><td class="desc">
+<p>The cache manager handle.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ftc_imagecache">FTC_ImageCache<a class="headerlink" href="#ftc_imagecache" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_CACHE_H (freetype/ftcache.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span> FTC_ImageCacheRec_*  <b>FTC_ImageCache</b>;
+</code></pre></div>
+
+<p>A handle to a glyph image cache object. They are designed to hold many distinct glyph images while not exceeding a certain memory threshold.</p>
+<hr>
+
+<h2 id="ftc_imagecache_new">FTC_ImageCache_New<a class="headerlink" href="#ftc_imagecache_new" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_CACHE_H (freetype/ftcache.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FTC_ImageCache_New</b>( <a href="ft2-cache_subsystem.html#ftc_manager">FTC_Manager</a>      manager,
+                      <a href="ft2-cache_subsystem.html#ftc_imagecache">FTC_ImageCache</a>  *acache );
+</code></pre></div>
+
+<p>Create a new glyph image cache.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="manager">manager</td><td class="desc">
+<p>The parent manager for the image cache.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="acache">acache</td><td class="desc">
+<p>A handle to the new glyph image cache object.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<hr>
+
+<h2 id="ftc_imagecache_lookup">FTC_ImageCache_Lookup<a class="headerlink" href="#ftc_imagecache_lookup" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_CACHE_H (freetype/ftcache.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FTC_ImageCache_Lookup</b>( <a href="ft2-cache_subsystem.html#ftc_imagecache">FTC_ImageCache</a>  cache,
+                         <a href="ft2-cache_subsystem.html#ftc_imagetype">FTC_ImageType</a>   type,
+                         <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>         gindex,
+                         <a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a>       *aglyph,
+                         <a href="ft2-cache_subsystem.html#ftc_node">FTC_Node</a>       *anode );
+</code></pre></div>
+
+<p>Retrieve a given glyph image from a glyph image cache.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="cache">cache</td><td class="desc">
+<p>A handle to the source glyph image cache.</p>
+</td></tr>
+<tr><td class="val" id="type">type</td><td class="desc">
+<p>A pointer to a glyph image type descriptor.</p>
+</td></tr>
+<tr><td class="val" id="gindex">gindex</td><td class="desc">
+<p>The glyph index to retrieve.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="aglyph">aglyph</td><td class="desc">
+<p>The corresponding <code><a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a></code> object. 0&nbsp;in case of failure.</p>
+</td></tr>
+<tr><td class="val" id="anode">anode</td><td class="desc">
+<p>Used to return the address of the corresponding cache node after incrementing its reference count (see note below).</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>The returned glyph is owned and managed by the glyph image cache. Never try to transform or discard it manually! You can however create a copy with <code><a href="ft2-glyph_management.html#ft_glyph_copy">FT_Glyph_Copy</a></code> and modify the new one.</p>
+<p>If <code>anode</code> is <em>not</em> <code>NULL</code>, it receives the address of the cache node containing the glyph image, after increasing its reference count. This ensures that the node (as well as the <code><a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a></code>) will always be kept in the cache until you call <code><a href="ft2-cache_subsystem.html#ftc_node_unref">FTC_Node_Unref</a></code> to &lsquo;release&rsquo; it.</p>
+<p>If <code>anode</code> is <code>NULL</code>, the cache node is left unchanged, which means that the <code><a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a></code> could be flushed out of the cache on the next call to one of the caching sub-system APIs. Don't assume that it is persistent!</p>
+<hr>
+
+<h2 id="ftc_sbit">FTC_SBit<a class="headerlink" href="#ftc_sbit" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_CACHE_H (freetype/ftcache.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span> FTC_SBitRec_*  <b>FTC_SBit</b>;
+</code></pre></div>
+
+<p>A handle to a small bitmap descriptor. See the <code><a href="ft2-cache_subsystem.html#ftc_sbitrec">FTC_SBitRec</a></code> structure for details.</p>
+<hr>
+
+<h2 id="ftc_sbitcache">FTC_SBitCache<a class="headerlink" href="#ftc_sbitcache" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_CACHE_H (freetype/ftcache.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span> FTC_SBitCacheRec_*  <b>FTC_SBitCache</b>;
+</code></pre></div>
+
+<p>A handle to a small bitmap cache. These are special cache objects used to store small glyph bitmaps (and anti-aliased pixmaps) in a much more efficient way than the traditional glyph image cache implemented by <code><a href="ft2-cache_subsystem.html#ftc_imagecache">FTC_ImageCache</a></code>.</p>
+<hr>
+
+<h2 id="ftc_sbitcache_new">FTC_SBitCache_New<a class="headerlink" href="#ftc_sbitcache_new" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_CACHE_H (freetype/ftcache.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FTC_SBitCache_New</b>( <a href="ft2-cache_subsystem.html#ftc_manager">FTC_Manager</a>     manager,
+                     <a href="ft2-cache_subsystem.html#ftc_sbitcache">FTC_SBitCache</a>  *acache );
+</code></pre></div>
+
+<p>Create a new cache to store small glyph bitmaps.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="manager">manager</td><td class="desc">
+<p>A handle to the source cache manager.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="acache">acache</td><td class="desc">
+<p>A handle to the new sbit cache. <code>NULL</code> in case of error.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<hr>
+
+<h2 id="ftc_sbitcache_lookup">FTC_SBitCache_Lookup<a class="headerlink" href="#ftc_sbitcache_lookup" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_CACHE_H (freetype/ftcache.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FTC_SBitCache_Lookup</b>( <a href="ft2-cache_subsystem.html#ftc_sbitcache">FTC_SBitCache</a>    cache,
+                        <a href="ft2-cache_subsystem.html#ftc_imagetype">FTC_ImageType</a>    type,
+                        <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>          gindex,
+                        <a href="ft2-cache_subsystem.html#ftc_sbit">FTC_SBit</a>        *sbit,
+                        <a href="ft2-cache_subsystem.html#ftc_node">FTC_Node</a>        *anode );
+</code></pre></div>
+
+<p>Look up a given small glyph bitmap in a given sbit cache and &lsquo;lock&rsquo; it to prevent its flushing from the cache until needed.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="cache">cache</td><td class="desc">
+<p>A handle to the source sbit cache.</p>
+</td></tr>
+<tr><td class="val" id="type">type</td><td class="desc">
+<p>A pointer to the glyph image type descriptor.</p>
+</td></tr>
+<tr><td class="val" id="gindex">gindex</td><td class="desc">
+<p>The glyph index.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="sbit">sbit</td><td class="desc">
+<p>A handle to a small bitmap descriptor.</p>
+</td></tr>
+<tr><td class="val" id="anode">anode</td><td class="desc">
+<p>Used to return the address of the corresponding cache node after incrementing its reference count (see note below).</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>The small bitmap descriptor and its bit buffer are owned by the cache and should never be freed by the application. They might as well disappear from memory on the next cache lookup, so don't treat them as persistent data.</p>
+<p>The descriptor's <code>buffer</code> field is set to&nbsp;0 to indicate a missing glyph bitmap.</p>
+<p>If <code>anode</code> is <em>not</em> <code>NULL</code>, it receives the address of the cache node containing the bitmap, after increasing its reference count. This ensures that the node (as well as the image) will always be kept in the cache until you call <code><a href="ft2-cache_subsystem.html#ftc_node_unref">FTC_Node_Unref</a></code> to &lsquo;release&rsquo; it.</p>
+<p>If <code>anode</code> is <code>NULL</code>, the cache node is left unchanged, which means that the bitmap could be flushed out of the cache on the next call to one of the caching sub-system APIs. Don't assume that it is persistent!</p>
+<hr>
+
+<h2 id="ftc_cmapcache">FTC_CMapCache<a class="headerlink" href="#ftc_cmapcache" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_CACHE_H (freetype/ftcache.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span> FTC_CMapCacheRec_*  <b>FTC_CMapCache</b>;
+</code></pre></div>
+
+<p>An opaque handle used to model a charmap cache. This cache is to hold character codes -&gt; glyph indices mappings.</p>
+<hr>
+
+<h2 id="ftc_cmapcache_new">FTC_CMapCache_New<a class="headerlink" href="#ftc_cmapcache_new" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_CACHE_H (freetype/ftcache.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FTC_CMapCache_New</b>( <a href="ft2-cache_subsystem.html#ftc_manager">FTC_Manager</a>     manager,
+                     <a href="ft2-cache_subsystem.html#ftc_cmapcache">FTC_CMapCache</a>  *acache );
+</code></pre></div>
+
+<p>Create a new charmap cache.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="manager">manager</td><td class="desc">
+<p>A handle to the cache manager.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="acache">acache</td><td class="desc">
+<p>A new cache handle. <code>NULL</code> in case of error.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>Like all other caches, this one will be destroyed with the cache manager.</p>
+<hr>
+
+<h2 id="ftc_cmapcache_lookup">FTC_CMapCache_Lookup<a class="headerlink" href="#ftc_cmapcache_lookup" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_CACHE_H (freetype/ftcache.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_uint">FT_UInt</a> )
+  <b>FTC_CMapCache_Lookup</b>( <a href="ft2-cache_subsystem.html#ftc_cmapcache">FTC_CMapCache</a>  cache,
+                        <a href="ft2-cache_subsystem.html#ftc_faceid">FTC_FaceID</a>     face_id,
+                        <a href="ft2-basic_types.html#ft_int">FT_Int</a>         cmap_index,
+                        <a href="ft2-basic_types.html#ft_uint32">FT_UInt32</a>      char_code );
+</code></pre></div>
+
+<p>Translate a character code into a glyph index, using the charmap cache.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="cache">cache</td><td class="desc">
+<p>A charmap cache handle.</p>
+</td></tr>
+<tr><td class="val" id="face_id">face_id</td><td class="desc">
+<p>The source face ID.</p>
+</td></tr>
+<tr><td class="val" id="cmap_index">cmap_index</td><td class="desc">
+<p>The index of the charmap in the source face. Any negative value means to use the cache <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code>'s default charmap.</p>
+</td></tr>
+<tr><td class="val" id="char_code">char_code</td><td class="desc">
+<p>The character code (in the corresponding charmap).</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>Glyph index. 0&nbsp;means &lsquo;no glyph&rsquo;.</p>
+<hr>
+
+<h2 id="ftc_scalerrec">FTC_ScalerRec<a class="headerlink" href="#ftc_scalerrec" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_CACHE_H (freetype/ftcache.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FTC_ScalerRec_
+  {
+    <a href="ft2-cache_subsystem.html#ftc_faceid">FTC_FaceID</a>  face_id;
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>     width;
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>     height;
+    <a href="ft2-basic_types.html#ft_int">FT_Int</a>      pixel;
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>     x_res;
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>     y_res;
+
+  } <b>FTC_ScalerRec</b>;
+</code></pre></div>
+
+<p>A structure used to describe a given character size in either pixels or points to the cache manager. See <code><a href="ft2-cache_subsystem.html#ftc_manager_lookupsize">FTC_Manager_LookupSize</a></code>.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="face_id">face_id</td><td class="desc">
+<p>The source face ID.</p>
+</td></tr>
+<tr><td class="val" id="width">width</td><td class="desc">
+<p>The character width.</p>
+</td></tr>
+<tr><td class="val" id="height">height</td><td class="desc">
+<p>The character height.</p>
+</td></tr>
+<tr><td class="val" id="pixel">pixel</td><td class="desc">
+<p>A Boolean. If 1, the <code>width</code> and <code>height</code> fields are interpreted as integer pixel character sizes. Otherwise, they are expressed as 1/64 of points.</p>
+</td></tr>
+<tr><td class="val" id="x_res">x_res</td><td class="desc">
+<p>Only used when <code>pixel</code> is value&nbsp;0 to indicate the horizontal resolution in dpi.</p>
+</td></tr>
+<tr><td class="val" id="y_res">y_res</td><td class="desc">
+<p>Only used when <code>pixel</code> is value&nbsp;0 to indicate the vertical resolution in dpi.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>This type is mainly used to retrieve <code><a href="ft2-sizing_and_scaling.html#ft_size">FT_Size</a></code> objects through the cache manager.</p>
+<hr>
+
+<h2 id="ftc_scaler">FTC_Scaler<a class="headerlink" href="#ftc_scaler" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_CACHE_H (freetype/ftcache.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span> FTC_ScalerRec_*  <b>FTC_Scaler</b>;
+</code></pre></div>
+
+<p>A handle to an <code><a href="ft2-cache_subsystem.html#ftc_scalerrec">FTC_ScalerRec</a></code> structure.</p>
+<hr>
+
+<h2 id="ftc_imagetyperec">FTC_ImageTypeRec<a class="headerlink" href="#ftc_imagetyperec" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_CACHE_H (freetype/ftcache.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FTC_ImageTypeRec_
+  {
+    <a href="ft2-cache_subsystem.html#ftc_faceid">FTC_FaceID</a>  face_id;
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>     width;
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>     height;
+    <a href="ft2-basic_types.html#ft_int32">FT_Int32</a>    flags;
+
+  } <b>FTC_ImageTypeRec</b>;
+</code></pre></div>
+
+<p>A structure used to model the type of images in a glyph cache.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="face_id">face_id</td><td class="desc">
+<p>The face ID.</p>
+</td></tr>
+<tr><td class="val" id="width">width</td><td class="desc">
+<p>The width in pixels.</p>
+</td></tr>
+<tr><td class="val" id="height">height</td><td class="desc">
+<p>The height in pixels.</p>
+</td></tr>
+<tr><td class="val" id="flags">flags</td><td class="desc">
+<p>The load flags, as in <code><a href="ft2-glyph_retrieval.html#ft_load_glyph">FT_Load_Glyph</a></code>.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ftc_imagetype">FTC_ImageType<a class="headerlink" href="#ftc_imagetype" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_CACHE_H (freetype/ftcache.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span> FTC_ImageTypeRec_*  <b>FTC_ImageType</b>;
+</code></pre></div>
+
+<p>A handle to an <code><a href="ft2-cache_subsystem.html#ftc_imagetyperec">FTC_ImageTypeRec</a></code> structure.</p>
+<hr>
+
+<h2 id="ftc_imagecache_lookupscaler">FTC_ImageCache_LookupScaler<a class="headerlink" href="#ftc_imagecache_lookupscaler" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_CACHE_H (freetype/ftcache.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FTC_ImageCache_LookupScaler</b>( <a href="ft2-cache_subsystem.html#ftc_imagecache">FTC_ImageCache</a>  cache,
+                               <a href="ft2-cache_subsystem.html#ftc_scaler">FTC_Scaler</a>      scaler,
+                               <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>        load_flags,
+                               <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>         gindex,
+                               <a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a>       *aglyph,
+                               <a href="ft2-cache_subsystem.html#ftc_node">FTC_Node</a>       *anode );
+</code></pre></div>
+
+<p>A variant of <code><a href="ft2-cache_subsystem.html#ftc_imagecache_lookup">FTC_ImageCache_Lookup</a></code> that uses an <code><a href="ft2-cache_subsystem.html#ftc_scalerrec">FTC_ScalerRec</a></code> to specify the face ID and its size.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="cache">cache</td><td class="desc">
+<p>A handle to the source glyph image cache.</p>
+</td></tr>
+<tr><td class="val" id="scaler">scaler</td><td class="desc">
+<p>A pointer to a scaler descriptor.</p>
+</td></tr>
+<tr><td class="val" id="load_flags">load_flags</td><td class="desc">
+<p>The corresponding load flags.</p>
+</td></tr>
+<tr><td class="val" id="gindex">gindex</td><td class="desc">
+<p>The glyph index to retrieve.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="aglyph">aglyph</td><td class="desc">
+<p>The corresponding <code><a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a></code> object. 0&nbsp;in case of failure.</p>
+</td></tr>
+<tr><td class="val" id="anode">anode</td><td class="desc">
+<p>Used to return the address of the corresponding cache node after incrementing its reference count (see note below).</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>The returned glyph is owned and managed by the glyph image cache. Never try to transform or discard it manually! You can however create a copy with <code><a href="ft2-glyph_management.html#ft_glyph_copy">FT_Glyph_Copy</a></code> and modify the new one.</p>
+<p>If <code>anode</code> is <em>not</em> <code>NULL</code>, it receives the address of the cache node containing the glyph image, after increasing its reference count. This ensures that the node (as well as the <code><a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a></code>) will always be kept in the cache until you call <code><a href="ft2-cache_subsystem.html#ftc_node_unref">FTC_Node_Unref</a></code> to &lsquo;release&rsquo; it.</p>
+<p>If <code>anode</code> is <code>NULL</code>, the cache node is left unchanged, which means that the <code><a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a></code> could be flushed out of the cache on the next call to one of the caching sub-system APIs. Don't assume that it is persistent!</p>
+<p>Calls to <code><a href="ft2-sizing_and_scaling.html#ft_set_char_size">FT_Set_Char_Size</a></code> and friends have no effect on cached glyphs; you should always use the FreeType cache API instead.</p>
+<hr>
+
+<h2 id="ftc_sbitrec">FTC_SBitRec<a class="headerlink" href="#ftc_sbitrec" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_CACHE_H (freetype/ftcache.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FTC_SBitRec_
+  {
+    <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>   width;
+    <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>   height;
+    <a href="ft2-basic_types.html#ft_char">FT_Char</a>   left;
+    <a href="ft2-basic_types.html#ft_char">FT_Char</a>   top;
+
+    <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>   format;
+    <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>   max_grays;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>  pitch;
+    <a href="ft2-basic_types.html#ft_char">FT_Char</a>   xadvance;
+    <a href="ft2-basic_types.html#ft_char">FT_Char</a>   yadvance;
+
+    <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>*  buffer;
+
+  } <b>FTC_SBitRec</b>;
+</code></pre></div>
+
+<p>A very compact structure used to describe a small glyph bitmap.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="width">width</td><td class="desc">
+<p>The bitmap width in pixels.</p>
+</td></tr>
+<tr><td class="val" id="height">height</td><td class="desc">
+<p>The bitmap height in pixels.</p>
+</td></tr>
+<tr><td class="val" id="left">left</td><td class="desc">
+<p>The horizontal distance from the pen position to the left bitmap border (a.k.a. &lsquo;left side bearing&rsquo;, or &lsquo;lsb&rsquo;).</p>
+</td></tr>
+<tr><td class="val" id="top">top</td><td class="desc">
+<p>The vertical distance from the pen position (on the baseline) to the upper bitmap border (a.k.a. &lsquo;top side bearing&rsquo;). The distance is positive for upwards y&nbsp;coordinates.</p>
+</td></tr>
+<tr><td class="val" id="format">format</td><td class="desc">
+<p>The format of the glyph bitmap (monochrome or gray).</p>
+</td></tr>
+<tr><td class="val" id="max_grays">max_grays</td><td class="desc">
+<p>Maximum gray level value (in the range 1 to&nbsp;255).</p>
+</td></tr>
+<tr><td class="val" id="pitch">pitch</td><td class="desc">
+<p>The number of bytes per bitmap line. May be positive or negative.</p>
+</td></tr>
+<tr><td class="val" id="xadvance">xadvance</td><td class="desc">
+<p>The horizontal advance width in pixels.</p>
+</td></tr>
+<tr><td class="val" id="yadvance">yadvance</td><td class="desc">
+<p>The vertical advance height in pixels.</p>
+</td></tr>
+<tr><td class="val" id="buffer">buffer</td><td class="desc">
+<p>A pointer to the bitmap pixels.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ftc_sbitcache_lookupscaler">FTC_SBitCache_LookupScaler<a class="headerlink" href="#ftc_sbitcache_lookupscaler" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_CACHE_H (freetype/ftcache.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FTC_SBitCache_LookupScaler</b>( <a href="ft2-cache_subsystem.html#ftc_sbitcache">FTC_SBitCache</a>  cache,
+                              <a href="ft2-cache_subsystem.html#ftc_scaler">FTC_Scaler</a>     scaler,
+                              <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>       load_flags,
+                              <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>        gindex,
+                              <a href="ft2-cache_subsystem.html#ftc_sbit">FTC_SBit</a>      *sbit,
+                              <a href="ft2-cache_subsystem.html#ftc_node">FTC_Node</a>      *anode );
+</code></pre></div>
+
+<p>A variant of <code><a href="ft2-cache_subsystem.html#ftc_sbitcache_lookup">FTC_SBitCache_Lookup</a></code> that uses an <code><a href="ft2-cache_subsystem.html#ftc_scalerrec">FTC_ScalerRec</a></code> to specify the face ID and its size.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="cache">cache</td><td class="desc">
+<p>A handle to the source sbit cache.</p>
+</td></tr>
+<tr><td class="val" id="scaler">scaler</td><td class="desc">
+<p>A pointer to the scaler descriptor.</p>
+</td></tr>
+<tr><td class="val" id="load_flags">load_flags</td><td class="desc">
+<p>The corresponding load flags.</p>
+</td></tr>
+<tr><td class="val" id="gindex">gindex</td><td class="desc">
+<p>The glyph index.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="sbit">sbit</td><td class="desc">
+<p>A handle to a small bitmap descriptor.</p>
+</td></tr>
+<tr><td class="val" id="anode">anode</td><td class="desc">
+<p>Used to return the address of the corresponding cache node after incrementing its reference count (see note below).</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>The small bitmap descriptor and its bit buffer are owned by the cache and should never be freed by the application. They might as well disappear from memory on the next cache lookup, so don't treat them as persistent data.</p>
+<p>The descriptor's <code>buffer</code> field is set to&nbsp;0 to indicate a missing glyph bitmap.</p>
+<p>If <code>anode</code> is <em>not</em> <code>NULL</code>, it receives the address of the cache node containing the bitmap, after increasing its reference count. This ensures that the node (as well as the image) will always be kept in the cache until you call <code><a href="ft2-cache_subsystem.html#ftc_node_unref">FTC_Node_Unref</a></code> to &lsquo;release&rsquo; it.</p>
+<p>If <code>anode</code> is <code>NULL</code>, the cache node is left unchanged, which means that the bitmap could be flushed out of the cache on the next call to one of the caching sub-system APIs. Don't assume that it is persistent!</p>
+<hr>
+                
+              
+              
+                
+
+
+              
+            </article>
+          </div>
+        </div>
+        
+      </main>
+      
+        
+<footer class="md-footer">
+  
+    <nav class="md-footer__inner md-grid" aria-label="Footer">
+      
+        
+        <a href="ft2-lcd_rendering.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: Subpixel Rendering" rel="prev">
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+          </div>
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              Subpixel Rendering
+            </div>
+          </div>
+        </a>
+      
+      
+        
+        <a href="ft2-computations.html" class="md-footer__link md-footer__link--next" aria-label="Next: Computations" rel="next">
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              Computations
+            </div>
+          </div>
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11H4z"/></svg>
+          </div>
+        </a>
+      
+    </nav>
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-footer-copyright">
+        
+          <div class="md-footer-copyright__highlight">
+            Copyright 2023 <a href = "https://www.freetype.org/license.html">The FreeType Project</a>.
+          </div>
+        
+        Made with
+        <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+          Material for MkDocs
+        </a>
+        
+      </div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    <script id="__config" type="application/json">{"base": ".", "features": [], "search": "assets/javascripts/workers/search.477d984a.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.config.lang": "en", "search.config.pipeline": "trimmer, stopWordFilter", "search.config.separator": "[\\s\\-]+", "search.placeholder": "Search", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version.title": "Select version"}, "version": null}</script>
+    
+    
+      <script src="assets/javascripts/bundle.82b56eb2.min.js"></script>
+      
+        <script src="javascripts/extra.js"></script>
+      
+    
+  </body>
+</html>

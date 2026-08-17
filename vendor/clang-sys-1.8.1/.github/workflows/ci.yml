@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  test:
+    name: Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+        clang: [["14.0", "clang_14_0"]]
+        rust: ["1.60.0"]
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      # LLVM and Clang
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v2.0.3
+        with:
+          version: ${{ matrix.clang[0] }}
+          directory: ${{ runner.temp }}/llvm-${{ matrix.clang[0] }}
+      # Rust
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+      # Test
+      - name: Cargo Test (Dynamic)
+        run: cargo test --verbose --features ${{ matrix.clang[1] }} -- --nocapture
+      - name: Cargo Test (Runtime)
+        run: cargo test --verbose --features "${{ matrix.clang[1] }} runtime" -- --nocapture
+  test-bindgen:
+    name: Test (bindgen)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      # LLVM and Clang
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v2.0.3
+        with:
+          version: 14
+          directory: ${{ runner.temp }}/llvm
+      # Rust
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      # Test
+      - name: Cargo Run (bindgen-test)
+        run: cargo run --manifest-path bindgen-test/Cargo.toml

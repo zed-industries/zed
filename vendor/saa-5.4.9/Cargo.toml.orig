@@ -1,0 +1,37 @@
+[package]
+name = "saa"
+description = "Word-sized low-level synchronization primitives providing both asynchronous and synchronous interfaces."
+documentation = "https://docs.rs/saa"
+version = "5.4.9"
+authors = ["wvwwvwwv <wvwwvwwv@me.com>"]
+edition = "2024"
+rust-version = "1.85.0"
+readme = "README.md"
+repository = "https://codeberg.org/wvwwvwwv/synchronous-and-asynchronous"
+license = "Apache-2.0"
+categories = ["asynchronous", "concurrency", "data-structures"]
+keywords = ["async", "concurrency", "mutex", "synchronization"]
+
+[workspace]
+members = [".", "examples"]
+
+[dependencies]
+lock_api = { version = "0.4", optional = true }
+loom = { version = "0.7", optional = true }
+
+[features]
+lock_api = ["dep:lock_api"]
+loom = ["dep:loom"]
+
+[dev-dependencies]
+criterion = { version = "0.8", features = ["async_futures"] }
+futures = "0.3"
+tokio = { version = "1.48", features = ["full"] }
+
+[[bench]]
+name = "lock"
+harness = false
+
+[[bench]]
+name = "semaphore"
+harness = false

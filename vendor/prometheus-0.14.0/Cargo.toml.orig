@@ -1,0 +1,82 @@
+[package]
+authors = ["overvenus@gmail.com", "siddontang@gmail.com", "vistaswx@gmail.com"]
+description = "Prometheus instrumentation library for Rust applications."
+documentation = "https://docs.rs/prometheus"
+edition = "2018"
+homepage = "https://github.com/tikv/rust-prometheus"
+keywords = ["prometheus", "metrics"]
+license = "Apache-2.0"
+name = "prometheus"
+readme = "README.md"
+repository = "https://github.com/tikv/rust-prometheus"
+rust-version = "1.81"
+version = "0.14.0"
+
+[package.metadata.docs.rs]
+features = ["nightly"]
+
+[features]
+default = ["protobuf"]
+gen = ["protobuf-codegen"]
+nightly = ["libc"]
+process = ["libc", "procfs"]
+push = ["reqwest", "libc", "protobuf"]
+
+[dependencies]
+cfg-if = "^1.0"
+fnv = "^1.0"
+lazy_static = "^1.4"
+libc = { version = "^0.2", optional = true }
+parking_lot = "^0.12"
+protobuf = { version = "^3.7.2", optional = true }
+memchr = "^2.3"
+reqwest = { version = "^0.12", features = ["blocking"], optional = true }
+thiserror = "^2.0"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+procfs = { version = "^0.17", optional = true, default-features = false }
+
+[dev-dependencies]
+criterion = "0.5"
+getopts = "^0.2"
+hyper = { version = "^1.6", features = ["http1", "server"] }
+hyper-util = { version = "^0.1", features = ["http1", "server", "tokio"] }
+tokio = { version = "^1.0", features = ["macros", "net", "rt-multi-thread"] }
+
+[build-dependencies]
+protobuf-codegen = { version = "^3.7.2", optional = true }
+
+[workspace]
+members = ["static-metric"]
+
+[[bench]]
+name = "atomic"
+harness = false
+
+[[bench]]
+name = "counter"
+harness = false
+
+[[bench]]
+name = "desc"
+harness = false
+
+[[bench]]
+name = "gauge"
+harness = false
+
+[[bench]]
+name = "histogram"
+harness = false
+
+[[bench]]
+name = "text_encoder"
+harness = false
+
+[[example]]
+name = "example_push"
+required-features = ["push"]
+
+[[example]]
+name = "example_process_collector"
+required-features = ["process"]

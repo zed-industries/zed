@@ -1,0 +1,19 @@
+language: rust
+rust:
+  - 1.56.0
+  - stable
+  - beta
+  - nightly
+sudo: false
+script:
+  - cargo build --verbose
+  - ./ci/test_full.sh
+notifications:
+  email:
+    on_success: never
+branches:
+  only:
+    - master
+    - next
+    - staging
+    - trying

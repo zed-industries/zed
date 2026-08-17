@@ -1,0 +1,307 @@
+// Copyright 2023 LiveKit, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package livekit;
+option go_package = "github.com/livekit/protocol/livekit";
+option csharp_namespace = "LiveKit.Proto";
+option ruby_package = "LiveKit::Proto";
+
+import "google/protobuf/timestamp.proto";
+import "livekit_models.proto";
+import "livekit_egress.proto";
+import "livekit_ingress.proto";
+import "livekit_sip.proto";
+import "livekit_room.proto";
+
+enum StreamType {
+  UPSTREAM = 0;
+  DOWNSTREAM = 1;
+}
+
+message AnalyticsVideoLayer {
+  int32 layer = 1;
+  uint32 packets = 2;
+  uint64 bytes = 3;
+  uint32 frames = 4;
+}
+
+message AnalyticsStream {
+  uint32 ssrc = 1;
+  uint32 primary_packets = 2;
+  uint64 primary_bytes = 3;
+  uint32 retransmit_packets = 4;
+  uint64 retransmit_bytes = 5;
+  uint32 padding_packets = 6;
+  uint64 padding_bytes = 7;
+  uint32 packets_lost = 8;
+  uint32 frames = 9;
+  uint32 rtt = 10;
+  uint32 jitter = 11;
+  uint32 nacks = 12;
+  uint32 plis = 13;
+  uint32 firs = 14;
+  repeated AnalyticsVideoLayer video_layers = 15;
+  google.protobuf.Timestamp start_time = 17;
+  google.protobuf.Timestamp end_time = 18;
+  uint32 packets_out_of_order = 19;
+}
+
+message AnalyticsStat {
+  // unique id for this stat
+  string id = 14;
+  string analytics_key = 1;
+  StreamType kind = 2;
+  google.protobuf.Timestamp time_stamp = 3;
+  string node = 4;
+  string room_id = 5;
+  string room_name = 6;
+  string participant_id = 7;
+  string track_id = 8;
+  float score = 9; // average score
+  repeated AnalyticsStream streams = 10;
+  string mime = 11;
+  float min_score = 12;
+  float median_score = 13;
+
+  // NEXT_ID: 15
+}
+
+message AnalyticsStats {
+  repeated AnalyticsStat stats = 1;
+}
+
+enum AnalyticsEventType {
+  ROOM_CREATED = 0;
+  ROOM_ENDED = 1;
+  PARTICIPANT_JOINED = 2;
+  PARTICIPANT_LEFT = 3;
+  PARTICIPANT_CONNECTION_ABORTED = 45;
+  TRACK_PUBLISHED = 4;
+  TRACK_PUBLISH_REQUESTED = 20;
+  TRACK_UNPUBLISHED = 5;
+  TRACK_SUBSCRIBED = 6;
+  TRACK_SUBSCRIBE_REQUESTED = 21;
+  TRACK_SUBSCRIBE_FAILED = 25;
+  TRACK_UNSUBSCRIBED = 7;
+  TRACK_PUBLISHED_UPDATE = 10;
+  TRACK_MUTED = 23;
+  TRACK_UNMUTED = 24;
+  TRACK_PUBLISH_STATS = 26;
+  TRACK_SUBSCRIBE_STATS = 27;
+  PARTICIPANT_ACTIVE = 11;
+  PARTICIPANT_RESUMED = 22;
+  EGRESS_STARTED = 12;
+  EGRESS_ENDED = 13;
+  EGRESS_UPDATED = 28;
+  TRACK_MAX_SUBSCRIBED_VIDEO_QUALITY = 14;
+  RECONNECTED = 15;
+  INGRESS_CREATED = 18;
+  INGRESS_DELETED = 19;
+  INGRESS_STARTED = 16;
+  INGRESS_ENDED = 17;
+  INGRESS_UPDATED = 29;
+  SIP_INBOUND_TRUNK_CREATED = 30;
+  SIP_INBOUND_TRUNK_DELETED = 31;
+  SIP_OUTBOUND_TRUNK_CREATED = 32;
+  SIP_OUTBOUND_TRUNK_DELETED = 33;
+  SIP_DISPATCH_RULE_CREATED = 34;
+  SIP_DISPATCH_RULE_DELETED = 35;
+  SIP_PARTICIPANT_CREATED = 36;
+  SIP_CALL_INCOMING = 37;
+  SIP_CALL_STARTED = 38;
+  SIP_CALL_ENDED = 39;
+  SIP_TRANSFER_REQUESTED = 43;
+  SIP_TRANSFER_COMPLETE = 44;
+  SIP_CALL_UPDATE = 46;
+  REPORT = 40;
+  API_CALL = 41;
+  WEBHOOK = 42;
+
+  // NEXT_ID: 47
+}
+
+message AnalyticsClientMeta {
+  string region = 1;
+  string node = 2;
+  string client_addr = 3;
+  uint32 client_connect_time = 4;
+  // udp, tcp, turn
+  string connection_type = 5;
+  ReconnectReason reconnect_reason = 6;
+  optional string geo_hash = 7;
+  optional string country = 8;
+  optional uint32 isp_asn = 9;
+}
+
+message AnalyticsEvent {
+  // unique id for this event
+  string id = 25;
+  AnalyticsEventType type = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  string room_id = 3;
+  Room room = 4;
+  string participant_id = 5;
+  ParticipantInfo participant = 6;
+  string track_id = 7;
+  TrackInfo track = 8;
+  string analytics_key = 10;
+  ClientInfo client_info = 11;
+  AnalyticsClientMeta client_meta = 12;
+  string egress_id = 13;
+  string ingress_id = 19;
+  VideoQuality max_subscribed_video_quality = 14;
+  ParticipantInfo publisher = 15;
+  string mime = 16;
+  EgressInfo egress = 17;
+  IngressInfo ingress = 18;
+  string error = 20;
+  RTPStats rtp_stats = 21;
+  int32 video_layer = 22;
+  string node_id = 24;
+  string sip_call_id = 26;
+  SIPCallInfo sip_call = 27;
+  string sip_trunk_id = 28;
+  SIPInboundTrunkInfo sip_inbound_trunk = 29;
+  SIPOutboundTrunkInfo sip_outbound_trunk = 30;
+  string sip_dispatch_rule_id = 31;
+  SIPDispatchRuleInfo sip_dispatch_rule = 32;
+  SIPTransferInfo sip_transfer = 36;
+  ReportInfo report = 33;
+  APICallInfo api_call = 34;
+  WebhookInfo webhook = 35;
+
+  // NEXT_ID: 37
+}
+
+message AnalyticsEvents {
+  repeated AnalyticsEvent events = 1;
+}
+
+message AnalyticsRoomParticipant {
+  string id = 1;
+  string identity = 2;
+  string name = 3;
+  ParticipantInfo.State state = 4;
+  google.protobuf.Timestamp joined_at = 5;
+}
+
+message AnalyticsRoom {
+  string id = 1;
+  string name = 2;
+  string project_id = 5;
+  google.protobuf.Timestamp created_at = 3;
+  repeated AnalyticsRoomParticipant participants = 4;
+
+  // NEXT_ID: 6
+}
+
+message AnalyticsNodeRooms {
+  string node_id = 1;
+  uint64 sequence_number = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  repeated AnalyticsRoom rooms = 4;
+}
+
+message ReportInfo {
+  oneof message {
+    FeatureUsageInfo feature_usage = 1;
+  }
+}
+
+message TimeRange {
+  google.protobuf.Timestamp started_at = 1;
+  google.protobuf.Timestamp ended_at = 2;
+}
+
+message FeatureUsageInfo {
+  enum Feature {
+    KRISP_NOISE_CANCELLATION = 0;
+    KRISP_BACKGROUND_VOICE_CANCELLATION = 1;
+    AIC_AUDIO_ENHANCEMENT = 2;
+  }
+  Feature feature = 1;
+  string project_id = 2;
+  string room_name = 3;
+  string room_id = 4;
+  string participant_identity = 5;
+  string participant_id = 6;
+  string track_id = 7;
+  // time ranges during which the feature was enabled.
+  // for e. g., noise cancellation may not be applied when a media track is paused/muted,
+  // this allows reporting only periods during which a feature is active.
+  repeated TimeRange time_ranges = 8;
+
+  // Feature specific metadata included in the report
+  map<string, string> feature_info = 9;
+}
+
+message APICallRequest {
+  oneof message {
+    CreateRoomRequest create_room_request = 1;
+    ListRoomsRequest list_rooms_request = 2;
+    DeleteRoomRequest delete_room_request = 3;
+    ListParticipantsRequest list_participants_request = 4;
+    RoomParticipantIdentity room_participant_identity = 5;
+    MuteRoomTrackRequest mute_room_track_request = 6;
+    UpdateParticipantRequest update_participant_request = 7;
+    UpdateSubscriptionsRequest update_subscriptions_request = 8;
+    SendDataRequest send_data_request = 9;
+    UpdateRoomMetadataRequest  update_room_metadata_request = 10;
+  }
+}
+
+message APICallInfo {
+  string project_id = 1;
+  APICallRequest request = 2;
+  string service = 3;
+  string method = 4;
+  string node_id = 5;
+  int32 status = 6;
+  string twirp_error_code = 7;
+  string twirp_error_message = 8;
+  string room_name = 9;
+  string room_id = 10;
+  string participant_identity = 11;
+  string participant_id = 12;
+  string track_id = 13;
+  google.protobuf.Timestamp started_at = 14;
+  int64 duration_ns = 15;
+}
+
+message WebhookInfo {
+  string event_id = 1;
+  string event = 2;
+  string project_id = 3;
+  string room_name = 4;
+  string room_id = 5;
+  string participant_identity = 6;
+  string participant_id = 7;
+  string track_id = 8;
+  string egress_id = 9;
+  string ingress_id = 10;
+  google.protobuf.Timestamp created_at = 11;
+  google.protobuf.Timestamp queued_at = 12;
+  int64 queue_duration_ns = 13;
+  google.protobuf.Timestamp sent_at = 14;
+  int64 send_duration_ns = 15;
+  string url = 16;
+  int32 num_dropped = 17;
+  bool is_dropped = 18;
+  string service_status = 19;
+  int32 service_error_code = 20;
+  string service_error = 21;
+  string send_error = 22;
+}

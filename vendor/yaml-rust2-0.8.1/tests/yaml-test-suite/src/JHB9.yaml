@@ -1,0 +1,49 @@
+---
+- name: Spec Example 2.7. Two Documents in a Stream
+  from: http://www.yaml.org/spec/1.2/spec.html#id2760493
+  tags: spec header
+  yaml: |
+    # Ranking of 1998 home runs
+    ---
+    - Mark McGwire
+    - Sammy Sosa
+    - Ken Griffey
+
+    # Team ranking
+    ---
+    - Chicago Cubs
+    - St Louis Cardinals
+  tree: |
+    +STR
+     +DOC ---
+      +SEQ
+       =VAL :Mark McGwire
+       =VAL :Sammy Sosa
+       =VAL :Ken Griffey
+      -SEQ
+     -DOC
+     +DOC ---
+      +SEQ
+       =VAL :Chicago Cubs
+       =VAL :St Louis Cardinals
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      "Mark McGwire",
+      "Sammy Sosa",
+      "Ken Griffey"
+    ]
+    [
+      "Chicago Cubs",
+      "St Louis Cardinals"
+    ]
+  dump: |
+    ---
+    - Mark McGwire
+    - Sammy Sosa
+    - Ken Griffey
+    ---
+    - Chicago Cubs
+    - St Louis Cardinals

@@ -1,0 +1,64 @@
+[package]
+name = "system-interface"
+version = "0.27.3"
+description = "Extensions to the Rust standard library"
+authors = ["Dan Gohman <dev@sunfishcode.online>"]
+license = "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
+keywords = ["api", "network", "file"]
+categories = ["filesystem", "network-programming", "os"]
+repository = "https://github.com/bytecodealliance/system-interface"
+edition = "2021"
+exclude = ["/.github"]
+
+[dependencies]
+async-std = { version = "1.13.0", optional = true, features = ["io_safety"] }
+bitflags = "2.2.3"
+cap-std = { version = "3.0.0", optional = true }
+cap-async-std = { version = "3.0.0", optional = true }
+char-device = { version = "0.16.0", optional = true }
+os_pipe = { version = "1.0.0", features = ["io_safety"], optional = true }
+socketpair = { version = "0.19.0", optional = true }
+io-lifetimes = { version = "2.0.0", default-features = false }
+ssh2 = { version = "0.9.1", optional = true }
+#socket2 = { version = "0.4.0", optional = true }
+
+[target.'cfg(not(windows))'.dependencies]
+rustix = { version = "0.38.0", features = ["fs", "net"] }
+
+[target.'cfg(windows)'.dependencies]
+cap-std = "3.0.0"
+cap-fs-ext = "3.0.0"
+winx = "0.36.0"
+fd-lock = "4.0.0"
+
+[target.'cfg(windows)'.dependencies.windows-sys]
+version = ">=0.52, <=0.59"
+features = [
+    "Win32_Foundation",
+    "Win32_Networking_WinSock",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Pipes",
+]
+
+[dev-dependencies]
+cap-fs-ext = "3.0.0"
+cap-tempfile = "3.0.0"
+cap-std = "3.0.0"
+tempfile = "3.2.0"
+
+[features]
+default = []
+cap_std_impls = ["cap-std"]
+cap_async_std_impls = ["async-std", "cap-async-std", "io-lifetimes/async-std"]
+cap_std_impls_fs_utf8 = ["cap-std/fs_utf8"]
+cap_async_std_impls_fs_utf8 = ["async-std", "cap-async-std/fs_utf8"]
+use_os_pipe = ["os_pipe", "io-lifetimes/os_pipe"]
+#use_socket2 = ["socket2", "io-lifetimes/socket2"]
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = [
+    'cfg(racy_asserts)',
+    'cfg(unix_socket_peek)',
+    'cfg(feature, values("socket2"))',
+]

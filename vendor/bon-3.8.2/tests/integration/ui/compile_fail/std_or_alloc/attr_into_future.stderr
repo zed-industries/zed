@@ -1,0 +1,39 @@
+error[E0277]: `dyn Future<Output = u32>` cannot be sent between threads safely
+  --> tests/integration/ui/compile_fail/std_or_alloc/attr_into_future.rs:17:17
+   |
+17 |     assert_send(&Sut.sut().value(21).into_future());
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `dyn Future<Output = u32>` cannot be sent between threads safely
+   |
+   = help: the trait `Send` is not implemented for `dyn Future<Output = u32>`
+   = note: required for `Unique<dyn Future<Output = u32>>` to implement `Send`
+note: required because it appears within the type `Box<dyn Future<Output = u32>>`
+  --> $RUST/alloc/src/boxed.rs
+   |
+   | pub struct Box<
+   |            ^^^
+note: required because it appears within the type `Pin<Box<dyn Future<Output = u32>>>`
+  --> $RUST/core/src/pin.rs
+   |
+   | pub struct Pin<Ptr> {
+   |            ^^^
+   = note: required for the cast from `&Pin<Box<dyn Future<Output = u32>>>` to `&dyn Send`
+
+error[E0277]: `(dyn Future<Output = u32> + 'static)` cannot be sent between threads safely
+  --> tests/integration/ui/compile_fail/std_or_alloc/attr_into_future.rs:24:17
+   |
+24 |     assert_send(&sut().value(21).into_future());
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `(dyn Future<Output = u32> + 'static)` cannot be sent between threads safely
+   |
+   = help: the trait `Send` is not implemented for `(dyn Future<Output = u32> + 'static)`
+   = note: required for `Unique<(dyn Future<Output = u32> + 'static)>` to implement `Send`
+note: required because it appears within the type `Box<(dyn Future<Output = u32> + 'static)>`
+  --> $RUST/alloc/src/boxed.rs
+   |
+   | pub struct Box<
+   |            ^^^
+note: required because it appears within the type `Pin<Box<(dyn Future<Output = u32> + 'static)>>`
+  --> $RUST/core/src/pin.rs
+   |
+   | pub struct Pin<Ptr> {
+   |            ^^^
+   = note: required for the cast from `&Pin<Box<(dyn Future<Output = u32> + 'static)>>` to `&dyn Send`

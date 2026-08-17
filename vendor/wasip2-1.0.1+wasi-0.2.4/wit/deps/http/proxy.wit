@@ -1,0 +1,50 @@
+package wasi:http@0.2.4;
+
+/// The `wasi:http/imports` world imports all the APIs for HTTP proxies.
+/// It is intended to be `include`d in other worlds.
+@since(version = 0.2.0)
+world imports {
+  /// HTTP proxies have access to time and randomness.
+  @since(version = 0.2.0)
+  import wasi:clocks/monotonic-clock@0.2.4;
+  @since(version = 0.2.0)
+  import wasi:clocks/wall-clock@0.2.4;
+  @since(version = 0.2.0)
+  import wasi:random/random@0.2.4;
+
+  /// Proxies have standard output and error streams which are expected to
+  /// terminate in a developer-facing console provided by the host.
+  @since(version = 0.2.0)
+  import wasi:cli/stdout@0.2.4;
+  @since(version = 0.2.0)
+  import wasi:cli/stderr@0.2.4;
+
+  /// TODO: this is a temporary workaround until component tooling is able to
+  /// gracefully handle the absence of stdin. Hosts must return an eof stream
+  /// for this import, which is what wasi-libc + tooling will do automatically
+  /// when this import is properly removed.
+  @since(version = 0.2.0)
+  import wasi:cli/stdin@0.2.4;
+
+  /// This is the default handler to use when user code simply wants to make an
+  /// HTTP request (e.g., via `fetch()`).
+  @since(version = 0.2.0)
+  import outgoing-handler;
+}
+
+/// The `wasi:http/proxy` world captures a widely-implementable intersection of
+/// hosts that includes HTTP forward and reverse proxies. Components targeting
+/// this world may concurrently stream in and out any number of incoming and
+/// outgoing HTTP requests.
+@since(version = 0.2.0)
+world proxy {
+  @since(version = 0.2.0)
+  include imports;
+
+  /// The host delivers incoming HTTP requests to a component by calling the
+  /// `handle` function of this exported interface. A host may arbitrarily reuse
+  /// or not reuse component instance when delivering incoming HTTP requests and
+  /// thus a component must be able to handle 0..N calls to `handle`.
+  @since(version = 0.2.0)
+  export incoming-handler;
+}

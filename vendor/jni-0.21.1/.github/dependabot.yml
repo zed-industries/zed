@@ -1,0 +1,12 @@
+version: 2
+updates:
+- package-ecosystem: cargo
+  directory: "/"
+  schedule:
+    interval: monthly
+  open-pull-requests-limit: 10
+- package-ecosystem: cargo
+  directory: "/example/mylib"
+  schedule:
+    interval: monthly
+  open-pull-requests-limit: 10

@@ -1,0 +1,135 @@
+{
+  "worlds": [
+    {
+      "name": "w1",
+      "imports": {
+        "interface-0": {
+          "interface": {
+            "id": 0
+          }
+        },
+        "imp1": {
+          "interface": {
+            "id": 1
+          }
+        }
+      },
+      "exports": {},
+      "package": 0
+    },
+    {
+      "name": "w1",
+      "imports": {
+        "interface-2": {
+          "interface": {
+            "id": 2
+          }
+        },
+        "imp1": {
+          "interface": {
+            "id": 3
+          }
+        }
+      },
+      "exports": {},
+      "package": 1
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "i1",
+      "types": {
+        "a": 0
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": null,
+      "types": {
+        "a": 1
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "i1",
+      "types": {
+        "a": 2
+      },
+      "functions": {},
+      "package": 1
+    },
+    {
+      "name": null,
+      "types": {
+        "a": 3
+      },
+      "functions": {},
+      "package": 1
+    }
+  ],
+  "types": [
+    {
+      "name": "a",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "a",
+      "kind": {
+        "type": 0
+      },
+      "owner": {
+        "interface": 1
+      }
+    },
+    {
+      "name": "a",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "interface": 2
+      }
+    },
+    {
+      "name": "a",
+      "kind": {
+        "type": 2
+      },
+      "owner": {
+        "interface": 3
+      }
+    }
+  ],
+  "packages": [
+    {
+      "name": "foo:name@1.0.0",
+      "interfaces": {
+        "i1": 0
+      },
+      "worlds": {
+        "w1": 0
+      }
+    },
+    {
+      "name": "foo:name@1.0.1",
+      "interfaces": {
+        "i1": 2
+      },
+      "worlds": {
+        "w1": 1
+      }
+    },
+    {
+      "name": "foo:root",
+      "interfaces": {},
+      "worlds": {}
+    }
+  ]
+}

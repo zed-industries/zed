@@ -1,0 +1,16 @@
+[package]
+name = "as-raw-xcb-connection"
+version = "1.0.1"
+edition = "2021"
+description = "Trait to facilitate interoperatibility with libxcb C API"
+repository = "https://github.com/psychon/as-raw-xcb-connection"
+license = "MIT OR Apache-2.0"
+keywords = ["xcb", "X11"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+
+[features]
+default = ["alloc"]
+alloc = []

@@ -1,0 +1,4 @@
+header = "#define CF_SWIFT_NAME(_name) __attribute__((swift_name(#_name)))"
+
+[fn]
+swift_name_macro = "CF_SWIFT_NAME"

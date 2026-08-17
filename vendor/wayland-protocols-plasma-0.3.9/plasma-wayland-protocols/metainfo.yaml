@@ -1,0 +1,14 @@
+maintainer:
+description: Provides the xml files of non-standard wayland protocols used in Plasma.
+irc: kwin
+mailinglist: kwin
+type: integration
+platforms:
+    - name: Linux
+    - name: FreeBSD
+portingAid: false
+deprecated: false
+release: true
+cmakename: PlasmaWaylandProtocols
+
+public_lib: true

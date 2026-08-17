@@ -1,0 +1,44 @@
+name: CI
+on: [push, pull_request]
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust: [stable, beta, nightly]
+    steps:
+    - uses: actions/checkout@v1
+      with:
+        submodules: true
+    - name: Install Rust
+      run: rustup update ${{ matrix.rust }} && rustup default ${{ matrix.rust }} && rustup component add rustfmt
+    - run: rustup target add wasm32-wasi
+    - run: cargo build
+    - run: cargo build --no-default-features
+    - run: cargo build --target wasm32-wasi
+    - run: cargo build --target wasm32-wasi --no-default-features
+    - run: cargo build -p wasi-ephemeral
+
+  rustfmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+      with:
+        submodules: true
+    - name: Install Rust
+      run: rustup update stable && rustup default stable && rustup component add rustfmt
+    - run: cargo fmt -- --check
+
+  generate:
+    name: Test Generated Code
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+      with:
+        submodules: true
+    - name: Install Rust
+      run: rustup update stable && rustup default stable
+    - run: cargo test -p witx-bindgen

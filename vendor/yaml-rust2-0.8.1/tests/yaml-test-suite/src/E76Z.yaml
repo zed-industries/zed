@@ -1,0 +1,26 @@
+---
+- name: Aliases in Implicit Block Mapping
+  from: NimYAML tests
+  tags: mapping alias
+  yaml: |
+    &a a: &b b
+    *b : *a
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL &a :a
+       =VAL &b :b
+       =ALI *b
+       =ALI *a
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "a": "b",
+      "b": "a"
+    }
+  dump: |
+    &a a: &b b
+    *b : *a

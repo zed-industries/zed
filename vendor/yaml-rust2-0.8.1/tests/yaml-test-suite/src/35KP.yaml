@@ -1,0 +1,44 @@
+---
+- name: Tags for Root Objects
+  from: NimYAML tests
+  tags: explicit-key header mapping tag
+  yaml: |
+    --- !!map
+    ? a
+    : b
+    --- !!seq
+    - !!str c
+    --- !!str
+    d
+    e
+  tree: |
+    +STR
+     +DOC ---
+      +MAP <tag:yaml.org,2002:map>
+       =VAL :a
+       =VAL :b
+      -MAP
+     -DOC
+     +DOC ---
+      +SEQ <tag:yaml.org,2002:seq>
+       =VAL <tag:yaml.org,2002:str> :c
+      -SEQ
+     -DOC
+     +DOC ---
+      =VAL <tag:yaml.org,2002:str> :d e
+     -DOC
+    -STR
+  json: |
+    {
+      "a": "b"
+    }
+    [
+      "c"
+    ]
+    "d e"
+  dump: |
+    --- !!map
+    a: b
+    --- !!seq
+    - !!str c
+    --- !!str d e

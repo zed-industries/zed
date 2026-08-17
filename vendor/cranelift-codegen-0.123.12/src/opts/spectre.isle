@@ -1,0 +1,15 @@
+;; Rewrites for `select_spectre_guard` -- check these rules carefully!
+;;
+;; This instruction prohibits all speculation on the controlling value when
+;; determining which input to use as the result. Rewrites must respect that
+;; requirement.
+
+;; If we statically know which value will be the result, it's safe to just use
+;; that value. No speculation on the controlling value is possible if we simply
+;; don't depend on that value at all.
+(rule (simplify (select_spectre_guard _ _ x x))
+      (subsume x))
+(rule (simplify (select_spectre_guard _ (iconst_u _ (u64_when_non_zero)) x _))
+      (subsume x))
+(rule (simplify (select_spectre_guard _ (iconst_u _ 0) _ y))
+      (subsume y))

@@ -1,0 +1,44 @@
+---
+- name: Spec Example 5.4. Flow Collection Indicators
+  from: http://www.yaml.org/spec/1.2/spec.html#id2772813
+  tags: spec flow sequence mapping
+  yaml: |
+    sequence: [ one, two, ]
+    mapping: { sky: blue, sea: green }
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :sequence
+       +SEQ []
+        =VAL :one
+        =VAL :two
+       -SEQ
+       =VAL :mapping
+       +MAP {}
+        =VAL :sky
+        =VAL :blue
+        =VAL :sea
+        =VAL :green
+       -MAP
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "sequence": [
+        "one",
+        "two"
+      ],
+      "mapping": {
+        "sky": "blue",
+        "sea": "green"
+      }
+    }
+  dump: |
+    sequence:
+    - one
+    - two
+    mapping:
+      sky: blue
+      sea: green

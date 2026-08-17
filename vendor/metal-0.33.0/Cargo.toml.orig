@@ -1,0 +1,114 @@
+[package]
+name = "metal"
+version = "0.33.0"
+description = "Rust bindings for Metal"
+documentation = "https://docs.rs/crate/metal"
+homepage = "https://github.com/gfx-rs/metal-rs"
+repository = "https://github.com/gfx-rs/metal-rs"
+authors = ["gfx-rs developers"]
+readme = "README.md"
+keywords = ["metal", "graphics", "bindings"]
+license = "MIT OR Apache-2.0"
+edition = "2021"
+exclude = [
+  "guide/**/*",
+  "examples/texture/**/*",
+  "tests/**/*",
+  "Cargo.lock",
+  "target/**/*",
+]
+rust-version = "1.82"
+
+[package.metadata.docs.rs]
+targets = [
+  "aarch64-apple-darwin",  # presented first in Docs.rs, keep this here
+  "aarch64-apple-ios",
+  "aarch64-apple-ios-sim",
+  "x86_64-apple-darwin",
+  "x86_64-apple-ios",
+]
+
+[features]
+default = ["link"]
+private = []
+mps = []
+link = ["core-graphics-types/link"]
+cargo-clippy = [
+] # Workaround for https://github.com/gfx-rs/metal-rs/pull/344#issuecomment-2569042111
+
+[dependencies]
+core-graphics-types = { version = "0.2.0", default-features = false }
+bitflags = "2"
+log = "0.4"
+block = "0.1.6"
+foreign-types = "0.5"
+dispatch = { version = "0.2", optional = true }
+paste = "1"
+
+[dependencies.objc]
+version = "0.2.4"
+
+[dev-dependencies]
+cocoa = "0.26.0"
+winit = "0.29"
+sema = "0.1.4"
+png = "0.18"
+glam = "0.30"
+rand = "0.9"
+
+[[example]]
+name = "window"
+
+[[example]]
+name = "headless-render"
+
+[[example]]
+name = "library"
+
+[[example]]
+name = "raytracing"
+
+[[example]]
+name = "reflection"
+
+[[example]]
+name = "caps"
+
+[[example]]
+name = "argument-buffer"
+
+[[example]]
+name = "bindless"
+
+[[example]]
+name = "circle"
+path = "examples/circle/main.rs"
+
+[[example]]
+name = "compute"
+path = "examples/compute/main.rs"
+
+[[example]]
+name = "mps"
+required-features = ["mps"]
+
+[[example]]
+name = "embedded-lib"
+path = "examples/compute/embedded-lib.rs"
+
+[[example]]
+name = "compute-argument-buffer"
+path = "examples/compute/compute-argument-buffer.rs"
+
+[[example]]
+name = "bind"
+
+[[example]]
+name = "events"
+required-features = ["dispatch"]
+
+[[example]]
+name = "fence"
+
+[workspace]
+members = ["examples/texture"]

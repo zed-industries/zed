@@ -1,0 +1,94 @@
+// pest. The Elegant Parser
+// Copyright (c) 2018 Dragoș Tiselice
+//
+// Licensed under the Apache License, Version 2.0
+// <LICENSE-APACHE or http://www.apache.org/licenses/LICENSE-2.0> or the MIT
+// license <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. All files in the project carrying such notice may not be copied,
+// modified, or distributed except according to those terms.
+
+string = { "abc" }
+insensitive = { ^"abc" }
+range = { '0'..'9' }
+ident = { string }
+pos_pred = { &string }
+neg_pred = { !string }
+double_neg_pred = { !!string }
+sequence = !{ string ~ string }
+sequence_compound = ${ string ~ string }
+sequence_atomic = @{ string ~ string }
+sequence_non_atomic = @{ sequence }
+sequence_atomic_compound = @{ sequence_compound }
+sequence_nested = { string ~ string }
+sequence_compound_nested = ${ sequence_nested }
+node_tag = { #string = string }
+choice = { string | range }
+choice_prefix = { | string | range }
+optional = { string? }
+repeat = { string* }
+repeat_atomic = @{ string* }
+repeat_once = { string+ }
+repeat_once_atomic = @{ string+ }
+repeat_min_max = { string{2, 3} }
+repeat_min_max_atomic = @{ string{2, 3} }
+repeat_exact = { string{2} }
+repeat_min = { string{2,} }
+repeat_min_atomic = @{ string{2,} }
+repeat_max = { string{, 2} }
+repeat_max_atomic = @{ string{, 2} }
+soi_at_start = { SOI ~ string }
+repeat_mutate_stack = { (PUSH('a'..'c') ~ ",")* ~ POP ~ POP ~ POP }
+repeat_mutate_stack_pop_all = { (PUSH('a'..'c') ~ ",")* ~ POP_ALL }
+will_fail = { repeat_mutate_stack_pop_all ~ "FAIL" }
+stack_resume_after_fail = { will_fail | repeat_mutate_stack_pop_all }
+peek_ = { PUSH(range) ~ PUSH(range) ~ PEEK ~ PEEK }
+peek_all = { PUSH(range) ~ PUSH(range) ~ PEEK_ALL }
+peek_slice_23 = { PUSH(range) ~ PUSH(range) ~ PUSH(range) ~ PUSH(range) ~ PUSH(range) ~ PEEK[1..-2] }
+pop_ = { PUSH(range) ~ PUSH(range) ~ POP ~ POP }
+pop_all = { PUSH(range) ~ PUSH(range) ~ POP_ALL }
+pop_fail = { PUSH(range) ~ !POP ~ range ~ POP }
+checkpoint_restore = ${
+		PUSH("") ~ (PUSH("a") ~ "b" ~ POP | DROP ~ "b" | POP ~ "a") ~ EOI
+}
+ascii_digits = { ASCII_DIGIT+ }
+ascii_nonzero_digits = { ASCII_NONZERO_DIGIT+ }
+ascii_bin_digits = { ASCII_BIN_DIGIT+ }
+ascii_oct_digits = { ASCII_OCT_DIGIT+ }
+ascii_hex_digits = { ASCII_HEX_DIGIT+ }
+ascii_alpha_lowers = { ASCII_ALPHA_LOWER+ }
+ascii_alpha_uppers = { ASCII_ALPHA_UPPER+ }
+ascii_alphas = { ASCII_ALPHA+ }
+ascii_alphanumerics = { ASCII_ALPHANUMERIC+ }
+asciis = { ASCII+ }
+newline = { NEWLINE+ }
+unicode = { XID_START ~ XID_CONTINUE* }
+SYMBOL = { "shadows builtin" }
+
+han = { HAN+ }
+hangul = { HANGUL+ }
+hiragana = { HIRAGANA+ }
+arabic = { ARABIC+ }
+emoji = { EMOJI+ }
+
+WHITESPACE = _{ " " }
+COMMENT = _{ "$"+ }
+
+// Line comment
+
+/* 1-line multiline comment */
+
+/*
+	N-line multiline comment
+*/
+
+/*
+	// Line comment inside multiline
+
+	/*
+		(Multiline inside) multiline
+	*/
+
+	Invalid segment of grammar below (repeated rule)
+
+	WHITESPACE = _{ "hi" }
+*/

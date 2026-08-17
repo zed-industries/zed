@@ -1,0 +1,30 @@
+---
+- name: Flow Sequence in Flow Mapping
+  from: NimYAML tests
+  tags: complex-key sequence mapping flow
+  yaml: |
+    {a: [b, c], [d, e]: f}
+  tree: |
+    +STR
+     +DOC
+      +MAP {}
+       =VAL :a
+       +SEQ []
+        =VAL :b
+        =VAL :c
+       -SEQ
+       +SEQ []
+        =VAL :d
+        =VAL :e
+       -SEQ
+       =VAL :f
+      -MAP
+     -DOC
+    -STR
+  dump: |
+    a:
+    - b
+    - c
+    ? - d
+      - e
+    : f

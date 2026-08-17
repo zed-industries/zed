@@ -1,0 +1,17 @@
+language: rust
+rust:
+  - 1.36.0
+  - stable
+  - nightly
+sudo: false
+script:
+  - cargo build --verbose
+  - cargo test --verbose
+  - cargo test --verbose --no-default-features
+  - cargo package
+  - cd target/package/unicode-normalization-*
+  - cargo test --verbose
+  - cargo test --verbose --no-default-features
+notifications:
+  email:
+    on_success: never

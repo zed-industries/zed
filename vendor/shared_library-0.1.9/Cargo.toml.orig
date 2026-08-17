@@ -1,0 +1,11 @@
+[package]
+name = "shared_library"
+version = "0.1.9"
+authors = ["Pierre Krieger <pierre.krieger1708@gmail.com>"]
+description = "Easily bind to and load shared libraries"
+license = "Apache-2.0/MIT"
+repository = "https://github.com/tomaka/shared_library/"
+
+[dependencies]
+libc = "0.2"
+lazy_static = "1"

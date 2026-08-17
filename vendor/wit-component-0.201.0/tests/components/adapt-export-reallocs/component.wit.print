@@ -1,0 +1,9 @@
+package root:component;
+
+world root {
+  import new: interface {
+    read: func(amt: u32) -> list<u8>;
+  }
+
+  export entrypoint: func(args: list<string>);
+}

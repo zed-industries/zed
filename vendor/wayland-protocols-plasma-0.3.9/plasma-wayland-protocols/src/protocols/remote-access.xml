@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="remote_access">
+  <copyright><![CDATA[
+    SPDX-FileCopyrightText: 2016 Oleg Chernovskiy
+
+    SPDX-License-Identifier: LGPL-2.1-or-later
+  ]]></copyright>
+    <interface name="org_kde_kwin_remote_access_manager" version="1">
+        <description summary="Protocol for managing rendered GBM buffers passing"/>
+        <event name="buffer_ready" since="1">
+            <description summary="Signals about buffer ready to be consumed by clients"/>
+            <arg name="id" type="int" summary="unique id of created buffer (you can use server-side fd number)"/>
+            <arg name="output" type="object" interface="wl_output" summary="screen that this buffer belongs to"/>
+        </event>
+        <request name="get_buffer" since="1">
+            <description summary="Answer on buffer_ready event, retrieves new buffer from server"/>
+            <arg name="buffer" type="new_id" interface="org_kde_kwin_remote_buffer"/>
+            <arg name="internal_buffer_id" type="int" summary="The internal buffer id of the buffer to create"/>
+        </request>
+        <request name="release" type="destructor">
+            <description summary="release org_kde_kwin_remote_access_manager interface"/>
+        </request>
+    </interface>
+    <interface name="org_kde_kwin_remote_buffer" version="1">
+        <description summary="This interface allows finer control of remote buffer lifecycle"/>
+        <event name="gbm_handle" since="1">
+            <description summary="This is sent after binding to remote access manager" />
+            <arg name="fd" type="fd"/>
+            <arg name="width" type="uint"/>
+            <arg name="height" type="uint"/>
+            <arg name="stride" type="uint"/>
+            <arg name="format" type="uint"/>
+        </event>
+        <request name="release" type="destructor" since="1">
+          <description summary="This request comes once client no longer needs this buffer."/>
+        </request>
+    </interface>
+</protocol>

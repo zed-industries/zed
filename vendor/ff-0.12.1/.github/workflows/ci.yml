@@ -1,0 +1,98 @@
+name: CI checks
+
+on: [push, pull_request]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v1
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: 1.56.0
+          override: true
+
+      # Ensure all code has been formatted with rustfmt
+      - run: rustup component add rustfmt
+      - name: Check formatting
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: -- --check --color always
+
+  test:
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+
+    steps:
+      - uses: actions/checkout@v1
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: 1.56.0
+          override: true
+      - name: cargo fetch
+        uses: actions-rs/cargo@v1
+        with:
+          command: fetch
+      - name: Run tests
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --verbose --all-features
+      - name: Run tests (without bitvec)
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --verbose --no-default-features --features derive
+
+  no-std:
+    name: Check no-std compatibility
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v1
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: 1.56.0
+          override: true
+      - run: rustup target add thumbv6m-none-eabi
+      - name: cargo fetch
+        uses: actions-rs/cargo@v1
+        with:
+          command: fetch
+      - name: Build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --verbose --target thumbv6m-none-eabi --no-default-features
+      - name: Build with bits feature
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --verbose --target thumbv6m-none-eabi --no-default-features --features bits
+
+  doc-links:
+    name: Documentation
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v1
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: 1.56.0
+          override: true
+      - name: cargo fetch
+        uses: actions-rs/cargo@v1
+        with:
+          command: fetch
+
+      - name: Check intra-doc links
+        uses: actions-rs/cargo@v1
+        with:
+          command: doc
+          args: --document-private-items

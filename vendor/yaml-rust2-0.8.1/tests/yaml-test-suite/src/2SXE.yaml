@@ -1,0 +1,27 @@
+---
+- name: Anchors With Colon in Name
+  from: Mailing List Discussion
+  tags: alias edge mapping 1.3-err
+  yaml: |
+    &a: key: &a value
+    foo:
+      *a:
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL &a: :key
+       =VAL &a :value
+       =VAL :foo
+       =ALI *a:
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "key": "value",
+      "foo": "key"
+    }
+  dump: |
+    &a: key: &a value
+    foo: *a:

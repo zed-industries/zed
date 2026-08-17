@@ -1,0 +1,27 @@
+[package]
+name = "peg-macros"
+version = "0.8.5"
+authors = [ "Kevin Mehall <km@kevinmehall.net>" ]
+license = "MIT"
+repository = "https://github.com/kevinmehall/rust-peg"
+description = "Procedural macros for rust-peg. To use rust-peg, see the `peg` crate."
+edition = "2021"
+
+[dependencies]
+quote = "1.0"
+proc-macro2 = "1.0.24"
+peg-runtime = { version = "= 0.8.5", path = "../peg-runtime" }
+
+[features]
+trace = []
+
+[lib]
+proc-macro = true
+name = "peg_macros"
+path = "lib.rs"
+
+[[bin]]
+name = "rust-peg"
+path = "bin.rs"
+test = false
+bench = false

@@ -1,0 +1,68 @@
+[package]
+name = "lol_html"
+version = "2.8.1"
+authors = ["Ivan Nikulin <inikulin@cloudflare.com, ifaaan@gmail.com>"]
+license = "BSD-3-Clause"
+description = "Streaming HTML rewriter/parser with CSS selector-based API"
+repository = "https://github.com/cloudflare/lol-html"
+documentation = "https://docs.rs/lol-html"
+categories = ["parser-implementations", "web-programming"]
+keywords = ["html", "css-selectors", "parser", "rewriter", "streaming"]
+readme = "README.md"
+include = ["/Cargo.toml", "/LICENSE", "/README.md", "/media", "/src"]
+edition = "2024"
+rust-version = "1.85"
+
+[lib]
+# Disable libtest to make sure criterion can parse the command line flags.
+# See https://bheisler.github.io/criterion.rs/book/faq.html and https://github.com/rust-lang/rust/issues/47241.
+bench = false
+
+[features]
+debug_trace = []
+# Unstable: for internal use only
+integration_test = []
+
+[[bench]]
+harness = false
+name = "bench"
+
+[dependencies]
+bitflags = "2.9.1"
+cfg-if = "1.0.1"
+cssparser = "0.36"
+encoding_rs = "0.8.35"
+hashbrown = "0.16.0"
+# hashbrown uses foldhash without std, which has a performance penalty
+foldhash = { version = "0.2.0", features = ["std"] }
+memchr = "2.7.5"
+mime = "0.3.17"
+selectors = "0.35"
+thiserror = "2.0"
+precomputed-hash = "0.1.1"
+
+[dev-dependencies]
+criterion = "0.8.0"
+glob = "0.3.2"
+html5ever = "0.38"
+markup5ever_rcdom = "0.38.0"
+hashbrown = { version = "0.16.0", features = ["serde"] }
+serde = "1.0.219"
+serde_derive = "1.0.219"
+serde_json = "1.0.140"
+static_assertions = "1.1.0"
+rand = "0.10"
+itertools = "0.14"
+
+[lints.rust]
+keyword_idents = { level = "deny", priority = 1 }
+for_loops_over_fallibles = "deny"
+unit_bindings = "deny"
+absolute_paths_not_starting_with_crate = "warn"
+elided_lifetimes_in_paths = "warn"
+macro_use_extern_crate = "warn"
+meta_variable_misuse = "warn"
+redundant_lifetimes = "warn"
+trivial_numeric_casts = "warn"
+unnameable_types = "warn"
+unused_qualifications = "warn"

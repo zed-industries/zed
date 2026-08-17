@@ -1,0 +1,23 @@
+package foo:foo;
+
+interface wasi-filesystem {
+  record descriptor-stat {
+  }
+
+  enum errno { e }
+
+
+  create-directory-at: func() -> result<_, errno>;
+
+  stat: func() -> result<descriptor-stat, errno>;
+}
+
+interface wall-clock {
+  record wall-clock {
+  }
+}
+
+world wasi {
+  import wasi-filesystem;
+  import wall-clock;
+}

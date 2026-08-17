@@ -1,0 +1,22 @@
+[package]
+name = "seahash"
+version = "4.1.0"
+authors = ["ticki <ticki@users.noreply.github.com>", "Tom Almeida <tom@tommoa.me>"]
+description = "A blazingly fast, portable hash function with proven statistical guarantees."
+repository = "https://gitlab.redox-os.org/redox-os/seahash"
+documentation = "https://docs.rs/seahash"
+license = "MIT"
+keywords = ["hash", "hashing", "checksum", "checksumming", "portable"]
+exclude = ["target", "Cargo.lock"]
+
+[dev-dependencies]
+quickcheck = "0.9.2"
+criterion = "0.3"
+
+[features]
+default = []
+use_std = []
+
+[[bench]]
+name = "bench"
+harness = false

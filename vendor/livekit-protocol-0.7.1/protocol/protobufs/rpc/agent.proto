@@ -1,0 +1,90 @@
+// Copyright 2023 LiveKit, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package rpc;
+
+option go_package = "github.com/livekit/protocol/rpc";
+
+import "google/protobuf/empty.proto";
+import "options.proto";
+import "livekit_agent.proto";
+
+service AgentInternal {
+  rpc CheckEnabled(CheckEnabledRequest) returns (CheckEnabledResponse) {
+    option (psrpc.options).multi = true;
+  };
+  rpc JobRequest(livekit.Job) returns (JobRequestResponse) {
+    option (psrpc.options) = {
+      affinity_func: true
+      topics: true
+      topic_params: {
+        names: ["namespace", "job_type"]
+        typed: false
+      }
+    };
+  };
+  rpc JobTerminate(JobTerminateRequest) returns (JobTerminateResponse) {
+    option (psrpc.options) = {
+      topics: true
+      topic_params: {
+        names: ["job_id"]
+        typed: false
+      }
+    };
+  }
+  rpc WorkerRegistered(google.protobuf.Empty) returns (google.protobuf.Empty) {
+    option (psrpc.options) = {
+      subscription: true
+      multi: true
+      topics: true
+      topic_params: {
+        names: ["handler_namespace"]
+        typed: false
+      }
+    };
+  };
+}
+
+enum JobTerminateReason {
+  TERMINATION_REQUESTED = 0;
+  AGENT_LEFT_ROOM = 1;
+}
+
+message CheckEnabledRequest{}
+
+message CheckEnabledResponse {
+  bool room_enabled = 1;
+  bool publisher_enabled = 2;
+  bool participant_enabled = 5;
+  repeated string namespaces = 3 [deprecated = true];
+  repeated string agent_names = 4;
+
+  // NEXT ID: 6
+}
+
+message JobRequestResponse {
+  livekit.JobState state = 1;
+}
+
+message JobTerminateRequest {
+  string job_id = 1;
+  JobTerminateReason reason = 2;
+}
+
+message JobTerminateResponse {
+  livekit.JobState state = 1;
+}
+

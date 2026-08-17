@@ -1,0 +1,21 @@
+==> 2024-01-15 10:00:00 <==
+# cmd: /home/user/miniforge3/bin/conda create -n waa python=3.9.18
++defaults::ca-certificates-2023.01.10-hca03da5_0
++defaults::openssl-1.1.1t-h1a28f6b_0
++defaults::python-3.9.18-h1a28f6b_0
++defaults::pip-22.3.1-py39hca03da5_0
++defaults::setuptools-65.6.3-py39hca03da5_0
++defaults::wheel-0.38.4-py39hca03da5_0
+# update specs: ['python=3.9.18']
+
+==> 2024-06-20 14:30:00 <==
+# cmd: /home/user/miniforge3/bin/conda update python
+-defaults::python-3.9.18-h1a28f6b_0
+-defaults::pip-22.3.1-py39hca03da5_0
+-defaults::setuptools-65.6.3-py39hca03da5_0
+-defaults::wheel-0.38.4-py39hca03da5_0
++defaults::python-3.9.21-h789abc_0
++defaults::pip-23.3.1-py39hca03da5_0
++defaults::setuptools-68.0.0-py39hca03da5_0
++defaults::wheel-0.41.2-py39hca03da5_0
+# update specs: ['python']

@@ -1,0 +1,5 @@
+type `foo` does not exist
+     --> tests/ui/parse-fail/bad-resource11.wit:4:16
+      |
+    4 |   type t = own<foo>;
+      |                ^--

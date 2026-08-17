@@ -1,0 +1,77 @@
+package foo:bar;
+
+interface foo {
+  resource bar {
+    constructor();
+    a: static func();
+    b: func();
+  }
+
+  type t = bar;
+
+  type t2 = own<bar>;
+
+  a: func(x: bar) -> bar;
+}
+
+interface baz {
+  use foo.{bar, t};
+
+  a: func(x: bar) -> bar;
+
+  b: func() -> t;
+}
+
+interface implicit-own-handles {
+  resource a;
+
+  b: func(a1: a, a2: a) -> a;
+
+  c: func() -> list<a>;
+}
+
+interface implicit-own-handles2 {
+  /// the `own` return and list param should be the same `own`
+  resource a {
+    constructor(a: list<a>);
+  }
+
+  /// same as above, even when the `list<b>` implicitly-defined `own` comes
+  /// before an explicitly defined `own`
+  resource b {
+    constructor(a: list<b>, b: b);
+  }
+
+  /// same as the above, the `own` argument should have the same type as the
+  /// return value
+  resource c {
+    a: static func(a: c) -> c;
+  }
+}
+
+world some-world {
+  import foo;
+  import baz;
+  import anon: interface {
+    resource a {
+      constructor();
+      b: static func();
+      c: func();
+    }
+  }
+  use baz.{bar};
+
+  resource a {
+    constructor();
+  }
+
+  export x: func() -> a;
+  export y: func() -> bar;
+}
+world implicit-own-handles3 {
+  /// there should only be one `list` type despite there looking like two
+  /// list types here
+  resource a {
+    constructor(a: list<a>, b: list<a>);
+  }
+}

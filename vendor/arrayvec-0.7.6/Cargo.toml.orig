@@ -1,0 +1,62 @@
+[package]
+name = "arrayvec"
+version = "0.7.6"
+authors = ["bluss"]
+license = "MIT OR Apache-2.0"
+edition = "2018"
+rust-version = "1.51"
+
+description = "A vector with fixed capacity, backed by an array (it can be stored on the stack too). Implements fixed capacity ArrayVec and ArrayString."
+documentation = "https://docs.rs/arrayvec/"
+repository = "https://github.com/bluss/arrayvec"
+
+keywords = ["stack", "vector", "array", "data-structure", "no_std"]
+categories = ["data-structures", "no-std"]
+
+[build-dependencies]
+
+[dependencies.borsh]
+version = "1.2.0"
+optional = true
+default-features = false
+
+[dependencies.serde]
+version = "1.0"
+optional = true
+default-features = false
+
+[dependencies.zeroize]
+version = "1.4"
+optional = true
+default-features = false
+
+[dev-dependencies.serde_test]
+version = "1.0"
+
+[dev-dependencies]
+matches = { version = "0.1" }
+bencher = "0.1.4"
+
+[[bench]]
+name = "extend"
+harness = false
+
+[[bench]]
+name = "arraystring"
+harness = false
+
+[features]
+default = ["std"]
+std = []
+
+[profile.bench]
+debug = true
+[profile.release]
+debug = true
+
+[package.metadata.docs.rs]
+features = ["borsh", "serde", "zeroize"]
+
+[package.metadata.release]
+no-dev-version = true
+tag-name = "{{version}}"

@@ -1,0 +1,37 @@
+---
+- name: Spec Example 6.3. Separation Spaces
+  from: http://www.yaml.org/spec/1.2/spec.html#id2778394
+  tags: spec libyaml-err sequence whitespace upto-1.2
+  yaml: |
+    - foo:—» bar
+    - - baz
+      -»baz
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       +MAP
+        =VAL :foo
+        =VAL :bar
+       -MAP
+       +SEQ
+        =VAL :baz
+        =VAL :baz
+       -SEQ
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      {
+        "foo": "bar"
+      },
+      [
+        "baz",
+        "baz"
+      ]
+    ]
+  dump: |
+    - foo: bar
+    - - baz
+      - baz

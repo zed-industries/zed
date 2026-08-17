@@ -1,0 +1,35 @@
+[package]
+name = "mac-notification-sys"
+version = "0.6.15"
+authors = ["Felix Döring <development@felixdoering.com>", "Hendrik Sollich <hendrik@hoodie.de>"]
+description = "Thin wrapper around macOS Notifications."
+edition = "2024"
+rust-version = "1.85"
+
+homepage = "https://github.com/h4llow3En/mac-notification-sys"
+repository = "https://github.com/h4llow3En/mac-notification-sys"
+documentation = "https://docs.rs/mac-notification-sys/latest/mac_notification_sys/"
+
+license = "MIT/Apache-2.0"
+keywords = ["notification", "masOS", "osx", "notify"]
+readme = "README.md"
+
+include = ["Cargo.toml", "build.rs", "objc/*", "src/*.rs", "tests/*.rs"]
+
+build = "build.rs"
+
+[package.metadata.docs.rs]
+targets = ["aarch64-apple-darwin"]
+
+[dependencies]
+objc2-foundation = "0.3"
+objc2 = "0.6"
+time = "0.3"
+log = "0.4"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+env_logger = "0.11"
+
+[build-dependencies]
+cc = "1.2"

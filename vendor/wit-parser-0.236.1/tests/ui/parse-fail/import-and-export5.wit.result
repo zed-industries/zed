@@ -1,0 +1,5 @@
+failed to elaborate world imports/exports of `w`
+     --> tests/ui/parse-fail/import-and-export5.wit:12:7
+      |
+   12 | world w {
+      |       ^: interface `anon` transitively depends on an interface in incompatible ways

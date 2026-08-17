@@ -1,0 +1,165 @@
+---
+source: brush-parser/src/tokenizer.rs
+expression: "test_tokenizer(r\"cat <<HERE1 <<HERE2\nSOMETHING\nHERE1\nOTHER\nHERE2\necho after\n\")?"
+---
+TokenizerResult(
+  input: "cat <<HERE1 <<HERE2\nSOMETHING\nHERE1\nOTHER\nHERE2\necho after\n",
+  result: [
+    W("cat", Loc(
+      start: Pos(
+        idx: 0,
+        line: 1,
+        col: 1,
+      ),
+      end: Pos(
+        idx: 3,
+        line: 1,
+        col: 4,
+      ),
+    )),
+    Op("<<", Loc(
+      start: Pos(
+        idx: 4,
+        line: 1,
+        col: 5,
+      ),
+      end: Pos(
+        idx: 6,
+        line: 1,
+        col: 7,
+      ),
+    )),
+    W("HERE1", Loc(
+      start: Pos(
+        idx: 6,
+        line: 1,
+        col: 7,
+      ),
+      end: Pos(
+        idx: 11,
+        line: 1,
+        col: 12,
+      ),
+    )),
+    W("SOMETHING\n", Loc(
+      start: Pos(
+        idx: 20,
+        line: 2,
+        col: 1,
+      ),
+      end: Pos(
+        idx: 36,
+        line: 4,
+        col: 1,
+      ),
+    )),
+    W("HERE1", Loc(
+      start: Pos(
+        idx: 36,
+        line: 4,
+        col: 1,
+      ),
+      end: Pos(
+        idx: 36,
+        line: 4,
+        col: 1,
+      ),
+    )),
+    Op("<<", Loc(
+      start: Pos(
+        idx: 11,
+        line: 1,
+        col: 12,
+      ),
+      end: Pos(
+        idx: 14,
+        line: 1,
+        col: 15,
+      ),
+    )),
+    W("HERE2", Loc(
+      start: Pos(
+        idx: 14,
+        line: 1,
+        col: 15,
+      ),
+      end: Pos(
+        idx: 19,
+        line: 1,
+        col: 20,
+      ),
+    )),
+    W("OTHER\n", Loc(
+      start: Pos(
+        idx: 36,
+        line: 4,
+        col: 1,
+      ),
+      end: Pos(
+        idx: 48,
+        line: 6,
+        col: 1,
+      ),
+    )),
+    W("HERE2", Loc(
+      start: Pos(
+        idx: 48,
+        line: 6,
+        col: 1,
+      ),
+      end: Pos(
+        idx: 48,
+        line: 6,
+        col: 1,
+      ),
+    )),
+    Op("\n", Loc(
+      start: Pos(
+        idx: 19,
+        line: 1,
+        col: 20,
+      ),
+      end: Pos(
+        idx: 20,
+        line: 2,
+        col: 1,
+      ),
+    )),
+    W("echo", Loc(
+      start: Pos(
+        idx: 48,
+        line: 6,
+        col: 1,
+      ),
+      end: Pos(
+        idx: 52,
+        line: 6,
+        col: 5,
+      ),
+    )),
+    W("after", Loc(
+      start: Pos(
+        idx: 53,
+        line: 6,
+        col: 6,
+      ),
+      end: Pos(
+        idx: 58,
+        line: 6,
+        col: 11,
+      ),
+    )),
+    Op("\n", Loc(
+      start: Pos(
+        idx: 58,
+        line: 6,
+        col: 11,
+      ),
+      end: Pos(
+        idx: 59,
+        line: 7,
+        col: 1,
+      ),
+    )),
+  ],
+)

@@ -1,0 +1,19 @@
+package root:component;
+
+world root {
+  record big2 {
+    a1: string,
+    a2: string,
+    a3: string,
+    a4: string,
+  }
+
+  record big {
+    a1: big2,
+    a2: big2,
+    a3: big2,
+    a4: big2,
+  }
+
+  export f: async func() -> big;
+}

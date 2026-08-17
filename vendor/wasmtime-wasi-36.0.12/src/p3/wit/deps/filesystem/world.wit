@@ -1,0 +1,9 @@
+package wasi:filesystem@0.3.0;
+
+@since(version = 0.3.0)
+world imports {
+    @since(version = 0.3.0)
+    import types;
+    @since(version = 0.3.0)
+    import preopens;
+}

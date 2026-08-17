@@ -1,0 +1,22 @@
+allowed_external_types = [
+    "aws_smithy_runtime_api::*",
+    "aws_smithy_types::*",
+    "bytes::bytes::Bytes",
+    "http::error::Error",
+    "http::header::map::HeaderMap",
+    "http::header::map::ValueIter",
+    "http::header::name::HeaderName",
+    "http::header::value::HeaderValue",
+    "http::request::Builder",
+    "http::request::Request",
+    "http::response::Builder",
+    "http::response::Response",
+    "http::uri::Uri",
+    "http_body::frame::Frame",
+
+    # TODO(https://github.com/smithy-lang/smithy-rs/issues/1193): Once tooling permits it, only allow the following types in the `event-stream` feature
+    "futures_core::stream::Stream",
+
+    # TODO(https://github.com/smithy-lang/smithy-rs/issues/1193): Once tooling permits it, only allow the following types in the `event-stream` feature
+    "aws_smithy_eventstream::*",
+]

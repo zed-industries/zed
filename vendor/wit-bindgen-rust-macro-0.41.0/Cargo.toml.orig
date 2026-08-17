@@ -1,0 +1,28 @@
+[package]
+name = "wit-bindgen-rust-macro"
+authors = ["Alex Crichton <alex@alexcrichton.com>"]
+version = { workspace = true }
+edition = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
+homepage = 'https://github.com/bytecodealliance/wit-bindgen'
+description = """
+Procedural macro paired with the `wit-bindgen` crate.
+"""
+
+[lib]
+proc-macro = true
+doctest = false
+test = false
+
+[dependencies]
+proc-macro2 = "1.0"
+quote = "1"
+wit-bindgen-core = { workspace = true }
+wit-bindgen-rust = { workspace = true }
+anyhow = { workspace = true }
+syn = { workspace = true }
+prettyplease = { workspace = true }
+
+[features]
+async = []

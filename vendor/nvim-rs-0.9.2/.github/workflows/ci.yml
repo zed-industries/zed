@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  NVIMRS_LOG_FILE: nvim-rs.log
+  NVIMRS_LOG_LEVEL: debug
+  NVIMRS_STDERR: nvim-rs.stderr
+  RUSTFLAGS: -C opt-level=0
+
+jobs:
+  all:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+        rust: [stable]
+        include:
+          - os: ubuntu-latest
+            rust: beta
+          - os: ubuntu-latest
+            rust: nightly
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Install Rust ${{ matrix.rust }}
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: ${{ matrix.rust }}
+        profile: minimal
+        override: true
+
+    - uses: Swatinem/rust-cache@v1
+
+    - name: Check
+      run: |
+        cargo check && cargo check --examples --features use_tokio && cargo check --examples --features use_async-std
+
+    - name: Download neovim binary on linux
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt install libfuse2
+        curl -L https://github.com/neovim/neovim/releases/download/nightly/nvim-linux-x86_64.appimage -o nvim.appimage
+        chmod a+x nvim.appimage
+        echo "NVIMRS_TEST_BIN=$PWD/nvim.appimage" >> $GITHUB_ENV
+
+    - name: Download neovim binary on macos
+      if: matrix.os == 'macos-latest'
+      run: |
+        curl -L https://github.com/neovim/neovim/releases/download/nightly/nvim-macos-x86_64.tar.gz -o nvim-macos.tar.gz
+        tar xfz nvim-macos.tar.gz
+        ls
+        echo "NVIMRS_TEST_BIN=$PWD/nvim-macos-x86_64/bin/nvim" >> $GITHUB_ENV
+
+    - name: Download neovim binary on windows
+      if: matrix.os == 'windows-latest'
+      run: |
+        curl -L https://github.com/neovim/neovim/releases/download/nightly/nvim-win64.zip -o nvim-win64.zip
+        7z x nvim-win64.zip
+        $exe = Get-ChildItem -Path nvim-win64 -Filter nvim.exe -Recurse | %{$_.FullName}
+        echo "NVIMRS_TEST_BIN=$exe" >> $env:GITHUB_ENV
+
+    - name: Build basic example
+      run: |
+        cargo build --example basic --features use_tokio
+
+    - name: Tests
+      run: |
+        cargo test -- --nocapture && cargo test --features use_tokio -- --nocapture && cargo test --features use_async-std -- --nocapture
+
+    - name: Benchtests
+      run: |
+            cargo bench --features use_tokio -- --test && cargo bench --features use_async-std -- --test

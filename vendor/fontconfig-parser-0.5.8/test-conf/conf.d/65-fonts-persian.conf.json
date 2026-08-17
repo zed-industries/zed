@@ -1,0 +1,899 @@
+[
+  {
+    "Alias": {
+      "alias": "Nesf",
+      "prefer": [],
+      "accept": [
+        "Nesf2"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Nesf2",
+      "prefer": [],
+      "accept": [
+        "Persian_sansserif_default"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Nazanin",
+      "prefer": [],
+      "accept": [
+        "Nazli"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Lotus",
+      "prefer": [],
+      "accept": [
+        "Lotoos"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Yaqut",
+      "prefer": [],
+      "accept": [
+        "Yaghoot"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Yaghut",
+      "prefer": [],
+      "accept": [
+        "Yaghoot"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Traffic",
+      "prefer": [],
+      "accept": [
+        "Terafik"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Ferdowsi",
+      "prefer": [],
+      "accept": [
+        "Ferdosi"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Fantezy",
+      "prefer": [],
+      "accept": [
+        "Fantezi"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Jadid",
+      "prefer": [],
+      "accept": [
+        "Persian_title"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Titr",
+      "prefer": [],
+      "accept": [
+        "Persian_title"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Kamran",
+      "prefer": [],
+      "accept": [
+        "Persian_fantasy",
+        "Homa"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Homa",
+      "prefer": [],
+      "accept": [
+        "Persian_fantasy",
+        "Kamran"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Fantezi",
+      "prefer": [],
+      "accept": [
+        "Persian_fantasy"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Tabassom",
+      "prefer": [],
+      "accept": [
+        "Persian_fantasy"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Arshia",
+      "prefer": [],
+      "accept": [
+        "Persian_square"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Nasim",
+      "prefer": [],
+      "accept": [
+        "Persian_square"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Elham",
+      "prefer": [],
+      "accept": [
+        "Persian_square",
+        "Farnaz"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Farnaz",
+      "prefer": [],
+      "accept": [
+        "Persian_square",
+        "Elham"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Sina",
+      "prefer": [],
+      "accept": [
+        "Persian_square"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Persian_title",
+      "prefer": [],
+      "accept": [
+        "Titr",
+        "Jadid",
+        "Persian_serif"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Persian_fantasy",
+      "prefer": [],
+      "accept": [
+        "Homa",
+        "Kamran",
+        "Fantezi",
+        "Tabassom",
+        "Persian_square"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "Persian_square",
+      "prefer": [],
+      "accept": [
+        "Arshia",
+        "Elham",
+        "Farnaz",
+        "Nasim",
+        "Sina",
+        "Persian_serif"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Match": {
+      "target": "Scan",
+      "tests": [
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Family": {
+              "Simple": {
+                "String": "Elham"
+              }
+            }
+          }
+        }
+      ],
+      "edits": [
+        {
+          "mode": "Assign",
+          "binding": "Weak",
+          "value": {
+            "Foundry": {
+              "Simple": {
+                "String": "farsiweb"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "Match": {
+      "target": "Scan",
+      "tests": [
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Family": {
+              "Simple": {
+                "String": "Homa"
+              }
+            }
+          }
+        }
+      ],
+      "edits": [
+        {
+          "mode": "Assign",
+          "binding": "Weak",
+          "value": {
+            "Foundry": {
+              "Simple": {
+                "String": "farsiweb"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "Match": {
+      "target": "Scan",
+      "tests": [
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Family": {
+              "Simple": {
+                "String": "Koodak"
+              }
+            }
+          }
+        }
+      ],
+      "edits": [
+        {
+          "mode": "Assign",
+          "binding": "Weak",
+          "value": {
+            "Foundry": {
+              "Simple": {
+                "String": "farsiweb"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "Match": {
+      "target": "Scan",
+      "tests": [
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Family": {
+              "Simple": {
+                "String": "Nazli"
+              }
+            }
+          }
+        }
+      ],
+      "edits": [
+        {
+          "mode": "Assign",
+          "binding": "Weak",
+          "value": {
+            "Foundry": {
+              "Simple": {
+                "String": "farsiweb"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "Match": {
+      "target": "Scan",
+      "tests": [
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Family": {
+              "Simple": {
+                "String": "Roya"
+              }
+            }
+          }
+        }
+      ],
+      "edits": [
+        {
+          "mode": "Assign",
+          "binding": "Weak",
+          "value": {
+            "Foundry": {
+              "Simple": {
+                "String": "farsiweb"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "Match": {
+      "target": "Scan",
+      "tests": [
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Family": {
+              "Simple": {
+                "String": "Terafik"
+              }
+            }
+          }
+        }
+      ],
+      "edits": [
+        {
+          "mode": "Assign",
+          "binding": "Weak",
+          "value": {
+            "Foundry": {
+              "Simple": {
+                "String": "farsiweb"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "Match": {
+      "target": "Scan",
+      "tests": [
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Family": {
+              "Simple": {
+                "String": "Titr"
+              }
+            }
+          }
+        }
+      ],
+      "edits": [
+        {
+          "mode": "Assign",
+          "binding": "Weak",
+          "value": {
+            "Foundry": {
+              "Simple": {
+                "String": "farsiweb"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "Match": {
+      "target": "Font",
+      "tests": [
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Foundry": {
+              "Simple": {
+                "String": "TURNED-OFF"
+              }
+            }
+          }
+        },
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Foundry": {
+              "Simple": {
+                "String": "farsiweb"
+              }
+            }
+          }
+        },
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Slant": {
+              "Simple": {
+                "Constant": "Roman"
+              }
+            }
+          }
+        },
+        {
+          "qual": "Any",
+          "target": "Pattern",
+          "compare": "NotEq",
+          "value": {
+            "Slant": {
+              "Simple": {
+                "Constant": "Roman"
+              }
+            }
+          }
+        }
+      ],
+      "edits": [
+        {
+          "mode": "Assign",
+          "binding": "Weak",
+          "value": {
+            "Matrix": {
+              "List": [
+                "Times",
+                [
+                  {
+                    "Simple": {
+                      "Property": [
+                        "Default",
+                        "Matrix"
+                      ]
+                    }
+                  },
+                  {
+                    "Matrix": [
+                      {
+                        "Simple": {
+                          "Double": 1.0
+                        }
+                      },
+                      {
+                        "Simple": {
+                          "Double": -0.2
+                        }
+                      },
+                      {
+                        "Simple": {
+                          "Double": 0.0
+                        }
+                      },
+                      {
+                        "Simple": {
+                          "Double": 1.0
+                        }
+                      }
+                    ]
+                  }
+                ]
+              ]
+            }
+          }
+        },
+        {
+          "mode": "Assign",
+          "binding": "Weak",
+          "value": {
+            "Slant": {
+              "Simple": {
+                "Constant": "Oblique"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "Match": {
+      "target": "Font",
+      "tests": [
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Foundry": {
+              "Simple": {
+                "String": "farsiweb"
+              }
+            }
+          }
+        }
+      ],
+      "edits": [
+        {
+          "mode": "Assign",
+          "binding": "Weak",
+          "value": {
+            "AutoHint": {
+              "Simple": {
+                "Bool": false
+              }
+            }
+          }
+        },
+        {
+          "mode": "Assign",
+          "binding": "Weak",
+          "value": {
+            "Hinting": {
+              "Simple": {
+                "Bool": false
+              }
+            }
+          }
+        },
+        {
+          "mode": "Assign",
+          "binding": "Weak",
+          "value": {
+            "Embeddedbitmap": {
+              "Simple": {
+                "Bool": false
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "serif",
+      "prefer": [],
+      "accept": [
+        "Nazli",
+        "Lotoos",
+        "Mitra",
+        "Ferdosi",
+        "Badr",
+        "Zar"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "sans-serif",
+      "prefer": [],
+      "accept": [
+        "Roya",
+        "Koodak",
+        "Terafik"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "monospace",
+      "prefer": [],
+      "accept": [
+        "Terafik"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "fantasy",
+      "prefer": [],
+      "accept": [
+        "Homa",
+        "Kamran",
+        "Fantezi",
+        "Tabassom"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "cursive",
+      "prefer": [],
+      "accept": [
+        "IranNastaliq",
+        "Nafees Nastaleeq"
+      ],
+      "default": []
+    }
+  },
+  {
+    "Match": {
+      "target": "Pattern",
+      "tests": [
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Family": {
+              "Simple": {
+                "String": "serif"
+              }
+            }
+          }
+        },
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "MoreEq",
+          "value": {
+            "Weight": {
+              "Simple": {
+                "Int": 200
+              }
+            }
+          }
+        },
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "MoreEq",
+          "value": {
+            "Size": {
+              "Simple": {
+                "Double": 24.0
+              }
+            }
+          }
+        }
+      ],
+      "edits": [
+        {
+          "mode": "Prepend",
+          "binding": "Weak",
+          "value": {
+            "Family": {
+              "Simple": {
+                "String": "Titr"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "Match": {
+      "target": "Pattern",
+      "tests": [
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Family": {
+              "Simple": {
+                "String": "sans-serif"
+              }
+            }
+          }
+        },
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "MoreEq",
+          "value": {
+            "Weight": {
+              "Simple": {
+                "Int": 200
+              }
+            }
+          }
+        },
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "MoreEq",
+          "value": {
+            "Size": {
+              "Simple": {
+                "Double": 24.0
+              }
+            }
+          }
+        }
+      ],
+      "edits": [
+        {
+          "mode": "Prepend",
+          "binding": "Weak",
+          "value": {
+            "Family": {
+              "Simple": {
+                "String": "Titr"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "Match": {
+      "target": "Pattern",
+      "tests": [
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Family": {
+              "Simple": {
+                "String": "Persian_sansserif_default"
+              }
+            }
+          }
+        },
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "MoreEq",
+          "value": {
+            "Weight": {
+              "Simple": {
+                "Int": 200
+              }
+            }
+          }
+        },
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "MoreEq",
+          "value": {
+            "Size": {
+              "Simple": {
+                "Double": 24.0
+              }
+            }
+          }
+        }
+      ],
+      "edits": [
+        {
+          "mode": "Prepend",
+          "binding": "Same",
+          "value": {
+            "Family": {
+              "Simple": {
+                "String": "Titr"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "Match": {
+      "target": "Pattern",
+      "tests": [
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Family": {
+              "Simple": {
+                "String": "Persian_sansserif_default"
+              }
+            }
+          }
+        }
+      ],
+      "edits": [
+        {
+          "mode": "Assign",
+          "binding": "Same",
+          "value": {
+            "Family": {
+              "Simple": {
+                "String": "Roya"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+]

@@ -1,0 +1,14 @@
+---
+- name: Comment that looks like a mapping key
+  from: '@perlpunk'
+  tags: comment error mapping
+  fail: true
+  yaml: |
+    key: value
+    this is #not a: key
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :key
+       =VAL :value

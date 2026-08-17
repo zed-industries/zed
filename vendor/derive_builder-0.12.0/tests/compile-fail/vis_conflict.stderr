@@ -1,0 +1,41 @@
+error: `public` and `private` cannot be used together
+ --> tests/compile-fail/vis_conflict.rs:7:15
+  |
+7 |     #[builder(public, private)]
+  |               ^^^^^^
+
+error: `vis="..."` cannot be used with `public` or `private`
+ --> tests/compile-fail/vis_conflict.rs:5:25
+  |
+5 | #[builder(public, vis = "pub(crate)")]
+  |                         ^^^^^^^^^^^^
+
+error: `public` and `private` cannot be used together
+  --> tests/compile-fail/vis_conflict.rs:12:57
+   |
+12 | #[builder(public, vis = "pub(crate)", build_fn(private, public))]
+   |                                                         ^^^^^^
+
+error: `vis="..."` cannot be used with `public` or `private`
+  --> tests/compile-fail/vis_conflict.rs:14:30
+   |
+14 |     #[builder(private, vis = "pub")]
+   |                              ^^^^^
+
+error: `vis="..."` cannot be used with `public` or `private`
+  --> tests/compile-fail/vis_conflict.rs:12:25
+   |
+12 | #[builder(public, vis = "pub(crate)", build_fn(private, public))]
+   |                         ^^^^^^^^^^^^
+
+error[E0433]: failed to resolve: use of undeclared type `ExampleBuilder`
+  --> tests/compile-fail/vis_conflict.rs:19:5
+   |
+19 |     ExampleBuilder::default().build();
+   |     ^^^^^^^^^^^^^^ use of undeclared type `ExampleBuilder`
+
+error[E0433]: failed to resolve: use of undeclared type `SecondExampleBuilder`
+  --> tests/compile-fail/vis_conflict.rs:20:5
+   |
+20 |     SecondExampleBuilder::default().build();
+   |     ^^^^^^^^^^^^^^^^^^^^ use of undeclared type `SecondExampleBuilder`

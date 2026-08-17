@@ -1,0 +1,36 @@
+<svg width="751px" height="128px" xmlns="http://www.w3.org/2000/svg">
+  <style>
+    .fg { fill: #AAAAAA }
+    .bg { fill: #000000 }
+    .fg-bright-blue { fill: #5555FF }
+    .fg-bright-red { fill: #FF5555 }
+    .container {
+      padding: 0 10px;
+      line-height: 18px;
+    }
+    .bold { font-weight: bold; }
+    tspan {
+      font: 14px SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace;
+      white-space: pre;
+      line-height: 18px;
+    }
+  </style>
+
+  <rect width="100%" height="100%" y="0" rx="4.5" class="bg" />
+
+  <text xml:space="preserve" class="container fg">
+    <tspan x="10px" y="28px"><tspan class="fg-bright-red bold">error: internal compiler error[E0080]</tspan><tspan class="bold">: could not evaluate static initializer</tspan>
+</tspan>
+    <tspan x="10px" y="46px"><tspan>  </tspan><tspan class="fg-bright-blue bold"> ╭▸ </tspan><tspan>$DIR/err.rs:11:21</tspan>
+</tspan>
+    <tspan x="10px" y="64px"><tspan>   </tspan><tspan class="fg-bright-blue bold">│</tspan>
+</tspan>
+    <tspan x="10px" y="82px"><tspan class="fg-bright-blue bold">11</tspan><tspan> </tspan><tspan class="fg-bright-blue bold">│</tspan><tspan> pub static C: u32 = 0 - 1;</tspan>
+</tspan>
+    <tspan x="10px" y="100px"><tspan>   </tspan><tspan class="fg-bright-blue bold">╰╴</tspan><tspan>                    </tspan><tspan class="fg-bright-red bold">━━━━━</tspan><tspan> </tspan><tspan class="fg-bright-red bold">attempt to compute `0_u32 - 1_u32`, which would overflow</tspan>
+</tspan>
+    <tspan x="10px" y="118px">
+</tspan>
+  </text>
+
+</svg>

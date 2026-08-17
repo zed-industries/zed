@@ -1,0 +1,63 @@
+name: Rust
+
+on: [push, pull_request]
+
+jobs:
+  vanilla_build:
+    name: Vanilla Build
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - run: rustup update
+    - name: Build
+      run: cargo build --verbose --all
+    - name: Run tests
+      run: cargo test --verbose --all
+  all_features_build:
+    name: All Features Enabled Build
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - run: rustup update
+    - name: Build
+      run: cargo build --verbose --all-features --all
+    - name: Run tests
+      run: cargo test --verbose --all-features --all
+    - name: Build Examples
+      run: cargo build --examples --all-features --all
+  msrv:
+    name: Minimum Supported Rust Version
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - run: rustup toolchain add 1.63
+    - name: Build
+      run: cargo +1.63 check --lib --all-features
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - run: rustup update
+    - run: rustup component add clippy
+    - run: cargo clippy --all-features --workspace -- -Dclippy::all
+  rustfmt:
+    name: Check rustfmt
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - run: rustup update
+    - run: rustup component add rustfmt --toolchain stable
+    - run: cargo +stable fmt --all -- --check
+  fuzz:
+    name: Run `int_in_range` fuzz target
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - run: rustup update
+    - name: "Install nightly"
+      run: rustup toolchain install nightly && rustup default nightly
+    - name: "Install `cargo-fuzz`"
+      run: cargo install cargo-fuzz
+    - name: "Fuzz for 3 minutes"
+      run: cargo fuzz run int_in_range -- -max_total_time=$((3 * 60))

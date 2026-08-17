@@ -1,0 +1,5 @@
+failed to update function `[constructor]a`: found a reference to a type which is excluded due to its feature not being activated
+     --> tests/ui/parse-fail/bad-gate4.wit:6:5
+      |
+    6 |     constructor();
+      |     ^----------

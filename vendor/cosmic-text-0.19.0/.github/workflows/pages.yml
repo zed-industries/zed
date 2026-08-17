@@ -1,0 +1,22 @@
+name: Pages
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  pages:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Build documentation
+      run: cargo doc --verbose
+    - name: Deploy documentation
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./target/doc
+        force_orphan: true

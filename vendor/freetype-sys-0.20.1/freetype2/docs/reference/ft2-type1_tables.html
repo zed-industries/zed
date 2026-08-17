@@ -1,0 +1,2306 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="API Reference Documentation for FreeType-2.13.2">
+      
+      
+      
+        <meta name="author" content="FreeType Contributors">
+      
+      
+      <link rel="icon" href="images/favico.ico">
+      <meta name="generator" content="mkdocs-1.4.3, mkdocs-material-7.1.9">
+    
+    
+      
+        <title>Type 1 Tables - FreeType-2.13.2 API Reference</title>
+      
+    
+    
+      <link rel="stylesheet" href="assets/stylesheets/main.ca7ac06f.min.css">
+      
+        
+        <link rel="stylesheet" href="assets/stylesheets/palette.f1a3b89f.min.css">
+        
+          
+          
+          <meta name="theme-color" content="#4cae4f">
+        
+      
+    
+    
+    
+      
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Noto+Serif:300,400,400i,700%7CRoboto+Mono&display=fallback">
+        <style>:root{--md-text-font-family:"Noto Serif";--md-code-font-family:"Roboto Mono"}</style>
+      
+    
+    
+    
+      <link rel="stylesheet" href="stylesheets/extra.css">
+    
+    
+      
+
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <script>function __prefix(e){return new URL(".",location).pathname+"."+e}function __get(e,t=localStorage){return JSON.parse(t.getItem(__prefix(e)))}</script>
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#type-1-tables" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-header__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            FreeType-2.13.2 API Reference
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Type 1 Tables
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+      </label>
+      
+<div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" data-md-state="active" required>
+      <label class="md-search__icon md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+      </label>
+      <button type="reset" class="md-search__icon md-icon" aria-label="Clear" tabindex="-1">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
+      </button>
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+  </nav>
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-nav__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    FreeType-2.13.2 API Reference
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="index.html" class="md-nav__link">
+        TOC
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-index.html" class="md-nav__link">
+        Index
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_3" type="checkbox" id="__nav_3" >
+      
+      <label class="md-nav__link" for="__nav_3">
+        General Remarks
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="General Remarks" data-md-level="1">
+        <label class="md-nav__title" for="__nav_3">
+          <span class="md-nav__icon md-icon"></span>
+          General Remarks
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-preamble.html" class="md-nav__link">
+        Preamble
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_inclusion.html" class="md-nav__link">
+        FreeType's header inclusion scheme
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-user_allocation.html" class="md-nav__link">
+        User allocation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_4" type="checkbox" id="__nav_4" >
+      
+      <label class="md-nav__link" for="__nav_4">
+        Core API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Core API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_4">
+          <span class="md-nav__icon md-icon"></span>
+          Core API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-basic_types.html" class="md-nav__link">
+        Basic Data Types
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-library_setup.html" class="md-nav__link">
+        Library Setup
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-face_creation.html" class="md-nav__link">
+        Face Creation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_testing_macros.html" class="md-nav__link">
+        Font Testing Macros
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizing_and_scaling.html" class="md-nav__link">
+        Sizing and Scaling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_retrieval.html" class="md-nav__link">
+        Glyph Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-character_mapping.html" class="md-nav__link">
+        Character Mapping
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-information_retrieval.html" class="md-nav__link">
+        Information Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-other_api_data.html" class="md-nav__link">
+        Other API Data
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_5" type="checkbox" id="__nav_5" >
+      
+      <label class="md-nav__link" for="__nav_5">
+        Extended API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Extended API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_5">
+          <span class="md-nav__icon md-icon"></span>
+          Extended API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_variants.html" class="md-nav__link">
+        Unicode Variation Sequences
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-color_management.html" class="md-nav__link">
+        Glyph Color Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-layer_management.html" class="md-nav__link">
+        Glyph Layer Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_management.html" class="md-nav__link">
+        Glyph Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-mac_specific.html" class="md-nav__link">
+        Mac Specific Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizes_management.html" class="md-nav__link">
+        Size Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_file_macros.html" class="md-nav__link">
+        Header File Macros
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+    
+  
+  
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_6" type="checkbox" id="__nav_6" checked>
+      
+      <label class="md-nav__link" for="__nav_6">
+        Format-Specific API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Format-Specific API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_6">
+          <span class="md-nav__icon md-icon"></span>
+          Format-Specific API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-multiple_masters.html" class="md-nav__link">
+        Multiple Masters
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_tables.html" class="md-nav__link">
+        TrueType Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+    
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" data-md-toggle="toc" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          Type 1 Tables
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="ft2-type1_tables.html" class="md-nav__link md-nav__link--active">
+        Type 1 Tables
+      </a>
+      
+        
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ps_fontinforec" class="md-nav__link">
+    PS_FontInfoRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ps_fontinfo" class="md-nav__link">
+    PS_FontInfo
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ps_privaterec" class="md-nav__link">
+    PS_PrivateRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ps_private" class="md-nav__link">
+    PS_Private
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cid_facedictrec" class="md-nav__link">
+    CID_FaceDictRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cid_facedict" class="md-nav__link">
+    CID_FaceDict
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cid_faceinforec" class="md-nav__link">
+    CID_FaceInfoRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cid_faceinfo" class="md-nav__link">
+    CID_FaceInfo
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_has_ps_glyph_names" class="md-nav__link">
+    FT_Has_PS_Glyph_Names
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_ps_font_info" class="md-nav__link">
+    FT_Get_PS_Font_Info
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_ps_font_private" class="md-nav__link">
+    FT_Get_PS_Font_Private
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_ps_font_value" class="md-nav__link">
+    FT_Get_PS_Font_Value
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#t1_blend_flags" class="md-nav__link">
+    T1_Blend_Flags
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#t1_encodingtype" class="md-nav__link">
+    T1_EncodingType
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ps_dict_keys" class="md-nav__link">
+    PS_Dict_Keys
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#t1_fontinfo" class="md-nav__link">
+    T1_FontInfo
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#t1_private" class="md-nav__link">
+    T1_Private
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cid_fontdict" class="md-nav__link">
+    CID_FontDict
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cid_info" class="md-nav__link">
+    CID_Info
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sfnt_names.html" class="md-nav__link">
+        SFNT Names
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bdf_fonts.html" class="md-nav__link">
+        BDF and PCF Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cid_fonts.html" class="md-nav__link">
+        CID Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pfr_fonts.html" class="md-nav__link">
+        PFR Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-winfnt_fonts.html" class="md-nav__link">
+        Window FNT Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-svg_fonts.html" class="md-nav__link">
+        OpenType SVG Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_formats.html" class="md-nav__link">
+        Font Formats
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gasp_table.html" class="md-nav__link">
+        Gasp Table
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_7" type="checkbox" id="__nav_7" >
+      
+      <label class="md-nav__link" for="__nav_7">
+        Controlling FreeType Modules
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Controlling FreeType Modules" data-md-level="1">
+        <label class="md-nav__title" for="__nav_7">
+          <span class="md-nav__icon md-icon"></span>
+          Controlling FreeType Modules
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-auto_hinter.html" class="md-nav__link">
+        The auto-hinter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cff_driver.html" class="md-nav__link">
+        The CFF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-t1_cid_driver.html" class="md-nav__link">
+        The Type 1 and CID drivers
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-tt_driver.html" class="md-nav__link">
+        The TrueType driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pcf_driver.html" class="md-nav__link">
+        The PCF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_svg_driver.html" class="md-nav__link">
+        The SVG driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-properties.html" class="md-nav__link">
+        Driver properties
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-parameter_tags.html" class="md-nav__link">
+        Parameter Tags
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lcd_rendering.html" class="md-nav__link">
+        Subpixel Rendering
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_8" type="checkbox" id="__nav_8" >
+      
+      <label class="md-nav__link" for="__nav_8">
+        Cache Sub-System
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Cache Sub-System" data-md-level="1">
+        <label class="md-nav__title" for="__nav_8">
+          <span class="md-nav__icon md-icon"></span>
+          Cache Sub-System
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cache_subsystem.html" class="md-nav__link">
+        Cache Sub-System
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_9" type="checkbox" id="__nav_9" >
+      
+      <label class="md-nav__link" for="__nav_9">
+        Support API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Support API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_9">
+          <span class="md-nav__icon md-icon"></span>
+          Support API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-computations.html" class="md-nav__link">
+        Computations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-list_processing.html" class="md-nav__link">
+        List Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-outline_processing.html" class="md-nav__link">
+        Outline Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-quick_advance.html" class="md-nav__link">
+        Quick retrieval of advance values
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bitmap_handling.html" class="md-nav__link">
+        Bitmap Handling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-raster.html" class="md-nav__link">
+        Scanline Converter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_stroker.html" class="md-nav__link">
+        Glyph Stroker
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-system_interface.html" class="md-nav__link">
+        System Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-module_management.html" class="md-nav__link">
+        Module Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gzip.html" class="md-nav__link">
+        GZIP Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lzw.html" class="md-nav__link">
+        LZW Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bzip2.html" class="md-nav__link">
+        BZIP2 Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-debugging_apis.html" class="md-nav__link">
+        External Debugging APIs
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_10" type="checkbox" id="__nav_10" >
+      
+      <label class="md-nav__link" for="__nav_10">
+        Error Codes
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Error Codes" data-md-level="1">
+        <label class="md-nav__title" for="__nav_10">
+          <span class="md-nav__icon md-icon"></span>
+          Error Codes
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_enumerations.html" class="md-nav__link">
+        Error Enumerations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_code_values.html" class="md-nav__link">
+        Error Code Values
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_11" type="checkbox" id="__nav_11" >
+      
+      <label class="md-nav__link" for="__nav_11">
+        Miscellaneous
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Miscellaneous" data-md-level="1">
+        <label class="md-nav__title" for="__nav_11">
+          <span class="md-nav__icon md-icon"></span>
+          Miscellaneous
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gx_validation.html" class="md-nav__link">
+        TrueTypeGX/AAT Validation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-incremental.html" class="md-nav__link">
+        Incremental Loading
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_engine.html" class="md-nav__link">
+        The TrueType Engine
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_validation.html" class="md-nav__link">
+        OpenType Validation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ps_fontinforec" class="md-nav__link">
+    PS_FontInfoRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ps_fontinfo" class="md-nav__link">
+    PS_FontInfo
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ps_privaterec" class="md-nav__link">
+    PS_PrivateRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ps_private" class="md-nav__link">
+    PS_Private
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cid_facedictrec" class="md-nav__link">
+    CID_FaceDictRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cid_facedict" class="md-nav__link">
+    CID_FaceDict
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cid_faceinforec" class="md-nav__link">
+    CID_FaceInfoRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cid_faceinfo" class="md-nav__link">
+    CID_FaceInfo
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_has_ps_glyph_names" class="md-nav__link">
+    FT_Has_PS_Glyph_Names
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_ps_font_info" class="md-nav__link">
+    FT_Get_PS_Font_Info
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_ps_font_private" class="md-nav__link">
+    FT_Get_PS_Font_Private
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_ps_font_value" class="md-nav__link">
+    FT_Get_PS_Font_Value
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#t1_blend_flags" class="md-nav__link">
+    T1_Blend_Flags
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#t1_encodingtype" class="md-nav__link">
+    T1_EncodingType
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ps_dict_keys" class="md-nav__link">
+    PS_Dict_Keys
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#t1_fontinfo" class="md-nav__link">
+    T1_FontInfo
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#t1_private" class="md-nav__link">
+    T1_Private
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cid_fontdict" class="md-nav__link">
+    CID_FontDict
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cid_info" class="md-nav__link">
+    CID_Info
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          <div class="md-content" data-md-component="content">
+            <article class="md-content__inner md-typeset">
+              
+                
+                
+                <p><a href="https://www.freetype.org">FreeType</a> &raquo; <a href="../">Docs</a> &raquo; <a href="index.html#format-specific-api">Format-Specific API</a> &raquo; Type 1 Tables</p>
+<hr />
+<h1 id="type-1-tables">Type 1 Tables<a class="headerlink" href="#type-1-tables" title="Permanent link">&para;</a></h1>
+<h2 id="synopsis">Synopsis<a class="headerlink" href="#synopsis" title="Permanent link">&para;</a></h2>
+<p>This section contains the definition of Type&nbsp;1-specific tables, including structures related to other PostScript font formats.</p>
+<h2 id="ps_fontinforec">PS_FontInfoRec<a class="headerlink" href="#ps_fontinforec" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPE1_TABLES_H (freetype/t1tables.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  PS_FontInfoRec_
+  {
+    <a href="ft2-basic_types.html#ft_string">FT_String</a>*  version;
+    <a href="ft2-basic_types.html#ft_string">FT_String</a>*  notice;
+    <a href="ft2-basic_types.html#ft_string">FT_String</a>*  full_name;
+    <a href="ft2-basic_types.html#ft_string">FT_String</a>*  family_name;
+    <a href="ft2-basic_types.html#ft_string">FT_String</a>*  weight;
+    <a href="ft2-basic_types.html#ft_long">FT_Long</a>     italic_angle;
+    <a href="ft2-basic_types.html#ft_bool">FT_Bool</a>     is_fixed_pitch;
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>    underline_position;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>   underline_thickness;
+
+  } <b>PS_FontInfoRec</b>;
+</code></pre></div>
+
+<p>A structure used to model a Type&nbsp;1 or Type&nbsp;2 FontInfo dictionary. Note that for Multiple Master fonts, each instance has its own FontInfo dictionary.</p>
+<hr>
+
+<h2 id="ps_fontinfo">PS_FontInfo<a class="headerlink" href="#ps_fontinfo" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPE1_TABLES_H (freetype/t1tables.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span> PS_FontInfoRec_*  <b>PS_FontInfo</b>;
+</code></pre></div>
+
+<p>A handle to a <code><a href="ft2-type1_tables.html#ps_fontinforec">PS_FontInfoRec</a></code> structure.</p>
+<hr>
+
+<h2 id="ps_privaterec">PS_PrivateRec<a class="headerlink" href="#ps_privaterec" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPE1_TABLES_H (freetype/t1tables.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  PS_PrivateRec_
+  {
+    <a href="ft2-basic_types.html#ft_int">FT_Int</a>     unique_id;
+    <a href="ft2-basic_types.html#ft_int">FT_Int</a>     lenIV;
+
+    <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>    num_blue_values;
+    <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>    num_other_blues;
+    <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>    num_family_blues;
+    <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>    num_family_other_blues;
+
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   blue_values[14];
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   other_blues[10];
+
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   family_blues      [14];
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   family_other_blues[10];
+
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>   blue_scale;
+    <a href="ft2-basic_types.html#ft_int">FT_Int</a>     blue_shift;
+    <a href="ft2-basic_types.html#ft_int">FT_Int</a>     blue_fuzz;
+
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  standard_width[1];
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  standard_height[1];
+
+    <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>    num_snap_widths;
+    <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>    num_snap_heights;
+    <a href="ft2-basic_types.html#ft_bool">FT_Bool</a>    force_bold;
+    <a href="ft2-basic_types.html#ft_bool">FT_Bool</a>    round_stem_up;
+
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   snap_widths [13];  /* including std width  */
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   snap_heights[13];  /* including std height */
+
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>   expansion_factor;
+
+    <a href="ft2-basic_types.html#ft_long">FT_Long</a>    language_group;
+    <a href="ft2-basic_types.html#ft_long">FT_Long</a>    password;
+
+    <a href="ft2-basic_types.html#ft_short">FT_Short</a>   min_feature[2];
+
+  } <b>PS_PrivateRec</b>;
+</code></pre></div>
+
+<p>A structure used to model a Type&nbsp;1 or Type&nbsp;2 private dictionary. Note that for Multiple Master fonts, each instance has its own Private dictionary.</p>
+<hr>
+
+<h2 id="ps_private">PS_Private<a class="headerlink" href="#ps_private" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPE1_TABLES_H (freetype/t1tables.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span> PS_PrivateRec_*  <b>PS_Private</b>;
+</code></pre></div>
+
+<p>A handle to a <code><a href="ft2-type1_tables.html#ps_privaterec">PS_PrivateRec</a></code> structure.</p>
+<hr>
+
+<h2 id="cid_facedictrec">CID_FaceDictRec<a class="headerlink" href="#cid_facedictrec" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPE1_TABLES_H (freetype/t1tables.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  CID_FaceDictRec_
+  {
+    <a href="ft2-type1_tables.html#ps_privaterec">PS_PrivateRec</a>  private_dict;
+
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>        len_buildchar;
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>       forcebold_threshold;
+    <a href="ft2-basic_types.html#ft_pos">FT_Pos</a>         stroke_width;
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>       expansion_factor;   /* this is a duplicate of           */
+                                       /* `private_dict-&gt;expansion_factor' */
+    <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>        paint_type;
+    <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>        font_type;
+    <a href="ft2-basic_types.html#ft_matrix">FT_Matrix</a>      font_matrix;
+    <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>      font_offset;
+
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>        num_subrs;
+    <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>       subrmap_offset;
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>        sd_bytes;
+
+  } <b>CID_FaceDictRec</b>;
+</code></pre></div>
+
+<p>A structure used to represent data in a CID top-level dictionary. In most cases, they are part of the font's &lsquo;/FDArray&rsquo; array. Within a CID font file, such (internal) subfont dictionaries are enclosed by &lsquo;%ADOBeginFontDict&rsquo; and &lsquo;%ADOEndFontDict&rsquo; comments.</p>
+<p>Note that <code>CID_FaceDictRec</code> misses a field for the &lsquo;/FontName&rsquo; keyword, specifying the subfont's name (the top-level font name is given by the &lsquo;/CIDFontName&rsquo; keyword). This is an oversight, but it doesn't limit the &lsquo;cid&rsquo; font module's functionality because FreeType neither needs this entry nor gives access to CID subfonts.</p>
+<hr>
+
+<h2 id="cid_facedict">CID_FaceDict<a class="headerlink" href="#cid_facedict" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPE1_TABLES_H (freetype/t1tables.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span> CID_FaceDictRec_*  <b>CID_FaceDict</b>;
+</code></pre></div>
+
+<p>A handle to a <code><a href="ft2-type1_tables.html#cid_facedictrec">CID_FaceDictRec</a></code> structure.</p>
+<hr>
+
+<h2 id="cid_faceinforec">CID_FaceInfoRec<a class="headerlink" href="#cid_faceinforec" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPE1_TABLES_H (freetype/t1tables.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  CID_FaceInfoRec_
+  {
+    <a href="ft2-basic_types.html#ft_string">FT_String</a>*      cid_font_name;
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>        cid_version;
+    <a href="ft2-basic_types.html#ft_int">FT_Int</a>          cid_font_type;
+
+    <a href="ft2-basic_types.html#ft_string">FT_String</a>*      registry;
+    <a href="ft2-basic_types.html#ft_string">FT_String</a>*      ordering;
+    <a href="ft2-basic_types.html#ft_int">FT_Int</a>          supplement;
+
+    <a href="ft2-type1_tables.html#ps_fontinforec">PS_FontInfoRec</a>  font_info;
+    <a href="ft2-basic_types.html#ft_bbox">FT_BBox</a>         font_bbox;
+    <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>        uid_base;
+
+    <a href="ft2-basic_types.html#ft_int">FT_Int</a>          num_xuid;
+    <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>        xuid[16];
+
+    <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>        cidmap_offset;
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>         fd_bytes;
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>         gd_bytes;
+    <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>        cid_count;
+
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>         num_dicts;
+    <a href="ft2-type1_tables.html#cid_facedict">CID_FaceDict</a>    font_dicts;
+
+    <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>        data_offset;
+
+  } <b>CID_FaceInfoRec</b>;
+</code></pre></div>
+
+<p>A structure used to represent CID Face information.</p>
+<hr>
+
+<h2 id="cid_faceinfo">CID_FaceInfo<a class="headerlink" href="#cid_faceinfo" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPE1_TABLES_H (freetype/t1tables.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span> CID_FaceInfoRec_*  <b>CID_FaceInfo</b>;
+</code></pre></div>
+
+<p>A handle to a <code><a href="ft2-type1_tables.html#cid_faceinforec">CID_FaceInfoRec</a></code> structure.</p>
+<hr>
+
+<h2 id="ft_has_ps_glyph_names">FT_Has_PS_Glyph_Names<a class="headerlink" href="#ft_has_ps_glyph_names" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPE1_TABLES_H (freetype/t1tables.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_int">FT_Int</a> )
+  <b>FT_Has_PS_Glyph_Names</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>  face );
+</code></pre></div>
+
+<p>Return true if a given face provides reliable PostScript glyph names. This is similar to using the <code><a href="ft2-font_testing_macros.html#ft_has_glyph_names">FT_HAS_GLYPH_NAMES</a></code> macro, except that certain fonts (mostly TrueType) contain incorrect glyph name tables.</p>
+<p>When this function returns true, the caller is sure that the glyph names returned by <code><a href="ft2-information_retrieval.html#ft_get_glyph_name">FT_Get_Glyph_Name</a></code> are reliable.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>face handle</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>Boolean. True if glyph names are reliable.</p>
+<hr>
+
+<h2 id="ft_get_ps_font_info">FT_Get_PS_Font_Info<a class="headerlink" href="#ft_get_ps_font_info" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPE1_TABLES_H (freetype/t1tables.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Get_PS_Font_Info</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>      face,
+                       <a href="ft2-type1_tables.html#ps_fontinfo">PS_FontInfo</a>  afont_info );
+</code></pre></div>
+
+<p>Retrieve the <code><a href="ft2-type1_tables.html#ps_fontinforec">PS_FontInfoRec</a></code> structure corresponding to a given PostScript font.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>PostScript face handle.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="afont_info">afont_info</td><td class="desc">
+<p>A pointer to a <code><a href="ft2-type1_tables.html#ps_fontinforec">PS_FontInfoRec</a></code> object.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>String pointers within the <code><a href="ft2-type1_tables.html#ps_fontinforec">PS_FontInfoRec</a></code> structure are owned by the face and don't need to be freed by the caller. Missing entries in the font's FontInfo dictionary are represented by <code>NULL</code> pointers.</p>
+<p>The following font formats support this feature: &lsquo;Type&nbsp;1&rsquo;, &lsquo;Type&nbsp;42&rsquo;, &lsquo;CFF&rsquo;, &lsquo;CID&nbsp;Type&nbsp;1&rsquo;. For other font formats this function returns the <code>FT_Err_Invalid_Argument</code> error code.</p>
+<h4>example</h4>
+<div class="highlight"><pre><span></span><code>  PS_FontInfoRec  font_info;
+
+
+  error = FT_Get_PS_Font_Info( face, &amp;font_info );
+  ...
+</code></pre></div>
+<hr>
+
+<h2 id="ft_get_ps_font_private">FT_Get_PS_Font_Private<a class="headerlink" href="#ft_get_ps_font_private" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPE1_TABLES_H (freetype/t1tables.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Get_PS_Font_Private</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>     face,
+                          <a href="ft2-type1_tables.html#ps_private">PS_Private</a>  afont_private );
+</code></pre></div>
+
+<p>Retrieve the <code><a href="ft2-type1_tables.html#ps_privaterec">PS_PrivateRec</a></code> structure corresponding to a given PostScript font.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>PostScript face handle.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="afont_private">afont_private</td><td class="desc">
+<p>A pointer to a <code><a href="ft2-type1_tables.html#ps_privaterec">PS_PrivateRec</a></code> object.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>The string pointers within the <code><a href="ft2-type1_tables.html#ps_privaterec">PS_PrivateRec</a></code> structure are owned by the face and don't need to be freed by the caller.</p>
+<p>Only the &lsquo;Type&nbsp;1&rsquo; font format supports this feature. For other font formats this function returns the <code>FT_Err_Invalid_Argument</code> error code.</p>
+<h4>example</h4>
+<div class="highlight"><pre><span></span><code>  PS_PrivateRec  font_private;
+
+
+  error = FT_Get_PS_Font_Private( face, &amp;font_private );
+  ...
+</code></pre></div>
+<hr>
+
+<h2 id="ft_get_ps_font_value">FT_Get_PS_Font_Value<a class="headerlink" href="#ft_get_ps_font_value" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPE1_TABLES_H (freetype/t1tables.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_long">FT_Long</a> )
+  <b>FT_Get_PS_Font_Value</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>       face,
+                        <a href="ft2-type1_tables.html#ps_dict_keys">PS_Dict_Keys</a>  key,
+                        <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>       idx,
+                        <span class="keyword">void</span>         *value,
+                        <a href="ft2-basic_types.html#ft_long">FT_Long</a>       value_len );
+</code></pre></div>
+
+<p>Retrieve the value for the supplied key from a PostScript font.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>PostScript face handle.</p>
+</td></tr>
+<tr><td class="val" id="key">key</td><td class="desc">
+<p>An enumeration value representing the dictionary key to retrieve.</p>
+</td></tr>
+<tr><td class="val" id="idx">idx</td><td class="desc">
+<p>For array values, this specifies the index to be returned.</p>
+</td></tr>
+<tr><td class="val" id="value">value</td><td class="desc">
+<p>A pointer to memory into which to write the value.</p>
+</td></tr>
+<tr><td class="val" id="valen_len">valen_len</td><td class="desc">
+<p>The size, in bytes, of the memory supplied for the value.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="value">value</td><td class="desc">
+<p>The value matching the above key, if it exists.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>The amount of memory (in bytes) required to hold the requested value (if it exists, -1 otherwise).</p>
+<h4>note</h4>
+
+<p>The values returned are not pointers into the internal structures of the face, but are &lsquo;fresh&rsquo; copies, so that the memory containing them belongs to the calling application. This also enforces the &lsquo;read-only&rsquo; nature of these values, i.e., this function cannot be used to manipulate the face.</p>
+<p><code>value</code> is a void pointer because the values returned can be of various types.</p>
+<p>If either <code>value</code> is <code>NULL</code> or <code>value_len</code> is too small, just the required memory size for the requested entry is returned.</p>
+<p>The <code>idx</code> parameter is used, not only to retrieve elements of, for example, the FontMatrix or FontBBox, but also to retrieve name keys from the CharStrings dictionary, and the charstrings themselves. It is ignored for atomic values.</p>
+<p><code>PS_DICT_BLUE_SCALE</code> returns a value that is scaled up by 1000. To get the value as in the font stream, you need to divide by 65536000.0 (to remove the FT_Fixed scale, and the x1000 scale).</p>
+<p>IMPORTANT: Only key/value pairs read by the FreeType interpreter can be retrieved. So, for example, PostScript procedures such as NP, ND, and RD are not available. Arbitrary keys are, obviously, not be available either.</p>
+<p>If the font's format is not PostScript-based, this function returns the <code>FT_Err_Invalid_Argument</code> error code.</p>
+<h4>since</h4>
+
+<p>2.4.8</p>
+<hr>
+
+<h2 id="t1_blend_flags">T1_Blend_Flags<a class="headerlink" href="#t1_blend_flags" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPE1_TABLES_H (freetype/t1tables.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">enum</span>  T1_Blend_Flags_
+  {
+    /* required fields in a FontInfo blend dictionary */
+    <a href="ft2-type1_tables.html#t1_blend_underline_position">T1_BLEND_UNDERLINE_POSITION</a> = 0,
+    <a href="ft2-type1_tables.html#t1_blend_underline_thickness">T1_BLEND_UNDERLINE_THICKNESS</a>,
+    <a href="ft2-type1_tables.html#t1_blend_italic_angle">T1_BLEND_ITALIC_ANGLE</a>,
+
+    /* required fields in a Private blend dictionary */
+    <a href="ft2-type1_tables.html#t1_blend_blue_values">T1_BLEND_BLUE_VALUES</a>,
+    <a href="ft2-type1_tables.html#t1_blend_other_blues">T1_BLEND_OTHER_BLUES</a>,
+    <a href="ft2-type1_tables.html#t1_blend_standard_width">T1_BLEND_STANDARD_WIDTH</a>,
+    <a href="ft2-type1_tables.html#t1_blend_standard_height">T1_BLEND_STANDARD_HEIGHT</a>,
+    <a href="ft2-type1_tables.html#t1_blend_stem_snap_widths">T1_BLEND_STEM_SNAP_WIDTHS</a>,
+    <a href="ft2-type1_tables.html#t1_blend_stem_snap_heights">T1_BLEND_STEM_SNAP_HEIGHTS</a>,
+    <a href="ft2-type1_tables.html#t1_blend_blue_scale">T1_BLEND_BLUE_SCALE</a>,
+    <a href="ft2-type1_tables.html#t1_blend_blue_shift">T1_BLEND_BLUE_SHIFT</a>,
+    <a href="ft2-type1_tables.html#t1_blend_family_blues">T1_BLEND_FAMILY_BLUES</a>,
+    <a href="ft2-type1_tables.html#t1_blend_family_other_blues">T1_BLEND_FAMILY_OTHER_BLUES</a>,
+    <a href="ft2-type1_tables.html#t1_blend_force_bold">T1_BLEND_FORCE_BOLD</a>,
+
+    T1_BLEND_MAX    /* do not remove */
+
+  } <b>T1_Blend_Flags</b>;
+
+
+  /* these constants are deprecated; use the corresponding */
+  /* `<b>T1_Blend_Flags</b>` values instead                       */
+#<span class="keyword">define</span> t1_blend_underline_position   <a href="ft2-type1_tables.html#t1_blend_underline_position">T1_BLEND_UNDERLINE_POSITION</a>
+#<span class="keyword">define</span> t1_blend_underline_thickness  <a href="ft2-type1_tables.html#t1_blend_underline_thickness">T1_BLEND_UNDERLINE_THICKNESS</a>
+#<span class="keyword">define</span> t1_blend_italic_angle         <a href="ft2-type1_tables.html#t1_blend_italic_angle">T1_BLEND_ITALIC_ANGLE</a>
+#<span class="keyword">define</span> t1_blend_blue_values          <a href="ft2-type1_tables.html#t1_blend_blue_values">T1_BLEND_BLUE_VALUES</a>
+#<span class="keyword">define</span> t1_blend_other_blues          <a href="ft2-type1_tables.html#t1_blend_other_blues">T1_BLEND_OTHER_BLUES</a>
+#<span class="keyword">define</span> t1_blend_standard_widths      <a href="ft2-type1_tables.html#t1_blend_standard_width">T1_BLEND_STANDARD_WIDTH</a>
+#<span class="keyword">define</span> t1_blend_standard_height      <a href="ft2-type1_tables.html#t1_blend_standard_height">T1_BLEND_STANDARD_HEIGHT</a>
+#<span class="keyword">define</span> t1_blend_stem_snap_widths     <a href="ft2-type1_tables.html#t1_blend_stem_snap_widths">T1_BLEND_STEM_SNAP_WIDTHS</a>
+#<span class="keyword">define</span> t1_blend_stem_snap_heights    <a href="ft2-type1_tables.html#t1_blend_stem_snap_heights">T1_BLEND_STEM_SNAP_HEIGHTS</a>
+#<span class="keyword">define</span> t1_blend_blue_scale           <a href="ft2-type1_tables.html#t1_blend_blue_scale">T1_BLEND_BLUE_SCALE</a>
+#<span class="keyword">define</span> t1_blend_blue_shift           <a href="ft2-type1_tables.html#t1_blend_blue_shift">T1_BLEND_BLUE_SHIFT</a>
+#<span class="keyword">define</span> t1_blend_family_blues         <a href="ft2-type1_tables.html#t1_blend_family_blues">T1_BLEND_FAMILY_BLUES</a>
+#<span class="keyword">define</span> t1_blend_family_other_blues   <a href="ft2-type1_tables.html#t1_blend_family_other_blues">T1_BLEND_FAMILY_OTHER_BLUES</a>
+#<span class="keyword">define</span> t1_blend_force_bold           <a href="ft2-type1_tables.html#t1_blend_force_bold">T1_BLEND_FORCE_BOLD</a>
+#<span class="keyword">define</span> t1_blend_max                  T1_BLEND_MAX
+</code></pre></div>
+
+<p>A set of flags used to indicate which fields are present in a given blend dictionary (font info or private). Used to support Multiple Masters fonts.</p>
+<h4>values</h4>
+<table class="fields long">
+<tr><td class="val" id="t1_blend_underline_position">T1_BLEND_UNDERLINE_POSITION</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="t1_blend_underline_thickness">T1_BLEND_UNDERLINE_THICKNESS</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="t1_blend_italic_angle">T1_BLEND_ITALIC_ANGLE</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="t1_blend_blue_values">T1_BLEND_BLUE_VALUES</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="t1_blend_other_blues">T1_BLEND_OTHER_BLUES</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="t1_blend_standard_width">T1_BLEND_STANDARD_WIDTH</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="t1_blend_standard_height">T1_BLEND_STANDARD_HEIGHT</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="t1_blend_stem_snap_widths">T1_BLEND_STEM_SNAP_WIDTHS</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="t1_blend_stem_snap_heights">T1_BLEND_STEM_SNAP_HEIGHTS</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="t1_blend_blue_scale">T1_BLEND_BLUE_SCALE</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="t1_blend_blue_shift">T1_BLEND_BLUE_SHIFT</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="t1_blend_family_blues">T1_BLEND_FAMILY_BLUES</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="t1_blend_family_other_blues">T1_BLEND_FAMILY_OTHER_BLUES</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="t1_blend_force_bold">T1_BLEND_FORCE_BOLD</td><td class="desc">
+
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="t1_encodingtype">T1_EncodingType<a class="headerlink" href="#t1_encodingtype" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPE1_TABLES_H (freetype/t1tables.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">enum</span>  T1_EncodingType_
+  {
+    <a href="ft2-type1_tables.html#t1_encoding_type_none">T1_ENCODING_TYPE_NONE</a> = 0,
+    <a href="ft2-type1_tables.html#t1_encoding_type_array">T1_ENCODING_TYPE_ARRAY</a>,
+    <a href="ft2-type1_tables.html#t1_encoding_type_standard">T1_ENCODING_TYPE_STANDARD</a>,
+    <a href="ft2-type1_tables.html#t1_encoding_type_isolatin1">T1_ENCODING_TYPE_ISOLATIN1</a>,
+    <a href="ft2-type1_tables.html#t1_encoding_type_expert">T1_ENCODING_TYPE_EXPERT</a>
+
+  } <b>T1_EncodingType</b>;
+</code></pre></div>
+
+<p>An enumeration describing the &lsquo;Encoding&rsquo; entry in a Type 1 dictionary.</p>
+<h4>values</h4>
+<table class="fields long">
+<tr><td class="val" id="t1_encoding_type_none">T1_ENCODING_TYPE_NONE</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="t1_encoding_type_array">T1_ENCODING_TYPE_ARRAY</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="t1_encoding_type_standard">T1_ENCODING_TYPE_STANDARD</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="t1_encoding_type_isolatin1">T1_ENCODING_TYPE_ISOLATIN1</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="t1_encoding_type_expert">T1_ENCODING_TYPE_EXPERT</td><td class="desc">
+
+</td></tr>
+</table>
+
+<h4>since</h4>
+
+<p>2.4.8</p>
+<hr>
+
+<h2 id="ps_dict_keys">PS_Dict_Keys<a class="headerlink" href="#ps_dict_keys" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPE1_TABLES_H (freetype/t1tables.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">enum</span>  PS_Dict_Keys_
+  {
+    /* conventionally in the font dictionary */
+    <a href="ft2-type1_tables.html#ps_dict_font_type">PS_DICT_FONT_TYPE</a>,              /* <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>         */
+    <a href="ft2-type1_tables.html#ps_dict_font_matrix">PS_DICT_FONT_MATRIX</a>,            /* <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>        */
+    <a href="ft2-type1_tables.html#ps_dict_font_bbox">PS_DICT_FONT_BBOX</a>,              /* <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>        */
+    <a href="ft2-type1_tables.html#ps_dict_paint_type">PS_DICT_PAINT_TYPE</a>,             /* <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>         */
+    <a href="ft2-type1_tables.html#ps_dict_font_name">PS_DICT_FONT_NAME</a>,              /* <a href="ft2-basic_types.html#ft_string">FT_String</a>*      */
+    <a href="ft2-type1_tables.html#ps_dict_unique_id">PS_DICT_UNIQUE_ID</a>,              /* <a href="ft2-basic_types.html#ft_int">FT_Int</a>          */
+    <a href="ft2-type1_tables.html#ps_dict_num_char_strings">PS_DICT_NUM_CHAR_STRINGS</a>,       /* <a href="ft2-basic_types.html#ft_int">FT_Int</a>          */
+    <a href="ft2-type1_tables.html#ps_dict_char_string_key">PS_DICT_CHAR_STRING_KEY</a>,        /* <a href="ft2-basic_types.html#ft_string">FT_String</a>*      */
+    <a href="ft2-type1_tables.html#ps_dict_char_string">PS_DICT_CHAR_STRING</a>,            /* <a href="ft2-basic_types.html#ft_string">FT_String</a>*      */
+    <a href="ft2-type1_tables.html#ps_dict_encoding_type">PS_DICT_ENCODING_TYPE</a>,          /* <a href="ft2-type1_tables.html#t1_encodingtype">T1_EncodingType</a> */
+    <a href="ft2-type1_tables.html#ps_dict_encoding_entry">PS_DICT_ENCODING_ENTRY</a>,         /* <a href="ft2-basic_types.html#ft_string">FT_String</a>*      */
+
+    /* conventionally in the font Private dictionary */
+    <a href="ft2-type1_tables.html#ps_dict_num_subrs">PS_DICT_NUM_SUBRS</a>,              /* <a href="ft2-basic_types.html#ft_int">FT_Int</a>     */
+    <a href="ft2-type1_tables.html#ps_dict_subr">PS_DICT_SUBR</a>,                   /* <a href="ft2-basic_types.html#ft_string">FT_String</a>* */
+    <a href="ft2-type1_tables.html#ps_dict_std_hw">PS_DICT_STD_HW</a>,                 /* <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  */
+    <a href="ft2-type1_tables.html#ps_dict_std_vw">PS_DICT_STD_VW</a>,                 /* <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  */
+    <a href="ft2-type1_tables.html#ps_dict_num_blue_values">PS_DICT_NUM_BLUE_VALUES</a>,        /* <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>    */
+    <a href="ft2-type1_tables.html#ps_dict_blue_value">PS_DICT_BLUE_VALUE</a>,             /* <a href="ft2-basic_types.html#ft_short">FT_Short</a>   */
+    <a href="ft2-type1_tables.html#ps_dict_blue_fuzz">PS_DICT_BLUE_FUZZ</a>,              /* <a href="ft2-basic_types.html#ft_int">FT_Int</a>     */
+    <a href="ft2-type1_tables.html#ps_dict_num_other_blues">PS_DICT_NUM_OTHER_BLUES</a>,        /* <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>    */
+    <a href="ft2-type1_tables.html#ps_dict_other_blue">PS_DICT_OTHER_BLUE</a>,             /* <a href="ft2-basic_types.html#ft_short">FT_Short</a>   */
+    <a href="ft2-type1_tables.html#ps_dict_num_family_blues">PS_DICT_NUM_FAMILY_BLUES</a>,       /* <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>    */
+    <a href="ft2-type1_tables.html#ps_dict_family_blue">PS_DICT_FAMILY_BLUE</a>,            /* <a href="ft2-basic_types.html#ft_short">FT_Short</a>   */
+    <a href="ft2-type1_tables.html#ps_dict_num_family_other_blues">PS_DICT_NUM_FAMILY_OTHER_BLUES</a>, /* <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>    */
+    <a href="ft2-type1_tables.html#ps_dict_family_other_blue">PS_DICT_FAMILY_OTHER_BLUE</a>,      /* <a href="ft2-basic_types.html#ft_short">FT_Short</a>   */
+    <a href="ft2-type1_tables.html#ps_dict_blue_scale">PS_DICT_BLUE_SCALE</a>,             /* <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>   */
+    <a href="ft2-type1_tables.html#ps_dict_blue_shift">PS_DICT_BLUE_SHIFT</a>,             /* <a href="ft2-basic_types.html#ft_int">FT_Int</a>     */
+    <a href="ft2-type1_tables.html#ps_dict_num_stem_snap_h">PS_DICT_NUM_STEM_SNAP_H</a>,        /* <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>    */
+    <a href="ft2-type1_tables.html#ps_dict_stem_snap_h">PS_DICT_STEM_SNAP_H</a>,            /* <a href="ft2-basic_types.html#ft_short">FT_Short</a>   */
+    <a href="ft2-type1_tables.html#ps_dict_num_stem_snap_v">PS_DICT_NUM_STEM_SNAP_V</a>,        /* <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>    */
+    <a href="ft2-type1_tables.html#ps_dict_stem_snap_v">PS_DICT_STEM_SNAP_V</a>,            /* <a href="ft2-basic_types.html#ft_short">FT_Short</a>   */
+    <a href="ft2-type1_tables.html#ps_dict_force_bold">PS_DICT_FORCE_BOLD</a>,             /* <a href="ft2-basic_types.html#ft_bool">FT_Bool</a>    */
+    <a href="ft2-type1_tables.html#ps_dict_rnd_stem_up">PS_DICT_RND_STEM_UP</a>,            /* <a href="ft2-basic_types.html#ft_bool">FT_Bool</a>    */
+    <a href="ft2-type1_tables.html#ps_dict_min_feature">PS_DICT_MIN_FEATURE</a>,            /* <a href="ft2-basic_types.html#ft_short">FT_Short</a>   */
+    <a href="ft2-type1_tables.html#ps_dict_len_iv">PS_DICT_LEN_IV</a>,                 /* <a href="ft2-basic_types.html#ft_int">FT_Int</a>     */
+    <a href="ft2-type1_tables.html#ps_dict_password">PS_DICT_PASSWORD</a>,               /* <a href="ft2-basic_types.html#ft_long">FT_Long</a>    */
+    <a href="ft2-type1_tables.html#ps_dict_language_group">PS_DICT_LANGUAGE_GROUP</a>,         /* <a href="ft2-basic_types.html#ft_long">FT_Long</a>    */
+
+    /* conventionally in the font FontInfo dictionary */
+    <a href="ft2-type1_tables.html#ps_dict_version">PS_DICT_VERSION</a>,                /* <a href="ft2-basic_types.html#ft_string">FT_String</a>* */
+    <a href="ft2-type1_tables.html#ps_dict_notice">PS_DICT_NOTICE</a>,                 /* <a href="ft2-basic_types.html#ft_string">FT_String</a>* */
+    <a href="ft2-type1_tables.html#ps_dict_full_name">PS_DICT_FULL_NAME</a>,              /* <a href="ft2-basic_types.html#ft_string">FT_String</a>* */
+    <a href="ft2-type1_tables.html#ps_dict_family_name">PS_DICT_FAMILY_NAME</a>,            /* <a href="ft2-basic_types.html#ft_string">FT_String</a>* */
+    <a href="ft2-type1_tables.html#ps_dict_weight">PS_DICT_WEIGHT</a>,                 /* <a href="ft2-basic_types.html#ft_string">FT_String</a>* */
+    <a href="ft2-type1_tables.html#ps_dict_is_fixed_pitch">PS_DICT_IS_FIXED_PITCH</a>,         /* <a href="ft2-basic_types.html#ft_bool">FT_Bool</a>    */
+    <a href="ft2-type1_tables.html#ps_dict_underline_position">PS_DICT_UNDERLINE_POSITION</a>,     /* <a href="ft2-basic_types.html#ft_short">FT_Short</a>   */
+    <a href="ft2-type1_tables.html#ps_dict_underline_thickness">PS_DICT_UNDERLINE_THICKNESS</a>,    /* <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  */
+    <a href="ft2-type1_tables.html#ps_dict_fs_type">PS_DICT_FS_TYPE</a>,                /* <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  */
+    <a href="ft2-type1_tables.html#ps_dict_italic_angle">PS_DICT_ITALIC_ANGLE</a>,           /* <a href="ft2-basic_types.html#ft_long">FT_Long</a>    */
+
+    PS_DICT_MAX = <a href="ft2-type1_tables.html#ps_dict_italic_angle">PS_DICT_ITALIC_ANGLE</a>
+
+  } <b>PS_Dict_Keys</b>;
+</code></pre></div>
+
+<p>An enumeration used in calls to <code><a href="ft2-type1_tables.html#ft_get_ps_font_value">FT_Get_PS_Font_Value</a></code> to identify the Type&nbsp;1 dictionary entry to retrieve.</p>
+<h4>values</h4>
+<table class="fields long">
+<tr><td class="val" id="ps_dict_font_type">PS_DICT_FONT_TYPE</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_font_matrix">PS_DICT_FONT_MATRIX</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_font_bbox">PS_DICT_FONT_BBOX</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_paint_type">PS_DICT_PAINT_TYPE</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_font_name">PS_DICT_FONT_NAME</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_unique_id">PS_DICT_UNIQUE_ID</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_num_char_strings">PS_DICT_NUM_CHAR_STRINGS</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_char_string_key">PS_DICT_CHAR_STRING_KEY</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_char_string">PS_DICT_CHAR_STRING</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_encoding_type">PS_DICT_ENCODING_TYPE</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_encoding_entry">PS_DICT_ENCODING_ENTRY</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_num_subrs">PS_DICT_NUM_SUBRS</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_subr">PS_DICT_SUBR</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_std_hw">PS_DICT_STD_HW</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_std_vw">PS_DICT_STD_VW</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_num_blue_values">PS_DICT_NUM_BLUE_VALUES</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_blue_value">PS_DICT_BLUE_VALUE</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_blue_fuzz">PS_DICT_BLUE_FUZZ</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_num_other_blues">PS_DICT_NUM_OTHER_BLUES</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_other_blue">PS_DICT_OTHER_BLUE</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_num_family_blues">PS_DICT_NUM_FAMILY_BLUES</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_family_blue">PS_DICT_FAMILY_BLUE</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_num_family_other_blues">PS_DICT_NUM_FAMILY_OTHER_BLUES</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_family_other_blue">PS_DICT_FAMILY_OTHER_BLUE</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_blue_scale">PS_DICT_BLUE_SCALE</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_blue_shift">PS_DICT_BLUE_SHIFT</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_num_stem_snap_h">PS_DICT_NUM_STEM_SNAP_H</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_stem_snap_h">PS_DICT_STEM_SNAP_H</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_num_stem_snap_v">PS_DICT_NUM_STEM_SNAP_V</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_stem_snap_v">PS_DICT_STEM_SNAP_V</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_force_bold">PS_DICT_FORCE_BOLD</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_rnd_stem_up">PS_DICT_RND_STEM_UP</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_min_feature">PS_DICT_MIN_FEATURE</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_len_iv">PS_DICT_LEN_IV</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_password">PS_DICT_PASSWORD</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_language_group">PS_DICT_LANGUAGE_GROUP</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_version">PS_DICT_VERSION</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_notice">PS_DICT_NOTICE</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_full_name">PS_DICT_FULL_NAME</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_family_name">PS_DICT_FAMILY_NAME</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_weight">PS_DICT_WEIGHT</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_is_fixed_pitch">PS_DICT_IS_FIXED_PITCH</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_underline_position">PS_DICT_UNDERLINE_POSITION</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_underline_thickness">PS_DICT_UNDERLINE_THICKNESS</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_fs_type">PS_DICT_FS_TYPE</td><td class="desc">
+
+</td></tr>
+<tr><td class="val" id="ps_dict_italic_angle">PS_DICT_ITALIC_ANGLE</td><td class="desc">
+
+</td></tr>
+</table>
+
+<h4>since</h4>
+
+<p>2.4.8</p>
+<hr>
+
+<h2 id="t1_fontinfo">T1_FontInfo<a class="headerlink" href="#t1_fontinfo" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPE1_TABLES_H (freetype/t1tables.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <a href="ft2-type1_tables.html#ps_fontinforec">PS_FontInfoRec</a>  <b>T1_FontInfo</b>;
+</code></pre></div>
+
+<p>This type is equivalent to <code><a href="ft2-type1_tables.html#ps_fontinforec">PS_FontInfoRec</a></code>. It is deprecated but kept to maintain source compatibility between various versions of FreeType.</p>
+<hr>
+
+<h2 id="t1_private">T1_Private<a class="headerlink" href="#t1_private" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPE1_TABLES_H (freetype/t1tables.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <a href="ft2-type1_tables.html#ps_privaterec">PS_PrivateRec</a>  <b>T1_Private</b>;
+</code></pre></div>
+
+<p>This type is equivalent to <code><a href="ft2-type1_tables.html#ps_privaterec">PS_PrivateRec</a></code>. It is deprecated but kept to maintain source compatibility between various versions of FreeType.</p>
+<hr>
+
+<h2 id="cid_fontdict">CID_FontDict<a class="headerlink" href="#cid_fontdict" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPE1_TABLES_H (freetype/t1tables.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <a href="ft2-type1_tables.html#cid_facedictrec">CID_FaceDictRec</a>  <b>CID_FontDict</b>;
+</code></pre></div>
+
+<p>This type is equivalent to <code><a href="ft2-type1_tables.html#cid_facedictrec">CID_FaceDictRec</a></code>. It is deprecated but kept to maintain source compatibility between various versions of FreeType.</p>
+<hr>
+
+<h2 id="cid_info">CID_Info<a class="headerlink" href="#cid_info" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_TYPE1_TABLES_H (freetype/t1tables.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <a href="ft2-type1_tables.html#cid_faceinforec">CID_FaceInfoRec</a>  <b>CID_Info</b>;
+</code></pre></div>
+
+<p>This type is equivalent to <code><a href="ft2-type1_tables.html#cid_faceinforec">CID_FaceInfoRec</a></code>. It is deprecated but kept to maintain source compatibility between various versions of FreeType.</p>
+<hr>
+                
+              
+              
+                
+
+
+              
+            </article>
+          </div>
+        </div>
+        
+      </main>
+      
+        
+<footer class="md-footer">
+  
+    <nav class="md-footer__inner md-grid" aria-label="Footer">
+      
+        
+        <a href="ft2-truetype_tables.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: TrueType Tables" rel="prev">
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+          </div>
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              TrueType Tables
+            </div>
+          </div>
+        </a>
+      
+      
+        
+        <a href="ft2-sfnt_names.html" class="md-footer__link md-footer__link--next" aria-label="Next: SFNT Names" rel="next">
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              SFNT Names
+            </div>
+          </div>
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11H4z"/></svg>
+          </div>
+        </a>
+      
+    </nav>
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-footer-copyright">
+        
+          <div class="md-footer-copyright__highlight">
+            Copyright 2023 <a href = "https://www.freetype.org/license.html">The FreeType Project</a>.
+          </div>
+        
+        Made with
+        <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+          Material for MkDocs
+        </a>
+        
+      </div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    <script id="__config" type="application/json">{"base": ".", "features": [], "search": "assets/javascripts/workers/search.477d984a.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.config.lang": "en", "search.config.pipeline": "trimmer, stopWordFilter", "search.config.separator": "[\\s\\-]+", "search.placeholder": "Search", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version.title": "Select version"}, "version": null}</script>
+    
+    
+      <script src="assets/javascripts/bundle.82b56eb2.min.js"></script>
+      
+        <script src="javascripts/extra.js"></script>
+      
+    
+  </body>
+</html>

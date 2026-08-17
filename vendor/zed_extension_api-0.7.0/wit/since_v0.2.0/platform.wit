@@ -1,0 +1,24 @@
+interface platform {
+    /// An operating system.
+    enum os {
+        /// macOS.
+        mac,
+        /// Linux.
+        linux,
+        /// Windows.
+        windows,
+    }
+
+    /// A platform architecture.
+    enum architecture {
+        /// AArch64 (e.g., Apple Silicon).
+        aarch64,
+        /// x86.
+        x86,
+        /// x86-64.
+        x8664,
+    }
+
+    /// Gets the current operating system and architecture.
+    current-platform: func() -> tuple<os, architecture>;
+}

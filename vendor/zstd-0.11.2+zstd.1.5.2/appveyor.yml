@@ -1,0 +1,40 @@
+os: Visual Studio 2015
+
+cache:
+  - c:\cargo\registry
+  - c:\cargo\git
+
+init:
+  - mkdir c:\cargo
+  - mkdir c:\rustup
+  - SET PATH=c:\cargo\bin;%PATH%
+
+environment:
+  CARGO_HOME: "c:\\cargo"
+  RUSTUP_HOME: "c:\\rustup"
+
+  matrix:
+    - TARGET: i686-pc-windows-msvc
+      CHANNEL: stable
+    - TARGET: x86_64-pc-windows-msvc
+      CHANNEL: stable
+    - TARGET: i686-pc-windows-gnu
+      CHANNEL: stable
+    - TARGET: x86_64-pc-windows-gnu
+      CHANNEL: stable
+
+install:
+  - appveyor DownloadFile https://win.rustup.rs/ -FileName rustup-init.exe
+  - rustup-init.exe -y --default-host %TARGET% --no-modify-path
+  - set PATH=%PATH%;%USERPROFILE%\.cargo\bin
+  - rustc -V
+  - cargo -V
+  - git submodule update --init --recursive
+
+# 'cargo test' takes care of building for us, so disable Appveyor's build stage. This prevents
+# the "directory does not contain a project or solution file" error.
+build: false
+
+# Equivalent to Travis' `script` phase
+test_script:
+  - cargo test --verbose %CARGOFLAGS%

@@ -1,0 +1,9 @@
+// parse-fail
+
+package foo:foo;
+
+world foo {
+  import foo: interface {
+    use foo.{i32};
+  }
+}

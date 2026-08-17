@@ -1,0 +1,72 @@
+[package]
+name = "wasm-streams"
+version = "0.4.2"
+authors = ["Mattias Buelens <mattias@buelens.com>"]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/MattiasBuelens/wasm-streams/"
+description = """
+Bridging between web streams and Rust streams using WebAssembly
+"""
+exclude = [
+    ".github/"
+]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+js-sys = "^0.3.72"
+wasm-bindgen = "0.2.95"
+wasm-bindgen-futures = "^0.4.45"
+futures-util = { version = "^0.3.31", features = ["io", "sink"] }
+
+[dependencies.web-sys]
+version = "^0.3.72"
+features = [
+    "AbortSignal",
+    "QueuingStrategy",
+    "ReadableStream",
+    "ReadableStreamType",
+    "ReadableWritablePair",
+    "ReadableStreamByobReader",
+    "ReadableStreamReaderMode",
+    "ReadableStreamReadResult",
+    "ReadableStreamByobRequest",
+    "ReadableStreamDefaultReader",
+    "ReadableByteStreamController",
+    "ReadableStreamGetReaderOptions",
+    "ReadableStreamDefaultController",
+    "StreamPipeOptions",
+    "TransformStream",
+    "TransformStreamDefaultController",
+    "Transformer",
+    "UnderlyingSink",
+    "UnderlyingSource",
+    "WritableStream",
+    "WritableStreamDefaultController",
+    "WritableStreamDefaultWriter",
+]
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3.45"
+tokio = { version = "^1", features = ["macros", "rt"] }
+pin-project = "^1"
+gloo-timers = { version = "^0.3.0", features = ["futures"] }
+
+[dev-dependencies.web-sys]
+version = "^0.3.72"
+features = [
+    "console",
+    "AbortSignal",
+    "ErrorEvent",
+    "PromiseRejectionEvent",
+    "Response",
+    "ReadableStream",
+    "Window",
+]
+
+[package.metadata.docs.rs]
+# https://blog.rust-lang.org/2020/03/15/docs-rs-opt-into-fewer-targets.html
+targets = ["x86_64-unknown-linux-gnu"]

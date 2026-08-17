@@ -1,0 +1,3 @@
+os: osx
+
+language: rust

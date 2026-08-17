@@ -1,0 +1,51 @@
+name: fmt
+
+on: [push, pull_request]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab
+
+      - name: Install Rust toolchain
+        run: rustup default nightly
+
+      - name: Install cargo-hack
+        run: cargo install cargo-hack
+
+      - name: Powerset
+        working-directory: ./fmt
+        run: cargo hack test --feature-powerset
+
+      - name: Minimal Versions
+        working-directory: ./fmt
+        run: cargo hack test --feature-powerset -Z minimal-versions
+
+      - name: Powerset (Tests)
+        working-directory: ./fmt/test
+        run: cargo hack test --feature-powerset
+
+  embedded:
+    name: Build (embedded)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab
+
+      - name: Install Rust toolchain
+        run: |
+          rustup default nightly
+          rustup target add thumbv6m-none-eabi
+
+      - name: Install cargo-hack
+        run: cargo install cargo-hack
+
+      - name: Powerset
+        working-directory: ./fmt
+        run: cargo hack check --each-feature --exclude-features std,alloc -Z avoid-dev-deps --target thumbv6m-none-eabi

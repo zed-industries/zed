@@ -1,0 +1,42 @@
+{
+  "worlds": [
+    {
+      "name": "name",
+      "imports": {
+        "name": {
+          "interface": {
+            "id": 1
+          }
+        }
+      },
+      "exports": {},
+      "package": 0
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "x",
+      "types": {},
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": null,
+      "types": {},
+      "functions": {},
+      "package": 0
+    }
+  ],
+  "types": [],
+  "packages": [
+    {
+      "name": "foo:name",
+      "interfaces": {
+        "x": 0
+      },
+      "worlds": {
+        "name": 0
+      }
+    }
+  ]
+}

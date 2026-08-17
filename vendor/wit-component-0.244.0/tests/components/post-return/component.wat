@@ -1,0 +1,36 @@
+(component
+  (core module $main (;0;)
+    (type (;0;) (func (param i32 i32 i32 i32) (result i32)))
+    (type (;1;) (func (result i32)))
+    (type (;2;) (func (param i32)))
+    (memory (;0;) 1)
+    (export "memory" (memory 0))
+    (export "cabi_realloc" (func 0))
+    (export "a" (func 1))
+    (export "cabi_post_a" (func 2))
+    (func (;0;) (type 0) (param i32 i32 i32 i32) (result i32)
+      unreachable
+    )
+    (func (;1;) (type 1) (result i32)
+      unreachable
+    )
+    (func (;2;) (type 2) (param i32)
+      unreachable
+    )
+    (@producers
+      (processed-by "wit-component" "$CARGO_PKG_VERSION")
+      (processed-by "my-fake-bindgen" "123.45")
+    )
+  )
+  (core instance $main (;0;) (instantiate $main))
+  (alias core export $main "memory" (core memory $memory (;0;)))
+  (type (;0;) (func (result string)))
+  (alias core export $main "a" (core func $a (;0;)))
+  (alias core export $main "cabi_realloc" (core func $cabi_realloc (;1;)))
+  (alias core export $main "cabi_post_a" (core func $cabi_post_a (;2;)))
+  (func $a (;0;) (type 0) (canon lift (core func $a) (memory $memory) string-encoding=utf8 (post-return $cabi_post_a)))
+  (export $"#func1 a" (@name "a") (;1;) "a" (func $a))
+  (@producers
+    (processed-by "wit-component" "$CARGO_PKG_VERSION")
+  )
+)

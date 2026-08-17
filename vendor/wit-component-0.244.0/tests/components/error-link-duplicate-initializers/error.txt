@@ -1,0 +1,1 @@
+library foo exports both `__wasm_call_ctors` and `_initialize`; expected at most one of the two

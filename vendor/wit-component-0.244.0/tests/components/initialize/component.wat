@@ -1,0 +1,38 @@
+(component
+  (core module $main (;0;)
+    (type (;0;) (func))
+    (export "a" (func 0))
+    (export "_initialize" (func 1))
+    (func (;0;) (type 0)
+      unreachable
+    )
+    (func (;1;) (type 0)
+      unreachable
+    )
+    (@producers
+      (processed-by "wit-component" "$CARGO_PKG_VERSION")
+      (processed-by "my-fake-bindgen" "123.45")
+    )
+  )
+  (core instance $main (;0;) (instantiate $main))
+  (alias core export $main "_initialize" (core func $start (;0;)))
+  (core module $start-shim-module (;1;)
+    (type (;0;) (func))
+    (import "" "" (func (;0;) (type 0)))
+    (start 0)
+  )
+  (core instance $start-shim-args (;1;)
+    (export "" (func $start))
+  )
+  (core instance $start-shim-instance (;2;) (instantiate $start-shim-module
+      (with "" (instance $start-shim-args))
+    )
+  )
+  (type (;0;) (func))
+  (alias core export $main "a" (core func $a (;1;)))
+  (func $a (;0;) (type 0) (canon lift (core func $a)))
+  (export $"#func1 a" (@name "a") (;1;) "a" (func $a))
+  (@producers
+    (processed-by "wit-component" "$CARGO_PKG_VERSION")
+  )
+)

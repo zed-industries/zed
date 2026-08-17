@@ -1,0 +1,24 @@
+[package]
+name = "rustix-openpty"
+version = "0.2.0"
+authors = ["Dan Gohman <dev@sunfishcode.online>"]
+description = "Safe Rust bindings to `openpty` and related functions"
+documentation = "https://docs.rs/rustix-openpty"
+license = "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
+repository = "https://github.com/sunfishcode/rustix-openpty"
+edition = "2021"
+keywords = ["terminal", "safe"]
+categories = ["os::unix-apis"]
+include = ["src", "Cargo.toml", "COPYRIGHT", "LICENSE*", "/*.md"]
+rust-version = "1.63"
+
+[target.'cfg(any(target_os = "android", target_os = "linux"))'.dependencies]
+rustix = { version = "1.0.0", default-features = false, features = ["alloc", "fs", "process", "pty", "stdio", "termios"] }
+
+[target.'cfg(not(any(target_os = "android", target_os = "linux")))'.dependencies]
+rustix = { version = "1.0.0", default-features = false, features = ["fs", "termios"] }
+libc = { version = "0.2.114", default-features = false }
+errno = { version = "0.3.1", default-features = false }
+
+[dev-dependencies]
+rustix = { version = "1.0.0", features = ["termios"] }

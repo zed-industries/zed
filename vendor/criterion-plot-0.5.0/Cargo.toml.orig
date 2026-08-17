@@ -1,0 +1,26 @@
+[package]
+authors = ["Jorge Aparicio <japaricious@gmail.com>", "Brook Heisler <brookheisler@gmail.com>"]
+name = "criterion-plot"
+version = "0.5.0"
+edition = "2018"
+
+description = "Criterion's plotting library"
+repository = "https://github.com/bheisler/criterion.rs"
+readme = "README.md"
+keywords = ["plotting", "gnuplot", "criterion"]
+categories = ["visualization"]
+license = "MIT/Apache-2.0"
+
+[dependencies]
+cast = "0.3"
+itertools = "0.10"
+
+[dev-dependencies]
+itertools-num = "0.1"
+num-complex = { version = "0.4", default-features = false, features = ["std"] }
+rand = "0.8"
+
+[badges]
+travis-ci = { repository = "bheisler/criterion.rs" }
+appveyor = { repository = "bheisler/criterion.rs", id = "4255ads9ctpupcl2" }
+maintenance = { status = "looking-for-maintainer" }

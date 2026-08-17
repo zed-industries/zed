@@ -1,0 +1,261 @@
+{
+  "worlds": [
+    {
+      "name": "w-bar",
+      "imports": {
+        "interface-0": {
+          "interface": {
+            "id": 0
+          }
+        },
+        "interface-1": {
+          "interface": {
+            "id": 1
+          }
+        }
+      },
+      "exports": {},
+      "package": 2
+    },
+    {
+      "name": "w-qux",
+      "imports": {
+        "interface-0": {
+          "interface": {
+            "id": 0
+          }
+        },
+        "interface-1": {
+          "interface": {
+            "id": 1
+          }
+        }
+      },
+      "exports": {},
+      "package": 3
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "types",
+      "types": {
+        "type1": 0
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "types",
+      "types": {
+        "type2": 1
+      },
+      "functions": {},
+      "package": 1
+    },
+    {
+      "name": "i0",
+      "types": {
+        "type1": 2,
+        "type2": 3,
+        "rec0": 4
+      },
+      "functions": {},
+      "package": 2
+    },
+    {
+      "name": "i1",
+      "types": {
+        "type1": 5,
+        "type2": 6,
+        "rec1": 7
+      },
+      "functions": {},
+      "package": 3
+    },
+    {
+      "name": "root",
+      "types": {
+        "rec0": 8,
+        "rec1": 9,
+        "rec": 10
+      },
+      "functions": {},
+      "package": 4
+    }
+  ],
+  "types": [
+    {
+      "name": "type1",
+      "kind": {
+        "type": "string"
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "type2",
+      "kind": {
+        "type": "string"
+      },
+      "owner": {
+        "interface": 1
+      }
+    },
+    {
+      "name": "type1",
+      "kind": {
+        "type": 0
+      },
+      "owner": {
+        "interface": 2
+      }
+    },
+    {
+      "name": "type2",
+      "kind": {
+        "type": 1
+      },
+      "owner": {
+        "interface": 2
+      }
+    },
+    {
+      "name": "rec0",
+      "kind": {
+        "record": {
+          "fields": [
+            {
+              "name": "foo",
+              "type": 2
+            },
+            {
+              "name": "bar",
+              "type": 3
+            }
+          ]
+        }
+      },
+      "owner": {
+        "interface": 2
+      }
+    },
+    {
+      "name": "type1",
+      "kind": {
+        "type": 0
+      },
+      "owner": {
+        "interface": 3
+      }
+    },
+    {
+      "name": "type2",
+      "kind": {
+        "type": 1
+      },
+      "owner": {
+        "interface": 3
+      }
+    },
+    {
+      "name": "rec1",
+      "kind": {
+        "record": {
+          "fields": [
+            {
+              "name": "foo",
+              "type": 5
+            },
+            {
+              "name": "bar",
+              "type": 6
+            }
+          ]
+        }
+      },
+      "owner": {
+        "interface": 3
+      }
+    },
+    {
+      "name": "rec0",
+      "kind": {
+        "type": 4
+      },
+      "owner": {
+        "interface": 4
+      }
+    },
+    {
+      "name": "rec1",
+      "kind": {
+        "type": 7
+      },
+      "owner": {
+        "interface": 4
+      }
+    },
+    {
+      "name": "rec",
+      "kind": {
+        "record": {
+          "fields": [
+            {
+              "name": "first",
+              "type": 8
+            },
+            {
+              "name": "second",
+              "type": 9
+            }
+          ]
+        }
+      },
+      "owner": {
+        "interface": 4
+      }
+    }
+  ],
+  "packages": [
+    {
+      "name": "foo:dep1",
+      "interfaces": {
+        "types": 0
+      },
+      "worlds": {}
+    },
+    {
+      "name": "foo:dep2",
+      "interfaces": {
+        "types": 1
+      },
+      "worlds": {}
+    },
+    {
+      "name": "foo:bar",
+      "interfaces": {
+        "i0": 2
+      },
+      "worlds": {
+        "w-bar": 0
+      }
+    },
+    {
+      "name": "foo:qux",
+      "interfaces": {
+        "i1": 3
+      },
+      "worlds": {
+        "w-qux": 1
+      }
+    },
+    {
+      "name": "foo:root",
+      "interfaces": {
+        "root": 4
+      },
+      "worlds": {}
+    }
+  ]
+}

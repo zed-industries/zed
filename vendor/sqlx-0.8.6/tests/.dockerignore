@@ -1,0 +1,7 @@
+*
+!certs/*
+!keys/*
+!mysql/my.cnf
+!mssql/*.sh
+!postgres/pg_hba.conf
+!*/*.sql

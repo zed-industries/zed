@@ -1,0 +1,11 @@
+error[E0271]: type mismatch resolving `<&[ElementOpaque] as SliceOfExternType>::Kind == Trivial`
+  --> tests/ui/slice_of_type_alias.rs:16:21
+   |
+16 |         fn g(slice: &[ElementOpaque]);
+   |                     ^^^^^^^^^^^^^^^^ expected `Trivial`, found `Opaque`
+   |
+note: required by a bound in `Without::check_slice`
+  --> src/rust_type.rs
+   |
+   |     pub const fn check_slice<U: SliceOfExternType<Kind = Trivial>>(&self) {}
+   |                                                   ^^^^^^^^^^^^^^ required by this bound in `Without::check_slice`

@@ -1,0 +1,12 @@
+package foo:foo;
+
+interface a {
+  type t = u32;
+}
+
+interface foo {
+  use a.{t};
+}
+
+world c {
+}

@@ -1,0 +1,5 @@
+package foo:foo;
+
+world the-world {
+  export y: func();
+}

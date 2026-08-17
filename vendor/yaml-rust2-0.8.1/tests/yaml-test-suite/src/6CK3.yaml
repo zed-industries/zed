@@ -1,0 +1,26 @@
+---
+- name: Spec Example 6.26. Tag Shorthands
+  from: http://www.yaml.org/spec/1.2/spec.html#id2785009
+  tags: spec tag local-tag
+  yaml: |
+    %TAG !e! tag:example.com,2000:app/
+    ---
+    - !local foo
+    - !!str bar
+    - !e!tag%21 baz
+  tree: |
+    +STR
+     +DOC ---
+      +SEQ
+       =VAL <!local> :foo
+       =VAL <tag:yaml.org,2002:str> :bar
+       =VAL <tag:example.com,2000:app/tag!> :baz
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      "foo",
+      "bar",
+      "baz"
+    ]

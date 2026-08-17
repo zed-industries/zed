@@ -1,0 +1,37 @@
+/* the following changes file names for PureC projects */
+
+if (argc > 0)
+{
+	ordner = argv[0];
+	if (basename(ordner) == "") /* ist Ordner */
+	{
+		ChangeFilenames(ordner);
+	}
+}
+
+proc ChangeFilenames(folder)
+local i,entries,directory,file;
+{
+	entries = filelist(directory,folder);
+	for (i = 0; i < entries; ++i)
+	{
+		file = directory[i,0];
+		if ((directory[i,3]&16) > 0) /* subdirectory */
+		{
+			ChangeFilenames(folder+file+"\\");
+		}
+		else
+		{
+			if ((stricmp(suffix(file),".h")==0)|(stricmp(suffix(file),".c")==0))
+			ChangeFilename(folder,file);
+		}
+	}
+}
+
+proc ChangeFilename(path,datei)
+local newfile,err;
+{
+	newfile=datei;
+	newfile[0]=(newfile[0] | 32) ^ 32;
+	err=files.rename("-q",path+datei,newfile);
+}

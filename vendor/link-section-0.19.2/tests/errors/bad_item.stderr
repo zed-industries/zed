@@ -1,0 +1,14 @@
+error[E0277]: the trait bound `SECTION: link_section::__support::SectionItemTyped<u64>` is not satisfied
+  --> tests/errors/bad_item.rs:12:1
+   |
+12 | #[in_section(SECTION)]
+   | ^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `SectionItemTyped<u64>` is not implemented for `SECTION`
+      but trait `SectionItemTyped<u32>` is implemented for it
+  --> tests/errors/bad_item.rs:3:1
+   |
+ 3 | #[section(typed)]
+   | ^^^^^^^^^^^^^^^^^
+   = help: for that trait implementation, expected `u32`, found `u64`
+   = note: this error originates in the macro `$crate::__in_section_crate` which comes from the expansion of the attribute macro `section` (in Nightly builds, run with -Z macro-backtrace for more info)

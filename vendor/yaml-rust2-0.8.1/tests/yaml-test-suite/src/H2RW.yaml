@@ -1,0 +1,51 @@
+---
+- name: Blank lines
+  from: IRC discussion with leont
+  tags: comment literal scalar whitespace
+  yaml: |
+    foo: 1
+
+    bar: 2
+    ␣␣␣␣
+    text: |
+      a
+    ␣␣␣␣
+      b
+
+      c
+    ␣
+      d
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :foo
+       =VAL :1
+       =VAL :bar
+       =VAL :2
+       =VAL :text
+       =VAL |a\n  \nb\n\nc\n\nd\n
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "foo": 1,
+      "bar": 2,
+      "text": "a\n  \nb\n\nc\n\nd\n"
+    }
+  dump: |
+    foo: 1
+    bar: 2
+    text: "a\n  \nb\n\nc\n\nd\n"
+  emit: |
+    foo: 1
+    bar: 2
+    text: |
+      a
+    ␣␣␣␣
+      b
+
+      c
+
+      d

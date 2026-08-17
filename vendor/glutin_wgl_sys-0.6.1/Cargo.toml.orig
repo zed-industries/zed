@@ -1,0 +1,13 @@
+[package]
+name = "glutin_wgl_sys"
+version = "0.6.1"
+authors = ["Kirill Chibisov <contact@kchibisov.com>"]
+description = "The wgl bindings for glutin"
+repository = "https://github.com/rust-windowing/glutin"
+license = "Apache-2.0"
+readme = "README.md"
+rust-version = "1.70.0"
+edition = "2021"
+
+[build-dependencies]
+gl_generator = "0.14"

@@ -1,0 +1,60 @@
+[package]
+name = "arc-swap"
+version = "1.9.0"
+authors = ["Michal 'vorner' Vaner <vorner@vorner.cz>"]
+description = "Atomically swappable Arc"
+documentation = "https://docs.rs/arc-swap"
+repository = "https://github.com/vorner/arc-swap"
+readme = "README.md"
+keywords = ["atomic", "Arc"]
+categories = ["data-structures", "memory-management"]
+license = "MIT OR Apache-2.0"
+edition = "2018"
+
+[badges]
+maintenance = { status = "actively-developed" }
+
+[features]
+# ArcSwapWeak (for std::sycn::Weak) support
+weak = []
+# Some strategies used for testing few internal cornercases. *DO NOT USE* (no stability guarantees and their performance is likely very bad).
+internal-test-strategies = []
+# Possibly some strategies we are experimenting with. Currently empty. No stability guarantees are included about them.
+experimental-strategies = []
+# Use the nightly "thread_local" feature, to allow no_std builds. No stability
+# guarantees with this feature.
+experimental-thread-local = []
+
+[dependencies]
+rustversion = "1"
+serde = { version = "1", features = ["rc"], optional = true }
+
+[dev-dependencies]
+adaptive-barrier = "~1"
+criterion = "~0.7"
+crossbeam-utils = "~0.8"
+itertools = "0.14"
+num_cpus = "~1"
+once_cell = "~1"
+parking_lot = "~0.12"
+proptest = "1"
+serde_derive = "1.0.130"
+serde_test = "1.0.177"
+
+[profile.bench]
+debug = true
+
+[package.metadata.docs.rs]
+features = ["serde", "weak"]
+
+[[bench]]
+name = "background"
+harness = false
+
+[[bench]]
+name = "int-access"
+harness = false
+
+[[bench]]
+name = "track"
+harness = false

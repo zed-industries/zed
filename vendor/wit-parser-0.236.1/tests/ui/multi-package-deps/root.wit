@@ -1,0 +1,16 @@
+package foo:root;
+
+package foo:nest {
+  interface nesty {
+    use foo:dep1/i1.{o};
+    type l = list<o>;
+  }
+}
+
+interface i0 {
+  use foo:dep1/i1.{o};
+  use foo:nest/nesty.{l};
+
+  type r = result<o>;
+  type r1 = result<l>;
+}

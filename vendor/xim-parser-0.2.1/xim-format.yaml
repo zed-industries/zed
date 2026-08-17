@@ -1,0 +1,632 @@
+Enums:
+  ErrorFlag:
+    repr: u16
+    bitflag: true
+    variants:
+      InputMethodIdValid: 1
+      InputContextIdValid: 2
+
+  ForwardEventFlag:
+    repr: u16
+    bitflag: true
+    variants:
+      Synchronous: 1
+      RequestFiltering: 2
+      RequestLoopUpstring: 4
+
+  PreeditDrawStatus:
+    repr: u32
+    bitflag: true
+    variants:
+      NoString: 1
+      NoFeedback: 2
+
+  PreeditStateFlag:
+    repr: u32
+    bitflag: true
+    variants:
+      Unknown: 0
+      Enable: 1
+      Disable: 2
+
+  Feedback:
+    repr: u32
+    bitflag: true
+    variants:
+      Reverse: 0x1
+      Underline: 0x2
+      Highlight: 0x4
+      Primary: 0x8
+      Secondary: 0x10
+      Tertiary: 0x20
+      VisibleToForward: 0x40
+      VisibleToBackward: 0x80
+      VisibleCenter: 0x100
+
+  CaretDirection:
+    repr: u32
+    variants:
+      ForwardChar: 0
+      BackwardChar: 1
+      ForwardWord: 2
+      BackwardWord: 3
+      CaretUp: 4
+      CaretDown: 5
+      NextLine: 6
+      PreviousLine: 7
+      LineStart: 8
+      LineEnd: 9
+      AbsolutePosition: 10
+      DontChange: 11
+
+  CaretStyle:
+    repr: u32
+    variants:
+      Invisible: 0
+      Primary: 1
+      Secondary: 2
+
+  TriggerNotifyFlag:
+    repr: u32
+    variants:
+      OnKeyList: 0
+      OffKeyList: 1
+
+  HotKeyState:
+    repr: u32
+    variants:
+      On: 1
+      Off: 2
+
+  AttrType:
+    repr: u16
+    variants:
+      Separator: 0
+      Byte: 1
+      Word: 2
+      Long: 3
+      Char: 4
+      Window: 5
+      Style: 10
+      XRectangle: 11
+      XPoint: 12
+      XFontSet: 13
+      HotkeyTriggers: 15
+      StringConversion: 17
+      PreeditState: 18
+      ResetState: 19
+      NestedList: 0x7fff
+
+  ErrorCode:
+    repr: u16
+    variants:
+      BadAlloc: 1
+      BadStyle: 2
+      BadClientWindow: 3
+      BadFocusWindow: 4
+      BadArea: 5
+      BadSpotLocation: 6
+      BadColormap: 7
+      BadAtom: 8
+      BadPixel: 9
+      BadPixmap: 10
+      BadName: 11
+      BadCursor: 12
+      BadProtocol: 13
+      BadForeground: 14
+      BadBackground: 15
+      LocaleNotSupported: 16
+      BadSomething: 999
+  
+  # Common attribute values
+  InputStyle:
+    bitflag: true
+    repr: u32
+    variants:
+      PreeditArea: 0x1
+      PreeditCallbacks: 0x2
+      PreeditPosition: 0x4
+      PreeditNothing: 0x8
+      PreeditNone: 0x10
+      StatusArea: 0x100
+      StatusCallbacks: 0x200
+      StatusNothing: 0x400
+      StatusNone: 0x800
+
+AttributeNames:
+  NestedList: XNVaNestedList
+  QueryInputStyle: queryInputStyle
+  ClientWindow: clientWindow
+  InputStyle: inputStyle
+  FocusWindow: focusWindow
+  ResourceName: resourceName
+  ResourceClass: resourceClass
+  GeometryCallback: geometryCallback
+  DestroyCallback: destroyCallback
+  FilterEvents: filterEvents
+  PreeditStartCallback: preeditStartCallback
+  PreeditDoneCallback: preeditDoneCallback
+  PreeditDrawCallback: preeditDrawCallback
+  PreeditCaretCallback: preeditCaretCallback
+  PreeditStateNotifyCallback: preeditStateNotifyCallback
+  PreeditAttributes: preeditAttributes
+  StatusStartCallback: statusStartCallback
+  StatusDoneCallback: statusDoneCallback
+  StatusDrawCallback: statusDrawCallback
+  StatusAttributes: statusAttributes
+  Area: area
+  AreaNeeded: areaNeeded
+  SpotLocation: spotLocation
+  ColorMap: colorMap
+  StdColorMap: stdColorMap
+  Foreground: foreground
+  Background: background
+  BackgroundPixmap: backgroundPixmap
+  FontSet: fontSet
+  LineSpace: lineSpace
+  Cursor: cursor
+
+  QueryIMValuesList: queryIMValuesList
+  QueryICValuesList: queryICValuesList
+  VisiblePosition: visiblePosition
+  R6PreeditCallback: r6PreeditCallback
+  StringConversionCallback: stringConversionCallback
+  StringConversion: stringConversion
+  ResetState: resetState
+  HotKey: hotKey
+  HotKeyState: hotKeyState
+  PreeditState: preeditState
+  SeparatorofNestedList: separatorofNestedList
+
+Structs:
+  Attr:
+    - "id u16"
+    - "ty AttrType"
+    - "name @pad AttributeName"
+  Attribute:
+    - "id u16"
+    - "value @padadd2 xstring"
+  Extension:
+    - "major_opcode u8"
+    - "minor_opcode u8"
+    - "name @pad string"
+  TriggerKey:
+    - "keysym u32"
+    - "modifier u32"
+    - "modifier_mask u32"
+  StatusTextContent:
+    - "status PreeditDrawStatus"
+    - "status_string @pad string"
+    - "feedbacks @list22 Feedback"
+
+  # attribute datas
+  Point:
+    - "x i16"
+    - "y i16"
+  Rectangle:
+    - "x i16"
+    - "y i16"
+    - "width u16"
+    - "height u16"
+  FontSet:
+    - "name @pad string"
+
+  XEvent:
+    - "response_type u8"
+    - "detail u8"
+    - "sequence u16"
+    - "time u32"
+    - "root u32"
+    - "event u32"
+    - "child u32"
+    - "root_x i16"
+    - "root_y i16"
+    - "event_x i16"
+    - "event_y i16"
+    - "state u16"
+    - "same_screen @append1 bool"
+
+Requests:
+  Connect:
+    major_opcode: 1
+    minor_opcode: ~
+    body:
+      - "endian @append1 Endian"
+      - "client_major_protocol_version u16"
+      - "client_minor_protocol_version u16"
+      - "client_auth_protocol_names @list @pad string"
+
+  ConnectReply:
+    major_opcode: 2
+    minor_opcode: ~
+    body:
+      - "server_major_protocol_version u16"
+      - "server_minor_protocol_version u16"
+
+  Disconnect:
+    major_opcode: 3
+    minor_opcode: ~
+    body: []
+
+  DisconnectReply:
+    major_opcode: 4
+    minor_opcode: ~
+    body: []
+
+# Don't implement auth request since it doesn't used at all
+
+  AuthRequired:
+    major_opcode: 10
+    minor_opcode: ~
+    body: []
+
+  AuthReply:
+    major_opcode: 11
+    minor_opcode: ~
+    body: []
+
+  AuthNext:
+    major_opcode: 12
+    minor_opcode: ~
+    body: []
+
+  AuthSetup:
+    major_opcode: 13
+    minor_opcode: ~
+    body: []
+
+  AuthNg:
+    major_opcode: 14
+    minor_opcode: ~
+    body: []
+
+  Error:
+    major_opcode: 20
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+      - "flag ErrorFlag"
+      - "code ErrorCode"
+      - "detail @pad err_string"
+
+  Open:
+    major_opcode: 30
+    minor_opcode: ~
+    body:
+      - "locale @pad string1"
+
+  OpenReply:
+    major_opcode: 31
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "im_attrs @list Attr"
+      - "ic_attrs @list22 Attr"
+
+  Close:
+    major_opcode: 32
+    minor_opcode: ~
+    body:
+      - "input_method_id @append2 u16"
+
+  CloseReply:
+    major_opcode: 33
+    minor_opcode: ~
+    body:
+      - "input_method_id @append2 u16"
+
+  RegisterTriggerKeys:
+    major_opcode: 34
+    minor_opcode: ~
+    body:
+      - "input_method_id @append2 u16"
+      - "on_keys @list04 TriggerKey"
+      - "off_keys @list04 TriggerKey"
+
+  TriggerNotify:
+    major_opcode: 35
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+      - "flag TriggerNotifyFlag"
+      - "index u32"
+      - "event_mask u32"
+
+  TriggerNotifyReply:
+    major_opcode: 36
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+
+  SetEventMask:
+    major_opcode: 37
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+      - "forward_event_mask u32"
+      - "synchronous_event_mask u32"
+
+  EncodingNegotiation:
+    major_opcode: 38
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "encodings @padadd2 @list string1"
+      - "encoding_infos @list22 @pad string"
+
+  EncodingNegotiationReply:
+    major_opcode: 39
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "category u16"
+      - "index @append2 i16"
+
+  QueryExtension:
+    major_opcode: 40
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "extensions @pad @list string1"
+
+  QueryExtensionReply:
+    major_opcode: 41
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "extensions @list Extension"
+
+  SetImValues:
+    major_opcode: 42
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "attributes @list Attribute"
+
+  SetImValuesReply:
+    major_opcode: 43
+    minor_opcode: ~
+    body:
+      - "input_method_id @append2 u16"
+
+  GetImValues:
+    major_opcode: 44
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "im_attributes @padadd2 @list u16"
+
+  GetImValuesReply:
+    major_opcode: 45
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "im_attributes @list Attribute"
+
+  CreateIc:
+    major_opcode: 50
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "ic_attributes @list Attribute"
+
+  CreateIcReply:
+    major_opcode: 51
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+
+  DestroyIc:
+    major_opcode: 52
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+
+  DestroyIcReply:
+    major_opcode: 53
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+
+  SetIcValues:
+    major_opcode: 54
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+      - "ic_attributes @list22 Attribute"
+
+  SetIcValuesReply:
+    major_opcode: 55
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+
+  GetIcValues:
+    major_opcode: 56
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+      - "ic_attributes @pad @list u16"
+
+  GetIcValuesReply:
+    major_opcode: 57
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+      - "ic_attributes @list22 Attribute"
+
+  SetIcFocus:
+    major_opcode: 58
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+
+  UnsetIcFocus:
+    major_opcode: 59
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+
+  ForwardEvent:
+    major_opcode: 60
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+      - "flag ForwardEventFlag"
+      - "serial_number u16"
+      - "xev XEvent"
+
+  Sync:
+    major_opcode: 61
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+
+  SyncReply:
+    major_opcode: 62
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+
+  Commit:
+    major_opcode: 63
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+      - "data CommitData"
+
+  ResetIc:
+    major_opcode: 64
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+
+  ResetIcReply:
+    major_opcode: 65
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+      - "preedit_string @pad xstring"
+
+  Geometry:
+    major_opcode: 70
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+
+# Don't implement StrConversion same as auth
+
+  StrConversion:
+    major_opcode: 71
+    minor_opcode: ~
+    body: []
+
+  StrConversionReply:
+    major_opcode: 72
+    minor_opcode: ~
+    body: []
+
+
+
+  PreeditStart:
+    major_opcode: 73
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+
+  PreeditStartReply:
+    major_opcode: 74
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+      - "return_value i32"
+
+  PreeditDraw:
+    major_opcode: 75
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+      - "caret i32"
+      - "chg_first i32"
+      - "chg_length i32"
+      - "status PreeditDrawStatus"
+      - "preedit_string @pad xstring"
+      - "feedbacks @list22 Feedback"
+
+  PreeditCaret:
+    major_opcode: 76
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+      - "position i32"
+      - "direction CaretDirection"
+      - "style CaretStyle"
+
+  PreeditCaretReply:
+    major_opcode: 77
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+      - "position i32"
+
+  PreeditDone:
+    major_opcode: 78
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+
+  StatusStart:
+    major_opcode: 79
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+
+  StatusDraw:
+    major_opcode: 80
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+      - "content StatusContent"
+
+  StatusDone:
+    major_opcode: 81
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+
+  PreeditState:
+    major_opcode: 82
+    minor_opcode: ~
+    body:
+      - "input_method_id u16"
+      - "input_context_id u16"
+      - "state PreeditStateFlag"

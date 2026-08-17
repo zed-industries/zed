@@ -1,0 +1,25 @@
+---
+- name: Spec Example 6.8. Flow Folding [1.3]
+  from: TL85, modified for YAML 1.3
+  tags: double spec whitespace scalar 1.3-mod
+  yaml: |
+    ---
+    "
+      foo␣
+    ␣
+        bar
+
+      baz
+    "
+  tree: |
+    +STR
+     +DOC ---
+      =VAL " foo\nbar\nbaz␣
+     -DOC
+    -STR
+  json: |
+    " foo\nbar\nbaz "
+  dump: |
+    " foo\nbar\nbaz "
+  emit: |
+    --- " foo\nbar\nbaz "

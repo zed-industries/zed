@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<node>
+  <interface name="org.a11y.atspi.Image">
+
+    <property name="ImageDescription" type="s" access="read"/>
+
+    <property name="ImageLocale" type="s" access="read"/>
+
+    <method name="GetImageExtents">
+      <arg direction="in" name="coordType" type="u"/>
+      <arg direction="out" type="(iiii)"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QSpiRect"/>
+    </method>
+
+    <method name="GetImagePosition">
+      <arg direction="in" name="coordType" type="u"/>
+      <arg direction="out" name="x" type="i"/>
+      <arg direction="out" name="y" type="i"/>
+    </method>
+
+    <method name="GetImageSize">
+      <arg direction="out" name="width" type="i"/>
+      <arg direction="out" name="height" type="i"/>
+    </method>
+
+  </interface>
+</node>

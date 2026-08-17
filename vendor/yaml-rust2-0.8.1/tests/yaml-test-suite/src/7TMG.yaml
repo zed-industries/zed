@@ -1,0 +1,27 @@
+---
+- name: Comment in flow sequence before comma
+  from: '@perlpunk'
+  tags: comment flow sequence
+  yaml: |
+    ---
+    [ word1
+    # comment
+    , word2]
+  tree: |
+    +STR
+     +DOC ---
+      +SEQ []
+       =VAL :word1
+       =VAL :word2
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      "word1",
+      "word2"
+    ]
+  dump: |
+    ---
+    - word1
+    - word2

@@ -1,0 +1,19 @@
+language: rust
+sudo: false
+
+script:
+    - cargo build
+    - cargo test
+    - cargo bench --no-run
+    - cargo doc
+
+after_success:
+    - if [ "$TRAVIS_PULL_REQUEST" == false && test == "TRAVIS_BRANCH" == "master" ]; then
+    - curl https://raw.githubusercontent.com/reem/rust-gh-docs/master/make-docs.sh > docs.sh
+    - chmod u+x docs.sh
+    - ./docs.sh reem project-name
+
+env:
+  global:
+    secure: QPYL1XUr4CyK/2DXlsYC1eCpWRpyEiqQSd/FFVR+YdP/rOJ7AyAXQqPhfgjDBQwvc6E2fUiyYjoV/xe1a757DDeZKlgd8Lp20fSDwvNt/Ejx8ueh3h3kuOtgDpIGSKX/l+XC+ltDpzjhh7bowI2/fOEf+kE53jvu9i4PiLnKdlY=
+

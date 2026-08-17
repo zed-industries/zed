@@ -1,0 +1,4 @@
+failed to validate exported interface `foo`
+
+Caused by:
+    module does not export required function `foo#a`

@@ -1,0 +1,13 @@
+world test-reactor {
+  include wasi:cli/imports@0.2.6;
+
+  export add-strings: func(s: list<string>) -> u32;
+  export get-strings: func() -> list<string>;
+
+  use wasi:io/streams@0.2.6.{output-stream};
+
+  export write-strings-to: func(o: output-stream) -> result;
+
+  use wasi:filesystem/types@0.2.6.{descriptor-stat};
+  export pass-an-imported-record: func(d: descriptor-stat) -> string;
+}

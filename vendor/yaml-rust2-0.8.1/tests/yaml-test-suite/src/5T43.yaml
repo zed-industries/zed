@@ -1,0 +1,37 @@
+---
+- name: Colon at the beginning of adjacent flow scalar
+  from: '@perlpunk'
+  tags: flow mapping scalar
+  yaml: |
+    - { "key":value }
+    - { "key"::value }
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       +MAP {}
+        =VAL "key
+        =VAL :value
+       -MAP
+       +MAP {}
+        =VAL "key
+        =VAL ::value
+       -MAP
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      {
+        "key": "value"
+      },
+      {
+        "key": ":value"
+      }
+    ]
+  dump: |
+    - key: value
+    - key: :value
+  emit: |
+    - "key": value
+    - "key": :value

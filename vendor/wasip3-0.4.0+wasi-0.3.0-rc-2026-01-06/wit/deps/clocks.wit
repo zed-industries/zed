@@ -1,0 +1,161 @@
+package wasi:clocks@0.3.0-rc-2026-01-06;
+
+/// This interface common types used throughout wasi:clocks.
+@since(version = 0.3.0-rc-2026-01-06)
+interface types {
+  /// A duration of time, in nanoseconds.
+  @since(version = 0.3.0-rc-2026-01-06)
+  type duration = u64;
+}
+
+/// WASI Monotonic Clock is a clock API intended to let users measure elapsed
+/// time.
+///
+/// It is intended to be portable at least between Unix-family platforms and
+/// Windows.
+///
+/// A monotonic clock is a clock which has an unspecified initial value, and
+/// successive reads of the clock will produce non-decreasing values.
+@since(version = 0.3.0-rc-2026-01-06)
+interface monotonic-clock {
+  use types.{duration};
+
+  /// A mark on a monotonic clock is a number of nanoseconds since an
+  /// unspecified initial value, and can only be compared to instances from
+  /// the same monotonic-clock.
+  @since(version = 0.3.0-rc-2026-01-06)
+  type mark = u64;
+
+  /// Read the current value of the clock.
+  ///
+  /// The clock is monotonic, therefore calling this function repeatedly will
+  /// produce a sequence of non-decreasing values.
+  ///
+  /// For completeness, this function traps if it's not possible to represent
+  /// the value of the clock in a `mark`. Consequently, implementations
+  /// should ensure that the starting time is low enough to avoid the
+  /// possibility of overflow in practice.
+  @since(version = 0.3.0-rc-2026-01-06)
+  now: func() -> mark;
+
+  /// Query the resolution of the clock. Returns the duration of time
+  /// corresponding to a clock tick.
+  @since(version = 0.3.0-rc-2026-01-06)
+  get-resolution: func() -> duration;
+
+  /// Wait until the specified mark has occurred.
+  @since(version = 0.3.0-rc-2026-01-06)
+  wait-until: async func(when: mark);
+
+  /// Wait for the specified duration to elapse.
+  @since(version = 0.3.0-rc-2026-01-06)
+  wait-for: async func(how-long: duration);
+}
+
+/// WASI System Clock is a clock API intended to let users query the current
+/// time. The clock is not necessarily monotonic as it may be reset.
+///
+/// It is intended to be portable at least between Unix-family platforms and
+/// Windows.
+///
+/// External references may be reset, so this clock is not necessarily
+/// monotonic, making it unsuitable for measuring elapsed time.
+///
+/// It is intended for reporting the current date and time for humans.
+@since(version = 0.3.0-rc-2026-01-06)
+interface system-clock {
+  use types.{duration};
+
+  /// An "instant", or "exact time", is a point in time without regard to any
+  /// time zone: just the time since a particular external reference point,
+  /// often called an "epoch".
+  ///
+  /// Here, the epoch is 1970-01-01T00:00:00Z, also known as
+  /// [POSIX's Seconds Since the Epoch], also known as [Unix Time].
+  ///
+  /// Note that even if the seconds field is negative, incrementing
+  /// nanoseconds always represents moving forwards in time.
+  /// For example, `{ -1 seconds, 999999999 nanoseconds }` represents the
+  /// instant one nanosecond before the epoch.
+  /// For more on various different ways to represent time, see
+  /// https://tc39.es/proposal-temporal/docs/timezone.html
+  ///
+  /// [POSIX's Seconds Since the Epoch]: https://pubs.opengroup.org/onlinepubs/9699919799/xrat/V4_xbd_chap04.html#tag_21_04_16
+  /// [Unix Time]: https://en.wikipedia.org/wiki/Unix_time
+  @since(version = 0.3.0-rc-2026-01-06)
+  record instant {
+    seconds: s64,
+    nanoseconds: u32,
+  }
+
+  /// Read the current value of the clock.
+  ///
+  /// This clock is not monotonic, therefore calling this function repeatedly
+  /// will not necessarily produce a sequence of non-decreasing values.
+  ///
+  /// The nanoseconds field of the output is always less than 1000000000.
+  @since(version = 0.3.0-rc-2026-01-06)
+  now: func() -> instant;
+
+  /// Query the resolution of the clock. Returns the smallest duration of time
+  /// that the implementation permits distinguishing.
+  @since(version = 0.3.0-rc-2026-01-06)
+  get-resolution: func() -> duration;
+}
+
+@unstable(feature = clocks-timezone)
+interface timezone {
+  @unstable(feature = clocks-timezone)
+  use system-clock.{instant};
+
+  /// Return the IANA identifier of the currently configured timezone. This
+  /// should be an identifier from the IANA Time Zone Database.
+  ///
+  /// For displaying to a user, the identifier should be converted into a
+  /// localized name by means of an internationalization API.
+  ///
+  /// If the implementation does not expose an actual timezone, or is unable
+  /// to provide mappings from times to deltas between the configured timezone
+  /// and UTC, or determining the current timezone fails, or the timezone does
+  /// not have an IANA identifier, this returns nothing.
+  @unstable(feature = clocks-timezone)
+  iana-id: func() -> option<string>;
+
+  /// The number of nanoseconds difference between UTC time and the local
+  /// time of the currently configured timezone, at the exact time of
+  /// `instant`.
+  ///
+  /// The magnitude of the returned value will always be less than
+  /// 86,400,000,000,000 which is the number of nanoseconds in a day
+  /// (24*60*60*1e9).
+  ///
+  /// If the implementation does not expose an actual timezone, or is unable
+  /// to provide mappings from times to deltas between the configured timezone
+  /// and UTC, or determining the current timezone fails, this returns
+  /// nothing.
+  @unstable(feature = clocks-timezone)
+  utc-offset: func(when: instant) -> option<s64>;
+
+  /// Returns a string that is suitable to assist humans in debugging whether
+  /// any timezone is available, and if so, which. This may be the same string
+  /// as `iana-id`, or a formatted representation of the UTC offset such as
+  /// `-04:00`, or something else.
+  ///
+  /// WARNING: The returned string should not be consumed mechanically! It may
+  /// change across platforms, hosts, or other implementation details. Parsing
+  /// this string is a major platform-compatibility hazard.
+  @unstable(feature = clocks-timezone)
+  to-debug-string: func() -> string;
+}
+
+@since(version = 0.3.0-rc-2026-01-06)
+world imports {
+  @since(version = 0.3.0-rc-2026-01-06)
+  import types;
+  @since(version = 0.3.0-rc-2026-01-06)
+  import monotonic-clock;
+  @since(version = 0.3.0-rc-2026-01-06)
+  import system-clock;
+  @unstable(feature = clocks-timezone)
+  import timezone;
+}

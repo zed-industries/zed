@@ -1,0 +1,14 @@
+The gtk-rs Project is licensed under the MIT license, see the LICENSE file or
+<http://opensource.org/licenses/MIT>.
+
+Copyrights in the gtk-rs Project project are retained by their contributors.
+No copyright assignment is required to contribute to the gtk-rs Project
+project.
+
+For full authorship information, see the version control history.
+
+This project provides interoperability with various GNOME libraries but
+doesn't distribute any parts of them. Distributing compiled libraries and
+executables that link to those libraries may be subject to terms of the GNU
+LGPL or other licenses. For more information check the license of each GNOME
+library.

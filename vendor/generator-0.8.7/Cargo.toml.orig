@@ -1,0 +1,50 @@
+[package]
+name = "generator"
+version = "0.8.7"
+edition = "2021"
+rust-version = "1.73"
+authors = ["Xudong Huang <huangxu008@hotmail.com>"]
+license = "MIT/Apache-2.0"
+repository = "https://github.com/Xudong-Huang/generator-rs.git"
+homepage = "https://github.com/Xudong-Huang/generator-rs.git"
+documentation = "https://docs.rs/generator"
+description = "Stackfull Generator Library in Rust"
+readme = "README.md"
+keywords = ["generator", "coroutine", "green", "thread", "fiber"]
+categories = ["data-structures", "algorithms"]
+exclude = [
+    ".gitignore",
+    ".travis.yml",
+    "appveyor.yml",
+    "benches/**/*",
+]
+build = "build.rs"
+
+
+[target.'cfg(windows)'.dependencies.windows]
+version = ">=0.58, <=0.61"
+features = [
+    "Win32_System_Memory",
+    "Win32_System_Kernel",
+    "Win32_Foundation",
+    "Win32_System_SystemInformation",
+    "Win32_System_Diagnostics_Debug"
+]
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.100"
+
+[dependencies]
+log = "0.4"
+cfg-if = "1.0.0"
+
+[build-dependencies]
+rustversion = "1.0"
+cc = "1.0"
+
+# release build
+[profile.release]
+lto = true
+
+[profile.dev.build-override]
+debug = true

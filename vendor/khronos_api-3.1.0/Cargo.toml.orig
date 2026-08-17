@@ -1,0 +1,32 @@
+[package]
+name = "khronos_api"
+version = "3.1.0"
+authors = [
+  "Brendan Zabarauskas <bjzaba@yahoo.com.au>",
+  "Corey Richardson",
+  "Arseny Kapoulkine",
+  "Pierre Krieger <pierre.krieger1708@gmail.com>",
+]
+description = "The Khronos XML API Registry, exposed as byte string constants."
+license = "Apache-2.0"
+documentation = "https://docs.rs/khronos_api"
+homepage = "https://github.com/brendanzab/gl-rs/"
+repository = "https://github.com/brendanzab/gl-rs/"
+readme = "README.md"
+
+# Only include what we need here. The git submodules are quite large, and would
+# exceed the maximimum crate size if we didn't do this
+include = [
+  "/README.md",
+  "/src/**/*",
+  "/Cargo.toml",
+  "/build.rs",
+  "/api/xml/**/*.xml",
+  "/api_angle/scripts/**/*.xml",
+  "/api_egl/api/**/*.xml",
+  "/api_webgl/specs/latest/**/*.idl",
+  "/api_webgl/extensions/**/extension.xml",
+]
+
+categories = ["rendering::graphics-api"]
+keywords = ["gl", "egl", "opengl", "khronos"]

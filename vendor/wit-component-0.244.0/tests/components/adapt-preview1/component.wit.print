@@ -1,0 +1,8 @@
+package root:component;
+
+world root {
+  import foo: interface {
+    foo: func();
+  }
+  import foo:foo/my-wasi;
+}

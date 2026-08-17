@@ -1,0 +1,19 @@
+package wasi:sockets@0.2.4;
+
+@since(version = 0.2.0)
+world imports {
+    @since(version = 0.2.0)
+    import instance-network;
+    @since(version = 0.2.0)
+    import network;
+    @since(version = 0.2.0)
+    import udp;
+    @since(version = 0.2.0)
+    import udp-create-socket;
+    @since(version = 0.2.0)
+    import tcp;
+    @since(version = 0.2.0)
+    import tcp-create-socket;
+    @since(version = 0.2.0)
+    import ip-name-lookup;
+}

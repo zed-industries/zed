@@ -1,0 +1,43 @@
+error: `#[builder(derive(IntoFuture(...)))` can only be used with async functions; using it with a synchronous function is likely a mistake
+ --> tests/integration/ui/compile_fail/attr_into_future.rs:4:1
+  |
+4 | #[builder(derive(IntoFuture(Box)))]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `builder` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: `#[builder(derive(IntoFuture(...)))` is not supported for unsafe functions because `IntoFuture::into_future()` method is a safe method
+  --> tests/integration/ui/compile_fail/attr_into_future.rs:11:7
+   |
+11 | async unsafe fn unsafe_async_function() -> u32 {
+   |       ^^^^^^
+
+error: `#[builder(derive(IntoFuture(...)))` is incompatible with `#[builder(finish_fn)]` members because `IntoFuture::into_future()` method accepts zero parameters
+  --> tests/integration/ui/compile_fail/attr_into_future.rs:17:35
+   |
+17 | async fn with_finish_fn(#[builder(finish_fn)] value: u32) -> u32 {
+   |                                   ^^^^^^^^^
+
+error: expected an attribute of form `IntoFuture(Box, ...)`
+  --> tests/integration/ui/compile_fail/attr_into_future.rs:22:18
+   |
+22 | #[builder(derive(IntoFuture))]
+   |                  ^^^^^^^^^^
+
+error: expected `Box` as the first argument, only boxed futures are supported
+  --> tests/integration/ui/compile_fail/attr_into_future.rs:28:29
+   |
+28 | #[builder(derive(IntoFuture(Arc)))]
+   |                             ^^^
+
+error: expected `?Send` as the second argument
+  --> tests/integration/ui/compile_fail/attr_into_future.rs:34:34
+   |
+34 | #[builder(derive(IntoFuture(Box, Send)))]
+   |                                  ^^^^
+
+error: `#[builder(derive(IntoFuture(...)))` can only be used with async functions; using it with a synchronous function is likely a mistake
+  --> tests/integration/ui/compile_fail/attr_into_future.rs:42:8
+   |
+42 | struct AsyncConfig {
+   |        ^^^^^^^^^^^

@@ -1,0 +1,18 @@
+[package]
+name = "match_token"
+description = "Procedural macro for html5ever."
+documentation = "https://docs.rs/match_token"
+version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+syn = { workspace = true }
+quote = { workspace = true }
+proc-macro2 = { workspace = true }
+
+[lib]
+proc-macro = true

@@ -1,0 +1,5 @@
+Document:
+  - Element:
+      tag_name: doc
+      children:
+        - Text: "\n<greeting>Hello, world!</greeting>\n"

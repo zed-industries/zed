@@ -1,0 +1,20 @@
+---
+- name: Scalar value with two anchors
+  from: '@perlpunk'
+  tags: anchor error mapping
+  fail: true
+  yaml: |
+    top1: &node1
+      &k1 key1: val1
+    top2: &node2
+      &v2 val2
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :top1
+       +MAP &node1
+        =VAL &k1 :key1
+        =VAL :val1
+       -MAP
+       =VAL :top2

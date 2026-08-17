@@ -1,0 +1,2 @@
+package foo:dep2;
+interface types {}

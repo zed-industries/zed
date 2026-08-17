@@ -1,0 +1,16 @@
+package foo:bar;
+
+interface name {
+  resource name;
+
+  type handle = name;
+
+  foo: func() -> handle;
+}
+
+world module {
+  export name;
+  export name: interface {
+    use name.{handle};
+  }
+}

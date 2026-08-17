@@ -1,0 +1,35 @@
+name: Tests
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+          - beta
+          - nightly
+    steps:
+    - uses: actions/checkout@v1
+    - uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: ${{ matrix.rust }}
+        override: true
+        components: rustfmt
+    - name: Build
+      run: cargo build --verbose
+    - name: Run tests
+      run: cargo test
+    - name: Run benchmarks
+      run: cargo bench --features bench
+      if: startsWith(matrix.rust, 'nightly')
+  regen:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Regen
+      run: cd scripts && python3 unicode.py
+    - name: Diff
+      run: diff src/tables.rs scripts/tables.rs

@@ -1,0 +1,5 @@
+invalid map key type: map keys must be bool, u8, u16, u32, u64, s8, s16, s32, s64, char, or string
+     --> tests/ui/parse-fail/map-invalid-key.wit:6:18
+      |
+    6 |   type invalid = map<tuple<u32, string>, u32>;
+      |                  ^--

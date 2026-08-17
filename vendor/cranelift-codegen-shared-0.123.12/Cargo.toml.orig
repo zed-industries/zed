@@ -1,0 +1,14 @@
+[package]
+authors = ["The Cranelift Project Developers"]
+name = "cranelift-codegen-shared"
+version = "0.123.12"
+description = "For code shared between cranelift-codegen-meta and cranelift-codegen"
+license = "Apache-2.0 WITH LLVM-exception"
+repository = "https://github.com/bytecodealliance/wasmtime"
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# Since this is a shared dependency of several packages, please strive to keep this dependency-free
+# when no features are enabled.

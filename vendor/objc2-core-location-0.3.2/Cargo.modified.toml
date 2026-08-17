@@ -1,0 +1,6 @@
+[features]
+# CLLocation is no longer in CoreLocation, but was moved to _LocationEssentials
+CLLocation = [
+    "objc2-foundation/NSDate",
+    "objc2-foundation/NSObject",
+]

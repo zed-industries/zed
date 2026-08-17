@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ratified href="EXT_shader_texture_lod/">
+  <name>EXT_shader_texture_lod</name>
+  <contact> <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL
+  working group</a> (public_webgl 'at' khronos.org) </contact>
+
+  <contributors>
+    <contributor>Vladimir Vukicevic (vladimir 'at' mozilla.com)</contributor>
+    <contributor>Florian Boesch (pyalot 'at' gmail.com)</contributor>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+
+  <number>27</number>
+
+  <depends>
+    <api version="1.0"/>
+    <core version="2.0">
+      <glsl version="300 es"/>
+    </core>
+  </depends>
+
+  <overview>
+    <mirrors href="http://www.khronos.org/registry/gles/extensions/EXT/EXT_shader_texture_lod.txt"
+             name="EXT_shader_texture_lod">
+    </mirrors>
+
+    <features>
+      <feature>
+            This extension adds additional texture functions to the
+            OpenGL ES Shading Language which provide the shader writer
+            with explicit control of LOD.
+      </feature>
+      <glsl extname="GL_EXT_shader_texture_lod">
+        <stage type="fragment"/>
+        <function name="texture2DLodEXT" type="vec4">
+          <param name="sampler" type="sampler2D" />
+          <param name="coord" type="vec2" />
+          <param name="lod" type="float" />
+        </function>
+        <function name="texture2DProjLodEXT" type="vec4">
+          <param name="sampler" type="sampler2D" />
+          <param name="coord" type="vec3" />
+          <param name="lod" type="float" />
+        </function>
+        <function name="texture2DProjLodEXT" type="vec4">
+          <param name="sampler" type="sampler2D" />
+          <param name="coord" type="vec4" />
+          <param name="lod" type="float" />
+        </function>
+        <function name="textureCubeLodEXT" type="vec4">
+          <param name="sampler" type="samplerCube" />
+          <param name="coord" type="vec3" />
+          <param name="lod" type="float" />
+        </function>
+        <function name="texture2DGradEXT" type="vec4">
+          <param name="sampler" type="sampler2D" />
+          <param name="P" type="vec2" />
+          <param name="dPdx" type="vec2" />
+          <param name="dPdy" type="vec2" />
+        </function>
+        <function name="texture2DProjGradEXT" type="vec4">
+          <param name="sampler" type="sampler2D" />
+          <param name="P" type="vec3" />
+          <param name="dPdx" type="vec2" />
+          <param name="dPdy" type="vec2" />
+        </function>
+        <function name="texture2DProjGradEXT" type="vec4">
+          <param name="sampler" type="sampler2D" />
+          <param name="P" type="vec4" />
+          <param name="dPdx" type="vec2" />
+          <param name="dPdy" type="vec2" />
+        </function>
+        <function name="textureCubeGradEXT" type="vec4">
+          <param name="sampler" type="samplerCube" />
+          <param name="P" type="vec3" />
+          <param name="dPdx" type="vec3" />
+          <param name="dPdy" type="vec3" />
+        </function>
+      </glsl>
+    </features>
+  </overview>
+  
+  <idl xml:space="preserve">
+    [NoInterfaceObject]
+    interface EXT_shader_texture_lod {
+    };
+  </idl>
+
+  <samplecode xml:space="preserve">
+    <pre>
+    #extension GL_EXT_shader_texture_lod : enable
+    #extension GL_OES_standard_derivatives : enable
+
+    uniform sampler2D myTexture;
+    varying vec2 texcoord;
+
+    void main(){
+        // avoids artifacts when wrapping texture coordinates
+        gl_FragColor = texture2DGradEXT(myTexture, mod(texcoord, vec2(0.1, 0.5)), dFdx(texcoord), dFdy(texcoord));
+    }
+    </pre>
+  </samplecode>
+
+  <history>
+    <revision date="2014/02/10">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2014/02/18">
+      <change>Moved to draft.</change>
+    </revision>
+    <revision date="2014/06/27">
+      <change>Moved to community approved after discussion on public_webgl list.</change>
+    </revision>
+    <revision date="2014/07/15">
+      <change>Added NoInterfaceObject extended attribute.</change>
+    </revision>
+    <revision date="2014/11/07">
+      <change>Corrected extension name to include GL_ prefix.</change>
+    </revision>
+    <revision date="2015/05/29">
+      <change>Ratified by Khronos Board of Promoters.</change>
+    </revision>
+  </history>
+</ratified>

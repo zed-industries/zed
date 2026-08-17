@@ -1,0 +1,10 @@
+pre-release-commit-message = "Release {{version}}"
+tag-message = "Release {{version}}"
+tag-name = "{{version}}"
+pre-release-replacements = [
+  { file = "CHANGELOG.md", search = "Unreleased", replace = "{{version}}" },
+  { file = "CHANGELOG.md", search = "\\.\\.\\.HEAD", replace = "...{{tag_name}}" },
+  { file = "CHANGELOG.md", search = "ReleaseDate", replace = "{{date}}" },
+  { file = "CHANGELOG.md", search = "<!-- next-header -->", replace = "<!-- next-header -->\n## [Unreleased] - ReleaseDate" },
+  { file = "CHANGELOG.md", search = "<!-- next-url -->", replace = "<!-- next-url -->\n[Unreleased]: https://github.com/EmbarkStudios/cfg-expr/compare/{{tag_name}}...HEAD" },
+]

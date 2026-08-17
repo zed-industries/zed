@@ -1,0 +1,46 @@
+extend = [
+    { path = "tests/db.toml" },
+    { path = "tests/macros.toml" },
+    { path = "tests/maths.toml" },
+    { path = "tests/misc.toml" },
+    { path = "tests/serde.toml" }
+]
+
+[tasks.test]
+clear = true
+dependencies = ["test-no-std", "test-default"]
+
+# Some tests need cleaning before hand to ensure we don't inadvertantly test
+# using prebuilt logic
+[tasks.clean-no-std]
+alias = "clean"
+
+[tasks.test-no-std]
+dependencies = ["clean-no-std"]
+command = "cargo"
+args = ["test", "--no-default-features"]
+
+[tasks.clean-default]
+alias = "clean"
+
+[tasks.test-default]
+dependencies = ["clean-default"]
+command = "cargo"
+args = ["test", "--workspace", "--features=default"]
+
+[tasks.test-legacy-ops]
+command = "cargo"
+args = ["test", "--workspace", "--features=legacy-ops"]
+
+# This should reflect the steps in github
+[tasks.test-all]
+dependencies = [
+    "test-no-std",
+    "test-default",
+    "test-legacy-ops",
+    "test-maths",
+    "test-misc",
+    "test-db",
+    "test-serde",
+    "test-macros"
+]

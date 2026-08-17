@@ -1,0 +1,49 @@
+// Copyright 2025 LiveKit, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package livekit;
+option go_package = "github.com/livekit/protocol/livekit";
+option csharp_namespace = "LiveKit.Proto";
+option ruby_package = "LiveKit::Proto";
+
+import "livekit_room.proto";
+
+message TokenSourceRequest {
+  // The name of the room being requested when generating credentials
+  optional string room_name = 1;
+
+  // The name of the participant being requested for this client when generating credentials
+  optional string participant_name = 2;
+
+  // The identity of the participant being requested for this client when generating credentials
+  optional string participant_identity = 3;
+
+  // Any participant metadata being included along with the credentials generation operation
+  optional string participant_metadata = 4;
+
+  // Any participant attributes being included along with the credentials generation operation
+  map<string, string> participant_attributes = 5;
+
+  // A RoomConfiguration object can be passed to request extra parameters should be included when
+  // generating connection credentials - dispatching agents, defining egress settings, etc
+  // More info: https://docs.livekit.io/home/get-started/authentication/#room-configuration
+  optional RoomConfiguration room_config = 6;
+}
+
+message TokenSourceResponse {
+  string server_url = 1;
+  string participant_token = 2;
+}

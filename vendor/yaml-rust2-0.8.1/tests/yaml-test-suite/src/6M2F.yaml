@@ -1,0 +1,22 @@
+---
+- name: Aliases in Explicit Block Mapping
+  from: NimYAML tests
+  tags: alias explicit-key empty-key
+  yaml: |
+    ? &a a
+    : &b b
+    : *a
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL &a :a
+       =VAL &b :b
+       =VAL :
+       =ALI *a
+      -MAP
+     -DOC
+    -STR
+  dump: |
+    &a a: &b b
+    : *a

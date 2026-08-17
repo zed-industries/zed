@@ -1,0 +1,71 @@
+// Copyright 2023 LiveKit, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package livekit;
+option go_package = "github.com/livekit/protocol/livekit";
+option csharp_namespace = "LiveKit.Proto";
+option ruby_package = "LiveKit::Proto";
+
+import "livekit_agent.proto";
+import "logger/options.proto";
+
+service AgentDispatchService {
+  rpc CreateDispatch(CreateAgentDispatchRequest) returns (AgentDispatch);
+  rpc DeleteDispatch(DeleteAgentDispatchRequest) returns (AgentDispatch);
+  rpc ListDispatch(ListAgentDispatchRequest) returns (ListAgentDispatchResponse);
+}
+
+message CreateAgentDispatchRequest {
+  string agent_name = 1;
+  string room = 2;
+  string metadata = 3 [(logger.redact) = true];
+}
+
+message RoomAgentDispatch {
+  string agent_name = 1;
+  string metadata = 2 [(logger.redact) = true];
+}
+
+message DeleteAgentDispatchRequest {
+  string dispatch_id = 1;
+  string room = 2;
+}
+
+message ListAgentDispatchRequest {
+  string dispatch_id = 1; // if set, only the dispatch whose id is given will be returned
+  string room = 2;        // name of the room to list agents for. Must be set.
+}
+
+message ListAgentDispatchResponse {
+  repeated AgentDispatch agent_dispatches = 1;
+}
+
+message AgentDispatch {
+  string id = 1;
+  string agent_name = 2;
+  string room = 3;
+  string metadata = 4 [(logger.redact) = true];
+  AgentDispatchState state = 5;
+}
+
+message AgentDispatchState {
+  // For dispatches of tyoe JT_ROOM, there will be at most 1 job.
+  // For dispatches of type JT_PUBLISHER, there will be 1 per publisher.
+  repeated Job jobs = 1;
+  int64 created_at = 2;
+  int64 deleted_at = 3;
+}
+

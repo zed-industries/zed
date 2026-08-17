@@ -1,0 +1,21 @@
+[package]
+authors.workspace = true
+categories.workspace = true
+description = "Derive and attribute macros for accessing your type's documentation at runtime"
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+name = "documented"
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+documented-macros.workspace = true
+phf.workspace = true
+thiserror.workspace = true
+
+[features]
+customise = ["documented-macros/customise"]
+default = ["customise"]

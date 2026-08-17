@@ -1,0 +1,24 @@
+[package]
+name = "windows-interface"
+version = "0.57.0"
+authors = ["Microsoft"]
+edition = "2021"
+rust-version = "1.70"
+license = "MIT OR Apache-2.0"
+description = "The interface macro for the windows crate"
+repository = "https://github.com/microsoft/windows-rs"
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+default-target = "x86_64-pc-windows-msvc"
+targets = []
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2.0", default-features = false, features = ["parsing", "proc-macro", "printing", "full", "derive", "clone-impls"] }
+quote = "1.0"
+proc-macro2 = "1.0"

@@ -1,0 +1,52 @@
+name: Release
+on:
+  release:
+    types: [published]
+
+jobs:
+  crates_io:
+    name: crates.io publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+
+      - name: toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - id: cargo-cache
+        name: cache
+        uses: austinjones/rust-cache@v1
+        with:
+          key: release
+
+      - uses: actions-rs/cargo@v1
+        name: cargo test --all-features
+        with:
+          command: test
+          args: --features "blocking,futures-traits,logging"
+
+      - uses: actions-rs/cargo@v1
+        name: cargo test --no-default-features
+        with:
+          command: test
+          args: --no-default-features
+
+      - uses: actions-rs/cargo@v1
+        name: cargo test --release --all-features
+        with:
+          command: test
+          args: --release --features "blocking,futures-traits,logging"
+
+      - uses: actions-rs/cargo@v1
+        name: cargo test --release --no-default-features
+        with:
+          command: test
+          args: --release --no-default-features
+
+      - name: cargo publish
+        run: cargo publish --token ${{ secrets.CRATES_IO_TOKEN }}

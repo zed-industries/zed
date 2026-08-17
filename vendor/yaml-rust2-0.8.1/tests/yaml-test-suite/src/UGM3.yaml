@@ -1,0 +1,163 @@
+---
+- name: Spec Example 2.27. Invoice
+  from: http://www.yaml.org/spec/1.2/spec.html#id2761823
+  tags: spec tag literal mapping sequence alias unknown-tag
+  yaml: |
+    --- !<tag:clarkevans.com,2002:invoice>
+    invoice: 34843
+    date   : 2001-01-23
+    bill-to: &id001
+        given  : Chris
+        family : Dumars
+        address:
+            lines: |
+                458 Walkman Dr.
+                Suite #292
+            city    : Royal Oak
+            state   : MI
+            postal  : 48046
+    ship-to: *id001
+    product:
+        - sku         : BL394D
+          quantity    : 4
+          description : Basketball
+          price       : 450.00
+        - sku         : BL4438H
+          quantity    : 1
+          description : Super Hoop
+          price       : 2392.00
+    tax  : 251.42
+    total: 4443.52
+    comments:
+        Late afternoon is best.
+        Backup contact is Nancy
+        Billsmer @ 338-4338.
+  tree: |
+    +STR
+     +DOC ---
+      +MAP <tag:clarkevans.com,2002:invoice>
+       =VAL :invoice
+       =VAL :34843
+       =VAL :date
+       =VAL :2001-01-23
+       =VAL :bill-to
+       +MAP &id001
+        =VAL :given
+        =VAL :Chris
+        =VAL :family
+        =VAL :Dumars
+        =VAL :address
+        +MAP
+         =VAL :lines
+         =VAL |458 Walkman Dr.\nSuite #292\n
+         =VAL :city
+         =VAL :Royal Oak
+         =VAL :state
+         =VAL :MI
+         =VAL :postal
+         =VAL :48046
+        -MAP
+       -MAP
+       =VAL :ship-to
+       =ALI *id001
+       =VAL :product
+       +SEQ
+        +MAP
+         =VAL :sku
+         =VAL :BL394D
+         =VAL :quantity
+         =VAL :4
+         =VAL :description
+         =VAL :Basketball
+         =VAL :price
+         =VAL :450.00
+        -MAP
+        +MAP
+         =VAL :sku
+         =VAL :BL4438H
+         =VAL :quantity
+         =VAL :1
+         =VAL :description
+         =VAL :Super Hoop
+         =VAL :price
+         =VAL :2392.00
+        -MAP
+       -SEQ
+       =VAL :tax
+       =VAL :251.42
+       =VAL :total
+       =VAL :4443.52
+       =VAL :comments
+       =VAL :Late afternoon is best. Backup contact is Nancy Billsmer @ 338-4338.
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "invoice": 34843,
+      "date": "2001-01-23",
+      "bill-to": {
+        "given": "Chris",
+        "family": "Dumars",
+        "address": {
+          "lines": "458 Walkman Dr.\nSuite #292\n",
+          "city": "Royal Oak",
+          "state": "MI",
+          "postal": 48046
+        }
+      },
+      "ship-to": {
+        "given": "Chris",
+        "family": "Dumars",
+        "address": {
+          "lines": "458 Walkman Dr.\nSuite #292\n",
+          "city": "Royal Oak",
+          "state": "MI",
+          "postal": 48046
+        }
+      },
+      "product": [
+        {
+          "sku": "BL394D",
+          "quantity": 4,
+          "description": "Basketball",
+          "price": 450
+        },
+        {
+          "sku": "BL4438H",
+          "quantity": 1,
+          "description": "Super Hoop",
+          "price": 2392
+        }
+      ],
+      "tax": 251.42,
+      "total": 4443.52,
+      "comments": "Late afternoon is best. Backup contact is Nancy Billsmer @ 338-4338."
+    }
+  dump: |
+    --- !<tag:clarkevans.com,2002:invoice>
+    invoice: 34843
+    date: 2001-01-23
+    bill-to: &id001
+      given: Chris
+      family: Dumars
+      address:
+        lines: |
+          458 Walkman Dr.
+          Suite #292
+        city: Royal Oak
+        state: MI
+        postal: 48046
+    ship-to: *id001
+    product:
+    - sku: BL394D
+      quantity: 4
+      description: Basketball
+      price: 450.00
+    - sku: BL4438H
+      quantity: 1
+      description: Super Hoop
+      price: 2392.00
+    tax: 251.42
+    total: 4443.52
+    comments: Late afternoon is best. Backup contact is Nancy Billsmer @ 338-4338.

@@ -1,0 +1,5 @@
+error: extern C++ function with lifetimes must be declared in `unsafe extern "C++"` block
+ --> tests/ui/lifetime_extern_cxx.rs:5:9
+  |
+5 |         unsafe fn f<'a>(&'a self, arg: &str) -> &'a str;
+  |         ^^^^^^^^^^^^^^^

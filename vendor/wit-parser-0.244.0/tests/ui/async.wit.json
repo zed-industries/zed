@@ -1,0 +1,151 @@
+{
+  "worlds": [
+    {
+      "name": "y",
+      "imports": {
+        "x": {
+          "function": {
+            "name": "x",
+            "kind": "async-freestanding",
+            "params": []
+          }
+        },
+        "y": {
+          "function": {
+            "name": "y",
+            "kind": "freestanding",
+            "params": []
+          }
+        }
+      },
+      "exports": {
+        "x": {
+          "function": {
+            "name": "x",
+            "kind": "async-freestanding",
+            "params": []
+          }
+        },
+        "y": {
+          "function": {
+            "name": "y",
+            "kind": "freestanding",
+            "params": []
+          }
+        }
+      },
+      "package": 0
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "x",
+      "types": {
+        "z": 0
+      },
+      "functions": {
+        "x": {
+          "name": "x",
+          "kind": "async-freestanding",
+          "params": [
+            {
+              "name": "x",
+              "type": "u32"
+            }
+          ],
+          "result": "u64"
+        },
+        "y": {
+          "name": "y",
+          "kind": "freestanding",
+          "params": []
+        },
+        "[constructor]z": {
+          "name": "[constructor]z",
+          "kind": {
+            "constructor": 0
+          },
+          "params": [],
+          "result": 2
+        },
+        "[method]z.x": {
+          "name": "[method]z.x",
+          "kind": {
+            "async-method": 0
+          },
+          "params": [
+            {
+              "name": "self",
+              "type": 1
+            }
+          ]
+        },
+        "[method]z.y": {
+          "name": "[method]z.y",
+          "kind": {
+            "method": 0
+          },
+          "params": [
+            {
+              "name": "self",
+              "type": 1
+            }
+          ]
+        },
+        "[static]z.static-x": {
+          "name": "[static]z.static-x",
+          "kind": {
+            "async-static": 0
+          },
+          "params": []
+        },
+        "[static]z.static-y": {
+          "name": "[static]z.static-y",
+          "kind": {
+            "static": 0
+          },
+          "params": []
+        }
+      },
+      "package": 0
+    }
+  ],
+  "types": [
+    {
+      "name": "z",
+      "kind": "resource",
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": null,
+      "kind": {
+        "handle": {
+          "borrow": 0
+        }
+      },
+      "owner": null
+    },
+    {
+      "name": null,
+      "kind": {
+        "handle": {
+          "own": 0
+        }
+      },
+      "owner": null
+    }
+  ],
+  "packages": [
+    {
+      "name": "test:async",
+      "interfaces": {
+        "x": 0
+      },
+      "worlds": {
+        "y": 0
+      }
+    }
+  ]
+}

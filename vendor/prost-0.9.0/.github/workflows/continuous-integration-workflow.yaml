@@ -1,0 +1,111 @@
+name: continuous integration
+on: pull_request
+
+jobs:
+
+  rustfmt:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+      - name: install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: stable
+            default: true
+            profile: minimal
+            components: rustfmt
+      - name: rustfmt
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: stable
+            default: true
+            profile: minimal
+            components: clippy
+      - name: install ninja
+        uses: seanmiddleditch/gha-setup-ninja@v3
+      - name: clippy
+        uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          args: --workspace --all-features --all-targets
+
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        toolchain:
+          - stable
+          - 1.46.0
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+      - name: install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: ${{ matrix.toolchain }}
+            default: true
+            profile: minimal
+      - name: install ninja
+        uses: seanmiddleditch/gha-setup-ninja@v3
+      - name: test
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --workspace --all-targets
+      - name: test no-default-features
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --no-default-features
+
+  no-std:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+      - name: install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: nightly
+            default: true
+            profile: minimal
+      - name: install cargo-no-std-check
+        uses: actions-rs/cargo@v1
+        with:
+          command: install
+          args: cargo-no-std-check
+      - name: prost cargo-no-std-check
+        uses: actions-rs/cargo@v1
+        with:
+          command: no-std-check
+          args: --manifest-path Cargo.toml --no-default-features
+      - name: prost-types cargo-no-std-check
+        uses: actions-rs/cargo@v1
+        with:
+          command: no-std-check
+          args: --manifest-path prost-types/Cargo.toml --no-default-features
+      # prost-build depends on prost with --no-default-features, but when
+      # prost-build is built through the workspace, prost typically has default
+      # features enabled due to vagaries in Cargo workspace feature resolution.
+      # This additional check ensures that prost-build does not rely on any of
+      # prost's default features to compile.
+      - name: prost-build check
+        uses: actions-rs/cargo@v1
+        with:
+          command: check
+          args: --manifest-path prost-build/Cargo.toml

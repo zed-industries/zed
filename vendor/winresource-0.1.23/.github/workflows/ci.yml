@@ -1,0 +1,63 @@
+name: "winresource CI"
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: Test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: cargo test --all-features
+
+  windows:
+    name: Build example on Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: cargo build --manifest-path example/Cargo.toml
+
+  gnu:
+    name: Build example using gnu
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Create gnu Docker image
+        uses: docker/build-push-action@v5
+        with:
+          file: .github/workflows/gnu.Dockerfile
+          tags: gnu
+          load: true
+          cache-from: type=gha,scope=gnu
+          cache-to: type=gha,scope=gnu
+
+      - uses: actions/checkout@v4
+      - name: Build example
+        run: |
+          docker run -v .:/winresource -w /winresource/example gnu cargo build --target x86_64-pc-windows-gnu
+
+  xwin:
+    name: Build example using xwin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Create xwin Docker image
+        uses: docker/build-push-action@v5
+        with:
+          file: .github/workflows/xwin.Dockerfile
+          tags: xwin
+          load: true
+          cache-from: type=gha,scope=xwin
+          cache-to: type=gha,scope=xwin
+
+      - uses: actions/checkout@v4
+      - name: Build example
+        # Use a /Users path to test issues occurring on macOS where llvm-rc confuses input paths with /U options
+        run: |
+          docker run -v .:/Users/winresource -w /Users/winresource/example xwin cargo xwin build --target x86_64-pc-windows-msvc
+

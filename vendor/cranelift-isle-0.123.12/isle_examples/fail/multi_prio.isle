@@ -1,0 +1,2 @@
+(decl multi A (u32) u32)
+(rule 0 (A x) x)

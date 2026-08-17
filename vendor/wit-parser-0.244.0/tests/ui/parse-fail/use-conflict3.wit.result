@@ -1,0 +1,5 @@
+name `x` is defined more than once
+     --> tests/ui/parse-fail/use-conflict3.wit:12:3
+      |
+   12 |   x: func();
+      |   ^

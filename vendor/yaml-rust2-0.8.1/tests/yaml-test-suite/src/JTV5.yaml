@@ -1,0 +1,30 @@
+---
+- name: Block Mapping with Multiline Scalars
+  from: NimYAML tests
+  tags: explicit-key mapping scalar
+  yaml: |
+    ? a
+      true
+    : null
+      d
+    ? e
+      42
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :a true
+       =VAL :null d
+       =VAL :e 42
+       =VAL :
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "a true": "null d",
+      "e 42": null
+    }
+  dump: |
+    a true: null d
+    e 42:

@@ -1,0 +1,8 @@
+package foo:bar;
+
+world foo {
+  import my:dep/a@0.1.0;
+  import my:dep/a@0.2.0;
+  export my:dep/a@0.1.0;
+  export my:dep/a@0.2.0;
+}

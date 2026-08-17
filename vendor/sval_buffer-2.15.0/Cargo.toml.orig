@@ -1,0 +1,37 @@
+[package]
+name = "sval_buffer"
+version = "2.15.0"
+authors = ["Ashley Mannix <ashleymannix@live.com.au>"]
+edition = "2021"
+license = "Apache-2.0 OR MIT"
+documentation = "https://docs.rs/sval_buffer"
+description = "Value buffering for sval"
+repository = "https://github.com/sval-rs/sval"
+readme = "README.md"
+keywords = ["serialization", "no_std"]
+categories = ["encoding", "no-std"]
+
+[package.metadata.docs.rs]
+features = ["std"]
+
+[features]
+default = ["alloc"]
+std = ["alloc", "sval/std"]
+alloc = ["sval/alloc"]
+no_debug_assertions = []
+
+[dependencies.sval]
+version = "2.15.0"
+path = "../"
+
+[dependencies.sval_ref]
+version = "2.15.0"
+path = "../ref"
+
+[dev-dependencies.sval_derive_macros]
+version = "2.15.0"
+path = "../derive_macros"
+
+[dev-dependencies.sval_test]
+version = "2.15.0"
+path = "../test"

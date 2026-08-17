@@ -1,0 +1,27 @@
+---
+- name: Flow Mapping Separate Values
+  from: http://www.yaml.org/spec/1.2/spec.html#id2791704
+  tags: flow mapping
+  yaml: |
+    {
+    unquoted : "separate",
+    http://foo.com,
+    omitted value:,
+    }
+  tree: |
+    +STR
+     +DOC
+      +MAP {}
+       =VAL :unquoted
+       =VAL "separate
+       =VAL :http://foo.com
+       =VAL :
+       =VAL :omitted value
+       =VAL :
+      -MAP
+     -DOC
+    -STR
+  dump: |
+    unquoted: "separate"
+    http://foo.com: null
+    omitted value: null

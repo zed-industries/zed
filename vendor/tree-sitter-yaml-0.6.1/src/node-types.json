@@ -1,0 +1,542 @@
+[
+  {
+    "type": "alias",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "alias_name",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "anchor",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "anchor_name",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "block_mapping",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "block_mapping_pair",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "block_mapping_pair",
+    "named": true,
+    "fields": {
+      "key": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "block_node",
+            "named": true
+          },
+          {
+            "type": "flow_node",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "block_node",
+            "named": true
+          },
+          {
+            "type": "flow_node",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "block_node",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "anchor",
+          "named": true
+        },
+        {
+          "type": "block_mapping",
+          "named": true
+        },
+        {
+          "type": "block_scalar",
+          "named": true
+        },
+        {
+          "type": "block_sequence",
+          "named": true
+        },
+        {
+          "type": "tag",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "block_scalar",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "block_sequence",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "block_sequence_item",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "block_sequence_item",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "block_node",
+          "named": true
+        },
+        {
+          "type": "flow_node",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "document",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "block_node",
+          "named": true
+        },
+        {
+          "type": "flow_node",
+          "named": true
+        },
+        {
+          "type": "reserved_directive",
+          "named": true
+        },
+        {
+          "type": "tag_directive",
+          "named": true
+        },
+        {
+          "type": "yaml_directive",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "double_quote_scalar",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "escape_sequence",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "flow_mapping",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "flow_node",
+          "named": true
+        },
+        {
+          "type": "flow_pair",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "flow_node",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "alias",
+          "named": true
+        },
+        {
+          "type": "anchor",
+          "named": true
+        },
+        {
+          "type": "double_quote_scalar",
+          "named": true
+        },
+        {
+          "type": "flow_mapping",
+          "named": true
+        },
+        {
+          "type": "flow_sequence",
+          "named": true
+        },
+        {
+          "type": "plain_scalar",
+          "named": true
+        },
+        {
+          "type": "single_quote_scalar",
+          "named": true
+        },
+        {
+          "type": "tag",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "flow_pair",
+    "named": true,
+    "fields": {
+      "key": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "flow_node",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "flow_node",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "flow_sequence",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "flow_node",
+          "named": true
+        },
+        {
+          "type": "flow_pair",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "plain_scalar",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "boolean_scalar",
+          "named": true
+        },
+        {
+          "type": "float_scalar",
+          "named": true
+        },
+        {
+          "type": "integer_scalar",
+          "named": true
+        },
+        {
+          "type": "null_scalar",
+          "named": true
+        },
+        {
+          "type": "string_scalar",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "reserved_directive",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "directive_name",
+          "named": true
+        },
+        {
+          "type": "directive_parameter",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "single_quote_scalar",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "escape_sequence",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "stream",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "document",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "tag_directive",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "tag_handle",
+          "named": true
+        },
+        {
+          "type": "tag_prefix",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "yaml_directive",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "yaml_version",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "\"",
+    "named": false
+  },
+  {
+    "type": "&",
+    "named": false
+  },
+  {
+    "type": "'",
+    "named": false
+  },
+  {
+    "type": "*",
+    "named": false
+  },
+  {
+    "type": ",",
+    "named": false
+  },
+  {
+    "type": "-",
+    "named": false
+  },
+  {
+    "type": "---",
+    "named": false
+  },
+  {
+    "type": "...",
+    "named": false
+  },
+  {
+    "type": ":",
+    "named": false
+  },
+  {
+    "type": ">",
+    "named": false
+  },
+  {
+    "type": "?",
+    "named": false
+  },
+  {
+    "type": "[",
+    "named": false
+  },
+  {
+    "type": "]",
+    "named": false
+  },
+  {
+    "type": "alias_name",
+    "named": true
+  },
+  {
+    "type": "anchor_name",
+    "named": true
+  },
+  {
+    "type": "boolean_scalar",
+    "named": true
+  },
+  {
+    "type": "comment",
+    "named": true
+  },
+  {
+    "type": "directive_name",
+    "named": true
+  },
+  {
+    "type": "directive_parameter",
+    "named": true
+  },
+  {
+    "type": "escape_sequence",
+    "named": true
+  },
+  {
+    "type": "float_scalar",
+    "named": true
+  },
+  {
+    "type": "integer_scalar",
+    "named": true
+  },
+  {
+    "type": "null_scalar",
+    "named": true
+  },
+  {
+    "type": "string_scalar",
+    "named": true
+  },
+  {
+    "type": "tag",
+    "named": true
+  },
+  {
+    "type": "tag_handle",
+    "named": true
+  },
+  {
+    "type": "tag_prefix",
+    "named": true
+  },
+  {
+    "type": "yaml_version",
+    "named": true
+  },
+  {
+    "type": "{",
+    "named": false
+  },
+  {
+    "type": "|",
+    "named": false
+  },
+  {
+    "type": "}",
+    "named": false
+  }
+]

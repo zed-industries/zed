@@ -1,0 +1,131 @@
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+
+name: Continuous Integration
+
+jobs:
+  dependencies:
+    name: cargo build | dependencies
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+
+      - id: cargo-cache
+        name: cache
+        uses: austinjones/rust-cache@v1
+        with:
+          key: ci-${{ matrix.os }}
+
+      - name: cargo build | dependencies
+        uses: actions-rs/cargo@v1
+        if: steps.cargo-cache.outputs.cache-hit != 'true'
+        with:
+          command: build
+          args: --all-features
+
+      - name: cargo build | dev dependencies
+        uses: actions-rs/cargo@v1
+        if: steps.cargo-cache.outputs.cache-hit != 'true'
+        with:
+          command: test
+          args: --all-features --no-run
+
+      - name: cargo build | release dependencies
+        uses: actions-rs/cargo@v1
+        if: steps.cargo-cache.outputs.cache-hit != 'true'
+        with:
+          command: build
+          args: --release --all-features
+
+      - name: cargo build | release dev dependencies
+        uses: actions-rs/cargo@v1
+        if: steps.cargo-cache.outputs.cache-hit != 'true'
+        with:
+          command: test
+          args: --release --all-features --no-run
+
+  check:
+    name: cargo check
+    needs: dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+
+      - id: cargo-cache
+        name: cache
+        uses: austinjones/rust-cache@v1
+        with:
+          key: ci-ubuntu-latest
+
+      - name: cargo check
+        uses: actions-rs/cargo@v1
+        with:
+          command: check
+
+      - name: cargo clippy
+        uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: cargo fmt
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
+
+  test:
+    name: cargo test
+    needs: dependencies
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+
+      - id: cargo-cache
+        name: cache
+        uses: austinjones/rust-cache@v1
+        with:
+          key: ci-${{ matrix.os }}
+
+      - uses: actions-rs/cargo@v1
+        name: cargo test --all-features
+        with:
+          command: test
+          args: --features "blocking,futures-traits,logging"
+
+      - uses: actions-rs/cargo@v1
+        name: cargo test --no-default-features
+        with:
+          command: test
+          args: --no-default-features
+
+      - uses: actions-rs/cargo@v1
+        name: cargo test --release --all-features
+        with:
+          command: test
+          args: --release --features "blocking,futures-traits,logging"
+
+      - uses: actions-rs/cargo@v1
+        name: cargo test --release --no-default-features
+        with:
+          command: test
+          args: --release --no-default-features

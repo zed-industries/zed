@@ -1,0 +1,23 @@
+This file is an attempt of keeping track of all exceptions introduced in the code generation.
+An exception is a difference of code generation based on hard-coded name.
+
+- switch_exceptions (cg/mod.rs)
+- mask_exceptions (cg/mod.rs)
+- enum exceptions (x::SendEventDest in cg/enum.rs)
+- requests that receive event in parameters (cg/request.rs)
+- ClientMessageEvent::new: format is inferred from data (cg/event.rs)
+- ClientMessageEvent::data: variant inferred from format (handle_client_message_data in cg/struct.rs)
+- randr::NotifyEvent::new: sub_code is inferred from u variant (cg/event.rs)
+- randr::NotifyEvent::u: variant inferred from sub_code (handle_randr_notify_data in cg/struct.rs)
+- xkb unions have a special treatment, the variant is inferred from a type field, hidden to the user (cg/union.rs)
+- NotifyEvent::raw_level, NotifyEvent::more, and NotifyEvent::level are manually implemented to handle the level byte with a continuation flag and map it to ReportLevel variants (src/lib.rs)
+- xinput::Device is faked from DeviceId and is defined in lib.rs (search for "xinput" in cg folder)
+- specific documentation for xinput::InputInfoInfo::Button (cg/switch.rs)
+- A small part of the XML definitions is hand edited to make the code generation a lot easier.
+  and to improve the documentation.
+    To check what has been edited, a copy of the upstream definitions is kept under
+      - xml/upstream
+      - xml/upstream_normalized
+    The normalized copy is simply a normalization of indentation to 4 spaces.
+    The hand edition is the diff from xml/upstream_normalized to xml.
+    Run `diff -ur xml/upstream_normalized xml` to print the diff.

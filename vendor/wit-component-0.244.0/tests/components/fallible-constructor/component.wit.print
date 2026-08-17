@@ -1,0 +1,9 @@
+package root:component;
+
+world root {
+  import foo: interface {
+    resource a {
+      constructor() -> result<a, u32>;
+    }
+  }
+}

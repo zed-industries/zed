@@ -1,0 +1,17 @@
+---
+- name: Explicit Non-Specific Tag [1.3]
+  from: 8MK2, modified for YAML 1.3
+  tags: tag 1.3-mod
+  yaml: |
+    ---
+    ! a
+  tree: |
+    +STR
+     +DOC ---
+      =VAL <!> :a
+     -DOC
+    -STR
+  json: |
+    "a"
+  dump: |
+    --- ! a

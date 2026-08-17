@@ -1,0 +1,298 @@
+[
+  {
+    "Description": "Bitmap scaling"
+  },
+  {
+    "Match": {
+      "target": "Font",
+      "tests": [
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Outline": {
+              "Simple": {
+                "Bool": false
+              }
+            }
+          }
+        }
+      ],
+      "edits": [
+        {
+          "mode": "Assign",
+          "binding": "Weak",
+          "value": {
+            "PixelSizeFixupFactor": {
+              "List": [
+                "Divide",
+                [
+                  {
+                    "Simple": {
+                      "Property": [
+                        "Pattern",
+                        "PixelSize"
+                      ]
+                    }
+                  },
+                  {
+                    "Simple": {
+                      "Property": [
+                        "Font",
+                        "PixelSize"
+                      ]
+                    }
+                  }
+                ]
+              ]
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "Match": {
+      "target": "Font",
+      "tests": [
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Outline": {
+              "Simple": {
+                "Bool": false
+              }
+            }
+          }
+        },
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Scalable": {
+              "Simple": {
+                "Bool": false
+              }
+            }
+          }
+        },
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Hinting": {
+              "Simple": {
+                "Bool": true
+              }
+            }
+          }
+        }
+      ],
+      "edits": [
+        {
+          "mode": "Assign",
+          "binding": "Weak",
+          "value": {
+            "ScalingNotNeeded": {
+              "List": [
+                "And",
+                [
+                  {
+                    "Binary": [
+                      "Less",
+                      [
+                        {
+                          "Simple": {
+                            "Property": [
+                              "Default",
+                              "PixelSizeFixupFactor"
+                            ]
+                          }
+                        },
+                        {
+                          "Simple": {
+                            "Double": 1.2
+                          }
+                        }
+                      ]
+                    ]
+                  },
+                  {
+                    "Binary": [
+                      "More",
+                      [
+                        {
+                          "Simple": {
+                            "Property": [
+                              "Default",
+                              "PixelSizeFixupFactor"
+                            ]
+                          }
+                        },
+                        {
+                          "Simple": {
+                            "Double": 0.8
+                          }
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              ]
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "Match": {
+      "target": "Font",
+      "tests": [
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "ScalingNotNeeded": {
+              "Simple": {
+                "Bool": true
+              }
+            }
+          }
+        }
+      ],
+      "edits": [
+        {
+          "mode": "Assign",
+          "binding": "Weak",
+          "value": {
+            "PixelSizeFixupFactor": {
+              "Simple": {
+                "Double": 1.0
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "Match": {
+      "target": "Font",
+      "tests": [
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Outline": {
+              "Simple": {
+                "Bool": false
+              }
+            }
+          }
+        },
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "NotEq",
+          "value": {
+            "PixelSizeFixupFactor": {
+              "Simple": {
+                "Double": 1.0
+              }
+            }
+          }
+        }
+      ],
+      "edits": [
+        {
+          "mode": "Assign",
+          "binding": "Weak",
+          "value": {
+            "Matrix": {
+              "List": [
+                "Times",
+                [
+                  {
+                    "Simple": {
+                      "Property": [
+                        "Default",
+                        "Matrix"
+                      ]
+                    }
+                  },
+                  {
+                    "Matrix": [
+                      {
+                        "Simple": {
+                          "Property": [
+                            "Default",
+                            "PixelSizeFixupFactor"
+                          ]
+                        }
+                      },
+                      {
+                        "Simple": {
+                          "Double": 0.0
+                        }
+                      },
+                      {
+                        "Simple": {
+                          "Double": 0.0
+                        }
+                      },
+                      {
+                        "Simple": {
+                          "Property": [
+                            "Default",
+                            "PixelSizeFixupFactor"
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ]
+              ]
+            }
+          }
+        },
+        {
+          "mode": "Assign",
+          "binding": "Weak",
+          "value": {
+            "Size": {
+              "List": [
+                "Divide",
+                [
+                  {
+                    "Simple": {
+                      "Property": [
+                        "Default",
+                        "Size"
+                      ]
+                    }
+                  },
+                  {
+                    "Simple": {
+                      "Property": [
+                        "Default",
+                        "PixelSizeFixupFactor"
+                      ]
+                    }
+                  }
+                ]
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+]

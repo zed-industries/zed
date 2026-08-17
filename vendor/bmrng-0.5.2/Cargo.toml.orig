@@ -1,0 +1,47 @@
+[package]
+name = "bmrng"
+description = "async MPSC request-response channel for Tokio"
+version = "0.5.2"
+authors = ["Oguz Bilgener <oguz@bilgener.me>"]
+repository = "https://github.com/oguzbilgener/bmrng"
+documentation = "https://docs.rs/bmrng"
+keywords = ["tokio", "mpsc", "request", "async"]
+categories = ["concurrency", "asynchronous"]
+edition = "2018"
+license = "MIT OR Apache-2.0"
+
+include = [
+  "CHANGELOG.md",
+  "LICENSE",
+  "README.md",
+  ".gitignore",
+  "Cargo.toml",
+  "src/*.rs",
+  "src/*/*.rs",
+  "tests/*.rs",
+  "benches/**/*.rs"
+]
+
+[badges]
+maintenance = { status = "actively-developed" }
+
+[dependencies]
+tokio = { version = "1", features = ["sync", "time"] }
+futures-core = { version = "0.3", default-features = false }
+
+[dev-dependencies]
+futures-util = { version = "0.3", default-features = false }
+tokio = { version = "1", features = ["test-util", "rt", "rt-multi-thread", "macros"] }
+loom = { version = "0.5", features = ["futures", "checkpoint"] }
+criterion = { version = "0.3", features = ["async_tokio", "html_reports"] }
+
+[[test]]
+name = "tests"
+
+[[bench]]
+name = "bench_channel_async"
+harness = false
+
+[[bench]]
+name = "bench_channel_sync"
+harness = false

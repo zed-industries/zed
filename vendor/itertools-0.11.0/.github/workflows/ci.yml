@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - staging
+      - trying
+
+jobs:
+  check:
+    name: check
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        build: [msrv, stable]
+        features:
+          [
+            "",
+            "--no-default-features",
+            "--no-default-features --features use_alloc",
+            "--all-targets --all-features",
+          ]
+        include:
+          - build: msrv
+            rust: 1.62.1
+          - build: stable
+            rust: stable
+        exclude:
+          - build: msrv
+            # we only care about the MSRV with respect to the lib target
+            features: "--all-targets --all-features"
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+      - run: cargo check ${{ matrix.features }}
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --all-features
+
+  # https://github.com/rust-lang/crater/blob/9ab6f9697c901c4a44025cf0a39b73ad5b37d198/.github/workflows/bors.yml#L125-L149
+  end-success:
+    name: bors build finished
+    if: success()
+    runs-on: ubuntu-latest
+    needs: [check, test]
+
+    steps:
+      - name: Mark the job as successful
+        run: exit 0

@@ -1,0 +1,29 @@
+[package]
+name = "zeno"
+version = "0.3.3"
+authors = ["Chad Brokaw <cbrokaw@gmail.com>"]
+edition = "2021"
+description = "High performance, low level 2D path rasterization."
+license = "Apache-2.0 OR MIT"
+keywords = ["path", "rasterizer", "svg"]
+categories = ["graphics"]
+repository = "https://github.com/dfrg/zeno"
+homepage = "https://github.com/dfrg/zeno"
+readme = "README.md"
+
+[dependencies]
+libm = { version = "0.2.7", default-features = false, optional = true }
+
+[dev-dependencies]
+criterion = { version = "0.5.1", default-features = false, features = ["cargo_bench_support"] }
+fastrand = { version = "2.0.1", default-features = false }
+
+[features]
+default = ["eval", "std"]
+eval = []
+std = []
+libm = ["dep:libm"]
+
+[[bench]]
+name = "render"
+harness = false

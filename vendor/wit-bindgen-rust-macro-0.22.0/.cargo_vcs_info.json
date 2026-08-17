@@ -1,0 +1,6 @@
+{
+  "git": {
+    "sha1": "52d0b3d2aa491f582ee49ec364f86475fc180006"
+  },
+  "path_in_vcs": "crates/guest-rust/macro"
+}

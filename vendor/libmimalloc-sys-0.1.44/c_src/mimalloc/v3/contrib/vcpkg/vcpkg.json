@@ -1,0 +1,48 @@
+{
+  "name": "mimalloc",
+  "version": "3.1.4",
+  "port-version": 2,
+  "description": "Compact general purpose allocator with excellent performance",
+  "homepage": "https://github.com/microsoft/mimalloc",
+  "license": "MIT",
+  "supports": "!uwp",
+  "dependencies": [
+    {
+      "name": "vcpkg-cmake",
+      "host": true
+    },
+    {
+      "name": "vcpkg-cmake-config",
+      "host": true
+    }
+  ],
+  "features": {
+    "c": {
+      "description": "Use C11 compilation (this can still override new/delete)"
+    },
+    "override": {
+      "description": "Override the standard malloc/free interface"
+    },
+    "secure": {
+      "description": "Use full security mitigations (like guard pages and randomization)"
+    },
+    "guarded": {
+      "description": "Use build that support guard pages after objects controlled with MIMALLOC_GUARDED_SAMPLE_RATE"
+    },
+    "xmalloc": {
+      "description": "If out-of-memory, call abort() instead of returning NULL"
+    },
+    "optarch": {
+      "description": "Use architecture specific optimizations (on x64: '-march=haswell;-mavx2', on arm64: '-march=armv8.1-a')"
+    },
+    "nooptarch": {
+      "description": "Do _not_ use architecture specific optimizations (on x64: '-march=haswell;-mavx2', on arm64: '-march=armv8.1-a')"
+    },
+    "optsimd": {
+      "description": "Allow use of SIMD instructions (avx2 or neon) (requires 'optarch' to be enabled)"
+    },
+    "asm": {
+      "description": "Generate assembly files"
+    }
+  }
+}

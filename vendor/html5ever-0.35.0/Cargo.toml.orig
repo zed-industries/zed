@@ -1,0 +1,29 @@
+[package]
+name = "html5ever"
+description = "High-performance browser-grade HTML5 parser"
+documentation = "https://docs.rs/html5ever"
+categories = [ "parser-implementations", "web-programming" ]
+keywords = ["html", "html5", "parser", "parsing"]
+readme = "../README.md"
+version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[features]
+trace_tokenizer = []
+
+[dependencies]
+markup5ever = { workspace = true }
+match_token = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+typed-arena = { workspace = true }
+
+[[bench]]
+name = "html5ever"
+harness = false

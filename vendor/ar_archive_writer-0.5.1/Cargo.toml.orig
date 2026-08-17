@@ -1,0 +1,22 @@
+[package]
+name = "ar_archive_writer"
+version = "0.5.1"
+edition = "2024"
+license = "Apache-2.0 WITH LLVM-exception"
+description = "A writer for object file ar archives"
+keywords = ["ar", "archive"]
+readme = "Readme.md"
+repository = "https://github.com/rust-lang/ar_archive_writer"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+object = { version = "0.37.1", default-features = false, features = ["std", "read"] }
+
+[dev-dependencies]
+cargo-binutils = "0.3.6"
+object = { version = "0.37.1", default-features = false, features = ["write", "xcoff"] }
+pretty_assertions = "1.4.1"
+
+[lints.rust]
+rust_2018_idioms = { level = "deny" }

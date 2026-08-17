@@ -1,0 +1,10 @@
+name: cargo-deny
+on: [push, pull_request]
+jobs:
+  cargo-deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: EmbarkStudios/cargo-deny-action@v2

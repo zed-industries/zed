@@ -1,0 +1,10 @@
+package test:test;
+
+interface test {
+   foo: func(v: s32) -> s32;
+}
+
+world dlopen-lib-foo {
+    import test;
+    export test;
+}

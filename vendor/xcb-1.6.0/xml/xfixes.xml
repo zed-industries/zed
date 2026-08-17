@@ -1,0 +1,409 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Copyright (C) 2004 Josh Triplett.  All Rights Reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Except as contained in this notice, the names of the authors or their
+institutions shall not be used in advertising or otherwise to promote the
+sale, use or other dealings in this Software without prior written
+authorization from the authors.
+-->
+<!-- This file describes version 4 of XFixes. -->
+<xcb header="xfixes" extension-xname="XFIXES" extension-name="XFixes" major-version="5" minor-version="0">
+    <import>xproto</import>
+    <import>render</import>
+    <import>shape</import>
+
+    <!-- Version 1 -->
+    <request name="QueryVersion" opcode="0">
+        <field type="CARD32" name="client_major_version" />
+        <field type="CARD32" name="client_minor_version" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="major_version" />
+            <field type="CARD32" name="minor_version" />
+            <pad bytes="16" />
+        </reply>
+    </request>
+
+    <enum name="SaveSetMode">
+        <item name="Insert">
+            <value>0</value>
+        </item>
+        <item name="Delete">
+            <value>1</value>
+        </item>
+    </enum>
+
+    <enum name="SaveSetTarget">
+        <item name="Nearest">
+            <value>0</value>
+        </item>
+        <item name="Root">
+            <value>1</value>
+        </item>
+    </enum>
+
+    <enum name="SaveSetMapping">
+        <item name="Map">
+            <value>0</value>
+        </item>
+        <item name="Unmap">
+            <value>1</value>
+        </item>
+    </enum>
+
+    <request name="ChangeSaveSet" opcode="1">
+        <field type="BYTE" name="mode" enum="SaveSetMode" />
+        <field type="BYTE" name="target" enum="SaveSetTarget" />
+        <field type="BYTE" name="map" enum="SaveSetMapping" />
+        <pad bytes="1" />
+        <field type="WINDOW" name="window" />
+    </request>
+
+    <enum name="SelectionEvent">
+        <item name="SetSelectionOwner">
+            <value>0</value>
+        </item>
+        <item name="SelectionWindowDestroy">
+            <value>1</value>
+        </item>
+        <item name="SelectionClientClose">
+            <value>2</value>
+        </item>
+    </enum>
+
+    <enum name="SelectionEventMask">
+        <item name="SetSelectionOwner">
+            <bit>0</bit>
+        </item>
+        <item name="SelectionWindowDestroy">
+            <bit>1</bit>
+        </item>
+        <item name="SelectionClientClose">
+            <bit>2</bit>
+        </item>
+    </enum>
+
+    <event name="SelectionNotify" number="0">
+        <field type="CARD8" name="subtype" enum="SelectionEvent" />
+        <field type="WINDOW" name="window" />
+        <field type="WINDOW" name="owner" />
+        <field type="ATOM" name="selection" />
+        <field type="TIMESTAMP" name="timestamp" />
+        <field type="TIMESTAMP" name="selection_timestamp" />
+        <pad bytes="8" />
+    </event>
+
+    <request name="SelectSelectionInput" opcode="2">
+        <field type="WINDOW" name="window" />
+        <field type="ATOM" name="selection" />
+        <field type="CARD32" name="event_mask" mask="SelectionEventMask" />
+    </request>
+
+    <enum name="CursorNotify">
+        <item name="DisplayCursor">
+            <value>0</value>
+        </item>
+    </enum>
+
+    <enum name="CursorNotifyMask">
+        <item name="DisplayCursor">
+            <bit>0</bit>
+        </item>
+    </enum>
+
+    <event name="CursorNotify" number="1">
+        <field type="CARD8" name="subtype" enum="CursorNotify" />
+        <field type="WINDOW" name="window" />
+        <field type="CARD32" name="cursor_serial" />
+        <field type="TIMESTAMP" name="timestamp" />
+        <field type="ATOM" name="name" altenum="Atom" /> <!-- Added in version 2 -->
+        <pad bytes="12" />
+    </event>
+
+    <request name="SelectCursorInput" opcode="3">
+        <field type="WINDOW" name="window" />
+        <field type="CARD32" name="event_mask" mask="CursorNotifyMask" />
+    </request>
+
+    <request name="GetCursorImage" opcode="4">
+        <reply>
+            <pad bytes="1" />
+            <field type="INT16" name="x" />
+            <field type="INT16" name="y" />
+            <field type="CARD16" name="width" />
+            <field type="CARD16" name="height" />
+            <field type="CARD16" name="xhot" />
+            <field type="CARD16" name="yhot" />
+            <field type="CARD32" name="cursor_serial" />
+            <pad bytes="8" />
+            <list type="CARD32" name="cursor_image">
+                <op op="*">
+                    <fieldref>width</fieldref>
+                    <fieldref>height</fieldref>
+                </op>
+            </list>
+        </reply>
+    </request>
+
+    <!-- Version 2 -->
+
+    <xidtype name="REGION" />
+
+    <error name="BadRegion" number="0" />
+
+    <enum name="Region">
+        <item name="None">
+            <value>0</value>
+        </item>
+    </enum>
+
+    <request name="CreateRegion" opcode="5">
+        <field type="REGION" name="region" />
+        <list type="RECTANGLE" name="rectangles" />
+    </request>
+
+    <request name="CreateRegionFromBitmap" opcode="6">
+        <field type="REGION" name="region" />
+        <field type="PIXMAP" name="bitmap" />
+    </request>
+
+    <request name="CreateRegionFromWindow" opcode="7">
+        <field type="REGION" name="region" />
+        <field type="WINDOW" name="window" />
+        <field type="shape:KIND" name="kind" enum="SK" />
+        <pad bytes="3" />
+    </request>
+
+    <request name="CreateRegionFromGC" opcode="8">
+        <field type="REGION" name="region" />
+        <field type="GCONTEXT" name="gc" />
+    </request>
+
+    <request name="CreateRegionFromPicture" opcode="9">
+        <field type="REGION" name="region" />
+        <field type="PICTURE" name="picture" />
+    </request>
+
+    <request name="DestroyRegion" opcode="10">
+        <field type="REGION" name="region" />
+    </request>
+
+    <request name="SetRegion" opcode="11">
+        <field type="REGION" name="region" />
+        <list type="RECTANGLE" name="rectangles" />
+    </request>
+
+    <request name="CopyRegion" opcode="12">
+        <field type="REGION" name="source" />
+        <field type="REGION" name="destination" />
+    </request>
+
+    <request name="UnionRegion" opcode="13">
+        <field type="REGION" name="source1" />
+        <field type="REGION" name="source2" />
+        <field type="REGION" name="destination" />
+    </request>
+
+    <request name="IntersectRegion" opcode="14">
+        <field type="REGION" name="source1" />
+        <field type="REGION" name="source2" />
+        <field type="REGION" name="destination" />
+    </request>
+
+    <request name="SubtractRegion" opcode="15">
+        <field type="REGION" name="source1" />
+        <field type="REGION" name="source2" />
+        <field type="REGION" name="destination" />
+    </request>
+
+    <request name="InvertRegion" opcode="16">
+        <field type="REGION" name="source" />
+        <field type="RECTANGLE" name="bounds" />
+        <field type="REGION" name="destination" />
+    </request>
+
+    <request name="TranslateRegion" opcode="17">
+        <field type="REGION" name="region" />
+        <field type="INT16" name="dx" />
+        <field type="INT16" name="dy" />
+    </request>
+
+    <request name="RegionExtents" opcode="18">
+        <field type="REGION" name="source" />
+        <field type="REGION" name="destination" />
+    </request>
+
+    <request name="FetchRegion" opcode="19">
+        <field type="REGION" name="region" />
+        <reply>
+            <pad bytes="1" />
+            <field type="RECTANGLE" name="extents" />
+            <pad bytes="16" />
+            <list type="RECTANGLE" name="rectangles">
+                <op op='/'>
+                    <fieldref>length</fieldref>
+                    <value>2</value>
+                </op>
+            </list>
+        </reply>
+    </request>
+
+    <request name="SetGCClipRegion" opcode="20">
+        <field type="GCONTEXT" name="gc" />
+        <field type="REGION" name="region" altenum="Region" />
+        <field type="INT16" name="x_origin" />
+        <field type="INT16" name="y_origin" />
+    </request>
+
+    <request name="SetWindowShapeRegion" opcode="21">
+        <field type="WINDOW" name="dest" />
+        <field type="shape:KIND" name="dest_kind" enum="SK" />
+        <pad bytes="3" />
+        <field type="INT16" name="x_offset" />
+        <field type="INT16" name="y_offset" />
+        <field type="REGION" name="region" altenum="Region" />
+    </request>
+
+    <request name="SetPictureClipRegion" opcode="22">
+        <field type="PICTURE" name="picture" />
+        <field type="REGION" name="region" altenum="Region" />
+        <field type="INT16" name="x_origin" />
+        <field type="INT16" name="y_origin" />
+    </request>
+
+    <request name="SetCursorName" opcode="23">
+        <field type="CURSOR" name="cursor" />
+        <field type="CARD16" name="nbytes" />
+        <pad bytes="2" />
+        <list type="char" name="name">
+            <fieldref>nbytes</fieldref>
+        </list>
+    </request>
+
+    <request name="GetCursorName" opcode="24">
+        <field type="CURSOR" name="cursor" />
+        <reply>
+            <pad bytes="1" />
+            <field type="ATOM" name="atom" altenum="Atom" />
+            <field type="CARD16" name="nbytes" />
+            <pad bytes="18" />
+            <list type="char" name="name">
+                <fieldref>nbytes</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="GetCursorImageAndName" opcode="25">
+        <reply>
+            <pad bytes="1" />
+            <field type="INT16" name="x" />
+            <field type="INT16" name="y" />
+            <field type="CARD16" name="width" />
+            <field type="CARD16" name="height" />
+            <field type="CARD16" name="xhot" />
+            <field type="CARD16" name="yhot" />
+            <field type="CARD32" name="cursor_serial" />
+            <field type="ATOM" name="cursor_atom" altenum="Atom" />
+            <field type="CARD16" name="nbytes" />
+            <pad bytes="2" />
+            <list type="CARD32" name="cursor_image">
+                <op op="*">
+                    <fieldref>width</fieldref>
+                    <fieldref>height</fieldref>
+                </op>
+            </list>
+            <list type="char" name="name">
+                <fieldref>nbytes</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="ChangeCursor" opcode="26">
+        <field type="CURSOR" name="source" />
+        <field type="CURSOR" name="destination" />
+    </request>
+
+    <request name="ChangeCursorByName" opcode="27">
+        <field type="CURSOR" name="src" />
+        <field type="CARD16" name="nbytes" />
+        <pad bytes="2" />
+        <list type="char" name="name">
+            <fieldref>nbytes</fieldref>
+        </list>
+    </request>
+
+    <!-- Version 3 -->
+    <request name="ExpandRegion" opcode="28">
+        <field type="REGION" name="source" />
+        <field type="REGION" name="destination" />
+        <field type="CARD16" name="left" />
+        <field type="CARD16" name="right" />
+        <field type="CARD16" name="top" />
+        <field type="CARD16" name="bottom" />
+    </request>
+
+    <!-- Version 4 -->
+    <request name="HideCursor" opcode="29">
+        <field type="WINDOW" name="window" />
+    </request>
+
+    <request name="ShowCursor" opcode="30">
+        <field type="WINDOW" name="window" />
+    </request>
+
+    <!-- Version 5 -->
+
+    <xidtype name="BARRIER" />
+
+    <enum name="BarrierDirections">
+        <item name="PositiveX">
+            <bit>0</bit>
+        </item>
+        <item name="PositiveY">
+            <bit>1</bit>
+        </item>
+        <item name="NegativeX">
+            <bit>2</bit>
+        </item>
+        <item name="NegativeY">
+            <bit>3</bit>
+        </item>
+    </enum>
+
+    <request name="CreatePointerBarrier" opcode="31">
+        <field type="BARRIER" name="barrier" />
+        <field type="WINDOW" name="window" />
+        <field type="CARD16" name="x1" />
+        <field type="CARD16" name="y1" />
+        <field type="CARD16" name="x2" />
+        <field type="CARD16" name="y2" />
+        <field type="CARD32" name="directions" mask="BarrierDirections" />
+        <pad bytes="2" />
+        <field type="CARD16" name="num_devices" />
+        <list type="CARD16" name="devices">
+            <fieldref>num_devices</fieldref>
+        </list>
+    </request>
+
+    <request name="DeletePointerBarrier" opcode="32">
+        <field type="BARRIER" name="barrier" />
+    </request>
+</xcb>

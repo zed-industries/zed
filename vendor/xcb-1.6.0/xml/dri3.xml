@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+
+Copyright © 2013 Keith Packard
+
+Permission to use, copy, modify, distribute, and sell this software and its
+documentation for any purpose is hereby granted without fee, provided that
+the above copyright notice appear in all copies and that both that copyright
+notice and this permission notice appear in supporting documentation, and
+that the name of the copyright holders not be used in advertising or
+publicity pertaining to distribution of the software without specific,
+written prior permission.  The copyright holders make no representations
+about the suitability of this software for any purpose.  It is provided "as
+is" without express or implied warranty.
+
+THE COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS SOFTWARE,
+INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS, IN NO
+EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY SPECIAL, INDIRECT OR
+CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE,
+DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE
+OF THIS SOFTWARE.
+-->
+
+<xcb header="dri3" extension-xname="DRI3" extension-name="DRI3" major-version="1" minor-version="2">
+    <import>xproto</import>
+
+    <!-- Types -->
+
+    <!-- Requests -->
+    <request name="QueryVersion" opcode="0">
+        <field type="CARD32" name="major_version" />
+        <field type="CARD32" name="minor_version" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="major_version" />
+            <field type="CARD32" name="minor_version" />
+        </reply>
+    </request>
+
+    <request name="Open" opcode="1">
+        <field type="DRAWABLE" name="drawable" />
+        <field type="CARD32" name="provider" />
+        <reply>
+            <field type="CARD8" name="nfd" />
+            <fd name="device_fd" />
+            <pad bytes="24" />
+        </reply>
+    </request>
+
+    <request name="PixmapFromBuffer" opcode="2">
+        <field type="PIXMAP" name="pixmap" />
+        <field type="DRAWABLE" name="drawable" />
+        <field type="CARD32" name="size" />
+        <field type="CARD16" name="width" />
+        <field type="CARD16" name="height" />
+        <field type="CARD16" name="stride" />
+        <field type="CARD8" name="depth" />
+        <field type="CARD8" name="bpp" />
+        <fd name="pixmap_fd" />
+    </request>
+
+    <request name="BufferFromPixmap" opcode="3">
+        <field type="PIXMAP" name="pixmap" />
+        <reply>
+            <field type="CARD8" name="nfd" />
+            <field type="CARD32" name="size" />
+            <field type="CARD16" name="width" />
+            <field type="CARD16" name="height" />
+            <field type="CARD16" name="stride" />
+            <field type="CARD8" name="depth" />
+            <field type="CARD8" name="bpp" />
+            <fd name="pixmap_fd" />
+            <pad bytes="12" />
+        </reply>
+    </request>
+
+    <request name="FenceFromFD" opcode="4">
+        <field type="DRAWABLE" name="drawable" />
+        <field type="CARD32" name="fence" />
+        <field type="BOOL" name="initially_triggered" />
+        <pad bytes="3" />
+        <fd name="fence_fd" />
+    </request>
+
+    <request name="FDFromFence" opcode="5">
+        <field type="DRAWABLE" name="drawable" />
+        <field type="CARD32" name="fence" />
+        <reply>
+            <field type="CARD8" name="nfd" />
+            <fd name="fence_fd" />
+            <pad bytes="24" />
+        </reply>
+    </request>
+
+    <!-- v1.2 -->
+    <request name="GetSupportedModifiers" opcode="6">
+        <field type="CARD32" name="window" />
+        <field type="CARD8" name="depth" />
+        <field type="CARD8" name="bpp" />
+        <pad bytes="2" />
+        <reply>
+            <required_start_align align="8" />
+            <pad bytes="1" />
+            <field type="CARD32" name="num_window_modifiers" />
+            <field type="CARD32" name="num_screen_modifiers" />
+            <pad bytes="16" />
+            <list type="CARD64" name="window_modifiers">
+                <fieldref>num_window_modifiers</fieldref>
+            </list>
+            <list type="CARD64" name="screen_modifiers">
+                <fieldref>num_screen_modifiers</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="PixmapFromBuffers" opcode="7">
+        <required_start_align align="8" />
+        <field type="PIXMAP" name="pixmap" />
+        <field type="WINDOW" name="window" />
+        <field type="CARD8" name="num_buffers" />
+        <pad bytes="3" />
+        <field type="CARD16" name="width" />
+        <field type="CARD16" name="height" />
+        <field type="CARD32" name="stride0" />
+        <field type="CARD32" name="offset0" />
+        <field type="CARD32" name="stride1" />
+        <field type="CARD32" name="offset1" />
+        <field type="CARD32" name="stride2" />
+        <field type="CARD32" name="offset2" />
+        <field type="CARD32" name="stride3" />
+        <field type="CARD32" name="offset3" />
+        <field type="CARD8" name="depth" />
+        <field type="CARD8" name="bpp" />
+        <pad bytes="2" />
+        <field type="CARD64" name="modifier" />
+        <list type="fd" name="buffers">
+            <fieldref>num_buffers</fieldref>
+        </list>
+    </request>
+
+    <request name="BuffersFromPixmap" opcode="8">
+        <field type="PIXMAP" name="pixmap" />
+        <reply>
+            <required_start_align align="8" />
+            <field type="CARD8" name="nfd" />
+            <field type="CARD16" name="width" />
+            <field type="CARD16" name="height" />
+            <pad bytes="4" />
+            <field type="CARD64" name="modifier" />
+            <field type="CARD8" name="depth" />
+            <field type="CARD8" name="bpp" />
+            <pad bytes="6" />
+            <list type="CARD32" name="strides">
+                <fieldref>nfd</fieldref>
+            </list>
+            <list type="CARD32" name="offsets">
+                <fieldref>nfd</fieldref>
+            </list>
+            <list type="fd" name="buffers">
+                <fieldref>nfd</fieldref>
+            </list>
+        </reply>
+    </request>
+</xcb>

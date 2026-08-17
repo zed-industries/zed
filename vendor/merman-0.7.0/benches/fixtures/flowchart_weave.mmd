@@ -1,0 +1,49 @@
+flowchart LR
+  subgraph Left
+    direction TB
+    A1[A1]
+    A2[A2]
+    A3[A3]
+    A4[A4]
+    A5[A5]
+    A6[A6]
+    A7[A7]
+    A8[A8]
+  end
+
+  subgraph Right
+    direction TB
+    B1[B1]
+    B2[B2]
+    B3[B3]
+    B4[B4]
+    B5[B5]
+    B6[B6]
+    B7[B7]
+    B8[B8]
+  end
+
+  A1 --> B8
+  A2 --> B7
+  A3 --> B6
+  A4 --> B5
+  A5 --> B4
+  A6 --> B3
+  A7 --> B2
+  A8 --> B1
+
+  A1 --> B1
+  A2 --> B2
+  A3 --> B3
+  A4 --> B4
+  A5 --> B5
+  A6 --> B6
+  A7 --> B7
+  A8 --> B8
+
+  B2 -.feedback.-> A7
+  B3 -.feedback.-> A6
+  B4 -.feedback.-> A5
+  B5 -.feedback.-> A4
+  B6 -.feedback.-> A3
+  B7 -.feedback.-> A2

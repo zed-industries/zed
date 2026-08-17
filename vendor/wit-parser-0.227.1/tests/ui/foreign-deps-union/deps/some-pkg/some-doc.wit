@@ -1,0 +1,13 @@
+package foo:some-pkg;
+
+interface the-default {
+  type from-default = string;
+}
+
+interface some-interface {
+  type another-type = u32;
+}
+
+interface another-interface {
+  type yet-another-type = u8;
+}

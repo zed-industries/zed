@@ -1,0 +1,33 @@
+---
+- name: Spec Example 6.5. Empty Lines
+  from: http://www.yaml.org/spec/1.2/spec.html#id2778971
+  tags: double literal spec scalar upto-1.2 whitespace
+  yaml: |
+    Folding:
+      "Empty line
+       »
+      as a line feed"
+    Chomping: |
+      Clipped empty lines
+    ␣
+    ↵
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :Folding
+       =VAL "Empty line\nas a line feed
+       =VAL :Chomping
+       =VAL |Clipped empty lines\n
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "Folding": "Empty line\nas a line feed",
+      "Chomping": "Clipped empty lines\n"
+    }
+  dump: |
+    Folding: "Empty line\nas a line feed"
+    Chomping: |
+      Clipped empty lines

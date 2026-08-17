@@ -1,0 +1,18 @@
+[package]
+name = "maybe-rayon"
+version = "0.1.1"
+edition = "2021"
+license = "MIT"
+description = "Either acts as rayon or creates a single-threaded facade"
+homepage = "https://github.com/shssoichiro/maybe-rayon"
+repository = "https://github.com/shssoichiro/maybe-rayon"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+cfg-if = "1.0"
+rayon = { optional = true, version = "1.0" }
+
+[features]
+default = ["threads"]
+threads = ["rayon"]

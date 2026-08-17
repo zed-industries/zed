@@ -1,0 +1,22 @@
+[package]
+authors = ["Kornel <kornel@geekhood.net>"]
+description = "Tiny helper function to visit every pixel in the image together with its neighboring pixels. Duplicates pixels on the edges."
+license = "MIT"
+name = "loop9"
+readme = "README.md"
+version = "0.1.5"
+edition = "2021"
+homepage = "https://lib.rs/crates/loop9"
+categories = ["graphics"]
+keywords = ["convolve", "blur", "iterate", "convolution"]
+repository = "https://gitlab.com/kornelski/loop9.git"
+
+[dependencies]
+imgref = "1.7.0"
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+rustdoc-args = ["--generate-link-to-definition"]
+
+[badges]
+maintenance = { status = "passively-maintained" }

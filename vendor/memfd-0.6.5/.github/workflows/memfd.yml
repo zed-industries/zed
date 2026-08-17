@@ -1,0 +1,103 @@
+name: Test memfd
+
+on:
+  push:
+    paths-ignore:
+    - '*.md'
+    branches:
+    - master
+  pull_request:
+    types: [opened, repoened, synchronize]
+
+jobs:
+  native-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rust_toolchain: [nightly, stable, 1.63.0]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Rust ${{ matrix.rust_toolchain }}
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: ${{ matrix.rust_toolchain }}
+            profile: minimal
+            components: clippy
+            default: true
+      - name: Update
+        uses: actions-rs/cargo@v1
+        with:
+          command: update
+          args: --manifest-path=Cargo.toml
+      - name: Clippy
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+      - name: Doc
+        uses: actions-rs/cargo@v1
+        with:
+          command: doc
+      - name: Build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --manifest-path=Cargo.toml
+      - name: Test
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --manifest-path=Cargo.toml -- --nocapture
+      - name: Test Release
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --manifest-path=Cargo.toml --release -- --nocapture
+
+  build-on-unsupported:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Rust nightly
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: nightly
+            profile: minimal
+            target: ${{ matrix.rust_target }}
+            default: true
+      - name: Update
+        uses: actions-rs/cargo@v1
+        with:
+          command: update
+          args: --manifest-path=Cargo.toml
+      - name: Build ${{ matrix.rust_target }}
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --manifest-path=Cargo.toml
+  cross:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - arm-linux-androideabi
+          - aarch64-linux-android
+    steps:
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+          override: true
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Build
+        uses: actions-rs/cargo@v1
+        with:
+          use-cross: true
+          command: build
+          args: --target=${{ matrix.target }} --manifest-path=Cargo.toml

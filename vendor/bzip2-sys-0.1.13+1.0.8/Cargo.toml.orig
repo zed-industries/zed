@@ -1,0 +1,30 @@
+[package]
+name = "bzip2-sys"
+version = "0.1.13+1.0.8"
+authors = ["Alex Crichton <alex@alexcrichton.com>"]
+links = "bzip2"
+build = "build.rs"
+license = "MIT/Apache-2.0"
+repository = "https://github.com/alexcrichton/bzip2-rs"
+homepage = "https://github.com/alexcrichton/bzip2-rs"
+documentation = "https://docs.rs/bzip2-sys"
+description = """
+Bindings to libbzip2 for bzip2 compression and decompression exposed as
+Reader/Writer streams.
+"""
+categories = ["external-ffi-bindings"]
+
+[lib]
+name = "bzip2_sys"
+path = "lib.rs"
+
+[dependencies]
+
+[build-dependencies]
+pkg-config = "0.3.9"
+cc = "1.0"
+
+[features]
+# Enable this feature if you want to have a statically linked bzip2
+static = []
+__disabled = []

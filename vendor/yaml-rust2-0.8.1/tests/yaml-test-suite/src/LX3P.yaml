@@ -1,0 +1,20 @@
+---
+- name: Implicit Flow Mapping Key on one line
+  from: '@perlpunk'
+  tags: complex-key mapping flow sequence 1.3-err
+  yaml: |
+    [flow]: block
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       +SEQ []
+        =VAL :flow
+       -SEQ
+       =VAL :block
+      -MAP
+     -DOC
+    -STR
+  dump: |
+    ? - flow
+    : block

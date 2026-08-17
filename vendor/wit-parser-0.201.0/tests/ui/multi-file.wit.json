@@ -1,0 +1,298 @@
+{
+  "worlds": [
+    {
+      "name": "more-depends-on-later-things",
+      "imports": {
+        "interface-3": {
+          "interface": 3
+        }
+      },
+      "exports": {
+        "interface-3": {
+          "interface": 3
+        }
+      },
+      "package": 0
+    },
+    {
+      "name": "the-world",
+      "imports": {
+        "interface-1": {
+          "interface": 1
+        },
+        "x": {
+          "type": 15
+        },
+        "foo": {
+          "function": {
+            "name": "foo",
+            "kind": "freestanding",
+            "params": [],
+            "results": [
+              {
+                "type": 15
+              }
+            ]
+          }
+        }
+      },
+      "exports": {},
+      "package": 0
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "irrelevant-name",
+      "types": {
+        "a-name": 0
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "depend-on-me",
+      "types": {
+        "x": 1
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "depends-on-later-item",
+      "types": {
+        "x": 2
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "later-interface",
+      "types": {},
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "cycle1",
+      "types": {
+        "t": 3
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "cycle2",
+      "types": {
+        "t": 4
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "cycle3",
+      "types": {
+        "t": 5
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "foo",
+      "types": {
+        "x": 6
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "something-else",
+      "types": {
+        "y": 7
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "bar",
+      "types": {
+        "x": 8,
+        "x2": 9,
+        "x3": 10,
+        "x4": 11,
+        "y": 12,
+        "y2": 13,
+        "a-name": 14
+      },
+      "functions": {},
+      "package": 0
+    }
+  ],
+  "types": [
+    {
+      "name": "a-name",
+      "kind": {
+        "record": {
+          "fields": []
+        }
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "x",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "interface": 1
+      }
+    },
+    {
+      "name": "x",
+      "kind": {
+        "type": 1
+      },
+      "owner": {
+        "interface": 2
+      }
+    },
+    {
+      "name": "t",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "interface": 4
+      }
+    },
+    {
+      "name": "t",
+      "kind": {
+        "type": 3
+      },
+      "owner": {
+        "interface": 5
+      }
+    },
+    {
+      "name": "t",
+      "kind": {
+        "type": 4
+      },
+      "owner": {
+        "interface": 6
+      }
+    },
+    {
+      "name": "x",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "interface": 7
+      }
+    },
+    {
+      "name": "y",
+      "kind": {
+        "type": "u64"
+      },
+      "owner": {
+        "interface": 8
+      }
+    },
+    {
+      "name": "x",
+      "kind": {
+        "type": 6
+      },
+      "owner": {
+        "interface": 9
+      }
+    },
+    {
+      "name": "x2",
+      "kind": {
+        "type": 6
+      },
+      "owner": {
+        "interface": 9
+      }
+    },
+    {
+      "name": "x3",
+      "kind": {
+        "type": 6
+      },
+      "owner": {
+        "interface": 9
+      }
+    },
+    {
+      "name": "x4",
+      "kind": {
+        "type": 1
+      },
+      "owner": {
+        "interface": 9
+      }
+    },
+    {
+      "name": "y",
+      "kind": {
+        "type": 7
+      },
+      "owner": {
+        "interface": 9
+      }
+    },
+    {
+      "name": "y2",
+      "kind": {
+        "type": 7
+      },
+      "owner": {
+        "interface": 9
+      }
+    },
+    {
+      "name": "a-name",
+      "kind": {
+        "type": 0
+      },
+      "owner": {
+        "interface": 9
+      }
+    },
+    {
+      "name": "x",
+      "kind": {
+        "type": 1
+      },
+      "owner": {
+        "world": 1
+      }
+    }
+  ],
+  "packages": [
+    {
+      "name": "foo:multi-file",
+      "interfaces": {
+        "irrelevant-name": 0,
+        "depend-on-me": 1,
+        "depends-on-later-item": 2,
+        "later-interface": 3,
+        "cycle1": 4,
+        "cycle2": 5,
+        "cycle3": 6,
+        "foo": 7,
+        "something-else": 8,
+        "bar": 9
+      },
+      "worlds": {
+        "more-depends-on-later-things": 0,
+        "the-world": 1
+      }
+    }
+  ]
+}

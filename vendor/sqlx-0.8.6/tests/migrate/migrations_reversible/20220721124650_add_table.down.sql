@@ -1,0 +1,1 @@
+DROP TABLE migrations_reversible_test;

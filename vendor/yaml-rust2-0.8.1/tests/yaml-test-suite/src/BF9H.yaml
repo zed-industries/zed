@@ -1,0 +1,16 @@
+---
+- name: Trailing comment in multiline plain scalar
+  from: '@perlpunk'
+  tags: comment error scalar
+  fail: true
+  yaml: |
+    ---
+    plain: a
+           b # end of scalar
+           c
+  tree: |
+    +STR
+     +DOC ---
+      +MAP
+       =VAL :plain
+       =VAL :a b

@@ -1,0 +1,42 @@
+[package]
+name = "jiff-static"
+version = "0.2.15"  #:version
+authors = ["Andrew Gallant <jamslam@gmail.com>"]
+license = "Unlicense OR MIT"
+homepage = "https://github.com/BurntSushi/jiff/tree/master/crates/jiff-static"
+repository = "https://github.com/BurntSushi/jiff"
+documentation = "https://docs.rs/jiff-tzdb"
+description = "Create static TimeZone values for Jiff (useful in core-only environments)."
+categories = ["date-and-time"]
+keywords = ["date", "time", "static", "zone", "iana"]
+workspace = "../.."
+edition = "2021"
+rust-version = "1.70"
+include = ["/src/**/*.rs", "COPYING", "LICENSE-MIT", "UNLICENSE"]
+
+[lib]
+name = "jiff_static"
+bench = false
+proc-macro = true
+
+[features]
+default = []
+# This forces the jiff-tzdb crate to be included and makes the `get` proc macro
+# available (which pulls from the bundled tzdb).
+tzdb = ["dep:jiff-tzdb"]
+# This fattens up the TZif data to contain more explicit transitions. This may
+# improve the performance of time zone lookups.
+#
+# See the `tz-fat` feature in this repository's root `Cargo.toml` for more
+# context.
+tz-fat = []
+# Equivalent to the eponymous feature in `jiff` proper. Except it isn't
+# enabled by default here, since we don't really care about that level of
+# perf at compile time.
+perf-inline = []
+
+[dependencies]
+jiff-tzdb = { version = "0.1.4", path = "../jiff-tzdb", optional = true }
+proc-macro2 = "1.0.93"
+quote = "1.0.38"
+syn = "2.0.98"

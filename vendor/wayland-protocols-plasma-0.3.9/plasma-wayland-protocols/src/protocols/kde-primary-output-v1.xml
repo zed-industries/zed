@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="kde_primary_output_v1">
+  <copyright><![CDATA[
+    SPDX-FileCopyrightText: 2021 Aleix Pol Gonzalez <aleixpol@kde.org>
+
+    SPDX-License-Identifier: MIT-CMU
+    ]]></copyright>
+
+<interface name="kde_primary_output_v1" version="2">
+  <description summary="expose which is the primary display">
+    Protocol for telling which is the primary display among the selection
+    of enabled outputs.
+
+    Warning! The protocol described in this file is a desktop environment
+    implementation detail. Regular clients must not use this protocol.
+    Backward incompatible changes may be added without bumping the major
+    version of the extension.
+  </description>
+
+  <event name="primary_output">
+    <description summary="Provide the current primary output's name">
+      Specifies which output is the primary one identified by their uuid. See kde_output_device_v2 uuid event for more information about it.
+    </description>
+    <arg name="output_name" type="string" summary="the name of the output"/>
+  </event>
+
+  <request name="destroy" type="destructor" since="2">
+    <description summary="Destroy the primary output notifier."/>
+  </request>
+</interface>
+
+</protocol>

@@ -1,0 +1,5 @@
+invalid hex digit '"'
+     --> tests/parse-fail/string14.wat:1:5
+      |
+    1 | "\u{"
+      |     ^

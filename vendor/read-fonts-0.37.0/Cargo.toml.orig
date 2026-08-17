@@ -1,0 +1,53 @@
+[package]
+name = "read-fonts"
+version = "0.37.0"
+description = "Reading OpenType font files."
+readme = "README.md"
+categories = ["text-processing", "parsing", "graphics"]
+
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[package.metadata.docs.rs]
+# To build locally:
+# RUSTDOCFLAGS="--cfg docsrs" cargo +nightly doc --features libm,serde,std
+features = ["libm", "serde", "std"]
+
+[features]
+std = ["font-types/std"]
+codegen_test = []
+scaler_test = []
+# experimental support for incremental font transfer (https://www.w3.org/TR/IFT/)
+# code behind this feature does not honor semver and may break at any time.
+ift = []
+# this feature is not stable, but provides untyped traversal of font tables.
+# we do not consider this feature public API for the purposes of semver.
+experimental_traverse = ["std"]
+# Enables experimental implementations of proposed changes to the spec
+# as discussed at https://github.com/harfbuzz/boring-expansion-spec
+spec_next = []
+default = ["std"]
+serde = ["dep:serde", "font-types/serde"]
+libm = ["dep:core_maths"]
+
+[dependencies]
+font-types = { workspace = true, features = ["bytemuck"] }
+serde = { version = "1.0", features = ["derive"], optional = true }
+core_maths = { workspace = true, optional = true }
+bytemuck = { workspace = true }
+
+[dev-dependencies]
+font-test-data = { workspace = true }
+criterion = "0.3.0"
+rand = "0.8.5"
+serde_json = { workspace = true }
+
+[[bench]]
+name = "int_set_benchmark"
+harness = false
+
+[[bench]]
+name = "sparse_bit_set_benchmark"
+harness = false

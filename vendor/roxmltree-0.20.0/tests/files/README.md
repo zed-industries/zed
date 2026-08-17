@@ -1,0 +1,91 @@
+### Tests
+
+- attrs_001 - simple attribute
+- attrs_002 - attribute value with new lines
+- attrs_003 - attribute value with escaped text
+- attrs_004 - attribute value with escaped text
+- attrs_005 - attribute value with \r\n
+- attrs_006 - escaped `<`
+- attrs_err_001 - duplicated attributes
+- attrs_err_002 - duplicated attributes via namespaces
+- cdata_001 - simple case
+- cdata_002 - simple case
+- cdata_003 - empty
+- cdata_004 - simple case
+- cdata_005 - mixed text and cdata
+- cdata_006 - simple case
+- cdata_007 - with \r
+- comments_001 - comment before and after the root element
+- elems_err_001 - invalid tree structure
+- elems_err_002 - invalid tree structure with namespace
+- entity_001 - entity reference to an element
+- entity_002 - entity reference to an attribute value
+- entity_003 - many entity references to an attribute value
+- entity_004 - entity reference to a text
+- entity_005 - unused entity reference
+- entity_006 - entity reference to an escaped text
+- entity_007 - indirect entity reference to an attribute value
+- entity_008 - entity reference to an element
+- entity_009 - entity reference to a mixed content
+- entity_010 - entity reference to an element with an entity reference
+- entity_011 - character and entity references in attributes
+- entity_012 - mixed entity references in text
+- entity_013 - many entity references in text
+- entity_014 - many entity references in attribute
+- entity_err_001 - unknown entity reference
+- entity_err_002 - recursive entity references
+- entity_err_003 - reference to a close tag
+- entity_err_004 - reference to a close tag
+- entity_err_005 - billion laughs
+- entity_err_006 - billion laughs
+- entity_err_007 - malformed entity inside an attribute
+- entity_err_008 - malformed entity inside a character data/text
+- entity_err_009 - escaped `<` inside an attribute inside an entity is an error
+- ns_001 - attributes with different namespaces
+- ns_002 - attribute is not affected by the default namespace
+- ns_003 - attributes with different namespaces
+- ns_004 - `href` with a custom prefix
+- ns_005 - `xml` namespace resolving
+- ns_006 - `xml` namespace overriding
+- ns_007 - many namespaces
+- ns_008 - namespace propagation
+- ns_009 - namespace overwriting
+- ns_010 - indirect namespace propagation
+- ns_011 - empty URI
+- ns_012 - namespace propagation
+- ns_013 - namespace from entity
+- ns_014 - no namespaces
+- ns_015 - duplicated namespaces with different prefixes and a child element without prefix
+- ns_016 - an empty element with namespace on parent
+- ns_017 - duplicated namespaces with different prefixes and a child element with prefix
+- ns_err_001 - invalid `xml` URI
+- ns_err_002 - reserved URI
+- ns_err_003 - reserved URI
+- ns_err_004 - duplicated namespaces
+- ns_err_005 - escaped namespace
+- ns_err_006 - escaped namespace
+- ns_err_007 - reserved URI
+- ns_err_008 - reserved URI
+- ns_err_009 - `xmlns` cannot be used as an element prefix
+- ns_err_010 - an element with an unknown namespace
+- ns_err_011 - an attribute with an unknown namespace
+- ns_err_012 - closing tag with missing namespace prefix
+- ns_err_013 - closing tag with missing namespace prefix and default namespace
+- text_001 - single space text
+- text_002 - single escaped space text
+- text_003 - escaped text
+- text_004 - '>' text
+- text_005 - '\n\r\r\n' text
+- text_006 - '\r\r\r' text
+- text_007 - '\r\n\r\n' text
+- text_008 - only whitespaces
+- text_009 - escaped text
+- text_010 - text around elements
+- text_011 - mixed character references in text
+- text_012 - non-ASCII text
+- tree_001 - all node types
+- tree_002 - BOM
+- tree_003 - Windows-1251 encoding
+- tree_err_001 - no elements
+- tree_err_002 - root element not closed
+- tree_err_003 - child element not closed

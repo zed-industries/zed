@@ -1,0 +1,297 @@
+#
+# Makefile for FreeType2 link library using gcc 4.0.3 from the
+# AmigaOS4 SDK
+#
+
+
+# Copyright (C) 2005-2023 by
+# Werner Lemberg and Detlef Würkner.
+#
+# This file is part of the FreeType project, and may only be used, modified,
+# and distributed under the terms of the FreeType project license,
+# LICENSE.TXT.  By continuing to use, modify, or distribute this file you
+# indicate that you have read the license and understand and accept it
+# fully.
+
+
+# to build from the builds/amiga directory call
+#
+#  make -f makefile.os4
+#
+# Your programs source code should start with this
+# (uncomment the parts you do not need to keep the program small):
+# ---8<---
+#define FT_USE_AUTOFIT // autofitter
+#define FT_USE_RASTER  // monochrome rasterizer
+#define FT_USE_SMOOTH  // anti-aliasing rasterizer
+#define FT_USE_TT      // truetype font driver
+#define FT_USE_T1      // type1 font driver
+#define FT_USE_T42     // type42 font driver
+#define FT_USE_T1CID   // cid-keyed type1 font driver
+#define FT_USE_CFF     // opentype font driver
+#define FT_USE_BDF     // bdf bitmap font driver
+#define FT_USE_PCF     // pcf bitmap font driver
+#define FT_USE_PFR     // pfr font driver
+#define FT_USE_WINFNT  // windows .fnt|.fon bitmap font driver
+#define FT_USE_OTV     // opentype validator
+#define FT_USE_GXV     // truetype gx validator
+#include "FT:src/base/ftinit.c"
+# ---8<---
+#
+# link your programs with libft2_ppc.a and either ftsystem.ppc.o or ftsystempure.ppc.o
+# (and either ftdebug.ppc.o or ftdebugpure.ppc.o if you enabled FT_DEBUG_LEVEL_ERROR or
+# FT_DEBUG_LEVEL_TRACE in include/freetype/config/ftoption.h).
+
+all:	assign libft2_ppc.a ftsystem.ppc.o ftsystempure.ppc.o
+
+assign:
+	assign FT: //
+
+CC =     ppc-amigaos-gcc
+AR =     ppc-amigaos-ar
+RANLIB = ppc-amigaos-ranlib
+
+DIRFLAGS  = -Iinclude -I/FT/src -I/FT/include -I/SDK/include
+
+WARNINGS = -Wall -W -Wundef -Wpointer-arith -Wbad-function-cast \
+	   -Waggregate-return -Wwrite-strings -Wshadow
+
+OPTIONS  = -DFT2_BUILD_LIBRARY -DNDEBUG -fno-builtin
+OPTIMIZE = -O2 -fomit-frame-pointer -fstrength-reduce -finline-functions
+
+CFLAGS   = -mcrt=clib2 $(DIRFLAGS) $(WARNINGS) $(FT2FLAGS) $(OPTIONS) $(OPTIMIZE)
+
+#
+# FreeType2 library base
+#
+ftbase.ppc.o: FT:src/base/ftbase.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/base/ftbase.c
+
+ftinit.ppc.o: FT:src/base/ftinit.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/base/ftinit.c
+
+ftsystem.ppc.o: FT:src/base/ftsystem.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/base/ftsystem.c
+
+# pure version for use in run-time library etc
+ftsystempure.ppc.o: src/base/ftsystem.c
+	$(CC) -c $(CFLAGS) -o $@ src/base/ftsystem.c
+
+#
+# FreeType2 library base extensions
+#
+ftbbox.ppc.o: FT:src/base/ftbbox.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/base/ftbbox.c
+
+ftbdf.ppc.o: FT:src/base/ftbdf.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/base/ftbdf.c
+
+ftbitmap.ppc.o: FT:src/base/ftbitmap.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/base/ftbitmap.c
+
+ftcid.ppc.o: FT:src/base/ftcid.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/base/ftcid.c
+
+ftdebug.ppc.o: FT:src/base/ftdebug.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/base/ftdebug.c
+
+# pure version for use in run-time library etc
+ftdebugpure.ppc.o: src/base/ftdebug.c
+	$(CC) -c $(CFLAGS) -o $@ src/base/ftdebug.c
+
+ftfstype.ppc.o: FT:src/base/ftfstype.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/base/ftfstype.c
+
+ftgasp.ppc.o: FT:src/base/ftgasp.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/base/ftgasp.c
+
+ftglyph.ppc.o: FT:src/base/ftglyph.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/base/ftglyph.c
+
+ftgxval.ppc.o: FT:src/base/ftgxval.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/base/ftgxval.c
+
+ftmm.ppc.o: FT:src/base/ftmm.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/base/ftmm.c
+
+ftotval.ppc.o: FT:src/base/ftotval.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/base/ftotval.c
+
+ftpatent.ppc.o: FT:src/base/ftpatent.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/base/ftpatent.c
+
+ftpfr.ppc.o: FT:src/base/ftpfr.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/base/ftpfr.c
+
+ftstroke.ppc.o: FT:src/base/ftstroke.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/base/ftstroke.c
+
+ftsynth.ppc.o: FT:src/base/ftsynth.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/base/ftsynth.c
+
+fttype1.ppc.o: FT:src/base/fttype1.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/base/fttype1.c
+
+ftwinfnt.ppc.o: FT:src/base/ftwinfnt.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/base/ftwinfnt.c
+
+#
+# FreeType2 library autofitting module
+#
+autofit.ppc.o: FT:src/autofit/autofit.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/autofit/autofit.c
+
+#
+# FreeType2 library postscript hinting module
+#
+pshinter.ppc.o: FT:src/pshinter/pshinter.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/pshinter/pshinter.c
+
+#
+# FreeType2 library PS support module
+#
+psaux.ppc.o: FT:src/psaux/psaux.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/psaux/psaux.c
+
+#
+# FreeType2 library PS glyph names module
+#
+psnames.ppc.o: FT:src/psnames/psnames.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/psnames/psnames.c
+
+#
+# FreeType2 library monochrome raster module
+#
+raster.ppc.o: FT:src/raster/raster.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/raster/raster.c
+
+#
+# FreeType2 library anti-aliasing raster module
+#
+smooth.ppc.o: FT:src/smooth/smooth.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/smooth/smooth.c
+
+#
+# FreeType2 library 'sfnt' module
+#
+sfnt.ppc.o: FT:src/sfnt/sfnt.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/sfnt/sfnt.c
+
+#
+# FreeType2 library glyph and image caching system
+#
+ftcache.ppc.o: FT:src/cache/ftcache.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/cache/ftcache.c
+
+#
+# FreeType2 library OpenType font driver
+#
+cff.ppc.o: FT:src/cff/cff.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/cff/cff.c
+
+#
+# FreeType2 library TrueType font driver
+#
+truetype.ppc.o: FT:src/truetype/truetype.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/truetype/truetype.c
+
+#
+# FreeType2 library Type1 font driver
+#
+type1.ppc.o: FT:src/type1/type1.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/type1/type1.c
+
+#
+# FreeType2 library Type42 font driver
+#
+type42.ppc.o: FT:src/type42/type42.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/type42/type42.c
+
+#
+# FreeType2 library CID-keyed Type1 font driver
+#
+type1cid.ppc.o: FT:src/cid/type1cid.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/cid/type1cid.c
+
+#
+# FreeType2 library BDF bitmap font driver
+#
+bdf.ppc.o: FT:src/bdf/bdf.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/bdf/bdf.c
+
+#
+# FreeType2 library PCF bitmap font driver
+#
+pcf.ppc.o: FT:src/pcf/pcf.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/pcf/pcf.c
+
+#
+# FreeType2 library gzip support for compressed PCF bitmap fonts
+#
+gzip.ppc.o: FT:src/gzip/ftgzip.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/gzip/ftgzip.c
+
+#
+# FreeType2 library bzip2 support for compressed PCF bitmap fonts
+#
+bzip2.ppc.o: FT:src/bzip2/ftbzip2.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/bzip2/ftbzip2.c
+
+#
+# FreeType2 library compress support for compressed PCF bitmap fonts
+#
+lzw.ppc.o: FT:src/lzw/ftlzw.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/lzw/ftlzw.c
+
+#
+# FreeType2 library PFR font driver
+#
+pfr.ppc.o: FT:src/pfr/pfr.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/pfr/pfr.c
+
+#
+# FreeType2 library Windows FNT/FON bitmap font driver
+#
+winfnt.ppc.o: FT:src/winfonts/winfnt.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/winfonts/winfnt.c
+
+#
+# FreeType2 library TrueTypeGX Validator
+#
+gxvalid.ppc.o: FT:src/gxvalid/gxvalid.c
+	$(CC) -c $(CFLAGS) -Wno-aggregate-return -o $@ /FT/src/gxvalid/gxvalid.c
+
+#
+# FreeType2 library OpenType validator
+#
+otvalid.ppc.o: FT:src/otvalid/otvalid.c
+	$(CC) -c $(CFLAGS) -o $@ /FT/src/otvalid/otvalid.c
+
+BASE = ftbase.ppc.o ftbbox.ppc.o ftbdf.ppc.o ftbitmap.ppc.o ftcid.ppc.o \
+       ftfstype.ppc.o ftgasp.ppc.o ftglyph.ppc.o                        \
+       ftgxval.ppc.o ftmm.ppc.o ftotval.ppc.o                           \
+       ftpatent.ppc.o ftpfr.ppc.o ftstroke.ppc.o ftsynth.ppc.o          \
+       fttype1.ppc.o ftwinfnt.ppc.o
+
+DEBUG = ftdebug.ppc.o ftdebugpure.ppc.o
+
+AFIT = autofit.ppc.o
+
+GXV = gxvalid.ppc.o
+
+OTV = otvalid.ppc.o
+
+PS = psaux.ppc.o psnames.ppc.o pshinter.ppc.o
+
+RASTER = raster.ppc.o smooth.ppc.o
+
+FONTD = cff.ppc.o type1.ppc.o type42.ppc.o type1cid.ppc.o truetype.ppc.o\
+	bdf.ppc.o pcf.ppc.o pfr.ppc.o winfnt.ppc.o
+
+libft2_ppc.a:      $(BASE) $(AFIT) $(GXV) $(OTV) $(PS) $(RASTER) sfnt.ppc.o ftcache.ppc.o $(FONTD) gzip.ppc.o lzw.ppc.o
+	$(AR) r $@ $(BASE) $(AFIT) $(GXV) $(OTV) $(PS) $(RASTER) sfnt.ppc.o ftcache.ppc.o $(FONTD) gzip.ppc.o lzw.ppc.o
+	$(RANLIB) $@
+
+#Local Variables:
+#coding: latin-1
+#End:

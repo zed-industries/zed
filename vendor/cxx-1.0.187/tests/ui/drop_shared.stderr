@@ -1,0 +1,8 @@
+error[E0119]: conflicting implementations of trait `forbid::Drop` for type `Shared`
+ --> tests/ui/drop_shared.rs:3:5
+  |
+1 | #[cxx::bridge]
+  | -------------- first implementation here
+2 | mod ffi {
+3 |     struct Shared {
+  |     ^^^^^^^^^^^^^ conflicting implementation for `Shared`

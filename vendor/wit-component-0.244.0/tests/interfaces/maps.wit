@@ -1,0 +1,38 @@
+package foo:maps-test;
+
+interface maps-interface {
+  // Test all primitive key types
+  type bool-map = map<bool, string>;
+  type u8-map = map<u8, string>;
+  type u16-map = map<u16, string>;
+  type u32-map = map<u32, string>;
+  type u64-map = map<u64, string>;
+  type s8-map = map<s8, string>;
+  type s16-map = map<s16, string>;
+  type s32-map = map<s32, string>;
+  type s64-map = map<s64, string>;
+  type char-map = map<char, string>;
+  type string-map = map<string, u32>;
+  
+  // Test all value types
+  type string-to-bool = map<string, bool>;
+  type string-to-list = map<string, list<u8>>;
+  type string-to-option = map<string, option<u32>>;
+  type string-to-result = map<string, result<u32, string>>;
+  type string-to-tuple = map<string, tuple<u32, string>>;
+  
+  // Nested structures
+  type map-of-maps = map<string, map<string, u32>>;
+  type list-of-maps = list<map<string, u32>>;
+  type option-of-map = option<map<string, u32>>;
+  
+  // Functions
+  map-param: func(x: map<string, u32>);
+  map-result: func() -> map<string, u32>;
+  map-roundtrip: func(x: map<u32, string>) -> map<u32, string>;
+}
+
+world maps-test-world {
+  import maps-interface;
+  export maps-interface;
+}

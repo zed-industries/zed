@@ -1,0 +1,41 @@
+---
+- name: Block sequence indentation
+  from: '@ingydotnet'
+  tags: indent
+  yaml: |
+    - |
+     x
+    -
+     foo: bar
+    -
+     - 42
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       =VAL |x\n
+       +MAP
+        =VAL :foo
+        =VAL :bar
+       -MAP
+       +SEQ
+        =VAL :42
+       -SEQ
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      "x\n",
+      {
+        "foo" : "bar"
+      },
+      [
+        42
+      ]
+    ]
+  dump: |
+    - |
+      x
+    - foo: bar
+    - - 42

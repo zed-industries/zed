@@ -1,0 +1,42 @@
+name: Rust CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    name: Build & Lint
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        profile: minimal
+        components: clippy
+
+    - name: Install cargo-binstall
+      uses: cargo-bins/cargo-binstall@main
+
+    - name: Run tests
+      run: cargo test
+
+    - name: Check (no_std)
+      run: cargo check --no-default-features
+
+    - name: Check (no_std, alloc)
+      run: cargo check --no-default-features --features alloc
+
+    - name: Run clippy
+      run: cargo clippy
+
+    - name: Install cargo-msrv
+      run: cargo binstall --no-confirm cargo-msrv
+
+    - name: Verify MSRV
+      run: cargo msrv verify

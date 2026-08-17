@@ -1,0 +1,221 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - staging
+      - trying
+
+env:
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  build_and_test:
+    name: Build and test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+        rust: [nightly, beta, stable, 1.63]
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install ${{ matrix.rust }}
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: ${{ matrix.rust }}
+        override: true
+
+    - name: check
+      uses: actions-rs/cargo@v1
+      with:
+        command: check
+        args: --all --bins --tests
+
+    - name: check unstable
+      uses: actions-rs/cargo@v1
+      with:
+        command:  check
+        args: --features unstable --all --bins --examples --tests
+
+    - name: check wasm
+      uses: actions-rs/cargo@v1
+      with:
+        command:  check
+        target: wasm32-unknown-unknown
+        override: true
+        args: --features unstable --all --bins --tests
+
+    - name: check bench
+      uses: actions-rs/cargo@v1
+      if: matrix.rust == 'nightly'
+      with:
+        command:  check
+        args: --benches
+
+    - name: check std only
+      uses: actions-rs/cargo@v1
+      with:
+        command:  check
+        args: --no-default-features --features std
+
+    - name: check attributes
+      uses: actions-rs/cargo@v1
+      with:
+        command:  check
+        args: --features attributes
+
+    - name: build unstable only
+      uses: actions-rs/cargo@v1
+      with:
+        command:  build
+        args: --no-default-features --features unstable
+
+    - name: tests
+      uses: actions-rs/cargo@v1
+      with:
+        command: test
+        args: --all --features "unstable attributes"
+
+  build__with_no_std:
+    name: Build with no-std
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: setup
+      run: |
+        rustup default nightly
+        rustup target add thumbv7m-none-eabi
+
+    - name: check no_std
+      uses: actions-rs/cargo@v1
+      with:
+        command:  check
+        args: --no-default-features --features alloc --target thumbv7m-none-eabi -Z avoid-dev-deps
+
+  check_tokio_02_feature:
+    name: Check tokio02 feature
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: check tokio02
+      uses: actions-rs/cargo@v1
+      with:
+        command:  check
+        args: --all --features tokio02
+ 
+  check_io_safety_feature:
+    name: Check io_safety feature
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+    - uses: actions/checkout@v3
+    - name: check io_safety
+      uses: actions-rs/cargo@v1
+      with:
+        command:  check
+        args: --all --features io_safety
+ 
+
+  cross:
+    name: Cross compile
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - i686-unknown-linux-gnu
+          - powerpc-unknown-linux-gnu
+          - powerpc64-unknown-linux-gnu
+#          - mips-unknown-linux-gnu
+          - arm-linux-androideabi
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install nightly
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: nightly
+        override: true
+
+    - name: Install cross
+      run: cargo install cross
+
+    - name: check
+      run: cross check --all --target ${{ matrix.target }}
+
+    - name: check unstable
+      run: cross check --all --features unstable --target ${{ matrix.target }}
+
+    - name: test
+      run: cross test --all --features unstable --target ${{ matrix.target }}
+
+  check_wasm:
+    name: Check wasm targets
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust: [nightly, beta, stable]
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install rust with wasm32-unknown-unknown
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: ${{ matrix.rust }}
+        target: wasm32-unknown-unknown
+        override: true
+
+    - name: Cache cargo registry
+      uses: actions/cache@v2
+      with:
+        path: ~/.cargo/registry
+        key: wasm32-${{ matrix.rust }}-cargo-registry-${{ hashFiles('**/Cargo.toml') }}
+
+    - name: check
+      uses: actions-rs/cargo@v1
+      with:
+        command: check
+        args: --target wasm32-unknown-unknown 
+
+    - name: check unstable
+      uses: actions-rs/cargo@v1
+      with:
+        command: check
+        args: --target wasm32-unknown-unknown --tests --all --features unstable
+        
+  check_fmt_and_docs:
+    name: Checking fmt and docs
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    - uses: actions-rs/toolchain@v1
+      with:
+          profile: minimal
+          toolchain: nightly
+          override: true
+          components: rustfmt
+
+    - name: setup
+      run: |
+        rustup component add rustfmt
+        test -x $HOME/.cargo/bin/mdbook || ./ci/install-mdbook.sh
+        rustc --version
+
+    - name: mdbook
+      run: |
+        mdbook build docs
+    - name: fmt
+      run: cargo fmt --all -- --check
+
+    - name: Docs
+      run: cargo doc --features docs

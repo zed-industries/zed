@@ -1,0 +1,5137 @@
+;; Instruction formats.
+(type MInst
+      (enum
+       ;; A no-op of zero size.
+       (Nop0)
+
+       ;; A no-op that is one instruction large.
+       (Nop4)
+
+       ;; An ALU operation with two register sources and a register destination.
+       (AluRRR
+        (alu_op ALUOp)
+        (size OperandSize)
+        (rd WritableReg)
+        (rn Reg)
+        (rm Reg))
+
+       ;; An ALU operation with three register sources and a register destination.
+       (AluRRRR
+        (alu_op ALUOp3)
+        (size OperandSize)
+        (rd WritableReg)
+        (rn Reg)
+        (rm Reg)
+        (ra Reg))
+
+       ;; An ALU operation with a register source and an immediate-12 source, and a register
+       ;; destination.
+       (AluRRImm12
+        (alu_op ALUOp)
+        (size OperandSize)
+        (rd WritableReg)
+        (rn Reg)
+        (imm12 Imm12))
+
+       ;; An ALU operation with a register source and an immediate-logic source, and a register destination.
+       (AluRRImmLogic
+        (alu_op ALUOp)
+        (size OperandSize)
+        (rd WritableReg)
+        (rn Reg)
+        (imml ImmLogic))
+
+       ;; An ALU operation with a register source and an immediate-shiftamt source, and a register destination.
+       (AluRRImmShift
+        (alu_op ALUOp)
+        (size OperandSize)
+        (rd WritableReg)
+        (rn Reg)
+        (immshift ImmShift))
+
+       ;; An ALU operation with two register sources, one of which can be shifted, and a register
+       ;; destination.
+       (AluRRRShift
+        (alu_op ALUOp)
+        (size OperandSize)
+        (rd WritableReg)
+        (rn Reg)
+        (rm Reg)
+        (shiftop ShiftOpAndAmt))
+
+       ;; An ALU operation with two register sources, one of which can be {zero,sign}-extended and
+       ;; shifted, and a register destination.
+       (AluRRRExtend
+        (alu_op ALUOp)
+        (size OperandSize)
+        (rd WritableReg)
+        (rn Reg)
+        (rm Reg)
+        (extendop ExtendOp))
+
+       ;; A bit op instruction with a single register source.
+       (BitRR
+        (op BitOp)
+        (size OperandSize)
+        (rd WritableReg)
+        (rn Reg))
+
+       ;; An unsigned (zero-extending) 8-bit load.
+       (ULoad8
+        (rd WritableReg)
+        (mem AMode)
+        (flags MemFlags))
+
+       ;; A signed (sign-extending) 8-bit load.
+       (SLoad8
+        (rd WritableReg)
+        (mem AMode)
+        (flags MemFlags))
+
+       ;; An unsigned (zero-extending) 16-bit load.
+       (ULoad16
+        (rd WritableReg)
+        (mem AMode)
+        (flags MemFlags))
+
+       ;; A signed (sign-extending) 16-bit load.
+       (SLoad16
+        (rd WritableReg)
+        (mem AMode)
+        (flags MemFlags))
+
+       ;; An unsigned (zero-extending) 32-bit load.
+       (ULoad32
+        (rd WritableReg)
+        (mem AMode)
+        (flags MemFlags))
+
+       ;; A signed (sign-extending) 32-bit load.
+       (SLoad32
+        (rd WritableReg)
+        (mem AMode)
+        (flags MemFlags))
+
+       ;; A 64-bit load.
+       (ULoad64
+        (rd WritableReg)
+        (mem AMode)
+        (flags MemFlags))
+
+       ;; An 8-bit store.
+       (Store8
+        (rd Reg)
+        (mem AMode)
+        (flags MemFlags))
+
+       ;; A 16-bit store.
+       (Store16
+        (rd Reg)
+        (mem AMode)
+        (flags MemFlags))
+
+       ;; A 32-bit store.
+       (Store32
+        (rd Reg)
+        (mem AMode)
+        (flags MemFlags))
+
+       ;; A 64-bit store.
+       (Store64
+        (rd Reg)
+        (mem AMode)
+        (flags MemFlags))
+
+       ;; A store of a pair of registers.
+       (StoreP64
+        (rt Reg)
+        (rt2 Reg)
+        (mem PairAMode)
+        (flags MemFlags))
+
+       ;; A load of a pair of registers.
+       (LoadP64
+        (rt WritableReg)
+        (rt2 WritableReg)
+        (mem PairAMode)
+        (flags MemFlags))
+
+       ;; A MOV instruction. These are encoded as ORR's (AluRRR form).
+       ;; The 32-bit version zeroes the top 32 bits of the
+       ;; destination, which is effectively an alias for an unsigned
+       ;; 32-to-64-bit extension.
+       (Mov
+        (size OperandSize)
+        (rd WritableReg)
+        (rm Reg))
+
+       ;; Like `Move` but with a particular `PReg` source (for implementing CLIF
+       ;; instructions like `get_stack_pointer`).
+       (MovFromPReg
+        (rd WritableReg)
+        (rm PReg))
+
+       ;; Like `Move` but with a particular `PReg` destination (for
+       ;; implementing CLIF instructions like `set_pinned_reg`).
+       (MovToPReg
+        (rd PReg)
+        (rm Reg))
+
+       ;; A MOV[Z,N] with a 16-bit immediate.
+       (MovWide
+        (op MoveWideOp)
+        (rd WritableReg)
+        (imm MoveWideConst)
+        (size OperandSize))
+
+       ;; A MOVK with a 16-bit immediate. Modifies its register; we
+       ;; model this with a separate input `rn` and output `rd` virtual
+       ;; register, with a regalloc constraint to tie them together.
+       (MovK
+        (rd WritableReg)
+        (rn Reg)
+        (imm MoveWideConst)
+        (size OperandSize))
+
+
+       ;; A sign- or zero-extend operation.
+       (Extend
+        (rd WritableReg)
+        (rn Reg)
+        (signed bool)
+        (from_bits u8)
+        (to_bits u8))
+
+       ;; A conditional-select operation.
+       (CSel
+        (rd WritableReg)
+        (cond Cond)
+        (rn Reg)
+        (rm Reg))
+
+       ;; A conditional-select negation operation.
+       (CSNeg
+        (rd WritableReg)
+        (cond Cond)
+        (rn Reg)
+        (rm Reg))
+
+       ;; A conditional-set operation.
+       (CSet
+        (rd WritableReg)
+        (cond Cond))
+
+       ;; A conditional-set-mask operation.
+       (CSetm
+        (rd WritableReg)
+        (cond Cond))
+
+       ;; A conditional comparison with a second register.
+       (CCmp
+        (size OperandSize)
+        (rn Reg)
+        (rm Reg)
+        (nzcv NZCV)
+        (cond Cond))
+
+       ;; A conditional comparison with an immediate.
+       (CCmpImm
+        (size OperandSize)
+        (rn Reg)
+        (imm UImm5)
+        (nzcv NZCV)
+        (cond Cond))
+
+       ;; A synthetic insn, which is a load-linked store-conditional loop, that has the overall
+       ;; effect of atomically modifying a memory location in a particular way.  Because we have
+       ;; no way to explain to the regalloc about earlyclobber registers, this instruction has
+       ;; completely fixed operand registers, and we rely on the RA's coalescing to remove copies
+       ;; in the surrounding code to the extent it can. Load- and store-exclusive instructions,
+       ;; with acquire-release semantics, are used to access memory. The operand conventions are:
+       ;;
+       ;; x25   (rd) address
+       ;; x26   (rd) second operand for `op`
+       ;; x27   (wr) old value
+       ;; x24   (wr) scratch reg; value afterwards has no meaning
+       ;; x28   (wr) scratch reg; value afterwards has no meaning
+       (AtomicRMWLoop
+        (ty Type) ;; I8, I16, I32 or I64
+        (op AtomicRMWLoopOp)
+        (flags MemFlags)
+        (addr Reg)
+        (operand Reg)
+        (oldval WritableReg)
+        (scratch1 WritableReg)
+        (scratch2 WritableReg))
+
+       ;; Similar to AtomicRMWLoop, a compare-and-swap operation implemented using a load-linked
+       ;; store-conditional loop, with acquire-release semantics.
+       ;; Note that the operand conventions, although very similar to AtomicRMWLoop, are different:
+       ;;
+       ;; x25   (rd) address
+       ;; x26   (rd) expected value
+       ;; x28   (rd) replacement value
+       ;; x27   (wr) old value
+       ;; x24   (wr) scratch reg; value afterwards has no meaning
+       (AtomicCASLoop
+        (ty Type) ;; I8, I16, I32 or I64
+        (flags MemFlags)
+        (addr Reg)
+        (expected Reg)
+        (replacement Reg)
+        (oldval WritableReg)
+        (scratch WritableReg))
+
+       ;; An atomic read-modify-write operation. These instructions require the
+       ;; Large System Extension (LSE) ISA support (FEAT_LSE). The instructions have
+       ;; acquire-release semantics.
+       (AtomicRMW
+         (op AtomicRMWOp)
+         (rs Reg)
+         (rt WritableReg)
+         (rn Reg)
+         (ty Type)
+         (flags MemFlags))
+
+       ;; An atomic compare-and-swap operation. These instructions require the
+       ;; Large System Extension (LSE) ISA support (FEAT_LSE). The instructions have
+       ;; acquire-release semantics.
+       (AtomicCAS
+         ;; `rd` is really `rs` in the encoded instruction (so `rd` == `rs`); we separate
+         ;; them here to have separate use and def vregs for regalloc.
+         (rd WritableReg)
+         (rs Reg)
+         (rt Reg)
+         (rn Reg)
+         (ty Type)
+         (flags MemFlags))
+
+       ;; Read `access_ty` bits from address `rt`, either 8, 16, 32 or 64-bits, and put
+       ;; it in `rn`, optionally zero-extending to fill a word or double word result.
+       ;; This instruction is sequentially consistent.
+       (LoadAcquire
+        (access_ty Type) ;; I8, I16, I32 or I64
+        (rt WritableReg)
+        (rn Reg)
+        (flags MemFlags))
+
+       ;; Write the lowest `ty` bits of `rt` to address `rn`.
+       ;; This instruction is sequentially consistent.
+       (StoreRelease
+        (access_ty Type) ;; I8, I16, I32 or I64
+        (rt Reg)
+        (rn Reg)
+        (flags MemFlags))
+
+       ;; A memory fence.  This must provide ordering to ensure that, at a minimum, neither loads
+       ;; nor stores may move forwards or backwards across the fence.  Currently emitted as "dmb
+       ;; ish".  This instruction is sequentially consistent.
+       (Fence)
+
+       ;; Consumption of speculative data barrier.
+       (Csdb)
+
+       ;; FPU 32-bit move.
+       (FpuMove32
+         (rd WritableReg)
+         (rn Reg))
+
+       ;; FPU move. Note that this is distinct from a vector-register
+       ;; move; moving just 64 bits seems to be significantly faster.
+       (FpuMove64
+        (rd WritableReg)
+        (rn Reg))
+
+       ;; Vector register move.
+       (FpuMove128
+        (rd WritableReg)
+        (rn Reg))
+
+       ;; Move to scalar from a vector element.
+       (FpuMoveFromVec
+        (rd WritableReg)
+        (rn Reg)
+        (idx u8)
+        (size VectorSize))
+
+       ;; Zero-extend a SIMD & FP scalar to the full width of a vector register.
+       ;; 16-bit scalars require half-precision floating-point support (FEAT_FP16).
+       (FpuExtend
+        (rd WritableReg)
+        (rn Reg)
+        (size ScalarSize))
+
+       ;; 1-op FPU instruction.
+       (FpuRR
+        (fpu_op FPUOp1)
+        (size ScalarSize)
+        (rd WritableReg)
+        (rn Reg))
+
+       ;; 2-op FPU instruction.
+       (FpuRRR
+        (fpu_op FPUOp2)
+        (size ScalarSize)
+        (rd WritableReg)
+        (rn Reg)
+        (rm Reg))
+
+       (FpuRRI
+        (fpu_op FPUOpRI)
+        (rd WritableReg)
+        (rn Reg))
+
+       ;; Variant of FpuRRI that modifies its `rd`, and so we name the
+       ;; input state `ri` (for "input") and constrain the two
+       ;; together.
+       (FpuRRIMod
+        (fpu_op FPUOpRIMod)
+        (rd WritableReg)
+        (ri Reg)
+        (rn Reg))
+
+
+       ;; 3-op FPU instruction.
+       ;; 16-bit scalars require half-precision floating-point support (FEAT_FP16).
+       (FpuRRRR
+        (fpu_op FPUOp3)
+        (size ScalarSize)
+        (rd WritableReg)
+        (rn Reg)
+        (rm Reg)
+        (ra Reg))
+
+       ;; FPU comparison.
+       (FpuCmp
+        (size ScalarSize)
+        (rn Reg)
+        (rm Reg))
+
+       ;; Floating-point load, half-precision (16 bit).
+       (FpuLoad16
+        (rd WritableReg)
+        (mem AMode)
+        (flags MemFlags))
+
+       ;; Floating-point store, half-precision (16 bit).
+       (FpuStore16
+        (rd Reg)
+        (mem AMode)
+        (flags MemFlags))
+
+       ;; Floating-point load, single-precision (32 bit).
+       (FpuLoad32
+        (rd WritableReg)
+        (mem AMode)
+        (flags MemFlags))
+
+       ;; Floating-point store, single-precision (32 bit).
+       (FpuStore32
+        (rd Reg)
+        (mem AMode)
+        (flags MemFlags))
+
+       ;; Floating-point load, double-precision (64 bit).
+       (FpuLoad64
+        (rd WritableReg)
+        (mem AMode)
+        (flags MemFlags))
+
+       ;; Floating-point store, double-precision (64 bit).
+       (FpuStore64
+        (rd Reg)
+        (mem AMode)
+        (flags MemFlags))
+
+       ;; Floating-point/vector load, 128 bit.
+       (FpuLoad128
+        (rd WritableReg)
+        (mem AMode)
+        (flags MemFlags))
+
+       ;; Floating-point/vector store, 128 bit.
+       (FpuStore128
+        (rd Reg)
+        (mem AMode)
+        (flags MemFlags))
+
+       ;; A load of a pair of floating-point registers, double precision (64-bit).
+       (FpuLoadP64
+        (rt WritableReg)
+        (rt2 WritableReg)
+        (mem PairAMode)
+        (flags MemFlags))
+
+       ;; A store of a pair of floating-point registers, double precision (64-bit).
+       (FpuStoreP64
+        (rt Reg)
+        (rt2 Reg)
+        (mem PairAMode)
+        (flags MemFlags))
+
+       ;; A load of a pair of floating-point registers, 128-bit.
+       (FpuLoadP128
+        (rt WritableReg)
+        (rt2 WritableReg)
+        (mem PairAMode)
+        (flags MemFlags))
+
+       ;; A store of a pair of floating-point registers, 128-bit.
+       (FpuStoreP128
+        (rt Reg)
+        (rt2 Reg)
+        (mem PairAMode)
+        (flags MemFlags))
+
+       ;; Conversion: FP -> integer.
+       (FpuToInt
+        (op FpuToIntOp)
+        (rd WritableReg)
+        (rn Reg))
+
+       ;; Conversion: integer -> FP.
+       (IntToFpu
+        (op IntToFpuOp)
+        (rd WritableReg)
+        (rn Reg))
+
+       ;; FP conditional select, 16 bit.
+       ;; Requires FEAT_FP16.
+       (FpuCSel16
+        (rd WritableReg)
+        (rn Reg)
+        (rm Reg)
+        (cond Cond))
+
+       ;; FP conditional select, 32 bit.
+       (FpuCSel32
+        (rd WritableReg)
+        (rn Reg)
+        (rm Reg)
+        (cond Cond))
+
+       ;; FP conditional select, 64 bit.
+       (FpuCSel64
+        (rd WritableReg)
+        (rn Reg)
+        (rm Reg)
+        (cond Cond))
+
+       ;; Round to integer.
+       (FpuRound
+        (op FpuRoundMode)
+        (rd WritableReg)
+        (rn Reg))
+
+       ;; Move from a GPR to a vector register.  The scalar value is parked in the lowest lane
+       ;; of the destination, and all other lanes are zeroed out. Currently 16-, 32- and 64-bit
+       ;; transactions are supported. 16-bit moves require FEAT_FP16.
+       (MovToFpu
+        (rd WritableReg)
+        (rn Reg)
+        (size ScalarSize))
+
+       ;; Loads a floating-point immediate.
+       (FpuMoveFPImm
+        (rd WritableReg)
+        (imm ASIMDFPModImm)
+        (size ScalarSize))
+
+       ;; Move to a vector element from a GPR.
+       (MovToVec
+        (rd WritableReg)
+        (ri Reg)
+        (rn Reg)
+        (idx u8)
+        (size VectorSize))
+
+       ;; Unsigned move from a vector element to a GPR.
+       (MovFromVec
+        (rd WritableReg)
+        (rn Reg)
+        (idx u8)
+        (size ScalarSize))
+
+       ;; Signed move from a vector element to a GPR.
+       (MovFromVecSigned
+        (rd WritableReg)
+        (rn Reg)
+        (idx u8)
+        (size VectorSize)
+        (scalar_size OperandSize))
+
+       ;; Duplicate general-purpose register to vector.
+       (VecDup
+        (rd WritableReg)
+        (rn Reg)
+        (size VectorSize))
+
+       ;; Duplicate scalar to vector.
+       (VecDupFromFpu
+        (rd WritableReg)
+        (rn Reg)
+        (size VectorSize)
+        (lane u8))
+
+       ;; Duplicate FP immediate to vector.
+       (VecDupFPImm
+        (rd WritableReg)
+        (imm ASIMDFPModImm)
+        (size VectorSize))
+
+       ;; Duplicate immediate to vector.
+       (VecDupImm
+        (rd WritableReg)
+        (imm ASIMDMovModImm)
+        (invert bool)
+        (size VectorSize))
+
+       ;; Vector extend.
+       (VecExtend
+        (t VecExtendOp)
+        (rd WritableReg)
+        (rn Reg)
+        (high_half bool)
+        (lane_size ScalarSize))
+
+       ;; Move vector element to another vector element.
+       (VecMovElement
+        (rd WritableReg)
+        (ri Reg)
+        (rn Reg)
+        (dest_idx u8)
+        (src_idx u8)
+        (size VectorSize))
+
+       ;; Vector widening operation.
+       (VecRRLong
+        (op VecRRLongOp)
+        (rd WritableReg)
+        (rn Reg)
+        (high_half bool))
+
+       ;; Vector narrowing operation -- low half.
+       (VecRRNarrowLow
+        (op VecRRNarrowOp)
+        (rd WritableReg)
+        (rn Reg)
+        (lane_size ScalarSize))
+
+       ;; Vector narrowing operation -- high half.
+       (VecRRNarrowHigh
+        (op VecRRNarrowOp)
+        (rd WritableReg)
+        (ri Reg)
+        (rn Reg)
+        (lane_size ScalarSize))
+
+       ;; 1-operand vector instruction that operates on a pair of elements.
+       (VecRRPair
+        (op VecPairOp)
+        (rd WritableReg)
+        (rn Reg))
+
+       ;; 2-operand vector instruction that produces a result with twice the
+       ;; lane width and half the number of lanes.
+       (VecRRRLong
+        (alu_op VecRRRLongOp)
+        (rd WritableReg)
+        (rn Reg)
+        (rm Reg)
+        (high_half bool))
+
+       ;; 2-operand vector instruction that produces a result with
+       ;; twice the lane width and half the number of lanes. Variant
+       ;; that modifies `rd` (so takes its initial state as `ri`).
+       (VecRRRLongMod
+        (alu_op VecRRRLongModOp)
+        (rd WritableReg)
+        (ri Reg)
+        (rn Reg)
+        (rm Reg)
+        (high_half bool))
+
+       ;; 1-operand vector instruction that extends elements of the input
+       ;; register and operates on a pair of elements. The output lane width
+       ;; is double that of the input.
+       (VecRRPairLong
+        (op VecRRPairLongOp)
+        (rd WritableReg)
+        (rn Reg))
+
+       ;; A vector ALU op.
+       (VecRRR
+        (alu_op VecALUOp)
+        (rd WritableReg)
+        (rn Reg)
+        (rm Reg)
+        (size VectorSize))
+
+       ;; A vector ALU op modifying a source register.
+       (VecRRRMod
+        (alu_op VecALUModOp)
+        (rd WritableReg)
+        (ri Reg)
+        (rn Reg)
+        (rm Reg)
+        (size VectorSize))
+
+       ;; A vector ALU op modifying a source register.
+       (VecFmlaElem
+        (alu_op VecALUModOp)
+        (rd WritableReg)
+        (ri Reg)
+        (rn Reg)
+        (rm Reg)
+        (size VectorSize)
+        (idx u8))
+
+       ;; Vector two register miscellaneous instruction.
+       (VecMisc
+        (op VecMisc2)
+        (rd WritableReg)
+        (rn Reg)
+        (size VectorSize))
+
+       ;; Vector instruction across lanes.
+       (VecLanes
+        (op VecLanesOp)
+        (rd WritableReg)
+        (rn Reg)
+        (size VectorSize))
+
+       ;; Vector shift by immediate Shift Left (immediate), Unsigned Shift Right (immediate)
+       ;; Signed Shift Right (immediate).  These are somewhat unusual in that, for right shifts,
+       ;; the allowed range of `imm` values is 1 to lane-size-in-bits, inclusive.  A zero
+       ;; right-shift cannot be encoded.  Left shifts are "normal", though, having valid `imm`
+       ;; values from 0 to lane-size-in-bits - 1 inclusive.
+       (VecShiftImm
+        (op VecShiftImmOp)
+        (rd WritableReg)
+        (rn Reg)
+        (size VectorSize)
+        (imm u8))
+
+       ;; Destructive vector shift by immediate.
+       (VecShiftImmMod
+        (op VecShiftImmModOp)
+        (rd WritableReg)
+        (ri Reg)
+        (rn Reg)
+        (size VectorSize)
+        (imm u8))
+
+       ;; Vector extract - create a new vector, being the concatenation of the lowest `imm4` bytes
+       ;; of `rm` followed by the uppermost `16 - imm4` bytes of `rn`.
+       (VecExtract
+        (rd WritableReg)
+        (rn Reg)
+        (rm Reg)
+        (imm4 u8))
+
+       ;; Table vector lookup - single register table. The table
+       ;; consists of 8-bit elements and is stored in `rn`, while `rm`
+       ;; contains 8-bit element indices. This variant emits `TBL`,
+       ;; which sets elements that correspond to out-of-range indices
+       ;; (greater than 15) to 0.
+       (VecTbl
+        (rd WritableReg)
+        (rn Reg)
+        (rm Reg))
+
+       ;; Table vector lookup - single register table. The table
+       ;; consists of 8-bit elements and is stored in `rn`, while `rm`
+       ;; contains 8-bit element indices. This variant emits `TBX`,
+       ;; which leaves elements that correspond to out-of-range indices
+       ;; (greater than 15) unmodified. Hence, it takes an input vreg in
+       ;; `ri` that is constrained to the same allocation as `rd`.
+       (VecTblExt
+        (rd WritableReg)
+        (ri Reg)
+        (rn Reg)
+        (rm Reg))
+
+       ;; Table vector lookup - two register table. The table consists
+       ;; of 8-bit elements and is stored in `rn` and `rn2`, while
+       ;; `rm` contains 8-bit element indices. The table registers
+       ;; `rn` and `rn2` must have consecutive numbers modulo 32, that
+       ;; is v31 and v0 (in that order) are consecutive registers.
+       ;; This variant emits `TBL`, which sets out-of-range results to
+       ;; 0.
+       (VecTbl2
+        (rd WritableReg)
+        (rn Reg)
+        (rn2 Reg)
+        (rm Reg))
+
+       ;; Table vector lookup - two register table. The table consists
+       ;; of 8-bit elements and is stored in `rn` and `rn2`, while
+       ;; `rm` contains 8-bit element indices. The table registers
+       ;; `rn` and `rn2` must have consecutive numbers modulo 32, that
+       ;; is v31 and v0 (in that order) are consecutive registers.
+       ;; This variant emits `TBX`, which leaves out-of-range results
+       ;; unmodified, hence takes the initial state of the result
+       ;; register in vreg `ri`.
+       (VecTbl2Ext
+        (rd WritableReg)
+        (ri Reg)
+        (rn Reg)
+        (rn2 Reg)
+        (rm Reg))
+
+       ;; Load an element and replicate to all lanes of a vector.
+       (VecLoadReplicate
+        (rd WritableReg)
+        (rn Reg)
+        (size VectorSize)
+        (flags MemFlags))
+
+       ;; Vector conditional select, 128 bit.  A synthetic instruction, which generates a 4-insn
+       ;; control-flow diamond.
+       (VecCSel
+        (rd WritableReg)
+        (rn Reg)
+        (rm Reg)
+        (cond Cond))
+
+       ;; Move to the NZCV flags (actually a `MSR NZCV, Xn` insn).
+       (MovToNZCV
+        (rn Reg))
+
+       ;; Move from the NZCV flags (actually a `MRS Xn, NZCV` insn).
+       (MovFromNZCV
+        (rd WritableReg))
+
+       ;; A machine call instruction. N.B.: this allows only a +/- 128MB offset (it uses a relocation
+       ;; of type `Reloc::Arm64Call`); if the destination distance is not `RelocDistance::Near`, the
+       ;; code should use a `LoadExtName` / `CallInd` sequence instead, allowing an arbitrary 64-bit
+       ;; target.
+       (Call (info BoxCallInfo))
+
+       ;; A machine indirect-call instruction.
+       (CallInd (info BoxCallIndInfo))
+
+       ;; A return-call macro instruction.
+       (ReturnCall (info BoxReturnCallInfo))
+
+       ;; An indirect return-call macro instruction.
+       (ReturnCallInd (info BoxReturnCallIndInfo))
+
+       ;; A pseudo-instruction that captures register arguments in vregs.
+       (Args
+        (args VecArgPair))
+
+       ;; A pseudo-instruction that moves vregs to return registers.
+       (Rets
+        (rets VecRetPair))
+
+       ;; ---- branches (exactly one must appear at end of BB) ----
+
+       ;; A machine return instruction.
+       (Ret)
+
+       ;; A machine return instruction with pointer authentication using SP as the
+       ;; modifier. This instruction requires pointer authentication support
+       ;; (FEAT_PAuth) unless `is_hint` is true, in which case it is equivalent to
+       ;; the combination of a no-op and a return instruction on platforms without
+       ;; the relevant support.
+       (AuthenticatedRet
+        (key APIKey)
+        (is_hint bool))
+
+       ;; An unconditional branch.
+       (Jump
+        (dest BranchTarget))
+
+       ;; A conditional branch. Contains two targets; at emission time, both are emitted, but
+       ;; the MachBuffer knows to truncate the trailing branch if fallthrough. We optimize the
+       ;; choice of taken/not_taken (inverting the branch polarity as needed) based on the
+       ;; fallthrough at the time of lowering.
+       (CondBr
+        (taken BranchTarget)
+        (not_taken BranchTarget)
+        (kind CondBrKind))
+
+       ;; A conditional branch which tests the `bit` of `rn` and branches
+       ;; depending on `kind`.
+       (TestBitAndBranch
+        (kind TestBitAndBranchKind)
+        (taken BranchTarget)
+        (not_taken BranchTarget)
+        (rn Reg)
+        (bit u8))
+
+       ;; A conditional trap: execute a `udf` if the condition is true. This is
+       ;; one VCode instruction because it uses embedded control flow; it is
+       ;; logically a single-in, single-out region, but needs to appear as one
+       ;; unit to the register allocator.
+       ;;
+       ;; The `CondBrKind` gives the conditional-branch condition that will
+       ;; *execute* the embedded `Inst`. (In the emitted code, we use the inverse
+       ;; of this condition in a branch that skips the trap instruction.)
+       (TrapIf
+        (kind CondBrKind)
+        (trap_code TrapCode))
+
+       ;; An indirect branch through a register, augmented with set of all
+       ;; possible successors.
+       (IndirectBr
+        (rn Reg)
+        (targets VecMachLabel))
+
+       ;; A "break" instruction, used for e.g. traps and debug breakpoints.
+       (Brk)
+
+       ;; An instruction guaranteed to always be undefined and to trigger an illegal instruction at
+       ;; runtime.
+       (Udf
+        (trap_code TrapCode))
+
+       ;; Compute the address (using a PC-relative offset) of a memory location, using the `ADR`
+       ;; instruction. Note that we take a simple offset, not a `MemLabel`, here, because `Adr` is
+       ;; only used for now in fixed lowering sequences with hardcoded offsets. In the future we may
+       ;; need full `MemLabel` support.
+       (Adr
+        (rd WritableReg)
+        ;; Offset in range -2^20 .. 2^20.
+        (off i32))
+
+       ;; Compute the address (using a PC-relative offset) of a 4KB page.
+       (Adrp
+        (rd WritableReg)
+        (off i32))
+
+       ;; Raw 32-bit word, used for inline constants and jump-table entries.
+       (Word4
+        (data u32))
+
+       ;; Raw 64-bit word, used for inline constants.
+       (Word8
+        (data u64))
+
+       ;; Jump-table sequence, as one compound instruction (see note in lower_inst.rs for rationale).
+       (JTSequence
+        (default MachLabel)
+        (targets BoxVecMachLabel)
+        (ridx Reg)
+        (rtmp1 WritableReg)
+        (rtmp2 WritableReg))
+
+       ;; Load an inline symbol reference.
+       (LoadExtName
+        (rd WritableReg)
+        (name BoxExternalName)
+        (offset i64))
+
+       ;; Load address referenced by `mem` into `rd`.
+       (LoadAddr
+        (rd WritableReg)
+        (mem AMode))
+
+       ;; Pointer authentication code for instruction address with modifier in SP;
+       ;; equivalent to a no-op if Pointer authentication (FEAT_PAuth) is not
+       ;; supported.
+       (Paci
+        (key APIKey))
+
+       ;; Strip pointer authentication code from instruction address in LR;
+       ;; equivalent to a no-op if Pointer authentication (FEAT_PAuth) is not
+       ;; supported.
+       (Xpaclri)
+
+       ;; Branch target identification; equivalent to a no-op if Branch Target
+       ;; Identification (FEAT_BTI) is not supported.
+       (Bti
+        (targets BranchTargetType))
+
+       ;; Meta-insn, no-op in generated code: emit constant/branch veneer island
+       ;; at this point (with a guard jump around it) if less than the needed
+       ;; space is available before the next branch deadline. See the `MachBuffer`
+       ;; implementation in `machinst/buffer.rs` for the overall algorithm. In
+       ;; brief, we retain a set of "pending/unresolved label references" from
+       ;; branches as we scan forward through instructions to emit machine code;
+       ;; if we notice we're about to go out of range on an unresolved reference,
+       ;; we stop, emit a bunch of "veneers" (branches in a form that has a longer
+       ;; range, e.g. a 26-bit-offset unconditional jump), and point the original
+       ;; label references to those. This is an "island" because it comes in the
+       ;; middle of the code.
+       ;;
+       ;; This meta-instruction is a necessary part of the logic that determines
+       ;; where to place islands. Ordinarily, we want to place them between basic
+       ;; blocks, so we compute the worst-case size of each block, and emit the
+       ;; island before starting a block if we would exceed a deadline before the
+       ;; end of the block. However, some sequences (such as an inline jumptable)
+       ;; are variable-length and not accounted for by this logic; so these
+       ;; lowered sequences include an `EmitIsland` to trigger island generation
+       ;; where necessary.
+       (EmitIsland
+        ;; The needed space before the next deadline.
+        (needed_space CodeOffset))
+
+       ;; A call to the `ElfTlsGetAddr` libcall. Returns address of TLS symbol in x0.
+       (ElfTlsGetAddr
+        (symbol BoxExternalName)
+        (rd WritableReg)
+        (tmp WritableReg))
+
+       (MachOTlsGetAddr
+        (symbol ExternalName)
+        (rd WritableReg))
+
+       ;; An unwind pseudo-instruction.
+       (Unwind
+        (inst UnwindInst))
+
+       ;; A dummy use, useful to keep a value alive.
+       (DummyUse
+        (reg Reg))
+
+       ;; Emits an inline stack probe loop.
+       ;;
+       ;; Note that this is emitted post-regalloc so `start` and `end` can be
+       ;; temporary registers such as the spilltmp and tmp2 registers. This also
+       ;; means that the internal codegen can't use these registers.
+       (StackProbeLoop (start WritableReg)
+                       (end Reg)
+                       (step Imm12))))
+
+(model ALUOp (enum
+      (Add #x00) ;; 0
+      (Sub #x01)
+      (Orr #x02)
+      (OrrNot #x03)
+      (And #x04)
+      (AndNot #x05)
+      (Eor #x06)
+      (EorNot #x07)
+      (SubS #x08)
+      (SDiv #x09)
+      (UDiv #x0a)
+      (Extr #x0b)
+      (Lsr #x0c)
+      (Asr #x0d)
+      (Lsl #x0e)))
+
+;; An ALU operation. This can be paired with several instruction formats
+;; below (see `Inst`) in any combination.
+(type ALUOp
+  (enum
+    (Add)
+    (Sub)
+    (Orr)
+    (OrrNot)
+    (And)
+    (AndS)
+    (AndNot)
+    ;; XOR (AArch64 calls this "EOR")
+    (Eor)
+    ;; XNOR (AArch64 calls this "EOR-NOT")
+    (EorNot)
+    ;; Add, setting flags
+    (AddS)
+    ;; Sub, setting flags
+    (SubS)
+    ;; Signed multiply, high-word result
+    (SMulH)
+    ;; Unsigned multiply, high-word result
+    (UMulH)
+    (SDiv)
+    (UDiv)
+    (Extr)
+    (Lsr)
+    (Asr)
+    (Lsl)
+    ;; Add with carry
+    (Adc)
+    ;; Add with carry, settings flags
+    (AdcS)
+    ;; Subtract with carry
+    (Sbc)
+    ;; Subtract with carry, settings flags
+    (SbcS)
+))
+
+;; An ALU operation with three arguments.
+(type ALUOp3
+  (enum
+    ;; Multiply-add
+    (MAdd)
+    ;; Multiply-sub
+    (MSub)
+    ;; Unsigned-Multiply-add
+    (UMAddL)
+    ;; Signed-Multiply-add
+    (SMAddL)
+))
+
+(type MoveWideOp
+  (enum
+    (MovZ)
+    (MovN)
+))
+
+(type UImm5 (primitive UImm5))
+(model Imm12 (type (bv 24)))
+(type Imm12 (primitive Imm12))
+(model ImmLogic (type (bv 64)))
+(type ImmLogic (primitive ImmLogic))
+(model ImmShift (type (bv 6)))
+(type ImmShift (primitive ImmShift))
+(model ShiftOpAndAmt (type (bv 16)))
+(type ShiftOpAndAmt (primitive ShiftOpAndAmt))
+(model MoveWideConst (type (bv 16)))
+(type MoveWideConst (primitive MoveWideConst))
+(type NZCV (primitive NZCV))
+(type ASIMDFPModImm (primitive ASIMDFPModImm))
+(type ASIMDMovModImm (primitive ASIMDMovModImm))
+(type SImm7Scaled (primitive SImm7Scaled))
+
+(type BoxCallInfo (primitive BoxCallInfo))
+(type BoxCallIndInfo (primitive BoxCallIndInfo))
+(type BoxReturnCallInfo (primitive BoxReturnCallInfo))
+(type BoxReturnCallIndInfo (primitive BoxReturnCallIndInfo))
+(type CondBrKind (primitive CondBrKind))
+(type BranchTarget (primitive BranchTarget))
+(type BoxJTSequenceInfo (primitive BoxJTSequenceInfo))
+(type CodeOffset (primitive CodeOffset))
+(type VecMachLabel extern (enum))
+
+(model ExtendOp (enum
+    (UXTB #b000)
+    (UXTH #b001)
+    (UXTW #b010)
+    (UXTX #b011)
+    (SXTB #b100)
+    (SXTH #b101)
+    (SXTW #b110)
+    (SXTX #b111)
+))
+
+(type ExtendOp extern
+  (enum
+    (UXTB)
+    (UXTH)
+    (UXTW)
+    (UXTX)
+    (SXTB)
+    (SXTH)
+    (SXTW)
+    (SXTX)
+))
+
+;; An operation on the bits of a register. This can be paired with several instruction formats
+;; below (see `Inst`) in any combination.
+(type BitOp
+  (enum
+    ;; Bit reverse
+    (RBit)
+    (Clz)
+    (Cls)
+    ;; Byte reverse
+    (Rev16)
+    (Rev32)
+    (Rev64)
+))
+
+(type MemLabel extern (enum))
+(type SImm9 extern (enum))
+(type UImm12Scaled extern (enum))
+
+;; An addressing mode specified for a load/store operation.
+(type AMode
+      (enum
+        ;;
+        ;; Real ARM64 addressing modes:
+        ;;
+        ;; "post-indexed" mode as per AArch64 docs: postincrement reg after
+        ;; address computation.
+        ;; Specialized here to SP so we don't have to emit regalloc metadata.
+        (SPPostIndexed
+         (simm9 SImm9))
+
+        ;; "pre-indexed" mode as per AArch64 docs: preincrement reg before
+        ;; address computation.
+        ;; Specialized here to SP so we don't have to emit regalloc metadata.
+        (SPPreIndexed
+         (simm9 SImm9))
+
+        ;; N.B.: RegReg, RegScaled, and RegScaledExtended all correspond to
+        ;; what the ISA calls the "register offset" addressing mode. We split
+        ;; out several options here for more ergonomic codegen.
+        ;;
+        ;; Register plus register offset.
+        (RegReg
+         (rn Reg)
+         (rm Reg))
+
+        ;; Register plus register offset, scaled by type's size.
+        (RegScaled
+         (rn Reg)
+         (rm Reg))
+
+        ;; Register plus register offset, scaled by type's size, with index
+        ;; sign- or zero-extended first.
+        (RegScaledExtended
+         (rn Reg)
+         (rm Reg)
+         (extendop ExtendOp))
+
+        ;; Register plus register offset, with index sign- or zero-extended
+        ;; first.
+        (RegExtended
+         (rn Reg)
+         (rm Reg)
+         (extendop ExtendOp))
+
+        ;; Unscaled signed 9-bit immediate offset from reg.
+        (Unscaled
+         (rn Reg)
+         (simm9 SImm9))
+
+        ;; Scaled (by size of a type) unsigned 12-bit immediate offset from reg.
+        (UnsignedOffset
+         (rn Reg)
+         (uimm12 UImm12Scaled))
+
+        ;; virtual addressing modes that are lowered at emission time:
+        ;;
+        ;; Reference to a "label": e.g., a symbol.
+        (Label
+         (label MemLabel))
+
+        ;; Arbitrary offset from a register. Converted to generation of large
+        ;; offsets with multiple instructions as necessary during code emission.
+        (RegOffset
+         (rn Reg)
+         (off i64))
+
+        ;; Offset from the stack pointer.
+        (SPOffset
+         (off i64))
+
+        ;; Offset from the frame pointer.
+        (FPOffset
+         (off i64))
+
+        ;; A reference to a constant which is placed outside of the function's
+        ;; body, typically at the end.
+        (Const
+          (addr VCodeConstant))
+
+        ;; Offset from the beginning of the argument area to the argument
+        ;; referenced. This can only be determined when the function has been
+        ;; processed fully, as the size of the argument area after the prologue
+        ;; is only known once all return_call instructions in the function body
+        ;; have been processed.
+        (IncomingArg
+          (off i64))
+
+        ;; Offset into the slot area of the stack, which lies just above the
+        ;; outgoing argument area that's setup by the function prologue.
+        ;; At emission time, this is converted to `SPOffset` with a fixup added to
+        ;; the offset constant. The fixup is a running value that is tracked as
+        ;; emission iterates through instructions in linear order, and can be
+        ;; adjusted up and down with [Inst::VirtualSPOffsetAdj].
+        ;;
+        ;; The standard ABI is in charge of handling this (by emitting the
+        ;; adjustment meta-instructions). See the diagram in the documentation
+        ;; for [crate::isa::aarch64::abi](the ABI module) for more details.
+        (SlotOffset
+         (off i64))))
+
+;; A memory argument to a load/store-pair.
+(type PairAMode (enum
+  ;; Signed, scaled 7-bit offset from a register.
+  (SignedOffset
+    (reg Reg)
+    (simm7 SImm7Scaled))
+
+  ;; Pre-increment register before address computation.
+  (SPPreIndexed (simm7 SImm7Scaled))
+
+  ;; Post-increment register after address computation.
+  (SPPostIndexed (simm7 SImm7Scaled))
+))
+
+(type FPUOpRI extern (enum))
+(type FPUOpRIMod extern (enum))
+
+(model OperandSize
+      (enum (Size32 32)
+            (Size64 64)))
+
+(type OperandSize extern
+      (enum Size32
+            Size64))
+
+(type TestBitAndBranchKind (enum (Z) (NZ)))
+
+;; Helper for calculating the `OperandSize` corresponding to a type
+(spec (operand_size ty)
+      (provide
+            (= result (if (<= ty 32) 32 64)))
+      (require
+            (or (= ty 8) (= ty 16) (= ty 32) (= ty 64))))
+(instantiate operand_size
+    ((args Int) (ret Int) (canon (bv 8)))
+    ((args Int) (ret Int) (canon (bv 16)))
+    ((args Int) (ret Int) (canon (bv 32)))
+    ((args Int) (ret Int) (canon (bv 64)))
+)
+(decl operand_size (Type) OperandSize)
+(rule operand_size_32 1 (operand_size (fits_in_32 _ty)) (OperandSize.Size32))
+(rule operand_size_64 (operand_size (fits_in_64 _ty)) (OperandSize.Size64))
+
+(model ScalarSize
+      (enum (Size8 8)
+            (Size16 16)
+            (Size32 32)
+            (Size64 64)
+            (Size128 128)))
+
+;; Difference (32 - ty), useful for narrow calculations with 32-bit
+;; instructions.
+(decl diff_from_32 (Type) u8)
+(rule (diff_from_32 $I8) 24)
+(rule (diff_from_32 $I16) 16)
+
+(type ScalarSize extern
+      (enum Size8
+            Size16
+            Size32
+            Size64
+            Size128))
+
+;; Helper for calculating the `ScalarSize` corresponding to a type
+(decl scalar_size (Type) ScalarSize)
+
+(rule (scalar_size $I8) (ScalarSize.Size8))
+(rule (scalar_size $I16) (ScalarSize.Size16))
+(rule (scalar_size $I32) (ScalarSize.Size32))
+(rule (scalar_size $I64) (ScalarSize.Size64))
+(rule (scalar_size $I128) (ScalarSize.Size128))
+
+(rule (scalar_size $F32) (ScalarSize.Size32))
+(rule (scalar_size $F64) (ScalarSize.Size64))
+
+;; Helper for calculating the `ScalarSize` lane type from vector type
+(decl lane_size (Type) ScalarSize)
+(rule 1 (lane_size (multi_lane 8 _)) (ScalarSize.Size8))
+(rule 1 (lane_size (multi_lane 16 _)) (ScalarSize.Size16))
+(rule 1 (lane_size (multi_lane 32 _)) (ScalarSize.Size32))
+(rule 1 (lane_size (multi_lane 64 _)) (ScalarSize.Size64))
+(rule (lane_size (dynamic_lane 8 _)) (ScalarSize.Size8))
+(rule (lane_size (dynamic_lane 16 _)) (ScalarSize.Size16))
+(rule (lane_size (dynamic_lane 32 _)) (ScalarSize.Size32))
+(rule (lane_size (dynamic_lane 64 _)) (ScalarSize.Size64))
+
+;; Helper for extracting the size of a lane from the input `VectorSize`
+(decl pure vector_lane_size (VectorSize) ScalarSize)
+(rule (vector_lane_size (VectorSize.Size8x16)) (ScalarSize.Size8))
+(rule (vector_lane_size (VectorSize.Size8x8))  (ScalarSize.Size8))
+(rule (vector_lane_size (VectorSize.Size16x8)) (ScalarSize.Size16))
+(rule (vector_lane_size (VectorSize.Size16x4)) (ScalarSize.Size16))
+(rule (vector_lane_size (VectorSize.Size32x4)) (ScalarSize.Size32))
+(rule (vector_lane_size (VectorSize.Size32x2)) (ScalarSize.Size32))
+(rule (vector_lane_size (VectorSize.Size64x2)) (ScalarSize.Size64))
+
+(model Cond
+      (enum (Lo #x03)
+            (Hi #x08)
+            (Lt #x0b)
+            (Gt #x0c)))
+
+(type Cond extern
+  (enum
+    (Eq)
+    (Ne)
+    (Hs)
+    (Lo)
+    (Mi)
+    (Pl)
+    (Vs)
+    (Vc)
+    (Hi)
+    (Ls)
+    (Ge)
+    (Lt)
+    (Gt)
+    (Le)
+    (Al)
+    (Nv)
+))
+
+(model VectorSize
+  (enum
+    (Size8x8 #x00)
+    (Size8x16 #x01)
+    (Size16x4 #x02)
+    (Size16x8 #x03)
+    (Size32x2 #x04)
+    (Size32x4 #x05)
+    (Size64x2 #x06)))
+
+(type VectorSize extern
+  (enum
+    (Size8x8)
+    (Size8x16)
+    (Size16x4)
+    (Size16x8)
+    (Size32x2)
+    (Size32x4)
+    (Size64x2)
+))
+
+;; Helper for calculating the `VectorSize` corresponding to a type
+(decl vector_size (Type) VectorSize)
+(rule 1 (vector_size (multi_lane 8 8)) (VectorSize.Size8x8))
+(rule 1 (vector_size (multi_lane 8 16)) (VectorSize.Size8x16))
+(rule 1 (vector_size (multi_lane 16 4)) (VectorSize.Size16x4))
+(rule 1 (vector_size (multi_lane 16 8)) (VectorSize.Size16x8))
+(rule 1 (vector_size (multi_lane 32 2)) (VectorSize.Size32x2))
+(rule 1 (vector_size (multi_lane 32 4)) (VectorSize.Size32x4))
+(rule 1 (vector_size (multi_lane 64 2)) (VectorSize.Size64x2))
+(rule (vector_size (dynamic_lane 8 8)) (VectorSize.Size8x8))
+(rule (vector_size (dynamic_lane 8 16)) (VectorSize.Size8x16))
+(rule (vector_size (dynamic_lane 16 4)) (VectorSize.Size16x4))
+(rule (vector_size (dynamic_lane 16 8)) (VectorSize.Size16x8))
+(rule (vector_size (dynamic_lane 32 2)) (VectorSize.Size32x2))
+(rule (vector_size (dynamic_lane 32 4)) (VectorSize.Size32x4))
+(rule (vector_size (dynamic_lane 64 2)) (VectorSize.Size64x2))
+
+;; A floating-point unit (FPU) operation with one arg.
+(type FPUOp1
+  (enum
+    (Abs)
+    (Neg)
+    (Sqrt)
+    (Cvt32To64)
+    (Cvt64To32)
+))
+
+;; A floating-point unit (FPU) operation with two args.
+(type FPUOp2
+  (enum
+    (Add)
+    (Sub)
+    (Mul)
+    (Div)
+    (Max)
+    (Min)
+))
+
+;; A floating-point unit (FPU) operation with three args.
+(type FPUOp3
+  (enum
+    ;; Multiply-add
+    (MAdd)
+    ;; Multiply-sub
+    (MSub)
+    ;; Negated fused Multiply-add
+    (NMAdd)
+    ;; Negated fused Multiply-sub
+    (NMSub)
+))
+
+;; A conversion from an FP to an integer value.
+(type FpuToIntOp
+  (enum
+    (F32ToU32)
+    (F32ToI32)
+    (F32ToU64)
+    (F32ToI64)
+    (F64ToU32)
+    (F64ToI32)
+    (F64ToU64)
+    (F64ToI64)
+))
+
+;; A conversion from an integer to an FP value.
+(type IntToFpuOp
+  (enum
+    (U32ToF32)
+    (I32ToF32)
+    (U32ToF64)
+    (I32ToF64)
+    (U64ToF32)
+    (I64ToF32)
+    (U64ToF64)
+    (I64ToF64)
+))
+
+;; Modes for FP rounding ops: round down (floor) or up (ceil), or toward zero (trunc), or to
+;; nearest, and for 32- or 64-bit FP values.
+(type FpuRoundMode
+  (enum
+    (Minus32)
+    (Minus64)
+    (Plus32)
+    (Plus64)
+    (Zero32)
+    (Zero64)
+    (Nearest32)
+    (Nearest64)
+))
+
+;; Type of vector element extensions.
+(type VecExtendOp
+  (enum
+    ;; Signed extension
+    (Sxtl)
+    ;; Unsigned extension
+    (Uxtl)
+))
+
+;; A vector ALU operation.
+(type VecALUOp
+  (enum
+    ;; Signed saturating add
+    (Sqadd)
+    ;; Unsigned saturating add
+    (Uqadd)
+    ;; Signed saturating subtract
+    (Sqsub)
+    ;; Unsigned saturating subtract
+    (Uqsub)
+    ;; Compare bitwise equal
+    (Cmeq)
+    ;; Compare signed greater than or equal
+    (Cmge)
+    ;; Compare signed greater than
+    (Cmgt)
+    ;; Compare unsigned higher
+    (Cmhs)
+    ;; Compare unsigned higher or same
+    (Cmhi)
+    ;; Floating-point compare equal
+    (Fcmeq)
+    ;; Floating-point compare greater than
+    (Fcmgt)
+    ;; Floating-point compare greater than or equal
+    (Fcmge)
+    ;; Bitwise and
+    (And)
+    ;; Bitwise bit clear
+    (Bic)
+    ;; Bitwise inclusive or
+    (Orr)
+    ;; Bitwise exclusive or
+    (Eor)
+    ;; Unsigned maximum pairwise
+    (Umaxp)
+    ;; Add
+    (Add)
+    ;; Subtract
+    (Sub)
+    ;; Multiply
+    (Mul)
+    ;; Signed shift left
+    (Sshl)
+    ;; Unsigned shift left
+    (Ushl)
+    ;; Unsigned minimum
+    (Umin)
+    ;; Signed minimum
+    (Smin)
+    ;; Unsigned maximum
+    (Umax)
+    ;; Signed maximum
+    (Smax)
+    ;; Unsigned rounding halving add
+    (Urhadd)
+    ;; Floating-point add
+    (Fadd)
+    ;; Floating-point subtract
+    (Fsub)
+    ;; Floating-point divide
+    (Fdiv)
+    ;; Floating-point maximum
+    (Fmax)
+    ;; Floating-point minimum
+    (Fmin)
+    ;; Floating-point multiply
+    (Fmul)
+    ;; Add pairwise
+    (Addp)
+    ;; Zip vectors (primary) [meaning, high halves]
+    (Zip1)
+    ;; Zip vectors (secondary)
+    (Zip2)
+    ;; Signed saturating rounding doubling multiply returning high half
+    (Sqrdmulh)
+    ;; Unzip vectors (primary)
+    (Uzp1)
+    ;; Unzip vectors (secondary)
+    (Uzp2)
+    ;; Transpose vectors (primary)
+    (Trn1)
+    ;; Transpose vectors (secondary)
+    (Trn2)
+))
+
+;; A Vector ALU operation which modifies a source register.
+(type VecALUModOp
+  (enum
+    ;; Bitwise select
+    (Bsl)
+    ;; Floating-point fused multiply-add vectors
+    (Fmla)
+    ;; Floating-point fused multiply-subtract vectors
+    (Fmls)
+))
+
+;; A Vector miscellaneous operation with two registers.
+(type VecMisc2
+  (enum
+    ;; Bitwise NOT
+    (Not)
+    ;; Negate
+    (Neg)
+    ;; Absolute value
+    (Abs)
+    ;; Floating-point absolute value
+    (Fabs)
+    ;; Floating-point negate
+    (Fneg)
+    ;; Floating-point square root
+    (Fsqrt)
+    ;; Reverse elements in 16-bit lanes
+    (Rev16)
+    ;; Reverse elements in 32-bit lanes
+    (Rev32)
+    ;; Reverse elements in 64-bit doublewords
+    (Rev64)
+    ;; Floating-point convert to signed integer, rounding toward zero
+    (Fcvtzs)
+    ;; Floating-point convert to unsigned integer, rounding toward zero
+    (Fcvtzu)
+    ;; Signed integer convert to floating-point
+    (Scvtf)
+    ;; Unsigned integer convert to floating-point
+    (Ucvtf)
+    ;; Floating point round to integral, rounding towards nearest
+    (Frintn)
+    ;; Floating point round to integral, rounding towards zero
+    (Frintz)
+    ;; Floating point round to integral, rounding towards minus infinity
+    (Frintm)
+    ;; Floating point round to integral, rounding towards plus infinity
+    (Frintp)
+    ;; Population count per byte
+    (Cnt)
+    ;; Compare bitwise equal to 0
+    (Cmeq0)
+    ;; Compare signed greater than or equal to 0
+    (Cmge0)
+    ;; Compare signed greater than 0
+    (Cmgt0)
+    ;; Compare signed less than or equal to 0
+    (Cmle0)
+    ;; Compare signed less than 0
+    (Cmlt0)
+    ;; Floating point compare equal to 0
+    (Fcmeq0)
+    ;; Floating point compare greater than or equal to 0
+    (Fcmge0)
+    ;; Floating point compare greater than 0
+    (Fcmgt0)
+    ;; Floating point compare less than or equal to 0
+    (Fcmle0)
+    ;; Floating point compare less than 0
+    (Fcmlt0)
+))
+
+;; A vector widening operation with one argument.
+(type VecRRLongOp
+  (enum
+    ;; Floating-point convert to higher precision long, 16-bit elements
+    (Fcvtl16)
+    ;; Floating-point convert to higher precision long, 32-bit elements
+    (Fcvtl32)
+    ;; Shift left long (by element size), 8-bit elements
+    (Shll8)
+    ;; Shift left long (by element size), 16-bit elements
+    (Shll16)
+    ;; Shift left long (by element size), 32-bit elements
+    (Shll32)
+))
+
+;; A vector narrowing operation with one argument.
+(type VecRRNarrowOp
+  (enum
+    ;; Extract narrow.
+    (Xtn)
+    ;; Signed saturating extract narrow.
+    (Sqxtn)
+    ;; Signed saturating extract unsigned narrow.
+    (Sqxtun)
+    ;; Unsigned saturating extract narrow.
+    (Uqxtn)
+    ;; Floating-point convert to lower precision narrow.
+    (Fcvtn)
+))
+
+(type VecRRRLongOp
+  (enum
+    ;; Signed multiply long.
+    (Smull8)
+    (Smull16)
+    (Smull32)
+    ;; Unsigned multiply long.
+    (Umull8)
+    (Umull16)
+    (Umull32)
+))
+
+(type VecRRRLongModOp
+  (enum
+    ;; Unsigned multiply add long
+    (Umlal8)
+    (Umlal16)
+    (Umlal32)
+))
+
+;; A vector operation on a pair of elements with one register.
+(type VecPairOp
+  (enum
+    ;; Add pair of elements
+    (Addp)
+))
+
+;; 1-operand vector instruction that extends elements of the input register
+;; and operates on a pair of elements.
+(type VecRRPairLongOp
+  (enum
+    ;; Sign extend and add pair of elements
+    (Saddlp8)
+    (Saddlp16)
+    ;; Unsigned extend and add pair of elements
+    (Uaddlp8)
+    (Uaddlp16)
+))
+
+;; An operation across the lanes of vectors.
+(type VecLanesOp
+  (enum
+    ;; Integer addition across a vector
+    (Addv)
+    ;; Unsigned minimum across a vector
+    (Uminv)
+))
+
+;; A shift-by-immediate operation on each lane of a vector.
+(type VecShiftImmOp
+  (enum
+    ;; Unsigned shift left
+    (Shl)
+    ;; Unsigned shift right
+    (Ushr)
+    ;; Signed shift right
+    (Sshr)
+))
+
+;; Destructive shift-by-immediate operation on each lane of a vector.
+(type VecShiftImmModOp
+  (enum
+    ;; Shift left and insert
+    (Sli)
+))
+
+;; Atomic read-modify-write operations with acquire-release semantics
+(type AtomicRMWOp
+  (enum
+    (Add)
+    (Clr)
+    (Eor)
+    (Set)
+    (Smax)
+    (Smin)
+    (Umax)
+    (Umin)
+    (Swp)
+))
+
+;; Atomic read-modify-write operations, with acquire-release semantics,
+;; implemented with a loop.
+(type AtomicRMWLoopOp
+  (enum
+    (Add)
+    (Sub)
+    (And)
+    (Nand)
+    (Eor)
+    (Orr)
+    (Smax)
+    (Smin)
+    (Umax)
+    (Umin)
+    (Xchg)
+))
+
+;; Keys for instruction address PACs
+(type APIKey
+  (enum
+    ;; API key A with the modifier of SP
+    (ASP)
+    ;; API key B with the modifier of SP
+    (BSP)
+    ;; API key A with the modifier of zero
+    (AZ)
+    ;; API key B with the modifier of zero
+    (BZ)
+))
+
+;; Branch target types
+(type BranchTargetType
+  (enum
+    (None)
+    (C)
+    (J)
+    (JC)
+))
+
+;; Extractors for target features ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(decl pure partial sign_return_address_disabled () Unit)
+(extern constructor sign_return_address_disabled sign_return_address_disabled)
+
+(decl use_lse () Inst)
+(extern extractor use_lse use_lse)
+
+(decl pure use_fp16 () bool)
+(extern constructor use_fp16 use_fp16)
+
+;; Extractor helpers for various immediate constants ;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(decl pure partial move_wide_const_from_u64 (Type u64) MoveWideConst)
+(extern constructor move_wide_const_from_u64 move_wide_const_from_u64)
+
+(decl pure partial move_wide_const_from_inverted_u64 (Type u64) MoveWideConst)
+(extern constructor move_wide_const_from_inverted_u64 move_wide_const_from_inverted_u64)
+
+(decl pure partial imm_logic_from_u64 (Type u64) ImmLogic)
+(extern constructor imm_logic_from_u64 imm_logic_from_u64)
+
+(decl pure partial imm_size_from_type (Type) u16)
+(extern constructor imm_size_from_type imm_size_from_type)
+
+(decl pure partial imm_logic_from_imm64 (Type Imm64) ImmLogic)
+(extern constructor imm_logic_from_imm64 imm_logic_from_imm64)
+
+(spec (imm_shift_from_imm64 ty x)
+      (provide (= result (extract 5 0 (bvand x (bvsub (int2bv 64 ty) #x0000000000000001)))))
+      (require (bvult (bvand x (bvsub (int2bv 64 ty)  #x0000000000000001)) #x0000000000000040)))
+
+(decl pure partial imm_shift_from_imm64 (Type Imm64) ImmShift)
+(extern constructor imm_shift_from_imm64 imm_shift_from_imm64)
+
+(decl imm_shift_from_u8 (u8) ImmShift)
+(extern constructor imm_shift_from_u8 imm_shift_from_u8)
+
+(spec (imm12_from_u64 imm12)
+      (provide (= result (zero_ext 64 imm12)))
+      (require
+            ; REVIEW(mbm): correct formulation of imm12?
+            (or
+                  (= imm12 (bvand imm12 #x000fff))
+                  (= imm12 (bvand imm12 #xfff000))
+            )
+      )
+)
+(decl imm12_from_u64 (Imm12) u64)
+(extern extractor imm12_from_u64 imm12_from_u64)
+
+(decl u8_into_uimm5 (u8) UImm5)
+(extern constructor u8_into_uimm5 u8_into_uimm5)
+
+(spec (u8_into_imm12 arg)
+      (provide (= result (zero_ext 24 arg))))
+(decl u8_into_imm12 (u8) Imm12)
+(extern constructor u8_into_imm12 u8_into_imm12)
+
+(spec (u64_into_imm_logic ty a)
+      (provide (= result a))
+      (require (or (= ty 32) (= ty 64))))
+(decl u64_into_imm_logic (Type u64) ImmLogic)
+(extern constructor u64_into_imm_logic u64_into_imm_logic)
+
+(decl branch_target (MachLabel) BranchTarget)
+(extern constructor branch_target branch_target)
+(convert MachLabel BranchTarget branch_target)
+
+(decl targets_jt_space (BoxVecMachLabel) CodeOffset)
+(extern constructor targets_jt_space targets_jt_space)
+
+;; Calculate the minimum floating-point bound for a conversion to floating
+;; point from an integer type.
+;; Accepts whether the output is signed, the size of the input
+;; floating point type in bits, and the size of the output integer type
+;; in bits.
+(decl min_fp_value (bool u8 u8) Reg)
+(extern constructor min_fp_value min_fp_value)
+
+;; Calculate the maximum floating-point bound for a conversion to floating
+;; point from an integer type.
+;; Accepts whether the output is signed, the size of the input
+;; floating point type in bits, and the size of the output integer type
+;; in bits.
+(decl max_fp_value (bool u8 u8) Reg)
+(extern constructor max_fp_value max_fp_value)
+
+;; Constructs an FPUOpRI.Ushr* given the size in bits of the value (or lane)
+;; and the amount to shift by.
+(decl fpu_op_ri_ushr (u8 u8) FPUOpRI)
+(extern constructor fpu_op_ri_ushr fpu_op_ri_ushr)
+
+;; Constructs an FPUOpRIMod.Sli* given the size in bits of the value (or lane)
+;; and the amount to shift by.
+(decl fpu_op_ri_sli (u8 u8) FPUOpRIMod)
+(extern constructor fpu_op_ri_sli fpu_op_ri_sli)
+
+(decl pure partial lshr_from_u64 (Type u64) ShiftOpAndAmt)
+(extern constructor lshr_from_u64 lshr_from_u64)
+
+(spec (lshl_from_imm64 ty a)
+    (provide (= result (concat #x0e (extract 7 0 a))))
+    (require (= (extract 63 8 a) #b00000000000000000000000000000000000000000000000000000000)))
+(decl pure partial lshl_from_imm64 (Type Imm64) ShiftOpAndAmt)
+(extern constructor lshl_from_imm64 lshl_from_imm64)
+
+(decl pure partial lshl_from_u64 (Type u64) ShiftOpAndAmt)
+(extern constructor lshl_from_u64 lshl_from_u64)
+
+(decl pure partial ashr_from_u64 (Type u64) ShiftOpAndAmt)
+(extern constructor ashr_from_u64 ashr_from_u64)
+
+(decl integral_ty (Type) Type)
+(extern extractor integral_ty integral_ty)
+
+(decl valid_atomic_transaction (Type) Type)
+(extern extractor valid_atomic_transaction valid_atomic_transaction)
+
+(decl pure partial is_zero_simm9 (SImm9) Unit)
+(extern constructor is_zero_simm9 is_zero_simm9)
+
+(decl pure partial is_zero_uimm12 (UImm12Scaled) Unit)
+(extern constructor is_zero_uimm12 is_zero_uimm12)
+
+;; Helper to go directly from a `Value`, when it's an `iconst`, to an `Imm12`.
+; REVIEW(mbm): is imm12_from_value spec correct?
+; NOTE(mbm): compare with https://github.com/avanhatt/wasmtime/blob/94ccb9d4d55a479893cb04bc796ec620ed24cee2/cranelift/codegen/src/isa/aarch64/inst.isle#L1867-L1874
+(spec (imm12_from_value imm12)
+      (provide
+            ; REVIEW(mbm): zero_ext vs conv_to?
+            (= result (conv_to (widthof result) (zero_ext 64 imm12)))
+            (= imm12 (conv_to (widthof imm12) (zero_ext 64 result)))
+      )
+      (require
+            ; REVIEW(mbm): correct formulation of imm12?
+            (or
+                  (= imm12 (bvand imm12 #x000fff))
+                  (= imm12 (bvand imm12 #xfff000))
+            )
+      )
+)
+(decl imm12_from_value (Imm12) Value)
+(extractor
+  (imm12_from_value n)
+  (iconst (u64_from_imm64 (imm12_from_u64 n))))
+;; Conceptually the same as `imm12_from_value`, but tries negating the constant
+;; value (first sign-extending to handle narrow widths).
+(spec (imm12_from_negated_value arg)
+      (provide
+            (= (bvneg (sign_ext 64 arg)) (zero_ext 64 result))
+      )
+      (require
+            ; REVIEW(mbm): correct formulation of imm12?
+            (or
+                  (= result (bvand result #x000fff))
+                  (= result (bvand result #xfff000))
+            )
+      )
+)
+
+(instantiate imm12_from_negated_value
+    ((args (bv 8)) (ret (bv 24)) (canon (bv 8)))
+    ((args (bv 16)) (ret (bv 24)) (canon (bv 16)))
+    ((args (bv 32)) (ret (bv 24)) (canon (bv 32)))
+    ((args (bv 64)) (ret (bv 24)) (canon (bv 64)))
+)
+(decl pure partial imm12_from_negated_value (Value) Imm12)
+(rule imm12_from_negated_value
+  (imm12_from_negated_value (has_type ty (iconst n)))
+  (if-let (imm12_from_u64 imm) (i64_cast_unsigned (i64_checked_neg (i64_sextend_imm64 ty n))))
+  imm)
+
+;; Helper type to represent a value and an extend operation fused together.
+(model ExtendedValue (type (bv 67)))
+(type ExtendedValue extern (enum))
+;; Only including the i8 to i32 opcodes, based on the impl of extended_value_from_value
+(spec (extended_value_from_value x)
+  (provide
+    (switch (extract 66 64 x)
+      ((ExtendOp.UXTB) (= (extract 63 0 x) (zero_ext 64 (extract 7 0 (zero_ext 64 result)))))
+      ((ExtendOp.UXTH) (= (extract 63 0 x) (zero_ext 64 (extract 15 0 (zero_ext 64 result)))))
+      ((ExtendOp.UXTW) (= (extract 63 0 x) (zero_ext 64 (extract 31 0 (zero_ext 64 result)))))
+      ((ExtendOp.SXTB) (= (extract 63 0 x) (sign_ext 64 (extract 7 0 (zero_ext 64 result)))))
+      ((ExtendOp.SXTH) (= (extract 63 0 x) (sign_ext 64 (extract 15 0 (zero_ext 64 result)))))
+      ((ExtendOp.SXTW) (= (extract 63 0 x) (sign_ext 64 (extract 31 0 (zero_ext 64 result)))))))
+  (require
+    (bvult (extract 66 64 x) #b110)
+    (not (= (extract 66 64 x) #b011))
+    (= result (conv_to (widthof result) x))
+    (or (= 8 (widthof result)) (= 16 (widthof result)) (= 32 (widthof result)))))
+(decl extended_value_from_value (ExtendedValue) Value)
+(extern extractor extended_value_from_value extended_value_from_value)
+
+;; Constructors used to poke at the fields of an `ExtendedValue`.
+(decl put_extended_in_reg (ExtendedValue) Reg)
+(extern constructor put_extended_in_reg put_extended_in_reg)
+(decl get_extended_op (ExtendedValue) ExtendOp)
+(extern constructor get_extended_op get_extended_op)
+
+(decl nzcv (bool bool bool bool) NZCV)
+(extern constructor nzcv nzcv)
+
+(decl cond_br_zero (Reg OperandSize) CondBrKind)
+(extern constructor cond_br_zero cond_br_zero)
+
+(decl cond_br_not_zero (Reg OperandSize) CondBrKind)
+(extern constructor cond_br_not_zero cond_br_not_zero)
+
+(decl cond_br_cond (Cond) CondBrKind)
+(extern constructor cond_br_cond cond_br_cond)
+
+;; Instruction creation helpers ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Helper for creating the zero register.
+(spec (zero_reg) (provide (= result #x0000000000000000)))
+(decl zero_reg () Reg)
+(extern constructor zero_reg zero_reg)
+
+(decl fp_reg () Reg)
+(extern constructor fp_reg fp_reg)
+
+(decl stack_reg () Reg)
+(extern constructor stack_reg stack_reg)
+
+(decl writable_link_reg () WritableReg)
+(extern constructor writable_link_reg writable_link_reg)
+
+(decl writable_zero_reg () WritableReg)
+(extern constructor writable_zero_reg writable_zero_reg)
+
+(decl value_regs_zero () ValueRegs)
+(rule (value_regs_zero)
+      (value_regs
+            (imm $I64 (ImmExtend.Zero) 0)
+            (imm $I64 (ImmExtend.Zero) 0)))
+
+
+;; Helper for emitting `MInst.Mov` instructions.
+(decl mov (Reg Type) Reg)
+(rule (mov src ty)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.Mov (operand_size ty) dst src))))
+        dst))
+
+;; Helper for emitting `MInst.MovZ` instructions.
+(decl movz (MoveWideConst OperandSize) Reg)
+(rule (movz imm size)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.MovWide (MoveWideOp.MovZ) dst imm size))))
+        dst))
+
+;; Helper for emitting `MInst.MovN` instructions.
+(decl movn (MoveWideConst OperandSize) Reg)
+(rule (movn imm size)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.MovWide (MoveWideOp.MovN) dst imm size))))
+        dst))
+
+;; Helper for emitting `MInst.AluRRImmLogic` instructions.
+(decl alu_rr_imm_logic (ALUOp Type Reg ImmLogic) Reg)
+(rule (alu_rr_imm_logic op ty src imm)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.AluRRImmLogic op (operand_size ty) dst src imm))))
+        dst))
+
+;; Helper for emitting `MInst.AluRRImmShift` instructions.
+(spec (alu_rr_imm_shift op t a b)
+    (provide
+      (= result (switch op
+              ((ALUOp.Lsr)
+                (if (<= t 32)
+                    (conv_to 64 (bvlshr (extract 31 0 a) (bvand (bvsub (int2bv 32 32) #x00000001) (extract 31 0 (zero_ext 64 b)))))
+                    (bvlshr a (bvand (bvsub (int2bv 64 64) #x0000000000000001) (zero_ext 64 b)))))
+              ((ALUOp.Asr)
+                (if (<= t 32)
+                    (conv_to 64 (bvashr (extract 31 0 a) (bvand (bvsub (int2bv 32 32) #x00000001) (extract 31 0 (zero_ext 64 b)))))
+                    (bvashr a (bvand (bvsub (int2bv 64 64) #x0000000000000001) (zero_ext 64 b)))))
+              ((ALUOp.Lsl)
+                (if (<= t 32)
+                    (conv_to 64 (bvshl (extract 31 0 a) (bvand (bvsub (int2bv 32 32) #x00000001) (extract 31 0 (zero_ext 64 b)))))
+                    (bvshl a (bvand (bvsub (int2bv 64 64) #x0000000000000001) (zero_ext 64 b))))))))
+    (require
+      (or (= op (ALUOp.Lsr)) (= op (ALUOp.Asr)) (= op (ALUOp.Lsl)))
+      (or (= t 8) (= t 16) (= t 32) (= t 64))))
+(decl alu_rr_imm_shift (ALUOp Type Reg ImmShift) Reg)
+(rule (alu_rr_imm_shift op ty src imm)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.AluRRImmShift op (operand_size ty) dst src imm))))
+        dst))
+
+;; Helper for emitting `MInst.AluRRR` instructions.
+(spec (alu_rrr op t a b)
+    (provide
+      (= result (switch op
+              ((ALUOp.Lsr)
+                (if (<= t 32)
+                    (conv_to 64 (bvlshr (extract 31 0 a) (bvand (bvsub (int2bv 32 32) #x00000001) (extract 31 0 b))))
+                    (bvlshr a (bvand (bvsub (int2bv 64 64) #x0000000000000001) b))))
+              ((ALUOp.Asr)
+                (if (<= t 32)
+                    (conv_to 64 (bvashr (extract 31 0 a) (bvand (bvsub (int2bv 32 32) #x00000001) (extract 31 0 b))))
+                    (bvashr a (bvand (bvsub (int2bv 64 64) #x0000000000000001) b))))
+              ((ALUOp.Lsl)
+                (if (<= t 32)
+                    (conv_to 64 (bvshl (extract 31 0 a) (bvand (bvsub (int2bv 32 32) #x00000001) (extract 31 0 b))))
+                    (bvshl a (bvand (bvsub (int2bv 64 64) #x0000000000000001) b)))))))
+    (require
+      (or (= op (ALUOp.Lsr)) (= op (ALUOp.Asr)) (= op (ALUOp.Lsl)))
+      (or (= t 8) (= t 16) (= t 32) (= t 64))))
+(decl alu_rrr (ALUOp Type Reg Reg) Reg)
+(rule (alu_rrr op ty src1 src2)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.AluRRR op (operand_size ty) dst src1 src2))))
+        dst))
+
+;; Helper for emitting `MInst.VecRRR` instructions.
+(decl vec_rrr (VecALUOp Reg Reg VectorSize) Reg)
+(rule (vec_rrr op src1 src2 size)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.VecRRR op dst src1 src2 size))))
+        dst))
+
+;; Helper for emitting `MInst.FpuRR` instructions.
+(decl fpu_rr (FPUOp1 Reg ScalarSize) Reg)
+(rule (fpu_rr op src size)
+      (let ((dst WritableReg (temp_writable_reg $F64))
+            (_ Unit (emit (MInst.FpuRR op size dst src))))
+       dst))
+
+;; Helper for emitting `MInst.VecRRRMod` instructions which use three registers,
+;; one of which is both source and output.
+(decl vec_rrr_mod (VecALUModOp Reg Reg Reg VectorSize) Reg)
+(rule (vec_rrr_mod op src1 src2 src3 size)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_1 Unit (emit (MInst.VecRRRMod op dst src1 src2 src3 size))))
+        dst))
+
+;; Helper for emitting `MInst.VecFmlaElem` instructions which use three registers,
+;; one of which is both source and output.
+(decl vec_fmla_elem (VecALUModOp Reg Reg Reg VectorSize u8) Reg)
+(rule (vec_fmla_elem op src1 src2 src3 size idx)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_1 Unit (emit (MInst.VecFmlaElem op dst src1 src2 src3 size idx))))
+        dst))
+
+(decl fpu_rri (FPUOpRI Reg) Reg)
+(rule (fpu_rri op src)
+      (let ((dst WritableReg (temp_writable_reg $F64))
+            (_ Unit (emit (MInst.FpuRRI op dst src))))
+        dst))
+
+(decl fpu_rri_mod (FPUOpRIMod Reg Reg) Reg)
+(rule (fpu_rri_mod op dst_src src)
+      (let ((dst WritableReg (temp_writable_reg $F64))
+            (_ Unit (emit (MInst.FpuRRIMod op dst dst_src src))))
+        dst))
+
+;; Helper for emitting `MInst.FpuRRR` instructions.
+(decl fpu_rrr (FPUOp2 Reg Reg ScalarSize) Reg)
+(rule (fpu_rrr op src1 src2 size)
+      (let ((dst WritableReg (temp_writable_reg $F64))
+            (_ Unit (emit (MInst.FpuRRR op size dst src1 src2))))
+        dst))
+
+;; Helper for emitting `MInst.FpuRRRR` instructions.
+(decl fpu_rrrr (FPUOp3 ScalarSize Reg Reg Reg) Reg)
+(rule (fpu_rrrr size op src1 src2 src3)
+      (let ((dst WritableReg (temp_writable_reg $F64))
+            (_ Unit (emit (MInst.FpuRRRR size op dst src1 src2 src3))))
+        dst))
+
+;; Helper for emitting `MInst.FpuCmp` instructions.
+(decl fpu_cmp (ScalarSize Reg Reg) ProducesFlags)
+(rule (fpu_cmp size rn rm)
+      (ProducesFlags.ProducesFlagsSideEffect
+       (MInst.FpuCmp size rn rm)))
+
+;; Helper for emitting `MInst.VecLanes` instructions.
+(decl vec_lanes (VecLanesOp Reg VectorSize) Reg)
+(rule (vec_lanes op src size)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.VecLanes op dst src size))))
+        dst))
+
+;; Helper for emitting `MInst.VecShiftImm` instructions.
+(decl vec_shift_imm (VecShiftImmOp u8 Reg VectorSize) Reg)
+(rule (vec_shift_imm op imm src size)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.VecShiftImm op dst src size imm))))
+        dst))
+
+;; Helper for emitting `MInst.VecDup` instructions.
+(decl vec_dup (Reg VectorSize) Reg)
+(rule (vec_dup src size)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.VecDup dst src size))))
+        dst))
+
+;; Helper for emitting `MInst.VecDupFromFpu` instructions.
+(decl vec_dup_from_fpu (Reg VectorSize u8) Reg)
+(rule (vec_dup_from_fpu src size lane)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.VecDupFromFpu dst src size lane))))
+        dst))
+
+;; Helper for emitting `MInst.VecDupImm` instructions.
+(decl vec_dup_imm (ASIMDMovModImm bool VectorSize) Reg)
+(rule (vec_dup_imm imm invert size)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.VecDupImm dst imm invert size))))
+        dst))
+
+;; Helper for emitting `MInst.AluRRImm12` instructions.
+(decl alu_rr_imm12 (ALUOp Type Reg Imm12) Reg)
+(rule (alu_rr_imm12 op ty src imm)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.AluRRImm12 op (operand_size ty) dst src imm))))
+        dst))
+
+;; Helper for emitting `MInst.AluRRRShift` instructions.
+(decl alu_rrr_shift (ALUOp Type Reg Reg ShiftOpAndAmt) Reg)
+(rule (alu_rrr_shift op ty src1 src2 shift)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.AluRRRShift op (operand_size ty) dst src1 src2 shift))))
+        dst))
+
+;; Helper for emitting `cmp` instructions, setting flags, with a right-shifted
+;; second operand register.
+(decl cmp_rr_shift (OperandSize Reg Reg u64) ProducesFlags)
+(rule (cmp_rr_shift size src1 src2 shift_amount)
+      (if-let shift (lshr_from_u64 $I64 shift_amount))
+      (ProducesFlags.ProducesFlagsSideEffect
+       (MInst.AluRRRShift (ALUOp.SubS) size (writable_zero_reg)
+        src1 src2 shift)))
+
+;; Helper for emitting `cmp` instructions, setting flags, with an arithmetic right-shifted
+;; second operand register.
+(decl cmp_rr_shift_asr (OperandSize Reg Reg u64) ProducesFlags)
+(rule (cmp_rr_shift_asr size src1 src2 shift_amount)
+      (if-let shift (ashr_from_u64 $I64 shift_amount))
+      (ProducesFlags.ProducesFlagsSideEffect
+       (MInst.AluRRRShift (ALUOp.SubS) size (writable_zero_reg)
+        src1 src2 shift)))
+
+;; Helper for emitting `MInst.AluRRRExtend` instructions.
+(decl alu_rrr_extend (ALUOp Type Reg Reg ExtendOp) Reg)
+(rule (alu_rrr_extend op ty src1 src2 extend)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.AluRRRExtend op (operand_size ty) dst src1 src2 extend))))
+        dst))
+
+;; Same as `alu_rrr_extend`, but takes an `ExtendedValue` packed "pair" instead
+;; of a `Reg` and an `ExtendOp`.
+(decl alu_rr_extend_reg (ALUOp Type Reg ExtendedValue) Reg)
+(rule (alu_rr_extend_reg op ty src1 extended_reg)
+      (let ((src2 Reg (put_extended_in_reg extended_reg))
+            (extend ExtendOp (get_extended_op extended_reg)))
+        (alu_rrr_extend op ty src1 src2 extend)))
+
+;; Helper for emitting `MInst.AluRRRR` instructions.
+(decl alu_rrrr (ALUOp3 Type Reg Reg Reg) Reg)
+(rule (alu_rrrr op ty src1 src2 src3)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.AluRRRR op (operand_size ty) dst src1 src2 src3))))
+        dst))
+
+;; Helper for emitting paired `MInst.AluRRR` instructions
+(decl alu_rrr_with_flags_paired (Type Reg Reg ALUOp) ProducesFlags)
+(rule (alu_rrr_with_flags_paired ty src1 src2 alu_op)
+      (let ((dst WritableReg (temp_writable_reg $I64)))
+        (ProducesFlags.ProducesFlagsReturnsResultWithConsumer
+         (MInst.AluRRR alu_op (operand_size ty) dst src1 src2)
+         dst)))
+
+;; Should only be used for AdcS and SbcS
+(decl alu_rrr_with_flags_chained (Type Reg Reg ALUOp) ConsumesAndProducesFlags)
+(rule (alu_rrr_with_flags_chained ty src1 src2 alu_op)
+      (let ((dst WritableReg (temp_writable_reg $I64)))
+        (ConsumesAndProducesFlags.ReturnsReg
+         (MInst.AluRRR alu_op (operand_size ty) dst src1 src2)
+         dst)))
+
+;; Helper for emitting `MInst.BitRR` instructions.
+(decl bit_rr (BitOp Type Reg) Reg)
+(rule (bit_rr op ty src)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.BitRR op (operand_size ty) dst src))))
+        dst))
+
+;; Helper for emitting `adds` instructions.
+(decl add_with_flags_paired (Type Reg Reg) ProducesFlags)
+(rule (add_with_flags_paired ty src1 src2)
+      (let ((dst WritableReg (temp_writable_reg $I64)))
+        (ProducesFlags.ProducesFlagsReturnsResultWithConsumer
+         (MInst.AluRRR (ALUOp.AddS) (operand_size ty) dst src1 src2)
+         dst)))
+
+;; Helper for emitting `adc` instructions.
+(decl adc_paired (Type Reg Reg) ConsumesFlags)
+(rule (adc_paired ty src1 src2)
+      (let ((dst WritableReg (temp_writable_reg $I64)))
+        (ConsumesFlags.ConsumesFlagsReturnsResultWithProducer
+         (MInst.AluRRR (ALUOp.Adc) (operand_size ty) dst src1 src2)
+         dst)))
+
+;; Helper for emitting `subs` instructions.
+(decl sub_with_flags_paired (Type Reg Reg) ProducesFlags)
+(rule (sub_with_flags_paired ty src1 src2)
+      (let ((dst WritableReg (temp_writable_reg $I64)))
+        (ProducesFlags.ProducesFlagsReturnsResultWithConsumer
+         (MInst.AluRRR (ALUOp.SubS) (operand_size ty) dst src1 src2)
+         dst)))
+
+;; Helper for materializing a boolean value into a register from
+;; flags.
+(decl materialize_bool_result (Cond) ConsumesFlags)
+(rule (materialize_bool_result cond)
+      (let ((dst WritableReg (temp_writable_reg $I64)))
+        (ConsumesFlags.ConsumesFlagsReturnsReg
+         (MInst.CSet dst cond)
+         dst)))
+
+(decl cmn_imm (OperandSize Reg Imm12) ProducesFlags)
+(rule (cmn_imm size src1 src2)
+      (ProducesFlags.ProducesFlagsSideEffect
+       (MInst.AluRRImm12 (ALUOp.AddS) size (writable_zero_reg)
+        src1 src2)))
+
+(spec (cmp ty x y)
+  (provide (= result (subs ty x y)))
+  (require
+     (or (= ty 32) (= ty 64))))
+(decl cmp (OperandSize Reg Reg) ProducesFlags)
+(rule (cmp size src1 src2)
+      (ProducesFlags.ProducesFlagsSideEffect
+       (MInst.AluRRR (ALUOp.SubS) size (writable_zero_reg)
+        src1 src2)))
+
+(spec (cmp_imm ty x y)
+  (provide (= result (subs ty x (zero_ext 64 y))))
+  (require (or (= ty 32) (= ty 64))))
+(decl cmp_imm (OperandSize Reg Imm12) ProducesFlags)
+(rule (cmp_imm size src1 src2)
+      (ProducesFlags.ProducesFlagsSideEffect
+       (MInst.AluRRImm12 (ALUOp.SubS) size (writable_zero_reg)
+        src1 src2)))
+
+(decl cmp64_imm (Reg Imm12) ProducesFlags)
+(rule (cmp64_imm src1 src2)
+      (cmp_imm (OperandSize.Size64) src1 src2))
+
+(spec (cmp_extend ty x y extend)
+  (provide
+    (= result
+       (subs ty x
+         (switch extend
+           ((ExtendOp.UXTB) (zero_ext 64 (extract 7 0 y)))
+           ((ExtendOp.UXTH) (zero_ext 64 (extract 15 0 y)))
+           ((ExtendOp.UXTW) (zero_ext 64 (extract 31 0 y)))
+           ((ExtendOp.UXTX) (zero_ext 64 (extract 63 0 y)))
+           ((ExtendOp.SXTB) (sign_ext 64 (extract 7 0 y)))
+           ((ExtendOp.SXTH) (sign_ext 64 (extract 15 0 y)))
+           ((ExtendOp.SXTW) (sign_ext 64 (extract 31 0 y)))
+           ((ExtendOp.SXTX) (sign_ext 64 (extract 63 0 y)))))))
+  (require (or (= ty 32) (= ty 64))))
+(decl cmp_extend (OperandSize Reg Reg ExtendOp) ProducesFlags)
+(rule (cmp_extend size src1 src2 extend)
+      (ProducesFlags.ProducesFlagsSideEffect
+       (MInst.AluRRRExtend (ALUOp.SubS) size (writable_zero_reg)
+        src1 src2 extend)))
+
+;; Helper for emitting `sbc` instructions.
+(decl sbc_paired (Type Reg Reg) ConsumesFlags)
+(rule (sbc_paired ty src1 src2)
+      (let ((dst WritableReg (temp_writable_reg $I64)))
+        (ConsumesFlags.ConsumesFlagsReturnsResultWithProducer
+         (MInst.AluRRR (ALUOp.Sbc) (operand_size ty) dst src1 src2)
+         dst)))
+
+;; Helper for emitting `MInst.VecMisc` instructions.
+(decl vec_misc (VecMisc2 Reg VectorSize) Reg)
+(rule (vec_misc op src size)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.VecMisc op dst src size))))
+        dst))
+
+;; Helper for emitting `MInst.VecTbl` instructions.
+(decl vec_tbl (Reg Reg) Reg)
+(rule (vec_tbl rn rm)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.VecTbl dst rn rm))))
+        dst))
+
+(decl vec_tbl_ext (Reg Reg Reg) Reg)
+(rule (vec_tbl_ext ri rn rm)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.VecTblExt dst ri rn rm))))
+        dst))
+
+;; Helper for emitting `MInst.VecTbl2` instructions.
+(decl vec_tbl2 (Reg Reg Reg Type) Reg)
+(rule (vec_tbl2 rn rn2 rm ty)
+      (let (
+            (dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.VecTbl2 dst rn rn2 rm)))
+        )
+        dst))
+
+;; Helper for emitting `MInst.VecTbl2Ext` instructions.
+(decl vec_tbl2_ext (Reg Reg Reg Reg Type) Reg)
+(rule (vec_tbl2_ext ri rn rn2 rm ty)
+      (let (
+            (dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.VecTbl2Ext dst ri rn rn2 rm)))
+        )
+        dst))
+
+;; Helper for emitting `MInst.VecRRRLong` instructions.
+(decl vec_rrr_long (VecRRRLongOp Reg Reg bool) Reg)
+(rule (vec_rrr_long op src1 src2 high_half)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.VecRRRLong op dst src1 src2 high_half))))
+        dst))
+
+;; Helper for emitting `MInst.VecRRPairLong` instructions.
+(decl vec_rr_pair_long (VecRRPairLongOp Reg) Reg)
+(rule (vec_rr_pair_long op src)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.VecRRPairLong op dst src))))
+        dst))
+
+;; Helper for emitting `MInst.VecRRRLongMod` instructions.
+(decl vec_rrrr_long (VecRRRLongModOp Reg Reg Reg bool) Reg)
+(rule (vec_rrrr_long op src1 src2 src3 high_half)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.VecRRRLongMod op dst src1 src2 src3 high_half))))
+        dst))
+
+;; Helper for emitting `MInst.VecRRNarrow` instructions.
+(decl vec_rr_narrow_low (VecRRNarrowOp Reg ScalarSize) Reg)
+(rule (vec_rr_narrow_low op src size)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.VecRRNarrowLow op dst src size))))
+        dst))
+
+;; Helper for emitting `MInst.VecRRNarrow` instructions which update the
+;; high half of the destination register.
+(decl vec_rr_narrow_high (VecRRNarrowOp Reg Reg ScalarSize) Reg)
+(rule (vec_rr_narrow_high op mod src size)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.VecRRNarrowHigh op dst mod src size))))
+        dst))
+
+;; Helper for emitting `MInst.VecRRLong` instructions.
+(decl vec_rr_long (VecRRLongOp Reg bool) Reg)
+(rule (vec_rr_long op src high_half)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.VecRRLong op dst src high_half))))
+        dst))
+
+;; Helper for emitting `MInst.FpuCSel16` / `MInst.FpuCSel32` / `MInst.FpuCSel64`
+;; instructions.
+(decl fpu_csel (Type Cond Reg Reg) ConsumesFlags)
+(rule (fpu_csel $F16 cond if_true if_false)
+        (fpu_csel $F32 cond if_true if_false))
+
+(rule 1 (fpu_csel $F16 cond if_true if_false)
+        (if-let true (use_fp16))
+        (let ((dst WritableReg (temp_writable_reg $F16)))
+          (ConsumesFlags.ConsumesFlagsReturnsReg
+           (MInst.FpuCSel16 dst if_true if_false cond)
+           dst)))
+
+(rule (fpu_csel $F32 cond if_true if_false)
+      (let ((dst WritableReg (temp_writable_reg $F32)))
+        (ConsumesFlags.ConsumesFlagsReturnsReg
+         (MInst.FpuCSel32 dst if_true if_false cond)
+         dst)))
+
+(rule (fpu_csel $F64 cond if_true if_false)
+      (let ((dst WritableReg (temp_writable_reg $F64)))
+        (ConsumesFlags.ConsumesFlagsReturnsReg
+         (MInst.FpuCSel64 dst if_true if_false cond)
+         dst)))
+
+;; Helper for emitting `MInst.VecCSel` instructions.
+(decl vec_csel (Cond Reg Reg) ConsumesFlags)
+(rule (vec_csel cond if_true if_false)
+      (let ((dst WritableReg (temp_writable_reg $I8X16)))
+        (ConsumesFlags.ConsumesFlagsReturnsReg
+         (MInst.VecCSel dst if_true if_false cond)
+         dst)))
+
+;; Helper for emitting `MInst.FpuRound` instructions.
+(decl fpu_round (FpuRoundMode Reg) Reg)
+(rule (fpu_round op rn)
+      (let ((dst WritableReg (temp_writable_reg $F64))
+            (_ Unit (emit (MInst.FpuRound op dst rn))))
+        dst))
+
+;; Helper for emitting `MInst.FpuMove64` and `MInst.FpuMove128` instructions.
+(decl fpu_move (Type Reg) Reg)
+(rule (fpu_move _ src)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.FpuMove128 dst src))))
+        dst))
+(rule 1 (fpu_move (fits_in_64 _) src)
+      (let ((dst WritableReg (temp_writable_reg $F64))
+            (_ Unit (emit (MInst.FpuMove64 dst src))))
+        dst))
+
+;; Helper for emitting `MInst.MovToFpu` instructions.
+(spec (mov_to_fpu x s)
+  (provide (= result (zero_ext 64 (conv_to s x)))))
+(decl mov_to_fpu (Reg ScalarSize) Reg)
+(rule (mov_to_fpu x size)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.MovToFpu dst x size))))
+        dst))
+(rule 1 (mov_to_fpu x (ScalarSize.Size16))
+        (if-let false (use_fp16))
+        (mov_to_fpu x (ScalarSize.Size32)))
+
+;; Helper for emitting `MInst.FpuMoveFPImm` instructions.
+(decl fpu_move_fp_imm (ASIMDFPModImm ScalarSize) Reg)
+(rule (fpu_move_fp_imm imm size)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.FpuMoveFPImm dst imm size))))
+        dst))
+
+;; Helper for emitting `MInst.MovToVec` instructions.
+(decl mov_to_vec (Reg Reg u8 VectorSize) Reg)
+(rule (mov_to_vec src1 src2 lane size)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.MovToVec dst src1 src2 lane size))))
+        dst))
+
+;; Helper for emitting `MInst.VecMovElement` instructions.
+(decl mov_vec_elem (Reg Reg u8 u8 VectorSize) Reg)
+(rule (mov_vec_elem src1 src2 dst_idx src_idx size)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.VecMovElement dst src1 src2 dst_idx src_idx size))))
+        dst))
+
+;; Helper for emitting `MInst.MovFromVec` instructions.
+(spec (mov_from_vec x i s)
+  (provide
+    (= result
+       (switch s
+         (8
+           (switch i
+             (#x00 (zero_ext 64 (extract 7 0 x)))
+             (#x01 (zero_ext 64 (extract 15 8 x)))
+             (#x02 (zero_ext 64 (extract 23 16 x)))
+             (#x03 (zero_ext 64 (extract 31 24 x)))
+             (#x04 (zero_ext 64 (extract 39 32 x)))
+             (#x05 (zero_ext 64 (extract 47 40 x)))
+             (#x06 (zero_ext 64 (extract 55 48 x)))
+             (#x07 (zero_ext 64 (extract 63 56 x)))))
+         (16
+           (switch i
+             (#x00 (zero_ext 64 (extract 15 0 x)))
+             (#x01 (zero_ext 64 (extract 31 16 x)))
+             (#x03 (zero_ext 64 (extract 47 32 x)))
+             (#x04 (zero_ext 64 (extract 63 48 x)))))
+         (32
+           (switch i
+             (#x00 (zero_ext 64 (extract 31 0 x)))
+             (#x01 (zero_ext 64 (extract 63 32 x)))))))))
+(decl mov_from_vec (Reg u8 ScalarSize) Reg)
+(rule (mov_from_vec rn idx size)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.MovFromVec dst rn idx size))))
+        dst))
+
+;; Helper for emitting `MInst.MovFromVecSigned` instructions.
+(decl mov_from_vec_signed (Reg u8 VectorSize OperandSize) Reg)
+(rule (mov_from_vec_signed rn idx size scalar_size)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.MovFromVecSigned dst rn idx size scalar_size))))
+        dst))
+
+(decl fpu_move_from_vec (Reg u8 VectorSize) Reg)
+(rule (fpu_move_from_vec rn idx size)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.FpuMoveFromVec dst rn idx size))))
+        dst))
+
+;; Helper for emitting `MInst.Extend` instructions.
+(spec (extend a b c d)
+  (provide
+    (if b
+        (= result (sign_ext (bv2int d) (conv_to (bv2int c) a)))
+        (= result (zero_ext (bv2int d) (conv_to (bv2int c) a))))))
+(decl extend (Reg bool u8 u8) Reg)
+(rule (extend rn signed from_bits to_bits)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.Extend dst rn signed from_bits to_bits))))
+        dst))
+
+;; Helper for emitting `MInst.FpuExtend` instructions.
+(decl fpu_extend (Reg ScalarSize) Reg)
+(rule (fpu_extend src size)
+      (let ((dst WritableReg (temp_writable_reg $F32X4))
+            (_ Unit (emit (MInst.FpuExtend dst src size))))
+        dst))
+
+;; Helper for emitting `MInst.VecExtend` instructions.
+(decl vec_extend (VecExtendOp Reg bool ScalarSize) Reg)
+(rule (vec_extend op src high_half size)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.VecExtend op dst src high_half size))))
+        dst))
+
+;; Helper for emitting `MInst.VecExtract` instructions.
+(decl vec_extract (Reg Reg u8) Reg)
+(rule (vec_extract src1 src2 idx)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.VecExtract dst src1 src2 idx))))
+        dst))
+
+;; Helper for emitting `MInst.LoadAcquire` instructions.
+(decl load_acquire (Type MemFlags Reg) Reg)
+(rule (load_acquire ty flags addr)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.LoadAcquire ty dst addr flags))))
+        dst))
+
+;; Helper for emitting `MInst.StoreRelease` instructions.
+(decl store_release (Type MemFlags Reg Reg) SideEffectNoResult)
+(rule (store_release ty flags src addr)
+      (SideEffectNoResult.Inst (MInst.StoreRelease ty src addr flags)))
+
+;; Helper for generating a `tst` instruction.
+;;
+;; Produces a `ProducesFlags` rather than a register or emitted instruction
+;; which must be paired with `with_flags*` helpers.
+(decl tst_imm (Type Reg ImmLogic) ProducesFlags)
+(rule (tst_imm ty reg imm)
+      (ProducesFlags.ProducesFlagsSideEffect
+       (MInst.AluRRImmLogic (ALUOp.AndS)
+                            (operand_size ty)
+                            (writable_zero_reg)
+                            reg
+                            imm)))
+
+;; Helper for generating a `CSel` instruction.
+;;
+;; Note that this doesn't actually emit anything, instead it produces a
+;; `ConsumesFlags` instruction which must be consumed with `with_flags*`
+;; helpers.
+(decl csel (Cond Reg Reg) ConsumesFlags)
+(rule (csel cond if_true if_false)
+      (let ((dst WritableReg (temp_writable_reg $I64)))
+        (ConsumesFlags.ConsumesFlagsReturnsReg
+         (MInst.CSel dst cond if_true if_false)
+         dst)))
+
+;; Helper for constructing `cset` instructions.
+(decl cset (Cond) ConsumesFlags)
+(rule (cset cond)
+      (let ((dst WritableReg (temp_writable_reg $I64)))
+        (ConsumesFlags.ConsumesFlagsReturnsReg (MInst.CSet dst cond) dst)))
+
+;; Helper for constructing `cset` instructions, when the flags producer will
+;; also return a value.
+(decl cset_paired (Cond) ConsumesFlags)
+(rule (cset_paired cond)
+      (let ((dst WritableReg (temp_writable_reg $I64)))
+        (ConsumesFlags.ConsumesFlagsReturnsResultWithProducer (MInst.CSet dst cond) dst)))
+
+;; Helper for constructing `csetm` instructions.
+(decl csetm (Cond) ConsumesFlags)
+(rule (csetm cond)
+      (let ((dst WritableReg (temp_writable_reg $I64)))
+        (ConsumesFlags.ConsumesFlagsReturnsReg (MInst.CSetm dst cond) dst)))
+
+;; Helper for generating a `CSNeg` instruction.
+;;
+;; Note that this doesn't actually emit anything, instead it produces a
+;; `ConsumesFlags` instruction which must be consumed with `with_flags*`
+;; helpers.
+(decl csneg (Cond Reg Reg) ConsumesFlags)
+(rule (csneg cond if_true if_false)
+      (let ((dst WritableReg (temp_writable_reg $I64)))
+        (ConsumesFlags.ConsumesFlagsReturnsReg
+         (MInst.CSNeg dst cond if_true if_false)
+         dst)))
+
+;; Helper for generating `MInst.CCmp` instructions.
+;; Creates a new `ProducesFlags` from the supplied `ProducesFlags` followed
+;; immediately by the `MInst.CCmp` instruction.
+(decl ccmp (OperandSize Reg Reg NZCV Cond ProducesFlags) ProducesFlags)
+(rule (ccmp size rn rm nzcv cond inst_input)
+      (produces_flags_concat inst_input (ProducesFlags.ProducesFlagsSideEffect (MInst.CCmp size rn rm nzcv cond))))
+
+;; Helper for generating `MInst.CCmpImm` instructions.
+(decl ccmp_imm (OperandSize Reg UImm5 NZCV Cond) ConsumesFlags)
+(rule 1 (ccmp_imm size rn imm nzcv cond)
+      (let ((dst WritableReg (temp_writable_reg $I64)))
+        (ConsumesFlags.ConsumesFlagsTwiceReturnsValueRegs
+         (MInst.CCmpImm size rn imm nzcv cond)
+         (MInst.CSet dst cond)
+         (value_reg dst))))
+
+;; Helpers for generating `add` instructions.
+(spec (add ty a b)
+  (provide
+    (= result
+       (if (<= ty 32)
+           (conv_to 64 (bvadd (extract 31 0 a) (extract 31 0 b)))
+           (bvadd a b)))))
+(decl add (Type Reg Reg) Reg)
+(rule (add ty x y) (alu_rrr (ALUOp.Add) ty x y))
+
+(spec (add_imm ty a b)
+  (provide
+    (= result
+       (if (<= ty 32)
+           (conv_to 64 (bvadd (extract 31 0 a) (zero_ext 32 b)))
+           (bvadd a (zero_ext 64 b)))))
+  (require
+      (or
+            (= b (bvand b #x000fff))
+            (= b (bvand b #xfff000)))))
+(decl add_imm (Type Reg Imm12) Reg)
+(rule (add_imm ty x y) (alu_rr_imm12 (ALUOp.Add) ty x y))
+
+(spec (add_extend ty x y)
+    (provide
+      (= result
+         (if (<= ty 32)
+            (conv_to 64 (bvadd (extract 31 0 x)
+            (switch (extract 66 64 y)
+                  ((ExtendOp.UXTB) (zero_ext 32 (extract 7 0 y)))
+                  ((ExtendOp.UXTH) (zero_ext 32 (extract 15 0 y)))
+                  ((ExtendOp.UXTW) (zero_ext 32 (extract 31 0 y)))
+                  ((ExtendOp.UXTX) (zero_ext 32 (extract 31 0 y)))
+                  ((ExtendOp.SXTB) (sign_ext 32 (extract 7 0 y)))
+                  ((ExtendOp.SXTH) (sign_ext 32 (extract 15 0 y)))
+                  ((ExtendOp.SXTW) (sign_ext 32 (extract 31 0 y)))
+                  ((ExtendOp.SXTX) (sign_ext 32 (extract 31 0 y))))))
+            (bvadd x
+            (switch (extract 66 64 y)
+                  ((ExtendOp.UXTB) (zero_ext 64 (extract 7 0 y)))
+                  ((ExtendOp.UXTH) (zero_ext 64 (extract 15 0 y)))
+                  ((ExtendOp.UXTW) (zero_ext 64 (extract 31 0 y)))
+                  ((ExtendOp.UXTX) (zero_ext 64 (extract 63 0 y)))
+                  ((ExtendOp.SXTB) (sign_ext 64 (extract 7 0 y)))
+                  ((ExtendOp.SXTH) (sign_ext 64 (extract 15 0 y)))
+                  ((ExtendOp.SXTW) (sign_ext 64 (extract 31 0 y)))
+                  ((ExtendOp.SXTX) (sign_ext 64 (extract 63 0 y)))))))))
+(decl add_extend (Type Reg ExtendedValue) Reg)
+(rule (add_extend ty x y) (alu_rr_extend_reg (ALUOp.Add) ty x y))
+
+(decl add_extend_op (Type Reg Reg ExtendOp) Reg)
+(rule (add_extend_op ty x y extend) (alu_rrr_extend (ALUOp.Add) ty x y extend))
+
+(spec (add_shift ty a b shift)
+  (provide
+    (= result (if (<= ty 32)
+      (conv_to 64 (bvadd (extract 31 0 a)
+      (switch (extract 15 8 shift)
+        ((ALUOp.Lsl) (bvshl (extract 31 0 b) (zero_ext 32 (bvand (bvsub (int2bv 8 ty) #x01) (extract 7 0 shift)))))
+        ((ALUOp.Lsr) (bvlshr (extract 31 0 b) (zero_ext 32 (bvand (bvsub (int2bv 8 ty) #x01) (extract 7 0 shift)))))
+        ((ALUOp.Asr) (bvashr (extract 31 0 b) (zero_ext 32 (bvand (bvsub (int2bv 8 ty) #x01) (extract 7 0 shift))))))))
+      (bvadd a
+      (switch (extract 15 8 shift)
+        ((ALUOp.Lsl) (bvshl b (zero_ext 64 (bvand (bvsub (int2bv 8 ty) #x01) (extract 7 0 shift)))))
+        ((ALUOp.Lsr) (bvlshr b (zero_ext 64 (bvand (bvsub (int2bv 8 ty) #x01) (extract 7 0 shift)))))
+        ((ALUOp.Asr) (bvashr b (zero_ext 64 (bvand (bvsub (int2bv 8 ty) #x01) (extract 7 0 shift)))))))))))
+(decl add_shift (Type Reg Reg ShiftOpAndAmt) Reg)
+(rule (add_shift ty x y z) (alu_rrr_shift (ALUOp.Add) ty x y z))
+
+(decl add_vec (Reg Reg VectorSize) Reg)
+(rule (add_vec x y size) (vec_rrr (VecALUOp.Add) x y size))
+
+;; Helpers for generating `sub` instructions.
+(spec (sub ty a b)
+  (provide
+    (= result
+       (if (<= ty 32)
+           (conv_to 64 (bvsub (extract 31 0 a) (extract 31 0 b)))
+           (bvsub a b)))))
+(decl sub (Type Reg Reg) Reg)
+(rule (sub ty x y) (alu_rrr (ALUOp.Sub) ty x y))
+
+(spec (sub_imm ty a b)
+  (provide
+    (= result
+       (if (<= ty 32)
+           (conv_to 64 (bvsub (extract 31 0 a) (zero_ext 32 b)))
+           (bvsub a (zero_ext 64 b)))))
+  (require
+      (or
+            (= b (bvand b #x000fff))
+            (= b (bvand b #xfff000)))))
+(decl sub_imm (Type Reg Imm12) Reg)
+(rule (sub_imm ty x y) (alu_rr_imm12 (ALUOp.Sub) ty x y))
+
+(spec (sub_extend ty x y)
+    (provide
+      (= result
+         (if (<= ty 32)
+         (conv_to 64 (bvsub (extract 31 0 x)
+            (switch (extract 66 64 y)
+              ((ExtendOp.UXTB) (zero_ext 32 (extract 7 0 y)))
+              ((ExtendOp.UXTH) (zero_ext 32 (extract 15 0 y)))
+              ((ExtendOp.UXTW) (zero_ext 32 (extract 31 0 y)))
+              ((ExtendOp.UXTX) (zero_ext 32 (extract 31 0 y)))
+              ((ExtendOp.SXTB) (sign_ext 32 (extract 7 0 y)))
+              ((ExtendOp.SXTH) (sign_ext 32 (extract 15 0 y)))
+              ((ExtendOp.SXTW) (sign_ext 32 (extract 31 0 y)))
+              ((ExtendOp.SXTX) (sign_ext 32 (extract 31 0 y))))))
+         (bvsub x
+            (switch (extract 66 64 y)
+              ((ExtendOp.UXTB) (zero_ext 64 (extract 7 0 y)))
+              ((ExtendOp.UXTH) (zero_ext 64 (extract 15 0 y)))
+              ((ExtendOp.UXTW) (zero_ext 64 (extract 31 0 y)))
+              ((ExtendOp.UXTX) (zero_ext 64 (extract 63 0 y)))
+              ((ExtendOp.SXTB) (sign_ext 64 (extract 7 0 y)))
+              ((ExtendOp.SXTH) (sign_ext 64 (extract 15 0 y)))
+              ((ExtendOp.SXTW) (sign_ext 64 (extract 31 0 y)))
+              ((ExtendOp.SXTX) (sign_ext 64 (extract 63 0 y)))))))))
+(decl sub_extend (Type Reg ExtendedValue) Reg)
+(rule (sub_extend ty x y) (alu_rr_extend_reg (ALUOp.Sub) ty x y))
+
+(spec (sub_shift ty a b shift)
+  (provide
+    (= result (if (<= ty 32)
+      (conv_to 64 (bvsub (extract 31 0 a) (switch (extract 15 8 shift)
+        ((ALUOp.Lsl) (bvshl (extract 31 0 b) (zero_ext 32 (bvand (bvsub (int2bv 8 ty) #x01) (extract 7 0 shift)))))
+        ((ALUOp.Lsr) (bvlshr (extract 31 0 b) (zero_ext 32 (bvand (bvsub (int2bv 8 ty) #x01) (extract 7 0 shift)))))
+        ((ALUOp.Asr) (bvashr (extract 31 0 b) (zero_ext 32 (bvand (bvsub (int2bv 8 ty) #x01) (extract 7 0 shift))))))))
+      (bvsub a (switch (extract 15 8 shift)
+        ((ALUOp.Lsl) (bvshl b (zero_ext 64 (bvand (bvsub (int2bv 8 ty) #x01) (extract 7 0 shift)))))
+        ((ALUOp.Lsr) (bvlshr b (zero_ext 64 (bvand (bvsub (int2bv 8 ty) #x01) (extract 7 0 shift)))))
+        ((ALUOp.Asr) (bvashr b (zero_ext 64 (bvand (bvsub (int2bv 8 ty) #x01) (extract 7 0 shift)))))))))))
+(decl sub_shift (Type Reg Reg ShiftOpAndAmt) Reg)
+(rule (sub_shift ty x y z) (alu_rrr_shift (ALUOp.Sub) ty x y z))
+
+(decl sub_vec (Reg Reg VectorSize) Reg)
+(rule (sub_vec x y size) (vec_rrr (VecALUOp.Sub) x y size))
+
+(decl sub_i128 (ValueRegs ValueRegs) ValueRegs)
+(rule (sub_i128 x y)
+      (let
+          ;; Get the high/low registers for `x`.
+          ((x_regs ValueRegs x)
+           (x_lo Reg (value_regs_get x_regs 0))
+           (x_hi Reg (value_regs_get x_regs 1))
+
+           ;; Get the high/low registers for `y`.
+           (y_regs ValueRegs y)
+           (y_lo Reg (value_regs_get y_regs 0))
+           (y_hi Reg (value_regs_get y_regs 1)))
+        ;; the actual subtraction is `subs` followed by `sbc` which comprises
+        ;; the low/high bits of the result
+        (with_flags
+          (sub_with_flags_paired $I64 x_lo y_lo)
+          (sbc_paired $I64 x_hi y_hi))))
+
+;; Helpers for generating `madd` instructions.
+(spec (madd ty a b c)
+  (provide
+    (= result
+       (if (<= ty 32)
+           (conv_to 64 (bvadd (extract 31 0 c) (bvmul (extract 31 0 a) (extract 31 0 b))))
+           (bvadd c (bvmul a b))))))
+(decl madd (Type Reg Reg Reg) Reg)
+(rule (madd ty x y z) (alu_rrrr (ALUOp3.MAdd) ty x y z))
+
+;; Helpers for generating `msub` instructions.
+(spec (msub ty a b c)
+  (provide
+    (= result
+       (if (<= ty 32)
+           (conv_to 64 (bvsub (extract 31 0 c) (bvmul (extract 31 0 a) (extract 31 0 b))))
+           (bvsub c (bvmul a b))))))
+(decl msub (Type Reg Reg Reg) Reg)
+(rule (msub ty x y z) (alu_rrrr (ALUOp3.MSub) ty x y z))
+
+;; Helpers for generating `umaddl` instructions
+(decl umaddl (Reg Reg Reg) Reg)
+(rule (umaddl x y z) (alu_rrrr (ALUOp3.UMAddL) $I32 x y z))
+
+;; Helpers for generating `smaddl` instructions
+(decl smaddl (Reg Reg Reg) Reg)
+(rule (smaddl x y z) (alu_rrrr (ALUOp3.SMAddL) $I32 x y z))
+
+;; Helper for generating `uqadd` instructions.
+(decl uqadd (Reg Reg VectorSize) Reg)
+(rule (uqadd x y size) (vec_rrr (VecALUOp.Uqadd) x y size))
+
+;; Helper for generating `sqadd` instructions.
+(decl sqadd (Reg Reg VectorSize) Reg)
+(rule (sqadd x y size) (vec_rrr (VecALUOp.Sqadd) x y size))
+
+;; Helper for generating `uqsub` instructions.
+(decl uqsub (Reg Reg VectorSize) Reg)
+(rule (uqsub x y size) (vec_rrr (VecALUOp.Uqsub) x y size))
+
+;; Helper for generating `sqsub` instructions.
+(decl sqsub (Reg Reg VectorSize) Reg)
+(rule (sqsub x y size) (vec_rrr (VecALUOp.Sqsub) x y size))
+
+;; Helper for generating `umulh` instructions.
+(decl umulh (Type Reg Reg) Reg)
+(rule (umulh ty x y) (alu_rrr (ALUOp.UMulH) ty x y))
+
+;; Helper for generating `smulh` instructions.
+(decl smulh (Type Reg Reg) Reg)
+(rule (smulh ty x y) (alu_rrr (ALUOp.SMulH) ty x y))
+
+;; Helper for generating `mul` instructions.
+(decl mul (Reg Reg VectorSize) Reg)
+(rule (mul x y size) (vec_rrr (VecALUOp.Mul) x y size))
+
+;; Helper for generating `neg` instructions.
+(decl neg (Reg VectorSize) Reg)
+(rule (neg x size) (vec_misc (VecMisc2.Neg) x size))
+
+;; Helper for generating `rev16` instructions.
+(decl rev16 (Reg VectorSize) Reg)
+(rule (rev16 x size) (vec_misc (VecMisc2.Rev16) x size))
+
+;; Helper for generating `rev32` instructions.
+(decl rev32 (Reg VectorSize) Reg)
+(rule (rev32 x size) (vec_misc (VecMisc2.Rev32) x size))
+
+;; Helper for generating `rev64` instructions.
+(decl rev64 (Reg VectorSize) Reg)
+(rule (rev64 x size) (vec_misc (VecMisc2.Rev64) x size))
+
+;; Helper for generating `xtn` instructions.
+(decl xtn (Reg ScalarSize) Reg)
+(rule (xtn x size) (vec_rr_narrow_low (VecRRNarrowOp.Xtn) x size))
+
+;; Helper for generating `fcvtn` instructions.
+(decl fcvtn (Reg ScalarSize) Reg)
+(rule (fcvtn x size) (vec_rr_narrow_low (VecRRNarrowOp.Fcvtn) x size))
+
+;; Helper for generating `sqxtn` instructions.
+(decl sqxtn (Reg ScalarSize) Reg)
+(rule (sqxtn x size) (vec_rr_narrow_low (VecRRNarrowOp.Sqxtn) x size))
+
+;; Helper for generating `sqxtn2` instructions.
+(decl sqxtn2 (Reg Reg ScalarSize) Reg)
+(rule (sqxtn2 x y size) (vec_rr_narrow_high (VecRRNarrowOp.Sqxtn) x y size))
+
+;; Helper for generating `sqxtun` instructions.
+(decl sqxtun (Reg ScalarSize) Reg)
+(rule (sqxtun x size) (vec_rr_narrow_low (VecRRNarrowOp.Sqxtun) x size))
+
+;; Helper for generating `sqxtun2` instructions.
+(decl sqxtun2 (Reg Reg ScalarSize) Reg)
+(rule (sqxtun2 x y size) (vec_rr_narrow_high (VecRRNarrowOp.Sqxtun) x y size))
+
+;; Helper for generating `uqxtn` instructions.
+(decl uqxtn (Reg ScalarSize) Reg)
+(rule (uqxtn x size) (vec_rr_narrow_low (VecRRNarrowOp.Uqxtn) x size))
+
+;; Helper for generating `uqxtn2` instructions.
+(decl uqxtn2 (Reg Reg ScalarSize) Reg)
+(rule (uqxtn2 x y size) (vec_rr_narrow_high (VecRRNarrowOp.Uqxtn) x y size))
+
+;; Helper for generating `fence` instructions.
+(decl aarch64_fence () SideEffectNoResult)
+(rule (aarch64_fence)
+      (SideEffectNoResult.Inst (MInst.Fence)))
+
+;; Helper for generating `csdb` instructions.
+(decl csdb () SideEffectNoResult)
+(rule (csdb)
+      (SideEffectNoResult.Inst (MInst.Csdb)))
+
+;; Helper for generating `brk` instructions, hinted as being debug traps.
+(decl brk () SideEffectNoResult)
+(rule (brk)
+      (SideEffectNoResult.Inst (MInst.Brk)))
+
+;; Helper for generating `addp` instructions.
+(spec (addp x y s)
+  (provide
+    (= result
+       (switch s
+         (#x00 (concat
+         (bvadd (extract 55 48 x) (extract 63 56 x))
+         (bvadd (extract 39 32 x) (extract 47 40 x))
+         (bvadd (extract 23 16 x) (extract 31 24 x))
+         (bvadd (extract 7   0 x) (extract 15  8 x))
+         (bvadd (extract 55 48 y) (extract 63 56 y))
+         (bvadd (extract 39 32 y) (extract 47 40 y))
+         (bvadd (extract 23 16 y) (extract 31 24 y))
+         (bvadd (extract 7   0 y) (extract 15  8 y))))
+         (#x01 (concat
+         (bvadd (extract 47 32 x) (extract 63 48 x))
+         (bvadd (extract 15  0 x) (extract 31 16 x))
+         (bvadd (extract 47 32 y) (extract 63 48 y))
+         (bvadd (extract 15  0 y) (extract 31 16 y))))
+         (#x02 (concat
+         (bvadd (extract 31  0 x) (extract 63 32 x))
+         (bvadd (extract 31  0 y) (extract 63 32 y)))))))
+  (require (or (= s #x00) (= s #x01) (= s #x02))))
+(decl addp (Reg Reg VectorSize) Reg)
+(rule (addp x y size) (vec_rrr (VecALUOp.Addp) x y size))
+
+;; Helper for generating `zip1` instructions.
+(decl zip1 (Reg Reg VectorSize) Reg)
+(rule (zip1 x y size) (vec_rrr (VecALUOp.Zip1) x y size))
+
+;; Helper for generating vector `abs` instructions.
+(decl vec_abs (Reg VectorSize) Reg)
+(rule (vec_abs x size) (vec_misc (VecMisc2.Abs) x size))
+
+;; Helper for generating instruction sequences to calculate a scalar absolute
+;; value.
+(spec (abs s x)
+  (provide
+    (= result
+       (if (= s 32)
+           (conv_to 64
+                    (if (bvsge (extract 31 0 x) #x00000000)
+                        (extract 31 0 x)
+                        (bvneg (extract 31 0 x))))
+           (if (bvsge x #x0000000000000000) x (bvneg x)))))
+  (require (or (= s 32) (= s 64))))
+(decl abs (OperandSize Reg) Reg)
+(rule (abs size x)
+      (value_regs_get (with_flags (cmp_imm size x (u8_into_imm12 0))
+                                  (csneg (Cond.Gt) x x)) 0))
+
+;; Helper for generating `addv` instructions.
+(spec (addv x s)
+  (provide
+    (= result
+       (switch s
+         (#x00 (zero_ext 64
+         (bvadd (extract 7   0 x)
+         (bvadd (extract 15  8 x)
+         (bvadd (extract 23 16 x)
+         (bvadd (extract 31 24 x)
+         (bvadd (extract 39 32 x)
+         (bvadd (extract 47 40 x)
+         (bvadd (extract 55 48 x)
+         (extract 63 56 x))))))))))
+         (#x01 (zero_ext 64
+         (bvadd (extract 15 0 x)
+         (bvadd (extract 31 16 x)
+         (bvadd (extract 47 32 x)
+         (extract 63 48 x))))))
+         (#x02 (zero_ext 64
+         (bvadd (extract 31 0 x)
+         (extract 63 32 x)))))))
+  (require (or (= s #x00) (or (= s #x01) (= s #x02)))))
+(decl addv (Reg VectorSize) Reg)
+(rule (addv x size) (vec_lanes (VecLanesOp.Addv) x size))
+
+;; Helper for generating `shll32` instructions.
+(decl shll32 (Reg bool) Reg)
+(rule (shll32 x high_half) (vec_rr_long (VecRRLongOp.Shll32) x high_half))
+
+;; Helpers for generating `addlp` instructions.
+
+(decl saddlp8 (Reg) Reg)
+(rule (saddlp8 x) (vec_rr_pair_long (VecRRPairLongOp.Saddlp8) x))
+
+(decl saddlp16 (Reg) Reg)
+(rule (saddlp16 x) (vec_rr_pair_long (VecRRPairLongOp.Saddlp16) x))
+
+(decl uaddlp8 (Reg) Reg)
+(rule (uaddlp8 x) (vec_rr_pair_long (VecRRPairLongOp.Uaddlp8) x))
+
+(decl uaddlp16 (Reg) Reg)
+(rule (uaddlp16 x) (vec_rr_pair_long (VecRRPairLongOp.Uaddlp16) x))
+
+;; Helper for generating `umlal32` instructions.
+(decl umlal32 (Reg Reg Reg bool) Reg)
+(rule (umlal32 x y z high_half) (vec_rrrr_long (VecRRRLongModOp.Umlal32) x y z high_half))
+
+;; Helper for generating `smull8` instructions.
+(decl smull8 (Reg Reg bool) Reg)
+(rule (smull8 x y high_half) (vec_rrr_long (VecRRRLongOp.Smull8) x y high_half))
+
+;; Helper for generating `umull8` instructions.
+(decl umull8 (Reg Reg bool) Reg)
+(rule (umull8 x y high_half) (vec_rrr_long (VecRRRLongOp.Umull8) x y high_half))
+
+;; Helper for generating `smull16` instructions.
+(decl smull16 (Reg Reg bool) Reg)
+(rule (smull16 x y high_half) (vec_rrr_long (VecRRRLongOp.Smull16) x y high_half))
+
+;; Helper for generating `umull16` instructions.
+(decl umull16 (Reg Reg bool) Reg)
+(rule (umull16 x y high_half) (vec_rrr_long (VecRRRLongOp.Umull16) x y high_half))
+
+;; Helper for generating `smull32` instructions.
+(decl smull32 (Reg Reg bool) Reg)
+(rule (smull32 x y high_half) (vec_rrr_long (VecRRRLongOp.Smull32) x y high_half))
+
+;; Helper for generating `umull32` instructions.
+(decl umull32 (Reg Reg bool) Reg)
+(rule (umull32 x y high_half) (vec_rrr_long (VecRRRLongOp.Umull32) x y high_half))
+
+;; Helper for generating `asr` instructions.
+(decl asr (Type Reg Reg) Reg)
+(rule (asr ty x y) (alu_rrr (ALUOp.Asr) ty x y))
+
+(decl asr_imm (Type Reg ImmShift) Reg)
+(rule (asr_imm ty x imm) (alu_rr_imm_shift (ALUOp.Asr) ty x imm))
+
+;; Helper for generating `lsr` instructions.
+(spec (lsr ty a b)
+  (provide
+    (= result
+       (switch ty
+         (32 (conv_to 64 (bvlshr (extract 31 0 a) (extract 31 0 b))))
+         (64 (bvlshr a b))))))
+(decl lsr (Type Reg Reg) Reg)
+(rule (lsr ty x y) (alu_rrr (ALUOp.Lsr) ty x y))
+
+(spec (lsr_imm ty a b)
+  (provide
+    (= result
+       (switch ty
+         (32 (conv_to 64 (bvlshr (extract 31 0 a) (zero_ext 32 b))))
+         (64 (bvlshr a (zero_ext 64 b)))))))
+(decl lsr_imm (Type Reg ImmShift) Reg)
+(rule (lsr_imm ty x imm) (alu_rr_imm_shift (ALUOp.Lsr) ty x imm))
+
+;; Helper for generating `lsl` instructions.
+(spec (lsl ty a b)
+  (provide
+    (= result
+       (switch ty
+         (32 (conv_to 64 (bvshl (extract 31 0 a) (extract 31 0 b))))
+         (64 (bvshl a b))))))
+(decl lsl (Type Reg Reg) Reg)
+(rule (lsl ty x y) (alu_rrr (ALUOp.Lsl) ty x y))
+
+(spec (lsl_imm ty a b)
+  (provide
+    (= result
+       (switch ty
+         (32 (conv_to 64 (bvshl (extract 31 0 a) (zero_ext 32 b))))
+         (64 (bvshl a (zero_ext 64 b)))))))
+(decl lsl_imm (Type Reg ImmShift) Reg)
+(rule (lsl_imm ty x imm) (alu_rr_imm_shift (ALUOp.Lsl) ty x imm))
+
+;; Helper for generating `udiv` instructions.
+(spec (a64_udiv ty a b)
+  (provide
+    (= result
+       (if (<= ty 32)
+           (conv_to 64 (bvudiv (extract 31 0 a) (extract 31 0 b)))
+           (bvudiv a b)))))
+(decl a64_udiv (Type Reg Reg) Reg)
+(rule (a64_udiv ty x y) (alu_rrr (ALUOp.UDiv) ty x y))
+
+;; Helper for generating `sdiv` instructions.
+(spec (a64_sdiv ty a b)
+  (provide
+    (= result
+       (if (<= ty 32)
+           (conv_to 64 (bvsdiv (extract 31 0 a) (extract 31 0 b)))
+           (bvsdiv a b)))))
+(decl a64_sdiv (Type Reg Reg) Reg)
+(rule (a64_sdiv ty x y) (alu_rrr (ALUOp.SDiv) ty x y))
+
+;; Helper for generating `not` instructions.
+(decl not (Reg VectorSize) Reg)
+(rule (not x size) (vec_misc (VecMisc2.Not) x size))
+
+;; Helpers for generating `orr_not` instructions.
+(spec (orr_not ty a b)
+  (provide
+    (= result
+       (if (<= ty 32)
+           (conv_to 64 (bvor (extract 31 0 a) (bvnot (extract 31 0 b))))
+           (bvor a (bvnot b))))))
+(decl orr_not (Type Reg Reg) Reg)
+(rule (orr_not ty x y) (alu_rrr (ALUOp.OrrNot) ty x y))
+
+(spec (orr_not_shift ty a b shift)
+  (provide
+    (= result (if (<= ty 32)
+      (conv_to 64 (bvor a (bvnot (bvshl b (zero_ext 64 (bvand (bvsub (int2bv 8 ty) #x01) (extract 7 0 shift)))))))
+      (bvor a (bvnot (bvshl b (zero_ext 64 (bvand (bvsub (int2bv 8 ty) #x01) (extract 7 0 shift))))))))))
+(decl orr_not_shift (Type Reg Reg ShiftOpAndAmt) Reg)
+(rule (orr_not_shift ty x y shift) (alu_rrr_shift (ALUOp.OrrNot) ty x y shift))
+
+;; Helpers for generating `orr` instructions.
+(spec (orr ty a b)
+  (provide
+    (= result
+       (if (<= ty 32)
+         (conv_to 64 (bvor (extract 31 0 a) (extract 31 0 b)))
+         (bvor a b))))
+  (require (or (= ty 8) (= ty 16) (= ty 32) (= ty 64))))
+(decl orr (Type Reg Reg) Reg)
+(rule (orr ty x y) (alu_rrr (ALUOp.Orr) ty x y))
+
+(spec (orr_imm ty x y)
+  (provide
+    (= result
+       (switch ty
+         (32 (conv_to 64 (bvor (extract 31 0 x) (extract 31 0 y))))
+         (64 (bvor x (zero_ext 64 y))))))
+  (require
+      (or
+            (= y (bvand y #x0000000000000fff))
+            (= y (bvand y #x0000000000fff000)))))
+(decl orr_imm (Type Reg ImmLogic) Reg)
+(rule (orr_imm ty x y) (alu_rr_imm_logic (ALUOp.Orr) ty x y))
+
+(decl orr_shift (Type Reg Reg ShiftOpAndAmt) Reg)
+(rule (orr_shift ty x y shift) (alu_rrr_shift (ALUOp.Orr) ty x y shift))
+
+(decl orr_vec (Reg Reg VectorSize) Reg)
+(rule (orr_vec x y size) (vec_rrr (VecALUOp.Orr) x y size))
+
+;; Helpers for generating `and` instructions.
+(spec (and_reg ty a b)
+  (provide
+    (= result
+       (if (<= ty 32)
+         (conv_to 64 (bvand (extract 31 0 a) (extract 31 0 b)))
+         (bvand a b))))
+  (require (or (= ty 8) (= ty 16) (= ty 32) (= ty 64))))
+(decl and_reg (Type Reg Reg) Reg)
+(rule (and_reg ty x y) (alu_rrr (ALUOp.And) ty x y))
+
+(spec (and_imm ty x y)
+  (provide
+    (= result
+       (switch ty
+         (32 (conv_to 64 (bvand (extract 31 0 x) (extract 31 0 y))))
+         (64 (bvand x (zero_ext 64 y))))))
+  (require
+      (or
+            (= y (bvand y #x0000000000000fff))
+            (= y (bvand y #x0000000000fff000)))))
+(decl and_imm (Type Reg ImmLogic) Reg)
+(rule (and_imm ty x y) (alu_rr_imm_logic (ALUOp.And) ty x y))
+
+(decl and_vec (Reg Reg VectorSize) Reg)
+(rule (and_vec x y size) (vec_rrr (VecALUOp.And) x y size))
+
+;; Helpers for generating `eor` instructions.
+(decl eor (Type Reg Reg) Reg)
+(rule (eor ty x y) (alu_rrr (ALUOp.Eor) ty x y))
+
+(decl eor_vec (Reg Reg VectorSize) Reg)
+(rule (eor_vec x y size) (vec_rrr (VecALUOp.Eor) x y size))
+
+;; Helpers for generating `bic` instructions.
+(spec (bic ty a b)
+  (provide
+    (= result
+       (if (<= ty 32)
+         (conv_to 64 (bvand (extract 31 0 a) (bvnot (extract 31 0 b))))
+         (bvand a (bvnot b))
+       )
+    ))
+  (require (or (= ty 8) (= ty 16) (= ty 32) (= ty 64))))
+(decl bic (Type Reg Reg) Reg)
+(rule (bic ty x y) (alu_rrr (ALUOp.AndNot) ty x y))
+
+(decl bic_vec (Reg Reg VectorSize) Reg)
+(rule (bic_vec x y size) (vec_rrr (VecALUOp.Bic) x y size))
+
+;; Helpers for generating `sshl` instructions.
+(decl sshl (Reg Reg VectorSize) Reg)
+(rule (sshl x y size) (vec_rrr (VecALUOp.Sshl) x y size))
+
+;; Helpers for generating `ushl` instructions.
+(decl ushl (Reg Reg VectorSize) Reg)
+(rule (ushl x y size) (vec_rrr (VecALUOp.Ushl) x y size))
+
+;; Helpers for generating `ushl` instructions.
+(decl ushl_vec_imm (Reg u8 VectorSize) Reg)
+(rule (ushl_vec_imm x amt size) (vec_shift_imm (VecShiftImmOp.Shl) amt x size))
+
+;; Helpers for generating `ushr` instructions.
+(decl ushr_vec_imm (Reg u8 VectorSize) Reg)
+(rule (ushr_vec_imm x amt size) (vec_shift_imm (VecShiftImmOp.Ushr) amt x size))
+
+;; Helpers for generating `sshr` instructions.
+(decl sshr_vec_imm (Reg u8 VectorSize) Reg)
+(rule (sshr_vec_imm x amt size) (vec_shift_imm (VecShiftImmOp.Sshr) amt x size))
+
+;; Helpers for generating `rotr` instructions.
+;;
+;; Note that the `Extr` opcode is used here as `rotr` is an alias for that
+;; instruction where two operands are the same register.
+(spec (a64_rotr ty x y)
+  (provide
+    (= result
+       (if (= ty 32)
+           (zero_ext 64 (rotr (extract 31 0 x) (extract 31 0 y)))
+           (rotr x y))))
+  (require (or (= ty 32) (= ty 64))))
+(decl a64_rotr (Type Reg Reg) Reg)
+(rule (a64_rotr ty x y) (alu_rrr (ALUOp.Extr) ty x y))
+
+(spec (a64_rotr_imm ty x y)
+  (provide
+    (= result
+       (if (= ty 32)
+           (zero_ext 64 (rotr (extract 31 0 x) (zero_ext 32 y)))
+           (rotr x (zero_ext 64 y)))))
+  (require (or (= ty 32) (= ty 64))))
+(decl a64_rotr_imm (Type Reg ImmShift) Reg)
+(rule (a64_rotr_imm ty x y) (alu_rr_imm_shift (ALUOp.Extr) ty x y))
+
+;; Helpers for generating `extr` instructions
+(decl a64_extr (Type Reg Reg ImmShift) Reg)
+(rule (a64_extr ty x y shift) (alu_rrr_shift (ALUOp.Extr) ty x y (a64_extr_imm ty shift)))
+(decl a64_extr_imm (Type ImmShift) ShiftOpAndAmt)
+(extern constructor a64_extr_imm a64_extr_imm)
+
+;; Helpers for generating `rbit` instructions.
+(spec (rbit ty a)
+  (provide
+    (= result
+       (if (= ty 32)
+           (conv_to 64 (rev (extract 31 0 a)))
+           (rev a))))
+  (require (or (= ty 32) (= ty 64))))
+(decl rbit (Type Reg) Reg)
+(rule (rbit ty x) (bit_rr (BitOp.RBit) ty x))
+
+;; Helpers for generating `clz` instructions.
+(spec (a64_clz ty a)
+  (provide
+    (= result
+       (if (= ty 32)
+           (conv_to 64 (clz (extract 31 0 a)))
+           (clz a))))
+  (require (or (= ty 32) (= ty 64))))
+(decl a64_clz (Type Reg) Reg)
+(rule (a64_clz ty x) (bit_rr (BitOp.Clz) ty x))
+
+;; Helpers for generating `cls` instructions.
+(spec (a64_cls ty a)
+  (provide
+    (= result
+       (if (= ty 32)
+           (conv_to 64 (cls (extract 31 0 a)))
+           (cls a))))
+  (require (or (= ty 32) (= ty 64))))
+(decl a64_cls (Type Reg) Reg)
+(rule (a64_cls ty x) (bit_rr (BitOp.Cls) ty x))
+
+;; Helpers for generating `rev` instructions
+
+(decl a64_rev16 (Type Reg) Reg)
+(rule (a64_rev16 ty x) (bit_rr (BitOp.Rev16) ty x))
+
+(decl a64_rev32 (Type Reg) Reg)
+(rule (a64_rev32 ty x) (bit_rr (BitOp.Rev32) ty x))
+
+(decl a64_rev64 (Type Reg) Reg)
+(rule (a64_rev64 ty x) (bit_rr (BitOp.Rev64) ty x))
+
+;; Helpers for generating `eon` instructions.
+
+(decl eon (Type Reg Reg) Reg)
+(rule (eon ty x y) (alu_rrr (ALUOp.EorNot) ty x y))
+
+;; Helpers for generating `cnt` instructions.
+(spec (vec_cnt x s)
+  (provide
+    (= result
+       (switch s
+         ((VectorSize.Size8x8)
+           (concat
+             (popcnt (extract 63 56 x))
+             (popcnt (extract 55 48 x))
+             (popcnt (extract 47 40 x))
+             (popcnt (extract 39 32 x))
+             (popcnt (extract 31 24 x))
+             (popcnt (extract 23 16 x))
+             (popcnt (extract 15  8 x))
+             (popcnt (extract 7   0 x))))
+         ((VectorSize.Size16x4) result)
+         ((VectorSize.Size32x2) result))))
+  (require
+    (or (= s (VectorSize.Size8x8)) (= s (VectorSize.Size16x4)) (= s (VectorSize.Size32x2)))))
+(decl vec_cnt (Reg VectorSize) Reg)
+(rule (vec_cnt x size) (vec_misc (VecMisc2.Cnt) x size))
+
+;; Helpers for generating a `bsl` instruction.
+
+(decl bsl (Type Reg Reg Reg) Reg)
+(rule (bsl ty c x y)
+      (vec_rrr_mod (VecALUModOp.Bsl) c x y (vector_size ty)))
+
+;; Helper for generating a `udf` instruction.
+
+(decl udf (TrapCode) SideEffectNoResult)
+(rule (udf trap_code)
+      (SideEffectNoResult.Inst (MInst.Udf trap_code)))
+
+;; Helpers for generating various load instructions, with varying
+;; widths and sign/zero-extending properties.
+(decl aarch64_uload8 (AMode MemFlags) Reg)
+(spec (aarch64_uload8 amode flags)
+      (provide (= result (zero_ext 32 (load_effect flags 8 amode))))
+      (require (= 32 (widthof result))))
+(rule (aarch64_uload8 amode flags)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.ULoad8 dst amode flags))))
+        dst))
+(decl aarch64_sload8 (AMode MemFlags) Reg)
+(rule (aarch64_sload8 amode flags)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.SLoad8 dst amode flags))))
+        dst))
+(decl aarch64_uload16 (AMode MemFlags) Reg)
+(spec (aarch64_uload16 amode flags)
+      (provide (= result (zero_ext 32 (load_effect flags 16 amode))))
+      (require (= 32 (widthof result))))
+(rule (aarch64_uload16 amode flags)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.ULoad16 dst amode flags))))
+        dst))
+(decl aarch64_sload16 (AMode MemFlags) Reg)
+(rule (aarch64_sload16 amode flags)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.SLoad16 dst amode flags))))
+        dst))
+(decl aarch64_uload32 (AMode MemFlags) Reg)
+(spec (aarch64_uload32 amode flags)
+      (provide (= result (load_effect flags 32 amode)))
+      (require (= 32 (widthof result))))
+(rule (aarch64_uload32 amode flags)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.ULoad32 dst amode flags))))
+        dst))
+(decl aarch64_sload32 (AMode MemFlags) Reg)
+(rule (aarch64_sload32 amode flags)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.SLoad32 dst amode flags))))
+        dst))
+(decl aarch64_uload64 (AMode MemFlags) Reg)
+(spec (aarch64_uload64 amode flags)
+      (provide (= result (load_effect flags 64 amode)))
+      (require (= 64 (widthof result))))
+(rule (aarch64_uload64 amode flags)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.ULoad64 dst amode flags))))
+        dst))
+(decl aarch64_fpuload16 (AMode MemFlags) Reg)
+(rule (aarch64_fpuload16 amode flags)
+      (let ((dst WritableReg (temp_writable_reg $F64))
+            (_ Unit (emit (MInst.FpuLoad16 dst amode flags))))
+        dst))
+(decl aarch64_fpuload32 (AMode MemFlags) Reg)
+(rule (aarch64_fpuload32 amode flags)
+      (let ((dst WritableReg (temp_writable_reg $F64))
+            (_ Unit (emit (MInst.FpuLoad32 dst amode flags))))
+        dst))
+(decl aarch64_fpuload64 (AMode MemFlags) Reg)
+(rule (aarch64_fpuload64 amode flags)
+      (let ((dst WritableReg (temp_writable_reg $F64))
+            (_ Unit (emit (MInst.FpuLoad64 dst amode flags))))
+        dst))
+(decl aarch64_fpuload128 (AMode MemFlags) Reg)
+(rule (aarch64_fpuload128 amode flags)
+      (let ((dst WritableReg (temp_writable_reg $F64X2))
+            (_ Unit (emit (MInst.FpuLoad128 dst amode flags))))
+        dst))
+(decl aarch64_loadp64 (PairAMode MemFlags) ValueRegs)
+(rule (aarch64_loadp64 amode flags)
+      (let ((dst1 WritableReg (temp_writable_reg $I64))
+            (dst2 WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.LoadP64 dst1 dst2 amode flags))))
+        (value_regs dst1 dst2)))
+
+;; Helpers for generating various store instructions with varying
+;; widths.
+(decl aarch64_store8 (AMode MemFlags Reg) SideEffectNoResult)
+(spec (aarch64_store8 amode flags val)
+      (provide (= result (store_effect flags 8 (extract 7 0 val) amode))))
+(rule (aarch64_store8 amode flags val)
+      (SideEffectNoResult.Inst (MInst.Store8 val amode flags)))
+(decl aarch64_store16 (AMode MemFlags Reg) SideEffectNoResult)
+(spec (aarch64_store16 amode flags val)
+      (provide (= result (store_effect flags 16 (extract 15 0 val) amode))))
+(rule (aarch64_store16 amode flags val)
+      (SideEffectNoResult.Inst (MInst.Store16 val amode flags)))
+(decl aarch64_store32 (AMode MemFlags Reg) SideEffectNoResult)
+(spec (aarch64_store32 amode flags val)
+      (provide (= result (store_effect flags 32 (extract 31 0 val) amode))))
+(rule (aarch64_store32 amode flags val)
+      (SideEffectNoResult.Inst (MInst.Store32 val amode flags)))
+(decl aarch64_store64 (AMode MemFlags Reg) SideEffectNoResult)
+(spec (aarch64_store64 amode flags val)
+      (provide (= result (store_effect flags 64 val amode))))
+(rule (aarch64_store64 amode flags val)
+      (SideEffectNoResult.Inst (MInst.Store64 val amode flags)))
+(decl aarch64_fpustore16 (AMode MemFlags Reg) SideEffectNoResult)
+(rule (aarch64_fpustore16 amode flags val)
+      (SideEffectNoResult.Inst (MInst.FpuStore16 val amode flags)))
+(decl aarch64_fpustore32 (AMode MemFlags Reg) SideEffectNoResult)
+(rule (aarch64_fpustore32 amode flags val)
+      (SideEffectNoResult.Inst (MInst.FpuStore32 val amode flags)))
+(decl aarch64_fpustore64 (AMode MemFlags Reg) SideEffectNoResult)
+(rule (aarch64_fpustore64 amode flags val)
+      (SideEffectNoResult.Inst (MInst.FpuStore64 val amode flags)))
+(decl aarch64_fpustore128 (AMode MemFlags Reg) SideEffectNoResult)
+(rule (aarch64_fpustore128 amode flags val)
+      (SideEffectNoResult.Inst (MInst.FpuStore128 val amode flags)))
+(decl aarch64_storep64 (PairAMode MemFlags Reg Reg) SideEffectNoResult)
+(rule (aarch64_storep64 amode flags val1 val2)
+      (SideEffectNoResult.Inst (MInst.StoreP64 val1 val2 amode flags)))
+
+;; Helper for generating a `trapif` instruction.
+
+(decl trap_if (ProducesFlags TrapCode Cond) InstOutput)
+(rule (trap_if flags trap_code cond)
+      (side_effect
+       (with_flags_side_effect flags
+        (ConsumesFlags.ConsumesFlagsSideEffect
+         (MInst.TrapIf (cond_br_cond cond) trap_code)))))
+
+;; Helpers for lowering `trapz` and `trapnz`.
+(type ZeroCond
+      (enum
+       Zero
+       NonZero))
+
+(decl zero_cond_to_cond_br (ZeroCond Reg OperandSize) CondBrKind)
+(rule (zero_cond_to_cond_br (ZeroCond.Zero) reg size)
+      (cond_br_zero reg size))
+
+(rule (zero_cond_to_cond_br (ZeroCond.NonZero) reg size)
+      (cond_br_not_zero reg size))
+
+(decl trap_if_val (ZeroCond Value TrapCode) InstOutput)
+(rule (trap_if_val zero_cond val @ (value_type (fits_in_64 _)) trap_code)
+      (let ((reg Reg (put_in_reg_zext64 val)))
+      (side_effect
+       (SideEffectNoResult.Inst
+        (MInst.TrapIf (zero_cond_to_cond_br zero_cond reg (operand_size $I64)) trap_code)))))
+
+(rule -1 (trap_if_val zero_cond val @ (value_type $I128) trap_code)
+  (let ((c ValueRegs (put_in_regs val))
+        (c_lo Reg (value_regs_get c 0))
+        (c_hi Reg (value_regs_get c 1))
+        (c_test Reg (orr $I64 c_lo c_hi)))
+      (side_effect
+       (SideEffectNoResult.Inst
+        (MInst.TrapIf (zero_cond_to_cond_br zero_cond c_test (operand_size $I64)) trap_code)))))
+
+;; Immediate value helpers ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Type of extension performed by an immediate helper
+(model ImmExtend
+  (enum
+    (Sign #b0)
+    (Zero #b1)))
+(type ImmExtend
+  (enum
+    (Sign)
+    (Zero)))
+
+;; Arguments:
+;; * Immediate type
+;; * Way to extend the immediate value to the full width of the destination
+;;   register
+;; * Immediate value - only the bits that fit within the type are used and
+;;   extended, while the rest are ignored
+;;
+;; Note that, unlike the convention in the AArch64 backend, this helper leaves
+;; all bits in the destination register in a defined state, i.e. smaller types
+;; such as `I8` are either sign- or zero-extended.
+(spec (imm ty ext x)
+  (provide
+    (= result
+       (switch ty
+         (8 (if (= ext #b1) (zero_ext 64 (extract 7 0 x)) (sign_ext 64 (extract 7 0 x))))
+         (16 (if (= ext #b1) (zero_ext 64 (extract 15 0 x)) (sign_ext 64 (extract 15 0 x))))
+         (32 (if (= ext #b1) (zero_ext 64 (extract 32 0 x)) (sign_ext 64 (extract 32 0 x))))
+         (64 x))))
+  (require (or (= ty 8) (= ty 16) (= ty 32) (= ty 64))))
+(instantiate imm
+    ((args Int (bv 64)) (ret (bv 64)) (canon (bv 8)))
+    ((args Int (bv 64)) (ret (bv 64)) (canon (bv 16)))
+    ((args Int (bv 64)) (ret (bv 64)) (canon (bv 32)))
+    ((args Int (bv 64)) (ret (bv 64)) (canon (bv 64)))
+)
+(decl imm (Type ImmExtend u64) Reg)
+
+;; Move wide immediate instructions; to simplify, we only match when we
+;; are zero-extending the value.
+(rule 3 (imm (integral_ty ty) (ImmExtend.Zero) k)
+      (if-let n (move_wide_const_from_u64 ty k))
+      (add_range_fact
+       (movz n (operand_size ty))
+       64 k k))
+(rule 2 (imm (integral_ty (ty_32_or_64 ty)) (ImmExtend.Zero) k)
+      (if-let n (move_wide_const_from_inverted_u64 ty k))
+      (add_range_fact
+       (movn n (operand_size ty))
+       64 k k))
+
+;; Weird logical-instruction immediate in ORI using zero register; to simplify,
+;; we only match when we are zero-extending the value.
+(rule 1 (imm (integral_ty ty) (ImmExtend.Zero) k)
+      (if-let n (imm_logic_from_u64 ty k))
+      (if-let m (imm_size_from_type ty))
+      (add_range_fact
+       (orr_imm ty (zero_reg) n)
+       m k k))
+
+(decl load_constant_full (Type ImmExtend OperandSize u64) Reg)
+(extern constructor load_constant_full load_constant_full)
+
+;; Fallback for integral 32-bit constants
+(rule (imm (fits_in_32 (integral_ty ty)) extend n)
+      (load_constant_full ty extend (operand_size $I32) n))
+
+;; Fallback for integral 64-bit constants
+(rule -1 (imm (integral_ty $I64) extend n)
+      (load_constant_full $I64 extend (operand_size $I64) n))
+
+
+;; Sign extension helpers ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Place a `Value` into a register, sign extending it to 32-bits
+(spec (put_in_reg_sext32 arg)
+  (provide
+    (= result
+       (if (<= (widthof arg) 32)
+           (conv_to 64 (sign_ext 32 arg))
+           (conv_to 64 arg)))))
+(decl put_in_reg_sext32 (Value) Reg)
+(rule -1 (put_in_reg_sext32 val @ (value_type (fits_in_32 ty)))
+      (extend val true (ty_bits ty) 32))
+
+;; 32/64-bit passthrough.
+(rule (put_in_reg_sext32 val @ (value_type $I32)) val)
+(rule (put_in_reg_sext32 val @ (value_type $I64)) val)
+
+;; Place a `Value` into a register, zero extending it to 32-bits
+(spec (put_in_reg_zext32 arg)
+  (provide
+    (= result
+       (if (<= (widthof arg) 32)
+           (conv_to 64 (zero_ext 32 arg))
+           (conv_to 64 arg)))))
+(decl put_in_reg_zext32 (Value) Reg)
+(rule -1 (put_in_reg_zext32 val @ (value_type (fits_in_32 ty)))
+      (extend val false (ty_bits ty) 32))
+
+;; 32/64-bit passthrough.
+(rule (put_in_reg_zext32 val @ (value_type $I32)) val)
+(rule (put_in_reg_zext32 val @ (value_type $I64)) val)
+
+;; Place a `Value` into a register, sign extending it to 64-bits
+(spec (put_in_reg_sext64 x)
+      (provide (= (sign_ext 64 x) result)))
+(decl put_in_reg_sext64 (Value) Reg)
+(rule 1 (put_in_reg_sext64 val @ (value_type (fits_in_32 ty)))
+      (extend val true (ty_bits ty) 64))
+
+;; 64-bit passthrough.
+(rule (put_in_reg_sext64 val @ (value_type $I64)) val)
+
+;; Place a `Value` into a register, zero extending it to 64-bits
+(spec (put_in_reg_zext64 x)
+      (provide (= result (zero_ext 64 x))))
+(decl put_in_reg_zext64 (Value) Reg)
+(rule 1 (put_in_reg_zext64 val @ (value_type (fits_in_32 ty)))
+      (extend val false (ty_bits ty) 64))
+
+;; 64-bit passthrough.
+(rule (put_in_reg_zext64 val @ (value_type $I64)) val)
+
+;; Misc instruction helpers ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(decl trap_if_zero_divisor (Reg OperandSize) Reg)
+(rule (trap_if_zero_divisor reg size)
+      (let ((_ Unit (emit (MInst.TrapIf (cond_br_zero reg size ) (trap_code_division_by_zero)))))
+        reg))
+
+(decl size_from_ty (Type) OperandSize)
+(rule 1 (size_from_ty (fits_in_32 _ty)) (OperandSize.Size32))
+(rule (size_from_ty $I64) (OperandSize.Size64))
+
+;; Check for signed overflow. The only case is min_value / -1.
+;; The following checks must be done in 32-bit or 64-bit, depending
+;; on the input type. For 8- and 16- bit, the check for x == min_value
+;; must use a possibly-shifted value, xcheck, to overflow as expected.
+(decl trap_if_div_overflow (Type Reg Reg Reg) Reg)
+(rule (trap_if_div_overflow ty xcheck x y)
+      (let (
+          ;; Check RHS is -1.
+          (_ Unit (emit (MInst.AluRRImm12 (ALUOp.AddS) (operand_size ty) (writable_zero_reg) y (u8_into_imm12 1))))
+
+          ;; Check LHS is min_value, by subtracting 1 from the possibly-shifted
+          ;; value and branching if there is overflow.
+          (_ Unit (emit (MInst.CCmpImm (size_from_ty ty)
+                                       xcheck
+                                       (u8_into_uimm5 1)
+                                       (nzcv false false false false)
+                                       (Cond.Eq))))
+          (_ Unit (emit (MInst.TrapIf (cond_br_cond (Cond.Vs))
+                                      (trap_code_integer_overflow))))
+        )
+        x))
+
+;; In the cases narrower than a register width, subtracting 1 from the
+;; min_value will not cause overflow (e.g., I8's min_value of -128 stored in
+;; a 32-bit register produces -129 with no overflow). However, if we left shift
+;; x by (32 - ty), we then produce the 32-bit min_value for the respective min
+;; values of I8 and I16.
+;; E.g., I8's 0x00000080 left-shifted by 24 is 0x80000000, which overflows.
+(decl intmin_check (Type Reg) Reg)
+(rule intmin_check_fits_in_16 (intmin_check (fits_in_16 ty) x)
+      (alu_rr_imm_shift (ALUOp.Lsl) ty x (imm_shift_from_u8 (diff_from_32 ty))))
+
+;; In the I32 or I64 case, checking x itself against the min_value is fine.
+(rule -1 (intmin_check ty x) x)
+
+;; Check for unsigned overflow.
+(decl trap_if_overflow (ProducesFlags TrapCode) Reg)
+(rule (trap_if_overflow producer tc)
+      (with_flags_reg
+        producer
+        (ConsumesFlags.ConsumesFlagsSideEffect
+          (MInst.TrapIf (cond_br_cond (Cond.Hs)) tc))))
+
+(decl sink_atomic_load (Inst) Reg)
+(rule (sink_atomic_load x @ (atomic_load _ addr))
+      (let ((_ Unit (sink_inst x)))
+           (put_in_reg addr)))
+
+;; Helper for generating either an `AluRRR`, `AluRRRShift`, or `AluRRImmLogic`
+;; instruction depending on the input. Note that this requires that the `ALUOp`
+;; specified is commutative.
+(spec (alu_rs_imm_logic_commutative op t a b)
+    (provide
+      (= result
+         (conv_to 64
+           (switch op
+             ((ALUOp.Orr) (bvor a b))
+             ((ALUOp.And) (bvand a b))
+             ((ALUOp.Eor) (bvxor a b)))))))
+(decl alu_rs_imm_logic_commutative (ALUOp Type Value Value) Reg)
+
+;; Base case of operating on registers.
+(rule -1 (alu_rs_imm_logic_commutative op ty x y)
+      (alu_rrr op ty x y))
+
+;; Special cases for when one operand is a constant.
+(rule (alu_rs_imm_logic_commutative op ty x (iconst k))
+      (if-let imm (imm_logic_from_imm64 ty k))
+      (alu_rr_imm_logic op ty x imm))
+(rule 1 (alu_rs_imm_logic_commutative op ty (iconst k) x)
+      (if-let imm (imm_logic_from_imm64 ty k))
+      (alu_rr_imm_logic op ty x imm))
+
+;; Special cases for when one operand is shifted left by a constant.
+(rule (alu_rs_imm_logic_commutative op ty x (ishl y (iconst k)))
+      (if-let amt (lshl_from_imm64 ty k))
+      (alu_rrr_shift op ty x y amt))
+(rule 1 (alu_rs_imm_logic_commutative op ty (ishl x (iconst k)) y)
+      (if-let amt (lshl_from_imm64 ty k))
+      (alu_rrr_shift op ty y x amt))
+
+;; Same as `alu_rs_imm_logic_commutative` above, except that it doesn't require
+;; that the operation is commutative.
+(spec (alu_rs_imm_logic op t a b)
+    (provide
+      (= result
+         (conv_to 64
+           (switch op
+             ((ALUOp.OrrNot) (bvor a (bvnot b)))
+             ((ALUOp.EorNot) (bvxor a (bvnot b)))
+             ((ALUOp.AndNot) (bvand a (bvnot b))))))))
+(decl alu_rs_imm_logic (ALUOp Type Value Value) Reg)
+(rule -1 (alu_rs_imm_logic op ty x y)
+      (alu_rrr op ty x y))
+(rule (alu_rs_imm_logic op ty x (iconst k))
+      (if-let imm (imm_logic_from_imm64 ty k))
+      (alu_rr_imm_logic op ty x imm))
+(rule (alu_rs_imm_logic op ty x (ishl y (iconst k)))
+      (if-let amt (lshl_from_imm64 ty k))
+      (alu_rrr_shift op ty x y amt))
+
+;; Helper for generating i128 bitops which simply do the same operation to the
+;; hi/lo registers.
+;;
+;; TODO: Support immlogic here
+(decl i128_alu_bitop (ALUOp Type Value Value) ValueRegs)
+(rule (i128_alu_bitop op ty x y)
+      (let (
+          (x_regs ValueRegs (put_in_regs x))
+          (x_lo Reg (value_regs_get x_regs 0))
+          (x_hi Reg (value_regs_get x_regs 1))
+          (y_regs ValueRegs (put_in_regs y))
+          (y_lo Reg (value_regs_get y_regs 0))
+          (y_hi Reg (value_regs_get y_regs 1))
+        )
+        (value_regs
+          (alu_rrr op ty x_lo y_lo)
+          (alu_rrr op ty x_hi y_hi))))
+
+;; Helper for emitting `MInst.VecLoadReplicate` instructions.
+(decl ld1r (Reg VectorSize MemFlags) Reg)
+(rule (ld1r src size flags)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.VecLoadReplicate dst src size flags))))
+        dst))
+
+;; Helper for emitting `MInst.LoadExtName` instructions.
+(decl load_ext_name (BoxExternalName i64) Reg)
+(rule (load_ext_name extname offset)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.LoadExtName dst extname offset))))
+        dst))
+
+;; Lower the address of a load or a store.
+;;
+;; This will create an `AMode` representing the address of the `Value` provided
+;; at runtime plus the immediate offset `i32` provided. The `Type` here is used
+;; to represent the size of the value being loaded or stored for offset scaling
+;; if necessary.
+;;
+;; Note that this is broken up into two phases. In the first phase this attempts
+;; to find constants within the `val` provided and fold them in to the `offset`
+;; provided. Afterwards though the `amode_no_more_iconst` helper is used at
+;; which pointer constants are no longer pattern-matched and instead only
+;; various modes are generated. This in theory would not be necessary with
+;; mid-end optimizations that fold constants into load/store immediate offsets
+;; instead, but for now each backend needs to do this.
+(decl amode (Type Value i32) AMode)
+(spec (amode ty val offset)
+    (provide (= result (bvadd val (sign_ext 64 offset))))
+    (require (= 64 (widthof val))))
+
+(rule 0 (amode ty val offset)
+        (amode_no_more_iconst ty val offset))
+(rule 1 (amode ty (iadd x (i32_from_iconst y)) offset)
+        (if-let new_offset (i32_checked_add y offset))
+        (amode_no_more_iconst ty x new_offset))
+(rule 2 (amode ty (iadd (i32_from_iconst x) y) offset)
+        (if-let new_offset (i32_checked_add x offset))
+        (amode_no_more_iconst ty y new_offset))
+
+(decl amode_no_more_iconst (Type Value i32) AMode)
+;; Base case: move the `offset` into a register and add it to `val` via the
+;; amode
+(rule 0 (amode_no_more_iconst ty val offset)
+        (AMode.RegReg val (imm $I64 (ImmExtend.Zero) (i64_cast_unsigned offset))))
+
+;; Optimize cases where the `offset` provided fits into a immediates of
+;; various kinds of addressing modes.
+(rule 1 (amode_no_more_iconst ty val offset)
+        (if-let simm9 (simm9_from_i64 offset))
+        (AMode.Unscaled val simm9))
+(rule 2 (amode_no_more_iconst ty val offset)
+        (if-let uimm12 (uimm12_scaled_from_i64 offset ty))
+        (AMode.UnsignedOffset val uimm12))
+
+;; Optimizations where addition can fold some operations into the `amode`.
+;;
+;; Note that here these take higher priority than constants because an
+;; add-of-extend can be folded into an amode, representing 2 otherwise emitted
+;; instructions. Constants on the other hand added to the amode represent only
+;; a single instruction folded in, so fewer instructions should be generated
+;; with these higher priority than the rules above.
+(rule 3 (amode_no_more_iconst ty (iadd x y) offset)
+        (AMode.RegReg (amode_add x offset) y))
+(rule 4 (amode_no_more_iconst ty (iadd x (uextend y @ (value_type $I32))) offset)
+        (AMode.RegExtended (amode_add x offset) y (ExtendOp.UXTW)))
+(rule 4 (amode_no_more_iconst ty (iadd x (sextend y @ (value_type $I32))) offset)
+        (AMode.RegExtended (amode_add x offset) y (ExtendOp.SXTW)))
+(rule 5 (amode_no_more_iconst ty (iadd (uextend x @ (value_type $I32)) y) offset)
+        (AMode.RegExtended (amode_add y offset) x (ExtendOp.UXTW)))
+(rule 5 (amode_no_more_iconst ty (iadd (sextend x @ (value_type $I32)) y) offset)
+        (AMode.RegExtended (amode_add y offset) x (ExtendOp.SXTW)))
+
+;; `RegScaled*` rules where this matches an addition of an "index register" to a
+;; base register. The index register is shifted by the size of the type loaded
+;; in bytes to enable this mode matching.
+;;
+;; Note that this can additionally bundle an extending operation but the
+;; extension must happen before the shift. This will pattern-match the shift
+;; first and then if that succeeds afterwards try to find an extend.
+(rule 6 (amode_no_more_iconst ty (iadd x (ishl y @ (value_type shift_ty) (iconst (u64_from_imm64 n)))) offset)
+        (if-let true (u64_eq (ty_bytes ty) (u64_wrapping_shl 1 (shift_masked_imm shift_ty n))))
+        (amode_reg_scaled (amode_add x offset) y))
+(rule 7 (amode_no_more_iconst ty (iadd (ishl y @ (value_type shift_ty) (iconst (u64_from_imm64 n))) x) offset)
+        (if-let true (u64_eq (ty_bytes ty) (u64_wrapping_shl 1 (shift_masked_imm shift_ty n))))
+        (amode_reg_scaled (amode_add x offset) y))
+
+(decl amode_reg_scaled (Reg Value) AMode)
+(rule 0 (amode_reg_scaled base index)
+        (AMode.RegScaled base index))
+(rule 1 (amode_reg_scaled base (uextend index @ (value_type $I32)))
+        (AMode.RegScaledExtended base index (ExtendOp.UXTW)))
+(rule 1 (amode_reg_scaled base (sextend index @ (value_type $I32)))
+        (AMode.RegScaledExtended base index (ExtendOp.SXTW)))
+
+;; Helper to add a 32-bit signed immediate to the register provided. This will
+;; select an appropriate `add` instruction to use.
+(decl amode_add (Reg i32) Reg)
+(rule 0 (amode_add x y)
+        (add $I64 x (imm $I64 (ImmExtend.Zero) (i64_cast_unsigned y))))
+(rule 1 (amode_add x y)
+        (if-let (imm12_from_u64 imm12) (i64_cast_unsigned y))
+        (add_imm $I64 x imm12))
+(rule 2 (amode_add x 0) x)
+
+;; Creates a `PairAMode` for the `Value` provided plus the `i32` constant
+;; offset provided.
+(decl pair_amode (Value i32) PairAMode)
+
+;; Base case where `val` and `offset` are combined with an `add`
+(rule 0 (pair_amode val offset)
+        (if-let simm7 (simm7_scaled_from_i64 0 $I64))
+        (PairAMode.SignedOffset (amode_add val offset) simm7))
+
+;; Optimization when `offset` can fit into a `SImm7Scaled`.
+(rule 1 (pair_amode val offset)
+        (if-let simm7 (simm7_scaled_from_i64 offset $I64))
+        (PairAMode.SignedOffset val simm7))
+
+(decl pure partial simm7_scaled_from_i64 (i64 Type) SImm7Scaled)
+(extern constructor simm7_scaled_from_i64 simm7_scaled_from_i64)
+
+(decl pure partial uimm12_scaled_from_i64 (i64 Type) UImm12Scaled)
+(extern constructor uimm12_scaled_from_i64 uimm12_scaled_from_i64)
+
+(decl pure partial simm9_from_i64 (i64) SImm9)
+(extern constructor simm9_from_i64 simm9_from_i64)
+
+
+(decl sink_load_into_addr (Type Inst) Reg)
+(rule (sink_load_into_addr ty x @ (load _ addr (offset32 offset)))
+      (let ((_ Unit (sink_inst x)))
+        (add_imm_to_addr addr (i64_cast_unsigned offset))))
+
+(decl add_imm_to_addr (Reg u64) Reg)
+(rule 2 (add_imm_to_addr val 0) val)
+(rule 1 (add_imm_to_addr val (imm12_from_u64 imm)) (add_imm $I64 val imm))
+(rule 0 (add_imm_to_addr val offset) (add $I64 val (imm $I64 (ImmExtend.Zero) offset)))
+
+;; Lower a constant f16.
+;;
+;; Note that we must make sure that all bits outside the lowest 16 are set to 0
+;; because this function is also used to load wider constants (that have zeros
+;; in their most significant bits).
+(decl constant_f16 (u16) Reg)
+(rule 3 (constant_f16 n)
+        (if-let false (use_fp16))
+        (constant_f32 n))
+(rule 2 (constant_f16 0)
+        (vec_dup_imm (asimd_mov_mod_imm_zero (ScalarSize.Size32))
+                     false
+                     (VectorSize.Size32x2)))
+(rule 1 (constant_f16 n)
+        (if-let imm (asimd_fp_mod_imm_from_u64 n (ScalarSize.Size16)))
+        (fpu_move_fp_imm imm (ScalarSize.Size16)))
+(rule (constant_f16 n)
+      (mov_to_fpu (imm $I16 (ImmExtend.Zero) n) (ScalarSize.Size16)))
+
+;; Lower a constant f32.
+;;
+;; Note that we must make sure that all bits outside the lowest 32 are set to 0
+;; because this function is also used to load wider constants (that have zeros
+;; in their most significant bits).
+(decl constant_f32 (u32) Reg)
+(rule 3 (constant_f32 0)
+        (vec_dup_imm (asimd_mov_mod_imm_zero (ScalarSize.Size32))
+                     false
+                     (VectorSize.Size32x2)))
+(rule 2 (constant_f32 n)
+        (if-let imm (asimd_fp_mod_imm_from_u64 n (ScalarSize.Size32)))
+        (fpu_move_fp_imm imm (ScalarSize.Size32)))
+(rule 1 (constant_f32 (u16_from_u32 n))
+        (if-let true (use_fp16))
+        (constant_f16 n))
+(rule (constant_f32 n)
+      (mov_to_fpu (imm $I32 (ImmExtend.Zero) n) (ScalarSize.Size32)))
+
+;; Lower a constant f64.
+;;
+;; Note that we must make sure that all bits outside the lowest 64 are set to 0
+;; because this function is also used to load wider constants (that have zeros
+;; in their most significant bits).
+;; TODO: Treat as half of a 128 bit vector and consider replicated patterns.
+;; Scalar MOVI might also be an option.
+(decl constant_f64 (u64) Reg)
+(rule 4 (constant_f64 0)
+        (vec_dup_imm (asimd_mov_mod_imm_zero (ScalarSize.Size32))
+                     false
+                     (VectorSize.Size32x2)))
+(rule 3 (constant_f64 n)
+        (if-let imm (asimd_fp_mod_imm_from_u64 n (ScalarSize.Size64)))
+        (fpu_move_fp_imm imm (ScalarSize.Size64)))
+(rule 2 (constant_f64 (u32_from_u64 n))
+        (constant_f32 n))
+(rule 1 (constant_f64 (u64_low32_bits_unset n))
+        (mov_to_fpu (imm $I64 (ImmExtend.Zero) n) (ScalarSize.Size64)))
+(rule (constant_f64 n)
+      (fpu_load64 (AMode.Const (emit_u64_le_const n)) (mem_flags_trusted)))
+
+;; Tests whether the low 32 bits in the input are all zero.
+(decl u64_low32_bits_unset (u64) u64)
+(extern extractor u64_low32_bits_unset u64_low32_bits_unset)
+
+;; Lower a constant f128.
+(decl constant_f128 (u128) Reg)
+(rule 3 (constant_f128 0)
+        (vec_dup_imm (asimd_mov_mod_imm_zero (ScalarSize.Size8))
+                     false
+                     (VectorSize.Size8x16)))
+
+;; If the upper 64-bits are all zero then defer to `constant_f64`.
+(rule 2 (constant_f128 (u64_from_u128 n)) (constant_f64 n))
+
+;; If the low half of the u128 equals the high half then delegate to the splat
+;; logic as a splat of a 64-bit value.
+(rule 1 (constant_f128 (u128_replicated_u64 n))
+        (splat_const n (VectorSize.Size64x2)))
+
+;; Base case is to load the constant from memory.
+(rule (constant_f128 n)
+      (fpu_load128 (AMode.Const (emit_u128_le_const n)) (mem_flags_trusted)))
+
+;; Lower a vector splat with a constant parameter.
+;;
+;; The 64-bit input here only uses the low bits for the lane size in
+;; `VectorSize` and all other bits are ignored.
+(decl splat_const (u64 VectorSize) Reg)
+
+;; If the splat'd constant can itself be reduced in size then attempt to do so
+;; as it will make it easier to create the immediates in the instructions below.
+(rule 5 (splat_const (u64_replicated_u32 n) (VectorSize.Size64x2))
+        (splat_const n (VectorSize.Size32x4)))
+(rule 5 (splat_const (u32_replicated_u16 n) (VectorSize.Size32x4))
+        (splat_const n (VectorSize.Size16x8)))
+(rule 5 (splat_const (u32_replicated_u16 n) (VectorSize.Size32x2))
+        (splat_const n (VectorSize.Size16x4)))
+(rule 5 (splat_const (u16_replicated_u8 n) (VectorSize.Size16x8))
+        (splat_const n (VectorSize.Size8x16)))
+(rule 5 (splat_const (u16_replicated_u8 n) (VectorSize.Size16x4))
+        (splat_const n (VectorSize.Size8x8)))
+
+;; Special cases for `vec_dup_imm` instructions where the input is either
+;; negated or not.
+(rule 4 (splat_const n size)
+        (if-let imm (asimd_mov_mod_imm_from_u64 n (vector_lane_size size)))
+        (vec_dup_imm imm false size))
+(rule 3 (splat_const n size)
+        (if-let imm (asimd_mov_mod_imm_from_u64 (u64_not n) (vector_lane_size size)))
+        (vec_dup_imm imm true size))
+
+;; Special case a 32-bit splat where an immediate can be created by
+;; concatenating the 32-bit constant into a 64-bit value
+(rule 2 (splat_const n (VectorSize.Size32x4))
+        (if-let imm (asimd_mov_mod_imm_from_u64 (u64_or n (u64_wrapping_shl n 32)) (ScalarSize.Size64)))
+        (vec_dup_imm imm false (VectorSize.Size64x2)))
+(rule 2 (splat_const n (VectorSize.Size32x2))
+        (if-let imm (asimd_mov_mod_imm_from_u64 (u64_or n (u64_wrapping_shl n 32)) (ScalarSize.Size64)))
+        (fpu_extend (vec_dup_imm imm false (VectorSize.Size64x2)) (ScalarSize.Size64)))
+
+(rule 1 (splat_const n size)
+        (if-let true (vec_dup_fp_imm_supports_lane_size (vector_lane_size size)))
+        (if-let imm (asimd_fp_mod_imm_from_u64 n (vector_lane_size size)))
+        (vec_dup_fp_imm imm size))
+
+(decl pure vec_dup_fp_imm_supports_lane_size (ScalarSize) bool)
+(rule 1 (vec_dup_fp_imm_supports_lane_size (ScalarSize.Size32)) true)
+(rule 1 (vec_dup_fp_imm_supports_lane_size (ScalarSize.Size64)) true)
+(rule (vec_dup_fp_imm_supports_lane_size _) false)
+
+;; The base case for splat is to use `vec_dup` with the immediate loaded into a
+;; register.
+(rule (splat_const n size)
+      (vec_dup (imm $I64 (ImmExtend.Zero) n) size))
+
+;; Lower a FloatCC to a Cond.
+(decl fp_cond_code (FloatCC) Cond)
+;; TODO: Port lower_fp_condcode() to ISLE.
+(extern constructor fp_cond_code fp_cond_code)
+
+;; Lower an integer cond code.
+(spec (cond_code a) (provide (= a result)))
+(decl cond_code (IntCC) Cond)
+;; TODO: Port lower_condcode() to ISLE.
+(extern constructor cond_code cond_code)
+
+;; Invert a condition code.
+(decl invert_cond (Cond) Cond)
+;; TODO: Port cond.invert() to ISLE.
+(extern constructor invert_cond invert_cond)
+
+;; Generate comparison to zero operator from input condition code
+(decl float_cc_cmp_zero_to_vec_misc_op (FloatCC) VecMisc2)
+(extern constructor float_cc_cmp_zero_to_vec_misc_op float_cc_cmp_zero_to_vec_misc_op)
+
+(decl float_cc_cmp_zero_to_vec_misc_op_swap (FloatCC) VecMisc2)
+(extern constructor float_cc_cmp_zero_to_vec_misc_op_swap float_cc_cmp_zero_to_vec_misc_op_swap)
+
+;; Match valid generic compare to zero cases
+(decl fcmp_zero_cond (FloatCC) FloatCC)
+(extern extractor fcmp_zero_cond fcmp_zero_cond)
+
+;; Match not equal compare to zero separately as it requires two output instructions
+(decl fcmp_zero_cond_not_eq (FloatCC) FloatCC)
+(extern extractor fcmp_zero_cond_not_eq fcmp_zero_cond_not_eq)
+
+;; Helper for generating float compare to zero instructions where 2nd argument is zero
+(decl float_cmp_zero (FloatCC Reg VectorSize) Reg)
+(rule (float_cmp_zero cond rn size)
+      (vec_misc (float_cc_cmp_zero_to_vec_misc_op cond) rn size))
+
+;; Helper for generating float compare to zero instructions in case where 1st argument is zero
+(decl float_cmp_zero_swap (FloatCC Reg VectorSize) Reg)
+(rule (float_cmp_zero_swap cond rn size)
+      (vec_misc (float_cc_cmp_zero_to_vec_misc_op_swap cond) rn size))
+
+;; Helper for generating float compare equal to zero instruction
+(decl fcmeq0 (Reg VectorSize) Reg)
+(rule (fcmeq0 rn size)
+      (vec_misc (VecMisc2.Fcmeq0) rn size))
+
+;; Generate comparison to zero operator from input condition code
+(decl int_cc_cmp_zero_to_vec_misc_op (IntCC) VecMisc2)
+(extern constructor int_cc_cmp_zero_to_vec_misc_op int_cc_cmp_zero_to_vec_misc_op)
+
+(decl int_cc_cmp_zero_to_vec_misc_op_swap (IntCC) VecMisc2)
+(extern constructor int_cc_cmp_zero_to_vec_misc_op_swap int_cc_cmp_zero_to_vec_misc_op_swap)
+
+;; Match valid generic compare to zero cases
+(decl icmp_zero_cond (IntCC) IntCC)
+(extern extractor icmp_zero_cond icmp_zero_cond)
+
+;; Match not equal compare to zero separately as it requires two output instructions
+(decl icmp_zero_cond_not_eq (IntCC) IntCC)
+(extern extractor icmp_zero_cond_not_eq icmp_zero_cond_not_eq)
+
+;; Helper for generating int compare to zero instructions where 2nd argument is zero
+(decl int_cmp_zero (IntCC Reg VectorSize) Reg)
+(rule (int_cmp_zero cond rn size)
+      (vec_misc (int_cc_cmp_zero_to_vec_misc_op cond) rn size))
+
+;; Helper for generating int compare to zero instructions in case where 1st argument is zero
+(decl int_cmp_zero_swap (IntCC Reg VectorSize) Reg)
+(rule (int_cmp_zero_swap cond rn size)
+      (vec_misc (int_cc_cmp_zero_to_vec_misc_op_swap cond) rn size))
+
+;; Helper for generating int compare equal to zero instruction
+(decl cmeq0 (Reg VectorSize) Reg)
+(rule (cmeq0 rn size)
+      (vec_misc (VecMisc2.Cmeq0) rn size))
+
+;; Helper for emitting `MInst.AtomicRMW` instructions.
+(decl lse_atomic_rmw (AtomicRMWOp Value Reg Type MemFlags) Reg)
+(rule (lse_atomic_rmw op p r_arg2 ty flags)
+      (let (
+          (r_addr Reg p)
+          (dst WritableReg (temp_writable_reg ty))
+          (_ Unit (emit (MInst.AtomicRMW op r_arg2 dst r_addr ty flags)))
+        )
+        dst))
+
+;; Helper for emitting `MInst.AtomicCAS` instructions.
+(decl lse_atomic_cas (Reg Reg Reg Type MemFlags) Reg)
+(rule (lse_atomic_cas addr expect replace ty flags)
+      (let (
+            (dst WritableReg (temp_writable_reg ty))
+            (_ Unit (emit (MInst.AtomicCAS dst expect replace addr ty flags)))
+          )
+          dst))
+
+;; Helper for emitting `MInst.AtomicRMWLoop` instructions.
+;; - Make sure that both args are in virtual regs, since in effect
+;; we have to do a parallel copy to get them safely to the AtomicRMW input
+;; regs, and that's not guaranteed safe if either is in a real reg.
+;; - Move the args to the preordained AtomicRMW input regs
+;; - And finally, copy the preordained AtomicRMW output reg to its destination.
+(decl atomic_rmw_loop (AtomicRMWLoopOp Reg Reg Type MemFlags) Reg)
+(rule (atomic_rmw_loop op addr operand ty flags)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (scratch1 WritableReg (temp_writable_reg $I64))
+            (scratch2 WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.AtomicRMWLoop ty op flags addr operand dst scratch1 scratch2))))
+        dst))
+
+;; Helper for emitting `MInst.AtomicCASLoop` instructions.
+;; This is very similar to, but not identical to, the AtomicRmw case.  Note
+;; that the AtomicCASLoop sequence does its own masking, so we don't need to worry
+;; about zero-extending narrow (I8/I16/I32) values here.
+;; Make sure that all three args are in virtual regs.  See corresponding comment
+;; for `atomic_rmw_loop` above.
+(decl atomic_cas_loop (Reg Reg Reg Type MemFlags) Reg)
+(rule (atomic_cas_loop addr expect replace ty flags)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (scratch WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.AtomicCASLoop ty flags addr expect replace dst scratch))))
+        dst))
+
+;; Helper for emitting `MInst.MovPReg` instructions.
+(decl mov_from_preg (PReg) Reg)
+(rule (mov_from_preg src)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.MovFromPReg dst src))))
+        dst))
+
+(decl mov_to_preg (PReg Reg) SideEffectNoResult)
+(rule (mov_to_preg dst src)
+      (SideEffectNoResult.Inst (MInst.MovToPReg dst src)))
+
+(decl preg_sp () PReg)
+(extern constructor preg_sp preg_sp)
+
+(decl preg_fp () PReg)
+(extern constructor preg_fp preg_fp)
+
+(decl preg_link () PReg)
+(extern constructor preg_link preg_link)
+
+(decl preg_pinned () PReg)
+(extern constructor preg_pinned preg_pinned)
+
+(decl aarch64_sp () Reg)
+(rule (aarch64_sp)
+      (mov_from_preg (preg_sp)))
+
+(decl aarch64_fp () Reg)
+(rule (aarch64_fp)
+      (mov_from_preg (preg_fp)))
+
+(decl aarch64_link () Reg)
+(rule 1 (aarch64_link)
+      (if (preserve_frame_pointers))
+      (if (sign_return_address_disabled))
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            ;; Even though LR is not an allocatable register, whether it
+            ;; contains the return address for the current function is
+            ;; unknown at this point. For example, this operation may come
+            ;; immediately after a call, in which case LR would not have a
+            ;; valid value. That's why we must obtain the return address from
+            ;; the frame record that corresponds to the current subroutine on
+            ;; the stack; the presence of the record is guaranteed by the
+            ;; `preserve_frame_pointers` setting.
+            (addr AMode (AMode.FPOffset 8))
+            (_ Unit (emit (MInst.ULoad64 dst addr (mem_flags_trusted)))))
+           dst))
+
+(rule (aarch64_link)
+      (if (preserve_frame_pointers))
+      ;; Similarly to the rule above, we must load the return address from the
+      ;; the frame record. Furthermore, we can use LR as a scratch register
+      ;; because the function will set it to the return address immediately
+      ;; before returning.
+      (let ((addr AMode (AMode.FPOffset 8))
+            (lr WritableReg (writable_link_reg))
+            (_ Unit (emit (MInst.ULoad64 lr addr (mem_flags_trusted))))
+            (_ Unit (emit (MInst.Xpaclri))))
+           (mov_from_preg (preg_link))))
+
+;; Helper for getting the maximum shift amount for a type.
+
+(decl max_shift (Type) u8)
+(rule (max_shift $F64) 63)
+(rule (max_shift $F32) 31)
+
+;; Helper for generating `fcopysign` instruction sequences.
+
+(decl fcopy_sign (Reg Reg Type) Reg)
+(rule 1 (fcopy_sign x y (ty_scalar_float ty))
+      (let ((dst WritableReg (temp_writable_reg $F64))
+            (tmp Reg (fpu_rri (fpu_op_ri_ushr (ty_bits ty) (max_shift ty)) y))
+            (_ Unit (emit (MInst.FpuRRIMod (fpu_op_ri_sli (ty_bits ty) (max_shift ty)) dst x tmp))))
+       dst))
+(rule (fcopy_sign x y ty @ (multi_lane _ _))
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (tmp Reg (ushr_vec_imm y (max_shift (lane_type ty)) (vector_size ty)))
+            (_ Unit (emit (MInst.VecShiftImmMod (VecShiftImmModOp.Sli) dst x tmp (vector_size ty) (max_shift (lane_type ty))))))
+       dst))
+
+;; Helpers for generating `MInst.FpuToInt` instructions.
+
+(decl fpu_to_int_nan_check (ScalarSize Reg) Reg)
+(rule (fpu_to_int_nan_check size src)
+      (let ((r ValueRegs
+                  (with_flags (fpu_cmp size src src)
+                   (ConsumesFlags.ConsumesFlagsReturnsReg
+                    (MInst.TrapIf (cond_br_cond (Cond.Vs))
+                        (trap_code_bad_conversion_to_integer))
+                    src))))
+       (value_regs_get r 0)))
+
+;; Checks that the value is not less than the minimum bound,
+;; accepting a boolean (whether the type is signed), input type,
+;; output type, and registers containing the source and minimum bound.
+(decl fpu_to_int_underflow_check (bool Type Type Reg Reg) Reg)
+(rule (fpu_to_int_underflow_check true $F32 (fits_in_16 out_ty) src min)
+      (let ((r ValueRegs
+                  (with_flags (fpu_cmp (ScalarSize.Size32) src min)
+                   (ConsumesFlags.ConsumesFlagsReturnsReg
+                    (MInst.TrapIf (cond_br_cond (Cond.Le))
+                        (trap_code_integer_overflow))
+                    src))))
+       (value_regs_get r 0)))
+(rule (fpu_to_int_underflow_check true $F64 (fits_in_32 out_ty) src min)
+      (let ((r ValueRegs
+                  (with_flags (fpu_cmp (ScalarSize.Size64) src min)
+                   (ConsumesFlags.ConsumesFlagsReturnsReg
+                    (MInst.TrapIf (cond_br_cond (Cond.Le))
+                        (trap_code_integer_overflow))
+                    src))))
+       (value_regs_get r 0)))
+(rule -1 (fpu_to_int_underflow_check true in_ty _out_ty src min)
+      (let ((r ValueRegs
+                  (with_flags (fpu_cmp (scalar_size in_ty) src min)
+                   (ConsumesFlags.ConsumesFlagsReturnsReg
+                    (MInst.TrapIf (cond_br_cond (Cond.Lt))
+                        (trap_code_integer_overflow))
+                    src))))
+       (value_regs_get r 0)))
+(rule (fpu_to_int_underflow_check false in_ty _out_ty src min)
+      (let ((r ValueRegs
+                  (with_flags (fpu_cmp (scalar_size in_ty) src min)
+                   (ConsumesFlags.ConsumesFlagsReturnsReg
+                    (MInst.TrapIf (cond_br_cond (Cond.Le))
+                        (trap_code_integer_overflow))
+                    src))))
+       (value_regs_get r 0)))
+
+(decl fpu_to_int_overflow_check (ScalarSize Reg Reg) Reg)
+(rule (fpu_to_int_overflow_check size src max)
+      (let ((r ValueRegs
+                  (with_flags (fpu_cmp size src max)
+                   (ConsumesFlags.ConsumesFlagsReturnsReg
+                    (MInst.TrapIf (cond_br_cond (Cond.Ge))
+                        (trap_code_integer_overflow))
+                    src))))
+       (value_regs_get r 0)))
+
+;; Emits the appropriate instruction sequence to convert a
+;; floating-point value to an integer, trapping if the value
+;; is a NaN or does not fit in the target type.
+;; Accepts the specific conversion op, the source register,
+;; whether the input is signed, and finally the input and output
+;; types.
+(decl fpu_to_int_cvt (FpuToIntOp Reg bool Type Type) Reg)
+(rule (fpu_to_int_cvt op src signed in_ty out_ty)
+      (let ((size ScalarSize (scalar_size in_ty))
+            (in_bits u8 (ty_bits in_ty))
+            (out_bits u8 (ty_bits out_ty))
+            (src Reg (fpu_to_int_nan_check size src))
+            (min Reg (min_fp_value signed in_bits out_bits))
+            (src Reg (fpu_to_int_underflow_check signed in_ty out_ty src min))
+            (max Reg (max_fp_value signed in_bits out_bits))
+            (src Reg (fpu_to_int_overflow_check size src max)))
+       (fpu_to_int op src)))
+
+;; Emits the appropriate instruction sequence to convert a
+;; floating-point value to an integer, saturating if the value
+;; does not fit in the target type.
+;; Accepts the specific conversion op, the source register,
+;; whether the input is signed, and finally the output type.
+(decl fpu_to_int_cvt_sat (FpuToIntOp Reg bool Type) Reg)
+(rule 1 (fpu_to_int_cvt_sat op src _ $I64)
+      (fpu_to_int op src))
+(rule 1 (fpu_to_int_cvt_sat op src _ $I32)
+      (fpu_to_int op src))
+(rule (fpu_to_int_cvt_sat op src false (fits_in_16 out_ty))
+      (let ((result Reg (fpu_to_int op src))
+            (max Reg (imm out_ty (ImmExtend.Zero) (ty_mask out_ty))))
+       (with_flags_reg
+        (cmp (OperandSize.Size32) result max)
+        (csel (Cond.Hi) max result))))
+(rule (fpu_to_int_cvt_sat op src true (fits_in_16 out_ty))
+      (let ((result Reg (fpu_to_int op src))
+            (max Reg (signed_max out_ty))
+            (min Reg (signed_min out_ty))
+            (result Reg (with_flags_reg
+                         (cmp (operand_size out_ty) result max)
+                         (csel (Cond.Gt) max result)))
+            (result Reg (with_flags_reg
+                         (cmp (operand_size out_ty) result min)
+                         (csel (Cond.Lt) min result))))
+       result))
+
+(decl signed_min (Type) Reg)
+(rule (signed_min $I8) (imm $I8 (ImmExtend.Sign) 0x80))
+(rule (signed_min $I16) (imm $I16 (ImmExtend.Sign) 0x8000))
+
+(decl signed_max (Type) Reg)
+(rule (signed_max $I8) (imm $I8 (ImmExtend.Sign) 0x7F))
+(rule (signed_max $I16) (imm $I16 (ImmExtend.Sign) 0x7FFF))
+
+(decl fpu_to_int (FpuToIntOp Reg) Reg)
+(rule (fpu_to_int op src)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.FpuToInt op dst src))))
+       dst))
+
+;; Helper for generating `MInst.IntToFpu` instructions.
+
+(decl int_to_fpu (IntToFpuOp Reg) Reg)
+(rule (int_to_fpu op src)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.IntToFpu op dst src))))
+       dst))
+
+;;;; Helpers for Emitting Calls ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(decl gen_call_info (Sig ExternalName CallArgList CallRetList OptionTryCallInfo) BoxCallInfo)
+(extern constructor gen_call_info gen_call_info)
+
+(decl gen_call_ind_info (Sig Reg CallArgList CallRetList OptionTryCallInfo) BoxCallIndInfo)
+(extern constructor gen_call_ind_info gen_call_ind_info)
+
+(decl gen_return_call_info (Sig ExternalName CallArgList) BoxReturnCallInfo)
+(extern constructor gen_return_call_info gen_return_call_info)
+
+(decl gen_return_call_ind_info (Sig Reg CallArgList) BoxReturnCallIndInfo)
+(extern constructor gen_return_call_ind_info gen_return_call_ind_info)
+
+;; Helper for creating `MInst.Call` instructions.
+(decl call_impl (BoxCallInfo) SideEffectNoResult)
+(rule (call_impl info)
+      (SideEffectNoResult.Inst (MInst.Call info)))
+
+;; Helper for creating `MInst.CallInd` instructions.
+(decl call_ind_impl (BoxCallIndInfo) SideEffectNoResult)
+(rule (call_ind_impl info)
+      (SideEffectNoResult.Inst (MInst.CallInd info)))
+
+;; Helper for creating `MInst.ReturnCall` instructions.
+(decl return_call_impl (BoxReturnCallInfo) SideEffectNoResult)
+(rule (return_call_impl info)
+      (SideEffectNoResult.Inst (MInst.ReturnCall info)))
+
+;; Helper for creating `MInst.ReturnCallInd` instructions.
+(decl return_call_ind_impl (BoxReturnCallIndInfo) SideEffectNoResult)
+(rule (return_call_ind_impl info)
+      (SideEffectNoResult.Inst (MInst.ReturnCallInd info)))
+
+;; Helpers for pinned register manipulation.
+
+(decl write_pinned_reg (Reg) SideEffectNoResult)
+(rule (write_pinned_reg val)
+      (mov_to_preg (preg_pinned) val))
+
+;; Helpers for stackslot effective address generation.
+
+(decl compute_stack_addr (StackSlot Offset32) Reg)
+(rule (compute_stack_addr stack_slot offset)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+           (_ Unit (emit (abi_stackslot_addr dst stack_slot offset))))
+        dst))
+
+;; Helper for emitting instruction sequences to perform a vector comparison.
+
+(decl vec_cmp_vc (Reg Reg VectorSize) Reg)
+(rule (vec_cmp_vc rn rm size)
+      (let ((dst Reg (vec_rrr (VecALUOp.Fcmeq) rn rn size))
+            (tmp Reg (vec_rrr (VecALUOp.Fcmeq) rm rm size))
+            (dst Reg (vec_rrr (VecALUOp.And) dst tmp size)))
+       dst))
+
+(decl vec_cmp (Reg Reg Type Cond) Reg)
+
+;; Floating point Vs / Vc
+(rule (vec_cmp rn rm ty (Cond.Vc))
+      (if (ty_vector_float ty))
+      (vec_cmp_vc rn rm (vector_size ty)))
+(rule (vec_cmp rn rm ty (Cond.Vs))
+      (if (ty_vector_float ty))
+      (let ((tmp Reg (vec_cmp_vc rn rm (vector_size ty))))
+       (vec_misc (VecMisc2.Not) tmp (vector_size ty))))
+
+;; 'Less than' operations are implemented by swapping the order of
+;; operands and using the 'greater than' instructions.
+;; 'Not equal' is implemented with 'equal' and inverting the result.
+
+;; Floating-point
+(rule (vec_cmp rn rm ty (Cond.Eq))
+      (if (ty_vector_float ty))
+      (vec_rrr (VecALUOp.Fcmeq) rn rm (vector_size ty)))
+(rule (vec_cmp rn rm ty (Cond.Ne))
+      (if (ty_vector_float ty))
+      (let ((tmp Reg (vec_rrr (VecALUOp.Fcmeq) rn rm (vector_size ty))))
+       (vec_misc (VecMisc2.Not) tmp (vector_size ty))))
+(rule (vec_cmp rn rm ty (Cond.Ge))
+      (if (ty_vector_float ty))
+      (vec_rrr (VecALUOp.Fcmge) rn rm (vector_size ty)))
+(rule (vec_cmp rn rm ty (Cond.Gt))
+      (if (ty_vector_float ty))
+      (vec_rrr (VecALUOp.Fcmgt) rn rm (vector_size ty)))
+;; Floating-point swapped-operands
+(rule (vec_cmp rn rm ty (Cond.Mi))
+      (if (ty_vector_float ty))
+      (vec_rrr (VecALUOp.Fcmgt) rm rn (vector_size ty)))
+(rule (vec_cmp rn rm ty (Cond.Ls))
+      (if (ty_vector_float ty))
+      (vec_rrr (VecALUOp.Fcmge) rm rn (vector_size ty)))
+
+;; Integer
+(rule 1 (vec_cmp rn rm ty (Cond.Eq))
+      (if (ty_vector_not_float ty))
+      (vec_rrr (VecALUOp.Cmeq) rn rm (vector_size ty)))
+(rule 1 (vec_cmp rn rm ty (Cond.Ne))
+      (if (ty_vector_not_float ty))
+      (let ((tmp Reg (vec_rrr (VecALUOp.Cmeq) rn rm (vector_size ty))))
+       (vec_misc (VecMisc2.Not) tmp (vector_size ty))))
+(rule 1 (vec_cmp rn rm ty (Cond.Ge))
+      (if (ty_vector_not_float ty))
+      (vec_rrr (VecALUOp.Cmge) rn rm (vector_size ty)))
+(rule 1 (vec_cmp rn rm ty (Cond.Gt))
+      (if (ty_vector_not_float ty))
+      (vec_rrr (VecALUOp.Cmgt) rn rm (vector_size ty)))
+(rule (vec_cmp rn rm ty (Cond.Hs))
+      (if (ty_vector_not_float ty))
+      (vec_rrr (VecALUOp.Cmhs) rn rm (vector_size ty)))
+(rule (vec_cmp rn rm ty (Cond.Hi))
+      (if (ty_vector_not_float ty))
+      (vec_rrr (VecALUOp.Cmhi) rn rm (vector_size ty)))
+;; Integer swapped-operands
+(rule (vec_cmp rn rm ty (Cond.Le))
+      (if (ty_vector_not_float ty))
+      (vec_rrr (VecALUOp.Cmge) rm rn (vector_size ty)))
+(rule (vec_cmp rn rm ty (Cond.Lt))
+      (if (ty_vector_not_float ty))
+      (vec_rrr (VecALUOp.Cmgt) rm rn (vector_size ty)))
+(rule 1 (vec_cmp rn rm ty (Cond.Ls))
+      (if (ty_vector_not_float ty))
+      (vec_rrr (VecALUOp.Cmhs) rm rn (vector_size ty)))
+(rule (vec_cmp rn rm ty (Cond.Lo))
+      (if (ty_vector_not_float ty))
+      (vec_rrr (VecALUOp.Cmhi) rm rn (vector_size ty)))
+
+;; Helper for determining if any value in a vector is true.
+;; This operation is implemented by using umaxp to create a scalar value, which
+;; is then compared against zero.
+;;
+;; umaxp vn.4s, vm.4s, vm.4s
+;; mov xm, vn.d[0]
+;; cmp xm, #0
+(decl vanytrue (Reg Type) ProducesFlags)
+(rule 1 (vanytrue src (ty_vec128 ty))
+      (let ((src Reg (vec_rrr (VecALUOp.Umaxp) src src (VectorSize.Size32x4)))
+            (src Reg (mov_from_vec src 0 (ScalarSize.Size64))))
+       (cmp_imm (OperandSize.Size64) src (u8_into_imm12 0))))
+(rule (vanytrue src ty)
+      (if (ty_vec64 ty))
+      (let ((src Reg (mov_from_vec src 0 (ScalarSize.Size64))))
+       (cmp_imm (OperandSize.Size64) src (u8_into_imm12 0))))
+
+;;;; TLS Values ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Helper for emitting ElfTlsGetAddr.
+(decl elf_tls_get_addr (ExternalName) Reg)
+(rule (elf_tls_get_addr name)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (tmp WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.ElfTlsGetAddr (box_external_name name) dst tmp))))
+        dst))
+
+(decl macho_tls_get_addr (ExternalName) Reg)
+(rule (macho_tls_get_addr name)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.MachOTlsGetAddr name dst))))
+        dst))
+
+;; A tuple of `ProducesFlags` and `IntCC`.
+(type FlagsAndCC (enum (FlagsAndCC (flags ProducesFlags)
+                                   (cc IntCC))))
+
+(spec (flags_and_cc flags cc)
+      (provide
+            (= result (concat (extract 67 64 flags) cc)))
+      (require
+            (or
+                  (= cc (IntCC.Equal))
+                  (= cc (IntCC.NotEqual))
+                  (= cc (IntCC.UnsignedGreaterThanOrEqual))
+                  (= cc (IntCC.UnsignedGreaterThan))
+                  (= cc (IntCC.UnsignedLessThanOrEqual))
+                  (= cc (IntCC.UnsignedLessThan))
+                  (= cc (IntCC.SignedGreaterThanOrEqual))
+                  (= cc (IntCC.SignedGreaterThan))
+                  (= cc (IntCC.SignedLessThanOrEqual))
+                  (= cc (IntCC.SignedLessThan)))))
+;; Helper constructor for `FlagsAndCC`.
+(decl flags_and_cc (ProducesFlags IntCC) FlagsAndCC)
+(rule (flags_and_cc flags cc) (FlagsAndCC.FlagsAndCC flags cc))
+
+(spec (flags_and_cc_to_bool a)
+      (provide
+         (= result
+        (switch (extract 7 0 a)
+          ((IntCC.Equal) (if (= (extract 10 10 a) #b1) #x01 #x00))
+          ((IntCC.NotEqual) (if (= (extract 10 10 a) #b0) #x01 #x00))
+          ((IntCC.SignedGreaterThan) (if (and (= (extract 10 10 a) #b0) (= (extract 11 11 a) (extract 8 8 a))) #x01 #x00))
+          ((IntCC.SignedGreaterThanOrEqual) (if (= (extract 11 11 a) (extract 8 8 a)) #x01 #x00))
+          ((IntCC.SignedLessThan) (if (not (= (extract 11 11 a) (extract 8 8 a))) #x01 #x00))
+          ((IntCC.SignedLessThanOrEqual) (if (or (= (extract 10 10 a) #b1) (not (= (extract 11 11 a) (extract 8 8 a)))) #x01 #x00))
+          ((IntCC.UnsignedGreaterThan) (if (and (= (extract 9 9 a) #b1) (= (extract 10 10 a) #b0)) #x01 #x00))
+          ((IntCC.UnsignedGreaterThanOrEqual) (if (= (extract 9 9 a) #b1) #x01 #x00))
+          ((IntCC.UnsignedLessThan) (if (= (extract 9 9 a) #b0) #x01 #x00))
+          ((IntCC.UnsignedLessThanOrEqual) (if (or (= (extract 9 9 a) #b0) (= (extract 10 10 a) #b1)) #x01 #x00)))))
+      (require
+            (or
+                  (= (extract 7 0 a) (IntCC.Equal))
+                  (= (extract 7 0 a) (IntCC.NotEqual))
+                  (= (extract 7 0 a) (IntCC.UnsignedGreaterThanOrEqual))
+                  (= (extract 7 0 a) (IntCC.UnsignedGreaterThan))
+                  (= (extract 7 0 a) (IntCC.UnsignedLessThanOrEqual))
+                  (= (extract 7 0 a) (IntCC.UnsignedLessThan))
+                  (= (extract 7 0 a) (IntCC.SignedGreaterThanOrEqual))
+                  (= (extract 7 0 a) (IntCC.SignedGreaterThan))
+                  (= (extract 7 0 a) (IntCC.SignedLessThanOrEqual))
+                  (= (extract 7 0 a) (IntCC.SignedLessThan)))))
+;; Materialize a `FlagsAndCC` into a boolean `ValueRegs`.
+(decl flags_and_cc_to_bool (FlagsAndCC) ValueRegs)
+(rule (flags_and_cc_to_bool (FlagsAndCC.FlagsAndCC flags cc))
+      (with_flags flags (materialize_bool_result (cond_code cc))))
+
+;; Get the `ProducesFlags` out of a `FlagsAndCC`.
+(decl flags_and_cc_flags (FlagsAndCC) ProducesFlags)
+(rule (flags_and_cc_flags (FlagsAndCC.FlagsAndCC flags _cc)) flags)
+
+;; Get the `IntCC` out of a `FlagsAndCC`.
+(decl flags_and_cc_cc (FlagsAndCC) IntCC)
+(rule (flags_and_cc_cc (FlagsAndCC.FlagsAndCC _flags cc)) cc)
+
+;; Helpers for lowering `icmp` sequences.
+;; `lower_icmp` contains shared functionality for lowering `icmp`
+;; sequences, which `lower_icmp_into_{reg,flags}` extend from.
+(spec (lower_icmp c x y in_ty)
+      (provide
+            (= result
+               (concat
+                  (extract 67 64
+                    (if (or (= c (IntCC.SignedGreaterThanOrEqual))
+                            (= c (IntCC.SignedGreaterThan))
+                            (= c (IntCC.SignedLessThanOrEqual))
+                            (= c (IntCC.SignedLessThan)))
+                        (if (<= in_ty 32)
+                            (subs 32 (sign_ext 64 x) (sign_ext 64 y))
+                            (subs 64 (sign_ext 64 x) (sign_ext 64 y)))
+                        (if (<= in_ty 32)
+                            (subs 32 (zero_ext 64 x) (zero_ext 64 y))
+                            (subs 64 (zero_ext 64 x) (zero_ext 64 y)))))
+                  c)))
+      (require
+            (or
+                (= c (IntCC.Equal))
+                (= c (IntCC.NotEqual))
+                (= c (IntCC.UnsignedGreaterThanOrEqual))
+                (= c (IntCC.UnsignedGreaterThan))
+                (= c (IntCC.UnsignedLessThanOrEqual))
+                (= c (IntCC.UnsignedLessThan))
+                (= c (IntCC.SignedGreaterThanOrEqual))
+                (= c (IntCC.SignedGreaterThan))
+                (= c (IntCC.SignedLessThanOrEqual))
+                (= c (IntCC.SignedLessThan)))
+            (or (= in_ty 8)
+                (= in_ty 16)
+                (= in_ty 32)
+                (= in_ty 64))
+            (= in_ty (widthof x))
+            (= in_ty (widthof y))))
+(instantiate lower_icmp
+    ((args (bv 8) (bv 8) (bv 8) Int) (ret (bv 12)) (canon (bv 8)))
+    ((args (bv 8) (bv 16) (bv 16) Int) (ret (bv 12)) (canon (bv 16)))
+    ((args (bv 8) (bv 32) (bv 32) Int) (ret (bv 12)) (canon (bv 32)))
+    ((args (bv 8) (bv 64) (bv 64) Int) (ret (bv 12)) (canon (bv 64)))
+)
+(decl lower_icmp (IntCC Value Value Type) FlagsAndCC)
+
+(spec (lower_icmp_into_reg c x y in_ty out_ty)
+      (provide
+            (= result
+               (switch c
+                 ((IntCC.Equal) (if (= x y) #x01 #x00))
+                 ((IntCC.NotEqual) (if (not (= x y)) #x01 #x00))
+                 ((IntCC.SignedGreaterThan) (if (bvsgt x y) #x01 #x00))
+                 ((IntCC.SignedGreaterThanOrEqual) (if (bvsge x y) #x01 #x00))
+                 ((IntCC.SignedLessThan) (if (bvslt x y) #x01 #x00))
+                 ((IntCC.SignedLessThanOrEqual) (if (bvsle x y) #x01 #x00))
+                 ((IntCC.UnsignedGreaterThan) (if (bvugt x y) #x01 #x00))
+                 ((IntCC.UnsignedGreaterThanOrEqual) (if (bvuge x y) #x01 #x00))
+                 ((IntCC.UnsignedLessThan) (if (bvult x y) #x01 #x00))
+                 ((IntCC.UnsignedLessThanOrEqual) (if (bvule x y) #x01 #x00)))))
+      (require
+            (or
+                (= c (IntCC.Equal))
+                (= c (IntCC.NotEqual))
+                (= c (IntCC.UnsignedGreaterThanOrEqual))
+                (= c (IntCC.UnsignedGreaterThan))
+                (= c (IntCC.UnsignedLessThanOrEqual))
+                (= c (IntCC.UnsignedLessThan))
+                (= c (IntCC.SignedGreaterThanOrEqual))
+                (= c (IntCC.SignedGreaterThan))
+                (= c (IntCC.SignedLessThanOrEqual))
+                (= c (IntCC.SignedLessThan)))
+            (or (= in_ty 8)
+                (= in_ty 16)
+                (= in_ty 32)
+                (= in_ty 64))
+            (= in_ty (widthof x))
+            (= in_ty (widthof y))
+            (= out_ty 8)))
+(instantiate lower_icmp_into_reg
+    ((args (bv 8) (bv 8) (bv 8) Int Int) (ret (bv 8)) (canon (bv 8)))
+    ((args (bv 8) (bv 16) (bv 16) Int Int) (ret (bv 8)) (canon (bv 16)))
+    ((args (bv 8) (bv 32) (bv 32) Int Int) (ret (bv 8)) (canon (bv 32)))
+    ((args (bv 8) (bv 64) (bv 64) Int Int) (ret (bv 8)) (canon (bv 64)))
+)
+(decl lower_icmp_into_reg (IntCC Value Value Type Type) ValueRegs)
+(decl lower_icmp_into_flags (IntCC Value Value Type) FlagsAndCC)
+
+(spec (lower_icmp_const c x y in_ty)
+      (provide
+            (= result
+               (concat (extract 67 64
+                              (if (or (= c (IntCC.SignedGreaterThanOrEqual))
+                                      (= c (IntCC.SignedGreaterThan))
+                                      (= c (IntCC.SignedLessThanOrEqual))
+                                      (= c (IntCC.SignedLessThan)))
+                                    (if (<= in_ty 32)
+                                          (subs 32 (sign_ext 64 x) y)
+                                          (subs 64 (sign_ext 64 x) y))
+                                    (if (<= in_ty 32)
+                                          (subs 32 (zero_ext 64 x) y)
+                                          (subs 64 (zero_ext 64 x) y))))
+                       c)))
+       (require
+            (or
+                (= c (IntCC.Equal))
+                (= c (IntCC.NotEqual))
+                (= c (IntCC.UnsignedGreaterThanOrEqual))
+                (= c (IntCC.UnsignedGreaterThan))
+                (= c (IntCC.UnsignedLessThanOrEqual))
+                (= c (IntCC.UnsignedLessThan))
+                (= c (IntCC.SignedGreaterThanOrEqual))
+                (= c (IntCC.SignedGreaterThan))
+                (= c (IntCC.SignedLessThanOrEqual))
+                (= c (IntCC.SignedLessThan)))
+            (or (= in_ty 32) (= in_ty 64))
+            (= in_ty (widthof x))))
+(instantiate lower_icmp_const
+    ((args (bv 8) (bv 8) (bv 64) Int) (ret (bv 12)) (canon (bv 8)))
+    ((args (bv 8) (bv 16) (bv 64) Int) (ret (bv 12)) (canon (bv 16)))
+    ((args (bv 8) (bv 32) (bv 64) Int) (ret (bv 12)) (canon (bv 32)))
+    ((args (bv 8) (bv 64) (bv 64) Int) (ret (bv 12)) (canon (bv 64)))
+)
+(decl lower_icmp_const (IntCC Value u64 Type) FlagsAndCC)
+;; For most cases, `lower_icmp_into_flags` is the same as `lower_icmp`,
+;; except for some I128 cases (see below).
+(rule -1 (lower_icmp_into_flags cond x y ty) (lower_icmp cond x y ty))
+
+;; Vectors.
+;; `icmp` into flags for vectors is invalid.
+(rule 1 (lower_icmp_into_reg cond x y in_ty @ (multi_lane _ _) _out_ty)
+      (let ((cond Cond (cond_code cond))
+            (rn Reg (put_in_reg x))
+            (rm Reg (put_in_reg y)))
+       (vec_cmp rn rm in_ty cond)))
+
+;; Determines the appropriate extend op given the value type and the given ArgumentExtension.
+(spec (lower_extend_op ty b)
+      (provide
+            (= result
+               (switch ty
+                       (8 (switch b ((ArgumentExtension.Sext) (ExtendOp.SXTB))
+                                    ((ArgumentExtension.Uext) (ExtendOp.UXTB))))
+                       (16 (switch b ((ArgumentExtension.Sext) (ExtendOp.SXTH))
+                                     ((ArgumentExtension.Uext) (ExtendOp.UXTH)))))))
+      (require (or (= ty 8) (= ty 16) (= ty 32) (= ty 64))))
+(decl lower_extend_op (Type ArgumentExtension) ExtendOp)
+(rule (lower_extend_op $I8 (ArgumentExtension.Sext)) (ExtendOp.SXTB))
+(rule (lower_extend_op $I16 (ArgumentExtension.Sext)) (ExtendOp.SXTH))
+(rule (lower_extend_op $I8 (ArgumentExtension.Uext)) (ExtendOp.UXTB))
+(rule (lower_extend_op $I16 (ArgumentExtension.Uext)) (ExtendOp.UXTH))
+
+;; Integers <= 64-bits.
+(rule lower_icmp_into_reg_8_16_32_64 -2 (lower_icmp_into_reg cond rn rm in_ty out_ty)
+      (if (ty_int_ref_scalar_64 in_ty))
+      (let ((cc Cond (cond_code cond)))
+        (flags_and_cc_to_bool (lower_icmp cond rn rm in_ty))))
+
+(rule lower_icmp_8_16_signed 1 (lower_icmp cond rn rm (fits_in_16 ty))
+      (if (signed_cond_code cond))
+      (let ((rn Reg (put_in_reg_sext32 rn)))
+      (flags_and_cc (cmp_extend (operand_size ty) rn rm (lower_extend_op ty (ArgumentExtension.Sext))) cond)))
+(rule lower_icmp_8_16_unsigned_imm -1 (lower_icmp cond rn (imm12_from_value rm) (fits_in_16 ty))
+      (let ((rn Reg (put_in_reg_zext32 rn)))
+      (flags_and_cc (cmp_imm (operand_size ty) rn rm) cond)))
+(rule lower_icmp_8_16_unsigned -2 (lower_icmp cond rn rm (fits_in_16 ty))
+      (let ((rn Reg (put_in_reg_zext32 rn)))
+      (flags_and_cc (cmp_extend (operand_size ty) rn rm (lower_extend_op ty (ArgumentExtension.Uext))) cond)))
+(rule lower_icmp_32_64_const -3 (lower_icmp cond rn (u64_from_iconst c) ty)
+      (if (ty_int_ref_scalar_64 ty))
+      (lower_icmp_const cond rn c ty))
+(rule lower_icmp_32_64 -4 (lower_icmp cond rn rm ty)
+      (if (ty_int_ref_scalar_64 ty))
+      (flags_and_cc (cmp (operand_size ty) rn rm) cond))
+
+;; We get better encodings when testing against an immediate that's even instead
+;; of odd, so rewrite comparisons to use even immediates:
+;;
+;;         A >= B + 1
+;;     ==> A - 1 >= B
+;;     ==> A > B
+(rule lower_icmp_const_32_64_ugte (lower_icmp_const (IntCC.UnsignedGreaterThanOrEqual) a b ty)
+      (if (ty_int_ref_scalar_64 ty))
+      (if-let true (u64_is_odd b))
+      (if-let (imm12_from_u64 imm) (u64_wrapping_sub b 1))
+  (flags_and_cc (cmp_imm (operand_size ty) a imm) (IntCC.UnsignedGreaterThan)))
+
+(rule lower_icmp_const_32_64_sgte (lower_icmp_const (IntCC.SignedGreaterThanOrEqual) a b ty)
+      (if (ty_int_ref_scalar_64 ty))
+      (if-let true (u64_is_odd b))
+      (if-let (imm12_from_u64 imm) (u64_wrapping_sub b 1))
+  (flags_and_cc (cmp_imm (operand_size ty) a imm) (IntCC.SignedGreaterThan)))
+
+(rule lower_icmp_const_32_64_imm -1 (lower_icmp_const cond rn (imm12_from_u64 c) ty)
+      (if (ty_int_ref_scalar_64 ty))
+  (flags_and_cc (cmp_imm (operand_size ty) rn c) cond))
+(rule lower_icmp_const_32_64 -2 (lower_icmp_const cond rn c ty)
+      (if (ty_int_ref_scalar_64 ty))
+  (flags_and_cc (cmp (operand_size ty) rn (imm ty (ImmExtend.Zero) c)) cond))
+
+
+;; 128-bit integers.
+(rule (lower_icmp_into_reg cond @ (IntCC.Equal) rn rm $I128 $I8)
+      (let ((cc Cond (cond_code cond)))
+       (flags_and_cc_to_bool
+        (lower_icmp cond rn rm $I128))))
+(rule (lower_icmp_into_reg cond @ (IntCC.NotEqual) rn rm $I128 $I8)
+      (let ((cc Cond (cond_code cond)))
+       (flags_and_cc_to_bool
+        (lower_icmp cond rn rm $I128))))
+
+;; cmp lhs_lo, rhs_lo
+;; ccmp lhs_hi, rhs_hi, #0, eq
+(decl lower_icmp_i128_eq_ne (Value Value) ProducesFlags)
+(rule (lower_icmp_i128_eq_ne lhs rhs)
+      (let ((lhs ValueRegs (put_in_regs lhs))
+            (rhs ValueRegs (put_in_regs rhs))
+            (lhs_lo Reg (value_regs_get lhs 0))
+            (lhs_hi Reg (value_regs_get lhs 1))
+            (rhs_lo Reg (value_regs_get rhs 0))
+            (rhs_hi Reg (value_regs_get rhs 1))
+            (cmp_inst ProducesFlags (cmp (OperandSize.Size64) lhs_lo rhs_lo)))
+       (ccmp (OperandSize.Size64) lhs_hi rhs_hi
+        (nzcv false false false false) (Cond.Eq) cmp_inst)))
+
+(rule (lower_icmp (IntCC.Equal) lhs rhs $I128)
+      (flags_and_cc (lower_icmp_i128_eq_ne lhs rhs) (IntCC.Equal)))
+(rule (lower_icmp (IntCC.NotEqual) lhs rhs $I128)
+      (flags_and_cc (lower_icmp_i128_eq_ne lhs rhs) (IntCC.NotEqual)))
+
+;; cmp      lhs_lo, rhs_lo
+;; cset     tmp1, unsigned_cond
+;; cmp      lhs_hi, rhs_hi
+;; cset     tmp2, cond
+;; csel     dst, tmp1, tmp2, eq
+(rule -1 (lower_icmp_into_reg cond lhs rhs $I128 $I8)
+      (let ((unsigned_cond Cond (cond_code (intcc_unsigned cond)))
+            (cond Cond (cond_code cond))
+            (lhs ValueRegs (put_in_regs lhs))
+            (rhs ValueRegs (put_in_regs rhs))
+            (lhs_lo Reg (value_regs_get lhs 0))
+            (lhs_hi Reg (value_regs_get lhs 1))
+            (rhs_lo Reg (value_regs_get rhs 0))
+            (rhs_hi Reg (value_regs_get rhs 1))
+            (tmp1 Reg (with_flags_reg (cmp (OperandSize.Size64) lhs_lo rhs_lo)
+                                      (materialize_bool_result unsigned_cond))))
+        (with_flags (cmp (OperandSize.Size64) lhs_hi rhs_hi)
+                    (lower_icmp_i128_consumer cond tmp1))))
+
+(decl lower_icmp_i128_consumer (Cond Reg) ConsumesFlags)
+(rule (lower_icmp_i128_consumer cond tmp1)
+      (let ((tmp2 WritableReg (temp_writable_reg $I64))
+            (dst WritableReg (temp_writable_reg $I64)))
+       (ConsumesFlags.ConsumesFlagsTwiceReturnsValueRegs
+        (MInst.CSet tmp2 cond)
+        (MInst.CSel dst (Cond.Eq) tmp1 tmp2)
+        (value_reg dst))))
+
+(decl lower_bmask (Type Type ValueRegs) ValueRegs)
+
+
+;; For conversions that exactly fit a register, we can use csetm.
+;;
+;; cmp   val, #0
+;; csetm res, ne
+(rule 0
+      (lower_bmask (fits_in_64 _) (ty_32_or_64 in_ty) val)
+      (with_flags_reg
+        (cmp_imm (operand_size in_ty) (value_regs_get val 0) (u8_into_imm12 0))
+        (csetm (Cond.Ne))))
+
+;; For conversions from a 128-bit value into a 64-bit or smaller one, we or the
+;; two registers of the 128-bit value together, and then recurse with the
+;; combined value as a 64-bit test.
+;;
+;; orr   val, lo, hi
+;; cmp   val, #0
+;; csetm res, ne
+(rule 1
+      (lower_bmask (fits_in_64 ty) $I128 val)
+      (let ((lo Reg (value_regs_get val 0))
+            (hi Reg (value_regs_get val 1))
+            (combined Reg (orr $I64 lo hi)))
+        (lower_bmask ty $I64 (value_reg combined))))
+
+;; For converting from any type into i128, duplicate the result of
+;; converting to i64.
+(rule 2
+      (lower_bmask $I128 in_ty val)
+      (let ((res ValueRegs (lower_bmask $I64 in_ty val))
+            (res Reg (value_regs_get res 0)))
+        (value_regs res res)))
+
+;; For conversions smaller than a register, we need to mask off the high bits, and then
+;; we can recurse into the general case.
+;;
+;; and   tmp, val, #ty_mask
+;; cmp   tmp, #0
+;; csetm res, ne
+(rule 3
+      (lower_bmask out_ty (fits_in_16 in_ty) val)
+      ; This if-let can't fail due to ty_mask always producing 8/16 consecutive 1s.
+      (if-let mask_bits (imm_logic_from_u64 $I32 (ty_mask in_ty)))
+      (let ((masked Reg (and_imm $I32 (value_regs_get val 0) mask_bits)))
+        (lower_bmask out_ty $I32 masked)))
+
+;; Exceptional `lower_icmp_into_flags` rules.
+;; We need to guarantee that the flags for `cond` are correct, so we
+;; compare `dst` with 1.
+(rule (lower_icmp_into_flags cond @ (IntCC.SignedGreaterThanOrEqual) lhs rhs $I128)
+      (let ((dst ValueRegs (lower_icmp_into_reg cond lhs rhs $I128 $I8))
+            (dst Reg (value_regs_get dst 0))
+            (tmp Reg (imm $I64 (ImmExtend.Sign) 1))) ;; mov tmp, #1
+        (flags_and_cc (cmp (OperandSize.Size64) dst tmp) cond)))
+(rule (lower_icmp_into_flags cond @ (IntCC.UnsignedGreaterThanOrEqual) lhs rhs $I128)
+      (let ((dst ValueRegs (lower_icmp_into_reg cond lhs rhs $I128 $I8))
+            (dst Reg (value_regs_get dst 0))
+            (tmp Reg (imm $I64 (ImmExtend.Zero) 1)))
+        (flags_and_cc (cmp (OperandSize.Size64) dst tmp) cond)))
+(rule (lower_icmp_into_flags cond @ (IntCC.SignedLessThanOrEqual) lhs rhs $I128)
+      (let ((dst ValueRegs (lower_icmp_into_reg cond lhs rhs $I128 $I8))
+            (dst Reg (value_regs_get dst 0))
+            (tmp Reg (imm $I64 (ImmExtend.Sign) 1)))
+       (flags_and_cc (cmp (OperandSize.Size64) tmp dst) cond)))
+(rule (lower_icmp_into_flags cond @ (IntCC.UnsignedLessThanOrEqual) lhs rhs $I128)
+      (let ((dst ValueRegs (lower_icmp_into_reg cond lhs rhs $I128 $I8))
+            (dst Reg (value_regs_get dst 0))
+            (tmp Reg (imm $I64 (ImmExtend.Zero) 1)))
+        (flags_and_cc (cmp (OperandSize.Size64) tmp dst) cond)))
+;; For strict comparisons, we compare with 0.
+(rule (lower_icmp_into_flags cond @ (IntCC.SignedGreaterThan) lhs rhs $I128)
+      (let ((dst ValueRegs (lower_icmp_into_reg cond lhs rhs $I128 $I8))
+            (dst Reg (value_regs_get dst 0)))
+        (flags_and_cc (cmp (OperandSize.Size64) dst (zero_reg)) cond)))
+(rule (lower_icmp_into_flags cond @ (IntCC.UnsignedGreaterThan) lhs rhs $I128)
+      (let ((dst ValueRegs (lower_icmp_into_reg cond lhs rhs $I128 $I8))
+            (dst Reg (value_regs_get dst 0)))
+        (flags_and_cc (cmp (OperandSize.Size64) dst (zero_reg)) cond)))
+(rule (lower_icmp_into_flags cond @ (IntCC.SignedLessThan) lhs rhs $I128)
+      (let ((dst ValueRegs (lower_icmp_into_reg cond lhs rhs $I128 $I8))
+            (dst Reg (value_regs_get dst 0)))
+       (flags_and_cc (cmp (OperandSize.Size64) (zero_reg) dst) cond)))
+(rule (lower_icmp_into_flags cond @ (IntCC.UnsignedLessThan) lhs rhs $I128)
+      (let ((dst ValueRegs (lower_icmp_into_reg cond lhs rhs $I128 $I8))
+            (dst Reg (value_regs_get dst 0)))
+       (flags_and_cc (cmp (OperandSize.Size64) (zero_reg) dst) cond)))
+
+;; Helpers for generating select instruction sequences.
+(decl lower_select (ProducesFlags Cond Type Value Value) ValueRegs)
+(rule 2 (lower_select flags cond (ty_scalar_float (fits_in_64 ty)) rn rm)
+      (with_flags flags (fpu_csel ty cond rn rm)))
+(rule 4 (lower_select flags cond $F128 rn rm)
+      (with_flags flags (vec_csel cond rn rm)))
+(rule 3 (lower_select flags cond (ty_vec128 ty) rn rm)
+      (with_flags flags (vec_csel cond rn rm)))
+(rule (lower_select flags cond ty rn rm)
+      (if (ty_vec64 ty))
+      (with_flags flags (fpu_csel $F64 cond rn rm)))
+(rule 4 (lower_select flags cond $I128 rn rm)
+      (let ((dst_lo WritableReg (temp_writable_reg $I64))
+            (dst_hi WritableReg (temp_writable_reg $I64))
+            (rn ValueRegs (put_in_regs rn))
+            (rm ValueRegs (put_in_regs rm))
+            (rn_lo Reg (value_regs_get rn 0))
+            (rn_hi Reg (value_regs_get rn 1))
+            (rm_lo Reg (value_regs_get rm 0))
+            (rm_hi Reg (value_regs_get rm 1)))
+       (with_flags flags
+        (ConsumesFlags.ConsumesFlagsTwiceReturnsValueRegs
+         (MInst.CSel dst_lo cond rn_lo rm_lo)
+         (MInst.CSel dst_hi cond rn_hi rm_hi)
+         (value_regs dst_lo dst_hi)))))
+(rule 1 (lower_select flags cond ty rn rm)
+      (if (ty_int_ref_scalar_64 ty))
+      (with_flags flags (csel cond rn rm)))
+
+;; Helper for emitting `MInst.Jump` instructions.
+(decl aarch64_jump (BranchTarget) SideEffectNoResult)
+(rule (aarch64_jump target)
+      (SideEffectNoResult.Inst (MInst.Jump target)))
+
+;; Helper for emitting `MInst.JTSequence` instructions.
+;; Emit the compound instruction that does:
+;;
+;; b.hs default
+;; csel rB, xzr, rIndex, hs
+;; csdb
+;; adr rA, jt
+;; ldrsw rB, [rA, rB, uxtw #2]
+;; add rA, rA, rB
+;; br rA
+;; [jt entries]
+;;
+;; This must be *one* instruction in the vcode because
+;; we cannot allow regalloc to insert any spills/fills
+;; in the middle of the sequence; otherwise, the ADR's
+;; PC-rel offset to the jumptable would be incorrect.
+;; (The alternative is to introduce a relocation pass
+;; for inlined jumptables, which is much worse, IMHO.)
+(decl jt_sequence (Reg MachLabel BoxVecMachLabel) ConsumesFlags)
+(rule (jt_sequence ridx default targets)
+      (let ((rtmp1 WritableReg (temp_writable_reg $I64))
+            (rtmp2 WritableReg (temp_writable_reg $I64)))
+       (ConsumesFlags.ConsumesFlagsSideEffect
+        (MInst.JTSequence default targets ridx rtmp1 rtmp2))))
+
+;; Helper for emitting `MInst.CondBr` instructions.
+(decl cond_br (BranchTarget BranchTarget CondBrKind) ConsumesFlags)
+(rule (cond_br taken not_taken kind)
+      (ConsumesFlags.ConsumesFlagsSideEffect
+       (MInst.CondBr taken not_taken kind)))
+
+;; Helper for emitting `MInst.TestBitAndBranch` instructions.
+(decl test_branch (TestBitAndBranchKind BranchTarget BranchTarget Reg u8) SideEffectNoResult)
+(rule (test_branch kind taken not_taken rn bit)
+      (SideEffectNoResult.Inst (MInst.TestBitAndBranch kind taken not_taken rn bit)))
+
+;; Helper for emitting `tbnz` instructions.
+(decl tbnz (BranchTarget BranchTarget Reg u8) SideEffectNoResult)
+(rule (tbnz taken not_taken rn bit)
+      (test_branch (TestBitAndBranchKind.NZ) taken not_taken rn bit))
+
+;; Helper for emitting `tbz` instructions.
+(decl tbz (BranchTarget BranchTarget Reg u8) SideEffectNoResult)
+(rule (tbz taken not_taken rn bit)
+      (test_branch (TestBitAndBranchKind.Z) taken not_taken rn bit))
+
+;; Helper for emitting `MInst.MovToNZCV` instructions.
+(decl mov_to_nzcv (Reg) ProducesFlags)
+(rule (mov_to_nzcv rn)
+      (ProducesFlags.ProducesFlagsSideEffect
+       (MInst.MovToNZCV rn)))
+
+;; Helper for emitting `MInst.EmitIsland` instructions.
+(decl emit_island (CodeOffset) SideEffectNoResult)
+(rule (emit_island needed_space)
+      (SideEffectNoResult.Inst
+       (MInst.EmitIsland needed_space)))
+
+;; Helper for emitting `br_table` sequences.
+(decl br_table_impl (u64 Reg MachLabel BoxVecMachLabel) Unit)
+(rule (br_table_impl (imm12_from_u64 jt_size) ridx default targets)
+      (emit_side_effect (with_flags_side_effect
+           (cmp_imm (OperandSize.Size32) ridx jt_size)
+           (jt_sequence ridx default targets))))
+(rule -1 (br_table_impl jt_size ridx default targets)
+      (let ((jt_size Reg (imm $I64 (ImmExtend.Zero) jt_size)))
+       (emit_side_effect (with_flags_side_effect
+            (cmp (OperandSize.Size32) ridx jt_size)
+            (jt_sequence ridx default targets)))))
+
+;; Helper for emitting the `uzp1` instruction
+(decl vec_uzp1 (Reg Reg VectorSize) Reg)
+(rule (vec_uzp1 rn rm size) (vec_rrr (VecALUOp.Uzp1) rn rm size))
+
+;; Helper for emitting the `uzp2` instruction
+(decl vec_uzp2 (Reg Reg VectorSize) Reg)
+(rule (vec_uzp2 rn rm size) (vec_rrr (VecALUOp.Uzp2) rn rm size))
+
+;; Helper for emitting the `zip1` instruction
+(decl vec_zip1 (Reg Reg VectorSize) Reg)
+(rule (vec_zip1 rn rm size) (vec_rrr (VecALUOp.Zip1) rn rm size))
+
+;; Helper for emitting the `zip2` instruction
+(decl vec_zip2 (Reg Reg VectorSize) Reg)
+(rule (vec_zip2 rn rm size) (vec_rrr (VecALUOp.Zip2) rn rm size))
+
+;; Helper for emitting the `trn1` instruction
+(decl vec_trn1 (Reg Reg VectorSize) Reg)
+(rule (vec_trn1 rn rm size) (vec_rrr (VecALUOp.Trn1) rn rm size))
+
+;; Helper for emitting the `trn2` instruction
+(decl vec_trn2 (Reg Reg VectorSize) Reg)
+(rule (vec_trn2 rn rm size) (vec_rrr (VecALUOp.Trn2) rn rm size))
+
+;; Helper for creating a zero value `ASIMDMovModImm` immediate.
+(decl asimd_mov_mod_imm_zero (ScalarSize) ASIMDMovModImm)
+(extern constructor asimd_mov_mod_imm_zero asimd_mov_mod_imm_zero)
+
+;; Helper for fallibly creating an `ASIMDMovModImm` immediate from its parts.
+(decl pure partial asimd_mov_mod_imm_from_u64 (u64 ScalarSize) ASIMDMovModImm)
+(extern constructor asimd_mov_mod_imm_from_u64 asimd_mov_mod_imm_from_u64)
+
+;; Helper for fallibly creating an `ASIMDFPModImm` immediate from its parts.
+(decl pure partial asimd_fp_mod_imm_from_u64 (u64 ScalarSize) ASIMDFPModImm)
+(extern constructor asimd_fp_mod_imm_from_u64 asimd_fp_mod_imm_from_u64)
+
+;; Helper for creating a `VecDupFPImm` instruction
+(decl vec_dup_fp_imm (ASIMDFPModImm VectorSize) Reg)
+(rule (vec_dup_fp_imm imm size)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.VecDupFPImm dst imm size))))
+       dst))
+
+;; Helper for creating a `FpuLoad64` instruction
+(decl fpu_load64 (AMode MemFlags) Reg)
+(rule (fpu_load64 amode flags)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.FpuLoad64 dst amode flags))))
+       dst))
+
+;; Helper for creating a `FpuLoad128` instruction
+(decl fpu_load128 (AMode MemFlags) Reg)
+(rule (fpu_load128 amode flags)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.FpuLoad128 dst amode flags))))
+       dst))

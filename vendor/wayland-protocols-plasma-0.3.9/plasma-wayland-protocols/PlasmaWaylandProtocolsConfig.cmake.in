@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: 2020 Aleix Pol Gonzalez <aleixpol@kde.org>
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+set(PLASMA_WAYLAND_PROTOCOLS_DIR "@PACKAGE_KDE_INSTALL_DATADIR@/plasma-wayland-protocols")

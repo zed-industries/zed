@@ -1,0 +1,79 @@
+[package]
+name = "sqlx-mysql"
+documentation = "https://docs.rs/sqlx"
+description = "MySQL driver implementation for SQLx. Not for direct use; see the `sqlx` crate for details."
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+json = ["sqlx-core/json", "serde"]
+any = ["sqlx-core/any"]
+offline = ["sqlx-core/offline", "serde/derive"]
+migrate = ["sqlx-core/migrate"]
+
+# Type Integration features
+bigdecimal = ["dep:bigdecimal", "sqlx-core/bigdecimal"]
+chrono = ["dep:chrono", "sqlx-core/chrono"]
+rust_decimal = ["dep:rust_decimal", "rust_decimal/maths", "sqlx-core/rust_decimal"]
+time = ["dep:time", "sqlx-core/time"]
+uuid = ["dep:uuid", "sqlx-core/uuid"]
+
+[dependencies]
+sqlx-core = { workspace = true }
+
+# Futures crates
+futures-channel = { version = "0.3.19", default-features = false, features = ["sink", "alloc", "std"] }
+futures-core = { version = "0.3.19", default-features = false }
+futures-io = "0.3.24"
+futures-util = { version = "0.3.19", default-features = false, features = ["alloc", "sink", "io"] }
+
+# Cryptographic Primitives
+crc = "3.0.0"
+digest = { version = "0.10.0", default-features = false, features = ["std"] }
+hkdf = "0.12.0"
+hmac = { version = "0.12.0", default-features = false }
+md-5 = { version = "0.10.0", default-features = false }
+rand = { version = "0.8.4", default-features = false, features = ["std", "std_rng"] }
+rsa = "0.9"
+sha1 = { version = "0.10.1", default-features = false }
+sha2 = { version = "0.10.0", default-features = false }
+
+# Type Integrations (versions inherited from `[workspace.dependencies]`)
+bigdecimal = { workspace = true, optional = true }
+chrono = { workspace = true, optional = true }
+rust_decimal = { workspace = true, optional = true }
+time = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
+
+# Misc
+atoi = "2.0"
+base64 = { version = "0.22.0", default-features = false, features = ["std"] }
+bitflags = { version = "2", default-features = false, features = ["serde"] }
+byteorder = { version = "1.4.3", default-features = false, features = ["std"] }
+bytes = "1.1.0"
+dotenvy = "0.15.5"
+either = "1.6.1"
+generic-array = { version = "0.14.4", default-features = false }
+hex = "0.4.3"
+itoa = "1.0.1"
+log = "0.4.18"
+memchr = { version = "2.4.1", default-features = false }
+once_cell = "1.9.0"
+percent-encoding = "2.1.0"
+smallvec = "1.7.0"
+stringprep = "0.1.2"
+thiserror = "2.0.0"
+tracing = { version = "0.1.37", features = ["log"] }
+whoami = { version = "1.2.1", default-features = false }
+
+serde = { version = "1.0.144", optional = true }
+
+[dev-dependencies]
+sqlx = { workspace = true, features = ["mysql"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,19 @@
+environment:
+  matrix:
+  - TARGET: i686-pc-windows-msvc
+    JAVA_HOME: C:\Program Files (x86)\Java\jdk1.8.0
+  - TARGET: x86_64-pc-windows-msvc
+    JAVA_HOME: C:\Program Files\Java\jdk1.8.0
+install:
+- appveyor-retry appveyor DownloadFile https://win.rustup.rs/ -FileName rustup-init.exe
+- rustup-init.exe -y --default-host %TARGET%
+- set PATH=%PATH%;C:\Users\appveyor\.cargo\bin;%JAVA_HOME%\jre\bin\server
+- rustc -V
+- cargo -V
+build: false
+test_script:
+- cargo build --target %TARGET%
+#- cargo run --target %TARGET% -p systest
+cache:
+- target
+- C:\Users\appveyor\.cargo\registry

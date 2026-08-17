@@ -1,0 +1,44 @@
+[package]
+name        = "ordered-float"
+version     = "4.6.0"
+authors     = [
+  "Jonathan Reem <jonathan.reem@gmail.com>",
+  "Matt Brubeck <mbrubeck@limpet.net>",
+]
+license     = "MIT"
+description = "Wrappers for total ordering on floats"
+repository  = "https://github.com/reem/rust-ordered-float"
+readme      = "README.md"
+keywords    = ["no_std", "ord", "f64", "f32", "sort"]
+categories  = ["science", "rust-patterns", "no-std"]
+edition     = "2021"
+rust-version = "1.60"
+
+[dependencies]
+arbitrary  = { version = "1.0.0", optional = true }
+borsh      = { version = "1.2.0", optional = true, default-features = false }
+bytemuck   = { version = "1.12.2", optional = true, default-features = false }
+derive-visitor = { version = "0.4.0", optional = true }
+num-cmp    = { version = "0.1.0", optional = true }
+num-traits = { version = "0.2.9", default-features = false }
+proptest   = { version = "1.0.0", optional = true }
+rand       = { version = "0.8.3", optional = true, default-features = false }
+rkyv       = { version = "0.7.41", optional = true, default-features = false, features = ["rend"] }
+schemars   = { version = "0.8.8", optional = true }
+serde      = { version = "1.0", optional = true, default-features = false }
+speedy     = { version = "0.8.3", optional = true, default-features = false }
+
+[dev-dependencies]
+serde_test = "1.0"
+
+[features]
+default  = ["std"]
+std      = ["num-traits/std"]
+libm     = ["num-traits/libm"]
+serde    = ["dep:serde", "rand?/serde1"]
+randtest = ["rand/std", "rand/std_rng"]
+rkyv     = ["rkyv_32"]
+rkyv_16  = ["dep:rkyv", "rkyv?/size_16"]
+rkyv_32  = ["dep:rkyv", "rkyv?/size_32"]
+rkyv_64  = ["dep:rkyv", "rkyv?/size_64"]
+rkyv_ck  = ["rkyv?/validation"]

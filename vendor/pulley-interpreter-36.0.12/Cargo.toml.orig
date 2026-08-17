@@ -1,0 +1,43 @@
+[package]
+authors = ["The Pulley Project Developers"]
+description = "The Pulley interpreter, its bytecode definition, encoder, decoder, and etc..."
+edition.workspace = true
+rust-version.workspace = true
+license = "Apache-2.0 WITH LLVM-exception"
+name = "pulley-interpreter"
+readme = "./README.md"
+repository = "https://github.com/bytecodealliance/wasmtime/tree/main/pulley"
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+arbitrary = { workspace = true, optional = true }
+cranelift-bitset = { workspace = true }
+log = { workspace = true }
+wasmtime-math = { workspace = true, optional = true }
+anyhow = { workspace = true, optional = true }
+pulley-macros = { workspace = true }
+
+[dev-dependencies]
+env_logger = { workspace = true }
+anyhow = { workspace = true, features = ['std'] }
+clap = { workspace = true }
+termcolor = { workspace = true }
+
+[features]
+std = ['wasmtime-math?/std']
+arbitrary = ["dep:arbitrary", "arbitrary/derive", "std", "cranelift-bitset/arbitrary"]
+encode = []
+decode = []
+disas = ["decode"]
+interp = ["decode", "encode", "dep:wasmtime-math"]
+profile = ['std', 'dep:anyhow']
+
+[package.metadata.docs.rs]
+all-features = true
+
+[[example]]
+name = "profiler-html"
+required-features = ["profile"]

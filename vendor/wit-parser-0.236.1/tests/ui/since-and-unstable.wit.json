@@ -1,0 +1,608 @@
+{
+  "worlds": [
+    {
+      "name": "w1",
+      "imports": {},
+      "exports": {},
+      "package": 0,
+      "stability": {
+        "stable": {
+          "since": "1.0.1"
+        }
+      }
+    },
+    {
+      "name": "w2",
+      "imports": {},
+      "exports": {},
+      "package": 0,
+      "stability": {
+        "stable": {
+          "since": "1.0.0"
+        }
+      }
+    },
+    {
+      "name": "in-a-world",
+      "imports": {
+        "y": {
+          "interface": {
+            "id": 6,
+            "stability": {
+              "stable": {
+                "since": "1.0.0"
+              }
+            }
+          }
+        },
+        "interface-4": {
+          "interface": {
+            "id": 4,
+            "stability": {
+              "stable": {
+                "since": "1.0.0"
+              }
+            }
+          }
+        },
+        "t1": {
+          "type": 11
+        },
+        "t2": {
+          "type": 12
+        },
+        "t3": {
+          "type": 13
+        },
+        "t4": {
+          "type": 14
+        },
+        "t5": {
+          "type": 15
+        },
+        "t6": {
+          "type": 16
+        },
+        "t7": {
+          "type": 17
+        },
+        "x": {
+          "function": {
+            "name": "x",
+            "kind": "freestanding",
+            "params": [],
+            "stability": {
+              "stable": {
+                "since": "1.0.0"
+              }
+            }
+          }
+        },
+        "[constructor]t7": {
+          "function": {
+            "name": "[constructor]t7",
+            "kind": {
+              "constructor": 17
+            },
+            "params": [],
+            "result": 19,
+            "stability": {
+              "stable": {
+                "since": "1.0.0"
+              }
+            }
+          }
+        }
+      },
+      "exports": {
+        "x": {
+          "function": {
+            "name": "x",
+            "kind": "freestanding",
+            "params": [],
+            "stability": {
+              "stable": {
+                "since": "1.0.0"
+              }
+            }
+          }
+        },
+        "y": {
+          "interface": {
+            "id": 7,
+            "stability": {
+              "stable": {
+                "since": "1.0.0"
+              }
+            }
+          }
+        },
+        "interface-4": {
+          "interface": {
+            "id": 4,
+            "stability": {
+              "stable": {
+                "since": "1.0.0"
+              }
+            }
+          }
+        }
+      },
+      "package": 0
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "foo1",
+      "types": {},
+      "functions": {},
+      "stability": {
+        "stable": {
+          "since": "1.0.0"
+        }
+      },
+      "package": 0
+    },
+    {
+      "name": "foo2",
+      "types": {},
+      "functions": {},
+      "stability": {
+        "stable": {
+          "since": "1.0.0"
+        }
+      },
+      "package": 0
+    },
+    {
+      "name": "foo3",
+      "types": {},
+      "functions": {},
+      "stability": {
+        "stable": {
+          "since": "1.0.0"
+        }
+      },
+      "package": 0
+    },
+    {
+      "name": "in-an-interface",
+      "types": {
+        "r1": 0,
+        "r2": 1,
+        "t1": 2,
+        "t2": 3,
+        "t3": 4,
+        "t4": 5,
+        "t5": 6,
+        "r3": 7
+      },
+      "functions": {
+        "foo": {
+          "name": "foo",
+          "kind": "freestanding",
+          "params": [],
+          "stability": {
+            "stable": {
+              "since": "1.0.0"
+            }
+          }
+        },
+        "[constructor]r3": {
+          "name": "[constructor]r3",
+          "kind": {
+            "constructor": 7
+          },
+          "params": [],
+          "result": 18,
+          "stability": {
+            "stable": {
+              "since": "1.0.0"
+            }
+          }
+        },
+        "[static]r3.x1": {
+          "name": "[static]r3.x1",
+          "kind": {
+            "static": 7
+          },
+          "params": [],
+          "stability": {
+            "stable": {
+              "since": "1.0.0"
+            }
+          }
+        },
+        "[method]r3.x2": {
+          "name": "[method]r3.x2",
+          "kind": {
+            "method": 7
+          },
+          "params": [
+            {
+              "name": "self",
+              "type": 8
+            }
+          ],
+          "stability": {
+            "stable": {
+              "since": "1.0.0"
+            }
+          }
+        }
+      },
+      "package": 0
+    },
+    {
+      "name": "z",
+      "types": {},
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "deprecated1",
+      "types": {
+        "t1": 9,
+        "t2": 10
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": null,
+      "types": {},
+      "functions": {},
+      "stability": {
+        "stable": {
+          "since": "1.0.0"
+        }
+      },
+      "package": 0
+    },
+    {
+      "name": null,
+      "types": {},
+      "functions": {},
+      "stability": {
+        "stable": {
+          "since": "1.0.0"
+        }
+      },
+      "package": 0
+    }
+  ],
+  "types": [
+    {
+      "name": "r1",
+      "kind": "resource",
+      "owner": {
+        "interface": 3
+      },
+      "stability": {
+        "stable": {
+          "since": "1.0.0"
+        }
+      }
+    },
+    {
+      "name": "r2",
+      "kind": "resource",
+      "owner": {
+        "interface": 3
+      },
+      "stability": {
+        "stable": {
+          "since": "1.0.0"
+        }
+      }
+    },
+    {
+      "name": "t1",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "interface": 3
+      },
+      "stability": {
+        "stable": {
+          "since": "1.0.0"
+        }
+      }
+    },
+    {
+      "name": "t2",
+      "kind": {
+        "record": {
+          "fields": [
+            {
+              "name": "a",
+              "type": "u32"
+            }
+          ]
+        }
+      },
+      "owner": {
+        "interface": 3
+      },
+      "stability": {
+        "stable": {
+          "since": "1.0.0"
+        }
+      }
+    },
+    {
+      "name": "t3",
+      "kind": {
+        "enum": {
+          "cases": [
+            {
+              "name": "a"
+            }
+          ]
+        }
+      },
+      "owner": {
+        "interface": 3
+      },
+      "stability": {
+        "stable": {
+          "since": "1.0.0"
+        }
+      }
+    },
+    {
+      "name": "t4",
+      "kind": {
+        "flags": {
+          "flags": [
+            {
+              "name": "a"
+            }
+          ]
+        }
+      },
+      "owner": {
+        "interface": 3
+      },
+      "stability": {
+        "stable": {
+          "since": "1.0.0"
+        }
+      }
+    },
+    {
+      "name": "t5",
+      "kind": {
+        "variant": {
+          "cases": [
+            {
+              "name": "a",
+              "type": null
+            }
+          ]
+        }
+      },
+      "owner": {
+        "interface": 3
+      },
+      "stability": {
+        "stable": {
+          "since": "1.0.0"
+        }
+      }
+    },
+    {
+      "name": "r3",
+      "kind": "resource",
+      "owner": {
+        "interface": 3
+      },
+      "stability": {
+        "stable": {
+          "since": "1.0.0"
+        }
+      }
+    },
+    {
+      "name": null,
+      "kind": {
+        "handle": {
+          "borrow": 7
+        }
+      },
+      "owner": null,
+      "stability": {
+        "stable": {
+          "since": "1.0.0"
+        }
+      }
+    },
+    {
+      "name": "t1",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "interface": 5
+      },
+      "stability": {
+        "stable": {
+          "since": "1.0.0",
+          "deprecated": "1.0.1"
+        }
+      }
+    },
+    {
+      "name": "t2",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "interface": 5
+      },
+      "stability": {
+        "stable": {
+          "since": "1.0.0",
+          "deprecated": "1.0.1"
+        }
+      }
+    },
+    {
+      "name": "t1",
+      "kind": {
+        "record": {
+          "fields": [
+            {
+              "name": "x",
+              "type": "u32"
+            }
+          ]
+        }
+      },
+      "owner": {
+        "world": 2
+      },
+      "stability": {
+        "stable": {
+          "since": "1.0.0"
+        }
+      }
+    },
+    {
+      "name": "t2",
+      "kind": {
+        "enum": {
+          "cases": [
+            {
+              "name": "a"
+            }
+          ]
+        }
+      },
+      "owner": {
+        "world": 2
+      },
+      "stability": {
+        "stable": {
+          "since": "1.0.0"
+        }
+      }
+    },
+    {
+      "name": "t3",
+      "kind": {
+        "variant": {
+          "cases": [
+            {
+              "name": "a",
+              "type": null
+            }
+          ]
+        }
+      },
+      "owner": {
+        "world": 2
+      },
+      "stability": {
+        "stable": {
+          "since": "1.0.0"
+        }
+      }
+    },
+    {
+      "name": "t4",
+      "kind": {
+        "flags": {
+          "flags": [
+            {
+              "name": "a"
+            }
+          ]
+        }
+      },
+      "owner": {
+        "world": 2
+      },
+      "stability": {
+        "stable": {
+          "since": "1.0.0"
+        }
+      }
+    },
+    {
+      "name": "t5",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "world": 2
+      },
+      "stability": {
+        "stable": {
+          "since": "1.0.0"
+        }
+      }
+    },
+    {
+      "name": "t6",
+      "kind": "resource",
+      "owner": {
+        "world": 2
+      },
+      "stability": {
+        "stable": {
+          "since": "1.0.0"
+        }
+      }
+    },
+    {
+      "name": "t7",
+      "kind": "resource",
+      "owner": {
+        "world": 2
+      },
+      "stability": {
+        "stable": {
+          "since": "1.0.0"
+        }
+      }
+    },
+    {
+      "name": null,
+      "kind": {
+        "handle": {
+          "own": 7
+        }
+      },
+      "owner": null
+    },
+    {
+      "name": null,
+      "kind": {
+        "handle": {
+          "own": 17
+        }
+      },
+      "owner": null
+    }
+  ],
+  "packages": [
+    {
+      "name": "a:b@1.0.1",
+      "interfaces": {
+        "foo1": 0,
+        "foo2": 1,
+        "foo3": 2,
+        "in-an-interface": 3,
+        "z": 4,
+        "deprecated1": 5
+      },
+      "worlds": {
+        "w1": 0,
+        "w2": 1,
+        "in-a-world": 2
+      }
+    }
+  ]
+}

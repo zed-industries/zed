@@ -1,0 +1,38 @@
+name: CI
+on: [push, pull_request]
+jobs:
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      # make sure all code has been formatted with rustfmt and linted with clippy
+      - name: rustfmt
+        run: cargo fmt -- --check --color always
+
+      # run clippy to verify we have no warnings
+      - run: cargo fetch
+      - name: cargo clippy
+        run: cargo clippy --all-features -- -D warnings
+
+  test:
+    name: Test
+    strategy:
+      matrix:
+        os: [ubuntu, macos, windows]
+        rust: [1.45.0, stable, beta, nightly]
+    runs-on: ${{ matrix.os }}-latest
+    steps:
+      - uses: actions/checkout@v2
+      - run: rustup update --no-self-update ${{ matrix.rust }}
+      - run: rustup default ${{ matrix.rust }}
+      - run: ./build_and_test_features.sh
+        shell: bash
+

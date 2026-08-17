@@ -1,0 +1,97 @@
+lints.workspace = true
+
+[package]
+name = "time"
+version = "0.3.47"
+categories = [
+    "date-and-time",
+    "no-std",
+    "parser-implementations",
+    "value-formatting",
+]
+description = "Date and time library. Fully interoperable with the standard library. Mostly compatible with #![no_std]."
+include = ["{src,tests,benchmarks}/**/*", "LICENSE-*", "README.md"]
+readme = "../README.md"
+
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+targets = ["x86_64-unknown-linux-gnu"]
+rustdoc-args = ["--generate-link-to-definition"]
+
+[lib]
+bench = false
+
+[features]
+default = ["std"]
+alloc = ["serde_core?/alloc"]
+formatting = ["dep:itoa", "std", "time-macros?/formatting"]
+large-dates = ["time-core/large-dates", "time-macros?/large-dates"]
+local-offset = ["std", "dep:libc", "dep:num_threads"]
+macros = ["dep:time-macros"]
+parsing = ["time-macros?/parsing"]
+quickcheck = ["dep:quickcheck", "alloc", "deranged/quickcheck"]
+rand = ["rand08", "rand09"]
+rand08 = ["dep:rand08", "deranged/rand08"]
+rand09 = ["dep:rand09", "deranged/rand09"]
+serde = ["dep:serde_core", "time-macros?/serde", "deranged/serde"]
+serde-human-readable = ["serde", "formatting", "parsing"]
+# Deprecated in favor of using the relevant flags directly.
+serde-well-known = ["serde", "formatting", "parsing"]
+std = ["alloc"]
+wasm-bindgen = ["dep:js-sys"]
+
+# If adding an optional dependency, be sure to use the `dep:` prefix above to avoid an implicit
+# feature gate.
+[dependencies]
+deranged.workspace = true
+itoa = { workspace = true, optional = true }
+num-conv.workspace = true
+powerfmt.workspace = true
+quickcheck = { workspace = true, optional = true }
+rand08 = { workspace = true, optional = true }
+rand09 = { workspace = true, optional = true }
+serde_core = { workspace = true, optional = true }
+time-core.workspace = true
+time-macros = { workspace = true, optional = true }
+
+[target.'cfg(target_family = "unix")'.dependencies]
+libc = { workspace = true, optional = true }
+num_threads = { workspace = true, optional = true }
+
+[target.'cfg(all(target_family = "wasm", not(any(target_os = "emscripten", target_os = "wasi"))))'.dependencies]
+js-sys = { workspace = true, optional = true }
+
+[dev-dependencies]
+num-conv.workspace = true
+rand08.workspace = true
+rand09 = { workspace = true, features = ["small_rng"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+serde_test.workspace = true
+quickcheck_macros.workspace = true
+time-macros.workspace = true
+rstest.workspace = true
+rstest_reuse.workspace = true
+
+[target.'cfg(__ui_tests)'.dev-dependencies]
+trybuild.workspace = true
+
+[target.'cfg(bench)'.dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "benchmarks"
+harness = false
+path = "benchmarks/main.rs"
+
+[[test]]
+name = "tests"
+path = "tests/integration/main.rs"

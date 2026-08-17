@@ -1,0 +1,23 @@
+error: #[builder(default)] and #[builder(field(build="..."))] cannot be used together
+ --> tests/compile-fail/builder_field_custom.rs:8:19
+  |
+8 |         default = "1",
+  |                   ^^^
+
+error: #[builder(default)] and #[builder(field(type="..."))] cannot be used together
+  --> tests/compile-fail/builder_field_custom.rs:14:25
+   |
+14 |     #[builder(default = "2", field(type = "usize"))]
+   |                         ^^^
+
+error: #[builder(default)] and #[builder(field(build="..."))] cannot be used together
+  --> tests/compile-fail/builder_field_custom.rs:18:25
+   |
+18 |     #[builder(default = "3", field(type = "usize", build = "self.ipsum + 42"))]
+   |                         ^^^
+
+error: #[builder(default)] and #[builder(field(type="..."))] cannot be used together
+  --> tests/compile-fail/builder_field_custom.rs:18:25
+   |
+18 |     #[builder(default = "3", field(type = "usize", build = "self.ipsum + 42"))]
+   |                         ^^^

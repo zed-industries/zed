@@ -1,0 +1,42 @@
+[package]
+name = "arbitrary"
+version = "1.4.2" # Make sure this matches the derive crate version (not including the patch version)
+authors = [
+    "The Rust-Fuzz Project Developers",
+    "Nick Fitzgerald <fitzgen@gmail.com>",
+    "Manish Goregaokar <manishsmail@gmail.com>",
+    "Simonas Kazlauskas <arbitrary@kazlauskas.me>",
+    "Brian L. Troutwine <brian@troutwine.us>",
+    "Corey Farwell <coreyf@rwell.org>",
+]
+categories = ["development-tools::testing"]
+edition = "2021"
+keywords = ["arbitrary", "testing"]
+readme = "README.md"
+description = "The trait for generating structured data from unstructured data"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/rust-fuzz/arbitrary/"
+documentation = "https://docs.rs/arbitrary/"
+rust-version = "1.63.0" # Keep in sync with version documented in the README.md
+
+[dependencies]
+derive_arbitrary = { version = "~1.4.0", path = "./derive", optional = true }
+
+[features]
+# Turn this feature on to enable support for `#[derive(Arbitrary)]`.
+derive = ["derive_arbitrary"]
+
+[[example]]
+name = "derive_enum"
+required-features = ["derive"]
+
+[[test]]
+name = "derive"
+path = "./tests/derive.rs"
+required-features = ["derive"]
+
+[workspace]
+members = ["./fuzz"]
+
+[dev-dependencies]
+exhaustigen = "0.1.0"

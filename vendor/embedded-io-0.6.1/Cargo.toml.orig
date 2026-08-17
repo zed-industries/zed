@@ -1,0 +1,24 @@
+[package]
+name = "embedded-io"
+version = "0.6.1"
+edition = "2021"
+description = "Embedded IO traits"
+repository = "https://github.com/rust-embedded/embedded-hal"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+categories = [
+    "embedded",
+    "no-std",
+]
+
+[features]
+std = ["alloc"]
+alloc = []
+defmt-03 = ["dep:defmt-03"]
+
+[dependencies]
+defmt-03 = { package = "defmt", version = "0.3", optional = true }
+
+[package.metadata.docs.rs]
+features = ["std"]
+rustdoc-args = ["--cfg", "docsrs"]

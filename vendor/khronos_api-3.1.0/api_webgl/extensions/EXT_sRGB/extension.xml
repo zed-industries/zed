@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<extension href="EXT_sRGB/">
+  <name>EXT_sRGB</name>
+
+  <contact> <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL
+  working group</a> (public_webgl 'at' khronos.org) </contact>
+
+  <contributors>
+    <contributor>Florian Boesch (pyalot 'at' gmail.com)</contributor>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+
+  <number>17</number>
+
+  <depends>
+    <api version="1.0"/>
+    <core version="2.0">
+      <addendum>Additional format restrictions apply for CopyTexImage2D</addendum>
+    </core>
+  </depends>
+
+  <overview>
+    <mirrors href="http://www.khronos.org/registry/gles/extensions/EXT/EXT_sRGB.txt"
+             name="EXT_sRGB">
+    </mirrors>
+
+    <features>
+      <feature>
+         Adds the sRGB support to textures and framebuffer objects.
+      </feature>
+    </features>
+  </overview>
+
+  <idl xml:space="preserve">
+    [NoInterfaceObject]
+    interface EXT_sRGB {
+      const GLenum SRGB_EXT                                     = 0x8C40;
+      const GLenum SRGB_ALPHA_EXT                               = 0x8C42;
+      const GLenum SRGB8_ALPHA8_EXT                             = 0x8C43;
+      const GLenum FRAMEBUFFER_ATTACHMENT_COLOR_ENCODING_EXT    = 0x8210;
+    };
+  </idl>
+
+  <newtok>
+    <function name="texImage2D">
+      <param name="format" type="GLenum"/>
+      <param name="internalformat" type="GLenum"/>
+      Accepted by the <code>format</code> and <code>internalformat</code> parameters: <code>SRGB_EXT</code> and <code>SRGB_ALPHA_EXT</code>
+    </function>
+    <function name="texSubImage2D">
+      <param name="format" type="GLenum"/>
+      Accepted by the <code>format</code> parameter: <code>SRGB_EXT</code> and <code>SRGB_ALPHA_EXT</code>
+    </function>
+    <function name="renderbufferStorage">
+      <param name="internalformat" type="GLenum"/>
+      Accepted by the <code>internalformat</code> parameter: <code>SRGB_ALPHA8_EXT</code>
+    </function>
+    <function name="getFramebufferAttachmentParameter">
+      <param name="pname" type="GLenum"/>
+      Accepted by the <code>pname</code> parameter: FRAMEBUFFER_ATTACHMENT_COLOR_ENCODING_EXT
+    </function>
+  </newtok>
+
+  <samplecode xml:space="preserve">
+    <pre>
+        var ext = gl.getExtension('EXT_sRGB');
+        var texture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        texImage2D(gl.TEXTURE_2D, 0, ext.SRGB_EXT, 256, 256, 0, ext.SRGB_EXT, gl.UNSIGNED_BYTE, data);
+    </pre>
+  </samplecode>
+
+  <history>
+    <revision date="2012/12/16">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2013/01/26">
+      <change>Moved from proposal to draft</change>
+    </revision>
+    <revision date="2014/05/13">
+      <change>Moved from draft to community approved</change>
+    </revision>
+    <revision date="2014/07/15">
+      <change>Added NoInterfaceObject extended attribute.</change>
+    </revision>
+  </history>
+</extension>

@@ -1,0 +1,34 @@
+{
+  "worlds": [],
+  "interfaces": [
+    {
+      "name": "stable",
+      "types": {},
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "types",
+      "types": {},
+      "functions": {},
+      "package": 1
+    }
+  ],
+  "types": [],
+  "packages": [
+    {
+      "name": "wasi:dep2@0.2.3",
+      "interfaces": {
+        "stable": 0
+      },
+      "worlds": {}
+    },
+    {
+      "name": "wasmtime:test",
+      "interfaces": {
+        "types": 1
+      },
+      "worlds": {}
+    }
+  ]
+}

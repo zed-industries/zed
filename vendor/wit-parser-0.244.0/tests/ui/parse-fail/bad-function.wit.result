@@ -1,0 +1,5 @@
+name `nonexistent` is not defined
+     --> tests/ui/parse-fail/bad-function.wit:6:18
+      |
+    6 |   x: func(param: nonexistent);
+      |                  ^----------

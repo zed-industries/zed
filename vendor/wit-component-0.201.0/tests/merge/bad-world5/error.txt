@@ -1,0 +1,5 @@
+failed to merge package `foo:foo` into existing copy
+
+Caused by:
+    0: failed to merge world `foo`
+    1: import `a` not found in target world

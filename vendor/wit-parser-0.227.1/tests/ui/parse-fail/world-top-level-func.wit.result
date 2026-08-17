@@ -1,0 +1,5 @@
+import `foo` conflicts with prior import of same name
+     --> tests/ui/parse-fail/world-top-level-func.wit:4:10
+      |
+    4 |   import foo: func();
+      |          ^--

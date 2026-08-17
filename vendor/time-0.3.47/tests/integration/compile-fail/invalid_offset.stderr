@@ -1,0 +1,49 @@
+error: invalid component: hour was 26
+ --> tests/integration/compile-fail/invalid_offset.rs:4:22
+  |
+4 |     let _ = offset!(+26);
+  |                      ^^
+
+error: invalid component: minute was 60
+ --> tests/integration/compile-fail/invalid_offset.rs:5:24
+  |
+5 |     let _ = offset!(+0:60);
+  |                        ^^
+
+error: invalid component: second was 60
+ --> tests/integration/compile-fail/invalid_offset.rs:6:27
+  |
+6 |     let _ = offset!(+0:00:60);
+  |                           ^^
+
+error: unexpected token: 0
+ --> tests/integration/compile-fail/invalid_offset.rs:7:21
+  |
+7 |     let _ = offset!(0);
+  |                     ^
+
+error: missing component: sign
+ --> tests/integration/compile-fail/invalid_offset.rs:8:13
+  |
+8 |     let _ = offset!();
+  |             ^^^^^^^^^
+  |
+  = note: this error originates in the macro `offset` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: invalid component: hour was 0a
+ --> tests/integration/compile-fail/invalid_offset.rs:9:22
+  |
+9 |     let _ = offset!(+0a);
+  |                      ^^
+
+error: invalid component: minute was 0a
+  --> tests/integration/compile-fail/invalid_offset.rs:10:24
+   |
+10 |     let _ = offset!(+0:0a);
+   |                        ^^
+
+error: invalid component: second was 0a
+  --> tests/integration/compile-fail/invalid_offset.rs:11:27
+   |
+11 |     let _ = offset!(+0:00:0a);
+   |                           ^^

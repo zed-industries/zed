@@ -1,0 +1,103 @@
+error[E0261]: use of undeclared lifetime name `'a`
+ --> tests/ui/undeclared_lifetime.rs:4:19
+  |
+4 |         fn f0(_: &'a CxxString);
+  |                   ^^ undeclared lifetime
+  |
+help: consider introducing lifetime `'a` here
+  |
+4 |         fn f0<'a>(_: &'a CxxString);
+  |              ++++
+
+error[E0261]: use of undeclared lifetime name `'b`
+ --> tests/ui/undeclared_lifetime.rs:5:23
+  |
+5 |         fn g0<'a>(_: &'b CxxString);
+  |                       ^^ undeclared lifetime
+  |
+help: consider introducing lifetime `'b` here
+  |
+5 |         fn g0<'b, 'a>(_: &'b CxxString);
+  |               +++
+
+error[E0261]: use of undeclared lifetime name `'a`
+ --> tests/ui/undeclared_lifetime.rs:8:32
+  |
+8 |         fn f1(self: &This, _: &'a CxxString);
+  |                                ^^ undeclared lifetime
+  |
+help: consider introducing lifetime `'a` here
+  |
+8 |         fn f1<'a>(self: &This, _: &'a CxxString);
+  |              ++++
+help: consider introducing lifetime `'a` here
+  |
+8 |         fn f1<'a>(self: &This, _: &'a CxxString);
+  |              ++++
+
+error[E0261]: use of undeclared lifetime name `'b`
+ --> tests/ui/undeclared_lifetime.rs:9:36
+  |
+9 |         fn g1<'a>(self: &This, _: &'b CxxString);
+  |                                    ^^ undeclared lifetime
+  |
+help: consider introducing lifetime `'b` here
+  |
+9 |         fn g1<'b, 'a>(self: &This, _: &'b CxxString);
+  |               +++
+help: consider introducing lifetime `'b` here
+  |
+9 |         fn g1<'b, 'a>(self: &This, _: &'b CxxString);
+  |               +++
+
+error[E0261]: use of undeclared lifetime name `'a`
+  --> tests/ui/undeclared_lifetime.rs:10:22
+   |
+10 |         fn f2(self: &'a This);
+   |                      ^^ undeclared lifetime
+   |
+help: consider introducing lifetime `'a` here
+   |
+10 |         fn f2<'a>(self: &'a This);
+   |              ++++
+help: consider introducing lifetime `'a` here
+   |
+10 |         fn f2<'a>(self: &'a This);
+   |              ++++
+
+error[E0261]: use of undeclared lifetime name `'b`
+  --> tests/ui/undeclared_lifetime.rs:11:26
+   |
+11 |         fn g2<'a>(self: &'b This);
+   |                          ^^ undeclared lifetime
+   |
+help: consider introducing lifetime `'b` here
+   |
+11 |         fn g2<'b, 'a>(self: &'b This);
+   |               +++
+help: consider introducing lifetime `'b` here
+   |
+11 |         fn g2<'b, 'a>(self: &'b This);
+   |               +++
+
+error[E0261]: use of undeclared lifetime name `'a`
+  --> tests/ui/undeclared_lifetime.rs:12:27
+   |
+12 |         fn f3(self: &This<'a>);
+   |                           ^^ undeclared lifetime
+   |
+help: consider introducing lifetime `'a` here
+   |
+12 |         fn f3<'a>(self: &This<'a>);
+   |              ++++
+
+error[E0261]: use of undeclared lifetime name `'b`
+  --> tests/ui/undeclared_lifetime.rs:13:31
+   |
+13 |         fn g3<'a>(self: &This<'b>);
+   |                               ^^ undeclared lifetime
+   |
+help: consider introducing lifetime `'b` here
+   |
+13 |         fn g3<'b, 'a>(self: &This<'b>);
+   |               +++

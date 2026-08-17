@@ -1,0 +1,91 @@
+// Generated from {{template_path}} template. Edit the template, not the generated file.
+
+{% set components = ["x", "y", "z", "w"] %}
+{% set dimensions = [2, 3, 4] %}
+{% for dim in dimensions %}
+    {% set vec2_t = "Self::Vec2" %}
+    {% set vec3_t = "Self::Vec3" %}
+    {% set vec4_t = "Self::Vec4" %}
+
+    {% if dim == 4 %}
+        {% set vec4_t = "Self" %}
+    {% elif dim == 3 %}
+        {% set vec3_t = "Self" %}
+    {% elif dim == 2 %}
+        {% set vec2_t = "Self" %}
+    {% endif %}
+
+    pub trait Vec{{ dim }}Swizzles: Sized + Copy + Clone {
+        {% if dim != 2 %}
+        type Vec2;
+        {% endif %}
+        {% if dim != 3 %}
+        type Vec3;
+        {% endif %}
+        {% if dim != 4 %}
+        type Vec4;
+        {% endif %}
+
+        {% if dim == 4 %}
+        #[inline]
+        #[must_use]
+        fn xyzw(self) -> Self {
+            self
+        }
+        {% elif dim == 3 %}
+        #[inline]
+        #[must_use]
+        fn xyz(self) -> Self {
+            self
+        }
+        {% elif dim == 2 %}
+        #[inline]
+        #[must_use]
+        fn xy(self) -> Self {
+            self
+        }
+        {% endif %}
+
+        {% for i in dimensions %}
+            {% for e0 in components | slice(end=dim) %}
+                {% for e1 in components | slice(end=dim) %}
+                    {% if i == 2 %}
+                        {% set skip = dim == 2 and e0 == "x" and e1 == "y" %}
+                        {% if not skip %}
+                            #[must_use]
+                            fn {{e0}}{{e1}}(self) -> {{ vec2_t }};
+                        {% endif %}
+                        {% set skip = dim == 2 or e0 == e1 %}
+                        {% if not skip %}
+                            #[must_use]
+                            fn with_{{e0}}{{e1}}(self, rhs: {{ vec2_t }}) -> Self;
+                        {% endif %}
+                    {% else %}
+                        {% for e2 in components | slice(end=dim) %}
+                            {% if i == 3 %}
+                                {% set skip = dim == 3 and e0 == "x" and e1 == "y" and e2 == "z" %}
+                                {% if not skip %}
+                                    #[must_use]
+                                    fn {{e0}}{{e1}}{{e2}}(self) -> {{ vec3_t }};
+                                {% endif %}
+                                {% set skip = dim == 3 or e0 == e1 or e0 == e2 or e1 == e2 %}
+                                {% if not skip %}
+                                    #[must_use]
+                                    fn with_{{e0}}{{e1}}{{e2}}(self, rhs: {{ vec3_t }}) -> Self;
+                                {% endif %}
+                            {% else %}
+                                {% for e3 in components | slice(end=dim) %}
+                                    {% set skip = dim == 4 and e0 == "x" and e1 == "y" and e2 == "z" and e3 == "w" %}
+                                    {% if not skip %}
+                                        #[must_use]
+                                        fn {{e0}}{{e1}}{{e2}}{{e3}}(self) -> {{ vec4_t }};
+                                    {% endif %}
+                                {% endfor %}
+                            {% endif %}
+                        {% endfor %}
+                    {% endif %}
+                {% endfor %}
+            {% endfor %}
+        {% endfor %}
+    }
+{% endfor %}

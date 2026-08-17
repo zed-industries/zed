@@ -1,0 +1,106 @@
+{
+  "events": [
+    {
+      "connection_id": 0,
+      "action": {
+        "Request": {
+          "request": {
+            "uri": "https://www.example.com/",
+            "headers": {},
+            "method": "POST"
+          }
+        }
+      }
+    },
+    {
+      "connection_id": 0,
+      "action": {
+        "Data": {
+          "data": {
+            "Utf8": "hello world"
+          },
+          "direction": "Request"
+        }
+      }
+    },
+    {
+      "connection_id": 0,
+      "action": {
+        "Eof": {
+          "ok": true,
+          "direction": "Request"
+        }
+      }
+    },
+    {
+      "connection_id": 0,
+      "action": {
+        "Response": {
+          "response": {
+            "Ok": {
+              "status": 200,
+              "version": "HTTP/2.0",
+              "headers": {
+                "etag": [
+                  "\"3147526947+ident\""
+                ],
+                "vary": [
+                  "Accept-Encoding"
+                ],
+                "server": [
+                  "ECS (bsa/EB20)"
+                ],
+                "x-cache": [
+                  "HIT"
+                ],
+                "age": [
+                  "355292"
+                ],
+                "content-length": [
+                  "1256"
+                ],
+                "cache-control": [
+                  "max-age=604800"
+                ],
+                "expires": [
+                  "Mon, 16 Aug 2021 18:51:30 GMT"
+                ],
+                "content-type": [
+                  "text/html; charset=UTF-8"
+                ],
+                "date": [
+                  "Mon, 09 Aug 2021 18:51:30 GMT"
+                ],
+                "last-modified": [
+                  "Thu, 17 Oct 2019 07:18:26 GMT"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "connection_id": 0,
+      "action": {
+        "Data": {
+          "data": {
+            "Utf8": "hello from example.com"
+          },
+          "direction": "Response"
+        }
+      }
+    },
+    {
+      "connection_id": 0,
+      "action": {
+        "Eof": {
+          "ok": true,
+          "direction": "Response"
+        }
+      }
+    }
+  ],
+  "docs": "test of example.com. response body has been manually changed",
+  "version": "V0"
+}

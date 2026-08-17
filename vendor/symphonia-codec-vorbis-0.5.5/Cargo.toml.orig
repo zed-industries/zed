@@ -1,0 +1,18 @@
+[package]
+name = "symphonia-codec-vorbis"
+version = "0.5.5"
+description = "Pure Rust Vorbis decoder (a part of project Symphonia)."
+homepage = "https://github.com/pdeljanov/Symphonia"
+repository = "https://github.com/pdeljanov/Symphonia"
+authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
+license = "MPL-2.0"
+readme = "README.md"
+categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
+keywords = ["audio", "codec", "decoder", "vorbis"]
+edition = "2018"
+rust-version = "1.53"
+
+[dependencies]
+log = "0.4"
+symphonia-core = { version = "0.5.5", path = "../symphonia-core" }
+symphonia-utils-xiph = { version = "0.5.5", path = "../symphonia-utils-xiph" }

@@ -1,0 +1,19 @@
+[package]
+
+name = "hound"
+version = "3.5.1"
+authors = ["Ruud van Asseldonk <dev@veniogames.com>"]
+description = "A wav encoding and decoding library"
+keywords = ["wav", "wave", "audio", "codec"]
+categories = ["multimedia::encoding", "multimedia::audio"]
+license = "Apache-2.0"
+readme = "readme.md"
+homepage = "https://github.com/ruuda/hound"
+repository = "https://github.com/ruuda/hound"
+documentation = "https://docs.rs/hound"
+
+[dev-dependencies]
+# An older version of cpal, but newer versions depend on the futures library,
+# which is incompatible with the version of Rust that Hound guarantees to
+# support.
+cpal = "0.2.12"

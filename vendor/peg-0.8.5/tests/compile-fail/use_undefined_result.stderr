@@ -1,0 +1,5 @@
+error: using result of rule `foo`, which does not return a value
+ --> $DIR/use_undefined_result.rs:6:27
+  |
+6 |     rule bar() -> u32 = x:foo() { 0 } //~ ERROR using result of rule `foo`, which does not return a value
+  |                           ^^^

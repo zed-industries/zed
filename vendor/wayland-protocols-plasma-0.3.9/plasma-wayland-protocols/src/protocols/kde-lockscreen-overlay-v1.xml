@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="kde_lockscreen_overlay_v1">
+  <copyright><![CDATA[
+    SPDX-FileCopyrightText: 2022 Aleix Pol Gonzalez <aleixpol@kde.org>
+
+    SPDX-License-Identifier: LGPL-2.1-or-later
+  ]]></copyright>
+
+  <interface  name="kde_lockscreen_overlay_v1" version="1">
+      <description summary="Allow surfaces over the lockscreen">
+        Allows a client to request a surface to be visible when the system is locked.
+
+        This is meant to be used for specific high urgency cases like phone calls or alarms.
+
+        Warning! The protocol described in this file is a desktop environment
+        implementation detail. Regular clients must not use this protocol.
+        Backward incompatible changes may be added without bumping the major
+        version of the extension.
+      </description>
+
+      <enum name="error">
+          <entry name="invalid_surface_state" value="0" summary="the client provided an invalid surface state"/>
+      </enum>
+
+      <request name="allow">
+        <description summary="Tell about which surface could be raised above the lockscreen">
+          Informs the compositor that the surface could be shown when the screen is locked. This request should be called while the surface is unmapped.
+        </description>
+        <arg name="surface" type="object" interface="wl_surface"/>
+    </request>
+
+    <request name="destroy" type="destructor">
+        <description summary="Destroy the kde_lockscreen_overlay_v1">
+          This won't affect the surface previously marked with the allow request.
+        </description>
+    </request>
+  </interface>
+</protocol>

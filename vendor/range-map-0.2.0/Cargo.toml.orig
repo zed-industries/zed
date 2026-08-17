@@ -1,0 +1,16 @@
+[package]
+name = "range-map"
+version = "0.2.0"
+authors = ["Joe Neeman <joeneeman@gmail.com>"]
+description = "Maps and sets implemented using ranges."
+documentation = "http://jneem.github.io/range-map"
+repository = "http://github.com/jneem/range-map"
+readme = "README.md"
+license = "MIT/Apache-2.0"
+
+[dependencies]
+num-traits = "0.2"
+
+[dev-dependencies]
+quickcheck = "0.8"
+num-iter = "0.1"

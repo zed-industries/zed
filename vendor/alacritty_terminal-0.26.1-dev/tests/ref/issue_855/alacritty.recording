@@ -1,0 +1,216 @@
+[1m[7m%[27m[1m[0m                                                                         ]2;jwilm@jwilm-desk: ~/code/alacritty]1;..ode/alacritty[0m[27m[24m[Jjwilm@jwilm-desk [01;32m➜ [01;32m [36m~/code/alacritty [00m [K[?1h=[?2004h
+bck-i-search: _[K[A[23Ctarget/debug/alacritty --ref-test --title alacritty-reftes[4mt[24m
+bck-i-search: t_[K[A[7C[A[15C[4mt[4mp[24mut cup 20[K[1Bbck-i-search: tp_      [24m [1B[K[A[A[38C[4mt[4mp[4mu[24m[1B[25Du_[A[20C[2C[4mu[4mt[24m[1B[25Dt_[A[19C[6Csr 3 7[12D[24m[35mt[24m[35mp[24m[35mu[24m[35mt[39m[1B[K[A[38C[?1l>[?2004l[1B]2;tput csr 3 7]1;tput[4;8r[1m[7m%[27m[1m[0m                                                                         ]2;jwilm@jwilm-desk: ~/code/alacritty]1;..ode/alacritty[0m[27m[24m[Jjwilm@jwilm-desk [01;32m➜ [01;32m [36m~/code/alacritty [00m [K[?1h=[?2004h
+bck-i-search: _[K[A[23Ctput [4mc[24msr 3 7[1B[36Dc_[A[27C[4mc[4mu[24mp 20 [1B[35Du_[A[26C[4mc[24m[24msr 3 7[1B[35D_ [A[26C     [24m       [1B[K[A[38C[35ml[39m[35ml[35ml[39m[?1l>[?2004l[1B]2;ls --color=tty -lh]1;lltotal 90M
+-rw-rw-r-- 1 jwilm jwilm  40K May  5  2017 ]
+-rw-rw-r-- 1 jwilm jwilm  35K May  8  2017 0001-wip.patch
+-rwxrwxr-x 1 jwilm jwilm  328 Oct 22 11:43 [0m[01;32mAlacritty.desktop[0m
+-rw-rw-r-- 1 jwilm jwilm  139 Oct 22 11:43 alacritty.info
+-rw-rw-r-- 1 jwilm jwilm  14K Nov  2 08:25 alacritty_macos.yml
+-rwxrwxr-x 1 jwilm jwilm  16M Jan 25  2017 [01;32malacritty-pre-gco[0m
+-rw-rw-r-- 1 jwilm jwilm  71K May 10  2017 alacritty.profile
+-rw-rw-r-- 1 jwilm jwilm 1.2K Nov 11 08:50 alacritty.recording
+-rwxrwxr-x 1 jwilm jwilm  15M Oct 28  2016 [01;32malacritty_shader_color[0m
+-rw-rw-r-- 1 jwilm jwilm 272K May  9  2017 alacritty.svg
+-rw-rw-r-- 1 jwilm jwilm 1019 Jan  1  2017 alacritty.txt
+-rwxrwxr-x 1 jwilm jwilm  15M Sep 24  2016 [01;32malacritty_with_corrupt_bug[0m
+-rw-rw-r-- 1 jwilm jwilm  15K Nov  2 08:25 alacritty.yml
+drwxrwxr-x 3 jwilm jwilm 4.0K Oct 22 11:43 [01;34massets[0m
+-rw-rw-r-- 1 jwilm jwilm 1.1K Jun 29  2016 build.rs
+-rw-rw-r-- 1 jwilm jwilm 2.1M May  8  2017 build.txt
+drwxrwxr-x 2 jwilm jwilm 4.0K Feb 17  2017 [01;34m_.cargo[0m
+-rw-rw-r-- 1 jwilm jwilm  71K Nov  2 08:24 Cargo.lock
+-rw-rw-r-- 1 jwilm jwilm 1.1K Nov  2 08:25 Cargo.toml
+drwxrwxr-x 3 jwilm jwilm 4.0K Sep 28  2016 [01;34mclip[0m
+drwxrwxr-x 4 jwilm jwilm 4.0K Nov  2 08:24 [01;34mcopypasta[0m
+-rw-rw-r-- 1 jwilm jwilm  432 Jan  2  2017 curse.py
+drwxrwxr-x 2 jwilm jwilm 4.0K Nov  2 08:25 [01;34mdocs[0m
+-rwxrwxr-x 1 jwilm jwilm  23M Feb 16  2017 [01;32mfalacritty[0m
+-rwxrwxr-x 1 jwilm jwilm 8.4K Jan  1  2017 [01;32mflagtest[0m
+-rw-rw-r-- 1 jwilm jwilm   65 Jan  1  2017 flagtest.c
+drwxrwxr-x 7 jwilm jwilm 4.0K Oct  8  2016 [01;34mFlameGraph[0m
+drwxrwxr-x 4 jwilm jwilm 4.0K Oct 22 11:43 [01;34mfont[0m
+-rw-rw-r-- 1 jwilm jwilm  65K Feb  8  2017 lgtest
+-rw-rw-r-- 1 jwilm jwilm  11K Jun 29  2016 LICENSE-APACHE
+-rw-rw-r-- 1 jwilm jwilm  742 Jan  1  2017 log.txt
+-rw-rw-r-- 1 jwilm jwilm 1.4K Oct 22 11:43 Makefile
+-rw------- 1 jwilm jwilm  186 Oct 14 12:08 massif.out.21446
+-rw------- 1 jwilm jwilm  187 Oct 14 12:08 massif.out.21582
+-rw------- 1 jwilm jwilm 5.4M Oct 14 18:22 massif.out.24704
+-rw------- 1 jwilm jwilm 3.0M Oct 14 18:24 massif.out.25053
+-rw------- 1 jwilm jwilm  10M Oct 14 18:28 massif.out.25609
+-rw-rw-r-- 1 jwilm jwilm 7.5K May 11  2017 mutrace.log
+-rw-rw-r-- 1 jwilm jwilm  160 Oct 24  2016 notes.md
+-rw-rw-r-- 1 jwilm jwilm 2.7K Jun 11 11:17 original
+drwxrwxr-x 4 jwilm jwilm 4.0K Jul  6  2016 [01;34mpasswd[0m
+-rw------- 1 jwilm jwilm  93K May  9  2017 perf.data
+-rw------- 1 jwilm jwilm 176K Apr 12  2017 perf.data.old
+-rw-rw-r-- 1 jwilm jwilm  602 Feb 11  2017 playerctl-0.5.0_amd64.deb
+-rw-rw-r-- 1 jwilm jwilm  11K Nov 11 08:43 README.md
+-rw-rw-r-- 1 jwilm jwilm 2.7K Jun 11 11:39 refactor
+drwxrwxr-x 2 jwilm jwilm 4.0K Nov  2 08:25 [01;34mres[0m
+-rw-rw-r-- 1 jwilm jwilm  21K Feb  1  2017 save-restore.recording
+drwxrwxr-x 2 jwilm jwilm 4.0K Nov  2 08:25 [01;34mscripts[0m
+srw-rw---- 1 jwilm jwilm    0 Jan  1  2017 [01;35msgr[0m
+drwxrwxr-x 2 jwilm jwilm 4.0K Oct 22 11:43 [01;34msnap[0m
+drwxrwxr-x 4 jwilm jwilm 4.0K Nov 11 08:43 [01;34msrc[0m
+drwxrwxr-x 5 jwilm jwilm 4.0K Jun 17 21:36 [01;34mtarget[0m
+-rw-rw-r-- 1 jwilm jwilm   49 Jun  6  2016 TASKS.md
+-rw-rw-r-- 1 jwilm jwilm 188K Feb 11  2017 test2.log
+-rw-rw-r-- 1 jwilm jwilm 191K Feb 11  2017 test.log
+drwxrwxr-x 3 jwilm jwilm 4.0K Nov 11 08:48 [01;34mtests[0m
+-rw-rw-r-- 1 jwilm jwilm  128 May  4  2017 TODO.md
+-rw-rw-r-- 1 jwilm jwilm  12K Apr 19  2017 typescript
+-rw-rw-r-- 1 jwilm jwilm 3.0K Mar  7  2017 wego.example
+[1m[7m%[27m[1m[0m                                                                         ]2;jwilm@jwilm-desk: ~/code/alacritty]1;..ode/alacritty[0m[27m[24m[Jjwilm@jwilm-desk [01;32m➜ [01;32m [36m~/code/alacritty [00m [K[?1h=[?2004h
+bck-i-search: _[K[A[23Ctput [4mc[24msr 3 7[1B[36Dc_[A[27C[4mc[4mu[24mp 20 [1B[35Du_[A[26C[1C[4mu[4mp[24m[1B[30Dp_[A[25C[35mt[35mp[35mu[35mt[39m [24mc[24mu[24mp[1B[K[A[44C[1C[1C[1C[1C[36m0[39m [39m10[?1l>[?2004l[1B]2;tput cup 10]1;tput[11;1H[1m[7m%[27m[1m[0m                                                                         ]2;jwilm@jwilm-desk: ~/code/alacritty]1;..ode/alacritty[0m[27m[24m[Jjwilm@jwilm-desk [01;32m➜ [01;32m [36m~/code/alacritty [00m [K[?1h=[?2004h[35ml[39m[35ml[35ml[39m[?1l>[?2004l
+]2;ls --color=tty -lh]1;lltotal 90M
+-rw-rw-r-- 1 jwilm jwilm  40K May  5  2017 ]
+-rw-rw-r-- 1 jwilm jwilm  35K May  8  2017 0001-wip.patch
+-rwxrwxr-x 1 jwilm jwilm  328 Oct 22 11:43 [0m[01;32mAlacritty.desktop[0m
+-rw-rw-r-- 1 jwilm jwilm  139 Oct 22 11:43 alacritty.info
+-rw-rw-r-- 1 jwilm jwilm  14K Nov  2 08:25 alacritty_macos.yml
+-rwxrwxr-x 1 jwilm jwilm  16M Jan 25  2017 [01;32malacritty-pre-gco[0m
+-rw-rw-r-- 1 jwilm jwilm  71K May 10  2017 alacritty.profile
+-rw-rw-r-- 1 jwilm jwilm 5.6K Nov 11 08:50 alacritty.recording
+-rwxrwxr-x 1 jwilm jwilm  15M Oct 28  2016 [01;32malacritty_shader_color[0m
+-rw-rw-r-- 1 jwilm jwilm 272K May  9  2017 alacritty.svg
+-rw-rw-r-- 1 jwilm jwilm 1019 Jan  1  2017 alacritty.txt
+-rwxrwxr-x 1 jwilm jwilm  15M Sep 24  2016 [01;32malacritty_with_corrupt_bug[0m
+-rw-rw-r-- 1 jwilm jwilm  15K Nov  2 08:25 alacritty.yml
+drwxrwxr-x 3 jwilm jwilm 4.0K Oct 22 11:43 [01;34massets[0m
+-rw-rw-r-- 1 jwilm jwilm 1.1K Jun 29  2016 build.rs
+-rw-rw-r-- 1 jwilm jwilm 2.1M May  8  2017 build.txt
+drwxrwxr-x 2 jwilm jwilm 4.0K Feb 17  2017 [01;34m_.cargo[0m
+-rw-rw-r-- 1 jwilm jwilm  71K Nov  2 08:24 Cargo.lock
+-rw-rw-r-- 1 jwilm jwilm 1.1K Nov  2 08:25 Cargo.toml
+drwxrwxr-x 3 jwilm jwilm 4.0K Sep 28  2016 [01;34mclip[0m
+drwxrwxr-x 4 jwilm jwilm 4.0K Nov  2 08:24 [01;34mcopypasta[0m
+-rw-rw-r-- 1 jwilm jwilm  432 Jan  2  2017 curse.py
+drwxrwxr-x 2 jwilm jwilm 4.0K Nov  2 08:25 [01;34mdocs[0m
+-rwxrwxr-x 1 jwilm jwilm  23M Feb 16  2017 [01;32mfalacritty[0m
+-rwxrwxr-x 1 jwilm jwilm 8.4K Jan  1  2017 [01;32mflagtest[0m
+-rw-rw-r-- 1 jwilm jwilm   65 Jan  1  2017 flagtest.c
+drwxrwxr-x 7 jwilm jwilm 4.0K Oct  8  2016 [01;34mFlameGraph[0m
+drwxrwxr-x 4 jwilm jwilm 4.0K Oct 22 11:43 [01;34mfont[0m
+-rw-rw-r-- 1 jwilm jwilm  65K Feb  8  2017 lgtest
+-rw-rw-r-- 1 jwilm jwilm  11K Jun 29  2016 LICENSE-APACHE
+-rw-rw-r-- 1 jwilm jwilm  742 Jan  1  2017 log.txt
+-rw-rw-r-- 1 jwilm jwilm 1.4K Oct 22 11:43 Makefile
+-rw------- 1 jwilm jwilm  186 Oct 14 12:08 massif.out.21446
+-rw------- 1 jwilm jwilm  187 Oct 14 12:08 massif.out.21582
+-rw------- 1 jwilm jwilm 5.4M Oct 14 18:22 massif.out.24704
+-rw------- 1 jwilm jwilm 3.0M Oct 14 18:24 massif.out.25053
+-rw------- 1 jwilm jwilm  10M Oct 14 18:28 massif.out.25609
+-rw-rw-r-- 1 jwilm jwilm 7.5K May 11  2017 mutrace.log
+-rw-rw-r-- 1 jwilm jwilm  160 Oct 24  2016 notes.md
+-rw-rw-r-- 1 jwilm jwilm 2.7K Jun 11 11:17 original
+drwxrwxr-x 4 jwilm jwilm 4.0K Jul  6  2016 [01;34mpasswd[0m
+-rw------- 1 jwilm jwilm  93K May  9  2017 perf.data
+-rw------- 1 jwilm jwilm 176K Apr 12  2017 perf.data.old
+-rw-rw-r-- 1 jwilm jwilm  602 Feb 11  2017 playerctl-0.5.0_amd64.deb
+-rw-rw-r-- 1 jwilm jwilm  11K Nov 11 08:43 README.md
+-rw-rw-r-- 1 jwilm jwilm 2.7K Jun 11 11:39 refactor
+drwxrwxr-x 2 jwilm jwilm 4.0K Nov  2 08:25 [01;34mres[0m
+-rw-rw-r-- 1 jwilm jwilm  21K Feb  1  2017 save-restore.recording
+drwxrwxr-x 2 jwilm jwilm 4.0K Nov  2 08:25 [01;34mscripts[0m
+srw-rw---- 1 jwilm jwilm    0 Jan  1  2017 [01;35msgr[0m
+drwxrwxr-x 2 jwilm jwilm 4.0K Oct 22 11:43 [01;34msnap[0m
+drwxrwxr-x 4 jwilm jwilm 4.0K Nov 11 08:43 [01;34msrc[0m
+drwxrwxr-x 5 jwilm jwilm 4.0K Jun 17 21:36 [01;34mtarget[0m
+-rw-rw-r-- 1 jwilm jwilm   49 Jun  6  2016 TASKS.md
+-rw-rw-r-- 1 jwilm jwilm 188K Feb 11  2017 test2.log
+-rw-rw-r-- 1 jwilm jwilm 191K Feb 11  2017 test.log
+drwxrwxr-x 3 jwilm jwilm 4.0K Nov 11 08:48 [01;34mtests[0m
+-rw-rw-r-- 1 jwilm jwilm  128 May  4  2017 TODO.md
+-rw-rw-r-- 1 jwilm jwilm  12K Apr 19  2017 typescript
+-rw-rw-r-- 1 jwilm jwilm 3.0K Mar  7  2017 wego.example
+[1m[7m%[27m[1m[0m                                                                         ]2;jwilm@jwilm-desk: ~/code/alacritty]1;..ode/alacritty[0m[27m[24m[Jjwilm@jwilm-desk [01;32m➜ [01;32m [36m~/code/alacritty [00m [K[?1h=[?2004h[?1l>[?2004l
+[1m[7m%[27m[1m[0m                                                                         ]2;jwilm@jwilm-desk: ~/code/alacritty]1;..ode/alacritty[0m[27m[24m[Jjwilm@jwilm-desk [01;32m➜ [01;32m [36m~/code/alacritty [00m [K[?1h=[?2004h[?1l>[?2004l
+[1m[7m%[27m[1m[0m                                                                         ]2;jwilm@jwilm-desk: ~/code/alacritty]1;..ode/alacritty[0m[27m[24m[Jjwilm@jwilm-desk [01;32m➜ [01;32m [36m~/code/alacritty [00m [K[?1h=[?2004h[?1l>[?2004l
+[1m[7m%[27m[1m[0m                                                                         ]2;jwilm@jwilm-desk: ~/code/alacritty]1;..ode/alacritty[0m[27m[24m[Jjwilm@jwilm-desk [01;32m➜ [01;32m [36m~/code/alacritty [00m [K[?1h=[?2004h[?1l>[?2004l
+[1m[7m%[27m[1m[0m                                                                         ]2;jwilm@jwilm-desk: ~/code/alacritty]1;..ode/alacritty[0m[27m[24m[Jjwilm@jwilm-desk [01;32m➜ [01;32m [36m~/code/alacritty [00m [K[?1h=[?2004h[?1l>[?2004l
+[1m[7m%[27m[1m[0m                                                                         ]2;jwilm@jwilm-desk: ~/code/alacritty]1;..ode/alacritty[0m[27m[24m[Jjwilm@jwilm-desk [01;32m➜ [01;32m [36m~/code/alacritty [00m [K[?1h=[?2004h[35ml[39m[35ml[35ms[39m[?1l>[?2004l
+]2;ls --color=tty]1;ls]                           [0m[01;34mcopypasta[0m         [01;34mpasswd[0m
+0001-wip.patch              curse.py          perf.data
+[01;32mAlacritty.desktop[0m           [01;34mdocs[0m              perf.data.old
+alacritty.info              [01;32mfalacritty[0m        playerctl-0.5.0_amd64.deb
+alacritty_macos.yml         [01;32mflagtest[0m          README.md
+[01;32malacritty-pre-gco[0m           flagtest.c        refactor
+alacritty.profile           [01;34mFlameGraph[0m        [01;34mres[0m
+alacritty.recording         [01;34mfont[0m              save-restore.recording
+[01;32malacritty_shader_color[0m      lgtest            [01;34mscripts[0m
+alacritty.svg               LICENSE-APACHE    [01;35msgr[0m
+alacritty.txt               log.txt           [01;34msnap[0m
+[01;32malacritty_with_corrupt_bug[0m  Makefile          [01;34msrc[0m
+alacritty.yml               massif.out.21446  [01;34mtarget[0m
+[01;34massets[0m                      massif.out.21582  TASKS.md
+build.rs                    massif.out.24704  test2.log
+build.txt                   massif.out.25053  test.log
+[01;34m_.cargo[0m                     massif.out.25609  [01;34mtests[0m
+Cargo.lock                  mutrace.log       TODO.md
+Cargo.toml                  notes.md          typescript
+[01;34mclip[0m                        original          wego.example
+[1m[7m%[27m[1m[0m                                                                         ]2;jwilm@jwilm-desk: ~/code/alacritty]1;..ode/alacritty[0m[27m[24m[Jjwilm@jwilm-desk [01;32m➜ [01;32m [36m~/code/alacritty [00m [K[?1h=[?2004h[35ml[39m[35ml[35ml[39m[?1l>[?2004l
+]2;ls --color=tty -lh]1;lltotal 90M
+-rw-rw-r-- 1 jwilm jwilm  40K May  5  2017 ]
+-rw-rw-r-- 1 jwilm jwilm  35K May  8  2017 0001-wip.patch
+-rwxrwxr-x 1 jwilm jwilm  328 Oct 22 11:43 [0m[01;32mAlacritty.desktop[0m
+-rw-rw-r-- 1 jwilm jwilm  139 Oct 22 11:43 alacritty.info
+-rw-rw-r-- 1 jwilm jwilm  14K Nov  2 08:25 alacritty_macos.yml
+-rwxrwxr-x 1 jwilm jwilm  16M Jan 25  2017 [01;32malacritty-pre-gco[0m
+-rw-rw-r-- 1 jwilm jwilm  71K May 10  2017 alacritty.profile
+-rw-rw-r-- 1 jwilm jwilm  13K Nov 11 08:50 alacritty.recording
+-rwxrwxr-x 1 jwilm jwilm  15M Oct 28  2016 [01;32malacritty_shader_color[0m
+-rw-rw-r-- 1 jwilm jwilm 272K May  9  2017 alacritty.svg
+-rw-rw-r-- 1 jwilm jwilm 1019 Jan  1  2017 alacritty.txt
+-rwxrwxr-x 1 jwilm jwilm  15M Sep 24  2016 [01;32malacritty_with_corrupt_bug[0m
+-rw-rw-r-- 1 jwilm jwilm  15K Nov  2 08:25 alacritty.yml
+drwxrwxr-x 3 jwilm jwilm 4.0K Oct 22 11:43 [01;34massets[0m
+-rw-rw-r-- 1 jwilm jwilm 1.1K Jun 29  2016 build.rs
+-rw-rw-r-- 1 jwilm jwilm 2.1M May  8  2017 build.txt
+drwxrwxr-x 2 jwilm jwilm 4.0K Feb 17  2017 [01;34m_.cargo[0m
+-rw-rw-r-- 1 jwilm jwilm  71K Nov  2 08:24 Cargo.lock
+-rw-rw-r-- 1 jwilm jwilm 1.1K Nov  2 08:25 Cargo.toml
+drwxrwxr-x 3 jwilm jwilm 4.0K Sep 28  2016 [01;34mclip[0m
+drwxrwxr-x 4 jwilm jwilm 4.0K Nov  2 08:24 [01;34mcopypasta[0m
+-rw-rw-r-- 1 jwilm jwilm  432 Jan  2  2017 curse.py
+drwxrwxr-x 2 jwilm jwilm 4.0K Nov  2 08:25 [01;34mdocs[0m
+-rwxrwxr-x 1 jwilm jwilm  23M Feb 16  2017 [01;32mfalacritty[0m
+-rwxrwxr-x 1 jwilm jwilm 8.4K Jan  1  2017 [01;32mflagtest[0m
+-rw-rw-r-- 1 jwilm jwilm   65 Jan  1  2017 flagtest.c
+drwxrwxr-x 7 jwilm jwilm 4.0K Oct  8  2016 [01;34mFlameGraph[0m
+drwxrwxr-x 4 jwilm jwilm 4.0K Oct 22 11:43 [01;34mfont[0m
+-rw-rw-r-- 1 jwilm jwilm  65K Feb  8  2017 lgtest
+-rw-rw-r-- 1 jwilm jwilm  11K Jun 29  2016 LICENSE-APACHE
+-rw-rw-r-- 1 jwilm jwilm  742 Jan  1  2017 log.txt
+-rw-rw-r-- 1 jwilm jwilm 1.4K Oct 22 11:43 Makefile
+-rw------- 1 jwilm jwilm  186 Oct 14 12:08 massif.out.21446
+-rw------- 1 jwilm jwilm  187 Oct 14 12:08 massif.out.21582
+-rw------- 1 jwilm jwilm 5.4M Oct 14 18:22 massif.out.24704
+-rw------- 1 jwilm jwilm 3.0M Oct 14 18:24 massif.out.25053
+-rw------- 1 jwilm jwilm  10M Oct 14 18:28 massif.out.25609
+-rw-rw-r-- 1 jwilm jwilm 7.5K May 11  2017 mutrace.log
+-rw-rw-r-- 1 jwilm jwilm  160 Oct 24  2016 notes.md
+-rw-rw-r-- 1 jwilm jwilm 2.7K Jun 11 11:17 original
+drwxrwxr-x 4 jwilm jwilm 4.0K Jul  6  2016 [01;34mpasswd[0m
+-rw------- 1 jwilm jwilm  93K May  9  2017 perf.data
+-rw------- 1 jwilm jwilm 176K Apr 12  2017 perf.data.old
+-rw-rw-r-- 1 jwilm jwilm  602 Feb 11  2017 playerctl-0.5.0_amd64.deb
+-rw-rw-r-- 1 jwilm jwilm  11K Nov 11 08:43 README.md
+-rw-rw-r-- 1 jwilm jwilm 2.7K Jun 11 11:39 refactor
+drwxrwxr-x 2 jwilm jwilm 4.0K Nov  2 08:25 [01;34mres[0m
+-rw-rw-r-- 1 jwilm jwilm  21K Feb  1  2017 save-restore.recording
+drwxrwxr-x 2 jwilm jwilm 4.0K Nov  2 08:25 [01;34mscripts[0m
+srw-rw---- 1 jwilm jwilm    0 Jan  1  2017 [01;35msgr[0m
+drwxrwxr-x 2 jwilm jwilm 4.0K Oct 22 11:43 [01;34msnap[0m
+drwxrwxr-x 4 jwilm jwilm 4.0K Nov 11 08:43 [01;34msrc[0m
+drwxrwxr-x 5 jwilm jwilm 4.0K Jun 17 21:36 [01;34mtarget[0m
+-rw-rw-r-- 1 jwilm jwilm   49 Jun  6  2016 TASKS.md
+-rw-rw-r-- 1 jwilm jwilm 188K Feb 11  2017 test2.log
+-rw-rw-r-- 1 jwilm jwilm 191K Feb 11  2017 test.log
+drwxrwxr-x 3 jwilm jwilm 4.0K Nov 11 08:48 [01;34mtests[0m
+-rw-rw-r-- 1 jwilm jwilm  128 May  4  2017 TODO.md
+-rw-rw-r-- 1 jwilm jwilm  12K Apr 19  2017 typescript
+-rw-rw-r-- 1 jwilm jwilm 3.0K Mar  7  2017 wego.example
+[1m[7m%[27m[1m[0m                                                                         ]2;jwilm@jwilm-desk: ~/code/alacritty]1;..ode/alacritty[0m[27m[24m[Jjwilm@jwilm-desk [01;32m➜ [01;32m [36m~/code/alacritty [00m [K[?1h=[?2004h

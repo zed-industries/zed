@@ -1,0 +1,40 @@
+---
+- name: Literal scalars
+  from: '@ingydotnet'
+  tags: indent literal
+  yaml: |
+    - aaa: |2
+        xxx
+      bbb: |
+        xxx
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       +MAP
+        =VAL :aaa
+        =VAL |xxx\n
+        =VAL :bbb
+        =VAL |xxx\n
+       -MAP
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      {
+        "aaa" : "xxx\n",
+        "bbb" : "xxx\n"
+      }
+    ]
+  dump: |
+    ---
+    - aaa: |
+        xxx
+      bbb: |
+        xxx
+  emit: |
+    - aaa: |
+        xxx
+      bbb: |
+        xxx

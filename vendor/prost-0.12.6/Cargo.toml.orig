@@ -1,0 +1,42 @@
+[package]
+name = "prost"
+version = "0.12.6"
+authors = [
+  "Dan Burkert <dan@danburkert.com>",
+  "Lucio Franco <luciofranco14@gmail.com>",
+  "Casper Meijn <casper@meijn.net>",
+  "Tokio Contributors <team@tokio.rs>",
+]
+license = "Apache-2.0"
+repository = "https://github.com/tokio-rs/prost"
+documentation = "https://docs.rs/prost"
+readme = "README.md"
+description = "A Protocol Buffers implementation for the Rust Language."
+keywords = ["protobuf", "serialization"]
+categories = ["encoding"]
+edition = "2021"
+rust-version = "1.70"
+
+[lib]
+# https://bheisler.github.io/criterion.rs/book/faq.html#cargo-bench-gives-unrecognized-option-errors-for-valid-command-line-options
+bench = false
+
+[features]
+default = ["derive", "std"]
+derive = ["dep:prost-derive"]
+prost-derive = ["derive"]     # deprecated, please use derive feature instead
+no-recursion-limit = []
+std = []
+
+[dependencies]
+bytes = { version = "1", default-features = false }
+prost-derive = { version = "0.12.6", path = "../prost-derive", optional = true }
+
+[dev-dependencies]
+criterion = { version = "0.4", default-features = false }
+proptest = "1"
+rand = "0.8"
+
+[[bench]]
+name = "varint"
+harness = false

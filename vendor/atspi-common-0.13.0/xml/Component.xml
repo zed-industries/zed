@@ -1,0 +1,320 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<node xmlns:doc="http://www.freedesktop.org/dbus/1.0/doc.dtd">
+  <!--
+      org.a11y.atspi.Component:
+      @short_description: Interface for GUI components like widgets or other visible elements.
+  -->
+  <interface name="org.a11y.atspi.Component">
+
+    <!--
+        Contains:
+        @x: X coordinate of point.
+        @y: Y coordinate of point.
+        @coord_type: Whether the coordinates are relative to the screen or to the
+        component's top level window; see the description.
+
+        Queries whether a point (x, y) is inside the component.
+
+        The @coord_type values are as follows, and correspond to AtkCoordType:
+
+        0 - Coordinates are relative to the screen.
+        1 - Coordinates are relative to the component's toplevel window.
+        2 - Coordinates are relative to the component's immediate parent.
+    -->
+    <method name="Contains">
+      <arg direction="in" name="x" type="i"/>
+      <arg direction="in" name="y" type="i"/>
+      <arg direction="in" name="coord_type" type="u"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+    <!--
+        GetAccessibleAtPoint:
+        @x: X coordinate of point.
+        @y: Y coordinate of point.
+        @coord_type: Whether the coordinates are relative to the screen or to the
+        component's top level window; see the description.
+
+        Gets a reference to the accessible object that contains an (x, y) pair of
+        coordinates.
+
+        The @coord_type values are as follows, and correspond to AtkCoordType:
+
+        0 - Coordinates are relative to the screen.
+        1 - Coordinates are relative to the component's toplevel window.
+        2 - Coordinates are relative to the component's immediate parent.
+
+        Returns: A DBus name and object reference (so) for the sought object, or a null
+        object reference "/org/a11y/atspi/null" if there is no object at the specified
+        coordinates.
+    -->
+    <method name="GetAccessibleAtPoint">
+      <arg direction="in" name="x" type="i"/>
+      <arg direction="in" name="y" type="i"/>
+      <arg direction="in" name="coord_type" type="u"/>
+      <arg direction="out" type="(so)"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QSpiObjectReference"/>
+    </method>
+
+    <!--
+        GetExtents:
+        @coord_type: Whether the coordinates are relative to the screen or to the
+        component's top level window; see the description.
+
+        Queries the pixel extents of a component.
+
+        The @coord_type values are as follows, and correspond to AtkCoordType:
+
+        0 - Coordinates are relative to the screen.
+        1 - Coordinates are relative to the component's toplevel window.
+        2 - Coordinates are relative to the component's immediate parent.
+
+        Returns: a tuple (x, y, width, height) corresponding to the rectangle for the
+        component's extents.
+    -->
+    <method name="GetExtents">
+      <arg direction="in" name="coord_type" type="u"/>
+      <arg direction="out" type="(iiii)"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QSpiRect"/>
+    </method>
+
+    <!--
+        GetPosition:
+        @coord_type: Whether the coordinates are relative to the screen or to the
+        component's top level window; see the description.
+
+        Queries the upper-left position of a component.
+
+        The @coord_type values are as follows, and correspond to AtkCoordType:
+
+        0 - Coordinates are relative to the screen.
+        1 - Coordinates are relative to the component's toplevel window.
+        2 - Coordinates are relative to the component's immediate parent.
+
+        Returns: (x, y) coordinates of the component's upper-left corner.
+    -->
+    <method name="GetPosition">
+      <arg direction="in" name="coord_type" type="u"/>
+      <arg direction="out" name="x" type="i"/>
+      <arg direction="out" name="y" type="i"/>
+    </method>
+
+    <!--
+        GetSize:
+        Queries the pixel size of a component.
+
+        Returns: (width, height) of the component's rectangular area.
+    -->
+    <method name="GetSize">
+      <arg direction="out" name="width" type="i"/>
+      <arg direction="out" name="height" type="i"/>
+    </method>
+
+    <!--
+        GetLayer:
+
+        Queries the UI layer at which a component is rendered, which can help in
+        determining when components occlude one another.
+
+        The layer of a component indicates its relative stacking order with respect to the
+        onscreen visual representation of the UI.  The layer index, in combination
+        with the component's extents, can be used to compute the visibility of
+        all or part of a component.  This is important in programmatic determination of
+        region-of-interest for magnification, and in flat screen review models of the
+        screen, as well as for other uses.  Objects residing in two of the
+        Layer categories support further z-ordering information, with
+        respect to their peers in the same layer: namely, WINDOW and
+        MDI.  Relative stacking order for other objects within the same layer
+        is not available; the recommended heuristic is first child paints first. In other
+        words, assume that the first siblings in the child list are subject to being
+        overpainted by later siblings if their bounds intersect. The order of layers, from
+        bottom to top, is as follows:
+
+        0 - INVALID: Error condition.
+
+        1 - BACKGROUND: Reserved for the desktop background; this is the bottom-most
+        layer, over which everything else is painted.
+
+        2 - CANVAS: The 'background' layer for most content renderers and UI component containers.
+
+        3 - WIDGET: The layer in which the majority of ordinary 'foreground' widgets reside.
+
+        4 - MDI: A special layer between CANVAS and WIDGET, in which the 'pseudo-windows'
+        (e.g. the Multiple-Document Interface frames) reside.  See the GetMDIZOrder
+        method.
+
+        5 - POPUP: Layer for popup window content, above WIDGET.
+
+        6 - OVERLAY: The topmost layer.
+
+        7 - WINDOW: The layer in which a toplevel window background usually resides.
+    -->
+    <method name="GetLayer">
+      <arg direction="out" type="u"/>
+    </method>
+
+    <!--
+        GetMDIZOrder:
+
+        Queries the Z stacking order of a component which is in the MDI or WINDOW layer,
+        per the GetLayer method.  Bigger z-order numbers are nearer the top.
+
+        Returns: The z order of the component, or -1 if it is not in the MDI layer.
+    -->
+    <method name="GetMDIZOrder">
+      <arg direction="out" type="n"/>
+    </method>
+
+    <!--
+        GrabFocus:
+
+        Attempts to set the keyboard input focus to the component.
+
+        Returns: true if successful, or false otherwise.
+    -->
+    <method name="GrabFocus">
+      <arg direction="out" type="b"/>
+    </method>
+
+    <!--
+        GetAlpha:
+
+        Gets the opacity/alpha value of a component, if alpha blending is in use.
+
+        Returns: opacity value in the [0.0, 1.0] range.  0 is fully transparent and 1 is fully opaque.
+    -->
+    <method name="GetAlpha">
+      <arg direction="out" type="d"/>
+    </method>
+
+    <!--
+        SetExtents:
+        @x: the new horizontal position to which the component should be moved.
+        @y: the new vertical position to which the component should be moved.
+        @width: the width to which the component should be resized.
+        @height: the height to which the component should be resized.
+        @coord_type: Whether the coordinates are relative to the screen or to the
+        component's top level window; see the description.
+
+        Moves and resizes the component.
+
+        The @coord_type values are as follows, and correspond to AtkCoordType:
+
+        0 - Coordinates are relative to the screen.
+        1 - Coordinates are relative to the component's toplevel window.
+        2 - Coordinates are relative to the component's immediate parent.
+
+        Returns: true if successful, or false otherwise.
+    -->
+    <method name="SetExtents">
+      <arg direction="in" name="x" type="i"/>
+      <arg direction="in" name="y" type="i"/>
+      <arg direction="in" name="width" type="i"/>
+      <arg direction="in" name="height" type="i"/>
+      <arg direction="in" name="coord_type" type="u"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+    <!--
+        SetPosition:
+        @x: the new horizontal position to which the component should be moved.
+        @y: the new vertical position to which the component should be moved.
+        @coord_type: Whether the coordinates are relative to the screen or to the
+        component's top level window; see the description.
+
+        Moves the component to the specified position.
+
+        The @coord_type values are as follows, and correspond to AtkCoordType:
+
+        0 - Coordinates are relative to the screen.
+        1 - Coordinates are relative to the component's toplevel window.
+        2 - Coordinates are relative to the component's immediate parent.
+
+        Returns: true if successful, or false otherwise.
+    -->
+    <method name="SetPosition">
+      <arg direction="in" name="x" type="i"/>
+      <arg direction="in" name="y" type="i"/>
+      <arg direction="in" name="coord_type" type="u"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+    <!--
+        SetSize:
+        @width: the width to which the component should be resized.
+        @height: the height to which the component should be resized.
+
+        Resizes the component to the given pixel dimensions.
+
+        Returns: true if successful, or false otherwise.
+    -->
+    <method name="SetSize">
+      <arg direction="in" name="width" type="i"/>
+      <arg direction="in" name="height" type="i"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+    <!--
+        ScrollTo:
+        @type: How to position the component within its parent; see the description.
+
+        Makes the component visible on the screen by scrolling all necessary parents.
+
+        The @type corresponds to AtkScrollType:
+
+        0 - TOP_LEFT: Scroll the object vertically and horizontally to bring
+        its top left corner to the top left corner of the window.
+
+        1 - BOTTOM_RIGHT: Scroll the object vertically and horizontally to
+        bring its bottom right corner to the bottom right corner of the window.
+
+        2 - TOP_EDGE: Scroll the object vertically to bring its top edge to
+        the top edge of the window.
+
+        3 - BOTTOM_EDGE: Scroll the object vertically to bring its bottom
+        edge to the bottom edge of the window.
+
+        4 - LEFT_EDGE: Scroll the object vertically and horizontally to bring
+        its left edge to the left edge of the window.
+
+        5 - RIGHT_EDGE: Scroll the object vertically and horizontally to
+        bring its right edge to the right edge of the window.
+
+        6 - ANYWHERE: Scroll the object vertically and horizontally so that
+        as much as possible of the object becomes visible. The exact placement is
+        determined by the application.
+
+        Returns: true if successful, or false otherwise.
+    -->
+    <method name="ScrollTo">
+      <arg direction="in" name="type" type="u"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+    <!--
+        ScrollToPoint:
+        @coord_type: Whether the coordinates are relative to the screen or to the
+        component's top level window; see the description.
+        @x: X coordinate within the component to make visible.
+        @y: Y coordinate within the component to make visible.
+
+        Similar to the ScrollTo method, but makes a specific point from the component
+        visible in its parent.
+
+        The @coord_type values are as follows, and correspond to AtkCoordType:
+
+        0 - Coordinates are relative to the screen.
+        1 - Coordinates are relative to the component's toplevel window.
+        2 - Coordinates are relative to the component's immediate parent.
+
+        Returns: true if successful, or false otherwise.
+    -->
+    <method name="ScrollToPoint">
+      <arg direction="in" name="coord_type" type="u"/>
+      <arg direction="in" name="x" type="i"/>
+      <arg direction="in" name="y" type="i"/>
+      <arg direction="out" type="b"/>
+    </method>
+
+  </interface>
+</node>

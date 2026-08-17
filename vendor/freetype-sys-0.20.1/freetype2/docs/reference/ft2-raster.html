@@ -1,0 +1,1906 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="API Reference Documentation for FreeType-2.13.2">
+      
+      
+      
+        <meta name="author" content="FreeType Contributors">
+      
+      
+      <link rel="icon" href="images/favico.ico">
+      <meta name="generator" content="mkdocs-1.4.3, mkdocs-material-7.1.9">
+    
+    
+      
+        <title>Scanline Converter - FreeType-2.13.2 API Reference</title>
+      
+    
+    
+      <link rel="stylesheet" href="assets/stylesheets/main.ca7ac06f.min.css">
+      
+        
+        <link rel="stylesheet" href="assets/stylesheets/palette.f1a3b89f.min.css">
+        
+          
+          
+          <meta name="theme-color" content="#4cae4f">
+        
+      
+    
+    
+    
+      
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Noto+Serif:300,400,400i,700%7CRoboto+Mono&display=fallback">
+        <style>:root{--md-text-font-family:"Noto Serif";--md-code-font-family:"Roboto Mono"}</style>
+      
+    
+    
+    
+      <link rel="stylesheet" href="stylesheets/extra.css">
+    
+    
+      
+
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <script>function __prefix(e){return new URL(".",location).pathname+"."+e}function __get(e,t=localStorage){return JSON.parse(t.getItem(__prefix(e)))}</script>
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#scanline-converter" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-header__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            FreeType-2.13.2 API Reference
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Scanline Converter
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+      </label>
+      
+<div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" data-md-state="active" required>
+      <label class="md-search__icon md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+      </label>
+      <button type="reset" class="md-search__icon md-icon" aria-label="Clear" tabindex="-1">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
+      </button>
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+  </nav>
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-nav__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    FreeType-2.13.2 API Reference
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="index.html" class="md-nav__link">
+        TOC
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-index.html" class="md-nav__link">
+        Index
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_3" type="checkbox" id="__nav_3" >
+      
+      <label class="md-nav__link" for="__nav_3">
+        General Remarks
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="General Remarks" data-md-level="1">
+        <label class="md-nav__title" for="__nav_3">
+          <span class="md-nav__icon md-icon"></span>
+          General Remarks
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-preamble.html" class="md-nav__link">
+        Preamble
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_inclusion.html" class="md-nav__link">
+        FreeType's header inclusion scheme
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-user_allocation.html" class="md-nav__link">
+        User allocation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_4" type="checkbox" id="__nav_4" >
+      
+      <label class="md-nav__link" for="__nav_4">
+        Core API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Core API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_4">
+          <span class="md-nav__icon md-icon"></span>
+          Core API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-basic_types.html" class="md-nav__link">
+        Basic Data Types
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-library_setup.html" class="md-nav__link">
+        Library Setup
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-face_creation.html" class="md-nav__link">
+        Face Creation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_testing_macros.html" class="md-nav__link">
+        Font Testing Macros
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizing_and_scaling.html" class="md-nav__link">
+        Sizing and Scaling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_retrieval.html" class="md-nav__link">
+        Glyph Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-character_mapping.html" class="md-nav__link">
+        Character Mapping
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-information_retrieval.html" class="md-nav__link">
+        Information Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-other_api_data.html" class="md-nav__link">
+        Other API Data
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_5" type="checkbox" id="__nav_5" >
+      
+      <label class="md-nav__link" for="__nav_5">
+        Extended API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Extended API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_5">
+          <span class="md-nav__icon md-icon"></span>
+          Extended API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_variants.html" class="md-nav__link">
+        Unicode Variation Sequences
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-color_management.html" class="md-nav__link">
+        Glyph Color Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-layer_management.html" class="md-nav__link">
+        Glyph Layer Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_management.html" class="md-nav__link">
+        Glyph Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-mac_specific.html" class="md-nav__link">
+        Mac Specific Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizes_management.html" class="md-nav__link">
+        Size Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_file_macros.html" class="md-nav__link">
+        Header File Macros
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_6" type="checkbox" id="__nav_6" >
+      
+      <label class="md-nav__link" for="__nav_6">
+        Format-Specific API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Format-Specific API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_6">
+          <span class="md-nav__icon md-icon"></span>
+          Format-Specific API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-multiple_masters.html" class="md-nav__link">
+        Multiple Masters
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_tables.html" class="md-nav__link">
+        TrueType Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-type1_tables.html" class="md-nav__link">
+        Type 1 Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sfnt_names.html" class="md-nav__link">
+        SFNT Names
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bdf_fonts.html" class="md-nav__link">
+        BDF and PCF Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cid_fonts.html" class="md-nav__link">
+        CID Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pfr_fonts.html" class="md-nav__link">
+        PFR Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-winfnt_fonts.html" class="md-nav__link">
+        Window FNT Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-svg_fonts.html" class="md-nav__link">
+        OpenType SVG Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_formats.html" class="md-nav__link">
+        Font Formats
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gasp_table.html" class="md-nav__link">
+        Gasp Table
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_7" type="checkbox" id="__nav_7" >
+      
+      <label class="md-nav__link" for="__nav_7">
+        Controlling FreeType Modules
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Controlling FreeType Modules" data-md-level="1">
+        <label class="md-nav__title" for="__nav_7">
+          <span class="md-nav__icon md-icon"></span>
+          Controlling FreeType Modules
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-auto_hinter.html" class="md-nav__link">
+        The auto-hinter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cff_driver.html" class="md-nav__link">
+        The CFF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-t1_cid_driver.html" class="md-nav__link">
+        The Type 1 and CID drivers
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-tt_driver.html" class="md-nav__link">
+        The TrueType driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pcf_driver.html" class="md-nav__link">
+        The PCF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_svg_driver.html" class="md-nav__link">
+        The SVG driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-properties.html" class="md-nav__link">
+        Driver properties
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-parameter_tags.html" class="md-nav__link">
+        Parameter Tags
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lcd_rendering.html" class="md-nav__link">
+        Subpixel Rendering
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_8" type="checkbox" id="__nav_8" >
+      
+      <label class="md-nav__link" for="__nav_8">
+        Cache Sub-System
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Cache Sub-System" data-md-level="1">
+        <label class="md-nav__title" for="__nav_8">
+          <span class="md-nav__icon md-icon"></span>
+          Cache Sub-System
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cache_subsystem.html" class="md-nav__link">
+        Cache Sub-System
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+    
+  
+  
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_9" type="checkbox" id="__nav_9" checked>
+      
+      <label class="md-nav__link" for="__nav_9">
+        Support API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Support API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_9">
+          <span class="md-nav__icon md-icon"></span>
+          Support API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-computations.html" class="md-nav__link">
+        Computations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-list_processing.html" class="md-nav__link">
+        List Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-outline_processing.html" class="md-nav__link">
+        Outline Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-quick_advance.html" class="md-nav__link">
+        Quick retrieval of advance values
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bitmap_handling.html" class="md-nav__link">
+        Bitmap Handling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+    
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" data-md-toggle="toc" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          Scanline Converter
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="ft2-raster.html" class="md-nav__link md-nav__link--active">
+        Scanline Converter
+      </a>
+      
+        
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_span" class="md-nav__link">
+    FT_Span
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_spanfunc" class="md-nav__link">
+    FT_SpanFunc
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_raster_params" class="md-nav__link">
+    FT_Raster_Params
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_raster_flag_xxx" class="md-nav__link">
+    FT_RASTER_FLAG_XXX
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_raster" class="md-nav__link">
+    FT_Raster
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_raster_newfunc" class="md-nav__link">
+    FT_Raster_NewFunc
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_raster_donefunc" class="md-nav__link">
+    FT_Raster_DoneFunc
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_raster_resetfunc" class="md-nav__link">
+    FT_Raster_ResetFunc
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_raster_setmodefunc" class="md-nav__link">
+    FT_Raster_SetModeFunc
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_raster_renderfunc" class="md-nav__link">
+    FT_Raster_RenderFunc
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_raster_funcs" class="md-nav__link">
+    FT_Raster_Funcs
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_raster_bittest_func" class="md-nav__link">
+    FT_Raster_BitTest_Func
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_raster_bitset_func" class="md-nav__link">
+    FT_Raster_BitSet_Func
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_stroker.html" class="md-nav__link">
+        Glyph Stroker
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-system_interface.html" class="md-nav__link">
+        System Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-module_management.html" class="md-nav__link">
+        Module Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gzip.html" class="md-nav__link">
+        GZIP Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lzw.html" class="md-nav__link">
+        LZW Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bzip2.html" class="md-nav__link">
+        BZIP2 Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-debugging_apis.html" class="md-nav__link">
+        External Debugging APIs
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_10" type="checkbox" id="__nav_10" >
+      
+      <label class="md-nav__link" for="__nav_10">
+        Error Codes
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Error Codes" data-md-level="1">
+        <label class="md-nav__title" for="__nav_10">
+          <span class="md-nav__icon md-icon"></span>
+          Error Codes
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_enumerations.html" class="md-nav__link">
+        Error Enumerations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_code_values.html" class="md-nav__link">
+        Error Code Values
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_11" type="checkbox" id="__nav_11" >
+      
+      <label class="md-nav__link" for="__nav_11">
+        Miscellaneous
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Miscellaneous" data-md-level="1">
+        <label class="md-nav__title" for="__nav_11">
+          <span class="md-nav__icon md-icon"></span>
+          Miscellaneous
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gx_validation.html" class="md-nav__link">
+        TrueTypeGX/AAT Validation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-incremental.html" class="md-nav__link">
+        Incremental Loading
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_engine.html" class="md-nav__link">
+        The TrueType Engine
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_validation.html" class="md-nav__link">
+        OpenType Validation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_span" class="md-nav__link">
+    FT_Span
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_spanfunc" class="md-nav__link">
+    FT_SpanFunc
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_raster_params" class="md-nav__link">
+    FT_Raster_Params
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_raster_flag_xxx" class="md-nav__link">
+    FT_RASTER_FLAG_XXX
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_raster" class="md-nav__link">
+    FT_Raster
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_raster_newfunc" class="md-nav__link">
+    FT_Raster_NewFunc
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_raster_donefunc" class="md-nav__link">
+    FT_Raster_DoneFunc
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_raster_resetfunc" class="md-nav__link">
+    FT_Raster_ResetFunc
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_raster_setmodefunc" class="md-nav__link">
+    FT_Raster_SetModeFunc
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_raster_renderfunc" class="md-nav__link">
+    FT_Raster_RenderFunc
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_raster_funcs" class="md-nav__link">
+    FT_Raster_Funcs
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_raster_bittest_func" class="md-nav__link">
+    FT_Raster_BitTest_Func
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_raster_bitset_func" class="md-nav__link">
+    FT_Raster_BitSet_Func
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          <div class="md-content" data-md-component="content">
+            <article class="md-content__inner md-typeset">
+              
+                
+                
+                <p><a href="https://www.freetype.org">FreeType</a> &raquo; <a href="../">Docs</a> &raquo; <a href="index.html#support-api">Support API</a> &raquo; Scanline Converter</p>
+<hr />
+<h1 id="scanline-converter">Scanline Converter<a class="headerlink" href="#scanline-converter" title="Permanent link">&para;</a></h1>
+<h2 id="synopsis">Synopsis<a class="headerlink" href="#synopsis" title="Permanent link">&para;</a></h2>
+<p>A raster or a rasterizer is a scan converter in charge of producing a pixel coverage bitmap that can be used as an alpha channel when compositing a glyph with a background. FreeType comes with two rasterizers: bilevel <code>raster1</code> and anti-aliased <code>smooth</code> are two separate modules. They are usually called from the high-level <code><a href="ft2-glyph_retrieval.html#ft_load_glyph">FT_Load_Glyph</a></code> or <code><a href="ft2-glyph_retrieval.html#ft_render_glyph">FT_Render_Glyph</a></code> functions and produce the entire coverage bitmap at once, while staying largely invisible to users.</p>
+<p>Instead of working with complete coverage bitmaps, it is also possible to intercept consecutive pixel runs on the same scanline with the same coverage, called <em>spans</em>, and process them individually. Only the <code>smooth</code> rasterizer permits this when calling <code><a href="ft2-outline_processing.html#ft_outline_render">FT_Outline_Render</a></code> with <code><a href="ft2-raster.html#ft_raster_params">FT_Raster_Params</a></code> as described below.</p>
+<p>Working with either complete bitmaps or spans it is important to think of them as colorless coverage objects suitable as alpha channels to blend arbitrary colors with a background. For best results, it is recommended to use gamma correction, too.</p>
+<p>This section also describes the public API needed to set up alternative <code><a href="ft2-module_management.html#ft_renderer">FT_Renderer</a></code> modules.</p>
+<h2 id="ft_span">FT_Span<a class="headerlink" href="#ft_span" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_IMAGE_H (freetype/ftimage.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_Span_
+  {
+    <span class="keyword">short</span>           x;
+    <span class="keyword">unsigned</span> <span class="keyword">short</span>  len;
+    <span class="keyword">unsigned</span> <span class="keyword">char</span>   coverage;
+
+  } <b>FT_Span</b>;
+</code></pre></div>
+
+<p>A structure to model a single span of consecutive pixels when rendering an anti-aliased bitmap.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="x">x</td><td class="desc">
+<p>The span's horizontal start position.</p>
+</td></tr>
+<tr><td class="val" id="len">len</td><td class="desc">
+<p>The span's length in pixels.</p>
+</td></tr>
+<tr><td class="val" id="coverage">coverage</td><td class="desc">
+<p>The span color/coverage, ranging from 0 (background) to 255 (foreground).</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>This structure is used by the span drawing callback type named <code><a href="ft2-raster.html#ft_spanfunc">FT_SpanFunc</a></code> that takes the y&nbsp;coordinate of the span as a parameter.</p>
+<p>The anti-aliased rasterizer produces coverage values from 0 to 255, that is, from completely transparent to completely opaque.</p>
+<hr>
+
+<h2 id="ft_spanfunc">FT_SpanFunc<a class="headerlink" href="#ft_spanfunc" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_IMAGE_H (freetype/ftimage.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">void</span>
+  (*<b>FT_SpanFunc</b>)( <span class="keyword">int</span>             y,
+                  <span class="keyword">int</span>             count,
+                  <span class="keyword">const</span> <a href="ft2-raster.html#ft_span">FT_Span</a>*  spans,
+                  <span class="keyword">void</span>*           user );
+
+#<span class="keyword">define</span> FT_Raster_Span_Func  <b>FT_SpanFunc</b>
+</code></pre></div>
+
+<p>A function used as a call-back by the anti-aliased renderer in order to let client applications draw themselves the pixel spans on each scan line.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="y">y</td><td class="desc">
+<p>The scanline's upward y&nbsp;coordinate.</p>
+</td></tr>
+<tr><td class="val" id="count">count</td><td class="desc">
+<p>The number of spans to draw on this scanline.</p>
+</td></tr>
+<tr><td class="val" id="spans">spans</td><td class="desc">
+<p>A table of <code>count</code> spans to draw on the scanline.</p>
+</td></tr>
+<tr><td class="val" id="user">user</td><td class="desc">
+<p>User-supplied data that is passed to the callback.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>This callback allows client applications to directly render the spans of the anti-aliased bitmap to any kind of surfaces.</p>
+<p>This can be used to write anti-aliased outlines directly to a given background bitmap using alpha compositing. It can also be used for oversampling and averaging.</p>
+<hr>
+
+<h2 id="ft_raster_params">FT_Raster_Params<a class="headerlink" href="#ft_raster_params" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_IMAGE_H (freetype/ftimage.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_Raster_Params_
+  {
+    <span class="keyword">const</span> <a href="ft2-basic_types.html#ft_bitmap">FT_Bitmap</a>*        target;
+    <span class="keyword">const</span> <span class="keyword">void</span>*             source;
+    <span class="keyword">int</span>                     flags;
+    <a href="ft2-raster.html#ft_spanfunc">FT_SpanFunc</a>             gray_spans;
+    <a href="ft2-raster.html#ft_spanfunc">FT_SpanFunc</a>             black_spans;  /* unused */
+    <a href="ft2-raster.html#ft_raster_bittest_func">FT_Raster_BitTest_Func</a>  bit_test;     /* unused */
+    <a href="ft2-raster.html#ft_raster_bitset_func">FT_Raster_BitSet_Func</a>   bit_set;      /* unused */
+    <span class="keyword">void</span>*                   user;
+    <a href="ft2-basic_types.html#ft_bbox">FT_BBox</a>                 clip_box;
+
+  } <b>FT_Raster_Params</b>;
+</code></pre></div>
+
+<p>A structure to hold the parameters used by a raster's render function, passed as an argument to <code><a href="ft2-outline_processing.html#ft_outline_render">FT_Outline_Render</a></code>.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="target">target</td><td class="desc">
+<p>The target bitmap.</p>
+</td></tr>
+<tr><td class="val" id="source">source</td><td class="desc">
+<p>A pointer to the source glyph image (e.g., an <code><a href="ft2-outline_processing.html#ft_outline">FT_Outline</a></code>).</p>
+</td></tr>
+<tr><td class="val" id="flags">flags</td><td class="desc">
+<p>The rendering flags.</p>
+</td></tr>
+<tr><td class="val" id="gray_spans">gray_spans</td><td class="desc">
+<p>The gray span drawing callback.</p>
+</td></tr>
+<tr><td class="val" id="black_spans">black_spans</td><td class="desc">
+<p>Unused.</p>
+</td></tr>
+<tr><td class="val" id="bit_test">bit_test</td><td class="desc">
+<p>Unused.</p>
+</td></tr>
+<tr><td class="val" id="bit_set">bit_set</td><td class="desc">
+<p>Unused.</p>
+</td></tr>
+<tr><td class="val" id="user">user</td><td class="desc">
+<p>User-supplied data that is passed to each drawing callback.</p>
+</td></tr>
+<tr><td class="val" id="clip_box">clip_box</td><td class="desc">
+<p>An optional span clipping box expressed in <em>integer</em> pixels (not in 26.6 fixed-point units).</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>The <code><a href="ft2-raster.html#ft_raster_flag_xxx">FT_RASTER_FLAG_AA</a></code> bit flag must be set in the <code>flags</code> to generate an anti-aliased glyph bitmap, otherwise a monochrome bitmap is generated. The <code>target</code> should have appropriate pixel mode and its dimensions define the clipping region.</p>
+<p>If both <code><a href="ft2-raster.html#ft_raster_flag_xxx">FT_RASTER_FLAG_AA</a></code> and <code><a href="ft2-raster.html#ft_raster_flag_xxx">FT_RASTER_FLAG_DIRECT</a></code> bit flags are set in <code>flags</code>, the raster calls an <code><a href="ft2-raster.html#ft_spanfunc">FT_SpanFunc</a></code> callback <code>gray_spans</code> with <code>user</code> data as an argument ignoring <code>target</code>. This allows direct composition over a pre-existing user surface to perform the span drawing and composition. To optionally clip the spans, set the <code><a href="ft2-raster.html#ft_raster_flag_xxx">FT_RASTER_FLAG_CLIP</a></code> flag and <code>clip_box</code>. The monochrome raster does not support the direct mode.</p>
+<p>The gray-level rasterizer always uses 256 gray levels. If you want fewer gray levels, you have to use <code><a href="ft2-raster.html#ft_raster_flag_xxx">FT_RASTER_FLAG_DIRECT</a></code> and reduce the levels in the callback function.</p>
+<hr>
+
+<h2 id="ft_raster_flag_xxx">FT_RASTER_FLAG_XXX<a class="headerlink" href="#ft_raster_flag_xxx" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_IMAGE_H (freetype/ftimage.h).</p>
+<div class = "codehilite"><pre><code>#<span class="keyword">define</span> <a href="ft2-raster.html#ft_raster_flag_default">FT_RASTER_FLAG_DEFAULT</a>  0x0
+#<span class="keyword">define</span> <a href="ft2-raster.html#ft_raster_flag_aa">FT_RASTER_FLAG_AA</a>       0x1
+#<span class="keyword">define</span> <a href="ft2-raster.html#ft_raster_flag_direct">FT_RASTER_FLAG_DIRECT</a>   0x2
+#<span class="keyword">define</span> <a href="ft2-raster.html#ft_raster_flag_clip">FT_RASTER_FLAG_CLIP</a>     0x4
+#<span class="keyword">define</span> <a href="ft2-raster.html#ft_raster_flag_sdf">FT_RASTER_FLAG_SDF</a>      0x8
+
+  /* these constants are deprecated; use the corresponding */
+  /* `<b>FT_RASTER_FLAG_XXX</b>` values instead                   */
+#<span class="keyword">define</span> ft_raster_flag_default  <a href="ft2-raster.html#ft_raster_flag_default">FT_RASTER_FLAG_DEFAULT</a>
+#<span class="keyword">define</span> ft_raster_flag_aa       <a href="ft2-raster.html#ft_raster_flag_aa">FT_RASTER_FLAG_AA</a>
+#<span class="keyword">define</span> ft_raster_flag_direct   <a href="ft2-raster.html#ft_raster_flag_direct">FT_RASTER_FLAG_DIRECT</a>
+#<span class="keyword">define</span> ft_raster_flag_clip     <a href="ft2-raster.html#ft_raster_flag_clip">FT_RASTER_FLAG_CLIP</a>
+</code></pre></div>
+
+<p>A list of bit flag constants as used in the <code>flags</code> field of a <code><a href="ft2-raster.html#ft_raster_params">FT_Raster_Params</a></code> structure.</p>
+<h4>values</h4>
+<table class="fields">
+<tr><td class="val" id="ft_raster_flag_default">FT_RASTER_FLAG_DEFAULT</td><td class="desc">
+<p>This value is 0.</p>
+</td></tr>
+<tr><td class="val" id="ft_raster_flag_aa">FT_RASTER_FLAG_AA</td><td class="desc">
+<p>This flag is set to indicate that an anti-aliased glyph image should be generated. Otherwise, it will be monochrome (1-bit).</p>
+</td></tr>
+<tr><td class="val" id="ft_raster_flag_direct">FT_RASTER_FLAG_DIRECT</td><td class="desc">
+<p>This flag is set to indicate direct rendering. In this mode, client applications must provide their own span callback. This lets them directly draw or compose over an existing bitmap. If this bit is <em>not</em> set, the target pixmap's buffer <em>must</em> be zeroed before rendering and the output will be clipped to its size.</p>
+<p>Direct rendering is only possible with anti-aliased glyphs.</p>
+</td></tr>
+<tr><td class="val" id="ft_raster_flag_clip">FT_RASTER_FLAG_CLIP</td><td class="desc">
+<p>This flag is only used in direct rendering mode. If set, the output will be clipped to a box specified in the <code>clip_box</code> field of the <code><a href="ft2-raster.html#ft_raster_params">FT_Raster_Params</a></code> structure. Otherwise, the <code>clip_box</code> is effectively set to the bounding box and all spans are generated.</p>
+</td></tr>
+<tr><td class="val" id="ft_raster_flag_sdf">FT_RASTER_FLAG_SDF</td><td class="desc">
+<p>This flag is set to indicate that a signed distance field glyph image should be generated. This is only used while rendering with the <code><a href="ft2-glyph_retrieval.html#ft_render_mode">FT_RENDER_MODE_SDF</a></code> render mode.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_raster">FT_Raster<a class="headerlink" href="#ft_raster" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_IMAGE_H (freetype/ftimage.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span> FT_RasterRec_*  <b>FT_Raster</b>;
+</code></pre></div>
+
+<p>An opaque handle (pointer) to a raster object. Each object can be used independently to convert an outline into a bitmap or pixmap.</p>
+<h4>note</h4>
+
+<p>In FreeType 2, all rasters are now encapsulated within specific <code><a href="ft2-module_management.html#ft_renderer">FT_Renderer</a></code> modules and only used in their context.</p>
+<hr>
+
+<h2 id="ft_raster_newfunc">FT_Raster_NewFunc<a class="headerlink" href="#ft_raster_newfunc" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_IMAGE_H (freetype/ftimage.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">int</span>
+  (*<b>FT_Raster_NewFunc</b>)( <span class="keyword">void</span>*       memory,
+                        <a href="ft2-raster.html#ft_raster">FT_Raster</a>*  raster );
+
+#<span class="keyword">define</span> FT_Raster_New_Func  <b>FT_Raster_NewFunc</b>
+</code></pre></div>
+
+<p>A function used to create a new raster object.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="memory">memory</td><td class="desc">
+<p>A handle to the memory allocator.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="raster">raster</td><td class="desc">
+<p>A handle to the new raster object.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>Error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>The <code>memory</code> parameter is a typeless pointer in order to avoid un-wanted dependencies on the rest of the FreeType code. In practice, it is an <code><a href="ft2-system_interface.html#ft_memory">FT_Memory</a></code> object, i.e., a handle to the standard FreeType memory allocator. However, this field can be completely ignored by a given raster implementation.</p>
+<hr>
+
+<h2 id="ft_raster_donefunc">FT_Raster_DoneFunc<a class="headerlink" href="#ft_raster_donefunc" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_IMAGE_H (freetype/ftimage.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">void</span>
+  (*<b>FT_Raster_DoneFunc</b>)( <a href="ft2-raster.html#ft_raster">FT_Raster</a>  raster );
+
+#<span class="keyword">define</span> FT_Raster_Done_Func  <b>FT_Raster_DoneFunc</b>
+</code></pre></div>
+
+<p>A function used to destroy a given raster object.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="raster">raster</td><td class="desc">
+<p>A handle to the raster object.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_raster_resetfunc">FT_Raster_ResetFunc<a class="headerlink" href="#ft_raster_resetfunc" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_IMAGE_H (freetype/ftimage.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">void</span>
+  (*<b>FT_Raster_ResetFunc</b>)( <a href="ft2-raster.html#ft_raster">FT_Raster</a>       raster,
+                          <span class="keyword">unsigned</span> <span class="keyword">char</span>*  pool_base,
+                          <span class="keyword">unsigned</span> <span class="keyword">long</span>   pool_size );
+
+#<span class="keyword">define</span> FT_Raster_Reset_Func  <b>FT_Raster_ResetFunc</b>
+</code></pre></div>
+
+<p>FreeType used to provide an area of memory called the &lsquo;render pool&rsquo; available to all registered rasterizers. This was not thread safe, however, and now FreeType never allocates this pool.</p>
+<p>This function is called after a new raster object is created.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="raster">raster</td><td class="desc">
+<p>A handle to the new raster object.</p>
+</td></tr>
+<tr><td class="val" id="pool_base">pool_base</td><td class="desc">
+<p>Previously, the address in memory of the render pool. Set this to <code>NULL</code>.</p>
+</td></tr>
+<tr><td class="val" id="pool_size">pool_size</td><td class="desc">
+<p>Previously, the size in bytes of the render pool. Set this to 0.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>Rasterizers should rely on dynamic or stack allocation if they want to (a handle to the memory allocator is passed to the rasterizer constructor).</p>
+<hr>
+
+<h2 id="ft_raster_setmodefunc">FT_Raster_SetModeFunc<a class="headerlink" href="#ft_raster_setmodefunc" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_IMAGE_H (freetype/ftimage.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">int</span>
+  (*<b>FT_Raster_SetModeFunc</b>)( <a href="ft2-raster.html#ft_raster">FT_Raster</a>      raster,
+                            <span class="keyword">unsigned</span> <span class="keyword">long</span>  mode,
+                            <span class="keyword">void</span>*          args );
+
+#<span class="keyword">define</span> FT_Raster_Set_Mode_Func  <b>FT_Raster_SetModeFunc</b>
+</code></pre></div>
+
+<p>This function is a generic facility to change modes or attributes in a given raster. This can be used for debugging purposes, or simply to allow implementation-specific &lsquo;features&rsquo; in a given raster module.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="raster">raster</td><td class="desc">
+<p>A handle to the new raster object.</p>
+</td></tr>
+<tr><td class="val" id="mode">mode</td><td class="desc">
+<p>A 4-byte tag used to name the mode or property.</p>
+</td></tr>
+<tr><td class="val" id="args">args</td><td class="desc">
+<p>A pointer to the new mode/property to use.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_raster_renderfunc">FT_Raster_RenderFunc<a class="headerlink" href="#ft_raster_renderfunc" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_IMAGE_H (freetype/ftimage.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">int</span>
+  (*<b>FT_Raster_RenderFunc</b>)( <a href="ft2-raster.html#ft_raster">FT_Raster</a>                raster,
+                           <span class="keyword">const</span> <a href="ft2-raster.html#ft_raster_params">FT_Raster_Params</a>*  params );
+
+#<span class="keyword">define</span> FT_Raster_Render_Func  <b>FT_Raster_RenderFunc</b>
+</code></pre></div>
+
+<p>Invoke a given raster to scan-convert a given glyph image into a target bitmap.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="raster">raster</td><td class="desc">
+<p>A handle to the raster object.</p>
+</td></tr>
+<tr><td class="val" id="params">params</td><td class="desc">
+<p>A pointer to an <code><a href="ft2-raster.html#ft_raster_params">FT_Raster_Params</a></code> structure used to store the rendering parameters.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>Error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>The exact format of the source image depends on the raster's glyph format defined in its <code><a href="ft2-raster.html#ft_raster_funcs">FT_Raster_Funcs</a></code> structure. It can be an <code><a href="ft2-outline_processing.html#ft_outline">FT_Outline</a></code> or anything else in order to support a large array of glyph formats.</p>
+<p>Note also that the render function can fail and return a <code>FT_Err_Unimplemented_Feature</code> error code if the raster used does not support direct composition.</p>
+<hr>
+
+<h2 id="ft_raster_funcs">FT_Raster_Funcs<a class="headerlink" href="#ft_raster_funcs" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_IMAGE_H (freetype/ftimage.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_Raster_Funcs_
+  {
+    <a href="ft2-basic_types.html#ft_glyph_format">FT_Glyph_Format</a>        glyph_format;
+
+    <a href="ft2-raster.html#ft_raster_newfunc">FT_Raster_NewFunc</a>      raster_new;
+    <a href="ft2-raster.html#ft_raster_resetfunc">FT_Raster_ResetFunc</a>    raster_reset;
+    <a href="ft2-raster.html#ft_raster_setmodefunc">FT_Raster_SetModeFunc</a>  raster_set_mode;
+    <a href="ft2-raster.html#ft_raster_renderfunc">FT_Raster_RenderFunc</a>   raster_render;
+    <a href="ft2-raster.html#ft_raster_donefunc">FT_Raster_DoneFunc</a>     raster_done;
+
+  } <b>FT_Raster_Funcs</b>;
+</code></pre></div>
+
+<p>A structure used to describe a given raster class to the library.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="glyph_format">glyph_format</td><td class="desc">
+<p>The supported glyph format for this raster.</p>
+</td></tr>
+<tr><td class="val" id="raster_new">raster_new</td><td class="desc">
+<p>The raster constructor.</p>
+</td></tr>
+<tr><td class="val" id="raster_reset">raster_reset</td><td class="desc">
+<p>Used to reset the render pool within the raster.</p>
+</td></tr>
+<tr><td class="val" id="raster_render">raster_render</td><td class="desc">
+<p>A function to render a glyph into a given bitmap.</p>
+</td></tr>
+<tr><td class="val" id="raster_done">raster_done</td><td class="desc">
+<p>The raster destructor.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_raster_bittest_func">FT_Raster_BitTest_Func<a class="headerlink" href="#ft_raster_bittest_func" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_IMAGE_H (freetype/ftimage.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">int</span>
+  (*<b>FT_Raster_BitTest_Func</b>)( <span class="keyword">int</span>    y,
+                             <span class="keyword">int</span>    x,
+                             <span class="keyword">void</span>*  user );
+</code></pre></div>
+
+<p>Deprecated, unimplemented.</p>
+<hr>
+
+<h2 id="ft_raster_bitset_func">FT_Raster_BitSet_Func<a class="headerlink" href="#ft_raster_bitset_func" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_IMAGE_H (freetype/ftimage.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">void</span>
+  (*<b>FT_Raster_BitSet_Func</b>)( <span class="keyword">int</span>    y,
+                            <span class="keyword">int</span>    x,
+                            <span class="keyword">void</span>*  user );
+</code></pre></div>
+
+<p>Deprecated, unimplemented.</p>
+<hr>
+                
+              
+              
+                
+
+
+              
+            </article>
+          </div>
+        </div>
+        
+      </main>
+      
+        
+<footer class="md-footer">
+  
+    <nav class="md-footer__inner md-grid" aria-label="Footer">
+      
+        
+        <a href="ft2-bitmap_handling.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: Bitmap Handling" rel="prev">
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+          </div>
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              Bitmap Handling
+            </div>
+          </div>
+        </a>
+      
+      
+        
+        <a href="ft2-glyph_stroker.html" class="md-footer__link md-footer__link--next" aria-label="Next: Glyph Stroker" rel="next">
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              Glyph Stroker
+            </div>
+          </div>
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11H4z"/></svg>
+          </div>
+        </a>
+      
+    </nav>
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-footer-copyright">
+        
+          <div class="md-footer-copyright__highlight">
+            Copyright 2023 <a href = "https://www.freetype.org/license.html">The FreeType Project</a>.
+          </div>
+        
+        Made with
+        <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+          Material for MkDocs
+        </a>
+        
+      </div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    <script id="__config" type="application/json">{"base": ".", "features": [], "search": "assets/javascripts/workers/search.477d984a.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.config.lang": "en", "search.config.pipeline": "trimmer, stopWordFilter", "search.config.separator": "[\\s\\-]+", "search.placeholder": "Search", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version.title": "Select version"}, "version": null}</script>
+    
+    
+      <script src="assets/javascripts/bundle.82b56eb2.min.js"></script>
+      
+        <script src="javascripts/extra.js"></script>
+      
+    
+  </body>
+</html>

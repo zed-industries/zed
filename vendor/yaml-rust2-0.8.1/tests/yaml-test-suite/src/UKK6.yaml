@@ -1,0 +1,43 @@
+---
+- name: Syntax character edge cases
+  from: '@ingydotnet'
+  tags: edge empty-key
+  yaml: |
+    - :
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       +MAP
+        =VAL :
+        =VAL :
+       -MAP
+      -SEQ
+     -DOC
+    -STR
+
+- yaml: |
+    ::
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL ::
+       =VAL :
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      ":": null
+    }
+
+- yaml: |
+    !
+  tree: |
+    +STR
+     +DOC
+      =VAL <!> :
+     -DOC
+    -STR
+  json: null

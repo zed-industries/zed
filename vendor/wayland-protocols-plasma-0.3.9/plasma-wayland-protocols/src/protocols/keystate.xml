@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="keystate">
+  <copyright><![CDATA[
+    SPDX-FileCopyrightText: 2019 Aleix Pol Gonzalez <aleixpol@kde.org>
+
+    SPDX-License-Identifier: LGPL-2.1-or-later
+  ]]></copyright>
+
+  <interface  name="org_kde_kwin_keystate" version="5">
+      <description summary="Key States">
+        Keeps track of the states of the different keys that have a state attached to it.
+      </description>
+      <enum name="key">
+        <entry name="capslock" value="0" />
+        <entry name="numlock" value="1"/>
+        <entry name="scrolllock" value="2"/>
+        <entry name="alt" value="3" since="5"/>
+        <entry name="control" value="4" since="5"/>
+        <entry name="shift" value="5" since="5"/>
+        <entry name="meta" value="6" since="5"/>
+        <entry name="altgr" value="7" since="5"/>
+      </enum>
+      <enum name="state">
+        <entry name="unlocked" value="0" />
+        <entry name="latched" value="1"/>
+        <entry name="locked" value="2"/>
+        <entry name="pressed" value="3" since="5"/>
+      </enum>
+      <request name="fetchStates">
+      </request>
+
+      <event name="stateChanged">
+        <description summary="Updates the state for a said key" />
+        <arg name="key" type="uint"/>
+        <arg name="state" type="uint"/>
+      </event>
+
+      <request name="destroy" type="destructor" since="4">
+      </request>
+  </interface>
+</protocol>

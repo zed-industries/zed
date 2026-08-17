@@ -1,0 +1,31 @@
+[package]
+name = "sdd"
+description = "Scalable lock-free delayed memory reclaimer"
+documentation = "https://docs.rs/sdd"
+version = "4.6.2"
+authors = ["wvwwvwwv <wvwwvwwv@me.com>"]
+edition = "2024"
+rust-version = "1.85.0"
+readme = "README.md"
+repository = "https://codeberg.org/wvwwvwwv/scalable-delayed-dealloc"
+license = "Apache-2.0"
+categories = ["concurrency", "data-structures", "memory-management"]
+keywords = ["concurrent", "epoch", "garbage", "lock-free", "memory"]
+
+[workspace]
+members = [".", "examples"]
+
+[dependencies]
+loom = { version = "0.7", optional = true }
+
+[dev-dependencies]
+criterion = "0.8"
+static_assertions = "1.1"
+
+[[bench]]
+name = "ebr"
+harness = false
+
+[[bench]]
+name = "bag"
+harness = false

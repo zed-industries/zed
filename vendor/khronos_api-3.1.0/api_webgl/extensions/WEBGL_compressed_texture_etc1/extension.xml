@@ -1,0 +1,91 @@
+<?xml version="1.0"?>
+
+<extension href="WEBGL_compressed_texture_etc1/">
+  <name>WEBGL_compressed_texture_etc1</name>
+  <contact>
+    <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL working group</a> (public_webgl 'at' khronos.org)
+  </contact>
+  <contributors>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+  <number>24</number>
+  <depends>
+    <api version="1.0"/>
+  </depends>
+  <overview>
+    <p>
+      This extension exposes the compressed texture format defined in the 
+      <a href="http://www.khronos.org/registry/gles/extensions/OES/OES_compressed_ETC1_RGB8_texture.txt">
+      OES_compressed_ETC1_RGB8_texture</a> OpenGL ES extension to WebGL.
+    </p>
+    <features>
+      <feature>
+        Compression format <code>COMPRESSED_RGB_ETC1_WEBGL</code> may be passed to
+        the <code>compressedTexImage2D</code> entry point.
+
+        This format correspond to the format defined in the OES_compressed_ETC1_RGB8_texture OpenGL ES
+        extension. Although the enum name is changed, the numeric value is the same. The correspondence
+        is given by this table:
+        <table>
+          <tr>
+            <th>WebGL format enum</th>
+            <th>OpenGL format enum</th>
+            <th>Numeric value</th>
+          </tr>
+          <tr>
+            <td>COMPRESSED_RGB_ETC1_WEBGL</td>
+            <td>ETC1_RGB8_OES</td>
+            <td>0x8D64</td>
+          </tr>
+        </table>
+      </feature>
+      <feature>
+        Calling <code>getParameter</code> with the argument <code>COMPRESSED_TEXTURE_FORMATS</code>
+        will include the format from this specification.
+      </feature>
+      <feature>
+        <p>The following format-specific restrictions must be enforced:</p>
+        <dl>
+          <dt>COMPRESSED_RGB_ETC1_WEBGL</dt>
+          <dd><p>The <code>byteLength</code> of the ArrayBufferView, <code>pixels</code>, passed to
+          <code>compressedTexImage2D</code> must be equal to the following number of bytes:</p>
+          <blockquote><code>
+            floor((width + 3) / 4) * floor((height + 3) / 4) * 8
+          </code></blockquote>
+          <p>If it is not, an <code>INVALID_VALUE</code> error is generated.</p>
+          </dd>
+        </dl>
+      </feature>
+    </features>
+  </overview>
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface WEBGL_compressed_texture_etc1 {
+    /* Compressed Texture Format */
+    const GLenum COMPRESSED_RGB_ETC1_WEBGL = 0x8D64; 
+};
+  </idl>
+  <history>
+    <revision date="2012/02/23">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2013/07/03">
+      <change>Clarified that length of ArrayBufferView is actually byteLength.</change>
+    </revision>
+    <revision date="2013/11/27">
+      <change>Moved to draft status.</change>
+    </revision>
+    <revision date="2013/12/03">
+      <change>Assigned extension number 24 to WEBGL_compressed_texture_etc1 extension.</change>
+    </revision>
+    <revision date="2014/03/07">
+      <change>Remove ability to use the format with compressedTexSubImage2D, as per the GLES extension spec.</change>
+    </revision>
+    <revision date="2014/06/27">
+      <change>Moved to community approved after discussion on public_webgl list.</change>
+    </revision>
+    <revision date="2014/07/15">
+      <change>Added NoInterfaceObject extended attribute.</change>
+    </revision>
+  </history>
+</extension>

@@ -1,0 +1,45 @@
+---
+- name: Trailing line of spaces
+  from: '@ingydotnet'
+  tags: whitespace
+  yaml: |
+    foo: |
+      x
+    ␣␣␣
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :foo
+       =VAL |x\n \n
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "foo" : "x\n \n"
+    }
+  emit: |
+    ---
+    foo: "x\n \n"
+
+- yaml: |
+    foo: |
+      x
+    ␣␣␣∎
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :foo
+       =VAL |x\n \n
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "foo" : "x\n \n"
+    }
+  emit: |
+    ---
+    foo: "x\n \n"

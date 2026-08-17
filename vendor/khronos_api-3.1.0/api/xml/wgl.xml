@@ -1,0 +1,1989 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<registry>
+    <comment>
+Copyright (c) 2013-2018 The Khronos Group Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+------------------------------------------------------------------------
+
+This file, wgl.xml, is the WGL API Registry. The older ".spec" file
+format has been retired and will no longer be updated with new
+extensions and API versions. The canonical version of the registry,
+together with documentation, schema, and Python generator scripts used
+to generate C header files for WGL, can always be found in the Khronos
+Registry at
+        https://github.com/KhronosGroup/OpenGL-Registry
+    </comment>
+
+    <!-- SECTION: WGL type definitions. Does not include base Windows types. -->
+
+    <types>
+            <!-- Dummy placeholders for Windows types -->
+        <type name="BOOL"/>
+        <type name="CHAR"/>
+        <type name="DWORD"/>
+        <type name="FLOAT"/>
+        <type name="GLbitfield"/>
+        <type name="GLboolean"/>
+        <type name="GLenum"/>
+        <type name="GLfloat"/>
+        <type name="GLint"/>
+        <type name="GLsizei"/>
+        <type name="GLuint"/>
+        <type name="GLushort"/>
+        <type name="HANDLE"/>
+        <type name="HDC"/>
+        <type name="HGLRC"/>
+        <type name="INT"/>
+        <type name="INT32"/>
+        <type name="INT64"/>
+        <type name="PROC"/>
+        <type name="RECT"/>
+        <type name="LPCSTR"/>
+        <type name="LPVOID"/>
+        <type name="UINT"/>
+        <type name="USHORT"/>
+        <type name="VOID"/>
+            <!-- Could be filled in from wgltypes.txt -->
+        <type name="COLORREF"/>
+        <type name="HENHMETAFILE"/>
+        <type name="LAYERPLANEDESCRIPTOR"/>
+        <type name="LPGLYPHMETRICSFLOAT"/>
+        <type name="PIXELFORMATDESCRIPTOR"/>
+            <!-- These are dependencies WGL types require to be declared legally -->
+            <!-- Declaring C structures in XML is a pain indentation-wise -->
+        <type>struct <name>_GPU_DEVICE</name> {
+    DWORD  cb;
+    CHAR   DeviceName[32];
+    CHAR   DeviceString[128];
+    DWORD  Flags;
+    RECT   rcVirtualScreen;
+};</type>
+            <!-- These are actual WGL types. Windows types are not included.  -->
+        <type>DECLARE_HANDLE(<name>HPBUFFERARB</name>);</type>
+        <type>DECLARE_HANDLE(<name>HPBUFFEREXT</name>);</type>
+        <type>DECLARE_HANDLE(<name>HVIDEOOUTPUTDEVICENV</name>);</type>
+        <type>DECLARE_HANDLE(<name>HPVIDEODEV</name>);</type>
+        <type>DECLARE_HANDLE(<name>HPGPUNV</name>);</type>
+        <type>DECLARE_HANDLE(<name>HGPUNV</name>);</type>
+        <type>DECLARE_HANDLE(<name>HVIDEOINPUTDEVICENV</name>);</type>
+        <type requires="_GPU_DEVICE">typedef struct _GPU_DEVICE <name>GPU_DEVICE</name>;</type>
+        <type requires="_GPU_DEVICE">typedef struct _GPU_DEVICE *<name>PGPU_DEVICE</name>;</type>
+    </types>
+
+    <!-- SECTION: WGL enumerant (token) definitions. -->
+
+    <!-- Bitmasks each have their own namespace, although bits are
+         sometimes reused for other purposes -->
+
+    <enums namespace="WGLLayerPlaneMask" type="bitmask" vendor="MS">
+        <enum value="0x00000001"  name="WGL_SWAP_MAIN_PLANE"/>
+        <enum value="0x00000002"  name="WGL_SWAP_OVERLAY1"/>
+        <enum value="0x00000004"  name="WGL_SWAP_OVERLAY2"/>
+        <enum value="0x00000008"  name="WGL_SWAP_OVERLAY3"/>
+        <enum value="0x00000010"  name="WGL_SWAP_OVERLAY4"/>
+        <enum value="0x00000020"  name="WGL_SWAP_OVERLAY5"/>
+        <enum value="0x00000040"  name="WGL_SWAP_OVERLAY6"/>
+        <enum value="0x00000080"  name="WGL_SWAP_OVERLAY7"/>
+        <enum value="0x00000100"  name="WGL_SWAP_OVERLAY8"/>
+        <enum value="0x00000200"  name="WGL_SWAP_OVERLAY9"/>
+        <enum value="0x00000400"  name="WGL_SWAP_OVERLAY10"/>
+        <enum value="0x00000800"  name="WGL_SWAP_OVERLAY11"/>
+        <enum value="0x00001000"  name="WGL_SWAP_OVERLAY12"/>
+        <enum value="0x00002000"  name="WGL_SWAP_OVERLAY13"/>
+        <enum value="0x00004000"  name="WGL_SWAP_OVERLAY14"/>
+        <enum value="0x00008000"  name="WGL_SWAP_OVERLAY15"/>
+        <enum value="0x00010000"  name="WGL_SWAP_UNDERLAY1"/>
+        <enum value="0x00020000"  name="WGL_SWAP_UNDERLAY2"/>
+        <enum value="0x00040000"  name="WGL_SWAP_UNDERLAY3"/>
+        <enum value="0x00080000"  name="WGL_SWAP_UNDERLAY4"/>
+        <enum value="0x00100000"  name="WGL_SWAP_UNDERLAY5"/>
+        <enum value="0x00200000"  name="WGL_SWAP_UNDERLAY6"/>
+        <enum value="0x00400000"  name="WGL_SWAP_UNDERLAY7"/>
+        <enum value="0x00800000"  name="WGL_SWAP_UNDERLAY8"/>
+        <enum value="0x01000000"  name="WGL_SWAP_UNDERLAY9"/>
+        <enum value="0x02000000"  name="WGL_SWAP_UNDERLAY10"/>
+        <enum value="0x04000000"  name="WGL_SWAP_UNDERLAY11"/>
+        <enum value="0x08000000"  name="WGL_SWAP_UNDERLAY12"/>
+        <enum value="0x10000000"  name="WGL_SWAP_UNDERLAY13"/>
+        <enum value="0x20000000"  name="WGL_SWAP_UNDERLAY14"/>
+        <enum value="0x40000000"  name="WGL_SWAP_UNDERLAY15"/>
+    </enums>
+
+    <enums namespace="WGLColorBufferMask" type="bitmask" vendor="ARB">
+        <enum value="0x00000001"    name="WGL_FRONT_COLOR_BUFFER_BIT_ARB"/>
+        <enum value="0x00000002"    name="WGL_BACK_COLOR_BUFFER_BIT_ARB"/>
+        <enum value="0x00000004"    name="WGL_DEPTH_BUFFER_BIT_ARB"/>
+        <enum value="0x00000008"    name="WGL_STENCIL_BUFFER_BIT_ARB"/>
+    </enums>
+
+    <enums namespace="WGLContextFlagsMask" type="bitmask" vendor="ARB">
+        <enum value="0x00000001"    name="WGL_CONTEXT_DEBUG_BIT_ARB"/>
+        <enum value="0x00000002"    name="WGL_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB"/>
+        <enum value="0x00000004"    name="WGL_CONTEXT_ROBUST_ACCESS_BIT_ARB"/>
+        <enum value="0x00000008"    name="WGL_CONTEXT_RESET_ISOLATION_BIT_ARB"/>
+    </enums>
+
+    <enums namespace="WGLContextProfileMask" type="bitmask" vendor="ARB">
+        <enum value="0x00000001"    name="WGL_CONTEXT_CORE_PROFILE_BIT_ARB"/>
+        <enum value="0x00000002"    name="WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB"/>
+        <enum value="0x00000004"    name="WGL_CONTEXT_ES_PROFILE_BIT_EXT"/>
+        <enum value="0x00000004"    name="WGL_CONTEXT_ES2_PROFILE_BIT_EXT" alias="WGL_CONTEXT_ES_PROFILE_BIT_EXT"/>
+    </enums>
+
+    <enums namespace="WGLImageBufferMaskI3D" type="bitmask" vendor="I3D">
+        <enum value="0x00000001"    name="WGL_IMAGE_BUFFER_MIN_ACCESS_I3D"/>
+        <enum value="0x00000002"    name="WGL_IMAGE_BUFFER_LOCK_I3D"/>
+    </enums>
+
+    <enums namespace="WGLDXInteropMaskNV" type="bitmask" vendor="NV">
+        <enum value="0x00000000"    name="WGL_ACCESS_READ_ONLY_NV"/>
+        <enum value="0x00000001"    name="WGL_ACCESS_READ_WRITE_NV"/>
+        <enum value="0x00000002"    name="WGL_ACCESS_WRITE_DISCARD_NV"/>
+    </enums>
+
+    <!-- The default ("API") enum namespace starts here. While some
+         assigned values may overlap, and different parts of the
+         namespace are reserved for different purposes, it is a single
+         namespace. The "class" attribute indicates some of the reserved
+         purposes but is by no means complete (and cannot be, since many
+         tokens are reused for different purposes in different
+         extensions and API versions). -->
+
+    <enums namespace="WGL" group="SpecialNumbers" vendor="MS">
+        <enum value="0"           name="WGL_CONTEXT_RELEASE_BEHAVIOR_NONE_ARB"/>
+        <enum value="0"           name="WGL_FONT_LINES"/>
+        <enum value="1"           name="WGL_FONT_POLYGONS"/>
+    </enums>
+
+    <enums namespace="WGL" start="0x1F00" end="0x1F02" vendor="ARB" comment="Unclear why AMD used values in this range">
+        <enum value="0x1F00"        name="WGL_GPU_VENDOR_AMD"/>
+        <enum value="0x1F01"        name="WGL_GPU_RENDERER_STRING_AMD"/>
+        <enum value="0x1F02"        name="WGL_GPU_OPENGL_VERSION_STRING_AMD"/>
+    </enums>
+
+    <enums namespace="WGL" start="0x2000" end="0x203F" vendor="ARB">
+        <enum value="0x2000"        name="WGL_NUMBER_PIXEL_FORMATS_ARB"/>
+        <enum value="0x2000"        name="WGL_NUMBER_PIXEL_FORMATS_EXT"/>
+        <enum value="0x2001"        name="WGL_DRAW_TO_WINDOW_ARB"/>
+        <enum value="0x2001"        name="WGL_DRAW_TO_WINDOW_EXT"/>
+        <enum value="0x2002"        name="WGL_DRAW_TO_BITMAP_ARB"/>
+        <enum value="0x2002"        name="WGL_DRAW_TO_BITMAP_EXT"/>
+        <enum value="0x2003"        name="WGL_ACCELERATION_ARB"/>
+        <enum value="0x2003"        name="WGL_ACCELERATION_EXT"/>
+        <enum value="0x2004"        name="WGL_NEED_PALETTE_ARB"/>
+        <enum value="0x2004"        name="WGL_NEED_PALETTE_EXT"/>
+        <enum value="0x2005"        name="WGL_NEED_SYSTEM_PALETTE_ARB"/>
+        <enum value="0x2005"        name="WGL_NEED_SYSTEM_PALETTE_EXT"/>
+        <enum value="0x2006"        name="WGL_SWAP_LAYER_BUFFERS_ARB"/>
+        <enum value="0x2006"        name="WGL_SWAP_LAYER_BUFFERS_EXT"/>
+        <enum value="0x2007"        name="WGL_SWAP_METHOD_ARB"/>
+        <enum value="0x2007"        name="WGL_SWAP_METHOD_EXT"/>
+        <enum value="0x2008"        name="WGL_NUMBER_OVERLAYS_ARB"/>
+        <enum value="0x2008"        name="WGL_NUMBER_OVERLAYS_EXT"/>
+        <enum value="0x2009"        name="WGL_NUMBER_UNDERLAYS_ARB"/>
+        <enum value="0x2009"        name="WGL_NUMBER_UNDERLAYS_EXT"/>
+        <enum value="0x200A"        name="WGL_TRANSPARENT_ARB"/>
+        <enum value="0x200A"        name="WGL_TRANSPARENT_EXT"/>
+        <enum value="0x200B"        name="WGL_TRANSPARENT_VALUE_EXT"/>
+        <enum value="0x200C"        name="WGL_SHARE_DEPTH_ARB"/>
+        <enum value="0x200C"        name="WGL_SHARE_DEPTH_EXT"/>
+        <enum value="0x200D"        name="WGL_SHARE_STENCIL_ARB"/>
+        <enum value="0x200D"        name="WGL_SHARE_STENCIL_EXT"/>
+        <enum value="0x200E"        name="WGL_SHARE_ACCUM_ARB"/>
+        <enum value="0x200E"        name="WGL_SHARE_ACCUM_EXT"/>
+        <enum value="0x200F"        name="WGL_SUPPORT_GDI_ARB"/>
+        <enum value="0x200F"        name="WGL_SUPPORT_GDI_EXT"/>
+        <enum value="0x2010"        name="WGL_SUPPORT_OPENGL_ARB"/>
+        <enum value="0x2010"        name="WGL_SUPPORT_OPENGL_EXT"/>
+        <enum value="0x2011"        name="WGL_DOUBLE_BUFFER_ARB"/>
+        <enum value="0x2011"        name="WGL_DOUBLE_BUFFER_EXT"/>
+        <enum value="0x2012"        name="WGL_STEREO_ARB"/>
+        <enum value="0x2012"        name="WGL_STEREO_EXT"/>
+        <enum value="0x2013"        name="WGL_PIXEL_TYPE_ARB"/>
+        <enum value="0x2013"        name="WGL_PIXEL_TYPE_EXT"/>
+        <enum value="0x2014"        name="WGL_COLOR_BITS_ARB"/>
+        <enum value="0x2014"        name="WGL_COLOR_BITS_EXT"/>
+        <enum value="0x2015"        name="WGL_RED_BITS_ARB"/>
+        <enum value="0x2015"        name="WGL_RED_BITS_EXT"/>
+        <enum value="0x2016"        name="WGL_RED_SHIFT_ARB"/>
+        <enum value="0x2016"        name="WGL_RED_SHIFT_EXT"/>
+        <enum value="0x2017"        name="WGL_GREEN_BITS_ARB"/>
+        <enum value="0x2017"        name="WGL_GREEN_BITS_EXT"/>
+        <enum value="0x2018"        name="WGL_GREEN_SHIFT_ARB"/>
+        <enum value="0x2018"        name="WGL_GREEN_SHIFT_EXT"/>
+        <enum value="0x2019"        name="WGL_BLUE_BITS_ARB"/>
+        <enum value="0x2019"        name="WGL_BLUE_BITS_EXT"/>
+        <enum value="0x201A"        name="WGL_BLUE_SHIFT_ARB"/>
+        <enum value="0x201A"        name="WGL_BLUE_SHIFT_EXT"/>
+        <enum value="0x201B"        name="WGL_ALPHA_BITS_ARB"/>
+        <enum value="0x201B"        name="WGL_ALPHA_BITS_EXT"/>
+        <enum value="0x201C"        name="WGL_ALPHA_SHIFT_ARB"/>
+        <enum value="0x201C"        name="WGL_ALPHA_SHIFT_EXT"/>
+        <enum value="0x201D"        name="WGL_ACCUM_BITS_ARB"/>
+        <enum value="0x201D"        name="WGL_ACCUM_BITS_EXT"/>
+        <enum value="0x201E"        name="WGL_ACCUM_RED_BITS_ARB"/>
+        <enum value="0x201E"        name="WGL_ACCUM_RED_BITS_EXT"/>
+        <enum value="0x201F"        name="WGL_ACCUM_GREEN_BITS_ARB"/>
+        <enum value="0x201F"        name="WGL_ACCUM_GREEN_BITS_EXT"/>
+        <enum value="0x2020"        name="WGL_ACCUM_BLUE_BITS_ARB"/>
+        <enum value="0x2020"        name="WGL_ACCUM_BLUE_BITS_EXT"/>
+        <enum value="0x2021"        name="WGL_ACCUM_ALPHA_BITS_ARB"/>
+        <enum value="0x2021"        name="WGL_ACCUM_ALPHA_BITS_EXT"/>
+        <enum value="0x2022"        name="WGL_DEPTH_BITS_ARB"/>
+        <enum value="0x2022"        name="WGL_DEPTH_BITS_EXT"/>
+        <enum value="0x2023"        name="WGL_STENCIL_BITS_ARB"/>
+        <enum value="0x2023"        name="WGL_STENCIL_BITS_EXT"/>
+        <enum value="0x2024"        name="WGL_AUX_BUFFERS_ARB"/>
+        <enum value="0x2024"        name="WGL_AUX_BUFFERS_EXT"/>
+        <enum value="0x2025"        name="WGL_NO_ACCELERATION_ARB"/>
+        <enum value="0x2025"        name="WGL_NO_ACCELERATION_EXT"/>
+        <enum value="0x2026"        name="WGL_GENERIC_ACCELERATION_ARB"/>
+        <enum value="0x2026"        name="WGL_GENERIC_ACCELERATION_EXT"/>
+        <enum value="0x2027"        name="WGL_FULL_ACCELERATION_ARB"/>
+        <enum value="0x2027"        name="WGL_FULL_ACCELERATION_EXT"/>
+        <enum value="0x2028"        name="WGL_SWAP_EXCHANGE_ARB"/>
+        <enum value="0x2028"        name="WGL_SWAP_EXCHANGE_EXT"/>
+        <enum value="0x2029"        name="WGL_SWAP_COPY_ARB"/>
+        <enum value="0x2029"        name="WGL_SWAP_COPY_EXT"/>
+        <enum value="0x202A"        name="WGL_SWAP_UNDEFINED_ARB"/>
+        <enum value="0x202A"        name="WGL_SWAP_UNDEFINED_EXT"/>
+        <enum value="0x202B"        name="WGL_TYPE_RGBA_ARB"/>
+        <enum value="0x202B"        name="WGL_TYPE_RGBA_EXT"/>
+        <enum value="0x202C"        name="WGL_TYPE_COLORINDEX_ARB"/>
+        <enum value="0x202C"        name="WGL_TYPE_COLORINDEX_EXT"/>
+        <enum value="0x202D"        name="WGL_DRAW_TO_PBUFFER_ARB"/>
+        <enum value="0x202D"        name="WGL_DRAW_TO_PBUFFER_EXT"/>
+        <enum value="0x202E"        name="WGL_MAX_PBUFFER_PIXELS_ARB"/>
+        <enum value="0x202E"        name="WGL_MAX_PBUFFER_PIXELS_EXT"/>
+        <enum value="0x202F"        name="WGL_MAX_PBUFFER_WIDTH_ARB"/>
+        <enum value="0x202F"        name="WGL_MAX_PBUFFER_WIDTH_EXT"/>
+        <enum value="0x2030"        name="WGL_MAX_PBUFFER_HEIGHT_ARB"/>
+        <enum value="0x2030"        name="WGL_MAX_PBUFFER_HEIGHT_EXT"/>
+        <enum value="0x2031"        name="WGL_OPTIMAL_PBUFFER_WIDTH_EXT"/>
+        <enum value="0x2032"        name="WGL_OPTIMAL_PBUFFER_HEIGHT_EXT"/>
+        <enum value="0x2033"        name="WGL_PBUFFER_LARGEST_ARB"/>
+        <enum value="0x2033"        name="WGL_PBUFFER_LARGEST_EXT"/>
+        <enum value="0x2034"        name="WGL_PBUFFER_WIDTH_ARB"/>
+        <enum value="0x2034"        name="WGL_PBUFFER_WIDTH_EXT"/>
+        <enum value="0x2035"        name="WGL_PBUFFER_HEIGHT_ARB"/>
+        <enum value="0x2035"        name="WGL_PBUFFER_HEIGHT_EXT"/>
+        <enum value="0x2036"        name="WGL_PBUFFER_LOST_ARB"/>
+        <enum value="0x2037"        name="WGL_TRANSPARENT_RED_VALUE_ARB"/>
+        <enum value="0x2038"        name="WGL_TRANSPARENT_GREEN_VALUE_ARB"/>
+        <enum value="0x2039"        name="WGL_TRANSPARENT_BLUE_VALUE_ARB"/>
+        <enum value="0x203A"        name="WGL_TRANSPARENT_ALPHA_VALUE_ARB"/>
+        <enum value="0x203B"        name="WGL_TRANSPARENT_INDEX_VALUE_ARB"/>
+            <unused start="0x203C" end="0x203F"/>
+    </enums>
+
+    <enums namespace="WGL" start="0x2040" end="0x205F" vendor="I3D">
+        <enum value="0x2040"        name="WGL_DEPTH_FLOAT_EXT"/>
+        <enum value="0x2041"        name="WGL_SAMPLE_BUFFERS_ARB"/>
+        <enum value="0x2041"        name="WGL_SAMPLE_BUFFERS_EXT"/>
+        <enum value="0x2042"        name="WGL_COVERAGE_SAMPLES_NV"/>
+        <enum value="0x2042"        name="WGL_SAMPLES_ARB"/>
+        <enum value="0x2042"        name="WGL_SAMPLES_EXT"/>
+        <enum value="0x2043"        name="ERROR_INVALID_PIXEL_TYPE_ARB"/>
+        <enum value="0x2043"        name="ERROR_INVALID_PIXEL_TYPE_EXT"/>
+        <enum value="0x2044"        name="WGL_GENLOCK_SOURCE_MULTIVIEW_I3D"/>
+        <enum value="0x2045"        name="WGL_GENLOCK_SOURCE_EXTERNAL_SYNC_I3D"/>
+        <enum value="0x2046"        name="WGL_GENLOCK_SOURCE_EXTERNAL_FIELD_I3D"/>
+        <enum value="0x2047"        name="WGL_GENLOCK_SOURCE_EXTERNAL_TTL_I3D"/>
+        <enum value="0x2048"        name="WGL_GENLOCK_SOURCE_DIGITAL_SYNC_I3D"/>
+        <enum value="0x2049"        name="WGL_GENLOCK_SOURCE_DIGITAL_FIELD_I3D"/>
+        <enum value="0x204A"        name="WGL_GENLOCK_SOURCE_EDGE_FALLING_I3D"/>
+        <enum value="0x204B"        name="WGL_GENLOCK_SOURCE_EDGE_RISING_I3D"/>
+        <enum value="0x204C"        name="WGL_GENLOCK_SOURCE_EDGE_BOTH_I3D"/>
+            <unused start="0x204D"/>
+        <enum value="0x204E"        name="WGL_GAMMA_TABLE_SIZE_I3D"/>
+        <enum value="0x204F"        name="WGL_GAMMA_EXCLUDE_DESKTOP_I3D"/>
+        <enum value="0x2050"        name="WGL_DIGITAL_VIDEO_CURSOR_ALPHA_FRAMEBUFFER_I3D"/>
+        <enum value="0x2051"        name="WGL_DIGITAL_VIDEO_CURSOR_ALPHA_VALUE_I3D"/>
+        <enum value="0x2052"        name="WGL_DIGITAL_VIDEO_CURSOR_INCLUDED_I3D"/>
+        <enum value="0x2053"        name="WGL_DIGITAL_VIDEO_GAMMA_CORRECTED_I3D"/>
+        <enum value="0x2054"        name="ERROR_INCOMPATIBLE_DEVICE_CONTEXTS_ARB"/>
+        <enum value="0x2055"        name="WGL_STEREO_EMITTER_ENABLE_3DL"/>
+        <enum value="0x2056"        name="WGL_STEREO_EMITTER_DISABLE_3DL"/>
+        <enum value="0x2057"        name="WGL_STEREO_POLARITY_NORMAL_3DL"/>
+        <enum value="0x2058"        name="WGL_STEREO_POLARITY_INVERT_3DL"/>
+            <unused start="0x2059" end="0x205F"/>
+    </enums>
+
+    <enums namespace="WGL" start="0x2060" end="0x206F" vendor="3DFX">
+            <unused start="0x2060" end="0x206F" comment="Could be reclaimed"/>
+    </enums>
+
+    <enums namespace="WGL" start="0x2070" end="0x209F" vendor="ARB" comment="Shared with GLX; synchronize create_context enums">
+        <enum value="0x2060"        name="WGL_SAMPLE_BUFFERS_3DFX"/>
+        <enum value="0x2061"        name="WGL_SAMPLES_3DFX"/>
+        <enum value="0x2070"        name="WGL_BIND_TO_TEXTURE_RGB_ARB"/>
+        <enum value="0x2071"        name="WGL_BIND_TO_TEXTURE_RGBA_ARB"/>
+        <enum value="0x2072"        name="WGL_TEXTURE_FORMAT_ARB"/>
+        <enum value="0x2073"        name="WGL_TEXTURE_TARGET_ARB"/>
+        <enum value="0x2074"        name="WGL_MIPMAP_TEXTURE_ARB"/>
+        <enum value="0x2075"        name="WGL_TEXTURE_RGB_ARB"/>
+        <enum value="0x2076"        name="WGL_TEXTURE_RGBA_ARB"/>
+        <enum value="0x2077"        name="WGL_NO_TEXTURE_ARB"/>
+        <enum value="0x2078"        name="WGL_TEXTURE_CUBE_MAP_ARB"/>
+        <enum value="0x2079"        name="WGL_TEXTURE_1D_ARB"/>
+        <enum value="0x207A"        name="WGL_TEXTURE_2D_ARB"/>
+        <enum value="0x207B"        name="WGL_MIPMAP_LEVEL_ARB"/>
+        <enum value="0x207C"        name="WGL_CUBE_MAP_FACE_ARB"/>
+        <enum value="0x207D"        name="WGL_TEXTURE_CUBE_MAP_POSITIVE_X_ARB"/>
+        <enum value="0x207E"        name="WGL_TEXTURE_CUBE_MAP_NEGATIVE_X_ARB"/>
+        <enum value="0x207F"        name="WGL_TEXTURE_CUBE_MAP_POSITIVE_Y_ARB"/>
+        <enum value="0x2080"        name="WGL_TEXTURE_CUBE_MAP_NEGATIVE_Y_ARB"/>
+        <enum value="0x2081"        name="WGL_TEXTURE_CUBE_MAP_POSITIVE_Z_ARB"/>
+        <enum value="0x2082"        name="WGL_TEXTURE_CUBE_MAP_NEGATIVE_Z_ARB"/>
+        <enum value="0x2083"        name="WGL_FRONT_LEFT_ARB"/>
+        <enum value="0x2084"        name="WGL_FRONT_RIGHT_ARB"/>
+        <enum value="0x2085"        name="WGL_BACK_LEFT_ARB"/>
+        <enum value="0x2086"        name="WGL_BACK_RIGHT_ARB"/>
+        <enum value="0x2087"        name="WGL_AUX0_ARB"/>
+        <enum value="0x2088"        name="WGL_AUX1_ARB"/>
+        <enum value="0x2089"        name="WGL_AUX2_ARB"/>
+        <enum value="0x208A"        name="WGL_AUX3_ARB"/>
+        <enum value="0x208B"        name="WGL_AUX4_ARB"/>
+        <enum value="0x208C"        name="WGL_AUX5_ARB"/>
+        <enum value="0x208D"        name="WGL_AUX6_ARB"/>
+        <enum value="0x208E"        name="WGL_AUX7_ARB"/>
+        <enum value="0x208F"        name="WGL_AUX8_ARB"/>
+        <enum value="0x2090"        name="WGL_AUX9_ARB"/>
+        <enum value="0x2091"        name="WGL_CONTEXT_MAJOR_VERSION_ARB"/>
+        <enum value="0x2092"        name="WGL_CONTEXT_MINOR_VERSION_ARB"/>
+        <enum value="0x2093"        name="WGL_CONTEXT_LAYER_PLANE_ARB"/>
+        <enum value="0x2094"        name="WGL_CONTEXT_FLAGS_ARB"/>
+        <enum value="0x2095"        name="ERROR_INVALID_VERSION_ARB"/>
+        <enum value="0x2096"        name="ERROR_INVALID_PROFILE_ARB"/>
+        <enum value="0x2097"        name="WGL_CONTEXT_RELEASE_BEHAVIOR_ARB"/>
+        <enum value="0x2098"        name="WGL_CONTEXT_RELEASE_BEHAVIOR_FLUSH_ARB"/>
+            <unused start="0x2099" end="0x209F"/>
+    </enums>
+
+    <enums namespace="WGL" start="0x20A0" end="0x219F" vendor="NV" comment="shared with GLX">
+        <enum value="0x20A0"        name="WGL_BIND_TO_TEXTURE_RECTANGLE_RGB_NV"/>
+        <enum value="0x20A1"        name="WGL_BIND_TO_TEXTURE_RECTANGLE_RGBA_NV"/>
+        <enum value="0x20A2"        name="WGL_TEXTURE_RECTANGLE_NV"/>
+        <enum value="0x20A3"        name="WGL_BIND_TO_TEXTURE_DEPTH_NV"/>
+        <enum value="0x20A4"        name="WGL_BIND_TO_TEXTURE_RECTANGLE_DEPTH_NV"/>
+        <enum value="0x20A5"        name="WGL_DEPTH_TEXTURE_FORMAT_NV"/>
+        <enum value="0x20A6"        name="WGL_TEXTURE_DEPTH_COMPONENT_NV"/>
+        <enum value="0x20A7"        name="WGL_DEPTH_COMPONENT_NV"/>
+        <enum value="0x20A8"        name="WGL_TYPE_RGBA_UNSIGNED_FLOAT_EXT"/>
+        <enum value="0x20A9"        name="WGL_FRAMEBUFFER_SRGB_CAPABLE_ARB"/>
+        <enum value="0x20A9"        name="WGL_FRAMEBUFFER_SRGB_CAPABLE_EXT"/>
+            <unused start="0x20AA" end="0x20AF"/>
+        <enum value="0x20B0"        name="WGL_FLOAT_COMPONENTS_NV"/>
+        <enum value="0x20B1"        name="WGL_BIND_TO_TEXTURE_RECTANGLE_FLOAT_R_NV"/>
+        <enum value="0x20B2"        name="WGL_BIND_TO_TEXTURE_RECTANGLE_FLOAT_RG_NV"/>
+        <enum value="0x20B3"        name="WGL_BIND_TO_TEXTURE_RECTANGLE_FLOAT_RGB_NV"/>
+        <enum value="0x20B4"        name="WGL_BIND_TO_TEXTURE_RECTANGLE_FLOAT_RGBA_NV"/>
+        <enum value="0x20B5"        name="WGL_TEXTURE_FLOAT_R_NV"/>
+        <enum value="0x20B6"        name="WGL_TEXTURE_FLOAT_RG_NV"/>
+        <enum value="0x20B7"        name="WGL_TEXTURE_FLOAT_RGB_NV"/>
+        <enum value="0x20B8"        name="WGL_TEXTURE_FLOAT_RGBA_NV"/>
+        <enum value="0x20B9"        name="WGL_COLOR_SAMPLES_NV"/>
+            <unused start="0x20BA" end="0x20BF"/>
+        <enum value="0x20C0"        name="WGL_BIND_TO_VIDEO_RGB_NV"/>
+        <enum value="0x20C1"        name="WGL_BIND_TO_VIDEO_RGBA_NV"/>
+        <enum value="0x20C2"        name="WGL_BIND_TO_VIDEO_RGB_AND_DEPTH_NV"/>
+        <enum value="0x20C3"        name="WGL_VIDEO_OUT_COLOR_NV"/>
+        <enum value="0x20C4"        name="WGL_VIDEO_OUT_ALPHA_NV"/>
+        <enum value="0x20C5"        name="WGL_VIDEO_OUT_DEPTH_NV"/>
+        <enum value="0x20C6"        name="WGL_VIDEO_OUT_COLOR_AND_ALPHA_NV"/>
+        <enum value="0x20C7"        name="WGL_VIDEO_OUT_COLOR_AND_DEPTH_NV"/>
+        <enum value="0x20C8"        name="WGL_VIDEO_OUT_FRAME"/>
+        <enum value="0x20C9"        name="WGL_VIDEO_OUT_FIELD_1"/>
+        <enum value="0x20CA"        name="WGL_VIDEO_OUT_FIELD_2"/>
+        <enum value="0x20CB"        name="WGL_VIDEO_OUT_STACKED_FIELDS_1_2"/>
+        <enum value="0x20CC"        name="WGL_VIDEO_OUT_STACKED_FIELDS_2_1"/>
+            <unused start="0x20CD" comment="reserved for GLX_DEVICE_ID_NV (not present in WGL interface)"/>
+        <enum value="0x20CE"        name="WGL_UNIQUE_ID_NV"/>
+        <enum value="0x20CF"        name="WGL_NUM_VIDEO_CAPTURE_SLOTS_NV"/>
+        <enum value="0x20D0"        name="ERROR_INCOMPATIBLE_AFFINITY_MASKS_NV"/>
+        <enum value="0x20D1"        name="ERROR_MISSING_AFFINITY_MASK_NV"/>
+            <unused start="0x20D2" end="0x20EF"/>
+        <enum value="0x20F0"        name="WGL_NUM_VIDEO_SLOTS_NV"/>
+            <unused start="0x20F1" end="0x219F"/>
+    </enums>
+
+    <enums namespace="WGL" start="0x21A0" end="0x21AF" vendor="AMD">
+        <enum value="0x21A0"        name="WGL_TYPE_RGBA_FLOAT_ARB"/>
+        <enum value="0x21A0"        name="WGL_TYPE_RGBA_FLOAT_ATI"/>
+            <unused start="0x21A1"/>
+        <enum value="0x21A2"        name="WGL_GPU_FASTEST_TARGET_GPUS_AMD"/>
+        <enum value="0x21A3"        name="WGL_GPU_RAM_AMD"/>
+        <enum value="0x21A4"        name="WGL_GPU_CLOCK_AMD"/>
+        <enum value="0x21A5"        name="WGL_GPU_NUM_PIPES_AMD"/>
+        <enum value="0x21A5"        name="WGL_TEXTURE_RECTANGLE_ATI" comment="Duplicates unrelated WGL_GPU_NUM_PIPES_AMD"/>
+        <enum value="0x21A6"        name="WGL_GPU_NUM_SIMD_AMD"/>
+        <enum value="0x21A7"        name="WGL_GPU_NUM_RB_AMD"/>
+        <enum value="0x21A8"        name="WGL_GPU_NUM_SPI_AMD"/>
+            <unused start="0x21A9" end="0x21AF"/>
+    </enums>
+
+    <enums namespace="WGL" start="0x21B0" end="0x21BF" vendor="Matrox" comment="could be reclaimed (tentative, RFC sent to ARB 2002/10/3)">
+        <unused start="0x21B0" end="0x21BF"/>
+    </enums>
+
+<!-- Please remember that new enumerant allocations must be obtained by
+     request to the Khronos API registrar (see comments at the top of this
+     file) File requests in the Khronos Bugzilla, OpenGL project, Registry
+     component. Also note that some GLX enum values are shared with GL and
+     WGL, and new ranges should be allocated with such overlaps in mind. -->
+
+<!-- Reservable for future use: 0x21C0-0x2FFF.
+     To generate a new range, allocate multiples of 16 starting at the
+     lowest available point in this block. -->
+    <enums namespace="WGL" start="0x21C0" end="0x2FFF" vendor="ARB">
+            <unused start="0x21C0" end="0x2FFF" comment="Reserved for future use"/>
+    </enums>
+
+    <enums namespace="EGL" start="0x3080" end="0x30AF" vendor="KHR" comment="Values shared with EGL. Do not allocate additional values in this range.">
+        <enum value="0x309D" name="WGL_COLORSPACE_EXT"/>
+        <enum value="0x3089" name="WGL_COLORSPACE_SRGB_EXT"/>
+        <enum value="0x308A" name="WGL_COLORSPACE_LINEAR_EXT"/>
+    </enums>
+
+    <enums namespace="WGL" start="0x31B3" end="0x31B3" vendor="ARB" comment="Shared with GLX.">
+        <enum value="0x31B3" name="WGL_CONTEXT_OPENGL_NO_ERROR_ARB"/>
+    </enums>
+
+    <enums namespace="GL" start="0x8250" end="0x826F" vendor="ARB" comment="Values shared with GL. Do not allocate additional values in this range.">
+        <enum value="0x8252"        name="WGL_LOSE_CONTEXT_ON_RESET_ARB"/>
+        <enum value="0x8256"        name="WGL_CONTEXT_RESET_NOTIFICATION_STRATEGY_ARB"/>
+        <enum value="0x8261"        name="WGL_NO_RESET_NOTIFICATION_ARB"/>
+    </enums>
+
+    <enums namespace="GL" start="0x9120" end="0x912F"  vendor="ARB" comment="Values shared with GL. Do not allocate additional values in this range.">
+        <enum value="0x9126"        name="WGL_CONTEXT_PROFILE_MASK_ARB"/>
+    </enums>
+
+    <!-- SECTION: WGL command definitions. -->
+    <commands namespace="WGL">
+        <command>
+            <proto>int <name>ChoosePixelFormat</name></proto>
+            <param><ptype>HDC</ptype> <name>hDc</name></param>
+            <param>const <ptype>PIXELFORMATDESCRIPTOR</ptype> *<name>pPfd</name></param>
+        </command>
+        <command>
+            <proto>int <name>DescribePixelFormat</name></proto>
+            <param><ptype>HDC</ptype> <name>hdc</name></param>
+            <param>int <name>ipfd</name></param>
+            <param><ptype>UINT</ptype> <name>cjpfd</name></param>
+            <param>const <ptype>PIXELFORMATDESCRIPTOR</ptype> *<name>ppfd</name></param>
+        </command>
+        <command>
+            <proto>int <name>GetPixelFormat</name></proto>
+            <param><ptype>HDC</ptype> <name>hdc</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>SetPixelFormat</name></proto>
+            <param><ptype>HDC</ptype> <name>hdc</name></param>
+            <param>int <name>ipfd</name></param>
+            <param>const <ptype>PIXELFORMATDESCRIPTOR</ptype> *<name>ppfd</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>SwapBuffers</name></proto>
+            <param><ptype>HDC</ptype> <name>hdc</name></param>
+        </command>
+        <command>
+            <proto>void *<name>wglAllocateMemoryNV</name></proto>
+            <param><ptype>GLsizei</ptype> <name>size</name></param>
+            <param><ptype>GLfloat</ptype> <name>readfreq</name></param>
+            <param><ptype>GLfloat</ptype> <name>writefreq</name></param>
+            <param><ptype>GLfloat</ptype> <name>priority</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglAssociateImageBufferEventsI3D</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param>const <ptype>HANDLE</ptype> *<name>pEvent</name></param>
+            <param>const <ptype>LPVOID</ptype> *<name>pAddress</name></param>
+            <param>const <ptype>DWORD</ptype> *<name>pSize</name></param>
+            <param><ptype>UINT</ptype> <name>count</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglBeginFrameTrackingI3D</name></proto>
+        </command>
+        <command>
+            <proto><ptype>GLboolean</ptype> <name>wglBindDisplayColorTableEXT</name></proto>
+            <param><ptype>GLushort</ptype> <name>id</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglBindSwapBarrierNV</name></proto>
+            <param><ptype>GLuint</ptype> <name>group</name></param>
+            <param><ptype>GLuint</ptype> <name>barrier</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglBindTexImageARB</name></proto>
+            <param><ptype>HPBUFFERARB</ptype> <name>hPbuffer</name></param>
+            <param>int <name>iBuffer</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglBindVideoCaptureDeviceNV</name></proto>
+            <param><ptype>UINT</ptype> <name>uVideoSlot</name></param>
+            <param><ptype>HVIDEOINPUTDEVICENV</ptype> <name>hDevice</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglBindVideoDeviceNV</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param>unsigned int <name>uVideoSlot</name></param>
+            <param><ptype>HVIDEOOUTPUTDEVICENV</ptype> <name>hVideoDevice</name></param>
+            <param>const int *<name>piAttribList</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglBindVideoImageNV</name></proto>
+            <param><ptype>HPVIDEODEV</ptype> <name>hVideoDevice</name></param>
+            <param><ptype>HPBUFFERARB</ptype> <name>hPbuffer</name></param>
+            <param>int <name>iVideoBuffer</name></param>
+        </command>
+        <command>
+            <proto><ptype>VOID</ptype> <name>wglBlitContextFramebufferAMD</name></proto>
+            <param><ptype>HGLRC</ptype> <name>dstCtx</name></param>
+            <param><ptype>GLint</ptype> <name>srcX0</name></param>
+            <param><ptype>GLint</ptype> <name>srcY0</name></param>
+            <param><ptype>GLint</ptype> <name>srcX1</name></param>
+            <param><ptype>GLint</ptype> <name>srcY1</name></param>
+            <param><ptype>GLint</ptype> <name>dstX0</name></param>
+            <param><ptype>GLint</ptype> <name>dstY0</name></param>
+            <param><ptype>GLint</ptype> <name>dstX1</name></param>
+            <param><ptype>GLint</ptype> <name>dstY1</name></param>
+            <param><ptype>GLbitfield</ptype> <name>mask</name></param>
+            <param><ptype>GLenum</ptype> <name>filter</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglChoosePixelFormatARB</name></proto>
+            <param><ptype>HDC</ptype> <name>hdc</name></param>
+            <param>const int *<name>piAttribIList</name></param>
+            <param>const <ptype>FLOAT</ptype> *<name>pfAttribFList</name></param>
+            <param><ptype>UINT</ptype> <name>nMaxFormats</name></param>
+            <param>int *<name>piFormats</name></param>
+            <param><ptype>UINT</ptype> *<name>nNumFormats</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglChoosePixelFormatEXT</name></proto>
+            <param><ptype>HDC</ptype> <name>hdc</name></param>
+            <param>const int *<name>piAttribIList</name></param>
+            <param>const <ptype>FLOAT</ptype> *<name>pfAttribFList</name></param>
+            <param><ptype>UINT</ptype> <name>nMaxFormats</name></param>
+            <param>int *<name>piFormats</name></param>
+            <param><ptype>UINT</ptype> *<name>nNumFormats</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglCopyContext</name></proto>
+            <param><ptype>HGLRC</ptype> <name>hglrcSrc</name></param>
+            <param><ptype>HGLRC</ptype> <name>hglrcDst</name></param>
+            <param><ptype>UINT</ptype> <name>mask</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglCopyImageSubDataNV</name></proto>
+            <param><ptype>HGLRC</ptype> <name>hSrcRC</name></param>
+            <param><ptype>GLuint</ptype> <name>srcName</name></param>
+            <param><ptype>GLenum</ptype> <name>srcTarget</name></param>
+            <param><ptype>GLint</ptype> <name>srcLevel</name></param>
+            <param><ptype>GLint</ptype> <name>srcX</name></param>
+            <param><ptype>GLint</ptype> <name>srcY</name></param>
+            <param><ptype>GLint</ptype> <name>srcZ</name></param>
+            <param><ptype>HGLRC</ptype> <name>hDstRC</name></param>
+            <param><ptype>GLuint</ptype> <name>dstName</name></param>
+            <param><ptype>GLenum</ptype> <name>dstTarget</name></param>
+            <param><ptype>GLint</ptype> <name>dstLevel</name></param>
+            <param><ptype>GLint</ptype> <name>dstX</name></param>
+            <param><ptype>GLint</ptype> <name>dstY</name></param>
+            <param><ptype>GLint</ptype> <name>dstZ</name></param>
+            <param><ptype>GLsizei</ptype> <name>width</name></param>
+            <param><ptype>GLsizei</ptype> <name>height</name></param>
+            <param><ptype>GLsizei</ptype> <name>depth</name></param>
+        </command>
+        <command>
+            <proto><ptype>HDC</ptype> <name>wglCreateAffinityDCNV</name></proto>
+            <param>const <ptype>HGPUNV</ptype> *<name>phGpuList</name></param>
+        </command>
+        <command>
+            <proto><ptype>HGLRC</ptype> <name>wglCreateAssociatedContextAMD</name></proto>
+            <param><ptype>UINT</ptype> <name>id</name></param>
+        </command>
+        <command>
+            <proto><ptype>HGLRC</ptype> <name>wglCreateAssociatedContextAttribsAMD</name></proto>
+            <param><ptype>UINT</ptype> <name>id</name></param>
+            <param><ptype>HGLRC</ptype> <name>hShareContext</name></param>
+            <param>const int *<name>attribList</name></param>
+        </command>
+        <command>
+            <proto><ptype>HANDLE</ptype> <name>wglCreateBufferRegionARB</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param>int <name>iLayerPlane</name></param>
+            <param><ptype>UINT</ptype> <name>uType</name></param>
+        </command>
+        <command>
+            <proto><ptype>HGLRC</ptype> <name>wglCreateContext</name></proto>
+            <param><ptype>HDC</ptype> <name>hDc</name></param>
+        </command>
+        <command>
+            <proto><ptype>HGLRC</ptype> <name>wglCreateContextAttribsARB</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param><ptype>HGLRC</ptype> <name>hShareContext</name></param>
+            <param>const int *<name>attribList</name></param>
+        </command>
+        <command>
+            <proto><ptype>GLboolean</ptype> <name>wglCreateDisplayColorTableEXT</name></proto>
+            <param><ptype>GLushort</ptype> <name>id</name></param>
+        </command>
+        <command>
+            <proto><ptype>LPVOID</ptype> <name>wglCreateImageBufferI3D</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param><ptype>DWORD</ptype> <name>dwSize</name></param>
+            <param><ptype>UINT</ptype> <name>uFlags</name></param>
+        </command>
+        <command>
+            <proto><ptype>HGLRC</ptype> <name>wglCreateLayerContext</name></proto>
+            <param><ptype>HDC</ptype> <name>hDc</name></param>
+            <param>int <name>level</name></param>
+        </command>
+        <command>
+            <proto><ptype>HPBUFFERARB</ptype> <name>wglCreatePbufferARB</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param>int <name>iPixelFormat</name></param>
+            <param>int <name>iWidth</name></param>
+            <param>int <name>iHeight</name></param>
+            <param>const int *<name>piAttribList</name></param>
+        </command>
+        <command>
+            <proto><ptype>HPBUFFEREXT</ptype> <name>wglCreatePbufferEXT</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param>int <name>iPixelFormat</name></param>
+            <param>int <name>iWidth</name></param>
+            <param>int <name>iHeight</name></param>
+            <param>const int *<name>piAttribList</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglDelayBeforeSwapNV</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param><ptype>GLfloat</ptype> <name>seconds</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglDeleteAssociatedContextAMD</name></proto>
+            <param><ptype>HGLRC</ptype> <name>hglrc</name></param>
+        </command>
+        <command>
+            <proto><ptype>VOID</ptype> <name>wglDeleteBufferRegionARB</name></proto>
+            <param><ptype>HANDLE</ptype> <name>hRegion</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglDeleteContext</name></proto>
+            <param><ptype>HGLRC</ptype> <name>oldContext</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglDeleteDCNV</name></proto>
+            <param><ptype>HDC</ptype> <name>hdc</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglDescribeLayerPlane</name></proto>
+            <param><ptype>HDC</ptype> <name>hDc</name></param>
+            <param>int <name>pixelFormat</name></param>
+            <param>int <name>layerPlane</name></param>
+            <param><ptype>UINT</ptype> <name>nBytes</name></param>
+            <param>const <ptype>LAYERPLANEDESCRIPTOR</ptype> *<name>plpd</name></param>
+        </command>
+        <command>
+            <proto><ptype>VOID</ptype> <name>wglDestroyDisplayColorTableEXT</name></proto>
+            <param><ptype>GLushort</ptype> <name>id</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglDestroyImageBufferI3D</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param><ptype>LPVOID</ptype> <name>pAddress</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglDestroyPbufferARB</name></proto>
+            <param><ptype>HPBUFFERARB</ptype> <name>hPbuffer</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglDestroyPbufferEXT</name></proto>
+            <param><ptype>HPBUFFEREXT</ptype> <name>hPbuffer</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglDisableFrameLockI3D</name></proto>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglDisableGenlockI3D</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglDXCloseDeviceNV</name></proto>
+            <param><ptype>HANDLE</ptype> <name>hDevice</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglDXLockObjectsNV</name></proto>
+            <param><ptype>HANDLE</ptype> <name>hDevice</name></param>
+            <param><ptype>GLint</ptype> <name>count</name></param>
+            <param><ptype>HANDLE</ptype> *<name>hObjects</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglDXObjectAccessNV</name></proto>
+            <param><ptype>HANDLE</ptype> <name>hObject</name></param>
+            <param><ptype>GLenum</ptype> <name>access</name></param>
+        </command>
+        <command>
+            <proto><ptype>HANDLE</ptype> <name>wglDXOpenDeviceNV</name></proto>
+            <param>void *<name>dxDevice</name></param>
+        </command>
+        <command>
+            <proto><ptype>HANDLE</ptype> <name>wglDXRegisterObjectNV</name></proto>
+            <param><ptype>HANDLE</ptype> <name>hDevice</name></param>
+            <param>void *<name>dxObject</name></param>
+            <param><ptype>GLuint</ptype> <name>name</name></param>
+            <param><ptype>GLenum</ptype> <name>type</name></param>
+            <param><ptype>GLenum</ptype> <name>access</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglDXSetResourceShareHandleNV</name></proto>
+            <param>void *<name>dxObject</name></param>
+            <param><ptype>HANDLE</ptype> <name>shareHandle</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglDXUnlockObjectsNV</name></proto>
+            <param><ptype>HANDLE</ptype> <name>hDevice</name></param>
+            <param><ptype>GLint</ptype> <name>count</name></param>
+            <param><ptype>HANDLE</ptype> *<name>hObjects</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglDXUnregisterObjectNV</name></proto>
+            <param><ptype>HANDLE</ptype> <name>hDevice</name></param>
+            <param><ptype>HANDLE</ptype> <name>hObject</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglEnableFrameLockI3D</name></proto>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglEnableGenlockI3D</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglEndFrameTrackingI3D</name></proto>
+        </command>
+        <command>
+            <proto><ptype>UINT</ptype> <name>wglEnumerateVideoCaptureDevicesNV</name></proto>
+            <param><ptype>HDC</ptype> <name>hDc</name></param>
+            <param><ptype>HVIDEOINPUTDEVICENV</ptype> *<name>phDeviceList</name></param>
+        </command>
+        <command>
+            <proto>int <name>wglEnumerateVideoDevicesNV</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param><ptype>HVIDEOOUTPUTDEVICENV</ptype> *<name>phDeviceList</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglEnumGpuDevicesNV</name></proto>
+            <param><ptype>HGPUNV</ptype> <name>hGpu</name></param>
+            <param><ptype>UINT</ptype> <name>iDeviceIndex</name></param>
+            <param><ptype>PGPU_DEVICE</ptype> <name>lpGpuDevice</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglEnumGpusFromAffinityDCNV</name></proto>
+            <param><ptype>HDC</ptype> <name>hAffinityDC</name></param>
+            <param><ptype>UINT</ptype> <name>iGpuIndex</name></param>
+            <param><ptype>HGPUNV</ptype> *<name>hGpu</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglEnumGpusNV</name></proto>
+            <param><ptype>UINT</ptype> <name>iGpuIndex</name></param>
+            <param><ptype>HGPUNV</ptype> *<name>phGpu</name></param>
+        </command>
+        <command>
+            <proto>void <name>wglFreeMemoryNV</name></proto>
+            <param>void *<name>pointer</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglGenlockSampleRateI3D</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param><ptype>UINT</ptype> <name>uRate</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglGenlockSourceDelayI3D</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param><ptype>UINT</ptype> <name>uDelay</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglGenlockSourceEdgeI3D</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param><ptype>UINT</ptype> <name>uEdge</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglGenlockSourceI3D</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param><ptype>UINT</ptype> <name>uSource</name></param>
+        </command>
+        <command>
+            <proto><ptype>UINT</ptype> <name>wglGetContextGPUIDAMD</name></proto>
+            <param><ptype>HGLRC</ptype> <name>hglrc</name></param>
+        </command>
+        <command>
+            <proto><ptype>HGLRC</ptype> <name>wglGetCurrentAssociatedContextAMD</name></proto>
+        </command>
+        <command>
+            <proto><ptype>HGLRC</ptype> <name>wglGetCurrentContext</name></proto>
+        </command>
+        <command>
+            <proto><ptype>HDC</ptype> <name>wglGetCurrentDC</name></proto>
+        </command>
+        <command>
+            <proto><ptype>HDC</ptype> <name>wglGetCurrentReadDCARB</name></proto>
+        </command>
+        <command>
+            <proto><ptype>HDC</ptype> <name>wglGetCurrentReadDCEXT</name></proto>
+        </command>
+        <command>
+            <proto><ptype>PROC</ptype> <name>wglGetDefaultProcAddress</name></proto>
+            <param><ptype>LPCSTR</ptype> <name>lpszProc</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglGetDigitalVideoParametersI3D</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param>int <name>iAttribute</name></param>
+            <param>int *<name>piValue</name></param>
+        </command>
+        <command>
+            <proto><ptype>UINT</ptype> <name>GetEnhMetaFilePixelFormat</name></proto>
+            <param><ptype>HENHMETAFILE</ptype> <name>hemf</name></param>
+            <param>const <ptype>PIXELFORMATDESCRIPTOR</ptype> *<name>ppfd</name></param>
+        </command>
+        <command>
+            <proto>const char *<name>wglGetExtensionsStringARB</name></proto>
+            <param><ptype>HDC</ptype> <name>hdc</name></param>
+        </command>
+        <command>
+            <proto>const char *<name>wglGetExtensionsStringEXT</name></proto>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglGetFrameUsageI3D</name></proto>
+            <param>float *<name>pUsage</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglGetGammaTableI3D</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param>int <name>iEntries</name></param>
+            <param><ptype>USHORT</ptype> *<name>puRed</name></param>
+            <param><ptype>USHORT</ptype> *<name>puGreen</name></param>
+            <param><ptype>USHORT</ptype> *<name>puBlue</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglGetGammaTableParametersI3D</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param>int <name>iAttribute</name></param>
+            <param>int *<name>piValue</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglGetGenlockSampleRateI3D</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param><ptype>UINT</ptype> *<name>uRate</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglGetGenlockSourceDelayI3D</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param><ptype>UINT</ptype> *<name>uDelay</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglGetGenlockSourceEdgeI3D</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param><ptype>UINT</ptype> *<name>uEdge</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglGetGenlockSourceI3D</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param><ptype>UINT</ptype> *<name>uSource</name></param>
+        </command>
+        <command>
+            <proto><ptype>UINT</ptype> <name>wglGetGPUIDsAMD</name></proto>
+            <param><ptype>UINT</ptype> <name>maxCount</name></param>
+            <param><ptype>UINT</ptype> *<name>ids</name></param>
+        </command>
+        <command>
+            <proto><ptype>INT</ptype> <name>wglGetGPUInfoAMD</name></proto>
+            <param><ptype>UINT</ptype> <name>id</name></param>
+            <param>int <name>property</name></param>
+            <param><ptype>GLenum</ptype> <name>dataType</name></param>
+            <param><ptype>UINT</ptype> <name>size</name></param>
+            <param>void *<name>data</name></param>
+        </command>
+        <command>
+            <proto>int <name>wglGetLayerPaletteEntries</name></proto>
+            <param><ptype>HDC</ptype> <name>hdc</name></param>
+            <param>int <name>iLayerPlane</name></param>
+            <param>int <name>iStart</name></param>
+            <param>int <name>cEntries</name></param>
+            <param>const <ptype>COLORREF</ptype> *<name>pcr</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglGetMscRateOML</name></proto>
+            <param><ptype>HDC</ptype> <name>hdc</name></param>
+            <param><ptype>INT32</ptype> *<name>numerator</name></param>
+            <param><ptype>INT32</ptype> *<name>denominator</name></param>
+        </command>
+        <command>
+            <proto><ptype>HDC</ptype> <name>wglGetPbufferDCARB</name></proto>
+            <param><ptype>HPBUFFERARB</ptype> <name>hPbuffer</name></param>
+        </command>
+        <command>
+            <proto><ptype>HDC</ptype> <name>wglGetPbufferDCEXT</name></proto>
+            <param><ptype>HPBUFFEREXT</ptype> <name>hPbuffer</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglGetPixelFormatAttribfvARB</name></proto>
+            <param><ptype>HDC</ptype> <name>hdc</name></param>
+            <param>int <name>iPixelFormat</name></param>
+            <param>int <name>iLayerPlane</name></param>
+            <param><ptype>UINT</ptype> <name>nAttributes</name></param>
+            <param>const int *<name>piAttributes</name></param>
+            <param><ptype>FLOAT</ptype> *<name>pfValues</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglGetPixelFormatAttribfvEXT</name></proto>
+            <param><ptype>HDC</ptype> <name>hdc</name></param>
+            <param>int <name>iPixelFormat</name></param>
+            <param>int <name>iLayerPlane</name></param>
+            <param><ptype>UINT</ptype> <name>nAttributes</name></param>
+            <param>int *<name>piAttributes</name></param>
+            <param><ptype>FLOAT</ptype> *<name>pfValues</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglGetPixelFormatAttribivARB</name></proto>
+            <param><ptype>HDC</ptype> <name>hdc</name></param>
+            <param>int <name>iPixelFormat</name></param>
+            <param>int <name>iLayerPlane</name></param>
+            <param><ptype>UINT</ptype> <name>nAttributes</name></param>
+            <param>const int *<name>piAttributes</name></param>
+            <param>int *<name>piValues</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglGetPixelFormatAttribivEXT</name></proto>
+            <param><ptype>HDC</ptype> <name>hdc</name></param>
+            <param>int <name>iPixelFormat</name></param>
+            <param>int <name>iLayerPlane</name></param>
+            <param><ptype>UINT</ptype> <name>nAttributes</name></param>
+            <param>int *<name>piAttributes</name></param>
+            <param>int *<name>piValues</name></param>
+        </command>
+        <command>
+            <proto><ptype>PROC</ptype> <name>wglGetProcAddress</name></proto>
+            <param><ptype>LPCSTR</ptype> <name>lpszProc</name></param>
+        </command>
+        <command>
+            <proto>int <name>wglGetSwapIntervalEXT</name></proto>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglGetSyncValuesOML</name></proto>
+            <param><ptype>HDC</ptype> <name>hdc</name></param>
+            <param><ptype>INT64</ptype> *<name>ust</name></param>
+            <param><ptype>INT64</ptype> *<name>msc</name></param>
+            <param><ptype>INT64</ptype> *<name>sbc</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglGetVideoDeviceNV</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param>int <name>numDevices</name></param>
+            <param><ptype>HPVIDEODEV</ptype> *<name>hVideoDevice</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglGetVideoInfoNV</name></proto>
+            <param><ptype>HPVIDEODEV</ptype> <name>hpVideoDevice</name></param>
+            <param>unsigned long *<name>pulCounterOutputPbuffer</name></param>
+            <param>unsigned long *<name>pulCounterOutputVideo</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglIsEnabledFrameLockI3D</name></proto>
+            <param><ptype>BOOL</ptype> *<name>pFlag</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglIsEnabledGenlockI3D</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param><ptype>BOOL</ptype> *<name>pFlag</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglJoinSwapGroupNV</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param><ptype>GLuint</ptype> <name>group</name></param>
+        </command>
+        <command>
+            <proto><ptype>GLboolean</ptype> <name>wglLoadDisplayColorTableEXT</name></proto>
+            <param>const <ptype>GLushort</ptype> *<name>table</name></param>
+            <param><ptype>GLuint</ptype> <name>length</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglLockVideoCaptureDeviceNV</name></proto>
+            <param><ptype>HDC</ptype> <name>hDc</name></param>
+            <param><ptype>HVIDEOINPUTDEVICENV</ptype> <name>hDevice</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglMakeAssociatedContextCurrentAMD</name></proto>
+            <param><ptype>HGLRC</ptype> <name>hglrc</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglMakeContextCurrentARB</name></proto>
+            <param><ptype>HDC</ptype> <name>hDrawDC</name></param>
+            <param><ptype>HDC</ptype> <name>hReadDC</name></param>
+            <param><ptype>HGLRC</ptype> <name>hglrc</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglMakeContextCurrentEXT</name></proto>
+            <param><ptype>HDC</ptype> <name>hDrawDC</name></param>
+            <param><ptype>HDC</ptype> <name>hReadDC</name></param>
+            <param><ptype>HGLRC</ptype> <name>hglrc</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglMakeCurrent</name></proto>
+            <param><ptype>HDC</ptype> <name>hDc</name></param>
+            <param><ptype>HGLRC</ptype> <name>newContext</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglQueryCurrentContextNV</name></proto>
+            <param>int <name>iAttribute</name></param>
+            <param>int *<name>piValue</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglQueryFrameCountNV</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param><ptype>GLuint</ptype> *<name>count</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglQueryFrameLockMasterI3D</name></proto>
+            <param><ptype>BOOL</ptype> *<name>pFlag</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglQueryFrameTrackingI3D</name></proto>
+            <param><ptype>DWORD</ptype> *<name>pFrameCount</name></param>
+            <param><ptype>DWORD</ptype> *<name>pMissedFrames</name></param>
+            <param>float *<name>pLastMissedUsage</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglQueryGenlockMaxSourceDelayI3D</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param><ptype>UINT</ptype> *<name>uMaxLineDelay</name></param>
+            <param><ptype>UINT</ptype> *<name>uMaxPixelDelay</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglQueryMaxSwapGroupsNV</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param><ptype>GLuint</ptype> *<name>maxGroups</name></param>
+            <param><ptype>GLuint</ptype> *<name>maxBarriers</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglQueryPbufferARB</name></proto>
+            <param><ptype>HPBUFFERARB</ptype> <name>hPbuffer</name></param>
+            <param>int <name>iAttribute</name></param>
+            <param>int *<name>piValue</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglQueryPbufferEXT</name></proto>
+            <param><ptype>HPBUFFEREXT</ptype> <name>hPbuffer</name></param>
+            <param>int <name>iAttribute</name></param>
+            <param>int *<name>piValue</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglQuerySwapGroupNV</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param><ptype>GLuint</ptype> *<name>group</name></param>
+            <param><ptype>GLuint</ptype> *<name>barrier</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglQueryVideoCaptureDeviceNV</name></proto>
+            <param><ptype>HDC</ptype> <name>hDc</name></param>
+            <param><ptype>HVIDEOINPUTDEVICENV</ptype> <name>hDevice</name></param>
+            <param>int <name>iAttribute</name></param>
+            <param>int *<name>piValue</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglRealizeLayerPalette</name></proto>
+            <param><ptype>HDC</ptype> <name>hdc</name></param>
+            <param>int <name>iLayerPlane</name></param>
+            <param><ptype>BOOL</ptype> <name>bRealize</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglReleaseImageBufferEventsI3D</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param>const <ptype>LPVOID</ptype> *<name>pAddress</name></param>
+            <param><ptype>UINT</ptype> <name>count</name></param>
+        </command>
+        <command>
+            <proto>int <name>wglReleasePbufferDCARB</name></proto>
+            <param><ptype>HPBUFFERARB</ptype> <name>hPbuffer</name></param>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+        </command>
+        <command>
+            <proto>int <name>wglReleasePbufferDCEXT</name></proto>
+            <param><ptype>HPBUFFEREXT</ptype> <name>hPbuffer</name></param>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglReleaseTexImageARB</name></proto>
+            <param><ptype>HPBUFFERARB</ptype> <name>hPbuffer</name></param>
+            <param>int <name>iBuffer</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglReleaseVideoCaptureDeviceNV</name></proto>
+            <param><ptype>HDC</ptype> <name>hDc</name></param>
+            <param><ptype>HVIDEOINPUTDEVICENV</ptype> <name>hDevice</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglReleaseVideoDeviceNV</name></proto>
+            <param><ptype>HPVIDEODEV</ptype> <name>hVideoDevice</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglReleaseVideoImageNV</name></proto>
+            <param><ptype>HPBUFFERARB</ptype> <name>hPbuffer</name></param>
+            <param>int <name>iVideoBuffer</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglResetFrameCountNV</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglRestoreBufferRegionARB</name></proto>
+            <param><ptype>HANDLE</ptype> <name>hRegion</name></param>
+            <param>int <name>x</name></param>
+            <param>int <name>y</name></param>
+            <param>int <name>width</name></param>
+            <param>int <name>height</name></param>
+            <param>int <name>xSrc</name></param>
+            <param>int <name>ySrc</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglSaveBufferRegionARB</name></proto>
+            <param><ptype>HANDLE</ptype> <name>hRegion</name></param>
+            <param>int <name>x</name></param>
+            <param>int <name>y</name></param>
+            <param>int <name>width</name></param>
+            <param>int <name>height</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglSendPbufferToVideoNV</name></proto>
+            <param><ptype>HPBUFFERARB</ptype> <name>hPbuffer</name></param>
+            <param>int <name>iBufferType</name></param>
+            <param>unsigned long *<name>pulCounterPbuffer</name></param>
+            <param><ptype>BOOL</ptype> <name>bBlock</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglSetDigitalVideoParametersI3D</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param>int <name>iAttribute</name></param>
+            <param>const int *<name>piValue</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglSetGammaTableI3D</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param>int <name>iEntries</name></param>
+            <param>const <ptype>USHORT</ptype> *<name>puRed</name></param>
+            <param>const <ptype>USHORT</ptype> *<name>puGreen</name></param>
+            <param>const <ptype>USHORT</ptype> *<name>puBlue</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglSetGammaTableParametersI3D</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param>int <name>iAttribute</name></param>
+            <param>const int *<name>piValue</name></param>
+        </command>
+        <command>
+            <proto>int <name>wglSetLayerPaletteEntries</name></proto>
+            <param><ptype>HDC</ptype> <name>hdc</name></param>
+            <param>int <name>iLayerPlane</name></param>
+            <param>int <name>iStart</name></param>
+            <param>int <name>cEntries</name></param>
+            <param>const <ptype>COLORREF</ptype> *<name>pcr</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglSetPbufferAttribARB</name></proto>
+            <param><ptype>HPBUFFERARB</ptype> <name>hPbuffer</name></param>
+            <param>const int *<name>piAttribList</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglSetStereoEmitterState3DL</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param><ptype>UINT</ptype> <name>uState</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglShareLists</name></proto>
+            <param><ptype>HGLRC</ptype> <name>hrcSrvShare</name></param>
+            <param><ptype>HGLRC</ptype> <name>hrcSrvSource</name></param>
+        </command>
+        <command>
+            <proto><ptype>INT64</ptype> <name>wglSwapBuffersMscOML</name></proto>
+            <param><ptype>HDC</ptype> <name>hdc</name></param>
+            <param><ptype>INT64</ptype> <name>target_msc</name></param>
+            <param><ptype>INT64</ptype> <name>divisor</name></param>
+            <param><ptype>INT64</ptype> <name>remainder</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglSwapLayerBuffers</name></proto>
+            <param><ptype>HDC</ptype> <name>hdc</name></param>
+            <param><ptype>UINT</ptype> <name>fuFlags</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglSwapIntervalEXT</name></proto>
+            <param>int <name>interval</name></param>
+        </command>
+        <command>
+            <proto><ptype>INT64</ptype> <name>wglSwapLayerBuffersMscOML</name></proto>
+            <param><ptype>HDC</ptype> <name>hdc</name></param>
+            <param>int <name>fuPlanes</name></param>
+            <param><ptype>INT64</ptype> <name>target_msc</name></param>
+            <param><ptype>INT64</ptype> <name>divisor</name></param>
+            <param><ptype>INT64</ptype> <name>remainder</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglUseFontBitmaps</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param><ptype>DWORD</ptype> <name>first</name></param>
+            <param><ptype>DWORD</ptype> <name>count</name></param>
+            <param><ptype>DWORD</ptype> <name>listBase</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglUseFontBitmapsA</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param><ptype>DWORD</ptype> <name>first</name></param>
+            <param><ptype>DWORD</ptype> <name>count</name></param>
+            <param><ptype>DWORD</ptype> <name>listBase</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglUseFontBitmapsW</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param><ptype>DWORD</ptype> <name>first</name></param>
+            <param><ptype>DWORD</ptype> <name>count</name></param>
+            <param><ptype>DWORD</ptype> <name>listBase</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglUseFontOutlines</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param><ptype>DWORD</ptype> <name>first</name></param>
+            <param><ptype>DWORD</ptype> <name>count</name></param>
+            <param><ptype>DWORD</ptype> <name>listBase</name></param>
+            <param><ptype>FLOAT</ptype> <name>deviation</name></param>
+            <param><ptype>FLOAT</ptype> <name>extrusion</name></param>
+            <param>int <name>format</name></param>
+            <param><ptype>LPGLYPHMETRICSFLOAT</ptype> <name>lpgmf</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglUseFontOutlinesA</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param><ptype>DWORD</ptype> <name>first</name></param>
+            <param><ptype>DWORD</ptype> <name>count</name></param>
+            <param><ptype>DWORD</ptype> <name>listBase</name></param>
+            <param><ptype>FLOAT</ptype> <name>deviation</name></param>
+            <param><ptype>FLOAT</ptype> <name>extrusion</name></param>
+            <param>int <name>format</name></param>
+            <param><ptype>LPGLYPHMETRICSFLOAT</ptype> <name>lpgmf</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglUseFontOutlinesW</name></proto>
+            <param><ptype>HDC</ptype> <name>hDC</name></param>
+            <param><ptype>DWORD</ptype> <name>first</name></param>
+            <param><ptype>DWORD</ptype> <name>count</name></param>
+            <param><ptype>DWORD</ptype> <name>listBase</name></param>
+            <param><ptype>FLOAT</ptype> <name>deviation</name></param>
+            <param><ptype>FLOAT</ptype> <name>extrusion</name></param>
+            <param>int <name>format</name></param>
+            <param><ptype>LPGLYPHMETRICSFLOAT</ptype> <name>lpgmf</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglWaitForMscOML</name></proto>
+            <param><ptype>HDC</ptype> <name>hdc</name></param>
+            <param><ptype>INT64</ptype> <name>target_msc</name></param>
+            <param><ptype>INT64</ptype> <name>divisor</name></param>
+            <param><ptype>INT64</ptype> <name>remainder</name></param>
+            <param><ptype>INT64</ptype> *<name>ust</name></param>
+            <param><ptype>INT64</ptype> *<name>msc</name></param>
+            <param><ptype>INT64</ptype> *<name>sbc</name></param>
+        </command>
+        <command>
+            <proto><ptype>BOOL</ptype> <name>wglWaitForSbcOML</name></proto>
+            <param><ptype>HDC</ptype> <name>hdc</name></param>
+            <param><ptype>INT64</ptype> <name>target_sbc</name></param>
+            <param><ptype>INT64</ptype> *<name>ust</name></param>
+            <param><ptype>INT64</ptype> *<name>msc</name></param>
+            <param><ptype>INT64</ptype> *<name>sbc</name></param>
+        </command>
+    </commands>
+
+    <!-- SECTION: WGL API interface definitions. -->
+    <feature api="wgl" name="WGL_VERSION_1_0" number="1.0">
+        <require>
+            <enum name="WGL_FONT_LINES"/>
+            <enum name="WGL_FONT_POLYGONS"/>
+            <enum name="WGL_SWAP_MAIN_PLANE"/>
+            <enum name="WGL_SWAP_OVERLAY1"/>
+            <enum name="WGL_SWAP_OVERLAY2"/>
+            <enum name="WGL_SWAP_OVERLAY3"/>
+            <enum name="WGL_SWAP_OVERLAY4"/>
+            <enum name="WGL_SWAP_OVERLAY5"/>
+            <enum name="WGL_SWAP_OVERLAY6"/>
+            <enum name="WGL_SWAP_OVERLAY7"/>
+            <enum name="WGL_SWAP_OVERLAY8"/>
+            <enum name="WGL_SWAP_OVERLAY9"/>
+            <enum name="WGL_SWAP_OVERLAY10"/>
+            <enum name="WGL_SWAP_OVERLAY11"/>
+            <enum name="WGL_SWAP_OVERLAY12"/>
+            <enum name="WGL_SWAP_OVERLAY13"/>
+            <enum name="WGL_SWAP_OVERLAY14"/>
+            <enum name="WGL_SWAP_OVERLAY15"/>
+            <enum name="WGL_SWAP_UNDERLAY1"/>
+            <enum name="WGL_SWAP_UNDERLAY2"/>
+            <enum name="WGL_SWAP_UNDERLAY3"/>
+            <enum name="WGL_SWAP_UNDERLAY4"/>
+            <enum name="WGL_SWAP_UNDERLAY5"/>
+            <enum name="WGL_SWAP_UNDERLAY6"/>
+            <enum name="WGL_SWAP_UNDERLAY7"/>
+            <enum name="WGL_SWAP_UNDERLAY8"/>
+            <enum name="WGL_SWAP_UNDERLAY9"/>
+            <enum name="WGL_SWAP_UNDERLAY10"/>
+            <enum name="WGL_SWAP_UNDERLAY11"/>
+            <enum name="WGL_SWAP_UNDERLAY12"/>
+            <enum name="WGL_SWAP_UNDERLAY13"/>
+            <enum name="WGL_SWAP_UNDERLAY14"/>
+            <enum name="WGL_SWAP_UNDERLAY15"/>
+            <command name="ChoosePixelFormat"/>
+            <command name="DescribePixelFormat"/>
+            <command name="GetEnhMetaFilePixelFormat"/>
+            <command name="GetPixelFormat"/>
+            <command name="SetPixelFormat"/>
+            <command name="SwapBuffers"/>
+            <command name="wglCopyContext"/>
+            <command name="wglCreateContext"/>
+            <command name="wglCreateLayerContext"/>
+            <command name="wglDeleteContext"/>
+            <command name="wglDescribeLayerPlane"/>
+            <command name="wglGetCurrentContext"/>
+            <command name="wglGetCurrentDC"/>
+            <command name="wglGetLayerPaletteEntries"/>
+            <command name="wglGetProcAddress"/>
+            <command name="wglMakeCurrent"/>
+            <command name="wglRealizeLayerPalette"/>
+            <command name="wglSetLayerPaletteEntries"/>
+            <command name="wglShareLists"/>
+            <command name="wglSwapLayerBuffers"/>
+            <command name="wglUseFontBitmaps"/>
+            <command name="wglUseFontBitmapsA"/>
+            <command name="wglUseFontBitmapsW"/>
+            <command name="wglUseFontOutlines"/>
+            <command name="wglUseFontOutlinesA"/>
+            <command name="wglUseFontOutlinesW"/>
+        </require>
+    </feature>
+
+    <!-- SECTION: WGL extension interface definitions -->
+    <extensions>
+        <extension name="WGL_3DFX_multisample" supported="wgl">
+            <require>
+                <enum name="WGL_SAMPLE_BUFFERS_3DFX"/>
+                <enum name="WGL_SAMPLES_3DFX"/>
+            </require>
+        </extension>
+        <extension name="WGL_3DL_stereo_control" supported="wgl">
+            <require>
+                <enum name="WGL_STEREO_EMITTER_ENABLE_3DL"/>
+                <enum name="WGL_STEREO_EMITTER_DISABLE_3DL"/>
+                <enum name="WGL_STEREO_POLARITY_NORMAL_3DL"/>
+                <enum name="WGL_STEREO_POLARITY_INVERT_3DL"/>
+                <command name="wglSetStereoEmitterState3DL"/>
+            </require>
+        </extension>
+        <extension name="WGL_AMD_gpu_association" supported="wgl">
+            <require>
+                <enum name="WGL_GPU_VENDOR_AMD"/>
+                <enum name="WGL_GPU_RENDERER_STRING_AMD"/>
+                <enum name="WGL_GPU_OPENGL_VERSION_STRING_AMD"/>
+                <enum name="WGL_GPU_FASTEST_TARGET_GPUS_AMD"/>
+                <enum name="WGL_GPU_RAM_AMD"/>
+                <enum name="WGL_GPU_CLOCK_AMD"/>
+                <enum name="WGL_GPU_NUM_PIPES_AMD"/>
+                <enum name="WGL_GPU_NUM_SIMD_AMD"/>
+                <enum name="WGL_GPU_NUM_RB_AMD"/>
+                <enum name="WGL_GPU_NUM_SPI_AMD"/>
+                <command name="wglGetGPUIDsAMD"/>
+                <command name="wglGetGPUInfoAMD"/>
+                <command name="wglGetContextGPUIDAMD"/>
+                <command name="wglCreateAssociatedContextAMD"/>
+                <command name="wglCreateAssociatedContextAttribsAMD"/>
+                <command name="wglDeleteAssociatedContextAMD"/>
+                <command name="wglMakeAssociatedContextCurrentAMD"/>
+                <command name="wglGetCurrentAssociatedContextAMD"/>
+                <command name="wglBlitContextFramebufferAMD"/>
+            </require>
+        </extension>
+        <extension name="WGL_ARB_buffer_region" supported="wgl">
+            <require>
+                <enum name="WGL_FRONT_COLOR_BUFFER_BIT_ARB"/>
+                <enum name="WGL_BACK_COLOR_BUFFER_BIT_ARB"/>
+                <enum name="WGL_DEPTH_BUFFER_BIT_ARB"/>
+                <enum name="WGL_STENCIL_BUFFER_BIT_ARB"/>
+                <command name="wglCreateBufferRegionARB"/>
+                <command name="wglDeleteBufferRegionARB"/>
+                <command name="wglSaveBufferRegionARB"/>
+                <command name="wglRestoreBufferRegionARB"/>
+            </require>
+        </extension>
+        <extension name="WGL_ARB_context_flush_control" supported="wgl">
+            <require>
+                <enum name="WGL_CONTEXT_RELEASE_BEHAVIOR_ARB"/>
+                <enum name="WGL_CONTEXT_RELEASE_BEHAVIOR_NONE_ARB"/>
+                <enum name="WGL_CONTEXT_RELEASE_BEHAVIOR_FLUSH_ARB"/>
+            </require>
+        </extension>
+        <extension name="WGL_ARB_create_context" supported="wgl">
+            <require>
+                <enum name="WGL_CONTEXT_DEBUG_BIT_ARB"/>
+                <enum name="WGL_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB"/>
+                <enum name="WGL_CONTEXT_MAJOR_VERSION_ARB"/>
+                <enum name="WGL_CONTEXT_MINOR_VERSION_ARB"/>
+                <enum name="WGL_CONTEXT_LAYER_PLANE_ARB"/>
+                <enum name="WGL_CONTEXT_FLAGS_ARB"/>
+                <enum name="ERROR_INVALID_VERSION_ARB"/>
+                <command name="wglCreateContextAttribsARB"/>
+            </require>
+        </extension>
+        <extension name="WGL_ARB_create_context_no_error" supported="wgl">
+            <require>
+                <enum name="WGL_CONTEXT_OPENGL_NO_ERROR_ARB"/>
+            </require>
+        </extension>
+        <extension name="WGL_ARB_create_context_profile" supported="wgl">
+            <require>
+                <enum name="WGL_CONTEXT_PROFILE_MASK_ARB"/>
+                <enum name="WGL_CONTEXT_CORE_PROFILE_BIT_ARB"/>
+                <enum name="WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB"/>
+                <enum name="ERROR_INVALID_PROFILE_ARB"/>
+            </require>
+        </extension>
+        <extension name="WGL_ARB_create_context_robustness" supported="wgl">
+            <require>
+                <enum name="WGL_CONTEXT_ROBUST_ACCESS_BIT_ARB"/>
+                <enum name="WGL_LOSE_CONTEXT_ON_RESET_ARB"/>
+                <enum name="WGL_CONTEXT_RESET_NOTIFICATION_STRATEGY_ARB"/>
+                <enum name="WGL_NO_RESET_NOTIFICATION_ARB"/>
+            </require>
+        </extension>
+        <extension name="WGL_ARB_extensions_string" supported="wgl">
+            <require>
+                <command name="wglGetExtensionsStringARB"/>
+            </require>
+        </extension>
+        <extension name="WGL_ARB_framebuffer_sRGB" supported="wgl">
+            <require>
+                <enum name="WGL_FRAMEBUFFER_SRGB_CAPABLE_ARB"/>
+            </require>
+        </extension>
+        <extension name="WGL_ARB_make_current_read" supported="wgl">
+            <require>
+                <enum name="ERROR_INVALID_PIXEL_TYPE_ARB"/>
+                <enum name="ERROR_INCOMPATIBLE_DEVICE_CONTEXTS_ARB"/>
+                <command name="wglMakeContextCurrentARB"/>
+                <command name="wglGetCurrentReadDCARB"/>
+            </require>
+        </extension>
+        <extension name="WGL_ARB_multisample" supported="wgl">
+            <require>
+                <enum name="WGL_SAMPLE_BUFFERS_ARB"/>
+                <enum name="WGL_SAMPLES_ARB"/>
+            </require>
+        </extension>
+        <extension name="WGL_ARB_pbuffer" supported="wgl">
+            <require>
+                <enum name="WGL_DRAW_TO_PBUFFER_ARB"/>
+                <enum name="WGL_MAX_PBUFFER_PIXELS_ARB"/>
+                <enum name="WGL_MAX_PBUFFER_WIDTH_ARB"/>
+                <enum name="WGL_MAX_PBUFFER_HEIGHT_ARB"/>
+                <enum name="WGL_PBUFFER_LARGEST_ARB"/>
+                <enum name="WGL_PBUFFER_WIDTH_ARB"/>
+                <enum name="WGL_PBUFFER_HEIGHT_ARB"/>
+                <enum name="WGL_PBUFFER_LOST_ARB"/>
+                <command name="wglCreatePbufferARB"/>
+                <command name="wglGetPbufferDCARB"/>
+                <command name="wglReleasePbufferDCARB"/>
+                <command name="wglDestroyPbufferARB"/>
+                <command name="wglQueryPbufferARB"/>
+            </require>
+        </extension>
+        <extension name="WGL_ARB_pixel_format" supported="wgl">
+            <require>
+                <enum name="WGL_NUMBER_PIXEL_FORMATS_ARB"/>
+                <enum name="WGL_DRAW_TO_WINDOW_ARB"/>
+                <enum name="WGL_DRAW_TO_BITMAP_ARB"/>
+                <enum name="WGL_ACCELERATION_ARB"/>
+                <enum name="WGL_NEED_PALETTE_ARB"/>
+                <enum name="WGL_NEED_SYSTEM_PALETTE_ARB"/>
+                <enum name="WGL_SWAP_LAYER_BUFFERS_ARB"/>
+                <enum name="WGL_SWAP_METHOD_ARB"/>
+                <enum name="WGL_NUMBER_OVERLAYS_ARB"/>
+                <enum name="WGL_NUMBER_UNDERLAYS_ARB"/>
+                <enum name="WGL_TRANSPARENT_ARB"/>
+                <enum name="WGL_TRANSPARENT_RED_VALUE_ARB"/>
+                <enum name="WGL_TRANSPARENT_GREEN_VALUE_ARB"/>
+                <enum name="WGL_TRANSPARENT_BLUE_VALUE_ARB"/>
+                <enum name="WGL_TRANSPARENT_ALPHA_VALUE_ARB"/>
+                <enum name="WGL_TRANSPARENT_INDEX_VALUE_ARB"/>
+                <enum name="WGL_SHARE_DEPTH_ARB"/>
+                <enum name="WGL_SHARE_STENCIL_ARB"/>
+                <enum name="WGL_SHARE_ACCUM_ARB"/>
+                <enum name="WGL_SUPPORT_GDI_ARB"/>
+                <enum name="WGL_SUPPORT_OPENGL_ARB"/>
+                <enum name="WGL_DOUBLE_BUFFER_ARB"/>
+                <enum name="WGL_STEREO_ARB"/>
+                <enum name="WGL_PIXEL_TYPE_ARB"/>
+                <enum name="WGL_COLOR_BITS_ARB"/>
+                <enum name="WGL_RED_BITS_ARB"/>
+                <enum name="WGL_RED_SHIFT_ARB"/>
+                <enum name="WGL_GREEN_BITS_ARB"/>
+                <enum name="WGL_GREEN_SHIFT_ARB"/>
+                <enum name="WGL_BLUE_BITS_ARB"/>
+                <enum name="WGL_BLUE_SHIFT_ARB"/>
+                <enum name="WGL_ALPHA_BITS_ARB"/>
+                <enum name="WGL_ALPHA_SHIFT_ARB"/>
+                <enum name="WGL_ACCUM_BITS_ARB"/>
+                <enum name="WGL_ACCUM_RED_BITS_ARB"/>
+                <enum name="WGL_ACCUM_GREEN_BITS_ARB"/>
+                <enum name="WGL_ACCUM_BLUE_BITS_ARB"/>
+                <enum name="WGL_ACCUM_ALPHA_BITS_ARB"/>
+                <enum name="WGL_DEPTH_BITS_ARB"/>
+                <enum name="WGL_STENCIL_BITS_ARB"/>
+                <enum name="WGL_AUX_BUFFERS_ARB"/>
+                <enum name="WGL_NO_ACCELERATION_ARB"/>
+                <enum name="WGL_GENERIC_ACCELERATION_ARB"/>
+                <enum name="WGL_FULL_ACCELERATION_ARB"/>
+                <enum name="WGL_SWAP_EXCHANGE_ARB"/>
+                <enum name="WGL_SWAP_COPY_ARB"/>
+                <enum name="WGL_SWAP_UNDEFINED_ARB"/>
+                <enum name="WGL_TYPE_RGBA_ARB"/>
+                <enum name="WGL_TYPE_COLORINDEX_ARB"/>
+                <command name="wglGetPixelFormatAttribivARB"/>
+                <command name="wglGetPixelFormatAttribfvARB"/>
+                <command name="wglChoosePixelFormatARB"/>
+            </require>
+        </extension>
+        <extension name="WGL_ARB_pixel_format_float" supported="wgl">
+            <require>
+                <enum name="WGL_TYPE_RGBA_FLOAT_ARB"/>
+            </require>
+        </extension>
+        <extension name="WGL_ARB_render_texture" supported="wgl">
+            <require>
+                <enum name="WGL_BIND_TO_TEXTURE_RGB_ARB"/>
+                <enum name="WGL_BIND_TO_TEXTURE_RGBA_ARB"/>
+                <enum name="WGL_TEXTURE_FORMAT_ARB"/>
+                <enum name="WGL_TEXTURE_TARGET_ARB"/>
+                <enum name="WGL_MIPMAP_TEXTURE_ARB"/>
+                <enum name="WGL_TEXTURE_RGB_ARB"/>
+                <enum name="WGL_TEXTURE_RGBA_ARB"/>
+                <enum name="WGL_NO_TEXTURE_ARB"/>
+                <enum name="WGL_TEXTURE_CUBE_MAP_ARB"/>
+                <enum name="WGL_TEXTURE_1D_ARB"/>
+                <enum name="WGL_TEXTURE_2D_ARB"/>
+                <enum name="WGL_MIPMAP_LEVEL_ARB"/>
+                <enum name="WGL_CUBE_MAP_FACE_ARB"/>
+                <enum name="WGL_TEXTURE_CUBE_MAP_POSITIVE_X_ARB"/>
+                <enum name="WGL_TEXTURE_CUBE_MAP_NEGATIVE_X_ARB"/>
+                <enum name="WGL_TEXTURE_CUBE_MAP_POSITIVE_Y_ARB"/>
+                <enum name="WGL_TEXTURE_CUBE_MAP_NEGATIVE_Y_ARB"/>
+                <enum name="WGL_TEXTURE_CUBE_MAP_POSITIVE_Z_ARB"/>
+                <enum name="WGL_TEXTURE_CUBE_MAP_NEGATIVE_Z_ARB"/>
+                <enum name="WGL_FRONT_LEFT_ARB"/>
+                <enum name="WGL_FRONT_RIGHT_ARB"/>
+                <enum name="WGL_BACK_LEFT_ARB"/>
+                <enum name="WGL_BACK_RIGHT_ARB"/>
+                <enum name="WGL_AUX0_ARB"/>
+                <enum name="WGL_AUX1_ARB"/>
+                <enum name="WGL_AUX2_ARB"/>
+                <enum name="WGL_AUX3_ARB"/>
+                <enum name="WGL_AUX4_ARB"/>
+                <enum name="WGL_AUX5_ARB"/>
+                <enum name="WGL_AUX6_ARB"/>
+                <enum name="WGL_AUX7_ARB"/>
+                <enum name="WGL_AUX8_ARB"/>
+                <enum name="WGL_AUX9_ARB"/>
+                <command name="wglBindTexImageARB"/>
+                <command name="wglReleaseTexImageARB"/>
+                <command name="wglSetPbufferAttribARB"/>
+            </require>
+        </extension>
+        <extension name="WGL_ARB_robustness_application_isolation" supported="wgl">
+            <require>
+                <enum name="WGL_CONTEXT_RESET_ISOLATION_BIT_ARB"/>
+            </require>
+        </extension>
+        <extension name="WGL_ARB_robustness_share_group_isolation" supported="wgl">
+            <require>
+                <enum name="WGL_CONTEXT_RESET_ISOLATION_BIT_ARB"/>
+            </require>
+        </extension>
+        <extension name="WGL_ATI_pixel_format_float" supported="wgl">
+            <require>
+                <enum name="WGL_TYPE_RGBA_FLOAT_ATI"/>
+            </require>
+        </extension>
+        <extension name="WGL_ATI_render_texture_rectangle" supported="wgl">
+            <require>
+                <enum name="WGL_TEXTURE_RECTANGLE_ATI"/>
+            </require>
+        </extension>
+        <extension name="WGL_EXT_colorspace" supported="wgl">
+            <require>
+                <enum name="WGL_COLORSPACE_EXT"/>
+                <enum name="WGL_COLORSPACE_SRGB_EXT"/>
+                <enum name="WGL_COLORSPACE_LINEAR_EXT"/>
+            </require>
+        </extension>
+        <extension name="WGL_EXT_create_context_es_profile" supported="wgl">
+            <require>
+                <enum name="WGL_CONTEXT_ES_PROFILE_BIT_EXT"/>
+            </require>
+        </extension>
+        <extension name="WGL_EXT_create_context_es2_profile" supported="wgl">
+            <require>
+                <enum name="WGL_CONTEXT_ES2_PROFILE_BIT_EXT"/>
+            </require>
+        </extension>
+        <extension name="WGL_EXT_depth_float" supported="wgl">
+            <require>
+                <enum name="WGL_DEPTH_FLOAT_EXT"/>
+            </require>
+        </extension>
+        <extension name="WGL_EXT_display_color_table" supported="wgl">
+            <require>
+                <command name="wglCreateDisplayColorTableEXT"/>
+                <command name="wglLoadDisplayColorTableEXT"/>
+                <command name="wglBindDisplayColorTableEXT"/>
+                <command name="wglDestroyDisplayColorTableEXT"/>
+            </require>
+        </extension>
+        <extension name="WGL_EXT_extensions_string" supported="wgl">
+            <require>
+                <command name="wglGetExtensionsStringEXT"/>
+            </require>
+        </extension>
+        <extension name="WGL_EXT_framebuffer_sRGB" supported="wgl">
+            <require>
+                <enum name="WGL_FRAMEBUFFER_SRGB_CAPABLE_EXT"/>
+            </require>
+        </extension>
+        <extension name="WGL_EXT_make_current_read" supported="wgl">
+            <require>
+                <enum name="ERROR_INVALID_PIXEL_TYPE_EXT"/>
+                <command name="wglMakeContextCurrentEXT"/>
+                <command name="wglGetCurrentReadDCEXT"/>
+            </require>
+        </extension>
+        <extension name="WGL_EXT_multisample" supported="wgl">
+            <require>
+                <enum name="WGL_SAMPLE_BUFFERS_EXT"/>
+                <enum name="WGL_SAMPLES_EXT"/>
+            </require>
+        </extension>
+        <extension name="WGL_EXT_pbuffer" supported="wgl">
+            <require>
+                <enum name="WGL_DRAW_TO_PBUFFER_EXT"/>
+                <enum name="WGL_MAX_PBUFFER_PIXELS_EXT"/>
+                <enum name="WGL_MAX_PBUFFER_WIDTH_EXT"/>
+                <enum name="WGL_MAX_PBUFFER_HEIGHT_EXT"/>
+                <enum name="WGL_OPTIMAL_PBUFFER_WIDTH_EXT"/>
+                <enum name="WGL_OPTIMAL_PBUFFER_HEIGHT_EXT"/>
+                <enum name="WGL_PBUFFER_LARGEST_EXT"/>
+                <enum name="WGL_PBUFFER_WIDTH_EXT"/>
+                <enum name="WGL_PBUFFER_HEIGHT_EXT"/>
+                <command name="wglCreatePbufferEXT"/>
+                <command name="wglGetPbufferDCEXT"/>
+                <command name="wglReleasePbufferDCEXT"/>
+                <command name="wglDestroyPbufferEXT"/>
+                <command name="wglQueryPbufferEXT"/>
+            </require>
+        </extension>
+        <extension name="WGL_EXT_pixel_format" supported="wgl">
+            <require>
+                <enum name="WGL_NUMBER_PIXEL_FORMATS_EXT"/>
+                <enum name="WGL_DRAW_TO_WINDOW_EXT"/>
+                <enum name="WGL_DRAW_TO_BITMAP_EXT"/>
+                <enum name="WGL_ACCELERATION_EXT"/>
+                <enum name="WGL_NEED_PALETTE_EXT"/>
+                <enum name="WGL_NEED_SYSTEM_PALETTE_EXT"/>
+                <enum name="WGL_SWAP_LAYER_BUFFERS_EXT"/>
+                <enum name="WGL_SWAP_METHOD_EXT"/>
+                <enum name="WGL_NUMBER_OVERLAYS_EXT"/>
+                <enum name="WGL_NUMBER_UNDERLAYS_EXT"/>
+                <enum name="WGL_TRANSPARENT_EXT"/>
+                <enum name="WGL_TRANSPARENT_VALUE_EXT"/>
+                <enum name="WGL_SHARE_DEPTH_EXT"/>
+                <enum name="WGL_SHARE_STENCIL_EXT"/>
+                <enum name="WGL_SHARE_ACCUM_EXT"/>
+                <enum name="WGL_SUPPORT_GDI_EXT"/>
+                <enum name="WGL_SUPPORT_OPENGL_EXT"/>
+                <enum name="WGL_DOUBLE_BUFFER_EXT"/>
+                <enum name="WGL_STEREO_EXT"/>
+                <enum name="WGL_PIXEL_TYPE_EXT"/>
+                <enum name="WGL_COLOR_BITS_EXT"/>
+                <enum name="WGL_RED_BITS_EXT"/>
+                <enum name="WGL_RED_SHIFT_EXT"/>
+                <enum name="WGL_GREEN_BITS_EXT"/>
+                <enum name="WGL_GREEN_SHIFT_EXT"/>
+                <enum name="WGL_BLUE_BITS_EXT"/>
+                <enum name="WGL_BLUE_SHIFT_EXT"/>
+                <enum name="WGL_ALPHA_BITS_EXT"/>
+                <enum name="WGL_ALPHA_SHIFT_EXT"/>
+                <enum name="WGL_ACCUM_BITS_EXT"/>
+                <enum name="WGL_ACCUM_RED_BITS_EXT"/>
+                <enum name="WGL_ACCUM_GREEN_BITS_EXT"/>
+                <enum name="WGL_ACCUM_BLUE_BITS_EXT"/>
+                <enum name="WGL_ACCUM_ALPHA_BITS_EXT"/>
+                <enum name="WGL_DEPTH_BITS_EXT"/>
+                <enum name="WGL_STENCIL_BITS_EXT"/>
+                <enum name="WGL_AUX_BUFFERS_EXT"/>
+                <enum name="WGL_NO_ACCELERATION_EXT"/>
+                <enum name="WGL_GENERIC_ACCELERATION_EXT"/>
+                <enum name="WGL_FULL_ACCELERATION_EXT"/>
+                <enum name="WGL_SWAP_EXCHANGE_EXT"/>
+                <enum name="WGL_SWAP_COPY_EXT"/>
+                <enum name="WGL_SWAP_UNDEFINED_EXT"/>
+                <enum name="WGL_TYPE_RGBA_EXT"/>
+                <enum name="WGL_TYPE_COLORINDEX_EXT"/>
+                <command name="wglGetPixelFormatAttribivEXT"/>
+                <command name="wglGetPixelFormatAttribfvEXT"/>
+                <command name="wglChoosePixelFormatEXT"/>
+            </require>
+        </extension>
+        <extension name="WGL_EXT_pixel_format_packed_float" supported="wgl">
+            <require>
+                <enum name="WGL_TYPE_RGBA_UNSIGNED_FLOAT_EXT"/>
+            </require>
+        </extension>
+        <extension name="WGL_EXT_swap_control" supported="wgl">
+            <require>
+                <command name="wglSwapIntervalEXT"/>
+                <command name="wglGetSwapIntervalEXT"/>
+            </require>
+        </extension>
+        <extension name="WGL_EXT_swap_control_tear" supported="wgl">
+            <require>
+            </require>
+        </extension>
+        <extension name="WGL_I3D_digital_video_control" supported="wgl">
+            <require>
+                <enum name="WGL_DIGITAL_VIDEO_CURSOR_ALPHA_FRAMEBUFFER_I3D"/>
+                <enum name="WGL_DIGITAL_VIDEO_CURSOR_ALPHA_VALUE_I3D"/>
+                <enum name="WGL_DIGITAL_VIDEO_CURSOR_INCLUDED_I3D"/>
+                <enum name="WGL_DIGITAL_VIDEO_GAMMA_CORRECTED_I3D"/>
+                <command name="wglGetDigitalVideoParametersI3D"/>
+                <command name="wglSetDigitalVideoParametersI3D"/>
+            </require>
+        </extension>
+        <extension name="WGL_I3D_gamma" supported="wgl">
+            <require>
+                <enum name="WGL_GAMMA_TABLE_SIZE_I3D"/>
+                <enum name="WGL_GAMMA_EXCLUDE_DESKTOP_I3D"/>
+                <command name="wglGetGammaTableParametersI3D"/>
+                <command name="wglSetGammaTableParametersI3D"/>
+                <command name="wglGetGammaTableI3D"/>
+                <command name="wglSetGammaTableI3D"/>
+            </require>
+        </extension>
+        <extension name="WGL_I3D_genlock" supported="wgl">
+            <require>
+                <enum name="WGL_GENLOCK_SOURCE_MULTIVIEW_I3D"/>
+                <enum name="WGL_GENLOCK_SOURCE_EXTERNAL_SYNC_I3D"/>
+                <enum name="WGL_GENLOCK_SOURCE_EXTERNAL_FIELD_I3D"/>
+                <enum name="WGL_GENLOCK_SOURCE_EXTERNAL_TTL_I3D"/>
+                <enum name="WGL_GENLOCK_SOURCE_DIGITAL_SYNC_I3D"/>
+                <enum name="WGL_GENLOCK_SOURCE_DIGITAL_FIELD_I3D"/>
+                <enum name="WGL_GENLOCK_SOURCE_EDGE_FALLING_I3D"/>
+                <enum name="WGL_GENLOCK_SOURCE_EDGE_RISING_I3D"/>
+                <enum name="WGL_GENLOCK_SOURCE_EDGE_BOTH_I3D"/>
+                <command name="wglEnableGenlockI3D"/>
+                <command name="wglDisableGenlockI3D"/>
+                <command name="wglIsEnabledGenlockI3D"/>
+                <command name="wglGenlockSourceI3D"/>
+                <command name="wglGetGenlockSourceI3D"/>
+                <command name="wglGenlockSourceEdgeI3D"/>
+                <command name="wglGetGenlockSourceEdgeI3D"/>
+                <command name="wglGenlockSampleRateI3D"/>
+                <command name="wglGetGenlockSampleRateI3D"/>
+                <command name="wglGenlockSourceDelayI3D"/>
+                <command name="wglGetGenlockSourceDelayI3D"/>
+                <command name="wglQueryGenlockMaxSourceDelayI3D"/>
+            </require>
+        </extension>
+        <extension name="WGL_I3D_image_buffer" supported="wgl">
+            <require>
+                <enum name="WGL_IMAGE_BUFFER_MIN_ACCESS_I3D"/>
+                <enum name="WGL_IMAGE_BUFFER_LOCK_I3D"/>
+                <command name="wglCreateImageBufferI3D"/>
+                <command name="wglDestroyImageBufferI3D"/>
+                <command name="wglAssociateImageBufferEventsI3D"/>
+                <command name="wglReleaseImageBufferEventsI3D"/>
+            </require>
+        </extension>
+        <extension name="WGL_I3D_swap_frame_lock" supported="wgl">
+            <require>
+                <command name="wglEnableFrameLockI3D"/>
+                <command name="wglDisableFrameLockI3D"/>
+                <command name="wglIsEnabledFrameLockI3D"/>
+                <command name="wglQueryFrameLockMasterI3D"/>
+            </require>
+        </extension>
+        <extension name="WGL_I3D_swap_frame_usage" supported="wgl">
+            <require>
+                <command name="wglGetFrameUsageI3D"/>
+                <command name="wglBeginFrameTrackingI3D"/>
+                <command name="wglEndFrameTrackingI3D"/>
+                <command name="wglQueryFrameTrackingI3D"/>
+            </require>
+        </extension>
+        <extension name="WGL_NV_copy_image" supported="wgl">
+            <require>
+                <command name="wglCopyImageSubDataNV"/>
+            </require>
+        </extension>
+        <extension name="WGL_NV_delay_before_swap" supported="wgl">
+            <require>
+                <command name="wglDelayBeforeSwapNV"/>
+            </require>
+        </extension>
+        <extension name="WGL_NV_DX_interop" supported="wgl">
+            <require>
+                <enum name="WGL_ACCESS_READ_ONLY_NV"/>
+                <enum name="WGL_ACCESS_READ_WRITE_NV"/>
+                <enum name="WGL_ACCESS_WRITE_DISCARD_NV"/>
+                <command name="wglDXSetResourceShareHandleNV"/>
+                <command name="wglDXOpenDeviceNV"/>
+                <command name="wglDXCloseDeviceNV"/>
+                <command name="wglDXRegisterObjectNV"/>
+                <command name="wglDXUnregisterObjectNV"/>
+                <command name="wglDXObjectAccessNV"/>
+                <command name="wglDXLockObjectsNV"/>
+                <command name="wglDXUnlockObjectsNV"/>
+            </require>
+        </extension>
+        <extension name="WGL_NV_DX_interop2" supported="wgl">
+            <require>
+            </require>
+        </extension>
+        <extension name="WGL_NV_float_buffer" supported="wgl">
+            <require>
+                <enum name="WGL_FLOAT_COMPONENTS_NV"/>
+                <enum name="WGL_BIND_TO_TEXTURE_RECTANGLE_FLOAT_R_NV"/>
+                <enum name="WGL_BIND_TO_TEXTURE_RECTANGLE_FLOAT_RG_NV"/>
+                <enum name="WGL_BIND_TO_TEXTURE_RECTANGLE_FLOAT_RGB_NV"/>
+                <enum name="WGL_BIND_TO_TEXTURE_RECTANGLE_FLOAT_RGBA_NV"/>
+                <enum name="WGL_TEXTURE_FLOAT_R_NV"/>
+                <enum name="WGL_TEXTURE_FLOAT_RG_NV"/>
+                <enum name="WGL_TEXTURE_FLOAT_RGB_NV"/>
+                <enum name="WGL_TEXTURE_FLOAT_RGBA_NV"/>
+            </require>
+        </extension>
+        <extension name="WGL_NV_gpu_affinity" supported="wgl">
+            <require>
+                <enum name="ERROR_INCOMPATIBLE_AFFINITY_MASKS_NV"/>
+                <enum name="ERROR_MISSING_AFFINITY_MASK_NV"/>
+                <command name="wglEnumGpusNV"/>
+                <command name="wglEnumGpuDevicesNV"/>
+                <command name="wglCreateAffinityDCNV"/>
+                <command name="wglEnumGpusFromAffinityDCNV"/>
+                <command name="wglDeleteDCNV"/>
+            </require>
+        </extension>
+        <extension name="WGL_NV_multisample_coverage" supported="wgl">
+            <require>
+                <enum name="WGL_COVERAGE_SAMPLES_NV"/>
+                <enum name="WGL_COLOR_SAMPLES_NV"/>
+            </require>
+        </extension>
+        <extension name="WGL_NV_present_video" supported="wgl">
+            <require>
+                <enum name="WGL_NUM_VIDEO_SLOTS_NV"/>
+                <command name="wglEnumerateVideoDevicesNV"/>
+                <command name="wglBindVideoDeviceNV"/>
+                <command name="wglQueryCurrentContextNV"/>
+            </require>
+        </extension>
+        <extension name="WGL_NV_render_depth_texture" supported="wgl">
+            <require>
+                <enum name="WGL_BIND_TO_TEXTURE_DEPTH_NV"/>
+                <enum name="WGL_BIND_TO_TEXTURE_RECTANGLE_DEPTH_NV"/>
+                <enum name="WGL_DEPTH_TEXTURE_FORMAT_NV"/>
+                <enum name="WGL_TEXTURE_DEPTH_COMPONENT_NV"/>
+                <enum name="WGL_DEPTH_COMPONENT_NV"/>
+            </require>
+        </extension>
+        <extension name="WGL_NV_render_texture_rectangle" supported="wgl">
+            <require>
+                <enum name="WGL_BIND_TO_TEXTURE_RECTANGLE_RGB_NV"/>
+                <enum name="WGL_BIND_TO_TEXTURE_RECTANGLE_RGBA_NV"/>
+                <enum name="WGL_TEXTURE_RECTANGLE_NV"/>
+            </require>
+        </extension>
+        <extension name="WGL_NV_swap_group" supported="wgl">
+            <require>
+                <command name="wglJoinSwapGroupNV"/>
+                <command name="wglBindSwapBarrierNV"/>
+                <command name="wglQuerySwapGroupNV"/>
+                <command name="wglQueryMaxSwapGroupsNV"/>
+                <command name="wglQueryFrameCountNV"/>
+                <command name="wglResetFrameCountNV"/>
+            </require>
+        </extension>
+        <extension name="WGL_NV_video_capture" supported="wgl">
+            <require>
+                <enum name="WGL_UNIQUE_ID_NV"/>
+                <enum name="WGL_NUM_VIDEO_CAPTURE_SLOTS_NV"/>
+                <command name="wglBindVideoCaptureDeviceNV"/>
+                <command name="wglEnumerateVideoCaptureDevicesNV"/>
+                <command name="wglLockVideoCaptureDeviceNV"/>
+                <command name="wglQueryVideoCaptureDeviceNV"/>
+                <command name="wglReleaseVideoCaptureDeviceNV"/>
+            </require>
+        </extension>
+        <extension name="WGL_NV_video_output" supported="wgl">
+            <require>
+                <enum name="WGL_BIND_TO_VIDEO_RGB_NV"/>
+                <enum name="WGL_BIND_TO_VIDEO_RGBA_NV"/>
+                <enum name="WGL_BIND_TO_VIDEO_RGB_AND_DEPTH_NV"/>
+                <enum name="WGL_VIDEO_OUT_COLOR_NV"/>
+                <enum name="WGL_VIDEO_OUT_ALPHA_NV"/>
+                <enum name="WGL_VIDEO_OUT_DEPTH_NV"/>
+                <enum name="WGL_VIDEO_OUT_COLOR_AND_ALPHA_NV"/>
+                <enum name="WGL_VIDEO_OUT_COLOR_AND_DEPTH_NV"/>
+                <enum name="WGL_VIDEO_OUT_FRAME"/>
+                <enum name="WGL_VIDEO_OUT_FIELD_1"/>
+                <enum name="WGL_VIDEO_OUT_FIELD_2"/>
+                <enum name="WGL_VIDEO_OUT_STACKED_FIELDS_1_2"/>
+                <enum name="WGL_VIDEO_OUT_STACKED_FIELDS_2_1"/>
+                <command name="wglGetVideoDeviceNV"/>
+                <command name="wglReleaseVideoDeviceNV"/>
+                <command name="wglBindVideoImageNV"/>
+                <command name="wglReleaseVideoImageNV"/>
+                <command name="wglSendPbufferToVideoNV"/>
+                <command name="wglGetVideoInfoNV"/>
+            </require>
+        </extension>
+        <extension name="WGL_NV_vertex_array_range" supported="wgl">
+            <require>
+                <command name="wglAllocateMemoryNV"/>
+                <command name="wglFreeMemoryNV"/>
+            </require>
+        </extension>
+        <extension name="WGL_OML_sync_control" supported="wgl">
+            <require>
+                <command name="wglGetSyncValuesOML"/>
+                <command name="wglGetMscRateOML"/>
+                <command name="wglSwapBuffersMscOML"/>
+                <command name="wglSwapLayerBuffersMscOML"/>
+                <command name="wglWaitForMscOML"/>
+                <command name="wglWaitForSbcOML"/>
+            </require>
+        </extension>
+    </extensions>
+</registry>

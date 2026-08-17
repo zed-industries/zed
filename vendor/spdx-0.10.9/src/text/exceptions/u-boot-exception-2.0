@@ -1,0 +1,7 @@
+r#"The U-Boot License Exception:
+
+Even though U-Boot in general is covered by the GPL-2.0/GPL-2.0+, this does *not* cover the so-called "standalone" applications that use U-Boot services by means of the jump table provided by U-Boot exactly for this purpose - this is merely considered normal use of U-Boot, and does *not* fall under the heading of "derived work".
+
+The header files "include/image.h" and "arch/*/include/asm/u-boot.h" define interfaces to U-Boot. Including these (unmodified) header files in another file is considered normal use of U-Boot, and does *not* fall under the heading of "derived work".
+-- Wolfgang Denk
+"#

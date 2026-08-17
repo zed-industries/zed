@@ -1,0 +1,50 @@
+package wasi:clocks@0.2.4;
+/// WASI Monotonic Clock is a clock API intended to let users measure elapsed
+/// time.
+///
+/// It is intended to be portable at least between Unix-family platforms and
+/// Windows.
+///
+/// A monotonic clock is a clock which has an unspecified initial value, and
+/// successive reads of the clock will produce non-decreasing values.
+@since(version = 0.2.0)
+interface monotonic-clock {
+    @since(version = 0.2.0)
+    use wasi:io/poll@0.2.4.{pollable};
+
+    /// An instant in time, in nanoseconds. An instant is relative to an
+    /// unspecified initial value, and can only be compared to instances from
+    /// the same monotonic-clock.
+    @since(version = 0.2.0)
+    type instant = u64;
+
+    /// A duration of time, in nanoseconds.
+    @since(version = 0.2.0)
+    type duration = u64;
+
+    /// Read the current value of the clock.
+    ///
+    /// The clock is monotonic, therefore calling this function repeatedly will
+    /// produce a sequence of non-decreasing values.
+    @since(version = 0.2.0)
+    now: func() -> instant;
+
+    /// Query the resolution of the clock. Returns the duration of time
+    /// corresponding to a clock tick.
+    @since(version = 0.2.0)
+    resolution: func() -> duration;
+
+    /// Create a `pollable` which will resolve once the specified instant
+    /// has occurred.
+    @since(version = 0.2.0)
+    subscribe-instant: func(
+        when: instant,
+    ) -> pollable;
+
+    /// Create a `pollable` that will resolve after the specified duration has
+    /// elapsed from the time this function is invoked.
+    @since(version = 0.2.0)
+    subscribe-duration: func(
+        when: duration,
+    ) -> pollable;
+}

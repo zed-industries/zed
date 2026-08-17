@@ -1,0 +1,81 @@
+[package]
+name = "kurbo"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+description = "A 2D curves library"
+keywords = ["graphics", "curve", "curves", "bezier", "geometry"]
+categories = ["graphics"]
+repository.workspace = true
+rust-version.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+# There are no platform specific docs.
+default-target = "x86_64-unknown-linux-gnu"
+targets = []
+
+[features]
+default = ["std"]
+# Get floating point functions from the standard library (likely using your target's libc)
+std = ["polycool/std", "euclid?/std"]
+# Use floating point implementations from libm
+libm = ["dep:libm", "polycool/libm", "euclid?/libm"]
+# Enable `From`/`Into` conversion of Kurbo and [mint] types, enabling interoperability
+# with other graphics libraries
+mint = ["dep:mint"]
+# Enable `From`/`Into` conversion of Kurbo and euclid types
+euclid = ["dep:euclid"]
+# Implement `serde::Deserialize` and `serde::Serialize` on various types
+serde = ["smallvec/serde", "dep:serde"]
+# Add best-effort support for using Kurbo types in JSON schemas using schemars
+schemars = ["schemars/smallvec", "dep:schemars"]
+
+[dependencies]
+arrayvec = { workspace = true }
+euclid = { workspace = true, optional = true }
+libm = { workspace = true, optional = true }
+mint = { workspace = true, optional = true }
+polycool = { workspace = true }
+schemars = { workspace = true, optional = true }
+serde = { workspace = true, optional = true, features = ["alloc", "derive"] }
+smallvec = { workspace = true, features = ["const_new"] }
+
+[dev-dependencies]
+# This is used for research but not really needed; maybe refactor.
+rand = { workspace = true }
+# wasm doesn't support rayon, so disable criterion's rayon support. (In
+# principle we could make it target-dependent.)
+criterion = { workspace = true, features = ["plotters", "cargo_bench_support"] }
+
+[target.wasm32-unknown-unknown.dev-dependencies]
+# We have a transitive dependency on getrandom and it does not automatically
+# support wasm32-unknown-unknown. We need to enable the wasm_js feature.
+getrandom = { version = "0.3.4", features = ["wasm_js"] }
+
+[lints]
+workspace = true
+
+[[bench]]
+name = "cubic"
+harness = false
+
+[[bench]]
+name = "cubic_arclen"
+harness = false
+
+[[bench]]
+name = "quad_arclen"
+harness = false
+
+[[bench]]
+name = "quartic"
+harness = false
+
+[[bench]]
+name = "nearest"
+harness = false
+
+[[bench]]
+name = "rect_expand"
+harness = false

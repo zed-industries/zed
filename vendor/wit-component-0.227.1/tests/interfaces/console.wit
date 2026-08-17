@@ -1,0 +1,5 @@
+package foo:console;
+
+interface console {
+  log: func(arg: string);
+}

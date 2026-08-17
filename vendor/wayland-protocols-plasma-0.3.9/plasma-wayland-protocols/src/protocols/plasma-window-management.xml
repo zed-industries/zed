@@ -1,0 +1,473 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="plasma_window_management">
+  <copyright><![CDATA[
+    SPDX-FileCopyrightText: 2013-2014 Pier Luigi Fiorini
+
+    SPDX-License-Identifier: LGPL-2.1-or-later
+  ]]></copyright>
+
+  <interface name="org_kde_plasma_window_management" version="18">
+    <description summary="application windows management">
+      This interface manages application windows.
+      It provides requests to show and hide the desktop and emits
+      an event every time a window is created so that the client can
+      use it to manage the window.
+
+      Only one client can bind this interface at a time.
+
+      Warning! The protocol described in this file is a desktop environment
+      implementation detail. Regular clients must not use this protocol.
+      Backward incompatible changes may be added without bumping the major
+      version of the extension.
+    </description>
+
+    <enum name="state">
+      <entry name="active" value="0x1"/>
+      <entry name="minimized" value="0x2"/>
+      <entry name="maximized" value="0x4"/>
+      <entry name="fullscreen" value="0x8"/>
+      <entry name="keep_above" value="0x10"/>
+      <entry name="keep_below" value="0x20"/>
+      <entry name="on_all_desktops" value="0x40"/>
+      <entry name="demands_attention" value="0x80"/>
+      <entry name="closeable" value="0x100"/>
+      <entry name="minimizable" value="0x200"/>
+      <entry name="maximizable" value="0x400"/>
+      <entry name="fullscreenable" value="0x800"/>
+      <entry name="skiptaskbar" value="0x1000" since="2"/>
+      <entry name="shadeable" value="0x2000" since="3"/>
+      <entry name="shaded" value="0x4000" since="3"/>
+      <entry name="movable" value="0x8000" since="3"/>
+      <entry name="resizable" value="0x10000" since="3"/>
+      <entry name="virtual_desktop_changeable" value="0x20000" since="3"/>
+      <entry name="skipswitcher" value="0x40000" since="9"/>
+    </enum>
+
+    <enum name="show_desktop">
+        <entry name="disabled" value="0"/>
+        <entry name="enabled" value="1"/>
+    </enum>
+
+    <request name="show_desktop">
+      <description summary="show/hide the desktop">
+        Tell the compositor to show/hide the desktop.
+      </description>
+      <arg name="state" type="uint" summary="requested state"/>
+    </request>
+
+    <request name="get_window">
+        <description summary="deprecated">Deprecated: use get_window_by_uuid</description>
+        <arg name="id" type="new_id" interface="org_kde_plasma_window"/>
+        <arg name="internal_window_id" type="uint" summary="The internal window id of the window to create"/>
+    </request>
+
+    <request name="get_window_by_uuid" since="12">
+        <arg name="id" type="new_id" interface="org_kde_plasma_window"/>
+        <arg name="internal_window_uuid" type="string" summary="The internal window uuiid of the window to create"/>
+    </request>
+
+    <event name="show_desktop_changed">
+        <description summary="notify the client when the show desktop mode is entered/left">
+            This event will be sent whenever the show desktop mode changes. E.g. when it is entered
+            or left.
+
+            On binding the interface the current state is sent.
+        </description>
+      <arg name="state" type="uint" summary="new state"/>
+    </event>
+
+    <event name="window">
+      <description summary="notify the client that a window was mapped">
+        This event will be sent immediately after a window is mapped.
+      </description>
+      <arg name="id" type="uint" summary="Deprecated: internal window Id"/>
+    </event>
+
+    <event name="stacking_order_changed" since="11">
+      <description summary="notify the client when stacking order changed">
+        This event will be sent when stacking order changed and on bind.
+
+        With version 17 this event is deprecated and will no longer be sent.
+      </description>
+      <arg name="ids" type="array" summary="internal windows id array"/>
+    </event>
+
+    <event name="stacking_order_uuid_changed" since="12">
+      <description summary="notify the client when stacking order changed">
+        This event will be sent when stacking order changed and on bind.
+
+        With version 17 this event is deprecated and will no longer be sent.
+      </description>
+      <arg name="uuids" type="string" summary="internal windows id ;-separated"/>
+    </event>
+
+    <event name="window_with_uuid" since="13">
+      <description summary="notify the client that a window was mapped">
+        This event will be sent immediately after a window is mapped.
+      </description>
+      <arg name="id" type="uint" summary="Deprecated: internal window Id"/>
+      <arg name="uuid" type="string" summary="internal window uuid"/>
+    </event>
+
+    <event name="stacking_order_changed_2" since="17">
+      <description summary="notify the client when stacking order changed">
+        This event will be sent when stacking order changed.
+      </description>
+    </event>
+
+    <request name="get_stacking_order" since="17">
+      <description summary="get the stacking order"/>
+      <arg name="stacking_order" type="new_id" interface="org_kde_plasma_stacking_order"/>
+    </request>
+  </interface>
+
+  <interface name="org_kde_plasma_window" version="18">
+    <description summary="interface to control application windows">
+      Manages and control an application window.
+
+      Only one client can bind this interface at a time.
+    </description>
+
+    <request name="set_state">
+      <description summary="set window state">
+        Set window state.
+
+        Values for state argument are described by org_kde_plasma_window_management.state
+        and can be used together in a bitfield. The flags bitfield describes which flags are
+        supposed to be set, the state bitfield the value for the set flags
+      </description>
+      <arg name="flags" type="uint" summary="bitfield of set state flags"/>
+      <arg name="state" type="uint" summary="bitfield of state flags"/>
+    </request>
+
+    <request name="set_virtual_desktop">
+      <description summary="map window on a virtual desktop">
+          Deprecated: use enter_virtual_desktop
+        Maps the window to a different virtual desktop.
+
+        To show the window on all virtual desktops, call the
+        org_kde_plasma_window.set_state request and specify a on_all_desktops
+        state in the bitfield.
+      </description>
+      <arg name="number" type="uint" summary="zero based virtual desktop number"/>
+    </request>
+
+    <request name="set_minimized_geometry">
+      <description summary="set the geometry for a taskbar entry">
+        Sets the geometry of the taskbar entry for this window.
+        The geometry is relative to a panel in particular.
+      </description>
+      <arg name="panel" type="object" interface="wl_surface"/>
+      <arg name="x" type="uint"/>
+      <arg name="y" type="uint"/>
+      <arg name="width" type="uint"/>
+      <arg name="height" type="uint"/>
+    </request>
+
+    <request name="unset_minimized_geometry">
+      <description summary="set the geometry for a taskbar entry">
+        Remove the task geometry information for a particular panel.
+      </description>
+      <arg name="panel" type="object" interface="wl_surface"/>
+    </request>
+
+  <!--
+    <request name="highlight">
+      <description summary="highlight the window">
+        Tell the compositor to highlight this window.
+      </description>
+    </request>
+  -->
+
+    <request name="close">
+      <description summary="close window">
+        Close this window.
+      </description>
+    </request>
+
+    <request name="request_move" since="3">
+      <description summary="request move">
+        Request an interactive move for this window.
+      </description>
+    </request>
+
+    <request name="request_resize" since="3">
+      <description summary="request resize">
+        Request an interactive resize for this window.
+      </description>
+    </request>
+
+    <request name="destroy" type="destructor" since="4">
+      <description summary="remove resource for the org_kde_plasma_window">
+        Removes the resource bound for this org_kde_plasma_window.
+      </description>
+    </request>
+
+    <request name="get_icon" since="7">
+      <description summary="Requests to get the window icon">
+        The compositor will write the window icon into the provided file descriptor.
+        The data is a serialized QIcon with QDataStream.
+      </description>
+      <arg name="fd" type="fd" summary="file descriptor for the icon"/>
+    </request>
+
+    <event name="title_changed">
+      <description summary="window title has been changed">
+        This event will be sent as soon as the window title is changed.
+      </description>
+      <arg name="title" type="string" summary="window title"/>
+    </event>
+
+    <event name="app_id_changed">
+      <description summary="application identifier has been changed">
+        This event will be sent as soon as the application
+        identifier is changed.
+      </description>
+      <arg name="app_id" type="string"/>
+    </event>
+
+    <event name="state_changed">
+      <description summary="window state has been changed">
+        This event will be sent as soon as the window state changes.
+
+        Values for state argument are described by org_kde_plasma_window_management.state.
+      </description>
+      <arg name="flags" type="uint" summary="bitfield of state flags"/>
+    </event>
+
+    <event name="virtual_desktop_changed">
+      <description summary="window was moved to another workspace">
+          DEPRECATED: use virtual_desktop_entered and virtual_desktop_left instead
+        This event will be sent when a window is moved to another
+        virtual desktop.
+
+        It is not sent if it becomes visible on all virtual desktops though.
+      </description>
+      <arg name="number" type="int" summary="zero based virtual desktop number"/>
+    </event>
+
+    <event name="themed_icon_name_changed">
+        <description summary="window's icon name changed">
+            This event will be sent whenever the themed icon name changes. May be null.
+        </description>
+        <arg name="name" type="string" summary="the new themed icon name"/>
+    </event>
+
+    <event name="unmapped">
+      <description summary="window's surface was unmapped">
+        This event will be sent immediately after the window is closed
+        and its surface is unmapped.
+      </description>
+    </event>
+
+    <event name="initial_state" since="4">
+        <description summary="All initial known state is submitted">
+            This event will be sent immediately after all initial state been sent to the client.
+            If the Plasma window is already unmapped, the unmapped event will be sent before the
+            initial_state event.
+        </description>
+    </event>
+
+    <event name="parent_window" since="5">
+        <description summary="The parent window changed">
+            This event will be sent whenever the parent window of this org_kde_plasma_window changes.
+            The passed parent is another org_kde_plasma_window and this org_kde_plasma_window is a
+            transient window to the parent window. If the parent argument is null, this
+            org_kde_plasma_window does not have a parent window.
+        </description>
+        <arg name="parent" type="object" interface="org_kde_plasma_window" summary="The parent window" allow-null="true"/>
+    </event>
+
+    <event name="geometry" since="6">
+        <description summary="The geometry of this window in absolute coordinates">
+            This event will be sent whenever the window geometry of this org_kde_plasma_window changes.
+            The coordinates are in absolute coordinates of the windowing system.
+        </description>
+        <arg name="x" type="int" summary="x position of the org_kde_plasma_window"/>
+        <arg name="y" type="int" summary="y position of the org_kde_plasma_window"/>
+        <arg name="width" type="uint" summary="width of the org_kde_plasma_window"/>
+        <arg name="height" type="uint" summary="height of the org_kde_plasma_window"/>
+    </event>
+
+    <event name="icon_changed" since="7">
+        <description summary="The icon of the window changed">
+            This event will be sent whenever the icon of the window changes, but there is no themed
+            icon name. Common examples are Xwayland windows which have a pixmap based icon.
+
+            The client can request the icon using get_icon.
+        </description>
+    </event>
+
+    <event name="pid_changed">
+      <description summary="process id of application owning the window has changed">
+        This event will be sent when the compositor has set the process id this window belongs to.
+        This should be set once before the initial_state is sent.
+      </description>
+      <arg name="pid" type="uint" summary="process id"/>
+    </event>
+
+
+
+
+    <request name="request_enter_virtual_desktop" since="8">
+      <description summary="map window on a virtual desktop">
+        Make the window enter a virtual desktop. A window can enter more
+        than one virtual desktop. if the id is empty or invalid, no action will be performed.
+      </description>
+      <arg name="id" type="string" summary="desktop id"/>
+    </request>
+
+    <request name="request_enter_new_virtual_desktop" since="8">
+      <description summary="map window on a virtual desktop">RFC: do this with an empty id to request_enter_virtual_desktop?
+        Make the window enter a new virtual desktop. If the server consents the request,
+        it will create a new virtual desktop and assign the window to it.
+      </description>
+    </request>
+
+    <request name="request_leave_virtual_desktop" since="8">
+      <description summary="remove a window from a virtual desktop">
+        Make the window exit a virtual desktop. If it exits all desktops it will be considered on all of them.
+      </description>
+      <arg name="id" type="string" summary="desktop id"/>
+    </request>
+
+    <event name="virtual_desktop_entered" since="8">
+      <description summary="the window entered a new virtual desktop">
+          This event will be sent when the window has entered a new virtual desktop. The window can be on more than one desktop, or none: then is considered on all of them.
+      </description>
+      <arg name="id" type="string" summary="desktop id"/>
+    </event>
+
+    <event name="virtual_desktop_left" since="8">
+      <description summary="the window left a virtual desktop">
+          This event will be sent when the window left a virtual desktop. If the window leaves all desktops, it can be considered on all.
+          If the window gets manually added on all desktops, the server has to send virtual_desktop_left for every previous desktop it was in for the window to be really considered on all desktops.
+      </description>
+      <arg name="is" type="string" summary="desktop id"/>
+    </event>
+
+    <!-- Version 10 additions -->
+
+    <event name="application_menu" since="10">
+      <description summary="notify the client that the current appmenu changed">
+          This event will be sent after the application menu
+          for the window has changed.
+      </description>
+      <arg name="service_name" type="string" />
+      <arg name="object_path" type="string" />
+    </event>
+
+    <request name="request_enter_activity" since="14">
+      <description summary="map window on an activity">
+        Make the window enter an activity. A window can enter more activity. If the id is empty or invalid, no action will be performed.
+      </description>
+      <arg name="id" type="string" summary="activity id"/>
+    </request>
+
+    <request name="request_leave_activity" since="14">
+      <description summary="remove a window from an activity">
+        Make the window exit a an activity. If it exits all activities it will be considered on all of them.
+      </description>
+      <arg name="id" type="string" summary="activity id"/>
+    </request>
+
+    <event name="activity_entered" since="14">
+      <description summary="the window entered an activity">
+        This event will be sent when the window has entered an activity. The window can be on more than one activity, or none: then is considered on all of them.
+      </description>
+      <arg name="id" type="string" summary="activity id"/>
+    </event>
+
+    <event name="activity_left" since="14">
+      <description summary="the window left an activity">
+        This event will be sent when the window left an activity. If the window leaves all activities, it will be considered on all.
+        If the window gets manually added on all activities, the server has to send activity_left for every previous activity it was in for the window to be really considered on all activities.
+      </description>
+      <arg name="id" type="string" summary="activity id"/>
+    </event>
+
+    <request name="send_to_output" since="15">
+     <description summary="send window to specified output">
+        Requests this window to be displayed in a specific output.
+      </description>
+      <arg name="output" type="object" interface="wl_output"/>
+    </request>
+
+    <event name="resource_name_changed" since="16">
+      <description summary="X11 resource name has changed">
+        This event will be sent when the X11 resource name of the window has changed.
+        This is only set for XWayland windows.
+      </description>
+      <arg name="resource_name" type="string" summary="resource name"/>
+    </event>
+
+    <event name="client_geometry" since="18">
+      <description summary="The client geometry (i.e. without decorations etc) of this window in absolute coordinates">
+        This event will be sent whenever the window geometry of this org_kde_plasma_window changes.
+        The coordinates are in absolute coordinates of the windowing system.
+      </description>
+      <arg name="x" type="int" summary="x position of the org_kde_plasma_window"/>
+      <arg name="y" type="int" summary="y position of the org_kde_plasma_window"/>
+      <arg name="width" type="uint" summary="width of the org_kde_plasma_window"/>
+      <arg name="height" type="uint" summary="height of the org_kde_plasma_window"/>
+    </event>
+  </interface>
+
+  <interface name="org_kde_plasma_activation_feedback" version="1">
+    <description summary="activation feedback">
+      The activation manager interface provides a way to get notified
+      when an application is about to be activated.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the activation manager object">
+        Destroy the activation manager object. The activation objects introduced
+        by this manager object will be unaffected.
+      </description>
+    </request>
+
+    <event name="activation">
+      <description summary="notify that an app is starting">
+        Will be issued when an app is set to be activated. It offers
+        an instance of org_kde_plasma_activation that will tell us the app_id
+        and the extent of the activation.
+      </description>
+      <arg name="id" type="new_id" interface="org_kde_plasma_activation"/>
+    </event>
+  </interface>
+
+  <interface name="org_kde_plasma_activation" version="1">
+    <request name="destroy" type="destructor">
+      <description summary="destroy the org_kde_plasma_activation object">
+        Notify the compositor that the org_kde_plasma_activation object will no
+        longer be used.
+      </description>
+    </request>
+
+    <event name="app_id">
+      <description summary="Offers the app_id"></description>
+      <arg name="app_id" type="string" summary="application id, as described in xdg_activation_v1"/>
+    </event>
+
+    <event name="finished">
+        <description summary="Notifies about activation finished, either by activation or because it got invalidated"></description>
+    </event>
+  </interface>
+
+  <interface name="org_kde_plasma_stacking_order" version="17">
+    <description summary="helper object for sending the stacking order">
+      When this object is created, the compositor sends a window event for
+      each window in the stacking order, and afterwards sends the done event
+      and destroys this object.
+    </description>
+
+    <event name="window">
+      <description summary="a window in the stacking order list"/>
+      <arg name="uuid" type="string" summary="window uuid"/>
+    </event>
+
+    <event name="done" type="destructor">
+      <description summary="marks the end of the list"/>
+    </event>
+  </interface>
+</protocol>

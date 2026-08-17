@@ -1,0 +1,5 @@
+duplicate name `bar` in this file
+     --> tests/ui/parse-fail/use-shadow1.wit:7:11
+      |
+    7 | interface bar {}
+      |           ^--

@@ -1,0 +1,40 @@
+[package]
+name = "symphonia-core"
+version = "0.5.5"
+description = "Project Symphonia shared structs, traits, and features."
+homepage = "https://github.com/pdeljanov/Symphonia"
+repository = "https://github.com/pdeljanov/Symphonia"
+authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
+license = "MPL-2.0"
+readme = "README.md"
+categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
+keywords = ["audio", "codec", "decoder", "multimedia", "media"]
+edition = "2018"
+rust-version = "1.53"
+
+[features]
+default = []
+
+# SIMD support.
+opt-simd-sse = ["rustfft/sse"]
+opt-simd-avx = ["rustfft/avx"]
+opt-simd-neon = ["rustfft/neon"]
+
+# Enable all SIMD support.
+opt-simd = [
+    "opt-simd-sse",
+    "opt-simd-avx",
+    "opt-simd-neon",
+]
+
+[dependencies]
+arrayvec = "0.7.1"
+bitflags = "1.2.1"
+bytemuck = "1.7"
+lazy_static = "1.4.0"
+log = "0.4"
+
+[dependencies.rustfft]
+version = "6.1.0"
+optional = true
+default-features = false

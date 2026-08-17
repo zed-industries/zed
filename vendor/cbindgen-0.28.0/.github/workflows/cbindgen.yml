@@ -1,0 +1,122 @@
+name: cbindgen
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+  merge_group:
+    types:
+      - checks_requested
+
+jobs:
+  rustfmt-clippy:
+
+    runs-on: ubuntu-24.04
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install stable
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: "clippy, rustfmt"
+
+    - name: Run rustfmt
+      run: |
+        cargo +stable fmt --check
+
+    - name: Run clippy
+      run: |
+        cargo +stable clippy --workspace -- -D warnings
+
+    - name: Install minimum supported Rust version
+      id: msrv
+      uses: dtolnay/rust-toolchain@1.74
+
+    - name: Build with minimum supported Rust version
+      run: |
+        cargo +${{steps.msrv.outputs.name}} test nonexistent-test --verbose
+
+  build:
+    runs-on: ubuntu-24.04
+
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+        include:
+          - arch: arm64
+            env:
+              CARGO_BUILD_TARGET: aarch64-unknown-linux-gnu
+              CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc-11
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Setup environment variables for cross compiling
+      if: matrix.arch != 'amd64'
+      run: |
+        echo CARGO_BUILD_TARGET=${{matrix.env.CARGO_BUILD_TARGET}} >> ${GITHUB_ENV}
+        echo CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=${{matrix.env.CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER}} >> ${GITHUB_ENV}
+
+    - name: Install cross linker and emulator
+      if: matrix.arch == 'arm64'
+      run: |
+        # Only works on noble (and later?)
+        sudo sed -i '/^Components/a Architectures: amd64' /etc/apt/sources.list.d/ubuntu.sources
+        echo "deb [arch=arm64] http://ports.ubuntu.com/ $(lsb_release -sc) main multiverse universe" | sudo tee -a /etc/apt/sources.list.d/ports.list
+        echo "deb [arch=arm64] http://ports.ubuntu.com/ $(lsb_release -sc)-security main multiverse universe" | sudo tee -a  /etc/apt/sources.list.d/ports.list
+        echo "deb [arch=arm64] http://ports.ubuntu.com/ $(lsb_release -sc)-backports main multiverse universe" | sudo tee -a  /etc/apt/sources.list.d/ports.list
+        echo "deb [arch=arm64] http://ports.ubuntu.com/ $(lsb_release -sc)-updates main multiverse universe" | sudo tee -a  /etc/apt/sources.list.d/ports.list
+
+        sudo dpkg --add-architecture arm64
+        sudo apt-get update
+        sudo apt-get install -y qemu-user gcc-11-aarch64-linux-gnu libc6:arm64
+
+    - name: Install stable Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{matrix.env.CARGO_BUILD_TARGET}}
+
+    - name: Install Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.8'
+
+    - name: Install Cython
+      run: |
+        python -m pip install --upgrade pip wheel
+        pip install Cython==3.0.2
+
+    - name: Build
+      run: |
+        cargo +stable build --verbose
+
+    - name: Build no-default-features
+      run: |
+        cargo +stable build --verbose --no-default-features
+
+    - name: Test package
+      env:
+        CBINDGEN_TEST_VERIFY: 1
+      run: |
+        cargo +stable package --verbose
+        (cd target/package/cbindgen-$(cargo +stable run -- --version | cut -d ' ' -f 2) && cargo +stable test --verbose)
+
+    - name: Install nightly Rust
+      uses: dtolnay/rust-toolchain@nightly
+      with:
+        targets: ${{matrix.env.CARGO_BUILD_TARGET}}
+
+    - name: Test
+      env:
+        CBINDGEN_TEST_VERIFY: 1
+      run: |
+        cargo +nightly test --verbose
+
+    - name: Test minimal-versions
+      run: |
+        cargo +nightly update -Zminimal-versions
+        cargo +nightly test

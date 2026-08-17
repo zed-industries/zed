@@ -1,0 +1,7 @@
+package foo:bar;
+
+world foo {
+  resource y;
+
+  import x: func() -> borrow<y>;
+}

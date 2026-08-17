@@ -1,0 +1,31 @@
+[package]
+name = "pciid-parser"
+version = "0.8.0"
+authors = ["Ilya Zlobintsev <ilya.zl@protonmail.com>"]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/ilyazzz/pci-id-parser"
+homepage = "https://github.com/ilyazzz/pci-id-parser"
+description = "A library for parsing PCI ID tables"
+keywords = ["pci", "parser", "pci-id"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ureq = { version = "3.0", optional = true }
+serde = { version = "1.0.147", features = ["derive"], optional = true }
+
+[features]
+online = ["ureq"]
+tracing = []      # Kept for compatibility
+
+[dev-dependencies]
+divan = "0.1.0"
+pretty_assertions = "1.2.1"
+
+[[bench]]
+name = "parse"
+harness = false
+
+[profile.bench]
+debug = true

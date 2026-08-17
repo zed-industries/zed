@@ -1,0 +1,27 @@
+[package]
+name = "profiling-procmacros"
+version = "1.0.17"
+authors = ["Philip Degarmo <aclysma@gmail.com>"]
+edition = "2018"
+description = "This crate provides a very thin abstraction over other profiler crates."
+license = "MIT OR Apache-2.0"
+readme = "../README.md"
+repository = "https://github.com/aclysma/profiling"
+homepage = "https://github.com/aclysma/profiling"
+keywords = ["performance", "profiling"]
+categories = ["development-tools::profiling"]
+rust-version = "1.65"
+
+[dependencies]
+quote = { version = "1.0", default-features = false }
+syn = { version = "2.0", features = ["full"] }
+
+[lib]
+proc-macro=true
+
+[features]
+profile-with-puffin = []
+profile-with-optick = []
+profile-with-superluminal = []
+profile-with-tracing = []
+profile-with-tracy = []

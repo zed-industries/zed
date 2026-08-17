@@ -1,0 +1,62 @@
+[package]
+name = "ipc-channel"
+version = "0.19.0"
+description = "A multiprocess drop-in replacement for Rust channels"
+authors = ["The Servo Project Developers"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/servo/ipc-channel"
+edition = "2021"
+
+[[bench]]
+name = "platform"
+harness = false
+
+[[bench]]
+name = "ipc"
+harness = false
+
+[[bench]]
+name = "ipc_receiver_set"
+harness = false
+
+[features]
+default = []
+force-inprocess = []
+memfd = ["sc"]
+async = ["futures", "futures-test"]
+win32-trace = []
+
+[dependencies]
+bincode = "1"
+crossbeam-channel = "0.5"
+fnv = "1.0.3"
+futures = { version = "0.3", optional = true }
+futures-test = { version = "0.3", optional = true }
+lazy_static = "1"
+libc = "0.2.12"
+rand = "0.8"
+serde = { version = "1.0", features = ["rc"] }
+uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(any(target_os = "linux", target_os = "openbsd", target_os = "freebsd"))'.dependencies]
+mio = { version = "1.0", features = ["os-ext"] }
+sc = { version = "0.2.2", optional = true }
+tempfile = "3.4"
+
+[dev-dependencies]
+crossbeam-utils = "0.8"
+static_assertions = "1.1.0"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[target.'cfg(target_os = "windows")'.dependencies.windows]
+version = "0.58.0"
+features = [
+    "Win32_Foundation",
+    "Win32_System_WindowsProgramming",
+    "Win32_System_Threading",
+    "Win32_System_Pipes",
+    "Win32_System_Memory",
+    "Win32_System_IO",
+    "Win32_Storage_FileSystem",
+    "Win32_Security",
+]

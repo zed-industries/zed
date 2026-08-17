@@ -1,0 +1,28 @@
+[package]
+name = "windows-implement"
+version = "0.60.2"
+edition = "2021"
+rust-version = "1.74"
+license = "MIT OR Apache-2.0"
+description = "The implement macro for the Windows crates"
+repository = "https://github.com/microsoft/windows-rs"
+categories = ["os::windows-apis"]
+readme = "readme.md"
+
+[dependencies]
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+syn = { workspace = true, features = ["parsing", "proc-macro", "printing", "full", "clone-impls"] }
+
+[dev-dependencies]
+windows-core = { path = "../core" }
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+default-target = "x86_64-pc-windows-msvc"
+targets = []
+
+[lib]
+proc-macro = true

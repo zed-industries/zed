@@ -1,0 +1,20 @@
+---
+- name: Zero indented block scalar
+  from: '@perlpunk'
+  tags: folded indent scalar
+  yaml: |
+    --- >
+    line1
+    line2
+    line3
+  tree: |
+    +STR
+     +DOC ---
+      =VAL >line1 line2 line3\n
+     -DOC
+    -STR
+  json: |
+    "line1 line2 line3\n"
+  dump: |
+    --- >
+      line1 line2 line3

@@ -1,0 +1,100 @@
+# Copyright 2015 Brian Smith.
+#
+# Permission to use, copy, modify, and/or distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHORS DISCLAIM ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+[package]
+categories = ["cryptography", "no-std"]
+description = "Web PKI X.509 Certificate Verification."
+edition = "2021"
+rust-version = "1.61"
+license = "ISC"
+name = "rustls-webpki"
+readme = "README.md"
+repository = "https://github.com/rustls/webpki"
+version = "0.101.7"
+
+include = [
+    "Cargo.toml",
+
+    "/LICENSE",
+    "README.md",
+
+    "src/calendar.rs",
+    "src/cert.rs",
+    "src/crl.rs",
+    "src/der.rs",
+    "src/end_entity.rs",
+    "src/error.rs",
+    "src/subject_name/dns_name.rs",
+    "src/subject_name/ip_address.rs",
+    "src/subject_name/mod.rs",
+    "src/subject_name/name.rs",
+    "src/subject_name/verify.rs",
+    "src/name/verify.rs",
+    "src/name/name.rs",
+    "src/signed_data.rs",
+    "src/time.rs",
+    "src/trust_anchor.rs",
+    "src/x509.rs",
+    "src/verify_cert.rs",
+    "src/lib.rs",
+
+    "src/data/**/*",
+
+    "tests/**",
+]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lib]
+name = "webpki"
+
+[features]
+default = ["std"]
+alloc = ["ring/alloc"]
+std = ["alloc"]
+
+[dependencies]
+ring = { version = "0.17", default-features = false }
+untrusted = "0.9"
+
+[dev-dependencies]
+base64 = "0.21"
+bencher = "0.1.5"
+once_cell = "1.17.2"
+rcgen = { version = "0.11.3", default-features = false }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[profile.bench]
+opt-level = 3
+debug = false
+rpath = false
+lto = true
+debug-assertions = false
+codegen-units = 1
+
+[profile.release]
+opt-level = 3
+debug = false
+rpath = false
+lto = true
+debug-assertions = false
+codegen-units = 1
+
+[[bench]]
+name = "benchmarks"
+path = "benches/benchmark.rs"
+harness = false

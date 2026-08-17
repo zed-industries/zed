@@ -1,0 +1,22 @@
+header = """
+#define CBINDGEN_PACKED        __attribute__ ((packed))
+#define CBINDGEN_ALIGNED(n)    __attribute__ ((aligned(n)))
+"""
+
+[layout]
+# We do not define packed.
+aligned_n = "CBINDGEN_ALIGNED"
+
+[export]
+include = [
+	"Align1Union",
+	"Align4Union",
+	"Align16Union",
+	"Align1Struct",
+	"Align2Struct",
+	"Align4Struct",
+	"Align8Struct",
+	"Align32Struct",
+	"OpaquePackedStruct",
+	"OpaquePackedUnion",
+]

@@ -1,0 +1,30 @@
+[package]
+name = "target-lexicon"
+version = "0.13.3"
+authors = ["Dan Gohman <sunfish@mozilla.com>"]
+description = "LLVM target triple types"
+documentation = "https://docs.rs/target-lexicon/"
+readme = "README.md"
+keywords = ["target", "host", "triple", "compiler", "jit"]
+categories = ["no-std"]
+license = "Apache-2.0 WITH LLVM-exception"
+repository = "https://github.com/bytecodealliance/target-lexicon"
+edition = "2018"
+
+[dependencies]
+serde = { version = "1.0", optional = true }
+
+[dev-dependencies]
+serde_json = "1.0"
+
+[features]
+default = []
+serde_support = ["serde", "std"]
+std = []
+# Enable (unstable) support for the zkasm architecture.
+arch_zkasm = []
+# Enable (unstable) support for the z80 architecture.
+arch_z80 = []
+
+[badges]
+maintenance = { status = "passively-maintained" }

@@ -1,0 +1,16 @@
+---
+- name: Literal block scalar with more spaces in first line
+  from: '@perlpunk'
+  tags: error literal whitespace
+  fail: true
+  yaml: |
+    ---
+    block scalar: |
+    ␣␣␣␣␣
+      more spaces at the beginning
+      are invalid
+  tree: |
+    +STR
+     +DOC ---
+      +MAP
+       =VAL :block scalar

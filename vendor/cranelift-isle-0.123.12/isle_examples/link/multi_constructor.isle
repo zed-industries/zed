@@ -1,0 +1,13 @@
+(decl multi A (u32) u32)
+(decl multi B (u32) u32)
+(decl multi C (u32) u32)
+(decl multi D (u32) u32)
+
+(extern constructor B ctor_B)
+(extern extractor C etor_C)
+
+(rule (A x)
+      (B x))
+
+(rule (D (C x))
+      (B x))

@@ -1,0 +1,298 @@
+Introduction
+------------
+
+Documentation is an extremely important part of any project, and it
+helps a lot if it uses consistent syntax and layout.
+
+The documentation for the FreeType library is maintained in header
+files in the `include/` directory in the form of code comments.  These
+comments are extracted and organized by 'docwriter' (previously
+'docmaker').  The generated docs can be viewed in the
+`docs/reference/site/` directory after running `make refdoc`.
+
+Documentation comments follow a specific structure and format as
+described below.
+
+
+Documentation Structure
+-----------------------
+
+The documentation is divided into multiple chapters, which contain
+sections relevant to it.  The chapter details and sections contained
+in them are listed in `include/freetype/ftchapters.h`.  Any unlisted
+section is added to the 'Miscellaneous' chapter.
+
+Sections may contain sub-sections which consist of properties,
+enumerations, and other data types.
+
+
+Comment Blocks
+--------------
+
+Documentation blocks follow a specific format:
+
+    /***************************** (should end on column 77)
+     *
+     *                             (1 asterisk, 1 space, then content)
+     *
+     */                            (end of block)
+
+To make 'docwriter' recognize a comment block, there must be at least
+two asterisks in the first line.  As a consequence, you should change
+the second asterisk to something else if you want to prevent a comment
+block being handled by 'docwriter' (for example, change `/****/` to
+`/*#**/`).
+
+
+Markup Tags
+-----------
+
+Markup tags are used to indicate what comes next.  The syntax for a
+tag is:
+
+    @foo:
+
+An `@`, followed by the tag, and then `:`.
+
+
+Reserved Tags
+-------------
+
+There are some keywords that have a special meaning to docwriter.
+As a convention, all keywords are written in lowercase.
+
+* `chapter`: Defines a chapter.  Usually the title with underscores.
+* `sections`: List of sections in the chapter, in order.
+* `section`: Defines the start or continuation of a section.
+* `title`: Title for a chapter or section.  May contain spaces.
+* `abstract`: The abstract for a section, visible in the Table of
+              Contents (TOC).
+* `description`: Detailed description of a tag (except chapters),
+                 shown as synopsis.
+* `values`: A list of 'values' for the tag.  These values are used for
+            cross-referencing.
+
+
+Other Tags
+----------
+
+Except the ones given above, any other tags will be added as a part of
+a subsection.  All tags are lowercase by convention.
+
+
+Public Header Definitions
+-------------------------
+
+The public headers for FreeType have their names defined in
+`include/freetype/config/ftheader.h`.  Any new public header file must
+be defined in this file, in the following format:
+
+    #define FT_NEWNAME_H  <freetype/newname.h>
+
+Where `newname` is the name of the header file.
+
+This macro is combined with the file location of a sub-section and
+printed with the object.
+
+
+Note on code blocks captured after comments
+-------------------------------------------
+
+All non-documentation lines after a documentation comment block are
+captured to be displayed as the code for the sub-section.  To stop
+collection, a line with `/* */` should be added.
+
+
+General Formatting Conventions
+------------------------------
+
+* Use two spaces after a full stop ending a sentence.
+* Use appropriate uppercasing in titles.  Refer
+
+  https://english.stackexchange.com/a/34
+
+  for more information.
+* Do not add trailing parentheses when citing a C function.
+
+
+Markdown Usage
+--------------
+
+All tags, except the ones that define the name and title for a block
+support markdown in them.  Docwriter uses a markdown parser that
+follows rules given in John Gruber's markdown guide:
+
+  https://daringfireball.net/projects/markdown/syntax
+
+with a few exceptions and extensions, detailed below.  This may also
+be referred to as the **FreeType Flavored Markdown**.
+
+
+Headers
+-------
+
+Markdown headers should not be used directly, because these are added
+based on section titles, sub-section names, and tags.  However, if a
+header needs to be added, note the following correspondence to HTML tags:
+
+* Section title on top of the page is `H1`.
+* Sub-section titles are `H2`.
+* Parts of sub-sections are `H4`.
+* Any header added will be visible in the Table of Contents (TOC) of
+  the page.
+
+
+Emphasis
+--------
+
+* Use `_underscores_` for italics.
+* Use `**double asterisks**` for bold.
+
+Although the other notations (double underscore for bold, single
+asterisk for italics) are supported, it is recommended to use the
+above for consistency.
+
+Note that there may be cases where having two asterisks or underscores
+in a line may lead to text being picked up as italics or bold.
+Although unintentional, this is correct markdown behavior.
+
+For inline code, wrap the sequence with backticks (see below).  This
+renders symbols correctly without modifications.  If a symbol is
+absolutely required outside of an inline code block or code sequence,
+escape it with a backslash (like `\*` or `\_`).
+
+
+Lists
+-----
+
+Unordered lists can be created with asterisks:
+
+    * Unordered list items can use asterisks.
+    * Another list item.
+
+Ordered lists start with numbers:
+
+    1. This is an ordered list item.
+    2. Brackets after numbers won't work.
+
+To continue a list over multiple paragraphs, indent them with at least
+four spaces.  For example:
+
+    1.  Lorem ipsum dolor sit amet, consectetuer adipiscing elit.
+        Aliquam hendrerit mi posuere lectus.  Vestibulum enim wisi,
+        viverra nec, fringilla in, laoreet vitae, risus.
+
+        Donec sit amet nisl.  Aliquam semper ipsum sit amet velit.
+        Suspendisse id sem consectetuer libero luctus adipiscing.
+
+    2.  This is the second list item.
+
+    This paragraph is not a part of the list.
+
+More information on lists in markdown is available at
+
+  https://daringfireball.net/projects/markdown/syntax#list
+
+
+Cross-references
+----------------
+
+Other sub-sections can be linked with the `@` symbol:
+
+    @description:
+      While FreeType's CFF driver doesn't expose API functions by
+      itself, it is possible to control its behaviour with
+      @FT_Property_Set and @FT_Property_Get.
+
+If a field in the `values` table of another sub-section is linked, the
+link leads to its parent sub-section.
+
+
+Links and Images
+----------------
+
+All URLs are converted to links in the HTML documentation.
+
+Markdown syntax for links and images are fully supported.
+
+
+Inline Code
+-----------
+
+To indicate a span of code, wrap it with backtick quotes (`` ` ``):
+
+    Use the `printf()` function.
+
+Cross-references, markdown, and html styling do not work in inline code
+sequences.
+
+
+Code and Syntax Highlighting
+----------------------------
+
+Blocks of code are fenced by lines with three back-ticks `` ``` ``
+followed by the language name, if any (used for syntax highlighting),
+as demonstrated in the following example.
+
+    ```c
+      x = y + z;
+      if ( zookoo == 2 )
+      {
+        foobar();
+      }
+    ```
+
+Note that the indentation of the opening line and the closing line
+must be exactly the same.  The code sequence itself should have a
+larger indentation than the surrounding back-ticks.
+
+Like inline code, markdown and html styling is *not* supported inside
+code blocks.
+
+
+Tables
+------
+
+Tables are used to list values, input, and other fields.  The FreeType
+Flavored Markdown adopts a simple approach to tables with two columns,
+or field definition tables.
+
+Field definition names may contain alphanumeric, underscore, and the
+`.` characters.  This is followed by `::`.  The following lines are
+the second column of the table.  A field definition ends with the
+start of another field definition, or a markup tag.
+
+    @Input:
+      pathname ::
+        A path to the font file.
+
+      face_index ::
+        See @FT_Open_Face for a detailed description of this
+        parameter.
+
+
+Non-breaking Space
+------------------
+
+A tilde can be used to create a non-breaking space.  The example
+
+    The encoding value~0 is reserved.
+
+is converted to
+
+    The encoding value&nbsp;0 is reserved.
+
+
+----------------------------------------------------------------------
+
+Copyright (C) 2018-2023 by
+Nikhil Ramakrishnan, David Turner, Robert Wilhelm, and Werner Lemberg.
+
+This  file is  part of  the FreeType  project, and  may only  be used,
+modified,  and distributed  under the  terms of  the  FreeType project
+license,  LICENSE.TXT.  By  continuing to  use, modify,  or distribute
+this file you  indicate that you have read  the license and understand
+and accept it fully.
+
+
+--- end of DOCGUIDE ---

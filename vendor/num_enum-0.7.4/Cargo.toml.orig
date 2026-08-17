@@ -1,0 +1,39 @@
+[package]
+name = "num_enum"
+version = "0.7.4"  # Keep in sync with num_enum_derive, the the dependency on it below.
+rust-version = "1.70.0"
+authors = [
+  "Daniel Wagner-Hall <dawagner@gmail.com>",
+  "Daniel Henry-Mantilla <daniel.henry.mantilla@gmail.com>",
+  "Vincent Esche <regexident@gmail.com>",
+]
+description = "Procedural macros to make inter-operation between primitives and enums easier."
+edition = "2021"
+repository = "https://github.com/illicitonion/num_enum"
+readme = "README.md"
+keywords = ["enum", "conversion", "safe", "ffi", "derive"]
+categories = ["rust-patterns"]
+license = "BSD-3-Clause OR MIT OR Apache-2.0"
+
+[features]
+std = ["num_enum_derive/std"]
+complex-expressions = ["num_enum_derive/complex-expressions"]
+external_doc = []
+
+default = ["std"]  # disable to use in a `no_std` environment
+
+[package.metadata.docs.rs]
+features = ["external_doc"]
+
+[badges]
+maintenance = { status = "passively-maintained" }
+
+[dependencies]
+rustversion = "1.0.4"
+num_enum_derive = { version = "=0.7.4", path = "../num_enum_derive", default-features = false }
+
+[dev-dependencies]
+anyhow = "1.0.14"
+paste = "1"
+trybuild = "1.0.98"
+walkdir = "2"

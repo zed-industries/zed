@@ -1,0 +1,33 @@
+---
+- name: Key with anchor after missing explicit mapping value
+  from: '@perlpunk'
+  tags: anchor explicit-key mapping
+  yaml: |
+    ---
+    a: 1
+    ? b
+    &anchor c: 3
+  tree: |
+    +STR
+     +DOC ---
+      +MAP
+       =VAL :a
+       =VAL :1
+       =VAL :b
+       =VAL :
+       =VAL &anchor :c
+       =VAL :3
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "a": 1,
+      "b": null,
+      "c": 3
+    }
+  dump: |
+    ---
+    a: 1
+    b:
+    &anchor c: 3

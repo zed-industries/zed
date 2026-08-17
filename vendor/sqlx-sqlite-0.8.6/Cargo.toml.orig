@@ -1,0 +1,77 @@
+[package]
+name = "sqlx-sqlite"
+documentation = "https://docs.rs/sqlx"
+description = "SQLite driver implementation for SQLx. Not for direct use; see the `sqlx` crate for details."
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+any = ["sqlx-core/any"]
+json = ["sqlx-core/json", "serde"]
+offline = ["sqlx-core/offline", "serde"]
+migrate = ["sqlx-core/migrate"]
+
+# Type integrations
+chrono = ["dep:chrono", "sqlx-core/chrono"]
+time = ["dep:time", "sqlx-core/time"]
+uuid = ["dep:uuid", "sqlx-core/uuid"]
+
+regexp = ["dep:regex"]
+
+preupdate-hook = ["libsqlite3-sys/preupdate_hook"]
+
+bundled = ["libsqlite3-sys/bundled"]
+unbundled = ["libsqlite3-sys/buildtime_bindgen"]
+
+[dependencies]
+futures-core = { version = "0.3.19", default-features = false }
+futures-channel = { version = "0.3.19", default-features = false, features = ["sink", "alloc", "std"] }
+# used by the SQLite worker thread to block on the async mutex that locks the database handle
+futures-executor = { version = "0.3.19" }
+futures-intrusive = "0.5.0"
+futures-util = { version = "0.3.19", default-features = false, features = ["alloc", "sink"] }
+
+chrono = { workspace = true, optional = true }
+time = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
+
+url = { version = "2.2.2" }
+percent-encoding = "2.1.0"
+serde_urlencoded = "0.7"
+
+flume = { version = "0.11.0", default-features = false, features = ["async"] }
+
+atoi = "2.0"
+
+log = "0.4.18"
+tracing = { version = "0.1.37", features = ["log"] }
+thiserror = "2.0.0"
+
+serde = { version = "1.0.145", features = ["derive"], optional = true }
+regex = { version = "1.5.5", optional = true }
+
+[dependencies.libsqlite3-sys]
+version = "0.30.1"
+default-features = false
+features = [
+    "pkg-config",
+    "vcpkg",
+    "unlock_notify"
+]
+
+[dependencies.sqlx-core]
+workspace = true
+
+[dev-dependencies]
+sqlx = { workspace = true, default-features = false, features = ["macros", "runtime-tokio", "tls-none", "sqlite"] }
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+features = ["bundled", "any", "json", "chrono", "time", "uuid"]

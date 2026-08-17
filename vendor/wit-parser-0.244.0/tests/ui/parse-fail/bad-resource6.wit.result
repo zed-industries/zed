@@ -1,0 +1,5 @@
+if a constructor return type is declared it must be a `result`
+     --> tests/ui/parse-fail/bad-resource6.wit:5:22
+      |
+    5 |     constructor() -> u32;
+      |                      ^--

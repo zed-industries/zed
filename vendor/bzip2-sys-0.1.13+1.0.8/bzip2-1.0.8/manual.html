@@ -1,0 +1,2541 @@
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>bzip2 and libbzip2, version 1.0.8</title>
+<meta name="generator" content="DocBook XSL Stylesheets V1.78.1">
+<link rel="stylesheet" type="text/css" href="bzip.css" />
+  <style type="text/css" media="screen">/* Colours:
+#74240f  dark brown      h1, h2, h3, h4
+#336699  medium blue     links
+#339999  turquoise       link hover colour
+#202020  almost black    general text
+#761596  purple          md5sum text
+#626262  dark gray       pre border
+#eeeeee  very light gray pre background
+#f2f2f9  very light blue nav table background
+#3366cc  medium blue     nav table border
+*/
+
+a, a:link, a:visited, a:active { color: #336699; }
+a:hover { color: #339999; }
+
+body { font: 80%/126% sans-serif; }
+h1, h2, h3, h4 { color: #74240f; }
+
+dt { color: #336699; font-weight: bold }
+dd { 
+ margin-left: 1.5em; 
+ padding-bottom: 0.8em;
+}
+
+/* -- ruler -- */
+div.hr_blue { 
+  height:  3px; 
+  background:#ffffff url("../images/hr_blue.png") repeat-x; }
+div.hr_blue hr { display:none; }
+
+/* release styles */
+#release p { margin-top: 0.4em; }
+#release .md5sum { color: #761596; }
+
+
+/* ------ styles for docs|manuals|howto ------ */
+/* -- lists -- */
+ul  { 
+ margin:     0px 4px 16px 16px;
+ padding:    0px;
+ list-style: url("../images/li-blue.png"); 
+}
+ul li { 
+ margin-bottom: 10px;
+}
+ul ul	{ 
+ list-style-type:  none; 
+ list-style-image: none; 
+ margin-left:      0px; 
+}
+
+/* header / footer nav tables */
+table.nav {
+ border:     solid 1px #3366cc;
+ background: #f2f2f9;
+ background-color: #f2f2f9;
+ margin-bottom: 0.5em;
+}
+/* don't have underlined links in chunked nav menus */
+table.nav a { text-decoration: none; }
+table.nav a:hover { text-decoration: underline; }
+table.nav td { font-size: 85%; }
+
+code, tt, pre { font-size: 120%; }
+code, tt { color: #761596; }
+
+div.literallayout, pre.programlisting, pre.screen {
+ color:      #000000;
+ padding:    0.5em;
+ background: #eeeeee;
+ border:     1px solid #626262;
+ background-color: #eeeeee;
+ margin: 4px 0px 4px 0px; 
+}
+</style>
+</head>
+<body bgcolor="white" text="black" link="#0000FF" vlink="#840084" alink="#0000FF"><div lang="en" class="book">
+<div class="titlepage">
+<div>
+<div><h1 class="title">
+<a name="userman"></a>bzip2 and libbzip2, version 1.0.8</h1></div>
+<div><h2 class="subtitle">A program and library for data compression</h2></div>
+<div><div class="authorgroup"><div class="author">
+<h3 class="author">
+<span class="firstname">Julian</span> <span class="surname">Seward</span>
+</h3>
+<div class="affiliation"><span class="orgname">https://sourceware.org/bzip2/<br></span></div>
+</div></div></div>
+<div><p class="releaseinfo">Version 1.0.8 of 13 July 2019</p></div>
+<div><p class="copyright">Copyright © 1996-2019 Julian Seward</p></div>
+<div><div class="legalnotice">
+<a name="legal"></a><p>This program, <code class="computeroutput">bzip2</code>, the
+  associated library <code class="computeroutput">libbzip2</code>, and
+  all documentation, are copyright © 1996-2019 Julian Seward.
+  All rights reserved.</p>
+<p>Redistribution and use in source and binary forms, with
+  or without modification, are permitted provided that the
+  following conditions are met:</p>
+<div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: bullet; ">
+<li class="listitem" style="list-style-type: disc"><p>Redistributions of source code must retain the
+   above copyright notice, this list of conditions and the
+   following disclaimer.</p></li>
+<li class="listitem" style="list-style-type: disc"><p>The origin of this software must not be
+   misrepresented; you must not claim that you wrote the original
+   software.  If you use this software in a product, an
+   acknowledgment in the product documentation would be
+   appreciated but is not required.</p></li>
+<li class="listitem" style="list-style-type: disc"><p>Altered source versions must be plainly marked
+   as such, and must not be misrepresented as being the original
+   software.</p></li>
+<li class="listitem" style="list-style-type: disc"><p>The name of the author may not be used to
+   endorse or promote products derived from this software without
+   specific prior written permission.</p></li>
+</ul></div>
+<p>THIS SOFTWARE IS PROVIDED BY THE AUTHOR "AS IS" AND ANY
+  EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+  THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+  PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE
+  AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+  EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+  TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+  DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+  ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+  LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
+  IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+  THE POSSIBILITY OF SUCH DAMAGE.</p>
+<p>PATENTS: To the best of my knowledge,
+ <code class="computeroutput">bzip2</code> and
+ <code class="computeroutput">libbzip2</code> do not use any patented
+ algorithms.  However, I do not have the resources to carry
+ out a patent search.  Therefore I cannot give any guarantee of
+ the above statement.
+ </p>
+</div></div>
+</div>
+<hr>
+</div>
+<div class="toc">
+<p><b>Table of Contents</b></p>
+<dl class="toc">
+<dt><span class="chapter"><a href="#intro">1. Introduction</a></span></dt>
+<dt><span class="chapter"><a href="#using">2. How to use bzip2</a></span></dt>
+<dd><dl>
+<dt><span class="sect1"><a href="#name">2.1. NAME</a></span></dt>
+<dt><span class="sect1"><a href="#synopsis">2.2. SYNOPSIS</a></span></dt>
+<dt><span class="sect1"><a href="#description">2.3. DESCRIPTION</a></span></dt>
+<dt><span class="sect1"><a href="#options">2.4. OPTIONS</a></span></dt>
+<dt><span class="sect1"><a href="#memory-management">2.5. MEMORY MANAGEMENT</a></span></dt>
+<dt><span class="sect1"><a href="#recovering">2.6. RECOVERING DATA FROM DAMAGED FILES</a></span></dt>
+<dt><span class="sect1"><a href="#performance">2.7. PERFORMANCE NOTES</a></span></dt>
+<dt><span class="sect1"><a href="#caveats">2.8. CAVEATS</a></span></dt>
+<dt><span class="sect1"><a href="#author">2.9. AUTHOR</a></span></dt>
+</dl></dd>
+<dt><span class="chapter"><a href="#libprog">3. 
+Programming with <code class="computeroutput">libbzip2</code>
+</a></span></dt>
+<dd><dl>
+<dt><span class="sect1"><a href="#top-level">3.1. Top-level structure</a></span></dt>
+<dd><dl>
+<dt><span class="sect2"><a href="#ll-summary">3.1.1. Low-level summary</a></span></dt>
+<dt><span class="sect2"><a href="#hl-summary">3.1.2. High-level summary</a></span></dt>
+<dt><span class="sect2"><a href="#util-fns-summary">3.1.3. Utility functions summary</a></span></dt>
+</dl></dd>
+<dt><span class="sect1"><a href="#err-handling">3.2. Error handling</a></span></dt>
+<dt><span class="sect1"><a href="#low-level">3.3. Low-level interface</a></span></dt>
+<dd><dl>
+<dt><span class="sect2"><a href="#bzcompress-init">3.3.1. BZ2_bzCompressInit</a></span></dt>
+<dt><span class="sect2"><a href="#bzCompress">3.3.2. BZ2_bzCompress</a></span></dt>
+<dt><span class="sect2"><a href="#bzCompress-end">3.3.3. BZ2_bzCompressEnd</a></span></dt>
+<dt><span class="sect2"><a href="#bzDecompress-init">3.3.4. BZ2_bzDecompressInit</a></span></dt>
+<dt><span class="sect2"><a href="#bzDecompress">3.3.5. BZ2_bzDecompress</a></span></dt>
+<dt><span class="sect2"><a href="#bzDecompress-end">3.3.6. BZ2_bzDecompressEnd</a></span></dt>
+</dl></dd>
+<dt><span class="sect1"><a href="#hl-interface">3.4. High-level interface</a></span></dt>
+<dd><dl>
+<dt><span class="sect2"><a href="#bzreadopen">3.4.1. BZ2_bzReadOpen</a></span></dt>
+<dt><span class="sect2"><a href="#bzread">3.4.2. BZ2_bzRead</a></span></dt>
+<dt><span class="sect2"><a href="#bzreadgetunused">3.4.3. BZ2_bzReadGetUnused</a></span></dt>
+<dt><span class="sect2"><a href="#bzreadclose">3.4.4. BZ2_bzReadClose</a></span></dt>
+<dt><span class="sect2"><a href="#bzwriteopen">3.4.5. BZ2_bzWriteOpen</a></span></dt>
+<dt><span class="sect2"><a href="#bzwrite">3.4.6. BZ2_bzWrite</a></span></dt>
+<dt><span class="sect2"><a href="#bzwriteclose">3.4.7. BZ2_bzWriteClose</a></span></dt>
+<dt><span class="sect2"><a href="#embed">3.4.8. Handling embedded compressed data streams</a></span></dt>
+<dt><span class="sect2"><a href="#std-rdwr">3.4.9. Standard file-reading/writing code</a></span></dt>
+</dl></dd>
+<dt><span class="sect1"><a href="#util-fns">3.5. Utility functions</a></span></dt>
+<dd><dl>
+<dt><span class="sect2"><a href="#bzbufftobuffcompress">3.5.1. BZ2_bzBuffToBuffCompress</a></span></dt>
+<dt><span class="sect2"><a href="#bzbufftobuffdecompress">3.5.2. BZ2_bzBuffToBuffDecompress</a></span></dt>
+</dl></dd>
+<dt><span class="sect1"><a href="#zlib-compat">3.6. zlib compatibility functions</a></span></dt>
+<dt><span class="sect1"><a href="#stdio-free">3.7. Using the library in a stdio-free environment</a></span></dt>
+<dd><dl>
+<dt><span class="sect2"><a href="#stdio-bye">3.7.1. Getting rid of stdio</a></span></dt>
+<dt><span class="sect2"><a href="#critical-error">3.7.2. Critical error handling</a></span></dt>
+</dl></dd>
+<dt><span class="sect1"><a href="#win-dll">3.8. Making a Windows DLL</a></span></dt>
+</dl></dd>
+<dt><span class="chapter"><a href="#misc">4. Miscellanea</a></span></dt>
+<dd><dl>
+<dt><span class="sect1"><a href="#limits">4.1. Limitations of the compressed file format</a></span></dt>
+<dt><span class="sect1"><a href="#port-issues">4.2. Portability issues</a></span></dt>
+<dt><span class="sect1"><a href="#bugs">4.3. Reporting bugs</a></span></dt>
+<dt><span class="sect1"><a href="#package">4.4. Did you get the right package?</a></span></dt>
+<dt><span class="sect1"><a href="#reading">4.5. Further Reading</a></span></dt>
+</dl></dd>
+</dl>
+</div>
+<div class="chapter">
+<div class="titlepage"><div><div><h1 class="title">
+<a name="intro"></a>1. Introduction</h1></div></div></div>
+<p><code class="computeroutput">bzip2</code> compresses files
+using the Burrows-Wheeler block-sorting text compression
+algorithm, and Huffman coding.  Compression is generally
+considerably better than that achieved by more conventional
+LZ77/LZ78-based compressors, and approaches the performance of
+the PPM family of statistical compressors.</p>
+<p><code class="computeroutput">bzip2</code> is built on top of
+<code class="computeroutput">libbzip2</code>, a flexible library for
+handling compressed data in the
+<code class="computeroutput">bzip2</code> format.  This manual
+describes both how to use the program and how to work with the
+library interface.  Most of the manual is devoted to this
+library, not the program, which is good news if your interest is
+only in the program.</p>
+<div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: bullet; ">
+<li class="listitem" style="list-style-type: disc"><p><a class="xref" href="#using" title="2. How to use bzip2">How to use bzip2</a> describes how to use
+ <code class="computeroutput">bzip2</code>; this is the only part
+ you need to read if you just want to know how to operate the
+ program.</p></li>
+<li class="listitem" style="list-style-type: disc"><p><a class="xref" href="#libprog" title="3.  Programming with libbzip2">Programming with libbzip2</a> describes the
+ programming interfaces in detail, and</p></li>
+<li class="listitem" style="list-style-type: disc"><p><a class="xref" href="#misc" title="4. Miscellanea">Miscellanea</a> records some
+ miscellaneous notes which I thought ought to be recorded
+ somewhere.</p></li>
+</ul></div>
+</div>
+<div class="chapter">
+<div class="titlepage"><div><div><h1 class="title">
+<a name="using"></a>2. How to use bzip2</h1></div></div></div>
+<div class="toc">
+<p><b>Table of Contents</b></p>
+<dl class="toc">
+<dt><span class="sect1"><a href="#name">2.1. NAME</a></span></dt>
+<dt><span class="sect1"><a href="#synopsis">2.2. SYNOPSIS</a></span></dt>
+<dt><span class="sect1"><a href="#description">2.3. DESCRIPTION</a></span></dt>
+<dt><span class="sect1"><a href="#options">2.4. OPTIONS</a></span></dt>
+<dt><span class="sect1"><a href="#memory-management">2.5. MEMORY MANAGEMENT</a></span></dt>
+<dt><span class="sect1"><a href="#recovering">2.6. RECOVERING DATA FROM DAMAGED FILES</a></span></dt>
+<dt><span class="sect1"><a href="#performance">2.7. PERFORMANCE NOTES</a></span></dt>
+<dt><span class="sect1"><a href="#caveats">2.8. CAVEATS</a></span></dt>
+<dt><span class="sect1"><a href="#author">2.9. AUTHOR</a></span></dt>
+</dl>
+</div>
+<p>This chapter contains a copy of the
+<code class="computeroutput">bzip2</code> man page, and nothing
+else.</p>
+<div class="sect1">
+<div class="titlepage"><div><div><h2 class="title" style="clear: both">
+<a name="name"></a>2.1. NAME</h2></div></div></div>
+<div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: bullet; ">
+<li class="listitem" style="list-style-type: disc"><p><code class="computeroutput">bzip2</code>,
+  <code class="computeroutput">bunzip2</code> - a block-sorting file
+  compressor, v1.0.8</p></li>
+<li class="listitem" style="list-style-type: disc"><p><code class="computeroutput">bzcat</code> -
+   decompresses files to stdout</p></li>
+<li class="listitem" style="list-style-type: disc"><p><code class="computeroutput">bzip2recover</code> -
+   recovers data from damaged bzip2 files</p></li>
+</ul></div>
+</div>
+<div class="sect1">
+<div class="titlepage"><div><div><h2 class="title" style="clear: both">
+<a name="synopsis"></a>2.2. SYNOPSIS</h2></div></div></div>
+<div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: bullet; ">
+<li class="listitem" style="list-style-type: disc"><p><code class="computeroutput">bzip2</code> [
+  -cdfkqstvzVL123456789 ] [ filenames ...  ]</p></li>
+<li class="listitem" style="list-style-type: disc"><p><code class="computeroutput">bunzip2</code> [
+  -fkvsVL ] [ filenames ...  ]</p></li>
+<li class="listitem" style="list-style-type: disc"><p><code class="computeroutput">bzcat</code> [ -s ] [
+  filenames ...  ]</p></li>
+<li class="listitem" style="list-style-type: disc"><p><code class="computeroutput">bzip2recover</code>
+  filename</p></li>
+</ul></div>
+</div>
+<div class="sect1">
+<div class="titlepage"><div><div><h2 class="title" style="clear: both">
+<a name="description"></a>2.3. DESCRIPTION</h2></div></div></div>
+<p><code class="computeroutput">bzip2</code> compresses files
+using the Burrows-Wheeler block sorting text compression
+algorithm, and Huffman coding.  Compression is generally
+considerably better than that achieved by more conventional
+LZ77/LZ78-based compressors, and approaches the performance of
+the PPM family of statistical compressors.</p>
+<p>The command-line options are deliberately very similar to
+those of GNU <code class="computeroutput">gzip</code>, but they are
+not identical.</p>
+<p><code class="computeroutput">bzip2</code> expects a list of
+file names to accompany the command-line flags.  Each file is
+replaced by a compressed version of itself, with the name
+<code class="computeroutput">original_name.bz2</code>.  Each
+compressed file has the same modification date, permissions, and,
+when possible, ownership as the corresponding original, so that
+these properties can be correctly restored at decompression time.
+File name handling is naive in the sense that there is no
+mechanism for preserving original file names, permissions,
+ownerships or dates in filesystems which lack these concepts, or
+have serious file name length restrictions, such as
+MS-DOS.</p>
+<p><code class="computeroutput">bzip2</code> and
+<code class="computeroutput">bunzip2</code> will by default not
+overwrite existing files.  If you want this to happen, specify
+the <code class="computeroutput">-f</code> flag.</p>
+<p>If no file names are specified,
+<code class="computeroutput">bzip2</code> compresses from standard
+input to standard output.  In this case,
+<code class="computeroutput">bzip2</code> will decline to write
+compressed output to a terminal, as this would be entirely
+incomprehensible and therefore pointless.</p>
+<p><code class="computeroutput">bunzip2</code> (or
+<code class="computeroutput">bzip2 -d</code>) decompresses all
+specified files.  Files which were not created by
+<code class="computeroutput">bzip2</code> will be detected and
+ignored, and a warning issued.
+<code class="computeroutput">bzip2</code> attempts to guess the
+filename for the decompressed file from that of the compressed
+file as follows:</p>
+<div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: bullet; ">
+<li class="listitem" style="list-style-type: disc"><p><code class="computeroutput">filename.bz2 </code>
+  becomes
+  <code class="computeroutput">filename</code></p></li>
+<li class="listitem" style="list-style-type: disc"><p><code class="computeroutput">filename.bz </code>
+  becomes
+  <code class="computeroutput">filename</code></p></li>
+<li class="listitem" style="list-style-type: disc"><p><code class="computeroutput">filename.tbz2</code>
+  becomes
+  <code class="computeroutput">filename.tar</code></p></li>
+<li class="listitem" style="list-style-type: disc"><p><code class="computeroutput">filename.tbz </code>
+  becomes
+  <code class="computeroutput">filename.tar</code></p></li>
+<li class="listitem" style="list-style-type: disc"><p><code class="computeroutput">anyothername </code>
+  becomes
+  <code class="computeroutput">anyothername.out</code></p></li>
+</ul></div>
+<p>If the file does not end in one of the recognised endings,
+<code class="computeroutput">.bz2</code>,
+<code class="computeroutput">.bz</code>,
+<code class="computeroutput">.tbz2</code> or
+<code class="computeroutput">.tbz</code>,
+<code class="computeroutput">bzip2</code> complains that it cannot
+guess the name of the original file, and uses the original name
+with <code class="computeroutput">.out</code> appended.</p>
+<p>As with compression, supplying no filenames causes
+decompression from standard input to standard output.</p>
+<p><code class="computeroutput">bunzip2</code> will correctly
+decompress a file which is the concatenation of two or more
+compressed files.  The result is the concatenation of the
+corresponding uncompressed files.  Integrity testing
+(<code class="computeroutput">-t</code>) of concatenated compressed
+files is also supported.</p>
+<p>You can also compress or decompress files to the standard
+output by giving the <code class="computeroutput">-c</code> flag.
+Multiple files may be compressed and decompressed like this.  The
+resulting outputs are fed sequentially to stdout.  Compression of
+multiple files in this manner generates a stream containing
+multiple compressed file representations.  Such a stream can be
+decompressed correctly only by
+<code class="computeroutput">bzip2</code> version 0.9.0 or later.
+Earlier versions of <code class="computeroutput">bzip2</code> will
+stop after decompressing the first file in the stream.</p>
+<p><code class="computeroutput">bzcat</code> (or
+<code class="computeroutput">bzip2 -dc</code>) decompresses all
+specified files to the standard output.</p>
+<p><code class="computeroutput">bzip2</code> will read arguments
+from the environment variables
+<code class="computeroutput">BZIP2</code> and
+<code class="computeroutput">BZIP</code>, in that order, and will
+process them before any arguments read from the command line.
+This gives a convenient way to supply default arguments.</p>
+<p>Compression is always performed, even if the compressed
+file is slightly larger than the original.  Files of less than
+about one hundred bytes tend to get larger, since the compression
+mechanism has a constant overhead in the region of 50 bytes.
+Random data (including the output of most file compressors) is
+coded at about 8.05 bits per byte, giving an expansion of around
+0.5%.</p>
+<p>As a self-check for your protection,
+<code class="computeroutput">bzip2</code> uses 32-bit CRCs to make
+sure that the decompressed version of a file is identical to the
+original.  This guards against corruption of the compressed data,
+and against undetected bugs in
+<code class="computeroutput">bzip2</code> (hopefully very unlikely).
+The chances of data corruption going undetected is microscopic,
+about one chance in four billion for each file processed.  Be
+aware, though, that the check occurs upon decompression, so it
+can only tell you that something is wrong.  It can't help you
+recover the original uncompressed data.  You can use
+<code class="computeroutput">bzip2recover</code> to try to recover
+data from damaged files.</p>
+<p>Return values: 0 for a normal exit, 1 for environmental
+problems (file not found, invalid flags, I/O errors, etc.), 2
+to indicate a corrupt compressed file, 3 for an internal
+consistency error (eg, bug) which caused
+<code class="computeroutput">bzip2</code> to panic.</p>
+</div>
+<div class="sect1">
+<div class="titlepage"><div><div><h2 class="title" style="clear: both">
+<a name="options"></a>2.4. OPTIONS</h2></div></div></div>
+<div class="variablelist"><dl class="variablelist">
+<dt><span class="term"><code class="computeroutput">-c --stdout</code></span></dt>
+<dd><p>Compress or decompress to standard
+  output.</p></dd>
+<dt><span class="term"><code class="computeroutput">-d --decompress</code></span></dt>
+<dd><p>Force decompression.
+  <code class="computeroutput">bzip2</code>,
+  <code class="computeroutput">bunzip2</code> and
+  <code class="computeroutput">bzcat</code> are really the same
+  program, and the decision about what actions to take is done on
+  the basis of which name is used.  This flag overrides that
+  mechanism, and forces bzip2 to decompress.</p></dd>
+<dt><span class="term"><code class="computeroutput">-z --compress</code></span></dt>
+<dd><p>The complement to
+  <code class="computeroutput">-d</code>: forces compression,
+  regardless of the invokation name.</p></dd>
+<dt><span class="term"><code class="computeroutput">-t --test</code></span></dt>
+<dd><p>Check integrity of the specified file(s), but
+  don't decompress them.  This really performs a trial
+  decompression and throws away the result.</p></dd>
+<dt><span class="term"><code class="computeroutput">-f --force</code></span></dt>
+<dd>
+<p>Force overwrite of output files.  Normally,
+  <code class="computeroutput">bzip2</code> will not overwrite
+  existing output files.  Also forces
+  <code class="computeroutput">bzip2</code> to break hard links to
+  files, which it otherwise wouldn't do.</p>
+<p><code class="computeroutput">bzip2</code> normally declines
+  to decompress files which don't have the correct magic header
+  bytes. If forced (<code class="computeroutput">-f</code>),
+  however, it will pass such files through unmodified. This is
+  how GNU <code class="computeroutput">gzip</code> behaves.</p>
+</dd>
+<dt><span class="term"><code class="computeroutput">-k --keep</code></span></dt>
+<dd><p>Keep (don't delete) input files during
+  compression or decompression.</p></dd>
+<dt><span class="term"><code class="computeroutput">-s --small</code></span></dt>
+<dd>
+<p>Reduce memory usage, for compression,
+  decompression and testing.  Files are decompressed and tested
+  using a modified algorithm which only requires 2.5 bytes per
+  block byte.  This means any file can be decompressed in 2300k
+  of memory, albeit at about half the normal speed.</p>
+<p>During compression, <code class="computeroutput">-s</code>
+  selects a block size of 200k, which limits memory use to around
+  the same figure, at the expense of your compression ratio.  In
+  short, if your machine is low on memory (8 megabytes or less),
+  use <code class="computeroutput">-s</code> for everything.  See
+  <a class="xref" href="#memory-management" title="2.5. MEMORY MANAGEMENT">MEMORY MANAGEMENT</a> below.</p>
+</dd>
+<dt><span class="term"><code class="computeroutput">-q --quiet</code></span></dt>
+<dd><p>Suppress non-essential warning messages.
+  Messages pertaining to I/O errors and other critical events
+  will not be suppressed.</p></dd>
+<dt><span class="term"><code class="computeroutput">-v --verbose</code></span></dt>
+<dd><p>Verbose mode -- show the compression ratio for
+  each file processed.  Further
+  <code class="computeroutput">-v</code>'s increase the verbosity
+  level, spewing out lots of information which is primarily of
+  interest for diagnostic purposes.</p></dd>
+<dt><span class="term"><code class="computeroutput">-L --license -V --version</code></span></dt>
+<dd><p>Display the software version, license terms and
+  conditions.</p></dd>
+<dt><span class="term"><code class="computeroutput">-1</code> (or
+ <code class="computeroutput">--fast</code>) to
+ <code class="computeroutput">-9</code> (or
+ <code class="computeroutput">-best</code>)</span></dt>
+<dd><p>Set the block size to 100 k, 200 k ...  900 k
+  when compressing.  Has no effect when decompressing.  See <a class="xref" href="#memory-management" title="2.5. MEMORY MANAGEMENT">MEMORY MANAGEMENT</a> below.  The
+  <code class="computeroutput">--fast</code> and
+  <code class="computeroutput">--best</code> aliases are primarily
+  for GNU <code class="computeroutput">gzip</code> compatibility.
+  In particular, <code class="computeroutput">--fast</code> doesn't
+  make things significantly faster.  And
+  <code class="computeroutput">--best</code> merely selects the
+  default behaviour.</p></dd>
+<dt><span class="term"><code class="computeroutput">--</code></span></dt>
+<dd><p>Treats all subsequent arguments as file names,
+  even if they start with a dash.  This is so you can handle
+  files with names beginning with a dash, for example:
+  <code class="computeroutput">bzip2 --
+  -myfilename</code>.</p></dd>
+<dt>
+<span class="term"><code class="computeroutput">--repetitive-fast</code>, </span><span class="term"><code class="computeroutput">--repetitive-best</code></span>
+</dt>
+<dd><p>These flags are redundant in versions 0.9.5 and
+  above.  They provided some coarse control over the behaviour of
+  the sorting algorithm in earlier versions, which was sometimes
+  useful.  0.9.5 and above have an improved algorithm which
+  renders these flags irrelevant.</p></dd>
+</dl></div>
+</div>
+<div class="sect1">
+<div class="titlepage"><div><div><h2 class="title" style="clear: both">
+<a name="memory-management"></a>2.5. MEMORY MANAGEMENT</h2></div></div></div>
+<p><code class="computeroutput">bzip2</code> compresses large
+files in blocks.  The block size affects both the compression
+ratio achieved, and the amount of memory needed for compression
+and decompression.  The flags <code class="computeroutput">-1</code>
+through <code class="computeroutput">-9</code> specify the block
+size to be 100,000 bytes through 900,000 bytes (the default)
+respectively.  At decompression time, the block size used for
+compression is read from the header of the compressed file, and
+<code class="computeroutput">bunzip2</code> then allocates itself
+just enough memory to decompress the file.  Since block sizes are
+stored in compressed files, it follows that the flags
+<code class="computeroutput">-1</code> to
+<code class="computeroutput">-9</code> are irrelevant to and so
+ignored during decompression.</p>
+<p>Compression and decompression requirements, in bytes, can be
+estimated as:</p>
+<pre class="programlisting">Compression:   400k + ( 8 x block size )
+
+Decompression: 100k + ( 4 x block size ), or
+               100k + ( 2.5 x block size )</pre>
+<p>Larger block sizes give rapidly diminishing marginal
+returns.  Most of the compression comes from the first two or
+three hundred k of block size, a fact worth bearing in mind when
+using <code class="computeroutput">bzip2</code> on small machines.
+It is also important to appreciate that the decompression memory
+requirement is set at compression time by the choice of block
+size.</p>
+<p>For files compressed with the default 900k block size,
+<code class="computeroutput">bunzip2</code> will require about 3700
+kbytes to decompress.  To support decompression of any file on a
+4 megabyte machine, <code class="computeroutput">bunzip2</code> has
+an option to decompress using approximately half this amount of
+memory, about 2300 kbytes.  Decompression speed is also halved,
+so you should use this option only where necessary.  The relevant
+flag is <code class="computeroutput">-s</code>.</p>
+<p>In general, try and use the largest block size memory
+constraints allow, since that maximises the compression achieved.
+Compression and decompression speed are virtually unaffected by
+block size.</p>
+<p>Another significant point applies to files which fit in a
+single block -- that means most files you'd encounter using a
+large block size.  The amount of real memory touched is
+proportional to the size of the file, since the file is smaller
+than a block.  For example, compressing a file 20,000 bytes long
+with the flag <code class="computeroutput">-9</code> will cause the
+compressor to allocate around 7600k of memory, but only touch
+400k + 20000 * 8 = 560 kbytes of it.  Similarly, the decompressor
+will allocate 3700k but only touch 100k + 20000 * 4 = 180
+kbytes.</p>
+<p>Here is a table which summarises the maximum memory usage
+for different block sizes.  Also recorded is the total compressed
+size for 14 files of the Calgary Text Compression Corpus
+totalling 3,141,622 bytes.  This column gives some feel for how
+compression varies with block size.  These figures tend to
+understate the advantage of larger block sizes for larger files,
+since the Corpus is dominated by smaller files.</p>
+<pre class="programlisting">        Compress   Decompress   Decompress   Corpus
+Flag     usage      usage       -s usage     Size
+
+ -1      1200k       500k         350k      914704
+ -2      2000k       900k         600k      877703
+ -3      2800k      1300k         850k      860338
+ -4      3600k      1700k        1100k      846899
+ -5      4400k      2100k        1350k      845160
+ -6      5200k      2500k        1600k      838626
+ -7      6100k      2900k        1850k      834096
+ -8      6800k      3300k        2100k      828642
+ -9      7600k      3700k        2350k      828642</pre>
+</div>
+<div class="sect1">
+<div class="titlepage"><div><div><h2 class="title" style="clear: both">
+<a name="recovering"></a>2.6. RECOVERING DATA FROM DAMAGED FILES</h2></div></div></div>
+<p><code class="computeroutput">bzip2</code> compresses files in
+blocks, usually 900kbytes long.  Each block is handled
+independently.  If a media or transmission error causes a
+multi-block <code class="computeroutput">.bz2</code> file to become
+damaged, it may be possible to recover data from the undamaged
+blocks in the file.</p>
+<p>The compressed representation of each block is delimited by
+a 48-bit pattern, which makes it possible to find the block
+boundaries with reasonable certainty.  Each block also carries
+its own 32-bit CRC, so damaged blocks can be distinguished from
+undamaged ones.</p>
+<p><code class="computeroutput">bzip2recover</code> is a simple
+program whose purpose is to search for blocks in
+<code class="computeroutput">.bz2</code> files, and write each block
+out into its own <code class="computeroutput">.bz2</code> file.  You
+can then use <code class="computeroutput">bzip2 -t</code> to test
+the integrity of the resulting files, and decompress those which
+are undamaged.</p>
+<p><code class="computeroutput">bzip2recover</code> takes a
+single argument, the name of the damaged file, and writes a
+number of files <code class="computeroutput">rec0001file.bz2</code>,
+<code class="computeroutput">rec0002file.bz2</code>, etc, containing
+the extracted blocks.  The output filenames are designed so that
+the use of wildcards in subsequent processing -- for example,
+<code class="computeroutput">bzip2 -dc rec*file.bz2 &gt;
+recovered_data</code> -- lists the files in the correct
+order.</p>
+<p><code class="computeroutput">bzip2recover</code> should be of
+most use dealing with large <code class="computeroutput">.bz2</code>
+files, as these will contain many blocks.  It is clearly futile
+to use it on damaged single-block files, since a damaged block
+cannot be recovered.  If you wish to minimise any potential data
+loss through media or transmission errors, you might consider
+compressing with a smaller block size.</p>
+</div>
+<div class="sect1">
+<div class="titlepage"><div><div><h2 class="title" style="clear: both">
+<a name="performance"></a>2.7. PERFORMANCE NOTES</h2></div></div></div>
+<p>The sorting phase of compression gathers together similar
+strings in the file.  Because of this, files containing very long
+runs of repeated symbols, like "aabaabaabaab ..."  (repeated
+several hundred times) may compress more slowly than normal.
+Versions 0.9.5 and above fare much better than previous versions
+in this respect.  The ratio between worst-case and average-case
+compression time is in the region of 10:1.  For previous
+versions, this figure was more like 100:1.  You can use the
+<code class="computeroutput">-vvvv</code> option to monitor progress
+in great detail, if you want.</p>
+<p>Decompression speed is unaffected by these
+phenomena.</p>
+<p><code class="computeroutput">bzip2</code> usually allocates
+several megabytes of memory to operate in, and then charges all
+over it in a fairly random fashion.  This means that performance,
+both for compressing and decompressing, is largely determined by
+the speed at which your machine can service cache misses.
+Because of this, small changes to the code to reduce the miss
+rate have been observed to give disproportionately large
+performance improvements.  I imagine
+<code class="computeroutput">bzip2</code> will perform best on
+machines with very large caches.</p>
+</div>
+<div class="sect1">
+<div class="titlepage"><div><div><h2 class="title" style="clear: both">
+<a name="caveats"></a>2.8. CAVEATS</h2></div></div></div>
+<p>I/O error messages are not as helpful as they could be.
+<code class="computeroutput">bzip2</code> tries hard to detect I/O
+errors and exit cleanly, but the details of what the problem is
+sometimes seem rather misleading.</p>
+<p>This manual page pertains to version 1.0.8 of
+<code class="computeroutput">bzip2</code>.  Compressed data created by
+this version is entirely forwards and backwards compatible with the
+previous public releases, versions 0.1pl2, 0.9.0 and 0.9.5, 1.0.0,
+1.0.1, 1.0.2 and 1.0.3, but with the following exception: 0.9.0 and
+above can correctly decompress multiple concatenated compressed files.
+0.1pl2 cannot do this; it will stop after decompressing just the first
+file in the stream.</p>
+<p><code class="computeroutput">bzip2recover</code> versions
+prior to 1.0.2 used 32-bit integers to represent bit positions in
+compressed files, so it could not handle compressed files more
+than 512 megabytes long.  Versions 1.0.2 and above use 64-bit ints
+on some platforms which support them (GNU supported targets, and
+Windows). To establish whether or not
+<code class="computeroutput">bzip2recover</code> was built with such
+a limitation, run it without arguments. In any event you can
+build yourself an unlimited version if you can recompile it with
+<code class="computeroutput">MaybeUInt64</code> set to be an
+unsigned 64-bit integer.</p>
+</div>
+<div class="sect1">
+<div class="titlepage"><div><div><h2 class="title" style="clear: both">
+<a name="author"></a>2.9. AUTHOR</h2></div></div></div>
+<p>Julian Seward,
+<code class="computeroutput">jseward@acm.org</code></p>
+<p>The ideas embodied in
+<code class="computeroutput">bzip2</code> are due to (at least) the
+following people: Michael Burrows and David Wheeler (for the
+block sorting transformation), David Wheeler (again, for the
+Huffman coder), Peter Fenwick (for the structured coding model in
+the original <code class="computeroutput">bzip</code>, and many
+refinements), and Alistair Moffat, Radford Neal and Ian Witten
+(for the arithmetic coder in the original
+<code class="computeroutput">bzip</code>).  I am much indebted for
+their help, support and advice.  See the manual in the source
+distribution for pointers to sources of documentation.  Christian
+von Roques encouraged me to look for faster sorting algorithms,
+so as to speed up compression.  Bela Lubkin encouraged me to
+improve the worst-case compression performance.  
+Donna Robinson XMLised the documentation.
+Many people sent
+patches, helped with portability problems, lent machines, gave
+advice and were generally helpful.</p>
+</div>
+</div>
+<div class="chapter">
+<div class="titlepage"><div><div><h1 class="title">
+<a name="libprog"></a>3. 
+Programming with <code class="computeroutput">libbzip2</code>
+</h1></div></div></div>
+<div class="toc">
+<p><b>Table of Contents</b></p>
+<dl class="toc">
+<dt><span class="sect1"><a href="#top-level">3.1. Top-level structure</a></span></dt>
+<dd><dl>
+<dt><span class="sect2"><a href="#ll-summary">3.1.1. Low-level summary</a></span></dt>
+<dt><span class="sect2"><a href="#hl-summary">3.1.2. High-level summary</a></span></dt>
+<dt><span class="sect2"><a href="#util-fns-summary">3.1.3. Utility functions summary</a></span></dt>
+</dl></dd>
+<dt><span class="sect1"><a href="#err-handling">3.2. Error handling</a></span></dt>
+<dt><span class="sect1"><a href="#low-level">3.3. Low-level interface</a></span></dt>
+<dd><dl>
+<dt><span class="sect2"><a href="#bzcompress-init">3.3.1. BZ2_bzCompressInit</a></span></dt>
+<dt><span class="sect2"><a href="#bzCompress">3.3.2. BZ2_bzCompress</a></span></dt>
+<dt><span class="sect2"><a href="#bzCompress-end">3.3.3. BZ2_bzCompressEnd</a></span></dt>
+<dt><span class="sect2"><a href="#bzDecompress-init">3.3.4. BZ2_bzDecompressInit</a></span></dt>
+<dt><span class="sect2"><a href="#bzDecompress">3.3.5. BZ2_bzDecompress</a></span></dt>
+<dt><span class="sect2"><a href="#bzDecompress-end">3.3.6. BZ2_bzDecompressEnd</a></span></dt>
+</dl></dd>
+<dt><span class="sect1"><a href="#hl-interface">3.4. High-level interface</a></span></dt>
+<dd><dl>
+<dt><span class="sect2"><a href="#bzreadopen">3.4.1. BZ2_bzReadOpen</a></span></dt>
+<dt><span class="sect2"><a href="#bzread">3.4.2. BZ2_bzRead</a></span></dt>
+<dt><span class="sect2"><a href="#bzreadgetunused">3.4.3. BZ2_bzReadGetUnused</a></span></dt>
+<dt><span class="sect2"><a href="#bzreadclose">3.4.4. BZ2_bzReadClose</a></span></dt>
+<dt><span class="sect2"><a href="#bzwriteopen">3.4.5. BZ2_bzWriteOpen</a></span></dt>
+<dt><span class="sect2"><a href="#bzwrite">3.4.6. BZ2_bzWrite</a></span></dt>
+<dt><span class="sect2"><a href="#bzwriteclose">3.4.7. BZ2_bzWriteClose</a></span></dt>
+<dt><span class="sect2"><a href="#embed">3.4.8. Handling embedded compressed data streams</a></span></dt>
+<dt><span class="sect2"><a href="#std-rdwr">3.4.9. Standard file-reading/writing code</a></span></dt>
+</dl></dd>
+<dt><span class="sect1"><a href="#util-fns">3.5. Utility functions</a></span></dt>
+<dd><dl>
+<dt><span class="sect2"><a href="#bzbufftobuffcompress">3.5.1. BZ2_bzBuffToBuffCompress</a></span></dt>
+<dt><span class="sect2"><a href="#bzbufftobuffdecompress">3.5.2. BZ2_bzBuffToBuffDecompress</a></span></dt>
+</dl></dd>
+<dt><span class="sect1"><a href="#zlib-compat">3.6. zlib compatibility functions</a></span></dt>
+<dt><span class="sect1"><a href="#stdio-free">3.7. Using the library in a stdio-free environment</a></span></dt>
+<dd><dl>
+<dt><span class="sect2"><a href="#stdio-bye">3.7.1. Getting rid of stdio</a></span></dt>
+<dt><span class="sect2"><a href="#critical-error">3.7.2. Critical error handling</a></span></dt>
+</dl></dd>
+<dt><span class="sect1"><a href="#win-dll">3.8. Making a Windows DLL</a></span></dt>
+</dl>
+</div>
+<p>This chapter describes the programming interface to
+<code class="computeroutput">libbzip2</code>.</p>
+<p>For general background information, particularly about
+memory use and performance aspects, you'd be well advised to read
+<a class="xref" href="#using" title="2. How to use bzip2">How to use bzip2</a> as well.</p>
+<div class="sect1">
+<div class="titlepage"><div><div><h2 class="title" style="clear: both">
+<a name="top-level"></a>3.1. Top-level structure</h2></div></div></div>
+<p><code class="computeroutput">libbzip2</code> is a flexible
+library for compressing and decompressing data in the
+<code class="computeroutput">bzip2</code> data format.  Although
+packaged as a single entity, it helps to regard the library as
+three separate parts: the low level interface, and the high level
+interface, and some utility functions.</p>
+<p>The structure of
+<code class="computeroutput">libbzip2</code>'s interfaces is similar
+to that of Jean-loup Gailly's and Mark Adler's excellent
+<code class="computeroutput">zlib</code> library.</p>
+<p>All externally visible symbols have names beginning
+<code class="computeroutput">BZ2_</code>.  This is new in version
+1.0.  The intention is to minimise pollution of the namespaces of
+library clients.</p>
+<p>To use any part of the library, you need to
+<code class="computeroutput">#include &lt;bzlib.h&gt;</code>
+into your sources.</p>
+<div class="sect2">
+<div class="titlepage"><div><div><h3 class="title">
+<a name="ll-summary"></a>3.1.1. Low-level summary</h3></div></div></div>
+<p>This interface provides services for compressing and
+decompressing data in memory.  There's no provision for dealing
+with files, streams or any other I/O mechanisms, just straight
+memory-to-memory work.  In fact, this part of the library can be
+compiled without inclusion of
+<code class="computeroutput">stdio.h</code>, which may be helpful
+for embedded applications.</p>
+<p>The low-level part of the library has no global variables
+and is therefore thread-safe.</p>
+<p>Six routines make up the low level interface:
+<code class="computeroutput">BZ2_bzCompressInit</code>,
+<code class="computeroutput">BZ2_bzCompress</code>, and
+<code class="computeroutput">BZ2_bzCompressEnd</code> for
+compression, and a corresponding trio
+<code class="computeroutput">BZ2_bzDecompressInit</code>,
+<code class="computeroutput">BZ2_bzDecompress</code> and
+<code class="computeroutput">BZ2_bzDecompressEnd</code> for
+decompression.  The <code class="computeroutput">*Init</code>
+functions allocate memory for compression/decompression and do
+other initialisations, whilst the
+<code class="computeroutput">*End</code> functions close down
+operations and release memory.</p>
+<p>The real work is done by
+<code class="computeroutput">BZ2_bzCompress</code> and
+<code class="computeroutput">BZ2_bzDecompress</code>.  These
+compress and decompress data from a user-supplied input buffer to
+a user-supplied output buffer.  These buffers can be any size;
+arbitrary quantities of data are handled by making repeated calls
+to these functions.  This is a flexible mechanism allowing a
+consumer-pull style of activity, or producer-push, or a mixture
+of both.</p>
+</div>
+<div class="sect2">
+<div class="titlepage"><div><div><h3 class="title">
+<a name="hl-summary"></a>3.1.2. High-level summary</h3></div></div></div>
+<p>This interface provides some handy wrappers around the
+low-level interface to facilitate reading and writing
+<code class="computeroutput">bzip2</code> format files
+(<code class="computeroutput">.bz2</code> files).  The routines
+provide hooks to facilitate reading files in which the
+<code class="computeroutput">bzip2</code> data stream is embedded
+within some larger-scale file structure, or where there are
+multiple <code class="computeroutput">bzip2</code> data streams
+concatenated end-to-end.</p>
+<p>For reading files,
+<code class="computeroutput">BZ2_bzReadOpen</code>,
+<code class="computeroutput">BZ2_bzRead</code>,
+<code class="computeroutput">BZ2_bzReadClose</code> and 
+<code class="computeroutput">BZ2_bzReadGetUnused</code> are
+supplied.  For writing files,
+<code class="computeroutput">BZ2_bzWriteOpen</code>,
+<code class="computeroutput">BZ2_bzWrite</code> and
+<code class="computeroutput">BZ2_bzWriteFinish</code> are
+available.</p>
+<p>As with the low-level library, no global variables are used
+so the library is per se thread-safe.  However, if I/O errors
+occur whilst reading or writing the underlying compressed files,
+you may have to consult <code class="computeroutput">errno</code> to
+determine the cause of the error.  In that case, you'd need a C
+library which correctly supports
+<code class="computeroutput">errno</code> in a multithreaded
+environment.</p>
+<p>To make the library a little simpler and more portable,
+<code class="computeroutput">BZ2_bzReadOpen</code> and
+<code class="computeroutput">BZ2_bzWriteOpen</code> require you to
+pass them file handles (<code class="computeroutput">FILE*</code>s)
+which have previously been opened for reading or writing
+respectively.  That avoids portability problems associated with
+file operations and file attributes, whilst not being much of an
+imposition on the programmer.</p>
+</div>
+<div class="sect2">
+<div class="titlepage"><div><div><h3 class="title">
+<a name="util-fns-summary"></a>3.1.3. Utility functions summary</h3></div></div></div>
+<p>For very simple needs,
+<code class="computeroutput">BZ2_bzBuffToBuffCompress</code> and
+<code class="computeroutput">BZ2_bzBuffToBuffDecompress</code> are
+provided.  These compress data in memory from one buffer to
+another buffer in a single function call.  You should assess
+whether these functions fulfill your memory-to-memory
+compression/decompression requirements before investing effort in
+understanding the more general but more complex low-level
+interface.</p>
+<p>Yoshioka Tsuneo
+(<code class="computeroutput">tsuneo@rr.iij4u.or.jp</code>) has
+contributed some functions to give better
+<code class="computeroutput">zlib</code> compatibility.  These
+functions are <code class="computeroutput">BZ2_bzopen</code>,
+<code class="computeroutput">BZ2_bzread</code>,
+<code class="computeroutput">BZ2_bzwrite</code>,
+<code class="computeroutput">BZ2_bzflush</code>,
+<code class="computeroutput">BZ2_bzclose</code>,
+<code class="computeroutput">BZ2_bzerror</code> and
+<code class="computeroutput">BZ2_bzlibVersion</code>.  You may find
+these functions more convenient for simple file reading and
+writing, than those in the high-level interface.  These functions
+are not (yet) officially part of the library, and are minimally
+documented here.  If they break, you get to keep all the pieces.
+I hope to document them properly when time permits.</p>
+<p>Yoshioka also contributed modifications to allow the
+library to be built as a Windows DLL.</p>
+</div>
+</div>
+<div class="sect1">
+<div class="titlepage"><div><div><h2 class="title" style="clear: both">
+<a name="err-handling"></a>3.2. Error handling</h2></div></div></div>
+<p>The library is designed to recover cleanly in all
+situations, including the worst-case situation of decompressing
+random data.  I'm not 100% sure that it can always do this, so
+you might want to add a signal handler to catch segmentation
+violations during decompression if you are feeling especially
+paranoid.  I would be interested in hearing more about the
+robustness of the library to corrupted compressed data.</p>
+<p>Version 1.0.3 more robust in this respect than any
+previous version.  Investigations with Valgrind (a tool for detecting
+problems with memory management) indicate
+that, at least for the few files I tested, all single-bit errors
+in the decompressed data are caught properly, with no
+segmentation faults, no uses of uninitialised data, no out of
+range reads or writes, and no infinite looping in the decompressor.
+So it's certainly pretty robust, although
+I wouldn't claim it to be totally bombproof.</p>
+<p>The file <code class="computeroutput">bzlib.h</code> contains
+all definitions needed to use the library.  In particular, you
+should definitely not include
+<code class="computeroutput">bzlib_private.h</code>.</p>
+<p>In <code class="computeroutput">bzlib.h</code>, the various
+return values are defined.  The following list is not intended as
+an exhaustive description of the circumstances in which a given
+value may be returned -- those descriptions are given later.
+Rather, it is intended to convey the rough meaning of each return
+value.  The first five actions are normal and not intended to
+denote an error situation.</p>
+<div class="variablelist"><dl class="variablelist">
+<dt><span class="term"><code class="computeroutput">BZ_OK</code></span></dt>
+<dd><p>The requested action was completed
+   successfully.</p></dd>
+<dt><span class="term"><code class="computeroutput">BZ_RUN_OK, BZ_FLUSH_OK,
+    BZ_FINISH_OK</code></span></dt>
+<dd><p>In 
+   <code class="computeroutput">BZ2_bzCompress</code>, the requested
+   flush/finish/nothing-special action was completed
+   successfully.</p></dd>
+<dt><span class="term"><code class="computeroutput">BZ_STREAM_END</code></span></dt>
+<dd><p>Compression of data was completed, or the
+   logical stream end was detected during
+   decompression.</p></dd>
+</dl></div>
+<p>The following return values indicate an error of some
+kind.</p>
+<div class="variablelist"><dl class="variablelist">
+<dt><span class="term"><code class="computeroutput">BZ_CONFIG_ERROR</code></span></dt>
+<dd><p>Indicates that the library has been improperly
+   compiled on your platform -- a major configuration error.
+   Specifically, it means that
+   <code class="computeroutput">sizeof(char)</code>,
+   <code class="computeroutput">sizeof(short)</code> and
+   <code class="computeroutput">sizeof(int)</code> are not 1, 2 and
+   4 respectively, as they should be.  Note that the library
+   should still work properly on 64-bit platforms which follow
+   the LP64 programming model -- that is, where
+   <code class="computeroutput">sizeof(long)</code> and
+   <code class="computeroutput">sizeof(void*)</code> are 8.  Under
+   LP64, <code class="computeroutput">sizeof(int)</code> is still 4,
+   so <code class="computeroutput">libbzip2</code>, which doesn't
+   use the <code class="computeroutput">long</code> type, is
+   OK.</p></dd>
+<dt><span class="term"><code class="computeroutput">BZ_SEQUENCE_ERROR</code></span></dt>
+<dd><p>When using the library, it is important to call
+   the functions in the correct sequence and with data structures
+   (buffers etc) in the correct states.
+   <code class="computeroutput">libbzip2</code> checks as much as it
+   can to ensure this is happening, and returns
+   <code class="computeroutput">BZ_SEQUENCE_ERROR</code> if not.
+   Code which complies precisely with the function semantics, as
+   detailed below, should never receive this value; such an event
+   denotes buggy code which you should
+   investigate.</p></dd>
+<dt><span class="term"><code class="computeroutput">BZ_PARAM_ERROR</code></span></dt>
+<dd><p>Returned when a parameter to a function call is
+   out of range or otherwise manifestly incorrect.  As with
+   <code class="computeroutput">BZ_SEQUENCE_ERROR</code>, this
+   denotes a bug in the client code.  The distinction between
+   <code class="computeroutput">BZ_PARAM_ERROR</code> and
+   <code class="computeroutput">BZ_SEQUENCE_ERROR</code> is a bit
+   hazy, but still worth making.</p></dd>
+<dt><span class="term"><code class="computeroutput">BZ_MEM_ERROR</code></span></dt>
+<dd><p>Returned when a request to allocate memory
+   failed.  Note that the quantity of memory needed to decompress
+   a stream cannot be determined until the stream's header has
+   been read.  So
+   <code class="computeroutput">BZ2_bzDecompress</code> and
+   <code class="computeroutput">BZ2_bzRead</code> may return
+   <code class="computeroutput">BZ_MEM_ERROR</code> even though some
+   of the compressed data has been read.  The same is not true
+   for compression; once
+   <code class="computeroutput">BZ2_bzCompressInit</code> or
+   <code class="computeroutput">BZ2_bzWriteOpen</code> have
+   successfully completed,
+   <code class="computeroutput">BZ_MEM_ERROR</code> cannot
+   occur.</p></dd>
+<dt><span class="term"><code class="computeroutput">BZ_DATA_ERROR</code></span></dt>
+<dd><p>Returned when a data integrity error is
+   detected during decompression.  Most importantly, this means
+   when stored and computed CRCs for the data do not match.  This
+   value is also returned upon detection of any other anomaly in
+   the compressed data.</p></dd>
+<dt><span class="term"><code class="computeroutput">BZ_DATA_ERROR_MAGIC</code></span></dt>
+<dd><p>As a special case of
+   <code class="computeroutput">BZ_DATA_ERROR</code>, it is
+   sometimes useful to know when the compressed stream does not
+   start with the correct magic bytes (<code class="computeroutput">'B' 'Z'
+   'h'</code>).</p></dd>
+<dt><span class="term"><code class="computeroutput">BZ_IO_ERROR</code></span></dt>
+<dd><p>Returned by
+   <code class="computeroutput">BZ2_bzRead</code> and
+   <code class="computeroutput">BZ2_bzWrite</code> when there is an
+   error reading or writing in the compressed file, and by
+   <code class="computeroutput">BZ2_bzReadOpen</code> and
+   <code class="computeroutput">BZ2_bzWriteOpen</code> for attempts
+   to use a file for which the error indicator (viz,
+   <code class="computeroutput">ferror(f)</code>) is set.  On
+   receipt of <code class="computeroutput">BZ_IO_ERROR</code>, the
+   caller should consult <code class="computeroutput">errno</code>
+   and/or <code class="computeroutput">perror</code> to acquire
+   operating-system specific information about the
+   problem.</p></dd>
+<dt><span class="term"><code class="computeroutput">BZ_UNEXPECTED_EOF</code></span></dt>
+<dd><p>Returned by
+   <code class="computeroutput">BZ2_bzRead</code> when the
+   compressed file finishes before the logical end of stream is
+   detected.</p></dd>
+<dt><span class="term"><code class="computeroutput">BZ_OUTBUFF_FULL</code></span></dt>
+<dd><p>Returned by
+   <code class="computeroutput">BZ2_bzBuffToBuffCompress</code> and
+   <code class="computeroutput">BZ2_bzBuffToBuffDecompress</code> to
+   indicate that the output data will not fit into the output
+   buffer provided.</p></dd>
+</dl></div>
+</div>
+<div class="sect1">
+<div class="titlepage"><div><div><h2 class="title" style="clear: both">
+<a name="low-level"></a>3.3. Low-level interface</h2></div></div></div>
+<div class="sect2">
+<div class="titlepage"><div><div><h3 class="title">
+<a name="bzcompress-init"></a>3.3.1. BZ2_bzCompressInit</h3></div></div></div>
+<pre class="programlisting">typedef struct {
+  char *next_in;
+  unsigned int avail_in;
+  unsigned int total_in_lo32;
+  unsigned int total_in_hi32;
+
+  char *next_out;
+  unsigned int avail_out;
+  unsigned int total_out_lo32;
+  unsigned int total_out_hi32;
+
+  void *state;
+
+  void *(*bzalloc)(void *,int,int);
+  void (*bzfree)(void *,void *);
+  void *opaque;
+} bz_stream;
+
+int BZ2_bzCompressInit ( bz_stream *strm, 
+                         int blockSize100k, 
+                         int verbosity,
+                         int workFactor );</pre>
+<p>Prepares for compression.  The
+<code class="computeroutput">bz_stream</code> structure holds all
+data pertaining to the compression activity.  A
+<code class="computeroutput">bz_stream</code> structure should be
+allocated and initialised prior to the call.  The fields of
+<code class="computeroutput">bz_stream</code> comprise the entirety
+of the user-visible data.  <code class="computeroutput">state</code>
+is a pointer to the private data structures required for
+compression.</p>
+<p>Custom memory allocators are supported, via fields
+<code class="computeroutput">bzalloc</code>,
+<code class="computeroutput">bzfree</code>, and
+<code class="computeroutput">opaque</code>.  The value
+<code class="computeroutput">opaque</code> is passed to as the first
+argument to all calls to <code class="computeroutput">bzalloc</code>
+and <code class="computeroutput">bzfree</code>, but is otherwise
+ignored by the library.  The call <code class="computeroutput">bzalloc (
+opaque, n, m )</code> is expected to return a pointer
+<code class="computeroutput">p</code> to <code class="computeroutput">n *
+m</code> bytes of memory, and <code class="computeroutput">bzfree (
+opaque, p )</code> should free that memory.</p>
+<p>If you don't want to use a custom memory allocator, set
+<code class="computeroutput">bzalloc</code>,
+<code class="computeroutput">bzfree</code> and
+<code class="computeroutput">opaque</code> to
+<code class="computeroutput">NULL</code>, and the library will then
+use the standard <code class="computeroutput">malloc</code> /
+<code class="computeroutput">free</code> routines.</p>
+<p>Before calling
+<code class="computeroutput">BZ2_bzCompressInit</code>, fields
+<code class="computeroutput">bzalloc</code>,
+<code class="computeroutput">bzfree</code> and
+<code class="computeroutput">opaque</code> should be filled
+appropriately, as just described.  Upon return, the internal
+state will have been allocated and initialised, and
+<code class="computeroutput">total_in_lo32</code>,
+<code class="computeroutput">total_in_hi32</code>,
+<code class="computeroutput">total_out_lo32</code> and
+<code class="computeroutput">total_out_hi32</code> will have been
+set to zero.  These four fields are used by the library to inform
+the caller of the total amount of data passed into and out of the
+library, respectively.  You should not try to change them.  As of
+version 1.0, 64-bit counts are maintained, even on 32-bit
+platforms, using the <code class="computeroutput">_hi32</code>
+fields to store the upper 32 bits of the count.  So, for example,
+the total amount of data in is <code class="computeroutput">(total_in_hi32
+&lt;&lt; 32) + total_in_lo32</code>.</p>
+<p>Parameter <code class="computeroutput">blockSize100k</code>
+specifies the block size to be used for compression.  It should
+be a value between 1 and 9 inclusive, and the actual block size
+used is 100000 x this figure.  9 gives the best compression but
+takes most memory.</p>
+<p>Parameter <code class="computeroutput">verbosity</code> should
+be set to a number between 0 and 4 inclusive.  0 is silent, and
+greater numbers give increasingly verbose monitoring/debugging
+output.  If the library has been compiled with
+<code class="computeroutput">-DBZ_NO_STDIO</code>, no such output
+will appear for any verbosity setting.</p>
+<p>Parameter <code class="computeroutput">workFactor</code>
+controls how the compression phase behaves when presented with
+worst case, highly repetitive, input data.  If compression runs
+into difficulties caused by repetitive data, the library switches
+from the standard sorting algorithm to a fallback algorithm.  The
+fallback is slower than the standard algorithm by perhaps a
+factor of three, but always behaves reasonably, no matter how bad
+the input.</p>
+<p>Lower values of <code class="computeroutput">workFactor</code>
+reduce the amount of effort the standard algorithm will expend
+before resorting to the fallback.  You should set this parameter
+carefully; too low, and many inputs will be handled by the
+fallback algorithm and so compress rather slowly, too high, and
+your average-to-worst case compression times can become very
+large.  The default value of 30 gives reasonable behaviour over a
+wide range of circumstances.</p>
+<p>Allowable values range from 0 to 250 inclusive.  0 is a
+special case, equivalent to using the default value of 30.</p>
+<p>Note that the compressed output generated is the same
+regardless of whether or not the fallback algorithm is
+used.</p>
+<p>Be aware also that this parameter may disappear entirely in
+future versions of the library.  In principle it should be
+possible to devise a good way to automatically choose which
+algorithm to use.  Such a mechanism would render the parameter
+obsolete.</p>
+<p>Possible return values:</p>
+<pre class="programlisting">BZ_CONFIG_ERROR
+  if the library has been mis-compiled
+BZ_PARAM_ERROR
+  if strm is NULL 
+  or blockSize &lt; 1 or blockSize &gt; 9
+  or verbosity &lt; 0 or verbosity &gt; 4
+  or workFactor &lt; 0 or workFactor &gt; 250
+BZ_MEM_ERROR 
+  if not enough memory is available
+BZ_OK 
+  otherwise</pre>
+<p>Allowable next actions:</p>
+<pre class="programlisting">BZ2_bzCompress
+  if BZ_OK is returned
+  no specific action needed in case of error</pre>
+</div>
+<div class="sect2">
+<div class="titlepage"><div><div><h3 class="title">
+<a name="bzCompress"></a>3.3.2. BZ2_bzCompress</h3></div></div></div>
+<pre class="programlisting">int BZ2_bzCompress ( bz_stream *strm, int action );</pre>
+<p>Provides more input and/or output buffer space for the
+library.  The caller maintains input and output buffers, and
+calls <code class="computeroutput">BZ2_bzCompress</code> to transfer
+data between them.</p>
+<p>Before each call to
+<code class="computeroutput">BZ2_bzCompress</code>,
+<code class="computeroutput">next_in</code> should point at the data
+to be compressed, and <code class="computeroutput">avail_in</code>
+should indicate how many bytes the library may read.
+<code class="computeroutput">BZ2_bzCompress</code> updates
+<code class="computeroutput">next_in</code>,
+<code class="computeroutput">avail_in</code> and
+<code class="computeroutput">total_in</code> to reflect the number
+of bytes it has read.</p>
+<p>Similarly, <code class="computeroutput">next_out</code> should
+point to a buffer in which the compressed data is to be placed,
+with <code class="computeroutput">avail_out</code> indicating how
+much output space is available.
+<code class="computeroutput">BZ2_bzCompress</code> updates
+<code class="computeroutput">next_out</code>,
+<code class="computeroutput">avail_out</code> and
+<code class="computeroutput">total_out</code> to reflect the number
+of bytes output.</p>
+<p>You may provide and remove as little or as much data as you
+like on each call of
+<code class="computeroutput">BZ2_bzCompress</code>.  In the limit,
+it is acceptable to supply and remove data one byte at a time,
+although this would be terribly inefficient.  You should always
+ensure that at least one byte of output space is available at
+each call.</p>
+<p>A second purpose of
+<code class="computeroutput">BZ2_bzCompress</code> is to request a
+change of mode of the compressed stream.</p>
+<p>Conceptually, a compressed stream can be in one of four
+states: IDLE, RUNNING, FLUSHING and FINISHING.  Before
+initialisation
+(<code class="computeroutput">BZ2_bzCompressInit</code>) and after
+termination (<code class="computeroutput">BZ2_bzCompressEnd</code>),
+a stream is regarded as IDLE.</p>
+<p>Upon initialisation
+(<code class="computeroutput">BZ2_bzCompressInit</code>), the stream
+is placed in the RUNNING state.  Subsequent calls to
+<code class="computeroutput">BZ2_bzCompress</code> should pass
+<code class="computeroutput">BZ_RUN</code> as the requested action;
+other actions are illegal and will result in
+<code class="computeroutput">BZ_SEQUENCE_ERROR</code>.</p>
+<p>At some point, the calling program will have provided all
+the input data it wants to.  It will then want to finish up -- in
+effect, asking the library to process any data it might have
+buffered internally.  In this state,
+<code class="computeroutput">BZ2_bzCompress</code> will no longer
+attempt to read data from
+<code class="computeroutput">next_in</code>, but it will want to
+write data to <code class="computeroutput">next_out</code>.  Because
+the output buffer supplied by the user can be arbitrarily small,
+the finishing-up operation cannot necessarily be done with a
+single call of
+<code class="computeroutput">BZ2_bzCompress</code>.</p>
+<p>Instead, the calling program passes
+<code class="computeroutput">BZ_FINISH</code> as an action to
+<code class="computeroutput">BZ2_bzCompress</code>.  This changes
+the stream's state to FINISHING.  Any remaining input (ie,
+<code class="computeroutput">next_in[0 .. avail_in-1]</code>) is
+compressed and transferred to the output buffer.  To do this,
+<code class="computeroutput">BZ2_bzCompress</code> must be called
+repeatedly until all the output has been consumed.  At that
+point, <code class="computeroutput">BZ2_bzCompress</code> returns
+<code class="computeroutput">BZ_STREAM_END</code>, and the stream's
+state is set back to IDLE.
+<code class="computeroutput">BZ2_bzCompressEnd</code> should then be
+called.</p>
+<p>Just to make sure the calling program does not cheat, the
+library makes a note of <code class="computeroutput">avail_in</code>
+at the time of the first call to
+<code class="computeroutput">BZ2_bzCompress</code> which has
+<code class="computeroutput">BZ_FINISH</code> as an action (ie, at
+the time the program has announced its intention to not supply
+any more input).  By comparing this value with that of
+<code class="computeroutput">avail_in</code> over subsequent calls
+to <code class="computeroutput">BZ2_bzCompress</code>, the library
+can detect any attempts to slip in more data to compress.  Any
+calls for which this is detected will return
+<code class="computeroutput">BZ_SEQUENCE_ERROR</code>.  This
+indicates a programming mistake which should be corrected.</p>
+<p>Instead of asking to finish, the calling program may ask
+<code class="computeroutput">BZ2_bzCompress</code> to take all the
+remaining input, compress it and terminate the current
+(Burrows-Wheeler) compression block.  This could be useful for
+error control purposes.  The mechanism is analogous to that for
+finishing: call <code class="computeroutput">BZ2_bzCompress</code>
+with an action of <code class="computeroutput">BZ_FLUSH</code>,
+remove output data, and persist with the
+<code class="computeroutput">BZ_FLUSH</code> action until the value
+<code class="computeroutput">BZ_RUN</code> is returned.  As with
+finishing, <code class="computeroutput">BZ2_bzCompress</code>
+detects any attempt to provide more input data once the flush has
+begun.</p>
+<p>Once the flush is complete, the stream returns to the
+normal RUNNING state.</p>
+<p>This all sounds pretty complex, but isn't really.  Here's a
+table which shows which actions are allowable in each state, what
+action will be taken, what the next state is, and what the
+non-error return values are.  Note that you can't explicitly ask
+what state the stream is in, but nor do you need to -- it can be
+inferred from the values returned by
+<code class="computeroutput">BZ2_bzCompress</code>.</p>
+<pre class="programlisting">IDLE/any
+  Illegal.  IDLE state only exists after BZ2_bzCompressEnd or
+  before BZ2_bzCompressInit.
+  Return value = BZ_SEQUENCE_ERROR
+
+RUNNING/BZ_RUN
+  Compress from next_in to next_out as much as possible.
+  Next state = RUNNING
+  Return value = BZ_RUN_OK
+
+RUNNING/BZ_FLUSH
+  Remember current value of next_in. Compress from next_in
+  to next_out as much as possible, but do not accept any more input.
+  Next state = FLUSHING
+  Return value = BZ_FLUSH_OK
+
+RUNNING/BZ_FINISH
+  Remember current value of next_in. Compress from next_in
+  to next_out as much as possible, but do not accept any more input.
+  Next state = FINISHING
+  Return value = BZ_FINISH_OK
+
+FLUSHING/BZ_FLUSH
+  Compress from next_in to next_out as much as possible, 
+  but do not accept any more input.
+  If all the existing input has been used up and all compressed
+  output has been removed
+    Next state = RUNNING; Return value = BZ_RUN_OK
+  else
+    Next state = FLUSHING; Return value = BZ_FLUSH_OK
+
+FLUSHING/other     
+  Illegal.
+  Return value = BZ_SEQUENCE_ERROR
+
+FINISHING/BZ_FINISH
+  Compress from next_in to next_out as much as possible,
+  but to not accept any more input.  
+  If all the existing input has been used up and all compressed
+  output has been removed
+    Next state = IDLE; Return value = BZ_STREAM_END
+  else
+    Next state = FINISHING; Return value = BZ_FINISH_OK
+
+FINISHING/other
+  Illegal.
+  Return value = BZ_SEQUENCE_ERROR</pre>
+<p>That still looks complicated?  Well, fair enough.  The
+usual sequence of calls for compressing a load of data is:</p>
+<div class="orderedlist"><ol class="orderedlist" type="1">
+<li class="listitem"><p>Get started with
+  <code class="computeroutput">BZ2_bzCompressInit</code>.</p></li>
+<li class="listitem"><p>Shovel data in and shlurp out its compressed form
+  using zero or more calls of
+  <code class="computeroutput">BZ2_bzCompress</code> with action =
+  <code class="computeroutput">BZ_RUN</code>.</p></li>
+<li class="listitem"><p>Finish up. Repeatedly call
+  <code class="computeroutput">BZ2_bzCompress</code> with action =
+  <code class="computeroutput">BZ_FINISH</code>, copying out the
+  compressed output, until
+  <code class="computeroutput">BZ_STREAM_END</code> is
+  returned.</p></li>
+<li class="listitem"><p>Close up and go home.  Call
+  <code class="computeroutput">BZ2_bzCompressEnd</code>.</p></li>
+</ol></div>
+<p>If the data you want to compress fits into your input
+buffer all at once, you can skip the calls of
+<code class="computeroutput">BZ2_bzCompress ( ..., BZ_RUN )</code>
+and just do the <code class="computeroutput">BZ2_bzCompress ( ..., BZ_FINISH
+)</code> calls.</p>
+<p>All required memory is allocated by
+<code class="computeroutput">BZ2_bzCompressInit</code>.  The
+compression library can accept any data at all (obviously).  So
+you shouldn't get any error return values from the
+<code class="computeroutput">BZ2_bzCompress</code> calls.  If you
+do, they will be
+<code class="computeroutput">BZ_SEQUENCE_ERROR</code>, and indicate
+a bug in your programming.</p>
+<p>Trivial other possible return values:</p>
+<pre class="programlisting">BZ_PARAM_ERROR
+  if strm is NULL, or strm-&gt;s is NULL</pre>
+</div>
+<div class="sect2">
+<div class="titlepage"><div><div><h3 class="title">
+<a name="bzCompress-end"></a>3.3.3. BZ2_bzCompressEnd</h3></div></div></div>
+<pre class="programlisting">int BZ2_bzCompressEnd ( bz_stream *strm );</pre>
+<p>Releases all memory associated with a compression
+stream.</p>
+<p>Possible return values:</p>
+<pre class="programlisting">BZ_PARAM_ERROR  if strm is NULL or strm-&gt;s is NULL
+BZ_OK           otherwise</pre>
+</div>
+<div class="sect2">
+<div class="titlepage"><div><div><h3 class="title">
+<a name="bzDecompress-init"></a>3.3.4. BZ2_bzDecompressInit</h3></div></div></div>
+<pre class="programlisting">int BZ2_bzDecompressInit ( bz_stream *strm, int verbosity, int small );</pre>
+<p>Prepares for decompression.  As with
+<code class="computeroutput">BZ2_bzCompressInit</code>, a
+<code class="computeroutput">bz_stream</code> record should be
+allocated and initialised before the call.  Fields
+<code class="computeroutput">bzalloc</code>,
+<code class="computeroutput">bzfree</code> and
+<code class="computeroutput">opaque</code> should be set if a custom
+memory allocator is required, or made
+<code class="computeroutput">NULL</code> for the normal
+<code class="computeroutput">malloc</code> /
+<code class="computeroutput">free</code> routines.  Upon return, the
+internal state will have been initialised, and
+<code class="computeroutput">total_in</code> and
+<code class="computeroutput">total_out</code> will be zero.</p>
+<p>For the meaning of parameter
+<code class="computeroutput">verbosity</code>, see
+<code class="computeroutput">BZ2_bzCompressInit</code>.</p>
+<p>If <code class="computeroutput">small</code> is nonzero, the
+library will use an alternative decompression algorithm which
+uses less memory but at the cost of decompressing more slowly
+(roughly speaking, half the speed, but the maximum memory
+requirement drops to around 2300k).  See <a class="xref" href="#using" title="2. How to use bzip2">How to use bzip2</a>
+for more information on memory management.</p>
+<p>Note that the amount of memory needed to decompress a
+stream cannot be determined until the stream's header has been
+read, so even if
+<code class="computeroutput">BZ2_bzDecompressInit</code> succeeds, a
+subsequent <code class="computeroutput">BZ2_bzDecompress</code>
+could fail with
+<code class="computeroutput">BZ_MEM_ERROR</code>.</p>
+<p>Possible return values:</p>
+<pre class="programlisting">BZ_CONFIG_ERROR
+  if the library has been mis-compiled
+BZ_PARAM_ERROR
+  if ( small != 0 &amp;&amp; small != 1 )
+  or (verbosity &lt;; 0 || verbosity &gt; 4)
+BZ_MEM_ERROR
+  if insufficient memory is available</pre>
+<p>Allowable next actions:</p>
+<pre class="programlisting">BZ2_bzDecompress
+  if BZ_OK was returned
+  no specific action required in case of error</pre>
+</div>
+<div class="sect2">
+<div class="titlepage"><div><div><h3 class="title">
+<a name="bzDecompress"></a>3.3.5. BZ2_bzDecompress</h3></div></div></div>
+<pre class="programlisting">int BZ2_bzDecompress ( bz_stream *strm );</pre>
+<p>Provides more input and/out output buffer space for the
+library.  The caller maintains input and output buffers, and uses
+<code class="computeroutput">BZ2_bzDecompress</code> to transfer
+data between them.</p>
+<p>Before each call to
+<code class="computeroutput">BZ2_bzDecompress</code>,
+<code class="computeroutput">next_in</code> should point at the
+compressed data, and <code class="computeroutput">avail_in</code>
+should indicate how many bytes the library may read.
+<code class="computeroutput">BZ2_bzDecompress</code> updates
+<code class="computeroutput">next_in</code>,
+<code class="computeroutput">avail_in</code> and
+<code class="computeroutput">total_in</code> to reflect the number
+of bytes it has read.</p>
+<p>Similarly, <code class="computeroutput">next_out</code> should
+point to a buffer in which the uncompressed output is to be
+placed, with <code class="computeroutput">avail_out</code>
+indicating how much output space is available.
+<code class="computeroutput">BZ2_bzCompress</code> updates
+<code class="computeroutput">next_out</code>,
+<code class="computeroutput">avail_out</code> and
+<code class="computeroutput">total_out</code> to reflect the number
+of bytes output.</p>
+<p>You may provide and remove as little or as much data as you
+like on each call of
+<code class="computeroutput">BZ2_bzDecompress</code>.  In the limit,
+it is acceptable to supply and remove data one byte at a time,
+although this would be terribly inefficient.  You should always
+ensure that at least one byte of output space is available at
+each call.</p>
+<p>Use of <code class="computeroutput">BZ2_bzDecompress</code> is
+simpler than
+<code class="computeroutput">BZ2_bzCompress</code>.</p>
+<p>You should provide input and remove output as described
+above, and repeatedly call
+<code class="computeroutput">BZ2_bzDecompress</code> until
+<code class="computeroutput">BZ_STREAM_END</code> is returned.
+Appearance of <code class="computeroutput">BZ_STREAM_END</code>
+denotes that <code class="computeroutput">BZ2_bzDecompress</code>
+has detected the logical end of the compressed stream.
+<code class="computeroutput">BZ2_bzDecompress</code> will not
+produce <code class="computeroutput">BZ_STREAM_END</code> until all
+output data has been placed into the output buffer, so once
+<code class="computeroutput">BZ_STREAM_END</code> appears, you are
+guaranteed to have available all the decompressed output, and
+<code class="computeroutput">BZ2_bzDecompressEnd</code> can safely
+be called.</p>
+<p>If case of an error return value, you should call
+<code class="computeroutput">BZ2_bzDecompressEnd</code> to clean up
+and release memory.</p>
+<p>Possible return values:</p>
+<pre class="programlisting">BZ_PARAM_ERROR
+  if strm is NULL or strm-&gt;s is NULL
+  or strm-&gt;avail_out &lt; 1
+BZ_DATA_ERROR
+  if a data integrity error is detected in the compressed stream
+BZ_DATA_ERROR_MAGIC
+  if the compressed stream doesn't begin with the right magic bytes
+BZ_MEM_ERROR
+  if there wasn't enough memory available
+BZ_STREAM_END
+  if the logical end of the data stream was detected and all
+  output in has been consumed, eg s--&gt;avail_out &gt; 0
+BZ_OK
+  otherwise</pre>
+<p>Allowable next actions:</p>
+<pre class="programlisting">BZ2_bzDecompress
+  if BZ_OK was returned
+BZ2_bzDecompressEnd
+  otherwise</pre>
+</div>
+<div class="sect2">
+<div class="titlepage"><div><div><h3 class="title">
+<a name="bzDecompress-end"></a>3.3.6. BZ2_bzDecompressEnd</h3></div></div></div>
+<pre class="programlisting">int BZ2_bzDecompressEnd ( bz_stream *strm );</pre>
+<p>Releases all memory associated with a decompression
+stream.</p>
+<p>Possible return values:</p>
+<pre class="programlisting">BZ_PARAM_ERROR
+  if strm is NULL or strm-&gt;s is NULL
+BZ_OK
+  otherwise</pre>
+<p>Allowable next actions:</p>
+<pre class="programlisting">  None.</pre>
+</div>
+</div>
+<div class="sect1">
+<div class="titlepage"><div><div><h2 class="title" style="clear: both">
+<a name="hl-interface"></a>3.4. High-level interface</h2></div></div></div>
+<p>This interface provides functions for reading and writing
+<code class="computeroutput">bzip2</code> format files.  First, some
+general points.</p>
+<div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: bullet; ">
+<li class="listitem" style="list-style-type: disc"><p>All of the functions take an
+  <code class="computeroutput">int*</code> first argument,
+  <code class="computeroutput">bzerror</code>.  After each call,
+  <code class="computeroutput">bzerror</code> should be consulted
+  first to determine the outcome of the call.  If
+  <code class="computeroutput">bzerror</code> is
+  <code class="computeroutput">BZ_OK</code>, the call completed
+  successfully, and only then should the return value of the
+  function (if any) be consulted.  If
+  <code class="computeroutput">bzerror</code> is
+  <code class="computeroutput">BZ_IO_ERROR</code>, there was an
+  error reading/writing the underlying compressed file, and you
+  should then consult <code class="computeroutput">errno</code> /
+  <code class="computeroutput">perror</code> to determine the cause
+  of the difficulty.  <code class="computeroutput">bzerror</code>
+  may also be set to various other values; precise details are
+  given on a per-function basis below.</p></li>
+<li class="listitem" style="list-style-type: disc"><p>If <code class="computeroutput">bzerror</code> indicates
+  an error (ie, anything except
+  <code class="computeroutput">BZ_OK</code> and
+  <code class="computeroutput">BZ_STREAM_END</code>), you should
+  immediately call
+  <code class="computeroutput">BZ2_bzReadClose</code> (or
+  <code class="computeroutput">BZ2_bzWriteClose</code>, depending on
+  whether you are attempting to read or to write) to free up all
+  resources associated with the stream.  Once an error has been
+  indicated, behaviour of all calls except
+  <code class="computeroutput">BZ2_bzReadClose</code>
+  (<code class="computeroutput">BZ2_bzWriteClose</code>) is
+  undefined.  The implication is that (1)
+  <code class="computeroutput">bzerror</code> should be checked
+  after each call, and (2) if
+  <code class="computeroutput">bzerror</code> indicates an error,
+  <code class="computeroutput">BZ2_bzReadClose</code>
+  (<code class="computeroutput">BZ2_bzWriteClose</code>) should then
+  be called to clean up.</p></li>
+<li class="listitem" style="list-style-type: disc"><p>The <code class="computeroutput">FILE*</code> arguments
+  passed to <code class="computeroutput">BZ2_bzReadOpen</code> /
+  <code class="computeroutput">BZ2_bzWriteOpen</code> should be set
+  to binary mode.  Most Unix systems will do this by default, but
+  other platforms, including Windows and Mac, will not.  If you
+  omit this, you may encounter problems when moving code to new
+  platforms.</p></li>
+<li class="listitem" style="list-style-type: disc"><p>Memory allocation requests are handled by
+  <code class="computeroutput">malloc</code> /
+  <code class="computeroutput">free</code>.  At present there is no
+  facility for user-defined memory allocators in the file I/O
+  functions (could easily be added, though).</p></li>
+</ul></div>
+<div class="sect2">
+<div class="titlepage"><div><div><h3 class="title">
+<a name="bzreadopen"></a>3.4.1. BZ2_bzReadOpen</h3></div></div></div>
+<pre class="programlisting">typedef void BZFILE;
+
+BZFILE *BZ2_bzReadOpen( int *bzerror, FILE *f, 
+                        int verbosity, int small,
+                        void *unused, int nUnused );</pre>
+<p>Prepare to read compressed data from file handle
+<code class="computeroutput">f</code>.
+<code class="computeroutput">f</code> should refer to a file which
+has been opened for reading, and for which the error indicator
+(<code class="computeroutput">ferror(f)</code>)is not set.  If
+<code class="computeroutput">small</code> is 1, the library will try
+to decompress using less memory, at the expense of speed.</p>
+<p>For reasons explained below,
+<code class="computeroutput">BZ2_bzRead</code> will decompress the
+<code class="computeroutput">nUnused</code> bytes starting at
+<code class="computeroutput">unused</code>, before starting to read
+from the file <code class="computeroutput">f</code>.  At most
+<code class="computeroutput">BZ_MAX_UNUSED</code> bytes may be
+supplied like this.  If this facility is not required, you should
+pass <code class="computeroutput">NULL</code> and
+<code class="computeroutput">0</code> for
+<code class="computeroutput">unused</code> and
+n<code class="computeroutput">Unused</code> respectively.</p>
+<p>For the meaning of parameters
+<code class="computeroutput">small</code> and
+<code class="computeroutput">verbosity</code>, see
+<code class="computeroutput">BZ2_bzDecompressInit</code>.</p>
+<p>The amount of memory needed to decompress a file cannot be
+determined until the file's header has been read.  So it is
+possible that <code class="computeroutput">BZ2_bzReadOpen</code>
+returns <code class="computeroutput">BZ_OK</code> but a subsequent
+call of <code class="computeroutput">BZ2_bzRead</code> will return
+<code class="computeroutput">BZ_MEM_ERROR</code>.</p>
+<p>Possible assignments to
+<code class="computeroutput">bzerror</code>:</p>
+<pre class="programlisting">BZ_CONFIG_ERROR
+  if the library has been mis-compiled
+BZ_PARAM_ERROR
+  if f is NULL
+  or small is neither 0 nor 1
+  or ( unused == NULL &amp;&amp; nUnused != 0 )
+  or ( unused != NULL &amp;&amp; !(0 &lt;= nUnused &lt;= BZ_MAX_UNUSED) )
+BZ_IO_ERROR
+  if ferror(f) is nonzero
+BZ_MEM_ERROR
+  if insufficient memory is available
+BZ_OK
+  otherwise.</pre>
+<p>Possible return values:</p>
+<pre class="programlisting">Pointer to an abstract BZFILE
+  if bzerror is BZ_OK
+NULL
+  otherwise</pre>
+<p>Allowable next actions:</p>
+<pre class="programlisting">BZ2_bzRead
+  if bzerror is BZ_OK
+BZ2_bzClose
+  otherwise</pre>
+</div>
+<div class="sect2">
+<div class="titlepage"><div><div><h3 class="title">
+<a name="bzread"></a>3.4.2. BZ2_bzRead</h3></div></div></div>
+<pre class="programlisting">int BZ2_bzRead ( int *bzerror, BZFILE *b, void *buf, int len );</pre>
+<p>Reads up to <code class="computeroutput">len</code>
+(uncompressed) bytes from the compressed file
+<code class="computeroutput">b</code> into the buffer
+<code class="computeroutput">buf</code>.  If the read was
+successful, <code class="computeroutput">bzerror</code> is set to
+<code class="computeroutput">BZ_OK</code> and the number of bytes
+read is returned.  If the logical end-of-stream was detected,
+<code class="computeroutput">bzerror</code> will be set to
+<code class="computeroutput">BZ_STREAM_END</code>, and the number of
+bytes read is returned.  All other
+<code class="computeroutput">bzerror</code> values denote an
+error.</p>
+<p><code class="computeroutput">BZ2_bzRead</code> will supply
+<code class="computeroutput">len</code> bytes, unless the logical
+stream end is detected or an error occurs.  Because of this, it
+is possible to detect the stream end by observing when the number
+of bytes returned is less than the number requested.
+Nevertheless, this is regarded as inadvisable; you should instead
+check <code class="computeroutput">bzerror</code> after every call
+and watch out for
+<code class="computeroutput">BZ_STREAM_END</code>.</p>
+<p>Internally, <code class="computeroutput">BZ2_bzRead</code>
+copies data from the compressed file in chunks of size
+<code class="computeroutput">BZ_MAX_UNUSED</code> bytes before
+decompressing it.  If the file contains more bytes than strictly
+needed to reach the logical end-of-stream,
+<code class="computeroutput">BZ2_bzRead</code> will almost certainly
+read some of the trailing data before signalling
+<code class="computeroutput">BZ_SEQUENCE_END</code>.  To collect the
+read but unused data once
+<code class="computeroutput">BZ_SEQUENCE_END</code> has appeared,
+call <code class="computeroutput">BZ2_bzReadGetUnused</code>
+immediately before
+<code class="computeroutput">BZ2_bzReadClose</code>.</p>
+<p>Possible assignments to
+<code class="computeroutput">bzerror</code>:</p>
+<pre class="programlisting">BZ_PARAM_ERROR
+  if b is NULL or buf is NULL or len &lt; 0
+BZ_SEQUENCE_ERROR
+  if b was opened with BZ2_bzWriteOpen
+BZ_IO_ERROR
+  if there is an error reading from the compressed file
+BZ_UNEXPECTED_EOF
+  if the compressed file ended before 
+  the logical end-of-stream was detected
+BZ_DATA_ERROR
+  if a data integrity error was detected in the compressed stream
+BZ_DATA_ERROR_MAGIC
+  if the stream does not begin with the requisite header bytes 
+  (ie, is not a bzip2 data file).  This is really 
+  a special case of BZ_DATA_ERROR.
+BZ_MEM_ERROR
+  if insufficient memory was available
+BZ_STREAM_END
+  if the logical end of stream was detected.
+BZ_OK
+  otherwise.</pre>
+<p>Possible return values:</p>
+<pre class="programlisting">number of bytes read
+  if bzerror is BZ_OK or BZ_STREAM_END
+undefined
+  otherwise</pre>
+<p>Allowable next actions:</p>
+<pre class="programlisting">collect data from buf, then BZ2_bzRead or BZ2_bzReadClose
+  if bzerror is BZ_OK
+collect data from buf, then BZ2_bzReadClose or BZ2_bzReadGetUnused
+  if bzerror is BZ_SEQUENCE_END
+BZ2_bzReadClose
+  otherwise</pre>
+</div>
+<div class="sect2">
+<div class="titlepage"><div><div><h3 class="title">
+<a name="bzreadgetunused"></a>3.4.3. BZ2_bzReadGetUnused</h3></div></div></div>
+<pre class="programlisting">void BZ2_bzReadGetUnused( int* bzerror, BZFILE *b, 
+                          void** unused, int* nUnused );</pre>
+<p>Returns data which was read from the compressed file but
+was not needed to get to the logical end-of-stream.
+<code class="computeroutput">*unused</code> is set to the address of
+the data, and <code class="computeroutput">*nUnused</code> to the
+number of bytes.  <code class="computeroutput">*nUnused</code> will
+be set to a value between <code class="computeroutput">0</code> and
+<code class="computeroutput">BZ_MAX_UNUSED</code> inclusive.</p>
+<p>This function may only be called once
+<code class="computeroutput">BZ2_bzRead</code> has signalled
+<code class="computeroutput">BZ_STREAM_END</code> but before
+<code class="computeroutput">BZ2_bzReadClose</code>.</p>
+<p>Possible assignments to
+<code class="computeroutput">bzerror</code>:</p>
+<pre class="programlisting">BZ_PARAM_ERROR
+  if b is NULL
+  or unused is NULL or nUnused is NULL
+BZ_SEQUENCE_ERROR
+  if BZ_STREAM_END has not been signalled
+  or if b was opened with BZ2_bzWriteOpen
+BZ_OK
+  otherwise</pre>
+<p>Allowable next actions:</p>
+<pre class="programlisting">BZ2_bzReadClose</pre>
+</div>
+<div class="sect2">
+<div class="titlepage"><div><div><h3 class="title">
+<a name="bzreadclose"></a>3.4.4. BZ2_bzReadClose</h3></div></div></div>
+<pre class="programlisting">void BZ2_bzReadClose ( int *bzerror, BZFILE *b );</pre>
+<p>Releases all memory pertaining to the compressed file
+<code class="computeroutput">b</code>.
+<code class="computeroutput">BZ2_bzReadClose</code> does not call
+<code class="computeroutput">fclose</code> on the underlying file
+handle, so you should do that yourself if appropriate.
+<code class="computeroutput">BZ2_bzReadClose</code> should be called
+to clean up after all error situations.</p>
+<p>Possible assignments to
+<code class="computeroutput">bzerror</code>:</p>
+<pre class="programlisting">BZ_SEQUENCE_ERROR
+  if b was opened with BZ2_bzOpenWrite
+BZ_OK
+  otherwise</pre>
+<p>Allowable next actions:</p>
+<pre class="programlisting">none</pre>
+</div>
+<div class="sect2">
+<div class="titlepage"><div><div><h3 class="title">
+<a name="bzwriteopen"></a>3.4.5. BZ2_bzWriteOpen</h3></div></div></div>
+<pre class="programlisting">BZFILE *BZ2_bzWriteOpen( int *bzerror, FILE *f, 
+                         int blockSize100k, int verbosity,
+                         int workFactor );</pre>
+<p>Prepare to write compressed data to file handle
+<code class="computeroutput">f</code>.
+<code class="computeroutput">f</code> should refer to a file which
+has been opened for writing, and for which the error indicator
+(<code class="computeroutput">ferror(f)</code>)is not set.</p>
+<p>For the meaning of parameters
+<code class="computeroutput">blockSize100k</code>,
+<code class="computeroutput">verbosity</code> and
+<code class="computeroutput">workFactor</code>, see
+<code class="computeroutput">BZ2_bzCompressInit</code>.</p>
+<p>All required memory is allocated at this stage, so if the
+call completes successfully,
+<code class="computeroutput">BZ_MEM_ERROR</code> cannot be signalled
+by a subsequent call to
+<code class="computeroutput">BZ2_bzWrite</code>.</p>
+<p>Possible assignments to
+<code class="computeroutput">bzerror</code>:</p>
+<pre class="programlisting">BZ_CONFIG_ERROR
+  if the library has been mis-compiled
+BZ_PARAM_ERROR
+  if f is NULL
+  or blockSize100k &lt; 1 or blockSize100k &gt; 9
+BZ_IO_ERROR
+  if ferror(f) is nonzero
+BZ_MEM_ERROR
+  if insufficient memory is available
+BZ_OK
+  otherwise</pre>
+<p>Possible return values:</p>
+<pre class="programlisting">Pointer to an abstract BZFILE
+  if bzerror is BZ_OK
+NULL
+  otherwise</pre>
+<p>Allowable next actions:</p>
+<pre class="programlisting">BZ2_bzWrite
+  if bzerror is BZ_OK
+  (you could go directly to BZ2_bzWriteClose, but this would be pretty pointless)
+BZ2_bzWriteClose
+  otherwise</pre>
+</div>
+<div class="sect2">
+<div class="titlepage"><div><div><h3 class="title">
+<a name="bzwrite"></a>3.4.6. BZ2_bzWrite</h3></div></div></div>
+<pre class="programlisting">void BZ2_bzWrite ( int *bzerror, BZFILE *b, void *buf, int len );</pre>
+<p>Absorbs <code class="computeroutput">len</code> bytes from the
+buffer <code class="computeroutput">buf</code>, eventually to be
+compressed and written to the file.</p>
+<p>Possible assignments to
+<code class="computeroutput">bzerror</code>:</p>
+<pre class="programlisting">BZ_PARAM_ERROR
+  if b is NULL or buf is NULL or len &lt; 0
+BZ_SEQUENCE_ERROR
+  if b was opened with BZ2_bzReadOpen
+BZ_IO_ERROR
+  if there is an error writing the compressed file.
+BZ_OK
+  otherwise</pre>
+</div>
+<div class="sect2">
+<div class="titlepage"><div><div><h3 class="title">
+<a name="bzwriteclose"></a>3.4.7. BZ2_bzWriteClose</h3></div></div></div>
+<pre class="programlisting">void BZ2_bzWriteClose( int *bzerror, BZFILE* f,
+                       int abandon,
+                       unsigned int* nbytes_in,
+                       unsigned int* nbytes_out );
+
+void BZ2_bzWriteClose64( int *bzerror, BZFILE* f,
+                         int abandon,
+                         unsigned int* nbytes_in_lo32,
+                         unsigned int* nbytes_in_hi32,
+                         unsigned int* nbytes_out_lo32,
+                         unsigned int* nbytes_out_hi32 );</pre>
+<p>Compresses and flushes to the compressed file all data so
+far supplied by <code class="computeroutput">BZ2_bzWrite</code>.
+The logical end-of-stream markers are also written, so subsequent
+calls to <code class="computeroutput">BZ2_bzWrite</code> are
+illegal.  All memory associated with the compressed file
+<code class="computeroutput">b</code> is released.
+<code class="computeroutput">fflush</code> is called on the
+compressed file, but it is not
+<code class="computeroutput">fclose</code>'d.</p>
+<p>If <code class="computeroutput">BZ2_bzWriteClose</code> is
+called to clean up after an error, the only action is to release
+the memory.  The library records the error codes issued by
+previous calls, so this situation will be detected automatically.
+There is no attempt to complete the compression operation, nor to
+<code class="computeroutput">fflush</code> the compressed file.  You
+can force this behaviour to happen even in the case of no error,
+by passing a nonzero value to
+<code class="computeroutput">abandon</code>.</p>
+<p>If <code class="computeroutput">nbytes_in</code> is non-null,
+<code class="computeroutput">*nbytes_in</code> will be set to be the
+total volume of uncompressed data handled.  Similarly,
+<code class="computeroutput">nbytes_out</code> will be set to the
+total volume of compressed data written.  For compatibility with
+older versions of the library,
+<code class="computeroutput">BZ2_bzWriteClose</code> only yields the
+lower 32 bits of these counts.  Use
+<code class="computeroutput">BZ2_bzWriteClose64</code> if you want
+the full 64 bit counts.  These two functions are otherwise
+absolutely identical.</p>
+<p>Possible assignments to
+<code class="computeroutput">bzerror</code>:</p>
+<pre class="programlisting">BZ_SEQUENCE_ERROR
+  if b was opened with BZ2_bzReadOpen
+BZ_IO_ERROR
+  if there is an error writing the compressed file
+BZ_OK
+  otherwise</pre>
+</div>
+<div class="sect2">
+<div class="titlepage"><div><div><h3 class="title">
+<a name="embed"></a>3.4.8. Handling embedded compressed data streams</h3></div></div></div>
+<p>The high-level library facilitates use of
+<code class="computeroutput">bzip2</code> data streams which form
+some part of a surrounding, larger data stream.</p>
+<div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: bullet; ">
+<li class="listitem" style="list-style-type: disc"><p>For writing, the library takes an open file handle,
+  writes compressed data to it,
+  <code class="computeroutput">fflush</code>es it but does not
+  <code class="computeroutput">fclose</code> it.  The calling
+  application can write its own data before and after the
+  compressed data stream, using that same file handle.</p></li>
+<li class="listitem" style="list-style-type: disc"><p>Reading is more complex, and the facilities are not as
+  general as they could be since generality is hard to reconcile
+  with efficiency.  <code class="computeroutput">BZ2_bzRead</code>
+  reads from the compressed file in blocks of size
+  <code class="computeroutput">BZ_MAX_UNUSED</code> bytes, and in
+  doing so probably will overshoot the logical end of compressed
+  stream.  To recover this data once decompression has ended,
+  call <code class="computeroutput">BZ2_bzReadGetUnused</code> after
+  the last call of <code class="computeroutput">BZ2_bzRead</code>
+  (the one returning
+  <code class="computeroutput">BZ_STREAM_END</code>) but before
+  calling
+  <code class="computeroutput">BZ2_bzReadClose</code>.</p></li>
+</ul></div>
+<p>This mechanism makes it easy to decompress multiple
+<code class="computeroutput">bzip2</code> streams placed end-to-end.
+As the end of one stream, when
+<code class="computeroutput">BZ2_bzRead</code> returns
+<code class="computeroutput">BZ_STREAM_END</code>, call
+<code class="computeroutput">BZ2_bzReadGetUnused</code> to collect
+the unused data (copy it into your own buffer somewhere).  That
+data forms the start of the next compressed stream.  To start
+uncompressing that next stream, call
+<code class="computeroutput">BZ2_bzReadOpen</code> again, feeding in
+the unused data via the <code class="computeroutput">unused</code> /
+<code class="computeroutput">nUnused</code> parameters.  Keep doing
+this until <code class="computeroutput">BZ_STREAM_END</code> return
+coincides with the physical end of file
+(<code class="computeroutput">feof(f)</code>).  In this situation
+<code class="computeroutput">BZ2_bzReadGetUnused</code> will of
+course return no data.</p>
+<p>This should give some feel for how the high-level interface
+can be used.  If you require extra flexibility, you'll have to
+bite the bullet and get to grips with the low-level
+interface.</p>
+</div>
+<div class="sect2">
+<div class="titlepage"><div><div><h3 class="title">
+<a name="std-rdwr"></a>3.4.9. Standard file-reading/writing code</h3></div></div></div>
+<p>Here's how you'd write data to a compressed file:</p>
+<pre class="programlisting">FILE*   f;
+BZFILE* b;
+int     nBuf;
+char    buf[ /* whatever size you like */ ];
+int     bzerror;
+int     nWritten;
+
+f = fopen ( "myfile.bz2", "w" );
+if ( !f ) {
+ /* handle error */
+}
+b = BZ2_bzWriteOpen( &amp;bzerror, f, 9 );
+if (bzerror != BZ_OK) {
+ BZ2_bzWriteClose ( b );
+ /* handle error */
+}
+
+while ( /* condition */ ) {
+ /* get data to write into buf, and set nBuf appropriately */
+ nWritten = BZ2_bzWrite ( &amp;bzerror, b, buf, nBuf );
+ if (bzerror == BZ_IO_ERROR) { 
+   BZ2_bzWriteClose ( &amp;bzerror, b );
+   /* handle error */
+ }
+}
+
+BZ2_bzWriteClose( &amp;bzerror, b );
+if (bzerror == BZ_IO_ERROR) {
+ /* handle error */
+}</pre>
+<p>And to read from a compressed file:</p>
+<pre class="programlisting">FILE*   f;
+BZFILE* b;
+int     nBuf;
+char    buf[ /* whatever size you like */ ];
+int     bzerror;
+int     nWritten;
+
+f = fopen ( "myfile.bz2", "r" );
+if ( !f ) {
+  /* handle error */
+}
+b = BZ2_bzReadOpen ( &amp;bzerror, f, 0, NULL, 0 );
+if ( bzerror != BZ_OK ) {
+  BZ2_bzReadClose ( &amp;bzerror, b );
+  /* handle error */
+}
+
+bzerror = BZ_OK;
+while ( bzerror == BZ_OK &amp;&amp; /* arbitrary other conditions */) {
+  nBuf = BZ2_bzRead ( &amp;bzerror, b, buf, /* size of buf */ );
+  if ( bzerror == BZ_OK ) {
+    /* do something with buf[0 .. nBuf-1] */
+  }
+}
+if ( bzerror != BZ_STREAM_END ) {
+   BZ2_bzReadClose ( &amp;bzerror, b );
+   /* handle error */
+} else {
+   BZ2_bzReadClose ( &amp;bzerror, b );
+}</pre>
+</div>
+</div>
+<div class="sect1">
+<div class="titlepage"><div><div><h2 class="title" style="clear: both">
+<a name="util-fns"></a>3.5. Utility functions</h2></div></div></div>
+<div class="sect2">
+<div class="titlepage"><div><div><h3 class="title">
+<a name="bzbufftobuffcompress"></a>3.5.1. BZ2_bzBuffToBuffCompress</h3></div></div></div>
+<pre class="programlisting">int BZ2_bzBuffToBuffCompress( char*         dest,
+                              unsigned int* destLen,
+                              char*         source,
+                              unsigned int  sourceLen,
+                              int           blockSize100k,
+                              int           verbosity,
+                              int           workFactor );</pre>
+<p>Attempts to compress the data in <code class="computeroutput">source[0
+.. sourceLen-1]</code> into the destination buffer,
+<code class="computeroutput">dest[0 .. *destLen-1]</code>.  If the
+destination buffer is big enough,
+<code class="computeroutput">*destLen</code> is set to the size of
+the compressed data, and <code class="computeroutput">BZ_OK</code>
+is returned.  If the compressed data won't fit,
+<code class="computeroutput">*destLen</code> is unchanged, and
+<code class="computeroutput">BZ_OUTBUFF_FULL</code> is
+returned.</p>
+<p>Compression in this manner is a one-shot event, done with a
+single call to this function.  The resulting compressed data is a
+complete <code class="computeroutput">bzip2</code> format data
+stream.  There is no mechanism for making additional calls to
+provide extra input data.  If you want that kind of mechanism,
+use the low-level interface.</p>
+<p>For the meaning of parameters
+<code class="computeroutput">blockSize100k</code>,
+<code class="computeroutput">verbosity</code> and
+<code class="computeroutput">workFactor</code>, see
+<code class="computeroutput">BZ2_bzCompressInit</code>.</p>
+<p>To guarantee that the compressed data will fit in its
+buffer, allocate an output buffer of size 1% larger than the
+uncompressed data, plus six hundred extra bytes.</p>
+<p><code class="computeroutput">BZ2_bzBuffToBuffDecompress</code>
+will not write data at or beyond
+<code class="computeroutput">dest[*destLen]</code>, even in case of
+buffer overflow.</p>
+<p>Possible return values:</p>
+<pre class="programlisting">BZ_CONFIG_ERROR
+  if the library has been mis-compiled
+BZ_PARAM_ERROR
+  if dest is NULL or destLen is NULL
+  or blockSize100k &lt; 1 or blockSize100k &gt; 9
+  or verbosity &lt; 0 or verbosity &gt; 4
+  or workFactor &lt; 0 or workFactor &gt; 250
+BZ_MEM_ERROR
+  if insufficient memory is available 
+BZ_OUTBUFF_FULL
+  if the size of the compressed data exceeds *destLen
+BZ_OK
+  otherwise</pre>
+</div>
+<div class="sect2">
+<div class="titlepage"><div><div><h3 class="title">
+<a name="bzbufftobuffdecompress"></a>3.5.2. BZ2_bzBuffToBuffDecompress</h3></div></div></div>
+<pre class="programlisting">int BZ2_bzBuffToBuffDecompress( char*         dest,
+                                unsigned int* destLen,
+                                char*         source,
+                                unsigned int  sourceLen,
+                                int           small,
+                                int           verbosity );</pre>
+<p>Attempts to decompress the data in <code class="computeroutput">source[0
+.. sourceLen-1]</code> into the destination buffer,
+<code class="computeroutput">dest[0 .. *destLen-1]</code>.  If the
+destination buffer is big enough,
+<code class="computeroutput">*destLen</code> is set to the size of
+the uncompressed data, and <code class="computeroutput">BZ_OK</code>
+is returned.  If the compressed data won't fit,
+<code class="computeroutput">*destLen</code> is unchanged, and
+<code class="computeroutput">BZ_OUTBUFF_FULL</code> is
+returned.</p>
+<p><code class="computeroutput">source</code> is assumed to hold
+a complete <code class="computeroutput">bzip2</code> format data
+stream.
+<code class="computeroutput">BZ2_bzBuffToBuffDecompress</code> tries
+to decompress the entirety of the stream into the output
+buffer.</p>
+<p>For the meaning of parameters
+<code class="computeroutput">small</code> and
+<code class="computeroutput">verbosity</code>, see
+<code class="computeroutput">BZ2_bzDecompressInit</code>.</p>
+<p>Because the compression ratio of the compressed data cannot
+be known in advance, there is no easy way to guarantee that the
+output buffer will be big enough.  You may of course make
+arrangements in your code to record the size of the uncompressed
+data, but such a mechanism is beyond the scope of this
+library.</p>
+<p><code class="computeroutput">BZ2_bzBuffToBuffDecompress</code>
+will not write data at or beyond
+<code class="computeroutput">dest[*destLen]</code>, even in case of
+buffer overflow.</p>
+<p>Possible return values:</p>
+<pre class="programlisting">BZ_CONFIG_ERROR
+  if the library has been mis-compiled
+BZ_PARAM_ERROR
+  if dest is NULL or destLen is NULL
+  or small != 0 &amp;&amp; small != 1
+  or verbosity &lt; 0 or verbosity &gt; 4
+BZ_MEM_ERROR
+  if insufficient memory is available 
+BZ_OUTBUFF_FULL
+  if the size of the compressed data exceeds *destLen
+BZ_DATA_ERROR
+  if a data integrity error was detected in the compressed data
+BZ_DATA_ERROR_MAGIC
+  if the compressed data doesn't begin with the right magic bytes
+BZ_UNEXPECTED_EOF
+  if the compressed data ends unexpectedly
+BZ_OK
+  otherwise</pre>
+</div>
+</div>
+<div class="sect1">
+<div class="titlepage"><div><div><h2 class="title" style="clear: both">
+<a name="zlib-compat"></a>3.6. zlib compatibility functions</h2></div></div></div>
+<p>Yoshioka Tsuneo has contributed some functions to give
+better <code class="computeroutput">zlib</code> compatibility.
+These functions are <code class="computeroutput">BZ2_bzopen</code>,
+<code class="computeroutput">BZ2_bzread</code>,
+<code class="computeroutput">BZ2_bzwrite</code>,
+<code class="computeroutput">BZ2_bzflush</code>,
+<code class="computeroutput">BZ2_bzclose</code>,
+<code class="computeroutput">BZ2_bzerror</code> and
+<code class="computeroutput">BZ2_bzlibVersion</code>.  These
+functions are not (yet) officially part of the library.  If they
+break, you get to keep all the pieces.  Nevertheless, I think
+they work ok.</p>
+<pre class="programlisting">typedef void BZFILE;
+
+const char * BZ2_bzlibVersion ( void );</pre>
+<p>Returns a string indicating the library version.</p>
+<pre class="programlisting">BZFILE * BZ2_bzopen  ( const char *path, const char *mode );
+BZFILE * BZ2_bzdopen ( int        fd,    const char *mode );</pre>
+<p>Opens a <code class="computeroutput">.bz2</code> file for
+reading or writing, using either its name or a pre-existing file
+descriptor.  Analogous to <code class="computeroutput">fopen</code>
+and <code class="computeroutput">fdopen</code>.</p>
+<pre class="programlisting">int BZ2_bzread  ( BZFILE* b, void* buf, int len );
+int BZ2_bzwrite ( BZFILE* b, void* buf, int len );</pre>
+<p>Reads/writes data from/to a previously opened
+<code class="computeroutput">BZFILE</code>.  Analogous to
+<code class="computeroutput">fread</code> and
+<code class="computeroutput">fwrite</code>.</p>
+<pre class="programlisting">int  BZ2_bzflush ( BZFILE* b );
+void BZ2_bzclose ( BZFILE* b );</pre>
+<p>Flushes/closes a <code class="computeroutput">BZFILE</code>.
+<code class="computeroutput">BZ2_bzflush</code> doesn't actually do
+anything.  Analogous to <code class="computeroutput">fflush</code>
+and <code class="computeroutput">fclose</code>.</p>
+<pre class="programlisting">const char * BZ2_bzerror ( BZFILE *b, int *errnum )</pre>
+<p>Returns a string describing the more recent error status of
+<code class="computeroutput">b</code>, and also sets
+<code class="computeroutput">*errnum</code> to its numerical
+value.</p>
+</div>
+<div class="sect1">
+<div class="titlepage"><div><div><h2 class="title" style="clear: both">
+<a name="stdio-free"></a>3.7. Using the library in a stdio-free environment</h2></div></div></div>
+<div class="sect2">
+<div class="titlepage"><div><div><h3 class="title">
+<a name="stdio-bye"></a>3.7.1. Getting rid of stdio</h3></div></div></div>
+<p>In a deeply embedded application, you might want to use
+just the memory-to-memory functions.  You can do this
+conveniently by compiling the library with preprocessor symbol
+<code class="computeroutput">BZ_NO_STDIO</code> defined.  Doing this
+gives you a library containing only the following eight
+functions:</p>
+<p><code class="computeroutput">BZ2_bzCompressInit</code>,
+<code class="computeroutput">BZ2_bzCompress</code>,
+<code class="computeroutput">BZ2_bzCompressEnd</code>
+<code class="computeroutput">BZ2_bzDecompressInit</code>,
+<code class="computeroutput">BZ2_bzDecompress</code>,
+<code class="computeroutput">BZ2_bzDecompressEnd</code>
+<code class="computeroutput">BZ2_bzBuffToBuffCompress</code>,
+<code class="computeroutput">BZ2_bzBuffToBuffDecompress</code></p>
+<p>When compiled like this, all functions will ignore
+<code class="computeroutput">verbosity</code> settings.</p>
+</div>
+<div class="sect2">
+<div class="titlepage"><div><div><h3 class="title">
+<a name="critical-error"></a>3.7.2. Critical error handling</h3></div></div></div>
+<p><code class="computeroutput">libbzip2</code> contains a number
+of internal assertion checks which should, needless to say, never
+be activated.  Nevertheless, if an assertion should fail,
+behaviour depends on whether or not the library was compiled with
+<code class="computeroutput">BZ_NO_STDIO</code> set.</p>
+<p>For a normal compile, an assertion failure yields the
+message:</p>
+<div class="blockquote"><blockquote class="blockquote">
+<p>bzip2/libbzip2: internal error number N.</p>
+<p>This is a bug in bzip2/libbzip2, 1.0.8 of 13 July 2019.
+Please report it to: bzip2-devel@sourceware.org.  If this happened
+when you were using some program which uses libbzip2 as a
+component, you should also report this bug to the author(s)
+of that program.  Please make an effort to report this bug;
+timely and accurate bug reports eventually lead to higher
+quality software.  Thanks.
+</p>
+</blockquote></div>
+<p>where <code class="computeroutput">N</code> is some error code
+number.  If <code class="computeroutput">N == 1007</code>, it also
+prints some extra text advising the reader that unreliable memory
+is often associated with internal error 1007. (This is a
+frequently-observed-phenomenon with versions 1.0.0/1.0.1).</p>
+<p><code class="computeroutput">exit(3)</code> is then
+called.</p>
+<p>For a <code class="computeroutput">stdio</code>-free library,
+assertion failures result in a call to a function declared
+as:</p>
+<pre class="programlisting">extern void bz_internal_error ( int errcode );</pre>
+<p>The relevant code is passed as a parameter.  You should
+supply such a function.</p>
+<p>In either case, once an assertion failure has occurred, any
+<code class="computeroutput">bz_stream</code> records involved can
+be regarded as invalid.  You should not attempt to resume normal
+operation with them.</p>
+<p>You may, of course, change critical error handling to suit
+your needs.  As I said above, critical errors indicate bugs in
+the library and should not occur.  All "normal" error situations
+are indicated via error return codes from functions, and can be
+recovered from.</p>
+</div>
+</div>
+<div class="sect1">
+<div class="titlepage"><div><div><h2 class="title" style="clear: both">
+<a name="win-dll"></a>3.8. Making a Windows DLL</h2></div></div></div>
+<p>Everything related to Windows has been contributed by
+Yoshioka Tsuneo
+(<code class="computeroutput">tsuneo@rr.iij4u.or.jp</code>), so
+you should send your queries to him (but please Cc:
+<code class="computeroutput">bzip2-devel@sourceware.org</code>).</p>
+<p>My vague understanding of what to do is: using Visual C++
+5.0, open the project file
+<code class="computeroutput">libbz2.dsp</code>, and build.  That's
+all.</p>
+<p>If you can't open the project file for some reason, make a
+new one, naming these files:
+<code class="computeroutput">blocksort.c</code>,
+<code class="computeroutput">bzlib.c</code>,
+<code class="computeroutput">compress.c</code>,
+<code class="computeroutput">crctable.c</code>,
+<code class="computeroutput">decompress.c</code>,
+<code class="computeroutput">huffman.c</code>,
+<code class="computeroutput">randtable.c</code> and
+<code class="computeroutput">libbz2.def</code>.  You will also need
+to name the header files <code class="computeroutput">bzlib.h</code>
+and <code class="computeroutput">bzlib_private.h</code>.</p>
+<p>If you don't use VC++, you may need to define the
+proprocessor symbol
+<code class="computeroutput">_WIN32</code>.</p>
+<p>Finally, <code class="computeroutput">dlltest.c</code> is a
+sample program using the DLL.  It has a project file,
+<code class="computeroutput">dlltest.dsp</code>.</p>
+<p>If you just want a makefile for Visual C, have a look at
+<code class="computeroutput">makefile.msc</code>.</p>
+<p>Be aware that if you compile
+<code class="computeroutput">bzip2</code> itself on Win32, you must
+set <code class="computeroutput">BZ_UNIX</code> to 0 and
+<code class="computeroutput">BZ_LCCWIN32</code> to 1, in the file
+<code class="computeroutput">bzip2.c</code>, before compiling.
+Otherwise the resulting binary won't work correctly.</p>
+<p>I haven't tried any of this stuff myself, but it all looks
+plausible.</p>
+</div>
+</div>
+<div class="chapter">
+<div class="titlepage"><div><div><h1 class="title">
+<a name="misc"></a>4. Miscellanea</h1></div></div></div>
+<div class="toc">
+<p><b>Table of Contents</b></p>
+<dl class="toc">
+<dt><span class="sect1"><a href="#limits">4.1. Limitations of the compressed file format</a></span></dt>
+<dt><span class="sect1"><a href="#port-issues">4.2. Portability issues</a></span></dt>
+<dt><span class="sect1"><a href="#bugs">4.3. Reporting bugs</a></span></dt>
+<dt><span class="sect1"><a href="#package">4.4. Did you get the right package?</a></span></dt>
+<dt><span class="sect1"><a href="#reading">4.5. Further Reading</a></span></dt>
+</dl>
+</div>
+<p>These are just some random thoughts of mine.  Your mileage
+may vary.</p>
+<div class="sect1">
+<div class="titlepage"><div><div><h2 class="title" style="clear: both">
+<a name="limits"></a>4.1. Limitations of the compressed file format</h2></div></div></div>
+<p><code class="computeroutput">bzip2-1.0.X</code>,
+<code class="computeroutput">0.9.5</code> and
+<code class="computeroutput">0.9.0</code> use exactly the same file
+format as the original version,
+<code class="computeroutput">bzip2-0.1</code>.  This decision was
+made in the interests of stability.  Creating yet another
+incompatible compressed file format would create further
+confusion and disruption for users.</p>
+<p>Nevertheless, this is not a painless decision.  Development
+work since the release of
+<code class="computeroutput">bzip2-0.1</code> in August 1997 has
+shown complexities in the file format which slow down
+decompression and, in retrospect, are unnecessary.  These
+are:</p>
+<div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: bullet; ">
+<li class="listitem" style="list-style-type: disc"><p>The run-length encoder, which is the first of the
+   compression transformations, is entirely irrelevant.  The
+   original purpose was to protect the sorting algorithm from the
+   very worst case input: a string of repeated symbols.  But
+   algorithm steps Q6a and Q6b in the original Burrows-Wheeler
+   technical report (SRC-124) show how repeats can be handled
+   without difficulty in block sorting.</p></li>
+<li class="listitem" style="list-style-type: disc">
+<p>The randomisation mechanism doesn't really need to be
+   there.  Udi Manber and Gene Myers published a suffix array
+   construction algorithm a few years back, which can be employed
+   to sort any block, no matter how repetitive, in O(N log N)
+   time.  Subsequent work by Kunihiko Sadakane has produced a
+   derivative O(N (log N)^2) algorithm which usually outperforms
+   the Manber-Myers algorithm.</p>
+<p>I could have changed to Sadakane's algorithm, but I find
+   it to be slower than <code class="computeroutput">bzip2</code>'s
+   existing algorithm for most inputs, and the randomisation
+   mechanism protects adequately against bad cases.  I didn't
+   think it was a good tradeoff to make.  Partly this is due to
+   the fact that I was not flooded with email complaints about
+   <code class="computeroutput">bzip2-0.1</code>'s performance on
+   repetitive data, so perhaps it isn't a problem for real
+   inputs.</p>
+<p>Probably the best long-term solution, and the one I have
+   incorporated into 0.9.5 and above, is to use the existing
+   sorting algorithm initially, and fall back to a O(N (log N)^2)
+   algorithm if the standard algorithm gets into
+   difficulties.</p>
+</li>
+<li class="listitem" style="list-style-type: disc"><p>The compressed file format was never designed to be
+   handled by a library, and I have had to jump though some hoops
+   to produce an efficient implementation of decompression.  It's
+   a bit hairy.  Try passing
+   <code class="computeroutput">decompress.c</code> through the C
+   preprocessor and you'll see what I mean.  Much of this
+   complexity could have been avoided if the compressed size of
+   each block of data was recorded in the data stream.</p></li>
+<li class="listitem" style="list-style-type: disc"><p>An Adler-32 checksum, rather than a CRC32 checksum,
+   would be faster to compute.</p></li>
+</ul></div>
+<p>It would be fair to say that the
+<code class="computeroutput">bzip2</code> format was frozen before I
+properly and fully understood the performance consequences of
+doing so.</p>
+<p>Improvements which I was able to incorporate into 0.9.0,
+despite using the same file format, are:</p>
+<div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: bullet; ">
+<li class="listitem" style="list-style-type: disc"><p>Single array implementation of the inverse BWT.  This
+  significantly speeds up decompression, presumably because it
+  reduces the number of cache misses.</p></li>
+<li class="listitem" style="list-style-type: disc"><p>Faster inverse MTF transform for large MTF values.
+  The new implementation is based on the notion of sliding blocks
+  of values.</p></li>
+<li class="listitem" style="list-style-type: disc"><p><code class="computeroutput">bzip2-0.9.0</code> now reads
+  and writes files with <code class="computeroutput">fread</code>
+  and <code class="computeroutput">fwrite</code>; version 0.1 used
+  <code class="computeroutput">putc</code> and
+  <code class="computeroutput">getc</code>.  Duh!  Well, you live
+  and learn.</p></li>
+</ul></div>
+<p>Further ahead, it would be nice to be able to do random
+access into files.  This will require some careful design of
+compressed file formats.</p>
+</div>
+<div class="sect1">
+<div class="titlepage"><div><div><h2 class="title" style="clear: both">
+<a name="port-issues"></a>4.2. Portability issues</h2></div></div></div>
+<p>After some consideration, I have decided not to use GNU
+<code class="computeroutput">autoconf</code> to configure 0.9.5 or
+1.0.</p>
+<p><code class="computeroutput">autoconf</code>, admirable and
+wonderful though it is, mainly assists with portability problems
+between Unix-like platforms.  But
+<code class="computeroutput">bzip2</code> doesn't have much in the
+way of portability problems on Unix; most of the difficulties
+appear when porting to the Mac, or to Microsoft's operating
+systems.  <code class="computeroutput">autoconf</code> doesn't help
+in those cases, and brings in a whole load of new
+complexity.</p>
+<p>Most people should be able to compile the library and
+program under Unix straight out-of-the-box, so to speak,
+especially if you have a version of GNU C available.</p>
+<p>There are a couple of
+<code class="computeroutput">__inline__</code> directives in the
+code.  GNU C (<code class="computeroutput">gcc</code>) should be
+able to handle them.  If you're not using GNU C, your C compiler
+shouldn't see them at all.  If your compiler does, for some
+reason, see them and doesn't like them, just
+<code class="computeroutput">#define</code>
+<code class="computeroutput">__inline__</code> to be
+<code class="computeroutput">/* */</code>.  One easy way to do this
+is to compile with the flag
+<code class="computeroutput">-D__inline__=</code>, which should be
+understood by most Unix compilers.</p>
+<p>If you still have difficulties, try compiling with the
+macro <code class="computeroutput">BZ_STRICT_ANSI</code> defined.
+This should enable you to build the library in a strictly ANSI
+compliant environment.  Building the program itself like this is
+dangerous and not supported, since you remove
+<code class="computeroutput">bzip2</code>'s checks against
+compressing directories, symbolic links, devices, and other
+not-really-a-file entities.  This could cause filesystem
+corruption!</p>
+<p>One other thing: if you create a
+<code class="computeroutput">bzip2</code> binary for public distribution,
+please consider linking it statically (<code class="computeroutput">gcc
+-static</code>).  This avoids all sorts of library-version
+issues that others may encounter later on.</p>
+<p>If you build <code class="computeroutput">bzip2</code> on
+Win32, you must set <code class="computeroutput">BZ_UNIX</code> to 0
+and <code class="computeroutput">BZ_LCCWIN32</code> to 1, in the
+file <code class="computeroutput">bzip2.c</code>, before compiling.
+Otherwise the resulting binary won't work correctly.</p>
+</div>
+<div class="sect1">
+<div class="titlepage"><div><div><h2 class="title" style="clear: both">
+<a name="bugs"></a>4.3. Reporting bugs</h2></div></div></div>
+<p>I tried pretty hard to make sure
+<code class="computeroutput">bzip2</code> is bug free, both by
+design and by testing.  Hopefully you'll never need to read this
+section for real.</p>
+<p>Nevertheless, if <code class="computeroutput">bzip2</code> dies
+with a segmentation fault, a bus error or an internal assertion
+failure, it will ask you to email me a bug report.  Experience from
+years of feedback of bzip2 users indicates that almost all these
+problems can be traced to either compiler bugs or hardware
+problems.</p>
+<div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: bullet; ">
+<li class="listitem" style="list-style-type: disc">
+<p>Recompile the program with no optimisation, and
+  see if it works.  And/or try a different compiler.  I heard all
+  sorts of stories about various flavours of GNU C (and other
+  compilers) generating bad code for
+  <code class="computeroutput">bzip2</code>, and I've run across two
+  such examples myself.</p>
+<p>2.7.X versions of GNU C are known to generate bad code
+  from time to time, at high optimisation levels.  If you get
+  problems, try using the flags
+  <code class="computeroutput">-O2</code>
+  <code class="computeroutput">-fomit-frame-pointer</code>
+  <code class="computeroutput">-fno-strength-reduce</code>.  You
+  should specifically <span class="emphasis"><em>not</em></span> use
+  <code class="computeroutput">-funroll-loops</code>.</p>
+<p>You may notice that the Makefile runs six tests as part
+  of the build process.  If the program passes all of these, it's
+  a pretty good (but not 100%) indication that the compiler has
+  done its job correctly.</p>
+</li>
+<li class="listitem" style="list-style-type: disc">
+<p>If <code class="computeroutput">bzip2</code>
+  crashes randomly, and the crashes are not repeatable, you may
+  have a flaky memory subsystem.
+  <code class="computeroutput">bzip2</code> really hammers your
+  memory hierarchy, and if it's a bit marginal, you may get these
+  problems.  Ditto if your disk or I/O subsystem is slowly
+  failing.  Yup, this really does happen.</p>
+<p>Try using a different machine of the same type, and see
+  if you can repeat the problem.</p>
+</li>
+<li class="listitem" style="list-style-type: disc"><p>This isn't really a bug, but ... If
+  <code class="computeroutput">bzip2</code> tells you your file is
+  corrupted on decompression, and you obtained the file via FTP,
+  there is a possibility that you forgot to tell FTP to do a
+  binary mode transfer.  That absolutely will cause the file to
+  be non-decompressible.  You'll have to transfer it
+  again.</p></li>
+</ul></div>
+<p>If you've incorporated
+<code class="computeroutput">libbzip2</code> into your own program
+and are getting problems, please, please, please, check that the
+parameters you are passing in calls to the library, are correct,
+and in accordance with what the documentation says is allowable.
+I have tried to make the library robust against such problems,
+but I'm sure I haven't succeeded.</p>
+<p>Finally, if the above comments don't help, you'll have to
+send me a bug report.  Now, it's just amazing how many people
+will send me a bug report saying something like:</p>
+<pre class="programlisting">bzip2 crashed with segmentation fault on my machine</pre>
+<p>and absolutely nothing else.  Needless to say, a such a
+report is <span class="emphasis"><em>totally, utterly, completely and
+comprehensively 100% useless; a waste of your time, my time, and
+net bandwidth</em></span>.  With no details at all, there's no way
+I can possibly begin to figure out what the problem is.</p>
+<p>The rules of the game are: facts, facts, facts.  Don't omit
+them because "oh, they won't be relevant".  At the bare
+minimum:</p>
+<pre class="programlisting">Machine type.  Operating system version.  
+Exact version of bzip2 (do bzip2 -V).  
+Exact version of the compiler used.  
+Flags passed to the compiler.</pre>
+<p>However, the most important single thing that will help me
+is the file that you were trying to compress or decompress at the
+time the problem happened.  Without that, my ability to do
+anything more than speculate about the cause, is limited.</p>
+</div>
+<div class="sect1">
+<div class="titlepage"><div><div><h2 class="title" style="clear: both">
+<a name="package"></a>4.4. Did you get the right package?</h2></div></div></div>
+<p><code class="computeroutput">bzip2</code> is a resource hog.
+It soaks up large amounts of CPU cycles and memory.  Also, it
+gives very large latencies.  In the worst case, you can feed many
+megabytes of uncompressed data into the library before getting
+any compressed output, so this probably rules out applications
+requiring interactive behaviour.</p>
+<p>These aren't faults of my implementation, I hope, but more
+an intrinsic property of the Burrows-Wheeler transform
+(unfortunately).  Maybe this isn't what you want.</p>
+<p>If you want a compressor and/or library which is faster,
+uses less memory but gets pretty good compression, and has
+minimal latency, consider Jean-loup Gailly's and Mark Adler's
+work, <code class="computeroutput">zlib-1.2.1</code> and
+<code class="computeroutput">gzip-1.2.4</code>.  Look for them at 
+<a class="ulink" href="http://www.zlib.org" target="_top">http://www.zlib.org</a> and 
+<a class="ulink" href="http://www.gzip.org" target="_top">http://www.gzip.org</a>
+respectively.</p>
+<p>For something faster and lighter still, you might try Markus F
+X J Oberhumer's <code class="computeroutput">LZO</code> real-time
+compression/decompression library, at 
+<a class="ulink" href="http://www.oberhumer.com/opensource" target="_top">http://www.oberhumer.com/opensource</a>.</p>
+</div>
+<div class="sect1">
+<div class="titlepage"><div><div><h2 class="title" style="clear: both">
+<a name="reading"></a>4.5. Further Reading</h2></div></div></div>
+<p><code class="computeroutput">bzip2</code> is not research
+work, in the sense that it doesn't present any new ideas.
+Rather, it's an engineering exercise based on existing
+ideas.</p>
+<p>Four documents describe essentially all the ideas behind
+<code class="computeroutput">bzip2</code>:</p>
+<div class="literallayout"><p>Michael Burrows and D. J. Wheeler:<br>
+  "A block-sorting lossless data compression algorithm"<br>
+   10th May 1994. <br>
+   Digital SRC Research Report 124.<br>
+   ftp://ftp.digital.com/pub/DEC/SRC/research-reports/SRC-124.ps.gz<br>
+   If you have trouble finding it, try searching at the<br>
+   New Zealand Digital Library, http://www.nzdl.org.<br>
+<br>
+Daniel S. Hirschberg and Debra A. LeLewer<br>
+  "Efficient Decoding of Prefix Codes"<br>
+   Communications of the ACM, April 1990, Vol 33, Number 4.<br>
+   You might be able to get an electronic copy of this<br>
+   from the ACM Digital Library.<br>
+<br>
+David J. Wheeler<br>
+   Program bred3.c and accompanying document bred3.ps.<br>
+   This contains the idea behind the multi-table Huffman coding scheme.<br>
+   ftp://ftp.cl.cam.ac.uk/users/djw3/<br>
+<br>
+Jon L. Bentley and Robert Sedgewick<br>
+  "Fast Algorithms for Sorting and Searching Strings"<br>
+   Available from Sedgewick's web page,<br>
+   www.cs.princeton.edu/~rs<br>
+</p></div>
+<p>The following paper gives valuable additional insights into
+the algorithm, but is not immediately the basis of any code used
+in bzip2.</p>
+<div class="literallayout"><p>Peter Fenwick:<br>
+   Block Sorting Text Compression<br>
+   Proceedings of the 19th Australasian Computer Science Conference,<br>
+     Melbourne, Australia.  Jan 31 - Feb 2, 1996.<br>
+   ftp://ftp.cs.auckland.ac.nz/pub/peter-f/ACSC96paper.ps</p></div>
+<p>Kunihiko Sadakane's sorting algorithm, mentioned above, is
+available from:</p>
+<div class="literallayout"><p>http://naomi.is.s.u-tokyo.ac.jp/~sada/papers/Sada98b.ps.gz<br>
+</p></div>
+<p>The Manber-Myers suffix array construction algorithm is
+described in a paper available from:</p>
+<div class="literallayout"><p>http://www.cs.arizona.edu/people/gene/PAPERS/suffix.ps<br>
+</p></div>
+<p>Finally, the following papers document some
+investigations I made into the performance of sorting
+and decompression algorithms:</p>
+<div class="literallayout"><p>Julian Seward<br>
+   On the Performance of BWT Sorting Algorithms<br>
+   Proceedings of the IEEE Data Compression Conference 2000<br>
+     Snowbird, Utah.  28-30 March 2000.<br>
+<br>
+Julian Seward<br>
+   Space-time Tradeoffs in the Inverse B-W Transform<br>
+   Proceedings of the IEEE Data Compression Conference 2001<br>
+     Snowbird, Utah.  27-29 March 2001.<br>
+</p></div>
+</div>
+</div>
+</div></body>
+</html>

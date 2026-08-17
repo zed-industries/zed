@@ -1,0 +1,28 @@
+[package]
+name = "euclid"
+version = "0.22.11"
+authors = ["The Servo Project Developers"]
+edition = "2021"
+rust-version = "1.56.0"
+description = "Geometry primitives"
+documentation = "https://docs.rs/euclid/"
+repository = "https://github.com/servo/euclid"
+keywords = ["matrix", "vector", "linear-algebra", "geometry"]
+categories = ["science"]
+license = "MIT OR Apache-2.0"
+
+[features]
+default = ["std"]
+unstable = []
+std = ["num-traits/std"]
+libm = ["num-traits/libm"]
+
+[dependencies]
+num-traits = { version = "0.2.15", default-features = false }
+serde = { version = "1.0", default-features = false, features = ["serde_derive"], optional = true }
+mint = { version = "0.5.1", optional = true }
+arbitrary = { version = "1", optional = true }
+bytemuck = { version = "1.9", optional = true }
+
+[dev-dependencies]
+serde_test = "1.0"

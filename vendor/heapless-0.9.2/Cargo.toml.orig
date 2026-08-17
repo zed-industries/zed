@@ -1,0 +1,95 @@
+[package]
+authors = [
+    "Jorge Aparicio <jorge@japaric.io>",
+    "Per Lindgren <per.lindgren@ltu.se>",
+    "Emil Fresk <emil.fresk@gmail.com>",
+]
+categories = ["data-structures", "no-std"]
+description = "`static` friendly data structures that don't require dynamic memory allocation"
+documentation = "https://docs.rs/heapless"
+edition = "2021"
+rust-version = "1.87"
+keywords = ["static", "no-heap"]
+license = "MIT OR Apache-2.0"
+name = "heapless"
+repository = "https://github.com/rust-embedded/heapless"
+version = "0.9.2"
+
+[features]
+bytes = ["dep:bytes"]
+
+# Enable polyfilling of atomics via `portable-atomic`.
+# `portable-atomic` polyfills some functionality by default, but to get full atomics you must
+# enable one of its features to tell it how to do it. See `portable-atomic` documentation for details.
+portable-atomic = ["dep:portable-atomic"]
+
+# Enable polyfilling of atomics via portable-atomic, using critical section for locking
+portable-atomic-critical-section = [
+    "dep:portable-atomic",
+    "portable-atomic",
+    "portable-atomic?/critical-section",
+]
+
+# Enable polyfilling of atomics via portable-atomic, using disabling interrupts for locking.
+# WARNING: this is only sound for single-core bare-metal privileged-mode targets!
+portable-atomic-unsafe-assume-single-core = [
+    "dep:portable-atomic",
+    "portable-atomic",
+    "portable-atomic?/unsafe-assume-single-core",
+]
+
+# implement serde traits.
+serde = ["dep:serde_core"]
+
+# implement ufmt traits.
+ufmt = ["dep:ufmt", "dep:ufmt-write"]
+
+# Implement `defmt::Format`.
+defmt = ["dep:defmt"]
+
+# Implement `zeroize::Zeroize` trait.
+zeroize = ["dep:zeroize"]
+
+# Implement `embedded_io::Write`
+"embedded-io-v0.7" = ["dep:embedded-io"]
+
+# Enable larger MPMC sizes.
+mpmc_large = []
+
+# Implement some alloc Vec interoperability
+alloc = []
+
+nightly = []
+
+[dependencies]
+bytes = { version = "1", default-features = false, optional = true }
+portable-atomic = { version = "1.0", optional = true }
+hash32 = "0.3.0"
+serde_core = { version = "1", optional = true, default-features = false }
+ufmt = { version = "0.2", optional = true }
+ufmt-write = { version = "0.1", optional = true }
+defmt = { version = "1.0.1", optional = true }
+zeroize = { version = "1.8", optional = true, default-features = false, features = ["derive"] }
+embedded-io = { version = "0.7", optional = true }
+
+# for the pool module
+[target.'cfg(any(target_arch = "arm", target_pointer_width = "32", target_pointer_width = "64"))'.dependencies]
+stable_deref_trait = { version = "1", default-features = false }
+
+[dev-dependencies]
+critical-section = { version = "1.1", features = ["std"] }
+static_assertions = "1.1.0"
+
+[package.metadata.docs.rs]
+features = [
+    "bytes",
+    "ufmt",
+    "serde",
+    "defmt",
+    "mpmc_large",
+    "portable-atomic-critical-section",
+    "alloc",
+]
+# for the pool module
+targets = ["i686-unknown-linux-gnu"]
+rustdoc-args = ["--cfg", "docsrs"]

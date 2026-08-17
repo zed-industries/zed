@@ -1,0 +1,17 @@
+[
+  {
+    "Dir": {
+      "prefix": "Default",
+      "salt": "",
+      "path": "/before/reset"
+    }
+  },
+  "ResetDirs",
+  {
+    "Dir": {
+      "prefix": "Default",
+      "salt": "",
+      "path": "/after/reset"
+    }
+  }
+]

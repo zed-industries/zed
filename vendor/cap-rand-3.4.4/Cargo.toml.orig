@@ -1,0 +1,21 @@
+[package]
+name = "cap-rand"
+version = "3.4.4"
+description = "Capability-based random number generators"
+authors = [
+    "Dan Gohman <dev@sunfishcode.online>",
+    "Jakub Konka <kubkon@jakubkonka.com>",
+]
+license = "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
+keywords = ["random", "rng"]
+categories = ["algorithms"]
+repository = "https://github.com/bytecodealliance/cap-std"
+edition = "2021"
+
+[dependencies]
+ambient-authority = "0.0.2"
+rand = "0.8.1"
+
+[features]
+default = []
+small_rng = ["rand/small_rng"]

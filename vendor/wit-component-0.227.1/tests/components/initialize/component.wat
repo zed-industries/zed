@@ -1,0 +1,38 @@
+(component
+  (core module (;0;)
+    (type (;0;) (func))
+    (export "a" (func 0))
+    (export "_initialize" (func 1))
+    (func (;0;) (type 0)
+      unreachable
+    )
+    (func (;1;) (type 0)
+      unreachable
+    )
+    (@producers
+      (processed-by "wit-component" "$CARGO_PKG_VERSION")
+      (processed-by "my-fake-bindgen" "123.45")
+    )
+  )
+  (core instance (;0;) (instantiate 0))
+  (alias core export 0 "_initialize" (core func (;0;)))
+  (core module (;1;)
+    (type (;0;) (func))
+    (import "" "" (func (;0;) (type 0)))
+    (start 0)
+  )
+  (core instance (;1;)
+    (export "" (func 0))
+  )
+  (core instance (;2;) (instantiate 1
+      (with "" (instance 1))
+    )
+  )
+  (type (;0;) (func))
+  (alias core export 0 "a" (core func (;1;)))
+  (func (;0;) (type 0) (canon lift (core func 1)))
+  (export (;1;) "a" (func 0))
+  (@producers
+    (processed-by "wit-component" "$CARGO_PKG_VERSION")
+  )
+)

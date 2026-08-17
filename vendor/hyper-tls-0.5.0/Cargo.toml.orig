@@ -1,0 +1,25 @@
+[package]
+name = "hyper-tls"
+version = "0.5.0" # don't forget html_root_url in lib.rs
+description = "Default TLS implementation for use with hyper"
+authors = ["Sean McArthur <sean@seanmonstar.com>"]
+license = "MIT/Apache-2.0"
+keywords = ["hyper", "tls", "http", "https", "ssl"]
+homepage = "https://hyper.rs"
+repository = "https://github.com/hyperium/hyper-tls"
+documentation = "https://docs.rs/hyper-tls"
+edition = "2018"
+
+[features]
+vendored = ["native-tls/vendored"]
+
+[dependencies]
+bytes = "1"
+native-tls = "0.2.1"
+hyper = { version = "0.14.2", default-features = false, features = ["tcp", "client"] }
+tokio = "1"
+tokio-native-tls = "0.3"
+
+[dev-dependencies]
+tokio = { version = "1.0.0", features = ["io-std", "macros", "io-util"] }
+hyper = { version = "0.14.2", default-features = false, features = ["http1"] }

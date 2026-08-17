@@ -1,0 +1,17 @@
+error: derive(BitAnd) is currently only supported on enums, not structs
+ --> tests/ui/derive_bit_struct.rs:3:14
+  |
+3 |     #[derive(BitAnd, BitOr, BitXor)]
+  |              ^^^^^^
+
+error: derive(BitOr) is currently only supported on enums, not structs
+ --> tests/ui/derive_bit_struct.rs:3:22
+  |
+3 |     #[derive(BitAnd, BitOr, BitXor)]
+  |                      ^^^^^
+
+error: derive(BitXor) is currently only supported on enums, not structs
+ --> tests/ui/derive_bit_struct.rs:3:29
+  |
+3 |     #[derive(BitAnd, BitOr, BitXor)]
+  |                             ^^^^^^

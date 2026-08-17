@@ -1,0 +1,22 @@
+---
+- name: Two document start markers
+  from: '@perlpunk'
+  tags: header
+  yaml: |
+    ---
+    ---
+  tree: |
+    +STR
+     +DOC ---
+      =VAL :
+     -DOC
+     +DOC ---
+      =VAL :
+     -DOC
+    -STR
+  json: |
+    null
+    null
+  dump: |
+    ---
+    ---

@@ -1,0 +1,26 @@
+[package]
+name = "lyon"
+version = "1.0.16"
+description = "2D Graphics rendering on the GPU using tessellation."
+authors = ["Nicolas Silva <nical@fastmail.com>"]
+repository = "https://github.com/nical/lyon"
+documentation = "https://docs.rs/lyon/"
+keywords = ["2d", "graphics", "tessellation", "svg"]
+license = "MIT OR Apache-2.0"
+workspace = "../.."
+edition = "2018"
+
+[lib]
+name = "lyon"
+path = "src/lib.rs"
+
+[features]
+serialization = ["lyon_tessellation/serialization"]
+debugger = ["lyon_tessellation/debugger"]
+extra = ["lyon_extra"]
+profiling = ["lyon_tessellation/profiling"]
+
+[dependencies]
+lyon_tessellation = { version = "1.0.16", path = "../tessellation" }
+lyon_algorithms = { version = "1.0.16", path = "../algorithms" }
+lyon_extra = { version = "1.0.0", optional = true, path = "../extra" }

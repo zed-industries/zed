@@ -1,0 +1,5 @@
+failed to merge package `foo:foo` into existing copy
+
+Caused by:
+    0: failed to merge interface `a`
+    1: expected function `a` to be present

@@ -1,0 +1,16 @@
+BasedOnStyle: Chromium
+AlignAfterOpenBracket: Align
+AlignConsecutiveAssignments: true
+AlignConsecutiveDeclarations: true
+AlignConsecutiveMacros: true
+AlignEscapedNewlines: true
+# AlignOperands: Align
+AlignTrailingComments: true
+AlwaysBreakAfterReturnType: AllDefinitions
+BreakBeforeBraces: Allman
+ColumnLimit: 80
+DerivePointerAlignment: false
+IndentCaseLabels: false
+PointerAlignment: Left
+SpaceBeforeParens: ControlStatements
+SpacesInParentheses: true

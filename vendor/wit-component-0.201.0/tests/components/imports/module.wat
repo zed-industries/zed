@@ -1,0 +1,12 @@
+(module
+  (import "foo" "foo1" (func))
+  (import "foo" "foo2" (func (param i32)))
+  (import "foo" "foo3" (func (param f32)))
+  (import "bar" "bar1" (func (param i32 i32)))
+  (import "bar" "bar2" (func (param i32)))
+  (import "baz" "baz1" (func (param i32 i32)))
+  (import "baz" "baz2" (func))
+  (import "baz" "baz3" (func (param i32)))
+  (memory (export "memory") 1)
+  (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) unreachable)
+)

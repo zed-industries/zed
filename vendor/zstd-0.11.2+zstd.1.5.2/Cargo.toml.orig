@@ -1,0 +1,48 @@
+[package]
+authors = ["Alexandre Bury <alexandre.bury@gmail.com>"]
+description = "Binding for the zstd compression library."
+documentation = "https://docs.rs/zstd"
+keywords = ["zstd", "zstandard", "compression"]
+categories = ["compression", "api-bindings"]
+license = "MIT"
+name = "zstd"
+repository = "https://github.com/gyscos/zstd-rs"
+version = "0.11.2+zstd.1.5.2"
+exclude = ["assets/*.zst"]
+readme = "Readme.md"
+edition = "2018"
+
+[package.metadata.docs.rs]
+features = ["experimental", "zstdmt", "zdict_builder", "doc-cfg"]
+
+[badges]
+travis-ci = { repository = "gyscos/zstd-rs" }
+
+[dependencies]
+zstd-safe = { path = "zstd-safe", version = "5.0.1", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+clap = "3.0"
+humansize = "1.0"
+partial-io = "0.5"
+walkdir = "2.2"
+
+[features]
+default = ["legacy", "arrays", "zdict_builder"]
+
+bindgen = ["zstd-safe/bindgen"]
+debug = ["zstd-safe/debug"]
+legacy = ["zstd-safe/legacy"]
+pkg-config = ["zstd-safe/pkg-config"]
+wasm = []
+zstdmt = ["zstd-safe/zstdmt"]
+experimental = ["zstd-safe/experimental"]
+thin = ["zstd-safe/thin"]
+arrays = ["zstd-safe/arrays"]
+no_asm = ["zstd-safe/no_asm"]
+doc-cfg = []
+zdict_builder = ["zstd-safe/zdict_builder"]
+
+[[example]]
+name = "train"
+required-features = ["zdict_builder"]

@@ -1,0 +1,101 @@
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "*"
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+name: CI
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      # make sure all code has been formatted with rustfmt
+      - name: check rustfmt
+        run: |
+          rustup component add rustfmt
+          cargo fmt -- --check --color always
+
+      # run clippy to verify we have no warnings
+      - run: cargo fetch
+      - name: cargo clippy
+        run: |
+          rustup component add clippy
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo clippy --all-targets --no-default-features -- -D warnings
+
+  test:
+    name: Build & Test
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+      - run: cargo fetch
+      - name: cargo build
+        run: cargo build
+      - name: cargo test build
+        run: cargo build --tests
+      - name: cargo test
+        run: cargo test
+      - name: cargo build `no_std`
+        run: cargo build --no-default-features
+      - name: cargo test build `no_std`
+        run: cargo build --no-default-features --tests
+      - name: cargo test build `no_std`
+        run: cargo test --no-default-features
+
+  test-nightly:
+    name: Build & Test Nightly
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          override: true
+      - run: cargo fetch
+      - name: cargo build
+        run: cargo build
+      - name: cargo test build
+        run: cargo build --tests
+      - name: cargo test
+        run: cargo test
+      - name: cargo build `no_std`
+        run: cargo build --no-default-features
+      - name: cargo test build `no_std`
+        run: cargo build --no-default-features --tests
+      - name: cargo test build `no_std`
+        run: cargo test --no-default-features
+
+  publish-check:
+    name: Publish Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+      - run: cargo fetch
+      - name: cargo publish check
+        run: cargo publish --dry-run

@@ -1,0 +1,28 @@
+[package]
+name = "windows-core"
+version = "0.62.2"
+edition = "2021"
+rust-version = "1.82"
+license = "MIT OR Apache-2.0"
+description = "Core type support for COM and Windows"
+repository = "https://github.com/microsoft/windows-rs"
+categories = ["os::windows-apis"]
+readme = "readme.md"
+
+[dependencies]
+windows-implement = { workspace = true }
+windows-interface = { workspace = true }
+windows-link = { workspace = true }
+windows-result = { workspace = true }
+windows-strings = { workspace = true }
+
+[features]
+default = ["std"]
+std = ["windows-result/std", "windows-strings/std"]
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+default-target = "x86_64-pc-windows-msvc"
+targets = []

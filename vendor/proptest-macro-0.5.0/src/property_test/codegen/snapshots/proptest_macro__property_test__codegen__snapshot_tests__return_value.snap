@@ -1,0 +1,49 @@
+---
+source: proptest-macro/src/property_test/codegen/mod.rs
+expression: formatted
+---
+#[test]
+fn return_value() {
+    #[derive(Debug)]
+    struct ReturnValueArgs {
+        x: i32,
+        y: i32,
+    }
+    impl ::proptest::prelude::Arbitrary for ReturnValueArgs {
+        type Parameters = ();
+        type Strategy = ::proptest::strategy::Map<
+            ::proptest::arbitrary::StrategyFor<(i32, i32)>,
+            fn((i32, i32)) -> Self,
+        >;
+        fn arbitrary_with((): Self::Parameters) -> Self::Strategy {
+            use ::proptest::strategy::Strategy;
+            ::proptest::prelude::any::<(i32, i32)>().prop_map(|(x, y)| Self { x, y })
+        }
+    }
+    let config = ::proptest::test_runner::Config {
+        test_name: Some(concat!(module_path!(), "::", stringify!(return_value))),
+        source_file: Some(file!()),
+        ..::proptest::test_runner::Config::default()
+    };
+    let mut runner = ::proptest::test_runner::TestRunner::new(config);
+    let result = runner
+        .run(
+            &::proptest::strategy::Strategy::prop_map(
+                ::proptest::prelude::any::<ReturnValueArgs>(),
+                |values| {
+                    ::proptest::sugar::NamedArguments(
+                        stringify!(ReturnValueArgs),
+                        values,
+                    )
+                },
+            ),
+            |::proptest::sugar::NamedArguments(_, ReturnValueArgs { x, y })| {
+                let result = { prop_assert!(x == y) };
+                result
+            },
+        );
+    match result {
+        Ok(()) => {}
+        Err(e) => panic!("{}", e),
+    }
+}

@@ -1,0 +1,55 @@
+// Copyright 2023 LiveKit, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package livekit;
+option go_package = "github.com/livekit/protocol/livekit";
+option csharp_namespace = "LiveKit.Proto";
+option ruby_package = "LiveKit::Proto";
+
+import "livekit_models.proto";
+import "livekit_egress.proto";
+import "livekit_ingress.proto";
+
+message WebhookEvent {
+  // one of room_started, room_finished, participant_joined, participant_left, participant_connection_aborted,
+  // track_published, track_unpublished, egress_started, egress_updated, egress_ended,
+  // ingress_started, ingress_ended
+  string event = 1;
+
+  Room room = 2;
+
+  // set when event is participant_* or track_*
+  ParticipantInfo participant = 3;
+
+  // set when event is egress_*
+  EgressInfo egress_info = 9;
+
+  // set when event is ingress_*
+  IngressInfo ingress_info = 10;
+
+  // set when event is track_*
+  TrackInfo track = 8;
+
+  // unique event uuid
+  string id = 6;
+
+  // timestamp in seconds
+  int64 created_at = 7;
+
+  int32 num_dropped = 11 [deprecated=true];
+
+  // NEXT_ID: 12
+}

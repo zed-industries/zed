@@ -1,0 +1,79 @@
+/// package docs;
+package foo:foo;
+
+/// interface docs
+interface coverage-iface {
+  /// basic typedef docs
+  type t = u32;
+
+  /// record typedef docs
+  record r {
+    /// record field docs
+    f1: u8,
+    f2: u8,
+  }
+
+  flags fl {
+    /// flag docs
+    f1,
+    f2,
+  }
+
+  variant v {
+    /// variant case docs
+    c1(u8),
+    c2,
+  }
+
+  enum e {
+    /// enum case docs
+    c1,
+    c2,
+  }
+
+  resource res {
+    /// constructor docs
+    constructor();
+    /// method docs
+    m: func();
+    /// static func docs
+    s: static func();
+  }
+
+  /// interface func docs
+  f: func();
+}
+
+/// world docs
+world coverage-world {
+  /// world func import docs
+  import imp: func();
+
+  /// world typedef docs
+  type t = u32;
+
+  /// world inline interface docs
+  export i: interface {
+    /// inline interface typedef docs
+    type t = u32;
+
+    /// inline interface func docs
+    f: func();
+  }
+  /// world func export docs
+  export exp: func();
+}
+
+/** other comment forms
+    multi-line block */
+interface other-comment-forms {
+  /// one doc line
+  // non-doc in the middle
+  /// another doc line
+  multiple-lines-split: func();
+
+  /// mixed forms; line doc
+  /** plus block doc
+      multi-line */
+  mixed-forms: func();
+}

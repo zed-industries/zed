@@ -1,0 +1,114 @@
+<?xml version="1.0"?>
+
+<ratified href="WEBGL_lose_context/">
+  <name>WEBGL_lose_context</name>
+  <aliases>
+    <alias>WEBKIT_WEBGL_lose_context</alias>
+    <alias>MOZ_WEBGL_lose_context</alias>
+  </aliases>
+  <contact><a href="mailto:enne@chromium.org">enne@chromium.org</a></contact>
+  <contributors>
+    <contributor>Members of the <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL working group</a></contributor>
+    <contributor>Glenn Maynard</contributor>
+  </contributors>
+  <number>3</number>
+  <depends>
+    <api version="1.0"/>
+  </depends>
+  <overview>
+    <p>This extension exposes new functions which simulate losing and restoring the WebGL context, even on platforms where the context can never be lost.  Consult the WebGL specification for documentation about the <code>webglcontextlost</code> and <code>webglcontextrestored</code> events.</p>
+    <p>When this extension is enabled:
+      <ul>
+        <li><code>loseContext</code> and <code>restoreContext</code> are allowed to generate INVALID_OPERATION errors even when the context is lost.</li>
+      </ul>
+    </p>
+    <p>
+        Note that this extension is <strong>not</strong> disconnected from the WebGLRenderingContext if that
+        object loses its context as described in "The Context Lost Event" of the WebGL specification, either
+        through use of this API or via actual circumstances such as a system failure.
+    </p>
+  </overview>
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface WEBGL_lose_context {
+      void loseContext();
+      void restoreContext();
+};
+  </idl>
+  <newfun>
+    <function name="loseContext" type="void">
+      <p>When this function is called and the context is not lost, simulate
+      losing the context so as to trigger the steps described in the WebGL
+      spec for handling context lost. The context will remain in the lost
+      state according to the WebGL specification until
+      <code>restoreContext()</code> is called.  If the context is already
+      lost when this function is called, generate an
+      <code>INVALID_OPERATION</code> error.</p>
+
+      <p>Implementations should destroy the underlying graphics context and
+      all graphics resources when this method is called. This is the
+      recommended mechanism for applications to programmatically halt their
+      use of the WebGL API.</p>
+
+    </function>
+    <function name="restoreContext" type="void">
+      When this function is called while the context is lost, and the conditions
+      defined by the WebGL specification for restoring the context are
+      met, simulate the context being restored so as to trigger the steps
+      described in the WebGL spec for handling the context being restored.
+      If the context is already restored when this function is called, or if
+      the conditions in the WebGL specification for restoring the
+      context are not satisfied, or if the context was not lost via <code>loseContext()</code>,
+      generate an <code>INVALID_OPERATION</code> error.
+    </function>
+  </newfun>
+  <history>
+    <revision date="2011/01/11">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2011/04/14">
+      <change>Added explicit restoreContext() method based on discussion on public_webgl list, to enable testing of scenario where context stays lost for a period of time.</change>
+    </revision>
+    <revision date="2011/11/08">
+      <change>Renamed from WEBKIT_lose_context to WEBGL_EXT_lose_context</change>
+    </revision>
+    <revision date="2011/11/11">
+      <change>Changed to make it clear this extension should follow the WebGL spec for the steps involved in handling losing and restoring the context rather than just fire events.</change>
+    </revision>
+    <revision date="2011/12/06">
+      <change>Added vendor-specific name strings for draft extension per discussion on WebGL mailing list</change>
+      <change>Renamed from WEBGL_EXT_lose_context to WEBGL_lose_context</change>
+    </revision>
+    <revision date="2011/12/07">
+      <change>Renamed "Name Strings" section to "Alias Name Strings".</change>
+    </revision>
+    <revision date="2012/01/03">
+      <change>Removed webgl module per changes to Web IDL spec.</change>
+    </revision>
+    <revision date="2013/01/26">
+      <change>Moved from draft to community approved status</change>
+    </revision>
+    <revision date="2013/05/15">
+      <change>Ratified by Khronos Board of Promoters.</change>
+    </revision>
+    <revision date="2013/06/05">
+      <change>Clarified error generation that conflicted with WebGL spec.</change>
+    </revision>
+    <revision date="2013/08/02">
+      <change>
+          Indicated that this extension is not disconnected from the WebGLRenderingContext
+          when that object loses its drawing buffer (i.e. when it performs the steps
+          outlined in "The Context Lost Event" of the WebGL specification).</change>
+    </revision>
+    <revision date="2014/05/08">
+      <change>Added INVALID_OPERATION for restoreContext() without loseContext()</change>
+    </revision>
+    <revision date="2014/07/15">
+      <change>Added NoInterfaceObject extended attribute.</change>
+    </revision>
+    <revision date="2017/02/03">
+      <change>Per discussion in working group, document that this extension
+      should destroy the underlying context and all graphics resources.</change>
+    </revision>
+  </history>
+</ratified>

@@ -1,0 +1,3 @@
+disallowed-types = [
+    { path = "std::collections::HashMap", reason = "HashMap's key order is unspecified and thus serializing such a type will result in a random output, use BTreeMap instead." }
+]

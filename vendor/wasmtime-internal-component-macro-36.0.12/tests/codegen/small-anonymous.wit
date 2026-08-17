@@ -1,0 +1,15 @@
+package foo:foo;
+
+interface anon {
+  enum error {
+    success,
+    failure,
+  }
+
+  option-test: func() -> result<option<string>, error>;
+}
+
+world the-world {
+  import anon;
+  export anon;
+}

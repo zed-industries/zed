@@ -1,0 +1,363 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Copyright (C) 2005 Jeremy Kolb.
+All Rights Reserved.
+
+Permission is hereby granted, free of charge, to any person ob/Sintaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Except as contained in this notice, the names of the authors or their
+institutions shall not be used in advertising or otherwise to promote the
+sale, use or other dealings in this Software without prior written
+authorization from the authors.
+-->
+
+<xcb header="xprint" extension-xname="XpExtension" extension-name="XPrint" extension-multiword="true" major-version="1" minor-version="0">
+
+    <!-- Conforms to XPRINT 1.0 -->
+
+    <import>xproto</import>
+
+    <typedef oldname="char" newname="STRING8" />
+
+    <!-- Types -->
+    <struct name="PRINTER">
+        <field type="CARD32" name="nameLen" />
+        <list type="STRING8" name="name">
+            <fieldref>nameLen</fieldref>
+        </list>
+        <pad align="4" />
+        <field type="CARD32" name="descLen" />
+        <list type="STRING8" name="description">
+            <fieldref>descLen</fieldref>
+        </list>
+        <pad align="4" />
+    </struct>
+
+    <!--<typedef oldname="CARD32" newname="PCONTEXT" />-->
+    <xidtype name="PCONTEXT" />
+
+    <!-- "PrintGetDocumentData" -->
+    <enum name="GetDoc">
+        <item name="Finished">
+            <value>0</value>
+        </item>
+        <item name="SecondConsumer">
+            <value>1</value>
+        </item>
+    </enum>
+
+    <!-- Event Mask ("PrintSelectInput") -->
+    <enum name="EvMask">
+        <item name="NoEventMask">
+            <value>0</value>
+        </item>
+        <item name="PrintMask">
+            <bit>0</bit>
+        </item>
+        <item name="AttributeMask">
+            <bit>1</bit>
+        </item>
+    </enum>
+
+    <!-- "PrintNotify" detail -->
+    <enum name="Detail">
+        <item name="StartJobNotify">
+            <value>1</value>
+        </item>
+        <item name="EndJobNotify">
+            <value>2</value>
+        </item>
+        <item name="StartDocNotify">
+            <value>3</value>
+        </item>
+        <item name="EndDocNotify">
+            <value>4</value>
+        </item>
+        <item name="StartPageNotify">
+            <value>5</value>
+        </item>
+        <item name="EndPageNotify">
+            <value>6</value>
+        </item>
+    </enum>
+
+    <!-- "AttributeNotify" detail -->
+    <enum name="Attr">
+        <item name="JobAttr">
+            <value>1</value>
+        </item>
+        <item name="DocAttr">
+            <value>2</value>
+        </item>
+        <item name="PageAttr">
+            <value>3</value>
+        </item>
+        <item name="PrinterAttr">
+            <value>4</value>
+        </item>
+        <item name="ServerAttr">
+            <value>5</value>
+        </item>
+        <item name="MediumAttr">
+            <value>6</value>
+        </item>
+        <item name="SpoolerAttr">
+            <value>7</value>
+        </item>
+    </enum>
+
+
+    <!-- Requests -->
+    <request name="PrintQueryVersion" opcode="0">
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD16" name="major_version" />
+            <field type="CARD16" name="minor_version" />
+        </reply>
+    </request>
+
+    <request name="PrintGetPrinterList" opcode="1">
+        <field type="CARD32" name="printerNameLen" />
+        <field type="CARD32" name="localeLen" />
+        <list type="STRING8" name="printer_name">
+            <fieldref>printerNameLen</fieldref>
+        </list>
+        <!-- There's some padding in here... -->
+        <list type="STRING8" name="locale">
+            <fieldref>localeLen</fieldref>
+        </list>
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="listCount" />
+            <pad bytes="20" />
+            <list type="PRINTER" name="printers">
+                <fieldref>listCount</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="PrintRehashPrinterList" opcode="20" />
+
+    <request name="CreateContext" opcode="2">
+        <field type="CARD32" name="context_id" />
+        <field type="CARD32" name="printerNameLen" />
+        <field type="CARD32" name="localeLen" />
+        <list type="STRING8" name="printerName">
+            <fieldref>printerNameLen</fieldref>
+        </list>
+        <!-- padding -->
+        <list type="STRING8" name="locale">
+            <fieldref>localeLen</fieldref>
+        </list>
+    </request>
+
+    <request name="PrintSetContext" opcode="3">
+        <field type="CARD32" name="context" />
+    </request>
+
+    <request name="PrintGetContext" opcode="4">
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="context" />
+        </reply>
+    </request>
+
+    <request name="PrintDestroyContext" opcode="5">
+        <field type="CARD32" name="context" />
+    </request>
+
+    <request name="PrintGetScreenOfContext" opcode="6">
+        <reply>
+            <pad bytes="1" />
+            <field type="WINDOW" name="root" />
+        </reply>
+    </request>
+
+    <request name="PrintStartJob" opcode="7">
+        <field type="CARD8" name="output_mode" />
+    </request>
+
+    <request name="PrintEndJob" opcode="8">
+        <field type="BOOL" name="cancel" />
+    </request>
+
+    <request name="PrintStartDoc" opcode="9">
+        <field type="CARD8" name="driver_mode" />
+    </request>
+
+    <request name="PrintEndDoc" opcode="10">
+        <field type="BOOL" name="cancel" />
+    </request>
+
+    <request name="PrintPutDocumentData" opcode="11">
+        <field type="DRAWABLE" name="drawable" />
+        <field type="CARD32" name="len_data" />
+        <field type="CARD16" name="len_fmt" />
+        <field type="CARD16" name="len_options" />
+        <list type="BYTE" name="data">
+            <fieldref>len_data</fieldref>
+        </list>
+        <!-- padding -->
+        <list type="STRING8" name="doc_format">
+            <fieldref>len_fmt</fieldref>
+        </list>
+        <!-- padding -->
+        <list type="STRING8" name="options">
+            <fieldref>len_options</fieldref>
+        </list>
+    </request>
+
+    <request name="PrintGetDocumentData" opcode="12">
+        <field type="PCONTEXT" name="context" />
+        <field type="CARD32" name="max_bytes" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="status_code" />
+            <field type="CARD32" name="finished_flag" />
+            <field type="CARD32" name="dataLen" />
+            <pad bytes="12" />
+            <list type="BYTE" name="data">
+                <fieldref>dataLen</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="PrintStartPage" opcode="13">
+        <field type="WINDOW" name="window" />
+    </request>
+
+    <request name="PrintEndPage" opcode="14">
+        <field type="BOOL" name="cancel" />
+        <pad bytes="3" />
+    </request>
+
+    <request name="PrintSelectInput" opcode="15">
+        <field type="PCONTEXT" name="context" />
+        <field type="CARD32" name="event_mask" />
+    </request>
+
+    <request name="PrintInputSelected" opcode="16">
+        <field type="PCONTEXT" name="context" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="event_mask" />
+            <field type="CARD32" name="all_events_mask" />
+        </reply>
+    </request>
+
+    <request name="PrintGetAttributes" opcode="17">
+        <field type="PCONTEXT" name="context" />
+        <field type="CARD8" name="pool" />
+        <pad bytes="3" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="stringLen" />
+            <pad bytes="20" />
+            <list type="STRING8" name="attributes">
+                <fieldref>stringLen</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="PrintGetOneAttributes" opcode="19">
+        <field type="PCONTEXT" name="context" />
+        <field type="CARD32" name="nameLen" />
+        <field type="CARD8" name="pool" />
+        <pad bytes="3" />
+        <list type="STRING8" name="name">
+            <fieldref>nameLen</fieldref>
+        </list>
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="valueLen" />
+            <pad bytes="20" />
+            <list type="STRING8" name="value">
+                <fieldref>valueLen</fieldref>
+            </list>
+        </reply>
+    </request>
+
+    <request name="PrintSetAttributes" opcode="18">
+        <field type="PCONTEXT" name="context" />
+        <field type="CARD32" name="stringLen" />
+        <field type="CARD8" name="pool" />
+        <field type="CARD8" name="rule" />
+        <pad bytes="2" />
+        <list type="STRING8" name="attributes" />
+    </request>
+
+    <request name="PrintGetPageDimensions" opcode="21">
+        <field type="PCONTEXT" name="context" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD16" name="width" />
+            <field type="CARD16" name="height" />
+            <field type="CARD16" name="offset_x" />
+            <field type="CARD16" name="offset_y" />
+            <field type="CARD16" name="reproducible_width" />
+            <field type="CARD16" name="reproducible_height" />
+        </reply>
+    </request>
+
+    <request name="PrintQueryScreens" opcode="22">
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD32" name="listCount" />
+            <pad bytes="20" />
+            <list type="WINDOW" name="roots">
+                <fieldref>listCount</fieldref>
+            </list>
+            <!-- There may be a WINDOW rootWindow here... -->
+        </reply>
+    </request>
+
+    <request name="PrintSetImageResolution" opcode="23">
+        <field type="PCONTEXT" name="context" />
+        <field type="CARD16" name="image_resolution" />
+        <reply>
+            <field type="BOOL" name="status" />
+            <field type="CARD16" name="previous_resolutions" />
+        </reply>
+    </request>
+
+    <request name="PrintGetImageResolution" opcode="24">
+        <field type="PCONTEXT" name="context" />
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD16" name="image_resolution" />
+        </reply>
+    </request>
+
+
+    <!-- Events -->
+    <event name="Notify" number="0">
+        <field type="CARD8" name="detail" />
+        <field type="PCONTEXT" name="context" />
+        <field type="BOOL" name="cancel" />
+    </event>
+
+    <event name="AttributNotify" number="1">
+        <field type="CARD8" name="detail" />
+        <field type="PCONTEXT" name="context" />
+    </event>
+
+    <!-- Errors -->
+    <error name="BadContext" number="0" />
+    <error name="BadSequence" number="1" />
+
+</xcb>

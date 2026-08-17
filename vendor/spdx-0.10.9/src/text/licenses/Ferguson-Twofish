@@ -1,0 +1,16 @@
+r#" The author hereby grants a perpetual license to everybody to 
+ use this code for any purpose as long as the copyright message is included 
+ in the source code of this or any derived work. 
+  
+ Yes, this means that you, your company, your club, and anyone else 
+ can use this code anywhere you want. You can change it and distribute it 
+ under the GPL, include it in your commercial product without releasing 
+ the source code, put it on the web, etc.  
+ The only thing you cannot do is remove my copyright message,  
+ or distribute any source code based on this implementation that does not  
+ include my copyright message.  
+  
+ I appreciate a mention in the documentation or credits,  
+ but I understand if that is difficult to do. 
+ I also appreciate it if you tell me where and why you used my code. 
+"#

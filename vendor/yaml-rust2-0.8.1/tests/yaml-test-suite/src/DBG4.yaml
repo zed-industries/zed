@@ -1,0 +1,62 @@
+---
+- name: Spec Example 7.10. Plain Characters
+  from: http://www.yaml.org/spec/1.2/spec.html#id2789510
+  tags: spec flow sequence scalar
+  yaml: |
+    # Outside flow collection:
+    - ::vector
+    - ": - ()"
+    - Up, up, and away!
+    - -123
+    - http://example.com/foo#bar
+    # Inside flow collection:
+    - [ ::vector,
+      ": - ()",
+      "Up, up and away!",
+      -123,
+      http://example.com/foo#bar ]
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       =VAL :::vector
+       =VAL ": - ()
+       =VAL :Up, up, and away!
+       =VAL :-123
+       =VAL :http://example.com/foo#bar
+       +SEQ []
+        =VAL :::vector
+        =VAL ": - ()
+        =VAL "Up, up and away!
+        =VAL :-123
+        =VAL :http://example.com/foo#bar
+       -SEQ
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      "::vector",
+      ": - ()",
+      "Up, up, and away!",
+      -123,
+      "http://example.com/foo#bar",
+      [
+        "::vector",
+        ": - ()",
+        "Up, up and away!",
+        -123,
+        "http://example.com/foo#bar"
+      ]
+    ]
+  dump: |
+    - ::vector
+    - ": - ()"
+    - Up, up, and away!
+    - -123
+    - http://example.com/foo#bar
+    - - ::vector
+      - ": - ()"
+      - "Up, up and away!"
+      - -123
+      - http://example.com/foo#bar

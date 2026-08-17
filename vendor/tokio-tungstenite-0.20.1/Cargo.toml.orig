@@ -1,0 +1,101 @@
+[package]
+name = "tokio-tungstenite"
+description = "Tokio binding for Tungstenite, the Lightweight stream-based WebSocket implementation"
+categories = ["web-programming::websocket", "network-programming", "asynchronous", "concurrency"]
+keywords = ["websocket", "io", "web"]
+authors = ["Daniel Abramov <dabramov@snapview.de>", "Alexey Galakhov <agalakhov@snapview.de>"]
+license = "MIT"
+homepage = "https://github.com/snapview/tokio-tungstenite"
+documentation = "https://docs.rs/tokio-tungstenite/0.20.1"
+repository = "https://github.com/snapview/tokio-tungstenite"
+version = "0.20.1"
+edition = "2018"
+rust-version = "1.63"
+include = ["examples/**/*", "src/**/*", "LICENSE", "README.md", "CHANGELOG.md"]
+
+[package.metadata.docs.rs]
+features = ["native-tls", "__rustls-tls"]
+
+[features]
+default = ["connect", "handshake"]
+connect = ["stream", "tokio/net", "handshake"]
+handshake = ["tungstenite/handshake"]
+native-tls = ["native-tls-crate", "tokio-native-tls", "stream", "tungstenite/native-tls", "handshake"]
+native-tls-vendored = ["native-tls", "native-tls-crate/vendored", "tungstenite/native-tls-vendored"]
+rustls-tls-native-roots = ["__rustls-tls", "rustls-native-certs"]
+rustls-tls-webpki-roots = ["__rustls-tls", "webpki-roots"]
+__rustls-tls = ["rustls", "tokio-rustls", "stream", "tungstenite/__rustls-tls", "handshake"]
+stream = []
+
+[dependencies]
+log = "0.4.17"
+futures-util = { version = "0.3.28", default-features = false, features = ["sink", "std"] }
+tokio = { version = "1.0.0", default-features = false, features = ["io-util"] }
+
+[dependencies.tungstenite]
+version = "0.20.1"
+default-features = false
+
+[dependencies.native-tls-crate]
+optional = true
+package = "native-tls"
+version = "0.2.11"
+
+[dependencies.rustls]
+optional = true
+version = "0.21.6"
+
+[dependencies.rustls-native-certs]
+optional = true
+version = "0.6.2"
+
+[dependencies.tokio-native-tls]
+optional = true
+version = "0.3.1"
+
+[dependencies.tokio-rustls]
+optional = true
+version = "0.24.1"
+
+[dependencies.webpki-roots]
+optional = true
+version = "0.25.2"
+
+[dev-dependencies]
+futures-channel = "0.3.28"
+hyper = { version = "0.14.25", default-features = false, features = ["http1", "server", "tcp"] }
+tokio = { version = "1.27.0", default-features = false, features = ["io-std", "macros", "net", "rt-multi-thread", "time"] }
+url = "2.3.1"
+env_logger = "0.10.0"
+
+[[example]]
+name = "autobahn-client"
+required-features = ["connect"]
+
+[[example]]
+name = "autobahn-server"
+required-features = ["handshake"]
+
+[[example]]
+name = "client"
+required-features = ["connect"]
+
+[[example]]
+name = "echo-server"
+required-features = ["handshake"]
+
+[[example]]
+name = "server-custom-accept"
+required-features = ["handshake"]
+
+[[example]]
+name = "server"
+required-features = ["handshake"]
+
+[[example]]
+name = "server-headers"
+required-features = ["handshake"]
+
+[[example]]
+name = "interval-server"
+required-features = ["handshake"]

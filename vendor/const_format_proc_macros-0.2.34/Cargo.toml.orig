@@ -1,0 +1,44 @@
+[package]
+name = "const_format_proc_macros"
+version = "0.2.34"
+authors = ["rodrimati1992 <rodrimatt1985@gmail.com>"]
+rust-version = "1.57.0"
+edition = "2021"
+license = "Zlib"
+description = "Implementation detail of the `const_format` crate"
+keywords = ["no-std", "format", "concat"]
+categories = ["no-std", "text-processing"]
+repository = "https://github.com/rodrimati1992/const_format_crates/"
+include = [
+    "Cargo.toml", 
+    "src/**/*.rs", 
+    "../README.md",
+    "LICENSE-ZLIB.md", 
+]
+
+[lib]
+proc-macro = true
+
+[features]
+default = []
+derive = ["syn", "syn/derive", "syn/printing"]
+debug = ["syn/extra-traits"]
+all = ["derive"]
+
+[dependencies]
+quote = "1.0.7"
+proc-macro2 = "1.0.19"
+unicode-xid = "0.2"
+
+[dependencies.syn]
+version = "1.0.38"
+optional = true
+default-features = false
+features = ["parsing", "proc-macro"]
+
+[dev-dependencies]
+fastrand = "1.3.4"
+
+
+[package.metadata.docs.rs]
+rustc-args = ["--cfg", "feature = \"all\""]

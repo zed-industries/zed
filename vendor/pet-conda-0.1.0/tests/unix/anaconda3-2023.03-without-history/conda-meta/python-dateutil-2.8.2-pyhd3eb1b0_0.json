@@ -1,0 +1,159 @@
+{
+  "build": "pyhd3eb1b0_0",
+  "build_number": 0,
+  "channel": "https://repo.anaconda.com/pkgs/main/noarch",
+  "constrains": [],
+  "depends": [
+    "python",
+    "six >=1.5"
+  ],
+  "extracted_package_dir": "/Users/donjayamanne/.pyenv/versions/anaconda3-2023.03/pkgs/python-dateutil-2.8.2-pyhd3eb1b0_0",
+  "features": "",
+  "files": [
+    "lib/python3.10/site-packages/dateutil/__init__.py",
+    "lib/python3.10/site-packages/dateutil/_common.py",
+    "lib/python3.10/site-packages/dateutil/_version.py",
+    "lib/python3.10/site-packages/dateutil/easter.py",
+    "lib/python3.10/site-packages/dateutil/parser/__init__.py",
+    "lib/python3.10/site-packages/dateutil/parser/_parser.py",
+    "lib/python3.10/site-packages/dateutil/parser/isoparser.py",
+    "lib/python3.10/site-packages/dateutil/relativedelta.py",
+    "lib/python3.10/site-packages/dateutil/rrule.py",
+    "lib/python3.10/site-packages/dateutil/tz/__init__.py",
+    "lib/python3.10/site-packages/dateutil/tz/_common.py",
+    "lib/python3.10/site-packages/dateutil/tz/_factories.py",
+    "lib/python3.10/site-packages/dateutil/tz/tz.py",
+    "lib/python3.10/site-packages/dateutil/tz/win.py",
+    "lib/python3.10/site-packages/dateutil/tzwin.py",
+    "lib/python3.10/site-packages/dateutil/utils.py",
+    "lib/python3.10/site-packages/dateutil/zoneinfo/__init__.py",
+    "lib/python3.10/site-packages/dateutil/zoneinfo/dateutil-zoneinfo.tar.gz",
+    "lib/python3.10/site-packages/dateutil/zoneinfo/rebuild.py",
+    "lib/python3.10/site-packages/python_dateutil-2.8.2.dist-info/INSTALLER",
+    "lib/python3.10/site-packages/python_dateutil-2.8.2.dist-info/LICENSE",
+    "lib/python3.10/site-packages/python_dateutil-2.8.2.dist-info/METADATA",
+    "lib/python3.10/site-packages/python_dateutil-2.8.2.dist-info/RECORD",
+    "lib/python3.10/site-packages/python_dateutil-2.8.2.dist-info/REQUESTED",
+    "lib/python3.10/site-packages/python_dateutil-2.8.2.dist-info/WHEEL",
+    "lib/python3.10/site-packages/python_dateutil-2.8.2.dist-info/direct_url.json",
+    "lib/python3.10/site-packages/python_dateutil-2.8.2.dist-info/top_level.txt",
+    "lib/python3.10/site-packages/python_dateutil-2.8.2.dist-info/zip-safe",
+    "lib/python3.10/site-packages/dateutil/__pycache__/__init__.cpython-310.pyc",
+    "lib/python3.10/site-packages/dateutil/__pycache__/_common.cpython-310.pyc",
+    "lib/python3.10/site-packages/dateutil/__pycache__/_version.cpython-310.pyc",
+    "lib/python3.10/site-packages/dateutil/__pycache__/easter.cpython-310.pyc",
+    "lib/python3.10/site-packages/dateutil/parser/__pycache__/__init__.cpython-310.pyc",
+    "lib/python3.10/site-packages/dateutil/parser/__pycache__/_parser.cpython-310.pyc",
+    "lib/python3.10/site-packages/dateutil/parser/__pycache__/isoparser.cpython-310.pyc",
+    "lib/python3.10/site-packages/dateutil/__pycache__/relativedelta.cpython-310.pyc",
+    "lib/python3.10/site-packages/dateutil/__pycache__/rrule.cpython-310.pyc",
+    "lib/python3.10/site-packages/dateutil/tz/__pycache__/__init__.cpython-310.pyc",
+    "lib/python3.10/site-packages/dateutil/tz/__pycache__/_common.cpython-310.pyc",
+    "lib/python3.10/site-packages/dateutil/tz/__pycache__/_factories.cpython-310.pyc",
+    "lib/python3.10/site-packages/dateutil/tz/__pycache__/tz.cpython-310.pyc",
+    "lib/python3.10/site-packages/dateutil/tz/__pycache__/win.cpython-310.pyc",
+    "lib/python3.10/site-packages/dateutil/__pycache__/tzwin.cpython-310.pyc",
+    "lib/python3.10/site-packages/dateutil/__pycache__/utils.cpython-310.pyc",
+    "lib/python3.10/site-packages/dateutil/zoneinfo/__pycache__/__init__.cpython-310.pyc",
+    "lib/python3.10/site-packages/dateutil/zoneinfo/__pycache__/rebuild.cpython-310.pyc"
+  ],
+  "fn": "python-dateutil-2.8.2-pyhd3eb1b0_0.conda",
+  "legacy_bz2_md5": "2eb923cc014094f4acf7f849d67d73f8",
+  "legacy_bz2_size": 246457,
+  "license": "BSD-3-Clause and Apache",
+  "license_family": "BSD",
+  "link": {
+    "source": "/Users/donjayamanne/.pyenv/versions/anaconda3-2023.03/pkgs/python-dateutil-2.8.2-pyhd3eb1b0_0",
+    "type": 1
+  },
+  "md5": "211ee00320b08a1ac9fea6677649f6c9",
+  "name": "python-dateutil",
+  "noarch": "python",
+  "package_tarball_full_path": "/Users/donjayamanne/.pyenv/versions/anaconda3-2023.03/pkgs/python-dateutil-2.8.2-pyhd3eb1b0_0.conda",
+  "package_type": "noarch_python",
+  "paths_data": {
+    "paths": [
+      {
+        "_path": "lib/python3.10/site-packages/dateutil/__pycache__/__init__.cpython-310.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.10/site-packages/dateutil/__pycache__/_common.cpython-310.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.10/site-packages/dateutil/__pycache__/_version.cpython-310.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.10/site-packages/dateutil/__pycache__/easter.cpython-310.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.10/site-packages/dateutil/parser/__pycache__/__init__.cpython-310.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.10/site-packages/dateutil/parser/__pycache__/_parser.cpython-310.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.10/site-packages/dateutil/parser/__pycache__/isoparser.cpython-310.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.10/site-packages/dateutil/__pycache__/relativedelta.cpython-310.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.10/site-packages/dateutil/__pycache__/rrule.cpython-310.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.10/site-packages/dateutil/tz/__pycache__/__init__.cpython-310.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.10/site-packages/dateutil/tz/__pycache__/_common.cpython-310.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.10/site-packages/dateutil/tz/__pycache__/_factories.cpython-310.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.10/site-packages/dateutil/tz/__pycache__/tz.cpython-310.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.10/site-packages/dateutil/tz/__pycache__/win.cpython-310.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.10/site-packages/dateutil/__pycache__/tzwin.cpython-310.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.10/site-packages/dateutil/__pycache__/utils.cpython-310.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.10/site-packages/dateutil/zoneinfo/__pycache__/__init__.cpython-310.pyc",
+        "path_type": "pyc_file"
+      },
+      {
+        "_path": "lib/python3.10/site-packages/dateutil/zoneinfo/__pycache__/rebuild.cpython-310.pyc",
+        "path_type": "pyc_file"
+      }
+    ],
+    "paths_version": 1
+  },
+  "requested_spec": "defaults/noarch::python-dateutil==2.8.2=pyhd3eb1b0_0[md5=211ee00320b08a1ac9fea6677649f6c9]",
+  "sha256": "01e82704b3d84c1b0b1f8823fa64259eb372a1278e6a40dddf2cefb4c96ab942",
+  "size": 238135,
+  "subdir": "noarch",
+  "timestamp": 1626374695070,
+  "track_features": "",
+  "url": "https://repo.anaconda.com/pkgs/main/noarch/python-dateutil-2.8.2-pyhd3eb1b0_0.conda",
+  "version": "2.8.2"
+}

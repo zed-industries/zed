@@ -1,0 +1,74 @@
+lints.workspace = true
+
+[package]
+authors = [
+    "Jyun-Yan You <jyyou.tw@gmail.com>",
+    "Emilio Cobos Álvarez <emilio@crisal.io>",
+    "Nick Fitzgerald <fitzgen@gmail.com>",
+    "The Servo project developers",
+]
+description = "Automatically generates Rust FFI bindings to C and C++ libraries."
+keywords = ["bindings", "ffi", "code-generation"]
+categories = ["external-ffi-bindings", "development-tools::ffi"]
+license = "BSD-3-Clause"
+name = "bindgen"
+readme = "../README.md"
+repository = "https://github.com/rust-lang/rust-bindgen"
+documentation = "https://docs.rs/bindgen"
+homepage = "https://rust-lang.github.io/rust-bindgen/"
+version = "0.71.1"
+build = "build.rs"
+rust-version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "bindgen"
+path = "lib.rs"
+
+[dependencies]
+annotate-snippets = { workspace = true, optional = true }
+bitflags.workspace = true
+cexpr.workspace = true
+clang-sys = { workspace = true, features = ["clang_11_0"] }
+clap = { workspace = true, features = ["derive"], optional = true }
+clap_complete = { workspace = true, optional = true }
+itertools = { workspace = true }
+log = { workspace = true, optional = true }
+prettyplease = { workspace = true, optional = true, features = ["verbatim"] }
+proc-macro2.workspace = true
+quote.workspace = true
+regex = { workspace = true, features = ["std", "unicode-perl"] }
+rustc-hash.workspace = true
+shlex.workspace = true
+syn = { workspace = true, features = ["full", "extra-traits", "visit-mut"] }
+
+[features]
+default = ["logging", "prettyplease", "runtime"]
+logging = ["dep:log"]
+static = ["clang-sys/static"]
+runtime = ["clang-sys/runtime"]
+# This feature is no longer used for anything and should be removed in bindgen 0.70
+which-rustfmt = []
+experimental = ["dep:annotate-snippets"]
+
+## The following features are for internal use and they shouldn't be used if
+## you're not hacking on bindgen
+# Features used by `bindgen-cli`
+__cli = ["dep:clap", "dep:clap_complete"]
+# Features used for CI testing
+__testing_only_extra_assertions = []
+__testing_only_libclang_9 = []
+__testing_only_libclang_16 = []
+
+[package.metadata.docs.rs]
+features = ["experimental"]
+
+[package.metadata.release]
+release = true
+pre-release-hook = ["../node_modules/doctoc/doctoc.js", "../CHANGELOG.md"]
+
+# Add version and date to changelog file
+[[package.metadata.release.pre-release-replacements]]
+file = "../CHANGELOG.md"
+search = "# Unreleased"
+replace = "# Unreleased\n## Added\n## Changed\n## Removed\n## Fixed\n## Security\n\n# {{version}} ({{date}})"

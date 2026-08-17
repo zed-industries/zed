@@ -1,0 +1,15 @@
+# for builds.sr.ht
+image: openbsd/latest
+packages:
+  - rust
+environment:
+  # RUST_BACKTRACE: 1 # Doesn't provide anything useful on OpenBSD
+tasks:
+  - build: |
+      cd uds/
+      cargo build
+      cargo build --all-features
+  - test: |
+      cd uds/
+      cargo run --all-features --bin characteristics
+      cargo test --all-features --no-fail-fast -- --nocapture

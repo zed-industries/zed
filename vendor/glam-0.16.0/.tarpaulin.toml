@@ -1,0 +1,7 @@
+[sse2_math]
+features = "bytemuck mint rand serde debug-glam-assert"
+exclude-files = ["src/f32/transform.rs", "benches/*", "tests/support/mod.rs"]
+
+[scalar_math]
+features = "scalar-math bytemuck mint rand serde debug-glam-assert"
+exclude-files = ["src/f32/transform.rs", "benches/*", "tests/support/mod.rs"]

@@ -1,0 +1,28 @@
+---
+- name: Block Sequence in Block Sequence
+  from: NimYAML tests
+  tags: sequence
+  yaml: |
+    - - s1_i1
+      - s1_i2
+    - s2
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       +SEQ
+        =VAL :s1_i1
+        =VAL :s1_i2
+       -SEQ
+       =VAL :s2
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      [
+        "s1_i1",
+        "s1_i2"
+      ],
+      "s2"
+    ]

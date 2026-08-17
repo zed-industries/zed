@@ -1,0 +1,45 @@
+---
+- name: Spec Example 9.6. Stream [1.3]
+  from: 6ZKB, modified for YAML 1.3
+  tags: spec header 1.3-mod
+  yaml: |
+    Mapping: Document
+    ---
+    # Empty
+    ...
+    %YAML 1.2
+    ---
+    matches %: 20
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :Mapping
+       =VAL :Document
+      -MAP
+     -DOC
+     +DOC ---
+      =VAL :
+     -DOC ...
+     +DOC ---
+      +MAP
+       =VAL :matches %
+       =VAL :20
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "Mapping": "Document"
+    }
+    null
+    {
+      "matches %": 20
+    }
+  emit: |
+    Mapping: Document
+    ---
+    ...
+    %YAML 1.2
+    ---
+    matches %: 20

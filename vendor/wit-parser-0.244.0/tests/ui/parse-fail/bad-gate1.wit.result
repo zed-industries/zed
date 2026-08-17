@@ -1,0 +1,5 @@
+found a reference to a type which is excluded due to its feature not being activated
+     --> tests/ui/parse-fail/bad-gate1.wit:7:8
+      |
+    7 |   type foo = gated;
+      |        ^--

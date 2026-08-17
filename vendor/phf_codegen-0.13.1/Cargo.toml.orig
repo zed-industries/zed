@@ -1,0 +1,15 @@
+[package]
+name = "phf_codegen"
+authors = ["Steven Fackler <sfackler@gmail.com>"]
+version = "0.13.1"
+license = "MIT"
+description = "Codegen library for PHF types"
+repository = "https://github.com/rust-phf/rust-phf"
+edition = "2021"
+readme = "../README.md"
+rust-version = "1.66"
+categories = ["data-structures"]
+
+[dependencies]
+phf_generator = "0.13.1"
+phf_shared = "0.13.1"

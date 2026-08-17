@@ -1,0 +1,24 @@
+[package]
+name = "cranelift-native"
+version = "0.123.12"
+authors = ["The Cranelift Project Developers"]
+description = "Support for targeting the host with Cranelift"
+documentation = "https://docs.rs/cranelift-native"
+repository = "https://github.com/bytecodealliance/wasmtime"
+categories = ["no-std"]
+license = "Apache-2.0 WITH LLVM-exception"
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+cranelift-codegen = { workspace = true }
+target-lexicon = { workspace = true }
+
+[target.'cfg(target_arch = "riscv64")'.dependencies]
+libc = { workspace = true }
+
+[features]
+default = ["std"]
+std = ["cranelift-codegen/std"]
+core = ["cranelift-codegen/core"]

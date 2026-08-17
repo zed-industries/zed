@@ -1,0 +1,18 @@
+[package]
+name = "synchronoise"
+version = "1.0.1"
+authors = ["QuietMisdreavus <grey@quietmisdreavus.net>"]
+description = "Synchronization primitives that build upon the standard library"
+repository = "https://github.com/QuietMisdreavus/synchronoise"
+documentation = "https://docs.rs/synchronoise/"
+license = "MIT OR Apache-2.0"
+categories = ["concurrency"]
+keywords = ["synchronization", "parallel_programming", "phaser"]
+
+[badges]
+travis-ci = { repository = "QuietMisdreavus/synchronoise" }
+appveyor = { repository = "QuietMisdreavus/synchronoise" }
+maintenance = { status = "as-is" }
+
+[dependencies]
+crossbeam-queue = "0.3.5"

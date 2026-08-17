@@ -1,0 +1,18 @@
+[package]
+name = "sunng/handlebars"
+version = "1.0.0"
+description = "wasm packages for handlebars"
+license = "MIT"
+repository = "https://github.com/sunng87/handlebars-rust"
+
+[[module]]
+name = "handlebars-cli"
+source = "handlebars-cli.wasm"
+abi = "wasi"
+
+# [module.interfaces]
+# wasi = "0.0.0-unstable"
+
+[[command]]
+name = "handlebars-cli"
+module = "handlebars-cli"

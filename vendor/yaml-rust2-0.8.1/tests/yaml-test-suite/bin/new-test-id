@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+
+(
+  while true; do
+    id=$(
+      cat /dev/urandom |
+      LC_ALL=C tr -cd A-HJ-NP-Z2-9 |
+      fold -w4 |
+      grep '[A-Z]' |
+      grep '[0-9]' |
+      head -n1
+    )
+
+    [[ -e src/$id.yaml ]] || break
+  done
+
+  echo "$id"
+)
+

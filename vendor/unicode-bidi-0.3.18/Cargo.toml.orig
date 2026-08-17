@@ -1,0 +1,57 @@
+[package]
+name = "unicode-bidi"
+version = "0.3.18"
+authors = ["The Servo Project Developers"]
+license = "MIT OR Apache-2.0"
+description = "Implementation of the Unicode Bidirectional Algorithm"
+repository = "https://github.com/servo/unicode-bidi"
+documentation = "https://docs.rs/unicode-bidi/"
+keywords = ["rtl", "unicode", "text", "layout", "bidi"]
+readme="README.md"
+edition = "2018"
+rust-version = "1.47.0"
+categories = [
+    "no-std",
+    "encoding",
+    "text-processing",
+]
+
+# No data is shipped; benches, examples and tests also depend on data.
+exclude = [
+    "benches/**",
+    "data/**",
+    "examples/**",
+    "tests/**",
+    "tools/**",
+]
+
+[badges]
+appveyor = { repository = "servo/unicode-bidi" }
+
+[lib]
+name = "unicode_bidi"
+
+[dependencies]
+flame = { version = "0.2", optional = true }
+flamer = { version = "0.4", optional = true }
+serde = { version = ">=0.8, <2.0", default-features = false, optional = true, features = ["derive"] }
+smallvec = { version = ">=1.13", optional = true, features = ["union"] }
+
+[dev-dependencies]
+serde_test = ">=0.8, <2.0"
+
+[features]
+# Note: We don't actually use the `std` feature for anything other than making
+# doctests work. But it may come in handy in the future.
+default = ["std", "hardcoded-data"]
+hardcoded-data = [] # Include hardcoded Bidi data
+std = []
+unstable = []  # travis-cargo needs it
+bench_it = []
+flame_it = ["flame", "flamer"]
+with_serde = ["serde"]  # DEPRECATED, please use `serde` feature, instead.
+
+[[test]]
+name = "conformance_tests"
+required-features = ["hardcoded-data"]
+path = "tests/conformance_tests.rs"

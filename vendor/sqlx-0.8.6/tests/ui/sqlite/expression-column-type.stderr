@@ -1,0 +1,7 @@
+error: database couldn't tell us the type of column #1 ("id"); this can happen for columns that are the result of an expression
+ --> $DIR/expression-column-type.rs:2:13
+  |
+2 |     let _ = sqlx::query!("select 1 as id");
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in a macro (in Nightly builds, run with -Z macro-backtrace for more info)

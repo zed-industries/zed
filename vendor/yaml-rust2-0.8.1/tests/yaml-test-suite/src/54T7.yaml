@@ -1,0 +1,25 @@
+---
+- name: Flow Mapping
+  from: https://github.com/ingydotnet/yaml-pegex-pm/blob/master/test/mapping.tml
+  tags: flow mapping
+  yaml: |
+    {foo: you, bar: far}
+  tree: |
+    +STR
+     +DOC
+      +MAP {}
+       =VAL :foo
+       =VAL :you
+       =VAL :bar
+       =VAL :far
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "foo": "you",
+      "bar": "far"
+    }
+  dump: |
+    foo: you
+    bar: far

@@ -1,0 +1,12 @@
+{
+  "worlds": [],
+  "interfaces": [],
+  "types": [],
+  "packages": [
+    {
+      "name": "foo:empty",
+      "interfaces": {},
+      "worlds": {}
+    }
+  ]
+}

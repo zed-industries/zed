@@ -1,0 +1,490 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<node>
+  <interface name="org.a11y.atspi.Event.Object">
+    <signal name="PropertyChange">
+      <arg name="property" type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg name="value" type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="BoundsChanged">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="LinkSelected">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="StateChanged">
+      <arg name="state" type="s"/>
+      <arg name="enabled" type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="ChildrenChanged">
+      <arg name="operation" type="s"/>
+      <arg name="index_in_parent" type="i"/>
+      <arg type="i"/>
+      <arg name="child" type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="VisibleDataChanged">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="SelectionChanged">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="ModelChanged">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="ActiveDescendantChanged">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg name="child" type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="Announcement">
+      <arg type="s"/>
+      <!-- politeness should be 1 (ATSPI_LIVE_POLITE) or 2
+           (ATSPI_LIVE_ASSERTIVE) -->
+      <arg type="i" name="politeness"/>
+      <arg type="i"/>
+      <!-- The variant should enclose a string with the text to be announced -->
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="AttributesChanged">
+      <!-- name specifies the name of the attribute that has changed, when available -->
+      <arg name="name" type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <!-- The variant should include a string with the attribute's new value, when available -->
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <!-- Table events. TODO: move to Table interface? -->
+    <signal name="RowInserted">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="RowReordered">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="RowDeleted">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="ColumnInserted">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="ColumnReordered">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="ColumnDeleted">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <!-- Text events. TODO: move to Text interface? -->
+    <signal name="TextBoundsChanged">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="TextSelectionChanged">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="TextChanged">
+      <arg name="detail" type="s"/>
+      <arg name="start_pos" type="i"/>
+      <arg name="length" type="i"/>
+      <arg name="text" type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="TextAttributesChanged">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="TextCaretMoved">
+      <arg type="s"/>
+      <arg name="position" type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+  </interface>
+
+  <interface name="org.a11y.atspi.Event.Window">
+    <signal name="PropertyChange">
+      <arg name="property" type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="Minimize">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="Maximize">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="Restore">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="Close">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="Create">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="Reparent">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="DesktopCreate">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="DesktopDestroy">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="Destroy">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="Activate">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="Deactivate">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="Raise">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="Lower">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="Move">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="Resize">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="Shade">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="uUshade">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="Restyle">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+  </interface>
+
+  <interface name="org.a11y.atspi.Event.Mouse">
+    <signal name="Abs">
+      <arg type="s"/>
+      <arg name="x" type="i"/>
+      <arg name="y" type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="Rel">
+      <arg type="s"/>
+      <arg name="x" type="i"/>
+      <arg name="y" type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="Button">
+      <arg name="detail" type="s"/>
+      <arg name="mouse_x" type="i"/>
+      <arg name="mouse_y" type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+  </interface>
+
+  <interface name="org.a11y.atspi.Event.Keyboard">
+    <signal name="Modifiers">
+      <arg type="s"/>
+      <arg name="previous_modifiers" type="i"/>
+      <arg name="current_modifiers" type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+  </interface>
+
+  <interface name="org.a11y.atspi.Event.Terminal">
+    <signal name="LineChanged">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="ColumncountChanged">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="LinecountChanged">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="ApplicationChanged">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="CharwidthChanged">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+  </interface>
+
+  <interface name="org.a11y.atspi.Event.Document">
+    <signal name="LoadComplete">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="Reload">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="LoadStopped">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="ContentChanged">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="AttributesChanged">
+      <!-- name specifies the name of the attribute that has changed, when available -->
+      <arg name="name" type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <!-- The variant should include a string with the attribute's new value, when available -->
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+    <signal name="PageChanged">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+  </interface>
+
+  <interface name="org.a11y.atspi.Event.Focus">
+    <!-- Focus is deprecated in favor of StateChanged with focus passed as its first argument -->
+    <signal name="Focus">
+      <arg type="s"/>
+      <arg type="i"/>
+      <arg type="i"/>
+      <arg type="v"/>
+      <arg name="properties" type="a{sv}"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QSpiEvent"/>
+    </signal>
+  </interface>
+
+</node>

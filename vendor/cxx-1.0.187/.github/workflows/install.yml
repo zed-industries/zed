@@ -1,0 +1,18 @@
+name: Install
+
+on:
+  workflow_dispatch:
+  schedule: [cron: "40 1 * * *"]
+  push: {tags: ['*']}
+
+permissions: {}
+
+env:
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  install:
+    name: Install
+    uses: dtolnay/.github/.github/workflows/check_install.yml@master
+    with:
+      crate: cxxbridge-cmd

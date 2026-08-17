@@ -1,0 +1,30 @@
+---
+- name: Flow Sequence in Flow Sequence
+  from: NimYAML tests
+  tags: sequence flow
+  yaml: |
+    [a, [b, c]]
+  tree: |
+    +STR
+     +DOC
+      +SEQ []
+       =VAL :a
+       +SEQ []
+        =VAL :b
+        =VAL :c
+       -SEQ
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      "a",
+      [
+        "b",
+        "c"
+      ]
+    ]
+  dump: |
+    - a
+    - - b
+      - c

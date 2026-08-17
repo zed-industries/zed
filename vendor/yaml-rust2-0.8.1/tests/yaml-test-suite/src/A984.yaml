@@ -1,0 +1,29 @@
+---
+- name: Multiline Scalar in Mapping
+  from: NimYAML tests
+  tags: scalar
+  yaml: |
+    a: b
+     c
+    d:
+     e
+      f
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :a
+       =VAL :b c
+       =VAL :d
+       =VAL :e f
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "a": "b c",
+      "d": "e f"
+    }
+  dump: |
+    a: b c
+    d: e f

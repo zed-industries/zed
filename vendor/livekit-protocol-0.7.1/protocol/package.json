@@ -1,0 +1,22 @@
+{
+  "name": "github.com/livekit/protocol",
+  "private": true,
+  "version": "1.44.0",
+  "scripts": {
+    "changeset": "changeset",
+    "ci:publish": "pnpm --filter @livekit/protocol run build && changeset publish"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.27.1",
+    "@changesets/cli": "^2.29.4",
+    "@livekit/changesets-changelog-github": "^0.0.4",
+    "esbuild": "^0.25.4"
+  },
+  "pnpm": {
+    "overrides": {
+      "minimatch": "10.0.3",
+      "js-yaml": "3.14.2"
+    }
+  },
+  "packageManager": "pnpm@9.15.9"
+}

@@ -1,0 +1,13 @@
+package foo:shared-dependency;
+
+interface doc {
+  f1: func();
+  f2: func();
+  f3: func();
+
+  g1: func() -> string;
+  g2: func() -> string;
+  g3: func() -> string;
+
+  unused-in-adapter: func();
+}

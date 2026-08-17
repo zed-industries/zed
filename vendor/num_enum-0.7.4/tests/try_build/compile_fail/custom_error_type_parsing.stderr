@@ -1,0 +1,29 @@
+error: num_enum error_type attribute requires `constructor` value
+ --> tests/try_build/compile_fail/custom_error_type_parsing.rs:2:12
+  |
+2 | #[num_enum(error_type(name = CustomError))]
+  |            ^^^^^^^^^^
+
+error: num_enum error_type attribute requires `name` value
+  --> tests/try_build/compile_fail/custom_error_type_parsing.rs:11:12
+   |
+11 | #[num_enum(error_type(constructor = CustomError::new))]
+   |            ^^^^^^^^^^
+
+error: expected `name` or `constructor`
+  --> tests/try_build/compile_fail/custom_error_type_parsing.rs:20:75
+   |
+20 | #[num_enum(error_type(name = CustomError, constructor = CustomError::new, extra = something))]
+   |                                                                           ^^^^^
+
+error: num_enum attribute must have at most one error_type
+  --> tests/try_build/compile_fail/custom_error_type_parsing.rs:29:76
+   |
+29 | #[num_enum(error_type(name = CustomError, constructor = CustomError::new), error_type(name = CustomError, constructor = CustomError::new))]
+   |                                                                            ^^^^^^^^^^
+
+error: At most one num_enum error_type attribute may be specified
+  --> tests/try_build/compile_fail/custom_error_type_parsing.rs:39:1
+   |
+39 | #[num_enum(error_type(name = CustomError, constructor = CustomError::new))]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

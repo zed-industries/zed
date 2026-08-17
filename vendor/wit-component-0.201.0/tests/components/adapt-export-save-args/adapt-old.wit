@@ -1,0 +1,3 @@
+world adapt-old {
+  export entrypoint: func(nargs: u32);
+}

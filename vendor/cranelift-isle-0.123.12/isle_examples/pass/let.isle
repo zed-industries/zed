@@ -1,0 +1,20 @@
+(type A (enum (Add (x u32) (y u32)) (Sub (x u32) (y u32))))
+(type B (enum (B (z u32))))
+
+(decl Sub (u32 u32) u32)
+(extern constructor Sub sub)
+
+(decl Add (u32 u32) u32)
+(extern constructor Add add)
+
+(decl Lower (A) B)
+
+(rule
+  (Lower (A.Add x y))
+  (let ((z u32 (Add x y)))
+    (B.B z)))
+
+(rule
+  (Lower (A.Sub x y))
+  (let ((z u32 (Sub x y)))
+    (B.B z)))

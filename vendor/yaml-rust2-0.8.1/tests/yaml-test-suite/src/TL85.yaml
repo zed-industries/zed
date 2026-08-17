@@ -1,0 +1,22 @@
+---
+- name: Spec Example 6.8. Flow Folding
+  from: http://www.yaml.org/spec/1.2/spec.html#id2779950
+  tags: double spec whitespace scalar upto-1.2
+  yaml: |
+    "
+      foo␣
+    ␣
+      —» bar
+
+      baz
+    "
+  tree: |
+    +STR
+     +DOC
+      =VAL " foo\nbar\nbaz␣
+     -DOC
+    -STR
+  json: |
+    " foo\nbar\nbaz "
+  dump: |
+    " foo\nbar\nbaz "

@@ -1,0 +1,23 @@
+[advisories]
+# criterion is currently failing cargo-deny due to serde_cbor being unmaintained
+unmaintained = "warn"
+
+[bans]
+multiple-versions = "deny"
+deny = []
+skip-tree = [
+    # ignore criterion dev-dependency that often have duplicate dependencies internally
+    { name = "criterion" },
+]
+
+[licenses]
+unlicensed = "deny"
+allow = [
+    "Apache-2.0",
+    "MIT",
+]
+exceptions = [
+    { allow = [
+        "Unicode-DFS-2016",
+    ], name = "unicode-ident" },
+]

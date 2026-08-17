@@ -1,0 +1,7 @@
+interface cycle1 {
+  type t = u32;
+}
+
+interface cycle3 {
+  use cycle2.{t};
+}

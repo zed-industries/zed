@@ -1,0 +1,21 @@
+[package]
+name = "cargo-platform"
+version = "0.3.2"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/cargo-platform"
+description = "Cargo's representation of a target platform."
+
+[dependencies]
+serde_core.workspace = true
+
+# serde v1.0.220 is the first version that released with `serde_core`.
+# This is required to avoid conflict with other `serde` users which may require an older version.
+[target.'cfg(any())'.dependencies]
+serde.workspace = true
+
+[lints]
+workspace = true

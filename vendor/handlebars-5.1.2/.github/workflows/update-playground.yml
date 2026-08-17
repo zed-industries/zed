@@ -1,0 +1,42 @@
+name: Build Playground
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - '**.rs'
+      - 'playground/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+    - name: Install wasm-pack
+      run: cargo install wasm-pack
+    - name: Build wasm
+      run: |
+        cd playground
+        wasm-pack build
+    - uses: actions/setup-node@v3
+      with:
+        node-version: 16
+        cache: 'npm'
+        cache-dependency-path: playground/www/package-lock.json
+    - name: Build web
+      run: |
+        cd playground/www
+        npm install
+        npm run build
+    - name: Publish dist directory
+      uses: JamesIves/github-pages-deploy-action@v4
+      with:
+        folder: playground/www/dist

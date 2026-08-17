@@ -1,0 +1,25 @@
+[package]
+authors = ["The Cranelift Project Developers"]
+name = "cranelift-control"
+version = "0.123.12"
+description = "White-box fuzz testing framework"
+license = "Apache-2.0 WITH LLVM-exception"
+repository = "https://github.com/bytecodealliance/wasmtime"
+readme = "README.md"
+keywords = ["fuzz", "test"]
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+arbitrary = { workspace = true, optional = true }
+
+[features]
+default = ["fuzz"]
+
+# Enable fuzzing support with `arbitrary`. Does not work on `no_std` targets.
+fuzz = ["dep:arbitrary"]
+
+# Turn on chaos mode.
+# Without this feature, a zero-sized dummy will be compiled
+# for the control plane.
+chaos = ["fuzz"]

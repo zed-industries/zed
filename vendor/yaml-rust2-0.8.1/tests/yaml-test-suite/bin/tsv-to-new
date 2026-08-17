@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+
+set -e -u -o pipefail
+
+die() { echo "$*" >&2; exit 1; }
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+bin=$root/bin
+
+tsv=$1
+dir=$root/new
+
+rm -fr "$dir"
+mkdir "$dir"
+
+if [[ -e .git/githubid ]]; then
+  from=$(< .git/githubid)
+else
+  from=$(
+    ssh git@github.com |&
+      perl -ne '/Hi (\w+)! You/ and print $1'
+  ) || true
+  from=@${from:-${USER:?}}
+  echo -n "$from" > .git/githubid
+fi
+
+mapfile -t each < <(tsv-to-json < "$tsv" | jq -c '.[]')
+mapfile -t head < <(jq -r '.[]' <<<"${each[0]}")
+each=("${each[@]:1}")
+
+# Get all tags. (First tag is 'alias')
+found=false
+for (( tag_idx = 0; tag_idx < ${#head[*]}; tag_idx++ )); do
+  [[ ${head[tag_idx]} == alias ]] && found=true && break
+done
+$found || die "No 'alias' cell. Did you forget the header line?"
+tag_name=("${head[@]:$tag_idx}")
+
+i=0
+_group=''
+_tags=''
+for line in "${each[@]}"; do
+  yaml=$(jq -r '.[3]' <<<"$line")
+  tree=$(jq -r '.[4]' <<<"$line")
+  mapfile -t cell < <(jq -r ".[1:3],.[5:6],.[$tag_idx:]|.[]" <<<"$line")
+  set -- "${cell[@]}"
+  group=$1; shift
+  name=$1; shift
+  [[ $name ]] || die "No 'name' field for row $((i+1)) in $tsv"
+  skip=$1; shift
+  tags=()
+  for tag in "${tag_name[@]}"; do
+    if [[ $1 ]]; then
+      tags+=( "$tag" )
+    fi
+    shift
+  done
+
+  if [[ $group && $group == $_group ]]; then
+    more=1
+    if [[ ${tags[*]} == $_tags ]]; then
+      tags=()
+    else
+      _tags=${tags[*]}
+    fi
+  else
+    more=''
+    _tags=${tags[*]}
+    if [[ ${#group} -eq 4 ]]; then
+      id=$group
+    else
+      id=$("$bin/new-test-id")
+    fi
+    while [[ -f $dir/$id*.yaml ]]; do
+      id=$("$bin/new-test-id")
+    done
+    : $((i++))
+    _group=$group
+  fi
+
+  file_name=$(printf "%03d-%s" "$i" "$id")
+  file=$dir/$file_name.yaml
+
+  YAML="$yaml" \
+  MORE="$more" \
+  SKIP="$skip" \
+  NAME="$name" \
+  FROM="$from" \
+  TAGS="${tags[*]}" \
+  TREE="$tree" \
+  "$bin/yaml-to-test" >> "$file"
+
+  if [[ $more ]]; then
+    action='  Added to'
+  else
+    action=Created
+  fi
+  echo "$action 'new/$file_name.yaml'"
+done

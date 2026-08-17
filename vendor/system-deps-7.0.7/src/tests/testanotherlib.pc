@@ -1,0 +1,12 @@
+prefix=/usr
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib/
+libdir2=${exec_prefix}/lib64/
+includedir=${prefix}/include/testlib
+includedir2=${prefix}/include/testanotherlib
+
+Name: Test Another Library
+Description: Another fake library to test pkg-config.
+Version: 1.2.3
+Libs: -L${libdir} -ltest -L${libdir2} -ltest2 -F${libdir} -framework someframework -F${libdir2} -framework someotherframework
+Cflags: -I${includedir} -I${includedir2} -DBADGER=yes -DAWESOME -DGREAT

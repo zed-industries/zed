@@ -1,0 +1,5 @@
+failed to elaborate world imports/exports of `baz`
+     --> tests/ui/parse-fail/import-and-export2.wit:11:7
+      |
+   11 | world baz {
+      |       ^--: interface `anon` transitively depends on an interface in incompatible ways

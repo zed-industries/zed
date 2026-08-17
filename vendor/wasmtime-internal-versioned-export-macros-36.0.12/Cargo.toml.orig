@@ -1,0 +1,19 @@
+[package]
+authors = ["The Wasmtime Project Developers"]
+description = "INTERNAL: Macros for defining versioned exports in Wasmtime"
+edition.workspace = true
+rust-version.workspace = true
+license = "Apache-2.0 WITH LLVM-exception"
+name = "wasmtime-internal-versioned-export-macros"
+repository = "https://github.com/bytecodealliance/wasmtime"
+version.workspace = true
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+syn = { workspace = true, features = ["full"] }
+quote = { workspace = true }
+proc-macro2 = { workspace = true }
+
+[lib]
+proc-macro = true

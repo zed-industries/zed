@@ -1,0 +1,25 @@
+[package]
+name = "hashlink"
+version = "0.8.4"
+authors = ["kyren <kerriganw@gmail.com>"]
+edition = "2018"
+description = "HashMap-like containers that hold their key-value pairs in a user controllable order"
+repository = "https://github.com/kyren/hashlink"
+documentation = "https://docs.rs/hashlink"
+readme = "README.md"
+keywords = ["data-structures", "no_std"]
+license = "MIT OR Apache-2.0"
+
+[badges]
+circle-ci = { repository = "kyren/hashlink", branch = "master" }
+
+[features]
+serde_impl = ["serde"]
+
+[dependencies]
+hashbrown = "0.14"
+serde = { version = "1.0", default-features = false, optional = true }
+
+[dev-dependencies]
+serde_test = "1.0"
+rustc-hash = "1.1"

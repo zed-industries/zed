@@ -1,0 +1,29 @@
+[package]
+name = "fixedbitset"
+version = "0.5.7"
+authors = ["bluss"]
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+rust-version = "1.56"
+edition = "2021"
+
+description = "FixedBitSet is a simple bitset collection"
+documentation = "https://docs.rs/fixedbitset/"
+repository = "https://github.com/petgraph/fixedbitset"
+
+keywords = ["container", "data-structure", "bitvec", "bitset", "no_std"]
+categories = ["data-structures"]
+
+[features]
+std = []
+default = ["std"]
+
+[package.metadata.release]
+no-dev-version = true
+tag-name = "{{version}}"
+
+[dependencies]
+serde = { version = "1.0", optional = true }
+
+[dev-dependencies]
+serde_json = "1.0"

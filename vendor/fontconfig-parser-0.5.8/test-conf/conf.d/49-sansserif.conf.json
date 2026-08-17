@@ -1,0 +1,61 @@
+[
+  {
+    "Description": "Add sans-serif to the family when no generic name"
+  },
+  {
+    "Match": {
+      "target": "Pattern",
+      "tests": [
+        {
+          "qual": "All",
+          "target": "Default",
+          "compare": "NotEq",
+          "value": {
+            "Family": {
+              "Simple": {
+                "String": "sans-serif"
+              }
+            }
+          }
+        },
+        {
+          "qual": "All",
+          "target": "Default",
+          "compare": "NotEq",
+          "value": {
+            "Family": {
+              "Simple": {
+                "String": "serif"
+              }
+            }
+          }
+        },
+        {
+          "qual": "All",
+          "target": "Default",
+          "compare": "NotEq",
+          "value": {
+            "Family": {
+              "Simple": {
+                "String": "monospace"
+              }
+            }
+          }
+        }
+      ],
+      "edits": [
+        {
+          "mode": "AppendLast",
+          "binding": "Weak",
+          "value": {
+            "Family": {
+              "Simple": {
+                "String": "sans-serif"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+]

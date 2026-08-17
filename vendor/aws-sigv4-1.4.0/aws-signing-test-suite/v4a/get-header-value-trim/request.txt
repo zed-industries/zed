@@ -1,0 +1,4 @@
+GET / HTTP/1.1
+Host:example.amazonaws.com
+My-Header1: value1
+My-Header2: "a   b   c"

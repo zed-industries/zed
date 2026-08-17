@@ -1,0 +1,5 @@
+error: ...
+ --> $DIR/multiple_tokens.rs:4:1
+  |
+4 | type T = ();
+  | ^^^^^^^^^^^^

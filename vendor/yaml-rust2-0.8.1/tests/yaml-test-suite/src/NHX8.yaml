@@ -1,0 +1,19 @@
+---
+- name: Empty Lines at End of Document
+  from: NimYAML tests
+  tags: empty-key whitespace
+  yaml: |
+    :
+    ↵
+    ↵
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :
+       =VAL :
+      -MAP
+     -DOC
+    -STR
+  emit: |
+    :

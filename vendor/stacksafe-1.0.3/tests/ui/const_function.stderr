@@ -1,0 +1,5 @@
+error: #[stacksafe] does not support const functions
+  --> tests/ui/const_function.rs:18:1
+   |
+18 | const fn unsupported() {}
+   | ^^^^^

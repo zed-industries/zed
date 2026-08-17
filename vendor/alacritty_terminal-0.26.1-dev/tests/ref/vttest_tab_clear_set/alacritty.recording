@@ -1,0 +1,23 @@
+[1m[7m%[27m[1m[0m                                                                                                                    [0m[27m[24m[J[0;30;101m UL [0m[0;37;100m ~/…/tests/ref/vttest_tab_cle… [0m[0;30;101m copy-tabs [0m [K[?2004hv[90mttest[39mv[39mt[39mt[39me[39ms[39mt[?2004l
+[0c[?1l[?3l[?4l[?5l[?6l[?7h[?8l[?40h[?45l[r[0m[2J[3;10HVT100 test program, version 2.7 (20180911)[4;10HLine speed 38400bd [5;10HChoose test type:
+[6;1H[0J
+          0. Exit
+          1. Test of cursor movements
+          2. Test of screen features
+          3. Test of character sets
+          4. Test of double-sized characters
+          5. Test of keyboard
+          6. Test of terminal reports
+          7. Test of VT52 mode
+          8. Test of VT102 features (Insert/Delete Char/Line)
+          9. Test of known bugs
+          10. Test of reset and self-test
+          11. Test non-VT100 (e.g., VT220, XTERM) terminals
+          12. Modify test-parameters
+
+          Enter choice number (0 - 12): 2
+[2J[1;1H[?7h****************************************************************************************************************************************************************[?7l[3;1H****************************************************************************************************************************************************************[?7h[5;1HThis should be three identical lines of *'s completely filling
+the top of the screen without any empty lines between.
+(Test of WRAP AROUND mode setting.)
+Push <RETURN>[2J[3g[1;1H[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[3CH[1;4H[0g[6C[0g[6C[0g[6C[0g[6C[0g[6C[0g[6C[0g[6C[0g[6C[0g[6C[0g[6C[0g[6C[0g[6C[0g[6C[1;7H[1g[2g[1;1H	*	*	*	*	*	*	*	*	*	*	*	*	*[2;2H     *     *     *     *     *     *     *     *     *     *     *     *     *[4;1HTest of TAB setting/resetting. These two lines
+should look the same. Push <RETURN>

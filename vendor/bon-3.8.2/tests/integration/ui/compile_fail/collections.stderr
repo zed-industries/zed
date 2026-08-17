@@ -1,0 +1,23 @@
+error: duplicate key in the map
+ --> tests/integration/ui/compile_fail/collections.rs:5:9
+  |
+5 |         "Hello": "Blackjack",
+  |         ^^^^^^^
+
+error: duplicate key in the map
+ --> tests/integration/ui/compile_fail/collections.rs:6:9
+  |
+6 |         "Hello": "Littlepip",
+  |         ^^^^^^^
+
+error: duplicate value in the set
+ --> tests/integration/ui/compile_fail/collections.rs:9:44
+  |
+9 |     let _set: BTreeSet<String> = bon::set!["mintals", "guns", "mintals", "roses"];
+  |                                            ^^^^^^^^^
+
+error: duplicate value in the set
+ --> tests/integration/ui/compile_fail/collections.rs:9:63
+  |
+9 |     let _set: BTreeSet<String> = bon::set!["mintals", "guns", "mintals", "roses"];
+  |                                                               ^^^^^^^^^

@@ -1,0 +1,5 @@
+error: #[stacksafe] does not support async functions
+  --> tests/ui/async_function.rs:18:1
+   |
+18 | async fn unsupported() {}
+   | ^^^^^

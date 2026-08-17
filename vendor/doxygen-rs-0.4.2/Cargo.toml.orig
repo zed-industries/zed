@@ -1,0 +1,13 @@
+[package]
+name = "doxygen-rs"
+description = "Transform Doxygen to Rustdoc"
+homepage = "https://github.com/Techie-Pi/doxygen-rs/"
+repository = "https://github.com/Techie-Pi/doxygen-rs/"
+keywords = ["bindgen", "doxygen", "rustdoc"]
+readme = "README.md"
+license = "BSD-3-Clause"
+version = "0.4.2"
+edition = "2021"
+
+[dependencies]
+phf = { version = "0.11", features = ["macros"] }

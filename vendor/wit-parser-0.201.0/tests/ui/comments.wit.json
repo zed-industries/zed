@@ -1,0 +1,49 @@
+{
+  "worlds": [],
+  "interfaces": [
+    {
+      "name": "foo",
+      "types": {
+        "x": 0,
+        "bar": 1
+      },
+      "functions": {},
+      "docs": {
+        "contents": "hello\nworld\nwhy, yes\nthis is a comment\n* this too */\n* is a comment */\n* this /* is /* a */ nested */ comment */"
+      },
+      "package": 0
+    }
+  ],
+  "types": [
+    {
+      "name": "x",
+      "kind": {
+        "type": "u32"
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "bar",
+      "kind": {
+        "stream": {
+          "element": 0,
+          "end": null
+        }
+      },
+      "owner": {
+        "interface": 0
+      }
+    }
+  ],
+  "packages": [
+    {
+      "name": "foo:comments",
+      "interfaces": {
+        "foo": 0
+      },
+      "worlds": {}
+    }
+  ]
+}

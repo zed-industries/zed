@@ -1,0 +1,130 @@
+[package]
+authors = ["The Cranelift Project Developers"]
+name = "cranelift-codegen"
+version = "0.123.12"
+description = "Low-level code generator library"
+license = "Apache-2.0 WITH LLVM-exception"
+documentation = "https://docs.rs/cranelift-codegen"
+repository = "https://github.com/bytecodealliance/wasmtime"
+categories = ["no-std"]
+readme = "README.md"
+keywords = ["compile", "compiler", "jit"]
+build = "build.rs"
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+# Ask Cargo to build docs with the feature `all-arch`
+features = ["all-arch"]
+
+[dependencies]
+anyhow = { workspace = true, optional = true, features = ['std'] }
+bumpalo = "3"
+capstone = { workspace = true, optional = true }
+cranelift-assembler-x64 = { workspace = true }
+cranelift-codegen-shared = { path = "./shared", version = "0.123.12" }
+cranelift-entity = { workspace = true }
+cranelift-bforest = { workspace = true }
+cranelift-bitset = { workspace = true }
+cranelift-control = { workspace = true }
+hashbrown = { workspace = true }
+target-lexicon = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true, optional = true }
+serde_derive = { workspace = true, optional = true }
+pulley-interpreter = { workspace = true, optional = true }
+postcard = { workspace = true, optional = true }
+gimli = { workspace = true, features = ["write", "std"], optional = true }
+smallvec = { workspace = true }
+regalloc2 = { workspace = true, features = ["checker"] }
+souper-ir = { version = "2.1.0", optional = true }
+sha2 = { version = "0.10.2", optional = true }
+rustc-hash = { workspace = true }
+wasmtime-math = { workspace = true }
+# It is a goal of the cranelift-codegen crate to have minimal external dependencies.
+# Please don't add any unless they are essential to the task of creating binary
+# machine code. Integration tests that need external dependencies can be
+# accommodated in `tests`.
+
+[dev-dependencies]
+criterion = { workspace = true }
+similar = "2.1.0"
+env_logger = { workspace = true }
+proptest = { workspace = true }
+
+[build-dependencies]
+cranelift-codegen-meta = { path = "meta", version = "0.123.12" }
+cranelift-isle = { path = "../isle/isle", version = "=0.123.12" }
+
+[features]
+default = ["std", "unwind", "host-arch", "timing"]
+
+# The "std" feature enables use of libstd. The "core" feature enables use
+# of some minimal std-like replacement libraries. At least one of these two
+# features need to be enabled.
+std = ["serde?/std"]
+
+# The "core" feature used to enable a hashmap workaround, but is now
+# deprecated (we (i) always use hashbrown, and (ii) don't support a
+# no_std build anymore). The feature remains for backward
+# compatibility as a no-op.
+core = []
+
+# Enable the `to_capstone` method on TargetIsa, for constructing a Capstone
+# context, and the `disassemble` method on `MachBufferFinalized`.
+disas = ["anyhow", "capstone"]
+
+# Enables detailed logging which can be somewhat expensive.
+trace-log = ["regalloc2/trace-log"]
+
+# This enables unwind info generation functionality.
+unwind = ["gimli"]
+
+# ISA targets for which we should build.
+# If no ISA targets are explicitly enabled, the ISA target for the host machine is enabled.
+x86 = []
+arm64 = []
+s390x = []
+riscv64 = []
+pulley = [
+    "dep:pulley-interpreter",
+    "pulley-interpreter/encode",
+    "pulley-interpreter/disas",
+    "cranelift-codegen-meta/pulley",
+]
+# Enable the ISA target for the host machine
+host-arch = []
+
+# Option to enable all architectures.
+all-arch = ["all-native-arch", "pulley"]
+
+# Option to enable all architectures that correspond to an actual native target
+# (that is, exclude Pulley).
+all-native-arch = ["x86", "arm64", "s390x", "riscv64"]
+
+# For dependent crates that want to serialize some parts of cranelift
+enable-serde = [
+    "serde",
+    "serde_derive",
+    "cranelift-entity/enable-serde",
+    "cranelift-bitset/enable-serde",
+    "regalloc2/enable-serde",
+    "smallvec/serde",
+]
+
+# Enable the incremental compilation cache for hot-reload use cases.
+incremental-cache = ["enable-serde", "postcard", "sha2"]
+
+# Enable support for the Souper harvester.
+souper-harvest = ["souper-ir", "souper-ir/stringify"]
+
+# Report any ISLE errors in pretty-printed style.
+isle-errors = ["cranelift-isle/fancy-errors"]
+
+# Enable tracking how long passes take in Cranelift.
+#
+# Enabled by default.
+timing = []

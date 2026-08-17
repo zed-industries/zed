@@ -1,0 +1,20 @@
+[package]
+name = "interpolate_name"
+version = "0.2.4"
+authors = ["Luca Barbato <lu_zero@gentoo.org>"]
+description = "Simple procedural macro attribute for repetitive tests"
+repository = "https://github.com/lu-zero/interpolate_name"
+readme = "README.md"
+keywords = ["proc_macro", "testing"]
+categories = ["development-tools::testing"]
+license = "MIT"
+edition = "2018"
+
+[lib]
+proc-macro = true
+test = false
+
+[dependencies]
+syn = { version = "2.0", features = ["fold", "full"] }
+quote = "1.0"
+proc-macro2 = "1.0"

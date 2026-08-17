@@ -1,0 +1,17 @@
+error: unsupported self type; C++ does not allow member functions on enums
+ --> tests/ui/enum_assoc.rs:7:18
+  |
+7 |         #[Self = "Enum"]
+  |                  ^^^^^^
+
+error[E0433]: failed to resolve: use of unresolved module or unlinked crate `ffi`
+  --> tests/ui/enum_assoc.rs:12:6
+   |
+12 | impl ffi::Enum {
+   |      ^^^ use of unresolved module or unlinked crate `ffi`
+   |
+   = help: if you wanted to use a crate named `ffi`, use `cargo add ffi` to add it to your `Cargo.toml`
+help: consider importing this module
+   |
+ 1 + use cxx_test_suite::ffi;
+   |

@@ -1,0 +1,7 @@
+use_small_heuristics = "Max"
+use_field_init_shorthand = true
+use_try_shorthand = true
+empty_item_single_line = true
+edition = "2018"
+unstable_features = true
+fn_args_layout = "Compressed"

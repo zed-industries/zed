@@ -1,0 +1,40 @@
+name: SSH
+
+on:
+  workflow_dispatch:
+    inputs:
+      os:
+        description: "Operating System"
+        required: true
+        default: "ubuntu-latest"
+
+jobs:
+  ssh:
+    name: SSH
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+        clang: [["13.0", "clang_13_0"]]
+        rust: ["1.60.0"]
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v2
+        if: github.event.inputs.os == matrix.os
+      # LLVM and Clang
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v2.0.3
+        if: github.event.inputs.os == matrix.os
+        with:
+          version: ${{ matrix.clang[0] }}
+          directory: ${{ runner.temp }}/llvm-${{ matrix.clang[0] }}
+      # Rust
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        if: github.event.inputs.os == matrix.os
+        with:
+          toolchain: ${{ matrix.rust }}
+      # SSH
+      - name: Enable SSH
+        uses: mxschmitt/action-tmate@v3
+        if: github.event.inputs.os == matrix.os

@@ -1,0 +1,5 @@
+error: const extern function is not supported
+ --> tests/ui/const_fn.rs:4:9
+  |
+4 |         const fn f();
+  |         ^^^^^^^^^^^^^

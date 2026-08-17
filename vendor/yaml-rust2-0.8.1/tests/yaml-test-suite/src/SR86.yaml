@@ -1,0 +1,15 @@
+---
+- name: Anchor plus Alias
+  from: '@perlpunk'
+  tags: alias error
+  fail: true
+  yaml: |
+    key1: &a value
+    key2: &b *a
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :key1
+       =VAL &a :value
+       =VAL :key2

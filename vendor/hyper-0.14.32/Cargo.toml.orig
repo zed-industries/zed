@@ -1,0 +1,258 @@
+[package]
+name = "hyper"
+version = "0.14.32"
+description = "A fast and correct HTTP library."
+readme = "README.md"
+homepage = "https://hyper.rs"
+documentation = "https://docs.rs/hyper"
+repository = "https://github.com/hyperium/hyper"
+license = "MIT"
+authors = ["Sean McArthur <sean@seanmonstar.com>"]
+keywords = ["http", "hyper", "hyperium"]
+categories = ["network-programming", "web-programming::http-client", "web-programming::http-server"]
+edition = "2018"
+
+include = [
+  "Cargo.toml",
+  "LICENSE",
+  "src/**/*",
+  #"build.rs",
+]
+
+[dependencies]
+bytes = "1"
+futures-core = { version = "0.3", default-features = false }
+futures-channel = "0.3"
+futures-util = { version = "0.3", default-features = false }
+http = "0.2"
+http-body = "0.4"
+httpdate = "1.0"
+httparse = "1.8"
+h2 = { version = "0.3.24", optional = true }
+itoa = "1"
+tracing = { version = "0.1", default-features = false, features = ["std"] }
+pin-project-lite = "0.2.4"
+tower-service = "0.3"
+tokio = { version = "1.27", features = ["sync"] }
+want = "0.3"
+
+# Optional
+
+libc = { version = "0.2", optional = true }
+socket2 = { version = ">=0.4.7, <0.6.0", optional = true, features = ["all"] }
+
+[dev-dependencies]
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
+matches = "0.1"
+num_cpus = "1.0"
+pretty_env_logger = "0.4"
+spmc = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.27", features = [
+    "fs",
+    "macros",
+    "io-std",
+    "io-util",
+    "rt",
+    "rt-multi-thread", # so examples can use #[tokio::main]
+    "sync",
+    "time",
+    "test-util",
+] }
+tokio-test = "0.4"
+tokio-util = { version = "0.7", features = ["codec"] }
+tower = { version = "0.4", default-features = false, features = ["make", "util"] }
+url = "2.2"
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]
+pnet_datalink = "0.27.2"
+
+[features]
+# Nothing by default
+default = []
+
+# Easily turn it all on
+full = [
+    "client",
+    "http1",
+    "http2",
+    "server",
+    "stream",
+    "runtime",
+]
+
+# HTTP versions
+http1 = []
+http2 = ["h2"]
+
+# Client/Server
+client = []
+server = []
+
+# `impl Stream` for things
+stream = []
+
+# Tokio support
+runtime = [
+    "tcp",
+    "tokio/rt",
+    "tokio/time",
+]
+tcp = [
+    "socket2",
+    "tokio/net",
+    "tokio/rt",
+    "tokio/time",
+]
+
+# C-API support (currently unstable (no semver))
+ffi = ["libc"]
+
+# enable 1.0 backports
+backports = []
+
+# whether or not to display deprecation warnings
+deprecated = []
+
+# internal features used in CI
+nightly = []
+__internal_happy_eyeballs_tests = []
+
+[package.metadata.docs.rs]
+features = ["ffi", "full"]
+rustdoc-args = ["--cfg", "docsrs", "--cfg", "hyper_unstable_ffi"]
+
+[package.metadata.playground]
+features = ["full"]
+
+[profile.release]
+codegen-units = 1
+incremental = false
+
+[profile.bench]
+codegen-units = 1
+incremental = false
+
+[[example]]
+name = "client"
+path = "examples/client.rs"
+required-features = ["full"]
+
+[[example]]
+name = "client_json"
+path = "examples/client_json.rs"
+required-features = ["full"]
+
+[[example]]
+name = "echo"
+path = "examples/echo.rs"
+required-features = ["full"]
+
+[[example]]
+name = "gateway"
+path = "examples/gateway.rs"
+required-features = ["full"]
+
+[[example]]
+name = "hello"
+path = "examples/hello.rs"
+required-features = ["full"]
+
+[[example]]
+name = "http_proxy"
+path = "examples/http_proxy.rs"
+required-features = ["full"]
+
+[[example]]
+name = "multi_server"
+path = "examples/multi_server.rs"
+required-features = ["full"]
+
+[[example]]
+name = "params"
+path = "examples/params.rs"
+required-features = ["full"]
+
+[[example]]
+name = "send_file"
+path = "examples/send_file.rs"
+required-features = ["full"]
+
+[[example]]
+name = "service_struct_impl"
+path = "examples/service_struct_impl.rs"
+required-features = ["full"]
+
+[[example]]
+name = "single_threaded"
+path = "examples/single_threaded.rs"
+required-features = ["full"]
+
+[[example]]
+name = "state"
+path = "examples/state.rs"
+required-features = ["full"]
+
+[[example]]
+name = "tower_client"
+path = "examples/tower_client.rs"
+required-features = ["full", "backports"]
+
+[[example]]
+name = "tower_server"
+path = "examples/tower_server.rs"
+required-features = ["full"]
+
+[[example]]
+name = "upgrades"
+path = "examples/upgrades.rs"
+required-features = ["full"]
+
+
+[[example]]
+name = "web_api"
+path = "examples/web_api.rs"
+required-features = ["full"]
+
+
+[[bench]]
+name = "body"
+path = "benches/body.rs"
+required-features = ["full"]
+
+[[bench]]
+name = "connect"
+path = "benches/connect.rs"
+required-features = ["full"]
+
+[[bench]]
+name = "end_to_end"
+path = "benches/end_to_end.rs"
+required-features = ["full"]
+
+[[bench]]
+name = "pipeline"
+path = "benches/pipeline.rs"
+required-features = ["full"]
+
+[[bench]]
+name = "server"
+path = "benches/server.rs"
+required-features = ["full"]
+
+
+[[test]]
+name = "client"
+path = "tests/client.rs"
+required-features = ["full"]
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+required-features = ["full"]
+
+[[test]]
+name = "server"
+path = "tests/server.rs"
+required-features = ["full"]

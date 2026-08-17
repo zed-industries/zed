@@ -1,0 +1,32 @@
+---
+- name: Anchors and Tags
+  from: NimYAML tests
+  tags: anchor tag
+  yaml: |2
+     - &a !!str a
+     - !!int 2
+     - !!int &c 4
+     - &d d
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       =VAL &a <tag:yaml.org,2002:str> :a
+       =VAL <tag:yaml.org,2002:int> :2
+       =VAL &c <tag:yaml.org,2002:int> :4
+       =VAL &d :d
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      "a",
+      2,
+      4,
+      "d"
+    ]
+  dump: |
+    - &a !!str a
+    - !!int 2
+    - &c !!int 4
+    - &d d

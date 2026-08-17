@@ -1,0 +1,50 @@
+package foo:root;
+
+interface foo {
+  use foo:wasi/clocks.{timestamp};
+  use foo:wasi/filesystem.{stat};
+}
+
+world my-world {
+  import foo:wasi/filesystem;
+  import foo:wasi/clocks;
+
+  export foo:corp/saas;
+}
+
+use foo:wasi/filesystem as filesystem;
+use foo:wasi/clocks as clocks;
+
+world my-world2 {
+  import filesystem;
+  import clocks;
+  export foo;
+  export foo:corp/saas;
+}
+
+interface bar {
+  use filesystem.{};
+  use foo:some-pkg/the-default.{from-default};
+  use foo:some-pkg/some-interface.{another-type};
+  use foo:some-pkg/some-interface.{};
+  use foo:some-pkg/another-interface.{yet-another-type};
+  use foo:different-pkg/i.{};
+}
+
+world bars-world {
+  import foo:some-pkg/the-default;
+  import foo:another-pkg/other-interface;
+}
+
+interface use1 {
+  use foo:foreign-pkg/the-default.{some-type};
+}
+interface use2 {
+  use foo:foreign-pkg/the-default.{some-type};
+}
+
+world unionw-world {
+  include my-world;
+  include my-world2;
+  include foo:wasi/wasi;
+}

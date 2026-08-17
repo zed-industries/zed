@@ -1,0 +1,540 @@
+[
+  {
+    "type": "change",
+    "named": true,
+    "fields": {
+      "kind": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "deleted",
+            "named": false
+          },
+          {
+            "type": "modified",
+            "named": false
+          },
+          {
+            "type": "new file",
+            "named": false
+          },
+          {
+            "type": "renamed",
+            "named": false
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "path",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "comment",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "branch",
+          "named": true
+        },
+        {
+          "type": "commit",
+          "named": true
+        },
+        {
+          "type": "summary",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "header",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "message",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "commit",
+          "named": true
+        },
+        {
+          "type": "item",
+          "named": true
+        },
+        {
+          "type": "user",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "path",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "rebase_command",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "source",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "comment",
+          "named": true
+        },
+        {
+          "type": "message",
+          "named": true
+        },
+        {
+          "type": "scissors",
+          "named": true
+        },
+        {
+          "type": "subject",
+          "named": true
+        },
+        {
+          "type": "trailer",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "subject",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "summary",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "branch",
+          "named": true
+        },
+        {
+          "type": "change",
+          "named": true
+        },
+        {
+          "type": "commit",
+          "named": true
+        },
+        {
+          "type": "header",
+          "named": true
+        },
+        {
+          "type": "path",
+          "named": true
+        },
+        {
+          "type": "rebase_command",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "trailer",
+    "named": true,
+    "fields": {
+      "key": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "trailer_key",
+            "named": true
+          }
+        ]
+      },
+      "separator": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": ":",
+            "named": false
+          },
+          {
+            "type": "=",
+            "named": false
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "trailer_value",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "trailer_key",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "trailer_value",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "commit",
+          "named": true
+        },
+        {
+          "type": "item",
+          "named": true
+        },
+        {
+          "type": "user",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "#",
+    "named": false
+  },
+  {
+    "type": "'",
+    "named": false
+  },
+  {
+    "type": "'.",
+    "named": false
+  },
+  {
+    "type": "(",
+    "named": false
+  },
+  {
+    "type": ")",
+    "named": false
+  },
+  {
+    "type": ",",
+    "named": false
+  },
+  {
+    "type": "->",
+    "named": false
+  },
+  {
+    "type": ".",
+    "named": false
+  },
+  {
+    "type": ":",
+    "named": false
+  },
+  {
+    "type": ";",
+    "named": false
+  },
+  {
+    "type": "=",
+    "named": false
+  },
+  {
+    "type": "Changes",
+    "named": false
+  },
+  {
+    "type": "Conflicts",
+    "named": false
+  },
+  {
+    "type": "HEAD",
+    "named": false
+  },
+  {
+    "type": "Last",
+    "named": false
+  },
+  {
+    "type": "Next",
+    "named": false
+  },
+  {
+    "type": "No",
+    "named": false
+  },
+  {
+    "type": "On",
+    "named": false
+  },
+  {
+    "type": "Untracked",
+    "named": false
+  },
+  {
+    "type": "You",
+    "named": false
+  },
+  {
+    "type": "Your",
+    "named": false
+  },
+  {
+    "type": "ahead",
+    "named": false
+  },
+  {
+    "type": "and",
+    "named": false
+  },
+  {
+    "type": "are",
+    "named": false
+  },
+  {
+    "type": "at",
+    "named": false
+  },
+  {
+    "type": "be",
+    "named": false
+  },
+  {
+    "type": "behind",
+    "named": false
+  },
+  {
+    "type": "branch",
+    "named": false
+  },
+  {
+    "type": "branch",
+    "named": true
+  },
+  {
+    "type": "by",
+    "named": false
+  },
+  {
+    "type": "commands",
+    "named": false
+  },
+  {
+    "type": "commit",
+    "named": true
+  },
+  {
+    "type": "commit",
+    "named": false
+  },
+  {
+    "type": "committed",
+    "named": false
+  },
+  {
+    "type": "currently",
+    "named": false
+  },
+  {
+    "type": "date",
+    "named": false
+  },
+  {
+    "type": "deleted",
+    "named": false
+  },
+  {
+    "type": "detached",
+    "named": false
+  },
+  {
+    "type": "diverged",
+    "named": false
+  },
+  {
+    "type": "do",
+    "named": false
+  },
+  {
+    "type": "done",
+    "named": false
+  },
+  {
+    "type": "drop",
+    "named": false
+  },
+  {
+    "type": "edit",
+    "named": false
+  },
+  {
+    "type": "exec",
+    "named": false
+  },
+  {
+    "type": "files",
+    "named": false
+  },
+  {
+    "type": "fixup",
+    "named": false
+  },
+  {
+    "type": "for",
+    "named": false
+  },
+  {
+    "type": "have",
+    "named": false
+  },
+  {
+    "type": "in",
+    "named": false
+  },
+  {
+    "type": "interactive",
+    "named": false
+  },
+  {
+    "type": "is",
+    "named": false
+  },
+  {
+    "type": "item",
+    "named": true
+  },
+  {
+    "type": "label",
+    "named": false
+  },
+  {
+    "type": "merge",
+    "named": false
+  },
+  {
+    "type": "modified",
+    "named": false
+  },
+  {
+    "type": "new file",
+    "named": false
+  },
+  {
+    "type": "not",
+    "named": false
+  },
+  {
+    "type": "of",
+    "named": false
+  },
+  {
+    "type": "on",
+    "named": false
+  },
+  {
+    "type": "onto",
+    "named": false
+  },
+  {
+    "type": "pick",
+    "named": false
+  },
+  {
+    "type": "progress",
+    "named": false
+  },
+  {
+    "type": "rebase",
+    "named": false
+  },
+  {
+    "type": "rebasing",
+    "named": false
+  },
+  {
+    "type": "remaining",
+    "named": false
+  },
+  {
+    "type": "renamed",
+    "named": false
+  },
+  {
+    "type": "reset",
+    "named": false
+  },
+  {
+    "type": "reword",
+    "named": false
+  },
+  {
+    "type": "scissors",
+    "named": true
+  },
+  {
+    "type": "squash",
+    "named": false
+  },
+  {
+    "type": "staged",
+    "named": false
+  },
+  {
+    "type": "to",
+    "named": false
+  },
+  {
+    "type": "up",
+    "named": false
+  },
+  {
+    "type": "user",
+    "named": true
+  },
+  {
+    "type": "with",
+    "named": false
+  }
+]

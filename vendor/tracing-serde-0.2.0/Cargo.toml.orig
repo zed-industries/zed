@@ -1,0 +1,39 @@
+[package]
+name = "tracing-serde"
+version = "0.2.0"
+authors = ["Tokio Contributors <team@tokio.rs>"]
+license = "MIT"
+edition = "2018"
+repository = "https://github.com/tokio-rs/tracing"
+homepage = "https://tokio.rs"
+description = """
+A compatibility layer for serializing trace data with `serde`
+"""
+categories = [
+    "development-tools::debugging",
+    "development-tools::profiling",
+    "asynchronous",
+    "encoding",
+]
+keywords = ["logging", "tracing", "serialization"]
+rust-version = "1.63.0"
+
+[features]
+valuable = ["valuable_crate", "valuable-serde", "tracing-core/valuable"]
+
+[dependencies]
+serde = "1"
+tracing-core = { path = "../tracing-core", version = "0.1.28"}
+
+[dev-dependencies]
+serde_json = "1"
+
+[target.'cfg(tracing_unstable)'.dependencies]
+valuable_crate = { package = "valuable", version = "0.1.0", optional = true, default-features = false }
+valuable-serde = { version = "0.1.0", optional = true, default-features = false }
+
+[badges]
+maintenance = { status = "experimental" }
+
+[lints]
+workspace = true

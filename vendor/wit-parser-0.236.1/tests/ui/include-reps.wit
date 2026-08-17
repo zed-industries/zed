@@ -1,0 +1,15 @@
+package foo:foo;
+
+interface a {}
+interface b {}
+
+world bar {
+    import a;
+    export b;
+}
+
+world foo {
+  include bar;
+  include bar;
+  include bar;
+}

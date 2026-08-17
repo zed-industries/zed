@@ -1,0 +1,18 @@
+[package]
+name = "kv-log-macro"
+version = "1.0.7"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/yoshuawuyts/kv-log-macro"
+documentation = "https://docs.rs/kv-log-macro"
+description = "Log macro for log's kv-unstable backend."
+keywords = ["log", "macro", "kv", "key", "value"]
+categories = ["text-processing"]
+authors = ["Yoshua Wuyts <yoshuawuyts@gmail.com>"]
+readme = "README.md"
+edition = "2018"
+
+[dependencies]
+log = { version = "0.4.8", features = ["kv_unstable"] }
+
+[dev-dependencies]
+femme = "1.2.0"

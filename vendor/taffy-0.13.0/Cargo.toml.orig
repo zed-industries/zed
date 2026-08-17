@@ -1,0 +1,122 @@
+[package]
+name = "taffy"
+version = "0.13.0"
+authors = [
+    "Alice Cecile <alice.i.cecile@gmail.com>",
+    "Johnathan Kelley <jkelleyrtp@gmail.com>",
+    "Nico Burns <nico@nicoburns.com>",
+]
+edition = "2021"
+rust-version = "1.71"
+include = ["src/**/*", "examples/**/*", "Cargo.toml", "README.md"]
+description = "A flexible UI layout library "
+repository = "https://github.com/DioxusLabs/taffy"
+keywords = ["cross-platform", "layout", "flexbox", "css-grid", "grid"]
+categories = ["gui"]
+license = "MIT"
+
+[dependencies]
+arrayvec = { version = "0.7", default-features = false }
+document-features = { version = "0.2.7", optional = true }
+serde = { version = "1.0", default-features = false, optional = true, features = ["serde_derive"] }
+slotmap = { version = "1.0.6", default-features = false, optional = true }
+smallvec = { version = "1.13", default-features = false, optional = true }
+cssparser = { version = "0.37.0", default-features = false, optional = true }
+
+[package.metadata.docs.rs]
+# To test all the documentation related features, run:
+# RUSTDOCFLAGS="--cfg docsrs" cargo +nightly doc -Zunstable-options -Zrustdoc-scrape-examples --all-features --no-deps --open
+
+all-features = true
+# see https://doc.rust-lang.org/nightly/rustdoc/scraped-examples.html
+cargo-args = ["-Zunstable-options", "-Zrustdoc-scrape-examples"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = [
+    "std",
+    "taffy_tree",
+    "flexbox",
+    "grid",
+    "block_layout",
+    "float_layout",
+    "calc",
+    "content_size",
+    "detailed_layout_info",
+]
+#! ## Feature Flags
+#!
+#! ### Algorithms
+
+## Enables the Block layout algorithm. See [`compute_block_layout`](crate::compute_block_layout).
+block_layout = []
+## Enables the Float layout algorithm. This is a sub-feature of block layout.
+float_layout = []
+## Enables the Flexbox layout algorithm. See [`compute_flexbox_layout`](crate::compute_flexbox_layout).
+flexbox = []
+## Enables the CSS Grid layout algorithm. See [`compute_grid_layout`](crate::compute_grid_layout).
+grid = ["alloc", "dep:smallvec"]
+## Enables calc() values for all layout algorithms
+calc = []
+## Causes all algorithms to compute and output a content size for each node
+content_size = []
+## Causes algorithms to stores detailed information of the nodes in TaffyTree, with only CSS Grid supporting this.
+detailed_layout_info = []
+## Use strict provenance APIs for pointer manipulation. Using this feature requires Rust 1.84 or higher.
+strict_provenance = []
+
+#! ### Taffy Tree
+
+## Enable the built-in Taffy node tree. See [`TaffyTree`](crate::TaffyTree).
+taffy_tree = ["dep:slotmap"]
+
+#! ### Other
+
+## Add [`serde`] derives to Style structs
+serde = ["dep:serde"]
+## Implement `FromStr` trait for Taffy style types
+parse = ["dep:cssparser"]
+## Enable the `parse` feature with proc-macro dependent optimisations
+parse_faster = ["parse", "cssparser/fast_match_byte"]
+## Allow Taffy to depend on the [`Rust Standard Library`](std)
+std = ["serde?/std", "slotmap?/std"]
+## Allow Taffy to depend on the alloc library
+alloc = ["serde?/alloc"]
+## Internal feature for debugging
+debug = ["std"]
+## Internal feature for profiling
+profile = ["std"]
+
+[dev-dependencies]
+serde_json = "1.0.93"
+roxmltree = "0.21.1"
+taffy_test_helpers = { path = "tests/common"}
+
+# Enable default features for tests and examples
+taffy = { path = ".", features = ["parse"] }
+
+[profile.release]
+lto = true
+panic = 'abort'
+
+[[bench]]
+name = "dummy_benchmark"
+path = "benches/dummy_benchmark.rs"
+harness = false
+
+[[example]]
+name = "basic"
+# This causes all the examples to be scraped for documentation, not just the basic example
+doc-scrape-examples = true
+
+[workspace]
+members = [
+    "scripts/gentest",
+    "scripts/getchrome",
+    "scripts/format-fixtures",
+    "scripts/import-yoga-tests",
+    "tests/common",
+]
+# The cosmic_text example and benches are excluded from the workspace as including them breaks compilation
+# of all crates in the workspace with our MSRV compiler
+exclude = ["examples/cosmic_text", "benches"]

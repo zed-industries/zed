@@ -1,0 +1,109 @@
+error: this empty `#[builder]` attribute is redundant; remove it
+ --> tests/integration/ui/compile_fail/attr_builder.rs:4:3
+  |
+4 | #[builder]
+  |   ^^^^^^^
+
+error: expected parameters in parentheses
+ --> tests/integration/ui/compile_fail/attr_builder.rs:8:10
+  |
+8 | #[builder()]
+  |          ^^
+
+error: this empty `builder` attribute is unexpected; remove it or pass parameters in parentheses: `builder(...)`
+  --> tests/integration/ui/compile_fail/attr_builder.rs:13:7
+   |
+13 |     #[builder]
+   |       ^^^^^^^
+
+error: expected parameters in parentheses
+  --> tests/integration/ui/compile_fail/attr_builder.rs:19:14
+   |
+19 |     #[builder()]
+   |              ^^
+
+error: this empty `builder` attribute is unexpected; remove it or pass parameters in parentheses: `builder(...)`
+  --> tests/integration/ui/compile_fail/attr_builder.rs:24:41
+   |
+24 | fn fn_empty_member_level_builder_attr(#[builder] _x: u32) {}
+   |                                         ^^^^^^^
+
+error: expected parameters in parentheses
+  --> tests/integration/ui/compile_fail/attr_builder.rs:27:60
+   |
+27 | fn fn_empty_member_level_builder_attr_with_parens(#[builder()] _x: u32) {}
+   |                                                            ^^
+
+error: this empty `builder` attribute is unexpected; remove it or pass parameters in parentheses: `builder(...)`
+  --> tests/integration/ui/compile_fail/attr_builder.rs:34:42
+   |
+34 |     fn empty_member_level_builder_attr(#[builder] _x: u32) {}
+   |                                          ^^^^^^^
+
+error: expected parameters in parentheses
+  --> tests/integration/ui/compile_fail/attr_builder.rs:40:61
+   |
+40 |     fn empty_member_level_builder_attr_with_parens(#[builder()] _x: u32) {}
+   |                                                             ^^
+
+error: expected parameters in parentheses
+  --> tests/integration/ui/compile_fail/attr_builder.rs:45:14
+   |
+45 |     #[builder()]
+   |              ^^
+
+error: to generate a builder for a struct, use `#[derive(bon::Builder)]` instead; `#[bon::builder]` syntax is supported only for functions starting with bon v3
+  --> tests/integration/ui/compile_fail/attr_builder.rs:50:1
+   |
+50 | struct LegacyBuilderProcMacroAttrOnStruct {}
+   | ^^^^^^
+
+error: only `fn` items are supported by the `#[bon::builder]` attribute
+  --> tests/integration/ui/compile_fail/attr_builder.rs:52:1
+   |
+52 | #[builder]
+   | ^^^^^^^^^^
+   |
+   = note: this error originates in the attribute macro `builder` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: found multiple #[must_use], but bon only works with exactly one or zero.
+  --> tests/integration/ui/compile_fail/attr_builder.rs:59:1
+   |
+59 | #[must_use]
+   | ^
+
+error: use a simple `identifier: type` syntax for the function argument; destructuring patterns in arguments aren't supported by the `#[builder]`
+  --> tests/integration/ui/compile_fail/attr_builder.rs:63:19
+   |
+63 | fn destructuring1((x, y): (u32, u32)) {
+   |                   ^^^^^^
+
+error: use a simple `identifier: type` syntax for the function argument; destructuring patterns in arguments aren't supported by the `#[builder]`
+  --> tests/integration/ui/compile_fail/attr_builder.rs:69:19
+   |
+69 | fn destructuring2((_, _): (u32, u32)) {}
+   |                   ^^^^^^
+
+error: found multiple #[track_caller], but bon only works with exactly one or zero.
+  --> tests/integration/ui/compile_fail/attr_builder.rs:73:1
+   |
+73 | #[track_caller]
+   | ^
+
+error: found multiple #[target_feature], but bon only works with exactly one or zero.
+  --> tests/integration/ui/compile_fail/attr_builder.rs:77:1
+   |
+77 | #[target_feature(enable = "")]
+   | ^
+
+error: the feature named `` is not valid for this target
+  --> tests/integration/ui/compile_fail/attr_builder.rs:76:18
+   |
+76 | #[target_feature(enable = "")]
+   |                  ^^^^^^^^^^^ `` is not valid for this target
+
+error: the feature named `` is not valid for this target
+  --> tests/integration/ui/compile_fail/attr_builder.rs:77:18
+   |
+77 | #[target_feature(enable = "")]
+   |                  ^^^^^^^^^^^ `` is not valid for this target

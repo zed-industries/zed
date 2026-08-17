@@ -1,0 +1,115 @@
+[package]
+name = "async-std"
+version = "1.13.2"
+authors = [
+  "Stjepan Glavina <stjepang@gmail.com>",
+  "Yoshua Wuyts <yoshuawuyts@gmail.com>",
+  "Friedel Ziegelmayer <me@dignifiedquire.com>",
+  "Contributors to async-std",
+]
+edition = "2018"
+rust-version = "1.63"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/async-rs/async-std"
+homepage = "https://async.rs"
+description = "Deprecated in favor of `smol` - Async version of the Rust standard library"
+keywords = ["async", "await", "future", "std", "task"]
+categories = ["asynchronous", "concurrency", "network-programming"]
+
+[package.metadata.docs.rs]
+features = ["docs"]
+rustdoc-args = ["--cfg", "feature=\"docs\""]
+
+[features]
+default = [
+  "std",
+  "async-global-executor",
+  "async-io",
+  "futures-lite",
+  "kv-log-macro",
+  "log",
+  "pin-project-lite",
+  "gloo-timers",
+]
+docs = ["attributes", "unstable", "default"]
+unstable = [
+  "std",
+  "async-io",
+  "async-process",
+]
+attributes = ["async-attributes"]
+std = [
+  "alloc",
+  "crossbeam-utils",
+  "futures-core/std",
+  "futures-io",
+  "memchr",
+  "once_cell",
+  "pin-utils",
+  "slab",
+  "wasm-bindgen-futures",
+  "futures-channel",
+  "async-channel",
+  "async-lock",
+]
+alloc = [
+  "futures-core/alloc",
+  "pin-project-lite",
+]
+tokio1 = ["async-global-executor/tokio"]
+tokio02 = ["async-global-executor/tokio02"]
+tokio03 = ["async-global-executor/tokio03"]
+io_safety = []
+
+[dependencies]
+async-attributes = { version = "1.1.2", optional = true }
+async-lock = { version = "3.1.0", optional = true }
+crossbeam-utils = { version = "0.8.0", optional = true }
+futures-core = { version = "0.3.4", optional = true, default-features = false }
+futures-io = { version = "0.3.4", optional = true }
+kv-log-macro = { version = "1.0.6", optional = true }
+log = { version = "0.4.8", features = ["kv_unstable"], optional = true }
+memchr = { version = "2.3.3", optional = true }
+once_cell = { version = "1.3.1", optional = true }
+pin-project-lite = { version = "0.2.0", optional = true }
+pin-utils = { version = "0.1.0-alpha.4", optional = true }
+slab = { version = "0.4.2", optional = true }
+async-channel = { version = "1.8.0", optional = true }
+
+# dev dependency, but they are not allowed to be optional :/
+surf = { version = "2.0.0", optional = true }
+
+
+[target.'cfg(not(target_os = "unknown"))'.dependencies]
+async-global-executor = { version = "2.4.0", optional = true, features = ["async-io"] }
+async-io = { version = "2.2.0", optional = true }
+futures-lite = { version = "2.0.0", optional = true }
+async-process = { version = "2.0.0", optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+gloo-timers = { version = "0.3.0", features = ["futures"], optional = true }
+wasm-bindgen-futures = { version = "0.4.10", optional = true }
+futures-channel = { version = "0.3.4", optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3.10"
+getrandom = { version = "0.2.0", features = ["js"] }
+
+[dev-dependencies]
+femme = "2.1.1"
+rand = "0.8.0"
+tempfile = "3.1.0"
+futures = "0.3.4"
+rand_xorshift = "0.3.0"
+
+[[test]]
+name = "stream"
+required-features = ["unstable"]
+
+[[example]]
+name = "tcp-ipv4-and-6-echo"
+required-features = ["unstable"]
+
+[[example]]
+name = "surf-web"
+required-features = ["surf"]

@@ -1,0 +1,6 @@
+package foo:foo;
+
+world foo {
+  import foo:dep1/types;
+  import foo:dep2/types;
+}

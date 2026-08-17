@@ -1,0 +1,6 @@
+{
+  "git": {
+    "sha1": "b79f66d40697ab7dadf791a416ab2ba15cccc3a3"
+  },
+  "path_in_vcs": "crates/async-compression"
+}

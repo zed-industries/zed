@@ -1,0 +1,10 @@
+package root:component;
+
+world root {
+  import foo:foo/foo;
+  import other-name: interface {
+    use foo:foo/foo.{bar};
+
+    a: func() -> bar;
+  }
+}

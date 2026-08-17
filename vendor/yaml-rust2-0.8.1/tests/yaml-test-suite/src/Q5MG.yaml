@@ -1,0 +1,17 @@
+---
+- name: Tab at beginning of line followed by a flow mapping
+  from: IRC
+  tags: flow whitespace
+  yaml: |
+    ———»{}
+  tree: |
+    +STR
+     +DOC
+      +MAP {}
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {}
+  dump: |
+    {}

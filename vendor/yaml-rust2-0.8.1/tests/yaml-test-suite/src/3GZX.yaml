@@ -1,0 +1,31 @@
+---
+- name: Spec Example 7.1. Alias Nodes
+  from: http://www.yaml.org/spec/1.2/spec.html#id2786448
+  tags: mapping spec alias
+  yaml: |
+    First occurrence: &anchor Foo
+    Second occurrence: *anchor
+    Override anchor: &anchor Bar
+    Reuse anchor: *anchor
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :First occurrence
+       =VAL &anchor :Foo
+       =VAL :Second occurrence
+       =ALI *anchor
+       =VAL :Override anchor
+       =VAL &anchor :Bar
+       =VAL :Reuse anchor
+       =ALI *anchor
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "First occurrence": "Foo",
+      "Second occurrence": "Foo",
+      "Override anchor": "Bar",
+      "Reuse anchor": "Bar"
+    }

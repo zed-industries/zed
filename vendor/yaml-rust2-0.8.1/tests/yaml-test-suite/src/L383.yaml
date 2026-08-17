@@ -1,0 +1,22 @@
+---
+- name: Two scalar docs with trailing comments
+  from: '@ingydotnet'
+  tags: comment
+  yaml: |
+    --- foo  # comment
+    --- foo  # comment
+  tree: |
+    +STR
+     +DOC ---
+      =VAL :foo
+     -DOC
+     +DOC ---
+      =VAL :foo
+     -DOC
+    -STR
+  json: |
+    "foo"
+    "foo"
+  dump: |
+    --- foo
+    --- foo

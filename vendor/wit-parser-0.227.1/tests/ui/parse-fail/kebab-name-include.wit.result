@@ -1,0 +1,5 @@
+import of `a` shadows previously imported items
+     --> tests/ui/parse-fail/kebab-name-include.wit:7:13
+      |
+    7 |     include bar;
+      |             ^--

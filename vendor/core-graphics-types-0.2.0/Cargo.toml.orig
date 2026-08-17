@@ -1,0 +1,22 @@
+[package]
+name = "core-graphics-types"
+description = "Bindings for some fundamental Core Graphics types"
+homepage = "https://github.com/servo/core-foundation-rs"
+repository = "https://github.com/servo/core-foundation-rs"
+version = "0.2.0"
+authors = ["The Servo Project Developers"]
+license = "MIT OR Apache-2.0"
+edition = "2018"
+
+[dependencies]
+bitflags = "2"
+core-foundation = { default-features = false, path = "../core-foundation", version = "0.10" }
+libc = "0.2"
+
+[features]
+default = ["link"]
+# Disable to manually link. Enabled by default.
+link = ["core-foundation/link"]
+
+[package.metadata.docs.rs]
+default-target = "x86_64-apple-darwin"

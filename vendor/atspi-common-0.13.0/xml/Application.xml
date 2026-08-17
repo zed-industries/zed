@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<node xmlns:doc="http://www.freedesktop.org/dbus/1.0/doc.dtd">
+  <!--
+      org.a11y.atspi.Application:
+      @short_description: Interface that must be implemented by the root object of an application.
+  -->
+  <interface name="org.a11y.atspi.Application">
+
+    <!--
+        ToolkitName: name of the toolkit used to implement the application's user interface.
+    -->
+    <property name="ToolkitName" type="s" access="read"/>
+
+    <!--
+        Version: version of the toolkit used to implement the application's user interface.
+    -->
+    <property name="Version" type="s" access="read"/>
+
+    <!--
+        AtspiVersion: You should return "2.1" here.
+
+        This was intended to be the version of the atspi interfaces
+        that the application supports, but atspi will probably move to
+        using versioned interface names instead.  Just return "2.1" here.
+    -->
+    <property name="AtspiVersion" type="s" access="read"/>
+
+    <!--
+        Id: set to an arbitrary numerical id when an application registers with the registry.
+
+        When a freshly-started application uses the
+        org.a11y.atspi.Socket.Embed method to register with the
+        accessibility registry, the registry will set a numerical id
+        on the application.
+
+        Per https://gitlab.gnome.org/GNOME/at-spi2-core/-/issues/82 it
+        may turn out that this id is not actually used subsequently.
+        This is a remnant of the time when registryd actually had to
+        make up identifiers for each application.  With DBus, however,
+        it is the bus that assigns unique names to applications that
+        connect to it.
+
+        Your application or toolkit can remember the Id passed when
+        the accessibility registry sets this property, and return it
+        back when the property is read.
+    -->
+    <property name="Id" type="i" access="readwrite"/>
+
+    <!-- This method is not used.
+
+         See https://gitlab.gnome.org/GNOME/orca/-/issues/260
+    -->
+    <method name="GetLocale">
+      <arg direction="in" name="lctype" type="u"/>
+      <arg direction="out" type="s"/>
+    </method>
+
+  </interface>
+</node>

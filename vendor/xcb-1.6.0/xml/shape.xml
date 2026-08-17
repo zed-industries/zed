@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Copyright (C) 2001-2004 Bart Massey, Jamey Sharp, and Josh Triplett.
+All Rights Reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Except as contained in this notice, the names of the authors or their
+institutions shall not be used in advertising or otherwise to promote the
+sale, use or other dealings in this Software without prior written
+authorization from the authors.
+-->
+<!-- This file describes version 1.1 of the Shape extension. -->
+<xcb header="shape" extension-xname="SHAPE" extension-name="Shape" major-version="1" minor-version="1">
+    <import>xproto</import>
+
+    <typedef oldname="CARD8" newname="OP" />
+    <typedef oldname="CARD8" newname="KIND" />
+
+    <!-- Shape attributes of type OP. -->
+    <enum name="SO">
+        <item name="Set">
+            <value>0</value>
+        </item>
+        <item name="Union">
+            <value>1</value>
+        </item>
+        <item name="Intersect">
+            <value>2</value>
+        </item>
+        <item name="Subtract">
+            <value>3</value>
+        </item>
+        <item name="Invert">
+            <value>4</value>
+        </item>
+    </enum>
+
+    <!-- Shape attributes of type KIND. -->
+    <enum name="SK">
+        <item name="Bounding">
+            <value>0</value>
+        </item>
+        <item name="Clip">
+            <value>1</value>
+        </item>
+        <item name="Input">
+            <value>2</value>
+        </item> <!-- added in version 1.1 -->
+    </enum>
+
+    <event name="Notify" number="0">
+        <field type="KIND" name="shape_kind" enum="SK" />
+        <field type="WINDOW" name="affected_window" />
+        <field type="INT16" name="extents_x" />
+        <field type="INT16" name="extents_y" />
+        <field type="CARD16" name="extents_width" />
+        <field type="CARD16" name="extents_height" />
+        <field type="TIMESTAMP" name="server_time" />
+        <field type="BOOL" name="shaped" />
+        <pad bytes="11" />
+    </event>
+
+    <request name="QueryVersion" opcode="0">
+        <reply>
+            <pad bytes="1" />
+            <field type="CARD16" name="major_version" />
+            <field type="CARD16" name="minor_version" />
+        </reply>
+    </request>
+
+    <request name="Rectangles" opcode="1">
+        <field type="OP" name="operation" enum="SO" />
+        <field type="KIND" name="destination_kind" enum="SK" />
+        <field type="BYTE" name="ordering" enum="ClipOrdering" />
+        <pad bytes="1" />
+        <field type="WINDOW" name="destination_window" />
+        <field type="INT16" name="x_offset" />
+        <field type="INT16" name="y_offset" />
+        <list type="RECTANGLE" name="rectangles" />
+    </request>
+
+    <request name="Mask" opcode="2">
+        <field type="OP" name="operation" enum="SO" />
+        <field type="KIND" name="destination_kind" enum="SK" />
+        <pad bytes="2" />
+        <field type="WINDOW" name="destination_window" />
+        <field type="INT16" name="x_offset" />
+        <field type="INT16" name="y_offset" />
+        <field type="PIXMAP" name="source_bitmap" altenum="Pixmap" />
+    </request>
+
+    <request name="Combine" opcode="3">
+        <field type="OP" name="operation" enum="SO" />
+        <field type="KIND" name="destination_kind" enum="SK" />
+        <field type="KIND" name="source_kind" enum="SK" />
+        <pad bytes="1" />
+        <field type="WINDOW" name="destination_window" />
+        <field type="INT16" name="x_offset" />
+        <field type="INT16" name="y_offset" />
+        <field type="WINDOW" name="source_window" />
+    </request>
+
+    <request name="Offset" opcode="4">
+        <field type="KIND" name="destination_kind" enum="SK" />
+        <pad bytes="3" />
+        <field type="WINDOW" name="destination_window" />
+        <field type="INT16" name="x_offset" />
+        <field type="INT16" name="y_offset" />
+    </request>
+
+    <request name="QueryExtents" opcode="5">
+        <field type="WINDOW" name="destination_window" />
+        <reply>
+            <pad bytes="1" />
+            <field type="BOOL" name="bounding_shaped" />
+            <field type="BOOL" name="clip_shaped" />
+            <pad bytes="2" />
+            <field type="INT16" name="bounding_shape_extents_x" />
+            <field type="INT16" name="bounding_shape_extents_y" />
+            <field type="CARD16" name="bounding_shape_extents_width" />
+            <field type="CARD16" name="bounding_shape_extents_height" />
+            <field type="INT16" name="clip_shape_extents_x" />
+            <field type="INT16" name="clip_shape_extents_y" />
+            <field type="CARD16" name="clip_shape_extents_width" />
+            <field type="CARD16" name="clip_shape_extents_height" />
+        </reply>
+    </request>
+
+    <request name="SelectInput" opcode="6">
+        <field type="WINDOW" name="destination_window" />
+        <field type="BOOL" name="enable" />
+        <pad bytes="3" />
+    </request>
+
+    <request name="InputSelected" opcode="7">
+        <field type="WINDOW" name="destination_window" />
+        <reply>
+            <field type="BOOL" name="enabled" />
+        </reply>
+    </request>
+
+    <request name="GetRectangles" opcode="8">
+        <field type="WINDOW" name="window" />
+        <field type="KIND" name="source_kind" enum="SK" />
+        <pad bytes="3" />
+        <reply>
+            <field type="BYTE" name="ordering" enum="ClipOrdering" />
+            <field type="CARD32" name="rectangles_len" />
+            <pad bytes="20" />
+            <list type="RECTANGLE" name="rectangles">
+                <fieldref>rectangles_len</fieldref>
+            </list>
+        </reply>
+    </request>
+</xcb>

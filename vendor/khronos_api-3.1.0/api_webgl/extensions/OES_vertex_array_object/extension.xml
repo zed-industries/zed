@@ -1,0 +1,138 @@
+<?xml version="1.0"?>
+
+<ratified href="OES_vertex_array_object/">
+  <name>OES_vertex_array_object</name>
+  <contact>
+    <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL working group</a> (public_webgl 'at' khronos.org)
+  </contact>
+  <contributors>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+  <number>5</number>
+  <depends>
+    <api version="1.0"/>
+    <core version="2.0" />
+  </depends>
+  <overview>
+    <mirrors href="http://www.khronos.org/registry/gles/extensions/OES/OES_vertex_array_object.txt" name="OES_vertex_array_object" />
+  </overview>
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface WebGLVertexArrayObjectOES : WebGLObject {
+};
+
+[NoInterfaceObject]
+interface OES_vertex_array_object {
+    const GLenum VERTEX_ARRAY_BINDING_OES = 0x85B5;
+
+    WebGLVertexArrayObjectOES? createVertexArrayOES();
+    void deleteVertexArrayOES(WebGLVertexArrayObjectOES? arrayObject);
+    [WebGLHandlesContextLoss] GLboolean isVertexArrayOES(WebGLVertexArrayObjectOES? arrayObject);
+    void bindVertexArrayOES(WebGLVertexArrayObjectOES? arrayObject);
+};
+  </idl>
+
+  <newfun>
+    <function name="createVertexArrayOES" type="WebGLVertexArrayObjectOES?">
+    </function>
+  </newfun>
+
+  <newfun>
+    <function name="deleteVertexArrayOES" type="void">
+      <param name="arrayObject" type="WebGLVertexArrayObjectOES?"/>
+    </function>
+  </newfun>
+
+  <newfun>
+    <function name="isVertexArrayOES" type="GLboolean">
+      <param name="arrayObject" type="WebGLVertexArrayObjectOES?"/>
+      Returns false if the vertex array object's <a
+      href="../../specs/1.0/#webgl-object-invalidated-flag">invalidated
+      flag</a> is set.
+    </function>
+  </newfun>
+
+  <newfun>
+    <function name="bindVertexArrayOES" type="void">
+      <param name="arrayObject" type="WebGLVertexArrayObjectOES?"/>
+    </function>
+  </newfun>
+
+  <issues>
+    <p>The OES_vertex_array_object spec does not make it clear
+    what happens to buffers that are deleted when they are referenced
+    by vertex array objects. It is inferred that all buffers are
+    reference counted.
+    </p>
+    <p>Before OES_vertex_array_object there was no way to use a deleted
+    buffer in a single context as the spec states it would be unbound
+    from all bind points. After OES_vertex_array_object it is now
+    possible to use deleted buffers.
+    </p>
+    <p>Furthermore, the OpenGL ES 2.0 spec specifies that using a
+    deleted buffer has undefined results including possibly
+    corrupt rendering and generating GL errors. Undefined behavior
+    is unacceptable for WebGL.
+    </p>
+    <ul>
+      <li>
+        <p>RESOLVED: Buffers should be reference counted when attached to
+        a vertex array object. This is consistent with the OpenGL ES 3.0
+        spec's implementation of Vertex Array Objects and matches the 
+        behavior of other WebGL objects, such as textures that are attached
+        to framebuffers.
+        </p>
+        <p>This will require that most implementations do not call 
+        glDeleteBuffer when the user calls deleteBuffer on the WebGL context.
+        Instead the implementation must wait for all references to be released
+        before calling glDeleteBuffer to prevent undefined behavior.
+        </p>
+        <p>If a buffer object is deleted while it is attached to the currently
+        bound vertex array object, then it is as if BindBuffer had been called,
+        with a buffer of 0, for each target to which this buffer was attached
+        in the currently bound vertex array object. In other words, this buffer
+        is ﬁrst detached from all attachment points in the currently bound 
+        vertex array object. Note that the buffer is speciﬁcally not detached
+        from any other vertex array object. Detaching the buffer from any other
+        vertex array objects is the responsibility of the application.
+        </p>
+      </li>
+    </ul>
+  </issues>
+  <history>
+    <revision date="2011/01/27">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2011/11/12">
+      <change>Demotion to draft.</change>
+    </revision>
+    <revision date="2011/12/06">
+      <change>Added vendor-specific name strings for draft extension per discussion on WebGL mailing list.</change>
+    </revision>
+    <revision date="2011/12/07">
+      <change>Renamed "Name Strings" section to "Alias Name Strings".</change>
+      <change>Sorted Revision History in ascending order.</change>
+    </revision>
+    <revision date="2012/01/03">
+      <change>Removed webgl module per changes to Web IDL spec.</change>
+    </revision>
+    <revision date="2012/09/24">
+      <change>Added resolution to deleted buffer issue</change>
+    </revision>
+    <revision date="2012/10/16">
+      <change>Based on feedback on public_webgl, moved from draft to community approved, and removed aliases.</change>
+    </revision>
+    <revision date="2013/05/08">
+      <change>Made WebGLVertexArrayObjectOES return values and arguments nullable on feedback from Benoit Jacob.</change>
+    </revision>
+    <revision date="2013/05/14">
+      <change>Based on pull request from J Kenneth King, added WebGLHandlesContextLoss extended attribute to isVertexArrayOES and added markup for new functions.</change>
+    </revision>
+    <revision date="2013/05/15">
+      <change>Ratified by Khronos Board of Promoters.</change>
+    </revision>
+    <revision date="2014/07/15">
+      <change>Added NoInterfaceObject extended attribute to extension and WebGLVertexArrayObjectOES interface.</change>
+    </revision>
+  </history>
+</ratified>

@@ -1,0 +1,331 @@
+framework = "AppKit"
+crate = "objc2-app-kit"
+required-crates = ["objc2", "objc2-foundation"]
+undesired-default-dependencies = ["objc2-open-gl"] # OpenGL is deprecated
+custom-lib-rs = true
+macos = "10.0"
+maccatalyst = "13.0"
+gnustep = true
+
+external.UTType.module = "UniformTypeIdentifiers.UTType"
+
+class.NSFont.bridged-to = "CoreText.CTFont.CTFont"
+class.NSFontCollection.bridged-to = "CoreText.CTFontCollection.CTFontCollection"
+class.NSMutableFontCollection.bridged-to = "CoreText.CTFontCollection.CTMutableFontCollection"
+class.NSFontDescriptor.bridged-to = "CoreText.CTFontDescriptor.CTFontDescriptor"
+class.NSGlyphInfo.bridged-to = "CoreText.CTGlyphInfo.CTGlyphInfo"
+
+# `objc_ownership` in .apinotes
+class.NSBundle.methods."loadNibNamed:owner:topLevelObjects:".skipped = true
+class.NSNib.methods."instantiateWithOwner:topLevelObjects:".skipped = true
+
+# Return type `oneway void`
+class.NSPasteboard.methods.releaseGlobally.skipped = true
+class.NSView.methods.releaseGState.skipped = true
+# + some more in IMServicePlugIn.framework
+
+# Uses `NS_SWIFT_UI_ACTOR` on a static, which is hard to support.
+#
+# Will have to be a method that takes `MainThreadMarker`.
+static.NSApp.skipped = true
+
+# These protocol impls would return the wrong types
+class.NSTextStorage.skipped-protocols = ["NSCopying", "NSMutableCopying"]
+
+# Set counterparts
+class.NSFontCollection.counterpart = "MutableSubclass(AppKit.NSFontCollection.NSMutableFontCollection)"
+class.NSMutableFontCollection.counterpart = "ImmutableSuperclass(AppKit.NSFontCollection.NSFontCollection)"
+class.NSParagraphStyle.counterpart = "MutableSubclass(AppKit.NSParagraphStyle.NSMutableParagraphStyle)"
+class.NSMutableParagraphStyle.counterpart = "ImmutableSuperclass(AppKit.NSParagraphStyle.NSParagraphStyle)"
+
+# Typedef that uses a generic from a class
+typedef.NSCollectionViewDiffableDataSourceItemProvider.skipped = true
+class.NSCollectionViewDiffableDataSource.methods."initWithCollectionView:itemProvider:".skipped = true
+
+# Requires `MainThreadOnly`, which I'm not sure is a good idea here?
+class.NSCollectionViewDiffableDataSource.skipped-protocols = ["NSCollectionViewDataSource"]
+class.NSManagedObjectContext.skipped-protocols = ["NSEditor", "NSEditorRegistration"]
+
+# Both protocols and classes
+protocol.NSTextAttachmentCell.renamed = "NSTextAttachmentCellProtocol"
+protocol.NSAccessibilityElement.renamed = "NSAccessibilityElementProtocol"
+
+# Both property and method
+class.NSDocument.methods."setDisplayName:".skipped = true
+
+# References static in `const`, which isn't yet in MSRV.
+const.NSOKButton.skipped = true
+const.NSCancelButton.skipped = true
+const.NSFileHandlingPanelCancelButton.skipped = true
+const.NSFileHandlingPanelOKButton.skipped = true
+
+# These subclass a generic struct, and hence the type parameter defaults to
+# `AnyObject`, which is not PartialEq, Eq nor Hash.
+class.NSLayoutXAxisAnchor.derives = "Debug"
+class.NSLayoutYAxisAnchor.derives = "Debug"
+class.NSLayoutDimension.derives = "Debug"
+
+# Different definitions depending on target.
+const.NSImageResizingModeTile.skipped = true
+const.NSImageResizingModeStretch.skipped = true
+const.NSTextAlignmentCenter.skipped = true
+const.NSTextAlignmentRight.skipped = true
+
+# Uses constants from IOKit
+enum.NSPointingDeviceType.use-value = true
+enum.NSEventButtonMask.use-value = true
+enum.NSEventSubtype.use-value = true
+static.NSNormalWindowLevel.use-value = true
+static.NSFloatingWindowLevel.use-value = true
+static.NSSubmenuWindowLevel.use-value = true
+static.NSTornOffMenuWindowLevel.use-value = true
+static.NSMainMenuWindowLevel.use-value = true
+static.NSStatusWindowLevel.use-value = true
+static.NSModalPanelWindowLevel.use-value = true
+static.NSPopUpMenuWindowLevel.use-value = true
+static.NSScreenSaverWindowLevel.use-value = true
+static.NSDockWindowLevel.use-value = true
+
+# I'm unsure of the ABI of the array this takes
+fn.NSDrawBitmap.skipped = true
+class.NSView.methods."getRectsExposedDuringLiveResize:count:".skipped = true
+
+# Uses a pointer to SEL, which doesn't implement Encode yet
+protocol.NSMenuDelegate.methods."menuHasKeyEquivalent:forEvent:target:action:".skipped = true
+
+# Duplicated method
+class.NSSlider.methods.isVertical.skipped = true
+class.NSSliderCell.methods.isVertical.skipped = true
+class.NSGestureRecognizer.methods.state.skipped = true
+
+# Needs `Symbols` framework
+class.NSImageView.categories.NSSymbolEffect.skipped = true
+
+# Needs IconRef from HIServices / Carbon
+class.NSImage.methods."initWithIconRef:".skipped = true
+
+# QTKit
+class.NSMovie.methods."initWithMovie:".skipped = true
+class.NSMovie.methods.QTMovie.skipped = true
+
+# Needs `cpu_type_t` from `<mach/machine.h>`.
+class.NSWorkspaceOpenConfiguration.methods.architecture.skipped = true
+class.NSWorkspaceOpenConfiguration.methods."setArchitecture:".skipped = true
+
+# Unsure whether we really want AppKit to depend on Intents
+protocol.NSApplicationDelegate.methods."application:handlerForIntent:".skipped = true
+
+# We don't really want objc2-app-kit to depend on objc2-core-text
+class.NSAdaptiveImageGlyph.skipped-protocols = ["CTAdaptiveImageProviding"]
+
+# header-translator crashes when trying to figure out the return type of this.
+class.NSTextView.methods."quickLookPreviewableItemsInRanges:".skipped = true
+
+# Deprecated.
+const.NSImageRepRegistryChangedNotification.skipped = true
+
+# Custom-defined.
+fn.NSApplicationMain.renamed = "__main"
+
+###
+### Main Thread Overrides
+###
+
+# Most things in AppKit is marked as MainThreadOnly automatically, but there are a few things we have to tweak
+class.NSColorPicker.main-thread-only = true
+class.NSController.main-thread-only = true
+class.NSObjectController.main-thread-only = true
+class.NSArrayController.main-thread-only = true
+class.NSDictionaryController.main-thread-only = true
+class.NSTreeController.main-thread-only = true
+class.NSUserDefaultsController.main-thread-only = true
+class.NSFontManager.main-thread-only = true
+class.NSMenu.main-thread-only = true
+class.NSMenuItem.main-thread-only = true
+class.NSWindowTabGroup.main-thread-only = true
+class.NSTextInputContext.main-thread-only = true
+
+# Most methods on these require MainThreadMarker anyhow
+protocol.NSDraggingInfo.requires-mainthreadonly = true
+protocol.NSBrowserDelegate.requires-mainthreadonly = true
+protocol.NSSplitViewDelegate.requires-mainthreadonly = true
+
+# Accesses the shared application, and hence is main thread only (even though not marked so in Swift).
+class.NSScreen.main-thread-only = true
+
+# Documented as "Main Thread Only".
+# > generally thread safe, although operations on views such as creating,
+# > resizing, and moving should happen on the main thread.
+# <https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/CocoaFundamentals/AddingBehaviortoaCocoaProgram/AddingBehaviorCocoa.html#//apple_ref/doc/uid/TP40002974-CH5-SW47>
+#
+# > If you want to use a thread to draw to a view, bracket all drawing code
+# > between the lockFocusIfCanDraw and unlockFocus methods of NSView.
+# <https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/Multithreading/ThreadSafetySummary/ThreadSafetySummary.html#//apple_ref/doc/uid/10000057i-CH12-123351-BBCFIIEB>
+class.NSView.main-thread-only = true
+
+# Documented as "Main Thread Only", but:
+# > Thread safe in that you can create and manage them on a secondary
+# > thread.
+# <https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/CocoaFundamentals/AddingBehaviortoaCocoaProgram/AddingBehaviorCocoa.html#//apple_ref/doc/uid/TP40002974-CH5-SW47>
+# <https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/Multithreading/ThreadSafetySummary/ThreadSafetySummary.html#//apple_ref/doc/uid/10000057i-CH12-123364>
+#
+# So could in theory be `Send`, and perhaps also `Sync` - but we would
+# like interior mutability on windows, since that's just much easier, and
+# in that case, they can't be!
+class.NSWindow.main-thread-only = true
+
+# TODO: This should probably be MainThreadOnly, or maybe +Send/Sync?
+# class.NSAppearance.main-thread-only = true
+
+# Documented Thread-Unsafe, but:
+# > One thread can create an NSImage object, draw to the image buffer,
+# > and pass it off to the main thread for drawing. The underlying image
+# > cache is shared among all threads.
+# <https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/Multithreading/ThreadSafetySummary/ThreadSafetySummary.html#//apple_ref/doc/uid/10000057i-CH12-126728>
+#
+# So really only unsafe to mutate on several threads.
+# class.NSImage.sendable = false
+
+# Documented as "Thread-Unsafe"
+# class.NSResponder.sendable = false
+
+###
+### Safety
+###
+
+# SAFETY: Apart from a few things like `-[NSWindow setReleasedWhenClosed:]`
+# and `-[Xyz setTarget:]`, AppKit methods are generally well-behaved.
+#
+# AppKit is huge though, so I (madsmtm) have only skimmed it while reviewing.
+unsafe-default-safety.documentation-is-reviewed = true
+# AppKit is internally bounds-checked.
+unsafe-default-safety.bounds-checked-internally = true
+
+# Any modification of either the target or the action has to remain `unsafe`,
+# as there's no way to guarantee that the action method is safe and of the
+# correct type, and no way to verify that this property also holds if the
+# event bubbles up.
+#
+# This unsafety of `Sel`+`AnyObject` is handled in `header-translator`.
+# Verify with: `rg "pub fn setTarget\("`.
+#
+# class.NSMenuItem.methods."setTarget:".unsafe = true
+# class.NSMenuItem.methods."setAction:".unsafe = true
+
+# SAFETY: These methods taking `(id) sender` are safe, the sender is part of
+# the target/action scheme to allow user code that overrides these to read the
+# sender, but the system itself (probably) do not inspect the sender.
+class.NSApplication.methods."hide:".unsafe = false
+class.NSApplication.methods."unhide:".unsafe = false
+class.NSApplication.methods."hideOtherApplications:".unsafe = false
+class.NSApplication.methods."unhideAllApplications:".unsafe = false
+class.NSApplication.methods."stop:".unsafe = false
+class.NSApplication.methods."terminate:".unsafe = false
+class.NSApplication.methods."orderFrontCharacterPalette:".unsafe = false
+class.NSApplication.methods."arrangeInFront:".unsafe = false
+class.NSApplication.methods."miniaturizeAll:".unsafe = false
+class.NSApplication.methods."orderFrontStandardAboutPanel:".unsafe = false
+class.NSWindow.methods."miniaturize:".unsafe = false
+class.NSWindow.methods."deminiaturize:".unsafe = false
+class.NSWindow.methods."zoom:".unsafe = false
+class.NSWindow.methods."makeKeyAndOrderFront:".unsafe = false
+class.NSWindow.methods."orderFront:".unsafe = false
+class.NSWindow.methods."orderBack:".unsafe = false
+class.NSWindow.methods."orderOut:".unsafe = false
+class.NSWindow.methods."performClose:".unsafe = false
+class.NSWindow.methods."performMiniaturize:".unsafe = false
+class.NSWindow.methods."performZoom:".unsafe = false
+class.NSWindow.methods."print:".unsafe = false
+class.NSWindow.methods."toggleFullScreen:".unsafe = false
+class.NSWindow.methods."selectNextKeyView:".unsafe = false
+class.NSWindow.methods."selectPreviousKeyView:".unsafe = false
+class.NSWindow.methods."toggleToolbarShown:".unsafe = false
+class.NSWindow.methods."runToolbarCustomizationPalette:".unsafe = false
+class.NSWindow.methods."selectNextTab:".unsafe = false
+class.NSWindow.methods."selectPreviousTab:".unsafe = false
+class.NSWindow.methods."moveTabToNewWindow:".unsafe = false
+class.NSWindow.methods."mergeAllWindows:".unsafe = false
+class.NSWindow.methods."toggleTabBar:".unsafe = false
+class.NSWindow.methods."toggleTabOverview:".unsafe = false
+# TODO: Add `NSResponder`, `NSView` etc. methods here as well?
+
+# SAFETY: Re-entrancy here is safe, just very confusing.
+# class.NSApplication.methods.run.unsafe = false
+
+# NSWindow initializers are not safe, since by default, windows are released
+# when closed, which means they are over-released unless you leak the window.
+# As such, it is critical to memory safety that the user calls
+# `window.setReleasedWhenClosed(false)` right after creating the window.
+class.NSWindow.methods."setReleasedWhenClosed:".unsafe = true
+class.NSWindow.methods.init.unsafe = true
+class.NSWindow.methods.new.unsafe = true
+class.NSWindow.methods."initWithContentRect:styleMask:backing:defer:".unsafe = true
+class.NSWindow.methods."initWithContentRect:styleMask:backing:defer:screen:".unsafe = true
+class.NSWindow.methods."initWithCoder:".unsafe = true
+class.NSWindow.methods."initWithWindowRef:".unsafe = true
+
+# SAFETY: The controller sets `releasedWhenClosed` to false.
+class.NSWindow.methods."windowWithContentViewController:".unsafe = false
+
+# SAFETY: NSPanel defaults to having `releasedWhenClosed` be false.
+class.NSPanel.methods."initWithContentRect:styleMask:backing:defer:".unsafe = false
+class.NSPanel.methods."initWithContentRect:styleMask:backing:defer:screen:".unsafe = false
+
+# Closing the window is safe.
+# class.NSWindow.methods.close.unsafe = false
+
+# This changes the threading which -[NSView drawRect:] is called on, which
+# is UB if done on a view that doesn't support this.
+class.NSView.methods."setCanDrawConcurrently:".unsafe = true
+class.NSWindow.methods."setAllowsConcurrentViewDrawing:".unsafe = true
+
+# TODO(breaking): Might need to be unsafe, if this is truly unretained?
+class.NSView.methods.window.unsafe = false
+
+# Documentation says that you shouldn't create cycles (though unsure if UB?).
+class.NSWindow.methods."addChildWindow:ordered:".unsafe = true
+class.NSWindow.methods."setParentWindow:".unsafe = true
+# NSView's `subviews` property / `addSubview:` etc. does this automatically.
+
+# May send the animation and delegate to another thread (?)
+class.NSAnimation.methods."setAnimationBlockingMode:".unsafe = true
+
+# May not be safe?
+class.NSProgressIndicator.methods."setUsesThreadedAnimation:".unsafe = true
+
+# Block should be marked as NS_SWIFT_SENDABLE
+class.NSColorSampler.methods."showSamplerWithSelectionHandler:".unsafe = true
+
+# SAFETY: Setting `stronglyReferencesItems` to `false` breaks lifetime safety.
+#
+# This is the default for applications linked on macOS 10.12, but that's
+# Rust's minimum supported macOS version, so that's fine.
+class.NSOutlineView.methods."setStronglyReferencesItems:".unsafe = true
+
+# TODO(breaking): These crash, should probably be skipped (and marked
+# `NS_UNAVAILABLE` in the header).
+class.NSStatusBar.methods.new.unsafe = true
+class.NSStatusBar.methods.init.unsafe = true
+
+# Incorrectly overwritten, breaks type-safety.
+class.NSTableView.methods.dataSource.unsafe = true
+class.NSTableView.methods."setDataSource:".unsafe = true
+class.NSTableView.methods.delegate.unsafe = true
+class.NSTableView.methods."setDelegate:".unsafe = true
+class.NSOutlineView.methods.dataSource.unsafe = true
+class.NSOutlineView.methods."setDataSource:".unsafe = true
+class.NSOutlineView.methods.delegate.unsafe = true
+class.NSOutlineView.methods."setDelegate:".unsafe = true
+class.NSTokenField.methods."setDelegate:".unsafe = true
+class.NSComboBox.methods."setDelegate:".unsafe = true
+class.NSSearchField.methods."setDelegate:".unsafe = true
+class.NSTextField.methods."setDelegate:".unsafe = true
+class.NSTextContentStorage.methods."setDelegate:".unsafe = true
+class.NSTextContentManager.methods."setDelegate:".unsafe = true
+class.NSSavePanel.methods.delegate.unsafe = true
+class.NSSavePanel.methods."setDelegate:".unsafe = true
+# TODO(breaking): Mark this unsafe (or allow delegate protocols to break type-safety).
+class.NSWindow.methods.delegate.unsafe = false
+class.NSWindow.methods."setDelegate:".unsafe = false
+class.NSComboButton.methods."setMenu:".unsafe = true
+class.NSResponder.methods."setMenu:".unsafe = true

@@ -1,0 +1,5 @@
+interface transitively depends on an interface in incompatible ways
+     --> tests/ui/parse-fail/import-and-export1.wit:16:10
+      |
+   16 |   export i3;
+      |          ^-

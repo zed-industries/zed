@@ -1,0 +1,96 @@
+[
+  {
+    "Description": "Set preferable fonts for emoji/math fonts"
+  },
+  {
+    "Match": {
+      "target": "Pattern",
+      "tests": [
+        {
+          "qual": "Any",
+          "target": "Default",
+          "compare": "Eq",
+          "value": {
+            "Lang": {
+              "Simple": {
+                "String": "und-zsye"
+              }
+            }
+          }
+        },
+        {
+          "qual": "All",
+          "target": "Default",
+          "compare": "NotEq",
+          "value": {
+            "Color": {
+              "Simple": {
+                "Bool": true
+              }
+            }
+          }
+        },
+        {
+          "qual": "All",
+          "target": "Default",
+          "compare": "NotEq",
+          "value": {
+            "Color": {
+              "Simple": {
+                "Bool": false
+              }
+            }
+          }
+        }
+      ],
+      "edits": [
+        {
+          "mode": "Append",
+          "binding": "Weak",
+          "value": {
+            "Color": {
+              "Simple": {
+                "Bool": true
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "Alias": {
+      "alias": "emoji",
+      "prefer": [
+        "Noto Color Emoji",
+        "Apple Color Emoji",
+        "Segoe UI Emoji",
+        "Twitter Color Emoji",
+        "EmojiOne Mozilla",
+        "Emoji Two",
+        "JoyPixels",
+        "Emoji One",
+        "Noto Emoji",
+        "Android Emoji"
+      ],
+      "accept": [],
+      "default": []
+    }
+  },
+  {
+    "Alias": {
+      "alias": "math",
+      "prefer": [
+        "XITS Math",
+        "STIX Two Math",
+        "Cambria Math",
+        "Latin Modern Math",
+        "Minion Math",
+        "Lucida Math",
+        "Asana Math"
+      ],
+      "accept": [],
+      "default": []
+    }
+  }
+]

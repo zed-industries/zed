@@ -1,0 +1,27 @@
+[package]
+name = "procfs-core"
+documentation = "https://docs.rs/procfs-core/"
+description = "Data structures and parsing for the linux procfs pseudo-filesystem"
+readme = "../README.md"
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["chrono"]
+serde1 = ["serde", "bitflags/serde"]
+
+[dependencies]
+backtrace = { version = "0.3", optional = true }
+bitflags = { version = "2" }
+chrono = { version = "0.4.20", optional = true, features = ["clock"], default-features = false }
+hex = "0.4"
+serde = { version = "1.0", features = ["derive"], optional = true }
+
+[package.metadata.docs.rs]
+all-features = true

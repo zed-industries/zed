@@ -1,0 +1,10 @@
+package wasi:cli@0.3.0;
+
+@since(version = 0.3.0)
+world command {
+  @since(version = 0.3.0)
+  include imports;
+
+  @since(version = 0.3.0)
+  export run;
+}

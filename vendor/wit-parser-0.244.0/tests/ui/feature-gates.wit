@@ -1,0 +1,118 @@
+package a:b;
+
+@unstable(feature = not-active)
+interface gated {
+}
+
+@unstable(feature = active)
+interface ungated {
+  @unstable(feature = not-active)
+  gated: func();
+
+  @unstable(feature = active)
+  ungated: func();
+}
+
+@unstable(feature = active)
+interface ungated2 {
+  @unstable(feature = not-active)
+  type gated = u32;
+  @unstable(feature = not-active)
+  type gated2 = gated;
+
+  @unstable(feature = not-active)
+  type gated-with-anonymous-type = option<option<gated>>;
+
+  @unstable(feature = active)
+  type ungated = u32;
+  @unstable(feature = active)
+  type ungated2 = ungated;
+}
+
+@unstable(feature = inactive)
+interface gated-use-target {
+  @unstable(feature = inactive)
+  type t = u32;
+}
+
+@unstable(feature = inactive)
+interface gated-use {
+  @unstable(feature = inactive)
+  use gated-use-target.{t};
+}
+
+@unstable(feature = active)
+interface ungated-use-target {
+  @unstable(feature = active)
+  type t = u32;
+}
+
+@unstable(feature = active)
+interface ungated-use {
+  @unstable(feature = active)
+  use ungated-use-target.{t};
+}
+
+@unstable(feature = inactive)
+interface gated-for-world {}
+
+@unstable(feature = inactive)
+world gated-world {
+  @unstable(feature = inactive)
+  import gated-for-world;
+  @unstable(feature = inactive)
+  export gated-for-world;
+}
+
+@unstable(feature = active)
+interface ungated-for-world {}
+
+@unstable(feature = active)
+world ungated-world {
+  @unstable(feature = active)
+  import ungated-for-world;
+  @unstable(feature = active)
+  export ungated-for-world;
+}
+
+world mixed-world {
+  @unstable(feature = inactive)
+  import gated-for-world;
+  @unstable(feature = inactive)
+  export gated-for-world;
+  @unstable(feature = inactive)
+  include gated-world;
+
+  @unstable(feature = active)
+  import ungated-for-world;
+  @unstable(feature = active)
+  export ungated-for-world;
+  @unstable(feature = inactive)
+  include ungated-world;
+}
+
+interface with-resources {
+  @unstable(feature = inactive)
+  resource gated {
+    @unstable(feature = inactive)
+    constructor();
+
+    @unstable(feature = inactive)
+    x: static func();
+
+    @unstable(feature = inactive)
+    y: func();
+  }
+
+  @unstable(feature = active)
+  resource ungated {
+    @unstable(feature = active)
+    constructor();
+
+    @unstable(feature = active)
+    x: static func();
+
+    @unstable(feature = active)
+    y: func();
+  }
+}

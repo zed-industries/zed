@@ -1,0 +1,95 @@
+#![allow(unused_imports)]
+#![allow(clippy::all)]
+use super::*;
+use wasm_bindgen::prelude::*;
+#[cfg(web_sys_unstable_apis)]
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(
+        extends = "::js_sys::Object",
+        js_name = "XRInputSourceArray",
+        typescript_type = "XRInputSourceArray"
+    )]
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[doc = "The `XrInputSourceArray` class."]
+    #[doc = ""]
+    #[doc = "[MDN Documentation](https://developer.mozilla.org/en-US/docs/Web/API/XRInputSourceArray)"]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `XrInputSourceArray`*"]
+    #[doc = ""]
+    #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
+    #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
+    pub type XrInputSourceArray;
+    #[cfg(web_sys_unstable_apis)]
+    #[wasm_bindgen(method, getter, js_class = "XRInputSourceArray", js_name = "length")]
+    #[doc = "Getter for the `length` field of this object."]
+    #[doc = ""]
+    #[doc = "[MDN Documentation](https://developer.mozilla.org/en-US/docs/Web/API/XRInputSourceArray/length)"]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `XrInputSourceArray`*"]
+    #[doc = ""]
+    #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
+    #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
+    pub fn length(this: &XrInputSourceArray) -> u32;
+    #[cfg(web_sys_unstable_apis)]
+    #[cfg(feature = "XrInputSource")]
+    #[wasm_bindgen(catch, method, js_class = "XRInputSourceArray", js_name = "forEach")]
+    #[doc = "The `forEach()` method."]
+    #[doc = ""]
+    #[doc = "[MDN Documentation](https://developer.mozilla.org/en-US/docs/Web/API/XRInputSourceArray/forEach)"]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `XrInputSource`, `XrInputSourceArray`*"]
+    #[doc = ""]
+    #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
+    #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
+    pub fn for_each(
+        this: &XrInputSourceArray,
+        callback: &::js_sys::Function<fn(XrInputSource, ::js_sys::Number) -> ::js_sys::Undefined>,
+    ) -> Result<(), JsValue>;
+    #[cfg(web_sys_unstable_apis)]
+    #[cfg(feature = "XrInputSource")]
+    #[wasm_bindgen(method, js_class = "XRInputSourceArray", indexing_getter)]
+    #[doc = "Indexing getter. As in the literal Javascript `this[key]`."]
+    #[doc = ""]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `XrInputSource`, `XrInputSourceArray`*"]
+    #[doc = ""]
+    #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
+    #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
+    pub fn get(this: &XrInputSourceArray, index: u32) -> Option<XrInputSource>;
+    #[cfg(web_sys_unstable_apis)]
+    #[cfg(feature = "XrInputSource")]
+    #[wasm_bindgen(method, js_class = "XRInputSourceArray")]
+    #[doc = "The `entries()` method."]
+    #[doc = ""]
+    #[doc = "[MDN Documentation](https://developer.mozilla.org/en-US/docs/Web/API/XRInputSourceArray/entries)"]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `XrInputSource`, `XrInputSourceArray`*"]
+    #[doc = ""]
+    #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
+    #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
+    pub fn entries(this: &XrInputSourceArray) -> ::js_sys::Iterator<XrInputSource>;
+    #[cfg(web_sys_unstable_apis)]
+    #[wasm_bindgen(method, js_class = "XRInputSourceArray")]
+    #[doc = "The `keys()` method."]
+    #[doc = ""]
+    #[doc = "[MDN Documentation](https://developer.mozilla.org/en-US/docs/Web/API/XRInputSourceArray/keys)"]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `XrInputSourceArray`*"]
+    #[doc = ""]
+    #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
+    #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
+    pub fn keys(this: &XrInputSourceArray) -> ::js_sys::Iterator<::js_sys::Number>;
+    #[cfg(web_sys_unstable_apis)]
+    #[cfg(feature = "XrInputSource")]
+    #[wasm_bindgen(method, js_class = "XRInputSourceArray")]
+    #[doc = "The `values()` method."]
+    #[doc = ""]
+    #[doc = "[MDN Documentation](https://developer.mozilla.org/en-US/docs/Web/API/XRInputSourceArray/values)"]
+    #[doc = ""]
+    #[doc = "*This API requires the following crate features to be activated: `XrInputSource`, `XrInputSourceArray`*"]
+    #[doc = ""]
+    #[doc = "*This API is unstable and requires `--cfg=web_sys_unstable_apis` to be activated, as"]
+    #[doc = "[described in the `wasm-bindgen` guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html)*"]
+    pub fn values(this: &XrInputSourceArray) -> ::js_sys::Iterator<XrInputSource>;
+}

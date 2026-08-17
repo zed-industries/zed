@@ -1,0 +1,11 @@
+package wasi:filesystem@0.2.4;
+
+@since(version = 0.2.0)
+interface preopens {
+    @since(version = 0.2.0)
+    use types.{descriptor};
+
+    /// Return the set of preopened directories, and their paths.
+    @since(version = 0.2.0)
+    get-directories: func() -> list<tuple<descriptor, string>>;
+}

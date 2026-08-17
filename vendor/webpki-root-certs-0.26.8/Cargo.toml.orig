@@ -1,0 +1,21 @@
+[package]
+name = "webpki-root-certs"
+version = "0.26.8"
+edition.workspace = true
+readme = "README.md"
+license = "MPL-2.0"
+homepage.workspace = true
+repository.workspace = true
+description = "Mozilla trusted certificate authorities in self-signed X.509 format for use with crates other than webpki"
+
+[dependencies]
+pki-types = { workspace = true }
+
+[dev-dependencies]
+hex = { workspace = true }
+percent-encoding = "2.3"
+ring = "0.17.0"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+webpki = { workspace = true }
+webpki-ccadb = { path = "../webpki-ccadb" }
+x509-parser = { workspace = true }

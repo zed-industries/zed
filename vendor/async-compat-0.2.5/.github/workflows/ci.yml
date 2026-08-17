@@ -1,0 +1,62 @@
+name: CI
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+  schedule:
+    - cron: '0 2 * * 0'
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  CARGO_NET_RETRY: 10
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: -D warnings
+  RUSTDOCFLAGS: -D warnings
+  RUSTUP_MAX_RETRIES: 10
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  fmt:
+    uses: smol-rs/.github/.github/workflows/fmt.yml@main
+  security_audit:
+    uses: smol-rs/.github/.github/workflows/security_audit.yml@main
+    permissions:
+      checks: write
+      contents: read
+      issues: write
+    secrets: inherit
+
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        rust: [nightly, beta, stable]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup update ${{ matrix.rust }} && rustup default ${{ matrix.rust }}
+      - run: cargo build --all --all-features --all-targets
+      - name: Run cargo check (without dev-dependencies to catch missing feature flags)
+        if: startsWith(matrix.rust, 'nightly')
+        run: cargo check -Z features=dev_dep
+      - run: cargo test
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup update stable
+      - run: cargo clippy --all-features --all-targets

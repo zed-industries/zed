@@ -1,0 +1,30 @@
+name: Main CI
+on:
+  pull_request:
+    branches: ["**"]
+  push:
+    branches:
+      - main
+
+jobs:
+  lint:
+    name: Check and Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: clippy
+      - name: Cache cargo dependencies
+        uses: actions/cache@v2
+        with:
+          path: ~/.cargo/
+          key: cache-cargo-deps-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+      - name: Check
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --all --all-targets --all-features -- --deny warnings

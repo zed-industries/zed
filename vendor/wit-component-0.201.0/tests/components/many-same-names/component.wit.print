@@ -1,0 +1,10 @@
+package root:component;
+
+world root {
+  export foo:foo/name;
+  export name: interface {
+    use foo:foo/name.{r2};
+
+    a: func();
+  }
+}

@@ -1,0 +1,14 @@
+[
+  {
+    "key": "citizen_code_of_conduct",
+    "name": "Citizen Code of Conduct",
+    "url": "https://api.github.com/codes_of_conduct/citizen_code_of_conduct",
+    "html_url": "http://citizencodeofconduct.org/"
+  },
+  {
+    "key": "contributor_covenant",
+    "name": "Contributor Covenant",
+    "url": "https://api.github.com/codes_of_conduct/contributor_covenant",
+    "html_url": "https://www.contributor-covenant.org/version/2/0/code_of_conduct/"
+  }
+]

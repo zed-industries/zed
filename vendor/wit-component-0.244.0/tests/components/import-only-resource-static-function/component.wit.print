@@ -1,0 +1,5 @@
+package root:component;
+
+world root {
+  import foo:bar/x;
+}

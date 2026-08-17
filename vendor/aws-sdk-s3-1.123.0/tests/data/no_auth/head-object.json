@@ -1,0 +1,91 @@
+{
+  "events": [
+    {
+      "connection_id": 0,
+      "action": {
+        "Request": {
+          "request": {
+            "uri": "https://gdc-organoid-pancreatic-phs001611-2-open.s3.us-east-1.amazonaws.com/0431cddc-a418-4a79-a34d-6c041394e8e4/a6ddcc84-8e4d-4c68-885c-2d51168eec97.FPKM-UQ.txt.gz",
+            "headers": {
+              "user-agent": [
+                "aws-sdk-rust/0.123.test os/windows/XPSP3 lang/rust/1.50.0"
+              ],
+              "amz-sdk-request": [
+                "attempt=1; max=3"
+              ],
+              "x-amz-user-agent": [
+                "aws-sdk-rust/0.123.test api/test-service/0.123 os/windows/XPSP3 lang/rust/1.50.0"
+              ]
+            },
+            "method": "HEAD"
+          }
+        }
+      }
+    },
+    {
+      "connection_id": 0,
+      "action": {
+        "Eof": {
+          "ok": true,
+          "direction": "Request"
+        }
+      }
+    },
+    {
+      "connection_id": 0,
+      "action": {
+        "Response": {
+          "response": {
+            "Ok": {
+              "status": 200,
+              "version": "HTTP/1.1",
+              "headers": {
+                "last-modified": [
+                  "Mon, 27 Jan 2020 20:56:51 GMT"
+                ],
+                "content-type": [
+                  "binary/octet-stream"
+                ],
+                "date": [
+                  "Mon, 07 Aug 2023 20:44:42 GMT"
+                ],
+                "server": [
+                  "AmazonS3"
+                ],
+                "accept-ranges": [
+                  "bytes"
+                ],
+                "x-amz-server-side-encryption": [
+                  "AES256"
+                ],
+                "x-amz-id-2": [
+                  "+d6tSM3krTTrvY+y6PFHnkw9OhAtJhQy8RzFrPO6vnUOIuvqViB9gFZvfJCcVMj7gX+dpIvZ3HI="
+                ],
+                "x-amz-request-id": [
+                  "EGGF3G9KFMFHZ3E0"
+                ],
+                "etag": [
+                  "\"446fc665f99183cd0540d7656a79d3ed\""
+                ],
+                "x-amz-meta-description": [
+                  "{\"url\": \"s3://cleversafe.service.consul/stage-submission-5/ORGANOID-PANCREATIC/0431cddc-a418-4a79-a34d-6c041394e8e4/a6ddcc84-8e4d-4c68-885c-2d51168eec97.FPKM-UQ.txt.gz\", \"node_id\": \"0431cddc-a418-4a79-a34d-6c041394e8e4/a6ddcc84-8e4d-4c68-885c-2d51168eec97.FPKM-UQ.txt.gz\"}"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "connection_id": 0,
+      "action": {
+        "Eof": {
+          "ok": true,
+          "direction": "Response"
+        }
+      }
+    }
+  ],
+  "docs": "traffic recording of optional auth (no Authorization header is included)",
+  "version": "V0"
+}

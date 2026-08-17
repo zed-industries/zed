@@ -1,0 +1,223 @@
+How to prepare a new release
+----------------------------
+
+. include/freetype/freetype.h: Update `FREETYPE_MAJOR`,
+  `FREETYPE_MINOR`, and `FREETYPE_PATCH`.
+
+. Update version numbers in all files where necessary (for example, do
+  a grep for both '2.10.4' and '2104' for release 2.10.4).
+
+. builds/unix/configure.raw: Update `version_info`.
+
+. docs/CHANGES: Document differences to last release.
+
+. README: Update.
+
+. docs/VERSIONS.TXT: Document changed `version_info`.
+
+. Update the 'dlg' submodule with
+
+    git submodule foreach git pull origin master
+
+. Copy the submodule code with
+
+    make copy_submodule
+
+  and run
+
+    make distclean && make devel && make
+    make distclean && make devel && make multi
+    make distclean && make devel CC=g++ && make CC=g++ ANSIFLAGS=""
+    make distclean && make devel CC=g++ && make multi CC=g++ ANSIFLAGS=""
+
+    sh autogen.sh
+    make distclean && ./configure CC=g++ && make ANSIFLAGS=""
+
+  to test compilation with both gcc and g++ (you might also add the `-j`
+  flag to `make` for parallel compilation).
+
+  Note that it is normally not necessary to test standard C
+  compilation with the `configure`, `meson`, and `cmake` build tools
+  since this is done by the CI process of 'gitlab.freedesktop.org' for
+  every commit.
+
+. Test C++ compilation for 'freetype-demos' too; this needs a compiled
+  FreeType library as described in the `README` file.
+
+    make distclean && make
+    make distclean && make CC=g++ ANSIFLAGS=""
+
+. Run `src/tools/chktrcmp.py` and check that there are no undefined
+  `trace_XXXX` macros.
+
+. Update meson subproject files (for both the 'freetype' and
+  'freetype-demos' git repositories) with
+
+    meson subprojects update
+
+. Test meson compilation (for both the 'freetype' and 'freetype-demos'
+  git repositories) with
+
+    meson setup builddir && meson compile -C builddir
+
+. Commit everything.
+
+. After pushing the new release, tag the git repositories ('freetype',
+  'freetype-demos') with
+
+    git tag VER-<version> -m "" -u <committer>
+
+  and push the tags with
+
+    git push --tags
+
+. Check with
+
+    git clean -ndx
+
+  that the git directory is really clean (and remove extraneous files
+  if necessary).
+
+. Say `make dist` in both the 'freetype' and 'freetype-demos'
+  repositories to generate the `.tar.gz`, `.tar.xz`, and `.zip` files.
+
+. Create the doc bundles (`freetype-doc-<version>.tar.gz`,
+  `freetype-doc-<version>.tar.xz`, `ftdoc<version>.zip`).  This is
+  everything in
+
+    <freetype-web git repository>/freetype2/docs
+
+  except the `reference` subdirectory.  Do *not* use option `-l` from
+  zip!
+
+. Run the following script (with updated `$VERSION`, `$SAVANNAH_USER`,
+  and `$SOURCEFORGE_USER` variables) to sign and upload the bundles to
+  both Savannah and SourceForge.  The signing code has been taken from
+  the `gnupload` script (part of the 'automake' bundle).
+
+    #!/bin/sh
+
+    VERSION=2.12.0
+    SAVANNAH_USER=wl
+    SOURCEFORGE_USER=wlemb
+    GPG_KEY_ID=BE6C3AAC63AD8E3F
+
+    #####################################################################
+
+    GPG="/usr/bin/gpg --batch --no-tty --local-user $GPG_KEY_ID"
+
+    version=`echo $VERSION | sed "s/\\.//g"`
+
+    FREETYPE_PACKAGES="freetype-$VERSION.tar.gz \
+                       freetype-$VERSION.tar.xz \
+                       ft$version.zip"
+    FT2DEMOS_PACKAGES="ft2demos-$VERSION.tar.gz \
+                       ft2demos-$VERSION.tar.xz \
+                       ftdmo$version.zip"
+    FTDOC_PACKAGES="freetype-doc-$VERSION.tar.gz \
+                    freetype-doc-$VERSION.tar.xz \
+                    ftdoc$version.zip"
+
+    PACKAGE_LIST="$FREETYPE_PACKAGES \
+                  $FT2DEMOS_PACKAGES \
+                  $FTDOC_PACKAGES"
+
+    set -e
+    unset passphrase
+
+    PATH=/empty echo -n "Enter GPG passphrase: "
+    stty -echo
+    read -r passphrase
+    stty echo
+    echo
+
+    for f in $PACKAGE_LIST; do
+      if test ! -f $f; then
+        echo "$0: Cannot find \`$f'" 1>&2
+        exit 1
+      else
+        :
+      fi
+    done
+
+    for f in $PACKAGE_LIST; do
+      echo "Signing $f..."
+      rm -f $f.sig
+      echo $passphrase | $GPG --passphrase-fd 0 -ba -o $f.sig $f
+    done
+
+    FREETYPE_SIGNATURES=
+    for i in $FREETYPE_PACKAGES; do
+      FREETYPE_SIGNATURES="$FREETYPE_SIGNATURES $i.sig"
+    done
+
+    FT2DEMOS_SIGNATURES=
+    for i in $FT2DEMOS_PACKAGES; do
+      FT2DEMOS_SIGNATURES="$FT2DEMOS_SIGNATURES $i.sig"
+    done
+
+    FTDOC_SIGNATURES=
+    for i in $FTDOC_PACKAGES; do
+      FTDOC_SIGNATURES="$FTDOC_SIGNATURES $i.sig"
+    done
+
+    SIGNATURE_LIST="$FREETYPE_SIGNATURES \
+                    $FT2DEMOS_SIGNATURES \
+                    $FTDOC_SIGNATURES"
+
+    scp $PACKAGE_LIST $SIGNATURE_LIST \
+      $SAVANNAH_USER@dl.sv.nongnu.org:/releases/freetype/
+
+    rsync -avP -e ssh $FREETYPE_PACKAGES $FREETYPE_SIGNATURES \
+      $SOURCEFORGE_USER,freetype@frs.sf.net:/home/frs/project/f/fr/freetype/freetype2/$VERSION/
+    rsync -avP -e ssh $FT2DEMOS_PACKAGES $FT2DEMOS_SIGNATURES \
+      $SOURCEFORGE_USER,freetype@frs.sf.net:/home/frs/project/f/fr/freetype/freetype-demos/$VERSION/
+    rsync -avP -e ssh $FTDOC_PACKAGES $FTDOC_SIGNATURES \
+      $SOURCEFORGE_USER,freetype@frs.sf.net:/home/frs/project/f/fr/freetype/freetype-docs/$VERSION/
+
+    # EOF
+
+. Prepare a `README` file for SourceForge and upload it with the
+  following script (with updated `$VERSION` and `$SOURCEFORGE_USER`
+  variables).
+
+    #!/bin/sh
+
+    VERSION=2.10.4
+    SOURCEFORGE_USER=wlemb
+
+    #####################################################################
+
+    rsync -avP -e ssh README \
+      $SOURCEFORGE_USER,freetype@frs.sf.net:/home/frs/project/f/fr/freetype/freetype2/$VERSION/
+
+    # EOF
+
+. On SourceForge, tag the just uploaded `ftXXX.zip` and
+  `freetype-XXX.tar.xz` files as the default files to download for
+  'Windows' and 'Others', respectively.
+
+. Trigger the automatic generation of the online API reference by
+  updating the `FT_VERSION` variable in file `.gitlab-ci.yml` of the
+  'freetype-web' repository.
+
+. Announce new release on 'freetype-announce@nongnu.org' and to
+  relevant newsgroups.  The text should include
+
+  - SHA256 checksums of all files,
+  - instructions how to verify the bundles using the `.sig` file data,
+  - the PGP public key used to sign the archives.
+
+----------------------------------------------------------------------
+
+Copyright (C) 2003-2023 by
+David Turner, Robert Wilhelm, and Werner Lemberg.
+
+This  file is  part of  the FreeType  project, and  may only  be used,
+modified,  and distributed  under the  terms of  the  FreeType project
+license,  LICENSE.TXT.  By  continuing to  use, modify,  or distribute
+this file you  indicate that you have read  the license and understand
+and accept it fully.
+
+
+--- end of release ---

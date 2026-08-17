@@ -1,0 +1,7 @@
+package foo:foo;
+
+world module {
+  export a: func();
+  export b: func() -> string;
+  export c: func(x: string) -> string;
+}

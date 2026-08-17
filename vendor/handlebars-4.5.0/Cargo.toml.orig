@@ -1,0 +1,67 @@
+[package]
+name = "handlebars"
+version = "4.5.0"
+authors = ["Ning Sun <sunng@pm.me>"]
+description = "Handlebars templating implemented in Rust."
+license = "MIT"
+keywords = ["handlebars", "templating", "web"]
+categories = ["template-engine", "web-programming"]
+homepage = "https://github.com/sunng87/handlebars-rust"
+repository = "https://github.com/sunng87/handlebars-rust"
+documentation = "https://docs.rs/crate/handlebars/"
+readme = "README.md"
+edition = "2021"
+rust-version = "1.57"
+
+[lib]
+name = "handlebars"
+path = "src/lib.rs"
+
+[[bin]]
+name = "handlebars-cli"
+path = "src/cli.rs"
+
+[dependencies]
+log = { version = "0.4.0" }
+thiserror = "1"
+pest = "2.1.0"
+pest_derive = "2.1.0"
+serde = "1.0.0"
+serde_json = "1.0.39"
+walkdir = { version = "2.2.3", optional = true }
+rhai = { version = "1.6", optional = true, features = ["sync", "serde"] }
+rust-embed = { version = "8.0.0", optional = true, features = ["include-exclude"] }
+heck = { version = "0.4", optional = true }
+
+[dev-dependencies]
+env_logger = "0.9"
+serde_derive = "1.0.75"
+tempfile = "3.0.0"
+criterion = "0.3"
+tiny_http = "0.11"
+time = { version = "0.3.7", features = ["serde", "formatting", "parsing"]}
+
+[target.'cfg(unix)'.dev-dependencies]
+pprof = { version = "0.10", features = ["flamegraph", "prost-codec"] }
+
+[features]
+dir_source = ["walkdir"]
+script_helper = ["rhai"]
+no_logging = []
+default = []
+string_helpers = ["heck"]
+
+[badges]
+maintenance = { status = "actively-developed" }
+
+[[bench]]
+name = "bench"
+harness = false
+
+[package.metadata.docs.rs]
+features = ["dir_source", "script_helper", "rust-embed"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[[example]]
+name = "script"
+required-features = ["script_helper"]

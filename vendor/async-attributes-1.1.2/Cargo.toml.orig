@@ -1,0 +1,23 @@
+[package]
+name = "async-attributes"
+description = "Experimental language-level polyfills for Async Rust."
+version = "1.1.2"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/async-rs/async-attributes"
+homepage = "https://github.com/async-rs/async-attributes"
+documentation = "https://docs.rs/async-attributes"
+authors = ["Yoshua Wuyts <yoshuawuyts@gmail.com>"]
+keywords = ["async", "await", "macro", "futures"]
+categories = ["asynchronous", "network-programming", "filesystem", "concurrency", "api-bindings"]
+edition = "2018"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "1.0", features = ["full"] }
+quote = "1.0"
+
+[dev-dependencies]
+async-std = "0.99.5"

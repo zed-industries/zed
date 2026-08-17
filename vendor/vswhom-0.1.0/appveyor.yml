@@ -1,0 +1,40 @@
+version: 0.1.0-{build}
+skip_tags: false
+
+platform: x64
+configuration: Release
+
+clone_folder: C:\vswhom.rs
+
+environment:
+  matrix:
+    - TARGET: x86_64-pc-windows-gnu
+      MINGW: true
+    - TARGET: x86_64-pc-windows-msvc
+
+install:
+  - set PATH=%PATH%;C:\Users\appveyor\.cargo\bin
+  - if defined MINGW set PATH=C:\msys64\mingw64\bin;C:\msys64\usr\bin;%PATH%
+  - if defined MINGW bash -lc "pacman --needed --noconfirm -Sy pacman-mirrors"
+  - if defined MINGW bash -lc "pacman --noconfirm -Sy"
+  - if defined MINGW bash -lc "pacman --noconfirm -S mingw-w64-x86_64-toolchain"
+  -
+  - curl -SL https://win.rustup.rs/ -oC:\rustup-init.exe
+  - C:\rustup-init.exe -y --default-host="%TARGET%"
+
+build: off
+build_script:
+  - git submodule update --init --recursive
+  - cargo build --verbose --release
+
+test: off
+test_script:
+  - cargo test --verbose --release
+  - cargo run --verbose --release --example detect
+
+notifications:
+  - provider: Email
+    to:
+      - nabijaczleweli@gmail.com
+    on_build_status_changed: true
+    on_build_success: false

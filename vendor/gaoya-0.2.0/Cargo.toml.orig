@@ -1,0 +1,54 @@
+[package]
+name = "gaoya"
+version = "0.2.0"
+authors = ["Sergejs Melderis <sergey.melderis@gmail.com>"]
+edition = "2021"
+readme = "../README.md"
+homepage = "https://github.com/serega/gaoya"
+repository = "https://github.com/serega/gaoya"
+license = "MIT"
+keywords = ["lsh",  "neardup", "dedup"]
+description = "Locality Sensitive Hashing Data Structures"
+
+[dev-dependencies]
+criterion = { version = "0.5.1", features = ["html_reports"] }
+
+[[bench]]
+name = "lsh_bench"
+harness = false
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[profile.release]
+debug = true
+
+
+[lib]
+name = "gaoya"
+path = "src/lib.rs"
+bench = false
+
+[dependencies]
+ahash = "0.8.3"
+rand = "0.8.5"
+rand_pcg = "0.3.1"
+sha-1 = "0.10.0"
+siphasher = "0.3.10"
+random_choice = "0.3.2"
+rayon = "1.7.0"
+seahash = "4.1.0"
+itertools = "0.10.5"
+num-traits = "0.2.15"
+shingles = "0.1.1"
+smallvec = { version = "1.10.0", features = ["const_generics", "const_new", "serde"] }
+crossbeam-utils = "0.8.15"
+triomphe = "0.1.8"
+fnv = "1.0.7"
+
+[features]
+unstable = []
+
+
+
+
+
+

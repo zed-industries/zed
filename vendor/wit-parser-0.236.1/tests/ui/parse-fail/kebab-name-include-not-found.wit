@@ -1,0 +1,8 @@
+package foo:foo;
+
+world foo { import a: func(); }
+world bar { import a: func(); }
+world baz {
+    include foo with { b1 as b2 }
+    include bar with { a as b }
+}

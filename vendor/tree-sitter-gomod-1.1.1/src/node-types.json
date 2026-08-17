@@ -1,0 +1,478 @@
+[
+  {
+    "type": "comment",
+    "named": true,
+    "extra": true,
+    "fields": {}
+  },
+  {
+    "type": "exclude_directive",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "exclude_spec",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "exclude_spec",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "module_path",
+          "named": true
+        },
+        {
+          "type": "version",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "file_path",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "go_directive",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "go_version",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "go_version",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "interpreted_string_literal",
+          "named": true
+        },
+        {
+          "type": "raw_string_literal",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "ignore_directive",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "ignore_spec",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "ignore_spec",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "file_path",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "interpreted_string_literal",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "escape_sequence",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "module_directive",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "module_path",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "module_path",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "interpreted_string_literal",
+          "named": true
+        },
+        {
+          "type": "raw_string_literal",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "replace_directive",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "replace_spec",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "replace_spec",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "file_path",
+          "named": true
+        },
+        {
+          "type": "module_path",
+          "named": true
+        },
+        {
+          "type": "version",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "require_directive",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "require_spec",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "require_spec",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "module_path",
+          "named": true
+        },
+        {
+          "type": "version",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "retract_directive",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "retract_spec",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "retract_spec",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "version",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "source_file",
+    "named": true,
+    "root": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "exclude_directive",
+          "named": true
+        },
+        {
+          "type": "go_directive",
+          "named": true
+        },
+        {
+          "type": "ignore_directive",
+          "named": true
+        },
+        {
+          "type": "module_directive",
+          "named": true
+        },
+        {
+          "type": "replace_directive",
+          "named": true
+        },
+        {
+          "type": "require_directive",
+          "named": true
+        },
+        {
+          "type": "retract_directive",
+          "named": true
+        },
+        {
+          "type": "tool_directive",
+          "named": true
+        },
+        {
+          "type": "toolchain_directive",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "tool",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "interpreted_string_literal",
+          "named": true
+        },
+        {
+          "type": "raw_string_literal",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "tool_directive",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "tool",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "toolchain_directive",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "toolchain_name",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "toolchain_name",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "interpreted_string_literal",
+          "named": true
+        },
+        {
+          "type": "raw_string_literal",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "version",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "interpreted_string_literal",
+          "named": true
+        },
+        {
+          "type": "raw_string_literal",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "\n",
+    "named": false
+  },
+  {
+    "type": "\"",
+    "named": false
+  },
+  {
+    "type": "(",
+    "named": false
+  },
+  {
+    "type": ")",
+    "named": false
+  },
+  {
+    "type": ",",
+    "named": false
+  },
+  {
+    "type": "//",
+    "named": false
+  },
+  {
+    "type": "=>",
+    "named": false
+  },
+  {
+    "type": "[",
+    "named": false
+  },
+  {
+    "type": "]",
+    "named": false
+  },
+  {
+    "type": "escape_sequence",
+    "named": true
+  },
+  {
+    "type": "exclude",
+    "named": false
+  },
+  {
+    "type": "go",
+    "named": false
+  },
+  {
+    "type": "ignore",
+    "named": false
+  },
+  {
+    "type": "module",
+    "named": false
+  },
+  {
+    "type": "raw_string_literal",
+    "named": true
+  },
+  {
+    "type": "replace",
+    "named": false
+  },
+  {
+    "type": "require",
+    "named": false
+  },
+  {
+    "type": "retract",
+    "named": false
+  },
+  {
+    "type": "tool",
+    "named": false
+  },
+  {
+    "type": "toolchain",
+    "named": false
+  }
+]

@@ -1,0 +1,41 @@
+---
+- name: Tags in Implicit Mapping
+  from: NimYAML tests
+  tags: tag mapping
+  yaml: |
+    !!str a: b
+    c: !!int 42
+    e: !!str f
+    g: h
+    !!str 23: !!bool false
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL <tag:yaml.org,2002:str> :a
+       =VAL :b
+       =VAL :c
+       =VAL <tag:yaml.org,2002:int> :42
+       =VAL :e
+       =VAL <tag:yaml.org,2002:str> :f
+       =VAL :g
+       =VAL :h
+       =VAL <tag:yaml.org,2002:str> :23
+       =VAL <tag:yaml.org,2002:bool> :false
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "a": "b",
+      "c": 42,
+      "e": "f",
+      "g": "h",
+      "23": false
+    }
+  dump: |
+    !!str a: b
+    c: !!int 42
+    e: !!str f
+    g: h
+    !!str 23: !!bool false

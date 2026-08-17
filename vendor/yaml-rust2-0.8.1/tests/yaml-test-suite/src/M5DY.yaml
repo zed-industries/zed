@@ -1,0 +1,46 @@
+---
+- name: Spec Example 2.11. Mapping between Sequences
+  from: http://www.yaml.org/spec/1.2/spec.html#id2760799
+  tags: complex-key explicit-key spec mapping sequence
+  yaml: |
+    ? - Detroit Tigers
+      - Chicago cubs
+    :
+      - 2001-07-23
+
+    ? [ New York Yankees,
+        Atlanta Braves ]
+    : [ 2001-07-02, 2001-08-12,
+        2001-08-14 ]
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       +SEQ
+        =VAL :Detroit Tigers
+        =VAL :Chicago cubs
+       -SEQ
+       +SEQ
+        =VAL :2001-07-23
+       -SEQ
+       +SEQ []
+        =VAL :New York Yankees
+        =VAL :Atlanta Braves
+       -SEQ
+       +SEQ []
+        =VAL :2001-07-02
+        =VAL :2001-08-12
+        =VAL :2001-08-14
+       -SEQ
+      -MAP
+     -DOC
+    -STR
+  dump: |
+    ? - Detroit Tigers
+      - Chicago cubs
+    : - 2001-07-23
+    ? - New York Yankees
+      - Atlanta Braves
+    : - 2001-07-02
+      - 2001-08-12
+      - 2001-08-14

@@ -1,0 +1,18 @@
+[package]
+name = "glob"
+version = "0.3.3"
+authors = ["The Rust Project Developers"]
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/rust-lang/glob"
+repository = "https://github.com/rust-lang/glob"
+documentation = "https://docs.rs/glob"
+description = """
+Support for matching file paths against Unix shell style patterns.
+"""
+categories = ["filesystem"]
+rust-version = "1.63.0"
+
+[dev-dependencies]
+# FIXME: This should be replaced by `tempfile`
+tempdir = "0.3"
+doc-comment = "0.3"

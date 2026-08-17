@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+package replay;
+
+option go_package = "github.com/livekit/protocol/replay";
+option csharp_namespace = "LiveKit.Proto";
+option ruby_package = "LiveKit::Proto";
+
+import "google/protobuf/empty.proto";
+import "livekit_models.proto";
+
+// Experimental (not currently available)
+service Replay {
+  rpc ListReplays(ListReplaysRequest) returns (ListReplaysResponse);
+  rpc DeleteReplay(DeleteReplayRequest) returns (google.protobuf.Empty);
+
+  rpc Playback(PlaybackRequest) returns (PlaybackResponse);
+  rpc Seek(SeekRequest) returns (google.protobuf.Empty);
+  rpc Close(ClosePlaybackRequest) returns (google.protobuf.Empty);
+}
+
+message ListReplaysRequest {
+  string room_name = 1; // optional
+  livekit.TokenPagination page_token = 2;
+}
+
+message ListReplaysResponse {
+  repeated ReplayInfo replays = 1;
+  livekit.TokenPagination next_page_token = 2;
+}
+
+message ReplayInfo {
+  string replay_id = 1;
+  string room_name = 2;
+  int64 start_time = 3;
+  int64 duration = 4;
+}
+
+message DeleteReplayRequest {
+  string replay_id = 1;
+}
+
+message PlaybackRequest {
+  string replay_id = 1;
+  string playback_room = 2; // name of room to play into
+  int64 seek_offset = 3; // initial timestamp (ms)
+}
+
+message PlaybackResponse {
+  string playback_id = 1;
+}
+
+message SeekRequest {
+  string playback_id = 1;
+  int64 seek_offset = 2; // timestamp (ms)
+}
+
+message ClosePlaybackRequest {
+  string playback_id = 1;
+}

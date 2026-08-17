@@ -1,0 +1,32 @@
+---
+- skip: true
+  note: The following cases are valid YAML according to the 1.2 productions but
+    not at all usefully valid. We don't want to encourage parsers to support
+    them when we'll likely make them invalid later.
+  also: MU58
+  name: Directive variants
+  from: '@ingydotnet'
+  tags: directive
+  yaml: |
+    %YAML1.1
+    ---
+  tree: |
+    +STR
+     +DOC ---
+      =VAL :
+     -DOC
+    -STR
+  json: |
+    null
+
+- yaml: |
+    %***
+    ---
+
+- yaml: |
+    %YAML 1.1 1.2
+    ---
+
+- yaml: |
+    %YAML 1.12345
+    ---

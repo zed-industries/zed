@@ -1,0 +1,31 @@
+---
+- name: Lookahead test cases
+  from: NimYAML tests
+  tags: mapping edge
+  yaml: |
+    - bla"keks: foo
+    - bla]keks: foo
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       +MAP
+        =VAL :bla"keks
+        =VAL :foo
+       -MAP
+       +MAP
+        =VAL :bla]keks
+        =VAL :foo
+       -MAP
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      {
+        "bla\"keks": "foo"
+      },
+      {
+        "bla]keks": "foo"
+      }
+    ]

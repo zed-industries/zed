@@ -1,0 +1,5 @@
+failed to update function `x`: function returns a type which contains a `borrow<T>` which is not supported
+     --> tests/ui/parse-fail/return-borrow6.wit:6:3
+      |
+    6 |   x: func() -> tuple<borrow<y>>;
+      |   ^

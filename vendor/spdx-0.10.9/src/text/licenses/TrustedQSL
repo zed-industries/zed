@@ -1,0 +1,59 @@
+r#"Copyright (C) 2001-2015 American Radio Relay League, Inc. All rights
+reserved.
+
+Portions (C) 2003-2023 The TrustedQSL Developers. Please see the AUTHORS.txt
+file for contributors.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+1. Any redistribution of source code must retain the above copyright
+notice, this list of conditions and the disclaimer shown in
+Paragraph 5 (below).
+
+2. Redistribution in binary form must reproduce the above copyright
+notice, this list of conditions and the disclaimer shown in
+Paragraph 5 (below) in the documentation and/or other materials
+provided with the distribution.
+
+3. Products derived from or including this software may not use
+"Logbook of the World" or "LoTW" or any other American Radio Relay
+League, Incorporated trademarks or servicemarks in their names
+without prior written permission of the ARRL. See Paragraph 6
+(below) for contact information.
+
+4. Use of this software does not imply endorsement by ARRL of
+products derived from or including this software and vendors may not
+claim such endorsement. 
+
+5. Disclaimer: This software is provided "as-is" without
+representation, guarantee or warranty of any kind, either express or
+implied, including but not limited to the implied warranties of
+merchantability or of fitness for a particular purpose. The entire
+risk as to the quality and performance of the software is solely
+with you. Should the software prove defective, you (and not the
+American Radio Relay League, its officers, directors, employees or
+agents) assume the entire cost of all necessary servicing, repair or
+correction. In no event will ARRL be liable to you or to any third
+party for any damages, whether direct or indirect, including lost
+profits, lost savings, or other incidental or consequential damages
+arising out of the use or inability to use such software, regardless
+of whether ARRL has been advised of the possibility of such damages.
+
+6. Contact information:
+
+American Radio Relay League, Inc.
+Attn: Logbook of the World Manager
+225 Main St
+Newington, CT 06111
+voice: 860-594-0200
+fax: 860-594-0259
+email: logbook@arrl.org
+Worldwide Web: www.arrl.org
+
+This software consists of voluntary contributions made by many
+individuals on behalf of the ARRL. More information on the "Logbook
+of The World" project and the ARRL is available from the ARRL Web
+site at www.arrl.org.
+"#

@@ -1,0 +1,29 @@
+classDiagram
+direction LR
+
+namespace Core {
+  class CoreResult~T~ {
+    +T value
+    +isOk() bool
+  }
+  class CoreError {
+    +String code
+    +String message
+  }
+}
+
+namespace API {
+  class ApiClient {
+    +get(path: String) ApiResponse
+    +post(path: String, body: ApiRequest) ApiResponse
+  }
+  class ApiRequest
+  class ApiResponse
+}
+
+CoreResult~T~ ..> CoreError : may-fail
+
+ApiClient --> ApiRequest : builds
+ApiClient --> ApiResponse : parses
+ApiClient ..> CoreResult~T~ : returns
+CoreError <|.. ApiResponse : wraps

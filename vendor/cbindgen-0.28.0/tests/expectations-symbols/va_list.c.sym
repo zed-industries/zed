@@ -1,0 +1,5 @@
+{
+va_list_test;
+va_list_test2;
+va_list_fn_ptrs;
+};

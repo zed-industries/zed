@@ -1,0 +1,4 @@
+package foo:baz;
+
+world bar {}
+

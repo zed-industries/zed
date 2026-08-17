@@ -1,0 +1,10 @@
+[package]
+name = "unicode_categories"
+version = "0.1.1"
+authors = ["Sean Gillespie <sean@swgillespie.me>"]
+description = "Query Unicode category membership for chars"
+keywords = ["unicode"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/swgillespie/unicode-categories"
+documentation = "http://swgillespie.github.io/unicode-categories/unicode_categories/"
+readme = "README.md"

@@ -1,0 +1,62 @@
+<?xml version="1.0"?>
+
+<ratified href="OES_standard_derivatives/">
+  <name>OES_standard_derivatives</name>
+  <contact>
+    <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL working group</a> (public_webgl 'at' khronos.org)
+  </contact>
+  <contributors>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+  <number>4</number>
+  <depends>
+    <api version="1.0"/>
+    <core version="2.0">
+      <glsl version="300 es"/>
+    </core>
+  </depends>
+  <overview>
+    <mirrors href="http://www.khronos.org/registry/gles/extensions/OES/OES_standard_derivatives.txt" name="OES_standard_derivatives" />
+    <features>
+      <feature>
+        The <code>hint</code> entry point accepts <code>FRAGMENT_SHADER_DERIVATIVE_HINT_OES</code>
+           as a target and the <code>getParameter</code> entry point accepts it as a pname.
+      </feature>
+      <glsl extname="GL_OES_standard_derivatives">
+        <stage type="fragment"/>
+        <function name="dFdx" type="genType">
+          <param type="genType" />
+        </function>
+        <function name="dFdy" type="genType">
+          <param type="genType" />
+        </function>
+        <function name="fwidth" type="genType">
+          <param type="genType" />
+        </function>
+      </glsl>
+    </features>
+  </overview>
+  <idl xml:space="preserve">
+[NoInterfaceObject]
+interface OES_standard_derivatives {
+    const GLenum FRAGMENT_SHADER_DERIVATIVE_HINT_OES = 0x8B8B;
+};
+  </idl>
+  <history>
+    <revision date="2010/01/13">
+      <change>Initial revision.</change>
+    </revision>
+    <revision date="2011/12/07">
+      <change>Added <code>genType</code> argument and return type to function declarations.</change>
+    </revision>
+    <revision date="2012/01/03">
+      <change>Removed webgl module per changes to Web IDL spec.</change>
+    </revision>
+    <revision date="2013/05/15">
+      <change>Ratified by Khronos Board of Promoters.</change>
+    </revision>
+    <revision date="2014/07/15">
+      <change>Added NoInterfaceObject extended attribute.</change>
+    </revision>
+  </history>
+</ratified>

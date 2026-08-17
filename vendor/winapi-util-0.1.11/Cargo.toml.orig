@@ -1,0 +1,25 @@
+[package]
+name = "winapi-util"
+version = "0.1.11"  #:version
+authors = ["Andrew Gallant <jamslam@gmail.com>"]
+description = "A dumping ground for high level safe wrappers over windows-sys."
+documentation = "https://docs.rs/winapi-util"
+homepage = "https://github.com/BurntSushi/winapi-util"
+repository = "https://github.com/BurntSushi/winapi-util"
+readme = "README.md"
+keywords = ["windows", "windows-sys", "util", "win"]
+license = "Unlicense OR MIT"
+categories = ["os::windows-apis", "external-ffi-bindings"]
+edition = "2021"
+
+[target.'cfg(windows)'.dependencies.windows-sys]
+version = ">=0.48.0, <=0.61.*"
+features = [
+  "Win32_Foundation",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Console",
+  "Win32_System_SystemInformation",
+]
+
+[package.metadata.docs.rs]
+targets = ["x86_64-pc-windows-msvc"]

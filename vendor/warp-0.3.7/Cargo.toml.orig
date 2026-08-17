@@ -1,0 +1,103 @@
+[package]
+name = "warp"
+version = "0.3.7"
+description = "serve the web at warp speeds"
+authors = ["Sean McArthur <sean@seanmonstar.com>"]
+license = "MIT"
+readme = "README.md"
+documentation = "https://docs.rs/warp"
+repository = "https://github.com/seanmonstar/warp"
+categories = ["web-programming::http-server"]
+keywords = ["warp", "server", "http", "hyper"]
+autotests = true
+autoexamples = true
+edition = "2018"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[dependencies]
+async-compression = { version = "0.4.5", features = ["tokio"], optional = true }
+bytes = "1.0"
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+futures-channel = { version = "0.3.17", features = ["sink"]}
+headers = "0.3.5"
+http = "0.2"
+hyper = { version = "0.14", features = ["stream", "server", "http1", "http2", "tcp", "client"] }
+log = "0.4"
+mime = "0.3"
+mime_guess = "2.0.0"
+multer = { version = "2.1.0", optional = true }
+scoped-tls = "1.0"
+serde = "1.0"
+serde_json = "1.0"
+serde_urlencoded = "0.7.1"
+tokio = { version = "1.0", features = ["fs", "sync", "time"] }
+tokio-util = { version = "0.7.1", features = ["io"] }
+tracing = { version = "0.1.21", default-features = false, features = ["log", "std"] }
+tower-service = "0.3"
+tokio-tungstenite = { version = "0.21", optional = true }
+percent-encoding = "2.1"
+pin-project = "1.0"
+tokio-rustls = { version = "0.25", optional = true }
+rustls-pemfile = { version = "2.0", optional = true }
+
+[dev-dependencies]
+pretty_env_logger = "0.5"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-log = "0.2"
+serde_derive = "1.0"
+handlebars = "5.0"
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
+tokio-stream = { version = "0.1.1", features = ["net"] }
+listenfd = "1.0"
+
+[features]
+default = ["multipart", "websocket"]
+multipart = ["multer"]
+websocket = ["tokio-tungstenite"]
+tls = ["tokio-rustls", "rustls-pemfile"]
+
+# Enable compression-related filters
+compression = ["compression-brotli", "compression-gzip"]
+compression-brotli = ["async-compression/brotli"]
+compression-gzip = ["async-compression/deflate", "async-compression/gzip"]
+
+[profile.release]
+codegen-units = 1
+incremental = false
+
+[profile.bench]
+codegen-units = 1
+incremental = false
+
+[[test]]
+name = "multipart"
+required-features = ["multipart"]
+
+[[test]]
+name = "ws"
+required-features = ["websocket"]
+
+[[example]]
+name = "compression"
+required-features = ["compression"]
+
+[[example]]
+name = "unix_socket"
+
+[[example]]
+name = "websockets"
+required-features = ["websocket"]
+
+[[example]]
+name = "websockets_chat"
+required-features = ["websocket"]
+
+[[example]]
+name = "query_string"
+
+
+[[example]]
+name = "multipart"
+required-features = ["multipart"]

@@ -1,0 +1,2905 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="API Reference Documentation for FreeType-2.13.2">
+      
+      
+      
+        <meta name="author" content="FreeType Contributors">
+      
+      
+      <link rel="icon" href="images/favico.ico">
+      <meta name="generator" content="mkdocs-1.4.3, mkdocs-material-7.1.9">
+    
+    
+      
+        <title>Glyph Layer Management - FreeType-2.13.2 API Reference</title>
+      
+    
+    
+      <link rel="stylesheet" href="assets/stylesheets/main.ca7ac06f.min.css">
+      
+        
+        <link rel="stylesheet" href="assets/stylesheets/palette.f1a3b89f.min.css">
+        
+          
+          
+          <meta name="theme-color" content="#4cae4f">
+        
+      
+    
+    
+    
+      
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Noto+Serif:300,400,400i,700%7CRoboto+Mono&display=fallback">
+        <style>:root{--md-text-font-family:"Noto Serif";--md-code-font-family:"Roboto Mono"}</style>
+      
+    
+    
+    
+      <link rel="stylesheet" href="stylesheets/extra.css">
+    
+    
+      
+
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <script>function __prefix(e){return new URL(".",location).pathname+"."+e}function __get(e,t=localStorage){return JSON.parse(t.getItem(__prefix(e)))}</script>
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#glyph-layer-management" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-header__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            FreeType-2.13.2 API Reference
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Glyph Layer Management
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+      </label>
+      
+<div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" data-md-state="active" required>
+      <label class="md-search__icon md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+      </label>
+      <button type="reset" class="md-search__icon md-icon" aria-label="Clear" tabindex="-1">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
+      </button>
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+  </nav>
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-nav__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    FreeType-2.13.2 API Reference
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="index.html" class="md-nav__link">
+        TOC
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-index.html" class="md-nav__link">
+        Index
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_3" type="checkbox" id="__nav_3" >
+      
+      <label class="md-nav__link" for="__nav_3">
+        General Remarks
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="General Remarks" data-md-level="1">
+        <label class="md-nav__title" for="__nav_3">
+          <span class="md-nav__icon md-icon"></span>
+          General Remarks
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-preamble.html" class="md-nav__link">
+        Preamble
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_inclusion.html" class="md-nav__link">
+        FreeType's header inclusion scheme
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-user_allocation.html" class="md-nav__link">
+        User allocation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_4" type="checkbox" id="__nav_4" >
+      
+      <label class="md-nav__link" for="__nav_4">
+        Core API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Core API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_4">
+          <span class="md-nav__icon md-icon"></span>
+          Core API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-basic_types.html" class="md-nav__link">
+        Basic Data Types
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-library_setup.html" class="md-nav__link">
+        Library Setup
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-face_creation.html" class="md-nav__link">
+        Face Creation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_testing_macros.html" class="md-nav__link">
+        Font Testing Macros
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizing_and_scaling.html" class="md-nav__link">
+        Sizing and Scaling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_retrieval.html" class="md-nav__link">
+        Glyph Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-character_mapping.html" class="md-nav__link">
+        Character Mapping
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-information_retrieval.html" class="md-nav__link">
+        Information Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-other_api_data.html" class="md-nav__link">
+        Other API Data
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+    
+  
+  
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_5" type="checkbox" id="__nav_5" checked>
+      
+      <label class="md-nav__link" for="__nav_5">
+        Extended API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Extended API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_5">
+          <span class="md-nav__icon md-icon"></span>
+          Extended API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_variants.html" class="md-nav__link">
+        Unicode Variation Sequences
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-color_management.html" class="md-nav__link">
+        Glyph Color Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+    
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" data-md-toggle="toc" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          Glyph Layer Management
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="ft2-layer_management.html" class="md-nav__link md-nav__link--active">
+        Glyph Layer Management
+      </a>
+      
+        
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_layeriterator" class="md-nav__link">
+    FT_LayerIterator
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_color_glyph_layer" class="md-nav__link">
+    FT_Get_Color_Glyph_Layer
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_paintformat" class="md-nav__link">
+    FT_PaintFormat
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_colorstopiterator" class="md-nav__link">
+    FT_ColorStopIterator
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_colorindex" class="md-nav__link">
+    FT_ColorIndex
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_colorstop" class="md-nav__link">
+    FT_ColorStop
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_paintextend" class="md-nav__link">
+    FT_PaintExtend
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_colorline" class="md-nav__link">
+    FT_ColorLine
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_affine23" class="md-nav__link">
+    FT_Affine23
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_composite_mode" class="md-nav__link">
+    FT_Composite_Mode
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_opaquepaint" class="md-nav__link">
+    FT_OpaquePaint
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_paintcolrlayers" class="md-nav__link">
+    FT_PaintColrLayers
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_paintsolid" class="md-nav__link">
+    FT_PaintSolid
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_paintlineargradient" class="md-nav__link">
+    FT_PaintLinearGradient
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_paintradialgradient" class="md-nav__link">
+    FT_PaintRadialGradient
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_paintsweepgradient" class="md-nav__link">
+    FT_PaintSweepGradient
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_paintglyph" class="md-nav__link">
+    FT_PaintGlyph
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_paintcolrglyph" class="md-nav__link">
+    FT_PaintColrGlyph
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_painttransform" class="md-nav__link">
+    FT_PaintTransform
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_painttranslate" class="md-nav__link">
+    FT_PaintTranslate
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_paintscale" class="md-nav__link">
+    FT_PaintScale
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_paintrotate" class="md-nav__link">
+    FT_PaintRotate
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_paintskew" class="md-nav__link">
+    FT_PaintSkew
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_paintcomposite" class="md-nav__link">
+    FT_PaintComposite
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_colr_paint" class="md-nav__link">
+    FT_COLR_Paint
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_color_root_transform" class="md-nav__link">
+    FT_Color_Root_Transform
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_clipbox" class="md-nav__link">
+    FT_ClipBox
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_color_glyph_paint" class="md-nav__link">
+    FT_Get_Color_Glyph_Paint
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_color_glyph_clipbox" class="md-nav__link">
+    FT_Get_Color_Glyph_ClipBox
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_paint_layers" class="md-nav__link">
+    FT_Get_Paint_Layers
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_colorline_stops" class="md-nav__link">
+    FT_Get_Colorline_Stops
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_paint" class="md-nav__link">
+    FT_Get_Paint
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_management.html" class="md-nav__link">
+        Glyph Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-mac_specific.html" class="md-nav__link">
+        Mac Specific Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizes_management.html" class="md-nav__link">
+        Size Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_file_macros.html" class="md-nav__link">
+        Header File Macros
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_6" type="checkbox" id="__nav_6" >
+      
+      <label class="md-nav__link" for="__nav_6">
+        Format-Specific API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Format-Specific API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_6">
+          <span class="md-nav__icon md-icon"></span>
+          Format-Specific API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-multiple_masters.html" class="md-nav__link">
+        Multiple Masters
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_tables.html" class="md-nav__link">
+        TrueType Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-type1_tables.html" class="md-nav__link">
+        Type 1 Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sfnt_names.html" class="md-nav__link">
+        SFNT Names
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bdf_fonts.html" class="md-nav__link">
+        BDF and PCF Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cid_fonts.html" class="md-nav__link">
+        CID Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pfr_fonts.html" class="md-nav__link">
+        PFR Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-winfnt_fonts.html" class="md-nav__link">
+        Window FNT Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-svg_fonts.html" class="md-nav__link">
+        OpenType SVG Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_formats.html" class="md-nav__link">
+        Font Formats
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gasp_table.html" class="md-nav__link">
+        Gasp Table
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_7" type="checkbox" id="__nav_7" >
+      
+      <label class="md-nav__link" for="__nav_7">
+        Controlling FreeType Modules
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Controlling FreeType Modules" data-md-level="1">
+        <label class="md-nav__title" for="__nav_7">
+          <span class="md-nav__icon md-icon"></span>
+          Controlling FreeType Modules
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-auto_hinter.html" class="md-nav__link">
+        The auto-hinter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cff_driver.html" class="md-nav__link">
+        The CFF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-t1_cid_driver.html" class="md-nav__link">
+        The Type 1 and CID drivers
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-tt_driver.html" class="md-nav__link">
+        The TrueType driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pcf_driver.html" class="md-nav__link">
+        The PCF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_svg_driver.html" class="md-nav__link">
+        The SVG driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-properties.html" class="md-nav__link">
+        Driver properties
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-parameter_tags.html" class="md-nav__link">
+        Parameter Tags
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lcd_rendering.html" class="md-nav__link">
+        Subpixel Rendering
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_8" type="checkbox" id="__nav_8" >
+      
+      <label class="md-nav__link" for="__nav_8">
+        Cache Sub-System
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Cache Sub-System" data-md-level="1">
+        <label class="md-nav__title" for="__nav_8">
+          <span class="md-nav__icon md-icon"></span>
+          Cache Sub-System
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cache_subsystem.html" class="md-nav__link">
+        Cache Sub-System
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_9" type="checkbox" id="__nav_9" >
+      
+      <label class="md-nav__link" for="__nav_9">
+        Support API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Support API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_9">
+          <span class="md-nav__icon md-icon"></span>
+          Support API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-computations.html" class="md-nav__link">
+        Computations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-list_processing.html" class="md-nav__link">
+        List Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-outline_processing.html" class="md-nav__link">
+        Outline Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-quick_advance.html" class="md-nav__link">
+        Quick retrieval of advance values
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bitmap_handling.html" class="md-nav__link">
+        Bitmap Handling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-raster.html" class="md-nav__link">
+        Scanline Converter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_stroker.html" class="md-nav__link">
+        Glyph Stroker
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-system_interface.html" class="md-nav__link">
+        System Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-module_management.html" class="md-nav__link">
+        Module Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gzip.html" class="md-nav__link">
+        GZIP Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lzw.html" class="md-nav__link">
+        LZW Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bzip2.html" class="md-nav__link">
+        BZIP2 Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-debugging_apis.html" class="md-nav__link">
+        External Debugging APIs
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_10" type="checkbox" id="__nav_10" >
+      
+      <label class="md-nav__link" for="__nav_10">
+        Error Codes
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Error Codes" data-md-level="1">
+        <label class="md-nav__title" for="__nav_10">
+          <span class="md-nav__icon md-icon"></span>
+          Error Codes
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_enumerations.html" class="md-nav__link">
+        Error Enumerations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_code_values.html" class="md-nav__link">
+        Error Code Values
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_11" type="checkbox" id="__nav_11" >
+      
+      <label class="md-nav__link" for="__nav_11">
+        Miscellaneous
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Miscellaneous" data-md-level="1">
+        <label class="md-nav__title" for="__nav_11">
+          <span class="md-nav__icon md-icon"></span>
+          Miscellaneous
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gx_validation.html" class="md-nav__link">
+        TrueTypeGX/AAT Validation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-incremental.html" class="md-nav__link">
+        Incremental Loading
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_engine.html" class="md-nav__link">
+        The TrueType Engine
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_validation.html" class="md-nav__link">
+        OpenType Validation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_layeriterator" class="md-nav__link">
+    FT_LayerIterator
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_color_glyph_layer" class="md-nav__link">
+    FT_Get_Color_Glyph_Layer
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_paintformat" class="md-nav__link">
+    FT_PaintFormat
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_colorstopiterator" class="md-nav__link">
+    FT_ColorStopIterator
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_colorindex" class="md-nav__link">
+    FT_ColorIndex
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_colorstop" class="md-nav__link">
+    FT_ColorStop
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_paintextend" class="md-nav__link">
+    FT_PaintExtend
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_colorline" class="md-nav__link">
+    FT_ColorLine
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_affine23" class="md-nav__link">
+    FT_Affine23
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_composite_mode" class="md-nav__link">
+    FT_Composite_Mode
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_opaquepaint" class="md-nav__link">
+    FT_OpaquePaint
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_paintcolrlayers" class="md-nav__link">
+    FT_PaintColrLayers
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_paintsolid" class="md-nav__link">
+    FT_PaintSolid
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_paintlineargradient" class="md-nav__link">
+    FT_PaintLinearGradient
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_paintradialgradient" class="md-nav__link">
+    FT_PaintRadialGradient
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_paintsweepgradient" class="md-nav__link">
+    FT_PaintSweepGradient
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_paintglyph" class="md-nav__link">
+    FT_PaintGlyph
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_paintcolrglyph" class="md-nav__link">
+    FT_PaintColrGlyph
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_painttransform" class="md-nav__link">
+    FT_PaintTransform
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_painttranslate" class="md-nav__link">
+    FT_PaintTranslate
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_paintscale" class="md-nav__link">
+    FT_PaintScale
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_paintrotate" class="md-nav__link">
+    FT_PaintRotate
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_paintskew" class="md-nav__link">
+    FT_PaintSkew
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_paintcomposite" class="md-nav__link">
+    FT_PaintComposite
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_colr_paint" class="md-nav__link">
+    FT_COLR_Paint
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_color_root_transform" class="md-nav__link">
+    FT_Color_Root_Transform
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_clipbox" class="md-nav__link">
+    FT_ClipBox
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_color_glyph_paint" class="md-nav__link">
+    FT_Get_Color_Glyph_Paint
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_color_glyph_clipbox" class="md-nav__link">
+    FT_Get_Color_Glyph_ClipBox
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_paint_layers" class="md-nav__link">
+    FT_Get_Paint_Layers
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_colorline_stops" class="md-nav__link">
+    FT_Get_Colorline_Stops
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_paint" class="md-nav__link">
+    FT_Get_Paint
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          <div class="md-content" data-md-component="content">
+            <article class="md-content__inner md-typeset">
+              
+                
+                
+                <p><a href="https://www.freetype.org">FreeType</a> &raquo; <a href="../">Docs</a> &raquo; <a href="index.html#extended-api">Extended API</a> &raquo; Glyph Layer Management</p>
+<hr />
+<h1 id="glyph-layer-management">Glyph Layer Management<a class="headerlink" href="#glyph-layer-management" title="Permanent link">&para;</a></h1>
+<h2 id="synopsis">Synopsis<a class="headerlink" href="#synopsis" title="Permanent link">&para;</a></h2>
+<p>The functions described here allow access of colored glyph layer data in OpenType's &lsquo;COLR&rsquo; tables.</p>
+<h2 id="ft_layeriterator">FT_LayerIterator<a class="headerlink" href="#ft_layeriterator" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_LayerIterator_
+  {
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>   num_layers;
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>   layer;
+    <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>*  p;
+
+  } <b>FT_LayerIterator</b>;
+</code></pre></div>
+
+<p>This iterator object is needed for <code><a href="ft2-layer_management.html#ft_get_color_glyph_layer">FT_Get_Color_Glyph_Layer</a></code>.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="num_layers">num_layers</td><td class="desc">
+<p>The number of glyph layers for the requested glyph index. Will be set by <code><a href="ft2-layer_management.html#ft_get_color_glyph_layer">FT_Get_Color_Glyph_Layer</a></code>.</p>
+</td></tr>
+<tr><td class="val" id="layer">layer</td><td class="desc">
+<p>The current layer. Will be set by <code><a href="ft2-layer_management.html#ft_get_color_glyph_layer">FT_Get_Color_Glyph_Layer</a></code>.</p>
+</td></tr>
+<tr><td class="val" id="p">p</td><td class="desc">
+<p>An opaque pointer into &lsquo;COLR&rsquo; table data. The caller must set this to <code>NULL</code> before the first call of <code><a href="ft2-layer_management.html#ft_get_color_glyph_layer">FT_Get_Color_Glyph_Layer</a></code>.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_get_color_glyph_layer">FT_Get_Color_Glyph_Layer<a class="headerlink" href="#ft_get_color_glyph_layer" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_bool">FT_Bool</a> )
+  <b>FT_Get_Color_Glyph_Layer</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>            face,
+                            <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>            base_glyph,
+                            <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>           *aglyph_index,
+                            <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>           *acolor_index,
+                            <a href="ft2-layer_management.html#ft_layeriterator">FT_LayerIterator</a>*  iterator );
+</code></pre></div>
+
+<p>This is an interface to the &lsquo;COLR&rsquo; table in OpenType fonts to iteratively retrieve the colored glyph layers associated with the current glyph slot.</p>
+<p><a href="https://docs.microsoft.com/en-us/typography/opentype/spec/colr">https://docs.microsoft.com/en-us/typography/opentype/spec/colr</a></p>
+<p>The glyph layer data for a given glyph index, if present, provides an alternative, multi-color glyph representation: Instead of rendering the outline or bitmap with the given glyph index, glyphs with the indices and colors returned by this function are rendered layer by layer.</p>
+<p>The returned elements are ordered in the z&nbsp;direction from bottom to top; the 'n'th element should be rendered with the associated palette color and blended on top of the already rendered layers (elements 0, 1, &hellip;, n-1).</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the parent face object.</p>
+</td></tr>
+<tr><td class="val" id="base_glyph">base_glyph</td><td class="desc">
+<p>The glyph index the colored glyph layers are associated with.</p>
+</td></tr>
+</table>
+
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="iterator">iterator</td><td class="desc">
+<p>An <code><a href="ft2-layer_management.html#ft_layeriterator">FT_LayerIterator</a></code> object. For the first call you should set <code>iterator-&gt;p</code> to <code>NULL</code>. For all following calls, simply use the same object again.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="aglyph_index">aglyph_index</td><td class="desc">
+<p>The glyph index of the current layer.</p>
+</td></tr>
+<tr><td class="val" id="acolor_index">acolor_index</td><td class="desc">
+<p>The color index into the font face's color palette of the current layer. The value 0xFFFF is special; it doesn't reference a palette entry but indicates that the text foreground color should be used instead (to be set up by the application outside of FreeType).</p>
+<p>The color palette can be retrieved with <code><a href="ft2-color_management.html#ft_palette_select">FT_Palette_Select</a></code>.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>Value&nbsp;1 if everything is OK. If there are no more layers (or if there are no layers at all), value&nbsp;0 gets returned. In case of an error, value&nbsp;0 is returned also.</p>
+<h4>note</h4>
+
+<p>This function is necessary if you want to handle glyph layers by yourself. In particular, functions that operate with <code><a href="ft2-glyph_management.html#ft_glyphrec">FT_GlyphRec</a></code> objects (like <code><a href="ft2-glyph_management.html#ft_get_glyph">FT_Get_Glyph</a></code> or <code><a href="ft2-glyph_management.html#ft_glyph_to_bitmap">FT_Glyph_To_Bitmap</a></code>) don't have access to this information.</p>
+<p>Note that <code><a href="ft2-glyph_retrieval.html#ft_render_glyph">FT_Render_Glyph</a></code> is able to handle colored glyph layers automatically if the <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_COLOR</a></code> flag is passed to a previous call to <code><a href="ft2-glyph_retrieval.html#ft_load_glyph">FT_Load_Glyph</a></code>. [This is an experimental feature.]</p>
+<h4>example</h4>
+<div class="highlight"><pre><span></span><code>  FT_Color*         palette;
+  FT_LayerIterator  iterator;
+
+  FT_Bool  have_layers;
+  FT_UInt  layer_glyph_index;
+  FT_UInt  layer_color_index;
+
+
+  error = FT_Palette_Select( face, palette_index, &amp;palette );
+  if ( error )
+    palette = NULL;
+
+  iterator.p  = NULL;
+  have_layers = FT_Get_Color_Glyph_Layer( face,
+                                          glyph_index,
+                                          &amp;layer_glyph_index,
+                                          &amp;layer_color_index,
+                                          &amp;iterator );
+
+  if ( palette &amp;&amp; have_layers )
+  {
+    do
+    {
+      FT_Color  layer_color;
+
+
+      if ( layer_color_index == 0xFFFF )
+        layer_color = text_foreground_color;
+      else
+        layer_color = palette[layer_color_index];
+
+      // Load and render glyph `layer_glyph_index&#39;, then
+      // blend resulting pixmap (using color `layer_color&#39;)
+      // with previously created pixmaps.
+
+    } while ( FT_Get_Color_Glyph_Layer( face,
+                                        glyph_index,
+                                        &amp;layer_glyph_index,
+                                        &amp;layer_color_index,
+                                        &amp;iterator ) );
+  }
+</code></pre></div>
+<h4>since</h4>
+
+<p>2.10</p>
+<hr>
+
+<h2 id="ft_paintformat">FT_PaintFormat<a class="headerlink" href="#ft_paintformat" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">enum</span>  FT_PaintFormat_
+  {
+    FT_COLR_PAINTFORMAT_COLR_LAYERS     = 1,
+    FT_COLR_PAINTFORMAT_SOLID           = 2,
+    FT_COLR_PAINTFORMAT_LINEAR_GRADIENT = 4,
+    FT_COLR_PAINTFORMAT_RADIAL_GRADIENT = 6,
+    FT_COLR_PAINTFORMAT_SWEEP_GRADIENT  = 8,
+    FT_COLR_PAINTFORMAT_GLYPH           = 10,
+    FT_COLR_PAINTFORMAT_COLR_GLYPH      = 11,
+    FT_COLR_PAINTFORMAT_TRANSFORM       = 12,
+    FT_COLR_PAINTFORMAT_TRANSLATE       = 14,
+    FT_COLR_PAINTFORMAT_SCALE           = 16,
+    FT_COLR_PAINTFORMAT_ROTATE          = 24,
+    FT_COLR_PAINTFORMAT_SKEW            = 28,
+    FT_COLR_PAINTFORMAT_COMPOSITE       = 32,
+    FT_COLR_PAINT_FORMAT_MAX            = 33,
+    FT_COLR_PAINTFORMAT_UNSUPPORTED     = 255
+
+  } <b>FT_PaintFormat</b>;
+</code></pre></div>
+
+<p>Enumeration describing the different paint format types of the v1 extensions to the &lsquo;COLR&rsquo; table, see &lsquo;<a href="https://github.com/googlefonts/colr-gradients-spec">https://github.com/googlefonts/colr-gradients-spec</a>&rsquo;.</p>
+<p>The enumeration values loosely correspond with the format numbers of the specification: FreeType always returns a fully specified &lsquo;Paint&rsquo; structure for the &lsquo;Transform&rsquo;, &lsquo;Translate&rsquo;, &lsquo;Scale&rsquo;, &lsquo;Rotate&rsquo;, and &lsquo;Skew&rsquo; table types even though the specification has different formats depending on whether or not a center is specified, whether the scale is uniform in x and y&nbsp;direction or not, etc. Also, only non-variable format identifiers are listed in this enumeration; as soon as support for variable &lsquo;COLR&rsquo; v1 fonts is implemented, interpolation is performed dependent on axis coordinates, which are configured on the <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code> through <code><a href="ft2-multiple_masters.html#ft_set_var_design_coordinates">FT_Set_Var_Design_Coordinates</a></code>. This implies that always static, readily interpolated values are returned in the &lsquo;Paint&rsquo; structures.</p>
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+
+<h2 id="ft_colorstopiterator">FT_ColorStopIterator<a class="headerlink" href="#ft_colorstopiterator" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_ColorStopIterator_
+  {
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>  num_color_stops;
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>  current_color_stop;
+
+    <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>*  p;
+
+    <a href="ft2-basic_types.html#ft_bool">FT_Bool</a>  read_variable;
+
+  } <b>FT_ColorStopIterator</b>;
+</code></pre></div>
+
+<p>This iterator object is needed for <code><a href="ft2-layer_management.html#ft_get_colorline_stops">FT_Get_Colorline_Stops</a></code>. It keeps state while iterating over the stops of an <code><a href="ft2-layer_management.html#ft_colorline">FT_ColorLine</a></code>, representing the <code>ColorLine</code> struct of the v1 extensions to &lsquo;COLR&rsquo;, see &lsquo;<a href="https://github.com/googlefonts/colr-gradients-spec">https://github.com/googlefonts/colr-gradients-spec</a>&rsquo;. Do not manually modify fields of this iterator.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="num_color_stops">num_color_stops</td><td class="desc">
+<p>The number of color stops for the requested glyph index. Set by <code><a href="ft2-layer_management.html#ft_get_paint">FT_Get_Paint</a></code>.</p>
+</td></tr>
+<tr><td class="val" id="current_color_stop">current_color_stop</td><td class="desc">
+<p>The current color stop. Set by <code><a href="ft2-layer_management.html#ft_get_colorline_stops">FT_Get_Colorline_Stops</a></code>.</p>
+</td></tr>
+<tr><td class="val" id="p">p</td><td class="desc">
+<p>An opaque pointer into &lsquo;COLR&rsquo; table data. Set by <code><a href="ft2-layer_management.html#ft_get_paint">FT_Get_Paint</a></code>. Updated by <code><a href="ft2-layer_management.html#ft_get_colorline_stops">FT_Get_Colorline_Stops</a></code>.</p>
+</td></tr>
+<tr><td class="val" id="read_variable">read_variable</td><td class="desc">
+<p>A boolean keeping track of whether variable color lines are to be read. Set by <code><a href="ft2-layer_management.html#ft_get_paint">FT_Get_Paint</a></code>.</p>
+</td></tr>
+</table>
+
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+
+<h2 id="ft_colorindex">FT_ColorIndex<a class="headerlink" href="#ft_colorindex" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_ColorIndex_
+  {
+    <a href="ft2-basic_types.html#ft_uint16">FT_UInt16</a>   palette_index;
+    <a href="ft2-basic_types.html#ft_f2dot14">FT_F2Dot14</a>  alpha;
+
+  } <b>FT_ColorIndex</b>;
+</code></pre></div>
+
+<p>A structure representing a <code>ColorIndex</code> value of the &lsquo;COLR&rsquo; v1 extensions, see &lsquo;<a href="https://github.com/googlefonts/colr-gradients-spec">https://github.com/googlefonts/colr-gradients-spec</a>&rsquo;.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="palette_index">palette_index</td><td class="desc">
+<p>The palette index into a &lsquo;CPAL&rsquo; palette.</p>
+</td></tr>
+<tr><td class="val" id="alpha">alpha</td><td class="desc">
+<p>Alpha transparency value multiplied with the value from &lsquo;CPAL&rsquo;.</p>
+</td></tr>
+</table>
+
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+
+<h2 id="ft_colorstop">FT_ColorStop<a class="headerlink" href="#ft_colorstop" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_ColorStop_
+  {
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>       stop_offset;
+    <a href="ft2-layer_management.html#ft_colorindex">FT_ColorIndex</a>  color;
+
+  } <b>FT_ColorStop</b>;
+</code></pre></div>
+
+<p>A structure representing a <code>ColorStop</code> value of the &lsquo;COLR&rsquo; v1 extensions, see &lsquo;<a href="https://github.com/googlefonts/colr-gradients-spec">https://github.com/googlefonts/colr-gradients-spec</a>&rsquo;.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="stop_offset">stop_offset</td><td class="desc">
+<p>The stop offset along the gradient, expressed as a 16.16 fixed-point coordinate.</p>
+</td></tr>
+<tr><td class="val" id="color">color</td><td class="desc">
+<p>The color information for this stop, see <code><a href="ft2-layer_management.html#ft_colorindex">FT_ColorIndex</a></code>.</p>
+</td></tr>
+</table>
+
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+
+<h2 id="ft_paintextend">FT_PaintExtend<a class="headerlink" href="#ft_paintextend" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">enum</span>  FT_PaintExtend_
+  {
+    FT_COLR_PAINT_EXTEND_PAD     = 0,
+    FT_COLR_PAINT_EXTEND_REPEAT  = 1,
+    FT_COLR_PAINT_EXTEND_REFLECT = 2
+
+  } <b>FT_PaintExtend</b>;
+</code></pre></div>
+
+<p>An enumeration representing the &lsquo;Extend&rsquo; mode of the &lsquo;COLR&rsquo; v1 extensions, see &lsquo;<a href="https://github.com/googlefonts/colr-gradients-spec">https://github.com/googlefonts/colr-gradients-spec</a>&rsquo;. It describes how the gradient fill continues at the other boundaries.</p>
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+
+<h2 id="ft_colorline">FT_ColorLine<a class="headerlink" href="#ft_colorline" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_ColorLine_
+  {
+    <a href="ft2-layer_management.html#ft_paintextend">FT_PaintExtend</a>        extend;
+    <a href="ft2-layer_management.html#ft_colorstopiterator">FT_ColorStopIterator</a>  color_stop_iterator;
+
+  } <b>FT_ColorLine</b>;
+</code></pre></div>
+
+<p>A structure representing a <code>ColorLine</code> value of the &lsquo;COLR&rsquo; v1 extensions, see &lsquo;<a href="https://github.com/googlefonts/colr-gradients-spec">https://github.com/googlefonts/colr-gradients-spec</a>&rsquo;. It describes a list of color stops along the defined gradient.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="extend">extend</td><td class="desc">
+<p>The extend mode at the outer boundaries, see <code><a href="ft2-layer_management.html#ft_paintextend">FT_PaintExtend</a></code>.</p>
+</td></tr>
+<tr><td class="val" id="color_stop_iterator">color_stop_iterator</td><td class="desc">
+<p>The <code><a href="ft2-layer_management.html#ft_colorstopiterator">FT_ColorStopIterator</a></code> used to enumerate and retrieve the actual <code><a href="ft2-layer_management.html#ft_colorstop">FT_ColorStop</a></code>'s.</p>
+</td></tr>
+</table>
+
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+
+<h2 id="ft_affine23">FT_Affine23<a class="headerlink" href="#ft_affine23" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_Affine_23_
+  {
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>  xx, xy, dx;
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>  yx, yy, dy;
+
+  } <b>FT_Affine23</b>;
+</code></pre></div>
+
+<p>A structure used to store a 2x3 matrix. Coefficients are in 16.16 fixed-point format. The computation performed is
+<div class="highlight"><pre><span></span><code>  x&#39; = x*xx + y*xy + dx
+  y&#39; = x*yx + y*yy + dy
+</code></pre></div></p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="xx">xx</td><td class="desc">
+<p>Matrix coefficient.</p>
+</td></tr>
+<tr><td class="val" id="xy">xy</td><td class="desc">
+<p>Matrix coefficient.</p>
+</td></tr>
+<tr><td class="val" id="dx">dx</td><td class="desc">
+<p>x translation.</p>
+</td></tr>
+<tr><td class="val" id="yx">yx</td><td class="desc">
+<p>Matrix coefficient.</p>
+</td></tr>
+<tr><td class="val" id="yy">yy</td><td class="desc">
+<p>Matrix coefficient.</p>
+</td></tr>
+<tr><td class="val" id="dy">dy</td><td class="desc">
+<p>y translation.</p>
+</td></tr>
+</table>
+
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+
+<h2 id="ft_composite_mode">FT_Composite_Mode<a class="headerlink" href="#ft_composite_mode" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">enum</span>  FT_Composite_Mode_
+  {
+    FT_COLR_COMPOSITE_CLEAR          = 0,
+    FT_COLR_COMPOSITE_SRC            = 1,
+    FT_COLR_COMPOSITE_DEST           = 2,
+    FT_COLR_COMPOSITE_SRC_OVER       = 3,
+    FT_COLR_COMPOSITE_DEST_OVER      = 4,
+    FT_COLR_COMPOSITE_SRC_IN         = 5,
+    FT_COLR_COMPOSITE_DEST_IN        = 6,
+    FT_COLR_COMPOSITE_SRC_OUT        = 7,
+    FT_COLR_COMPOSITE_DEST_OUT       = 8,
+    FT_COLR_COMPOSITE_SRC_ATOP       = 9,
+    FT_COLR_COMPOSITE_DEST_ATOP      = 10,
+    FT_COLR_COMPOSITE_XOR            = 11,
+    FT_COLR_COMPOSITE_PLUS           = 12,
+    FT_COLR_COMPOSITE_SCREEN         = 13,
+    FT_COLR_COMPOSITE_OVERLAY        = 14,
+    FT_COLR_COMPOSITE_DARKEN         = 15,
+    FT_COLR_COMPOSITE_LIGHTEN        = 16,
+    FT_COLR_COMPOSITE_COLOR_DODGE    = 17,
+    FT_COLR_COMPOSITE_COLOR_BURN     = 18,
+    FT_COLR_COMPOSITE_HARD_LIGHT     = 19,
+    FT_COLR_COMPOSITE_SOFT_LIGHT     = 20,
+    FT_COLR_COMPOSITE_DIFFERENCE     = 21,
+    FT_COLR_COMPOSITE_EXCLUSION      = 22,
+    FT_COLR_COMPOSITE_MULTIPLY       = 23,
+    FT_COLR_COMPOSITE_HSL_HUE        = 24,
+    FT_COLR_COMPOSITE_HSL_SATURATION = 25,
+    FT_COLR_COMPOSITE_HSL_COLOR      = 26,
+    FT_COLR_COMPOSITE_HSL_LUMINOSITY = 27,
+    FT_COLR_COMPOSITE_MAX            = 28
+
+  } <b>FT_Composite_Mode</b>;
+</code></pre></div>
+
+<p>An enumeration listing the &lsquo;COLR&rsquo; v1 composite modes used in <code><a href="ft2-layer_management.html#ft_paintcomposite">FT_PaintComposite</a></code>. For more details on each paint mode, see &lsquo;<a href="https://www.w3.org/TR/compositing-1/#porterduffcompositingoperators">https://www.w3.org/TR/compositing-1/#porterduffcompositingoperators</a>&rsquo;.</p>
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+
+<h2 id="ft_opaquepaint">FT_OpaquePaint<a class="headerlink" href="#ft_opaquepaint" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_Opaque_Paint_
+  {
+    <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>*  p;
+    <a href="ft2-basic_types.html#ft_bool">FT_Bool</a>   insert_root_transform;
+  } <b>FT_OpaquePaint</b>;
+</code></pre></div>
+
+<p>A structure representing an offset to a <code>Paint</code> value stored in any of the paint tables of a &lsquo;COLR&rsquo; v1 font. Compare Offset&lt;24&gt; there. When &lsquo;COLR&rsquo; v1 paint tables represented by FreeType objects such as <code><a href="ft2-layer_management.html#ft_paintcolrlayers">FT_PaintColrLayers</a></code>, <code><a href="ft2-layer_management.html#ft_paintcomposite">FT_PaintComposite</a></code>, or <code><a href="ft2-layer_management.html#ft_painttransform">FT_PaintTransform</a></code> reference downstream nested paint tables, we do not immediately retrieve them but encapsulate their location in this type. Use <code><a href="ft2-layer_management.html#ft_get_paint">FT_Get_Paint</a></code> to retrieve the actual <code><a href="ft2-layer_management.html#ft_colr_paint">FT_COLR_Paint</a></code> object that describes the details of the respective paint table.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="p">p</td><td class="desc">
+<p>An internal offset to a Paint table, needs to be set to NULL before passing this struct as an argument to <code><a href="ft2-layer_management.html#ft_get_paint">FT_Get_Paint</a></code>.</p>
+</td></tr>
+<tr><td class="val" id="insert_root_transform">insert_root_transform</td><td class="desc">
+<p>An internal boolean to track whether an initial root transform is to be provided. Do not set this value.</p>
+</td></tr>
+</table>
+
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+
+<h2 id="ft_paintcolrlayers">FT_PaintColrLayers<a class="headerlink" href="#ft_paintcolrlayers" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_PaintColrLayers_
+  {
+    <a href="ft2-layer_management.html#ft_layeriterator">FT_LayerIterator</a>  layer_iterator;
+
+  } <b>FT_PaintColrLayers</b>;
+</code></pre></div>
+
+<p>A structure representing a <code>PaintColrLayers</code> table of a &lsquo;COLR&rsquo; v1 font. This table describes a set of layers that are to be composited with composite mode <code>FT_COLR_COMPOSITE_SRC_OVER</code>. The return value of this function is an <code><a href="ft2-layer_management.html#ft_layeriterator">FT_LayerIterator</a></code> initialized so that it can be used with <code><a href="ft2-layer_management.html#ft_get_paint_layers">FT_Get_Paint_Layers</a></code> to retrieve the <code><a href="ft2-layer_management.html#ft_opaquepaint">FT_OpaquePaint</a></code> objects as references to each layer.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="layer_iterator">layer_iterator</td><td class="desc">
+<p>The layer iterator that describes the layers of this paint.</p>
+</td></tr>
+</table>
+
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+
+<h2 id="ft_paintsolid">FT_PaintSolid<a class="headerlink" href="#ft_paintsolid" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_PaintSolid_
+  {
+    <a href="ft2-layer_management.html#ft_colorindex">FT_ColorIndex</a>  color;
+
+  } <b>FT_PaintSolid</b>;
+</code></pre></div>
+
+<p>A structure representing a <code>PaintSolid</code> value of the &lsquo;COLR&rsquo; v1 extensions, see &lsquo;<a href="https://github.com/googlefonts/colr-gradients-spec">https://github.com/googlefonts/colr-gradients-spec</a>&rsquo;. Using a <code>PaintSolid</code> value means that the glyph layer filled with this paint is solid-colored and does not contain a gradient.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="color">color</td><td class="desc">
+<p>The color information for this solid paint, see <code><a href="ft2-layer_management.html#ft_colorindex">FT_ColorIndex</a></code>.</p>
+</td></tr>
+</table>
+
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+
+<h2 id="ft_paintlineargradient">FT_PaintLinearGradient<a class="headerlink" href="#ft_paintlineargradient" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_PaintLinearGradient_
+  {
+    <a href="ft2-layer_management.html#ft_colorline">FT_ColorLine</a>  colorline;
+
+    /* TODO: Potentially expose those as x0, y0 etc. */
+    <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>  p0;
+    <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>  p1;
+    <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>  p2;
+
+  } <b>FT_PaintLinearGradient</b>;
+</code></pre></div>
+
+<p>A structure representing a <code>PaintLinearGradient</code> value of the &lsquo;COLR&rsquo; v1 extensions, see &lsquo;<a href="https://github.com/googlefonts/colr-gradients-spec">https://github.com/googlefonts/colr-gradients-spec</a>&rsquo;. The glyph layer filled with this paint is drawn filled with a linear gradient.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="colorline">colorline</td><td class="desc">
+<p>The <code><a href="ft2-layer_management.html#ft_colorline">FT_ColorLine</a></code> information for this paint, i.e., the list of color stops along the gradient.</p>
+</td></tr>
+<tr><td class="val" id="p0">p0</td><td class="desc">
+<p>The starting point of the gradient definition in font units represented as a 16.16 fixed-point <code>FT_Vector</code>.</p>
+</td></tr>
+<tr><td class="val" id="p1">p1</td><td class="desc">
+<p>The end point of the gradient definition in font units represented as a 16.16 fixed-point <code>FT_Vector</code>.</p>
+</td></tr>
+<tr><td class="val" id="p2">p2</td><td class="desc">
+<p>Optional point&nbsp;p2 to rotate the gradient in font units represented as a 16.16 fixed-point <code>FT_Vector</code>. Otherwise equal to&nbsp;p0.</p>
+</td></tr>
+</table>
+
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+
+<h2 id="ft_paintradialgradient">FT_PaintRadialGradient<a class="headerlink" href="#ft_paintradialgradient" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_PaintRadialGradient_
+  {
+    <a href="ft2-layer_management.html#ft_colorline">FT_ColorLine</a>  colorline;
+
+    <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>  c0;
+    <a href="ft2-basic_types.html#ft_pos">FT_Pos</a>     r0;
+    <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>  c1;
+    <a href="ft2-basic_types.html#ft_pos">FT_Pos</a>     r1;
+
+  } <b>FT_PaintRadialGradient</b>;
+</code></pre></div>
+
+<p>A structure representing a <code>PaintRadialGradient</code> value of the &lsquo;COLR&rsquo; v1 extensions, see &lsquo;<a href="https://github.com/googlefonts/colr-gradients-spec">https://github.com/googlefonts/colr-gradients-spec</a>&rsquo;. The glyph layer filled with this paint is drawn filled with a radial gradient.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="colorline">colorline</td><td class="desc">
+<p>The <code><a href="ft2-layer_management.html#ft_colorline">FT_ColorLine</a></code> information for this paint, i.e., the list of color stops along the gradient.</p>
+</td></tr>
+<tr><td class="val" id="c0">c0</td><td class="desc">
+<p>The center of the starting point of the radial gradient in font units represented as a 16.16 fixed-point <code>FT_Vector</code>.</p>
+</td></tr>
+<tr><td class="val" id="r0">r0</td><td class="desc">
+<p>The radius of the starting circle of the radial gradient in font units represented as a 16.16 fixed-point value.</p>
+</td></tr>
+<tr><td class="val" id="c1">c1</td><td class="desc">
+<p>The center of the end point of the radial gradient in font units represented as a 16.16 fixed-point <code>FT_Vector</code>.</p>
+</td></tr>
+<tr><td class="val" id="r1">r1</td><td class="desc">
+<p>The radius of the end circle of the radial gradient in font units represented as a 16.16 fixed-point value.</p>
+</td></tr>
+</table>
+
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+
+<h2 id="ft_paintsweepgradient">FT_PaintSweepGradient<a class="headerlink" href="#ft_paintsweepgradient" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_PaintSweepGradient_
+  {
+    <a href="ft2-layer_management.html#ft_colorline">FT_ColorLine</a>  colorline;
+
+    <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>  center;
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>   start_angle;
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>   end_angle;
+
+  } <b>FT_PaintSweepGradient</b>;
+</code></pre></div>
+
+<p>A structure representing a <code>PaintSweepGradient</code> value of the &lsquo;COLR&rsquo; v1 extensions, see &lsquo;<a href="https://github.com/googlefonts/colr-gradients-spec">https://github.com/googlefonts/colr-gradients-spec</a>&rsquo;. The glyph layer filled with this paint is drawn filled with a sweep gradient from <code>start_angle</code> to <code>end_angle</code>.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="colorline">colorline</td><td class="desc">
+<p>The <code><a href="ft2-layer_management.html#ft_colorline">FT_ColorLine</a></code> information for this paint, i.e., the list of color stops along the gradient.</p>
+</td></tr>
+<tr><td class="val" id="center">center</td><td class="desc">
+<p>The center of the sweep gradient in font units represented as a vector of 16.16 fixed-point values.</p>
+</td></tr>
+<tr><td class="val" id="start_angle">start_angle</td><td class="desc">
+<p>The start angle of the sweep gradient in 16.16 fixed-point format specifying degrees divided by 180.0 (as in the spec). Multiply by 180.0f to receive degrees value. Values are given counter-clockwise, starting from the (positive) y&nbsp;axis.</p>
+</td></tr>
+<tr><td class="val" id="end_angle">end_angle</td><td class="desc">
+<p>The end angle of the sweep gradient in 16.16 fixed-point format specifying degrees divided by 180.0 (as in the spec). Multiply by 180.0f to receive degrees value. Values are given counter-clockwise, starting from the (positive) y&nbsp;axis.</p>
+</td></tr>
+</table>
+
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+
+<h2 id="ft_paintglyph">FT_PaintGlyph<a class="headerlink" href="#ft_paintglyph" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_PaintGlyph_
+  {
+    <a href="ft2-layer_management.html#ft_opaquepaint">FT_OpaquePaint</a>  paint;
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>         glyphID;
+
+  } <b>FT_PaintGlyph</b>;
+</code></pre></div>
+
+<p>A structure representing a &lsquo;COLR&rsquo; v1 <code>PaintGlyph</code> paint table.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="paint">paint</td><td class="desc">
+<p>An opaque paint object pointing to a <code>Paint</code> table that serves as the fill for the glyph ID.</p>
+</td></tr>
+<tr><td class="val" id="glyphid">glyphID</td><td class="desc">
+<p>The glyph ID from the &lsquo;glyf&rsquo; table, which serves as the contour information that is filled with paint.</p>
+</td></tr>
+</table>
+
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+
+<h2 id="ft_paintcolrglyph">FT_PaintColrGlyph<a class="headerlink" href="#ft_paintcolrglyph" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_PaintColrGlyph_
+  {
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>  glyphID;
+
+  } <b>FT_PaintColrGlyph</b>;
+</code></pre></div>
+
+<p>A structure representing a &lsquo;COLR&rsquo; v1 <code>PaintColorGlyph</code> paint table.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="glyphid">glyphID</td><td class="desc">
+<p>The glyph ID from the <code>BaseGlyphV1List</code> table that is drawn for this paint.</p>
+</td></tr>
+</table>
+
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+
+<h2 id="ft_painttransform">FT_PaintTransform<a class="headerlink" href="#ft_painttransform" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_PaintTransform_
+  {
+    <a href="ft2-layer_management.html#ft_opaquepaint">FT_OpaquePaint</a>  paint;
+    <a href="ft2-layer_management.html#ft_affine23">FT_Affine23</a>     affine;
+
+  } <b>FT_PaintTransform</b>;
+</code></pre></div>
+
+<p>A structure representing a &lsquo;COLR&rsquo; v1 <code>PaintTransform</code> paint table.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="paint">paint</td><td class="desc">
+<p>An opaque paint that is subject to being transformed.</p>
+</td></tr>
+<tr><td class="val" id="affine">affine</td><td class="desc">
+<p>A 2x3 transformation matrix in <code><a href="ft2-layer_management.html#ft_affine23">FT_Affine23</a></code> format containing 16.16 fixed-point values.</p>
+</td></tr>
+</table>
+
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+
+<h2 id="ft_painttranslate">FT_PaintTranslate<a class="headerlink" href="#ft_painttranslate" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_PaintTranslate_
+  {
+    <a href="ft2-layer_management.html#ft_opaquepaint">FT_OpaquePaint</a>  paint;
+
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>  dx;
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>  dy;
+
+  } <b>FT_PaintTranslate</b>;
+</code></pre></div>
+
+<p>A structure representing a &lsquo;COLR&rsquo; v1 <code>PaintTranslate</code> paint table. Used for translating downstream paints by a given x and y&nbsp;delta.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="paint">paint</td><td class="desc">
+<p>An <code><a href="ft2-layer_management.html#ft_opaquepaint">FT_OpaquePaint</a></code> object referencing the paint that is to be rotated.</p>
+</td></tr>
+<tr><td class="val" id="dx">dx</td><td class="desc">
+<p>Translation in x&nbsp;direction in font units represented as a 16.16 fixed-point value.</p>
+</td></tr>
+<tr><td class="val" id="dy">dy</td><td class="desc">
+<p>Translation in y&nbsp;direction in font units represented as a 16.16 fixed-point value.</p>
+</td></tr>
+</table>
+
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+
+<h2 id="ft_paintscale">FT_PaintScale<a class="headerlink" href="#ft_paintscale" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_PaintScale_
+  {
+    <a href="ft2-layer_management.html#ft_opaquepaint">FT_OpaquePaint</a>  paint;
+
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>  scale_x;
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>  scale_y;
+
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>  center_x;
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>  center_y;
+
+  } <b>FT_PaintScale</b>;
+</code></pre></div>
+
+<p>A structure representing all of the &lsquo;COLR&rsquo; v1 &lsquo;PaintScale*&rsquo; paint tables. Used for scaling downstream paints by a given x and y&nbsp;scale, with a given center. This structure is used for all &lsquo;PaintScale*&rsquo; types that are part of specification; fields of this structure are filled accordingly. If there is a center, the center values are set, otherwise they are set to the zero coordinate. If the source font file has &lsquo;PaintScaleUniform*&rsquo; set, the scale values are set accordingly to the same value.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="paint">paint</td><td class="desc">
+<p>An <code><a href="ft2-layer_management.html#ft_opaquepaint">FT_OpaquePaint</a></code> object referencing the paint that is to be scaled.</p>
+</td></tr>
+<tr><td class="val" id="scale_x">scale_x</td><td class="desc">
+<p>Scale factor in x&nbsp;direction represented as a 16.16 fixed-point value.</p>
+</td></tr>
+<tr><td class="val" id="scale_y">scale_y</td><td class="desc">
+<p>Scale factor in y&nbsp;direction represented as a 16.16 fixed-point value.</p>
+</td></tr>
+<tr><td class="val" id="center_x">center_x</td><td class="desc">
+<p>x&nbsp;coordinate of center point to scale from represented as a 16.16 fixed-point value.</p>
+</td></tr>
+<tr><td class="val" id="center_y">center_y</td><td class="desc">
+<p>y&nbsp;coordinate of center point to scale from represented as a 16.16 fixed-point value.</p>
+</td></tr>
+</table>
+
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+
+<h2 id="ft_paintrotate">FT_PaintRotate<a class="headerlink" href="#ft_paintrotate" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_PaintRotate_
+  {
+    <a href="ft2-layer_management.html#ft_opaquepaint">FT_OpaquePaint</a>  paint;
+
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>  angle;
+
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>  center_x;
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>  center_y;
+
+  } <b>FT_PaintRotate</b>;
+</code></pre></div>
+
+<p>A structure representing a &lsquo;COLR&rsquo; v1 <code>PaintRotate</code> paint table. Used for rotating downstream paints with a given center and angle.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="paint">paint</td><td class="desc">
+<p>An <code><a href="ft2-layer_management.html#ft_opaquepaint">FT_OpaquePaint</a></code> object referencing the paint that is to be rotated.</p>
+</td></tr>
+<tr><td class="val" id="angle">angle</td><td class="desc">
+<p>The rotation angle that is to be applied in degrees divided by 180.0 (as in the spec) represented as a 16.16 fixed-point value. Multiply by 180.0f to receive degrees value.</p>
+</td></tr>
+<tr><td class="val" id="center_x">center_x</td><td class="desc">
+<p>The x&nbsp;coordinate of the pivot point of the rotation in font units represented as a 16.16 fixed-point value.</p>
+</td></tr>
+<tr><td class="val" id="center_y">center_y</td><td class="desc">
+<p>The y&nbsp;coordinate of the pivot point of the rotation in font units represented as a 16.16 fixed-point value.</p>
+</td></tr>
+</table>
+
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+
+<h2 id="ft_paintskew">FT_PaintSkew<a class="headerlink" href="#ft_paintskew" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_PaintSkew_
+  {
+    <a href="ft2-layer_management.html#ft_opaquepaint">FT_OpaquePaint</a>  paint;
+
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>  x_skew_angle;
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>  y_skew_angle;
+
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>  center_x;
+    <a href="ft2-basic_types.html#ft_fixed">FT_Fixed</a>  center_y;
+
+  } <b>FT_PaintSkew</b>;
+</code></pre></div>
+
+<p>A structure representing a &lsquo;COLR&rsquo; v1 <code>PaintSkew</code> paint table. Used for skewing or shearing downstream paints by a given center and angle.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="paint">paint</td><td class="desc">
+<p>An <code><a href="ft2-layer_management.html#ft_opaquepaint">FT_OpaquePaint</a></code> object referencing the paint that is to be skewed.</p>
+</td></tr>
+<tr><td class="val" id="x_skew_angle">x_skew_angle</td><td class="desc">
+<p>The skewing angle in x&nbsp;direction in degrees divided by 180.0 (as in the spec) represented as a 16.16 fixed-point value. Multiply by 180.0f to receive degrees.</p>
+</td></tr>
+<tr><td class="val" id="y_skew_angle">y_skew_angle</td><td class="desc">
+<p>The skewing angle in y&nbsp;direction in degrees divided by 180.0 (as in the spec) represented as a 16.16 fixed-point value. Multiply by 180.0f to receive degrees.</p>
+</td></tr>
+<tr><td class="val" id="center_x">center_x</td><td class="desc">
+<p>The x&nbsp;coordinate of the pivot point of the skew in font units represented as a 16.16 fixed-point value.</p>
+</td></tr>
+<tr><td class="val" id="center_y">center_y</td><td class="desc">
+<p>The y&nbsp;coordinate of the pivot point of the skew in font units represented as a 16.16 fixed-point value.</p>
+</td></tr>
+</table>
+
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+
+<h2 id="ft_paintcomposite">FT_PaintComposite<a class="headerlink" href="#ft_paintcomposite" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_PaintComposite_
+  {
+    <a href="ft2-layer_management.html#ft_opaquepaint">FT_OpaquePaint</a>     source_paint;
+    <a href="ft2-layer_management.html#ft_composite_mode">FT_Composite_Mode</a>  composite_mode;
+    <a href="ft2-layer_management.html#ft_opaquepaint">FT_OpaquePaint</a>     backdrop_paint;
+
+  } <b>FT_PaintComposite</b>;
+</code></pre></div>
+
+<p>A structure representing a &lsquo;COLR&rsquo; v1 <code>PaintComposite</code> paint table. Used for compositing two paints in a &lsquo;COLR&rsquo; v1 directed acyclic graph.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="source_paint">source_paint</td><td class="desc">
+<p>An <code><a href="ft2-layer_management.html#ft_opaquepaint">FT_OpaquePaint</a></code> object referencing the source that is to be composited.</p>
+</td></tr>
+<tr><td class="val" id="composite_mode">composite_mode</td><td class="desc">
+<p>An <code><a href="ft2-layer_management.html#ft_composite_mode">FT_Composite_Mode</a></code> enum value determining the composition operation.</p>
+</td></tr>
+<tr><td class="val" id="backdrop_paint">backdrop_paint</td><td class="desc">
+<p>An <code><a href="ft2-layer_management.html#ft_opaquepaint">FT_OpaquePaint</a></code> object referencing the backdrop paint that <code>source_paint</code> is composited onto.</p>
+</td></tr>
+</table>
+
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+
+<h2 id="ft_colr_paint">FT_COLR_Paint<a class="headerlink" href="#ft_colr_paint" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_COLR_Paint_
+  {
+    <a href="ft2-layer_management.html#ft_paintformat">FT_PaintFormat</a> format;
+
+    <span class="keyword">union</span>
+    {
+      <a href="ft2-layer_management.html#ft_paintcolrlayers">FT_PaintColrLayers</a>      colr_layers;
+      <a href="ft2-layer_management.html#ft_paintglyph">FT_PaintGlyph</a>           glyph;
+      <a href="ft2-layer_management.html#ft_paintsolid">FT_PaintSolid</a>           solid;
+      <a href="ft2-layer_management.html#ft_paintlineargradient">FT_PaintLinearGradient</a>  linear_gradient;
+      <a href="ft2-layer_management.html#ft_paintradialgradient">FT_PaintRadialGradient</a>  radial_gradient;
+      <a href="ft2-layer_management.html#ft_paintsweepgradient">FT_PaintSweepGradient</a>   sweep_gradient;
+      <a href="ft2-layer_management.html#ft_painttransform">FT_PaintTransform</a>       transform;
+      <a href="ft2-layer_management.html#ft_painttranslate">FT_PaintTranslate</a>       translate;
+      <a href="ft2-layer_management.html#ft_paintscale">FT_PaintScale</a>           scale;
+      <a href="ft2-layer_management.html#ft_paintrotate">FT_PaintRotate</a>          rotate;
+      <a href="ft2-layer_management.html#ft_paintskew">FT_PaintSkew</a>            skew;
+      <a href="ft2-layer_management.html#ft_paintcomposite">FT_PaintComposite</a>       composite;
+      <a href="ft2-layer_management.html#ft_paintcolrglyph">FT_PaintColrGlyph</a>       colr_glyph;
+
+    } u;
+
+  } <b>FT_COLR_Paint</b>;
+</code></pre></div>
+
+<p>A union object representing format and details of a paint table of a &lsquo;COLR&rsquo; v1 font, see &lsquo;<a href="https://github.com/googlefonts/colr-gradients-spec">https://github.com/googlefonts/colr-gradients-spec</a>&rsquo;. Use <code><a href="ft2-layer_management.html#ft_get_paint">FT_Get_Paint</a></code> to retrieve a <code><a href="ft2-layer_management.html#ft_colr_paint">FT_COLR_Paint</a></code> for an <code><a href="ft2-layer_management.html#ft_opaquepaint">FT_OpaquePaint</a></code> object.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="format">format</td><td class="desc">
+<p>The gradient format for this Paint structure.</p>
+</td></tr>
+<tr><td class="val" id="u">u</td><td class="desc">
+<p>Union of all paint table types:</p>
+<ul>
+<li><code><a href="ft2-layer_management.html#ft_paintcolrlayers">FT_PaintColrLayers</a></code> <em> <code><a href="ft2-layer_management.html#ft_paintglyph">FT_PaintGlyph</a></code> </em> <code><a href="ft2-layer_management.html#ft_paintsolid">FT_PaintSolid</a></code> <em> <code><a href="ft2-layer_management.html#ft_paintlineargradient">FT_PaintLinearGradient</a></code> </em> <code><a href="ft2-layer_management.html#ft_paintradialgradient">FT_PaintRadialGradient</a></code> <em> <code><a href="ft2-layer_management.html#ft_paintsweepgradient">FT_PaintSweepGradient</a></code> </em> <code><a href="ft2-layer_management.html#ft_painttransform">FT_PaintTransform</a></code> <em> <code><a href="ft2-layer_management.html#ft_painttranslate">FT_PaintTranslate</a></code> </em> <code><a href="ft2-layer_management.html#ft_paintrotate">FT_PaintRotate</a></code> <em> <code><a href="ft2-layer_management.html#ft_paintskew">FT_PaintSkew</a></code> </em> <code><a href="ft2-layer_management.html#ft_paintcomposite">FT_PaintComposite</a></code> * <code><a href="ft2-layer_management.html#ft_paintcolrglyph">FT_PaintColrGlyph</a></code></li>
+</ul>
+</td></tr>
+</table>
+
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+
+<h2 id="ft_color_root_transform">FT_Color_Root_Transform<a class="headerlink" href="#ft_color_root_transform" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">enum</span>  FT_Color_Root_Transform_
+  {
+    <a href="ft2-layer_management.html#ft_color_include_root_transform">FT_COLOR_INCLUDE_ROOT_TRANSFORM</a>,
+    <a href="ft2-layer_management.html#ft_color_no_root_transform">FT_COLOR_NO_ROOT_TRANSFORM</a>,
+
+    FT_COLOR_ROOT_TRANSFORM_MAX
+
+  } <b>FT_Color_Root_Transform</b>;
+</code></pre></div>
+
+<p>An enumeration to specify whether <code><a href="ft2-layer_management.html#ft_get_color_glyph_paint">FT_Get_Color_Glyph_Paint</a></code> is to return a root transform to configure the client's graphics context matrix.</p>
+<h4>values</h4>
+<table class="fields long">
+<tr><td class="val" id="ft_color_include_root_transform">FT_COLOR_INCLUDE_ROOT_TRANSFORM</td><td class="desc">
+<p>Do include the root transform as the initial <code><a href="ft2-layer_management.html#ft_colr_paint">FT_COLR_Paint</a></code> object.</p>
+</td></tr>
+<tr><td class="val" id="ft_color_no_root_transform">FT_COLOR_NO_ROOT_TRANSFORM</td><td class="desc">
+<p>Do not output an initial root transform.</p>
+</td></tr>
+</table>
+
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+
+<h2 id="ft_clipbox">FT_ClipBox<a class="headerlink" href="#ft_clipbox" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_ClipBox_
+  {
+    <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>  bottom_left;
+    <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>  top_left;
+    <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>  top_right;
+    <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>  bottom_right;
+
+  } <b>FT_ClipBox</b>;
+</code></pre></div>
+
+<p>A structure representing a &lsquo;COLR&rsquo; v1 &lsquo;ClipBox&rsquo; table. &lsquo;COLR&rsquo; v1 glyphs may optionally define a clip box for aiding allocation or defining a maximum drawable region. Use <code><a href="ft2-layer_management.html#ft_get_color_glyph_clipbox">FT_Get_Color_Glyph_ClipBox</a></code> to retrieve it.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="bottom_left">bottom_left</td><td class="desc">
+<p>The bottom left corner of the clip box as an <code><a href="ft2-basic_types.html#ft_vector">FT_Vector</a></code> with fixed-point coordinates in 26.6 format.</p>
+</td></tr>
+<tr><td class="val" id="top_left">top_left</td><td class="desc">
+<p>The top left corner of the clip box as an <code><a href="ft2-basic_types.html#ft_vector">FT_Vector</a></code> with fixed-point coordinates in 26.6 format.</p>
+</td></tr>
+<tr><td class="val" id="top_right">top_right</td><td class="desc">
+<p>The top right corner of the clip box as an <code><a href="ft2-basic_types.html#ft_vector">FT_Vector</a></code> with fixed-point coordinates in 26.6 format.</p>
+</td></tr>
+<tr><td class="val" id="bottom_right">bottom_right</td><td class="desc">
+<p>The bottom right corner of the clip box as an <code><a href="ft2-basic_types.html#ft_vector">FT_Vector</a></code> with fixed-point coordinates in 26.6 format.</p>
+</td></tr>
+</table>
+
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+
+<h2 id="ft_get_color_glyph_paint">FT_Get_Color_Glyph_Paint<a class="headerlink" href="#ft_get_color_glyph_paint" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_bool">FT_Bool</a> )
+  <b>FT_Get_Color_Glyph_Paint</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>                  face,
+                            <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>                  base_glyph,
+                            <a href="ft2-layer_management.html#ft_color_root_transform">FT_Color_Root_Transform</a>  root_transform,
+                            <a href="ft2-layer_management.html#ft_opaquepaint">FT_OpaquePaint</a>*          paint );
+</code></pre></div>
+
+<p>This is the starting point and interface to color gradient information in a &lsquo;COLR&rsquo; v1 table in OpenType fonts to recursively retrieve the paint tables for the directed acyclic graph of a colored glyph, given a glyph ID.</p>
+<p><a href="https://github.com/googlefonts/colr-gradients-spec">https://github.com/googlefonts/colr-gradients-spec</a></p>
+<p>In a &lsquo;COLR&rsquo; v1 font, each color glyph defines a directed acyclic graph of nested paint tables, such as <code>PaintGlyph</code>, <code>PaintSolid</code>, <code>PaintLinearGradient</code>, <code>PaintRadialGradient</code>, and so on. Using this function and specifying a glyph ID, one retrieves the root paint table for this glyph ID.</p>
+<p>This function allows control whether an initial root transform is returned to configure scaling, transform, and translation correctly on the client's graphics context. The initial root transform is computed and returned according to the values configured for <code><a href="ft2-sizing_and_scaling.html#ft_size">FT_Size</a></code> and <code><a href="ft2-sizing_and_scaling.html#ft_set_transform">FT_Set_Transform</a></code> on the <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code> object, see below for details of the <code>root_transform</code> parameter. This has implications for a client &lsquo;COLR&rsquo; v1 implementation: When this function returns an initially computed root transform, at the time of executing the <code><a href="ft2-layer_management.html#ft_paintglyph">FT_PaintGlyph</a></code> operation, the contours should be retrieved using <code><a href="ft2-glyph_retrieval.html#ft_load_glyph">FT_Load_Glyph</a></code> at unscaled, untransformed size. This is because the root transform applied to the graphics context will take care of correct scaling.</p>
+<p>Alternatively, to allow hinting of contours, at the time of executing <code><a href="ft2-glyph_retrieval.html#ft_load_glyph">FT_Load_Glyph</a></code>, the current graphics context transformation matrix can be decomposed into a scaling matrix and a remainder, and <code><a href="ft2-glyph_retrieval.html#ft_load_glyph">FT_Load_Glyph</a></code> can be used to retrieve the contours at scaled size. Care must then be taken to blit or clip to the graphics context with taking this remainder transformation into account.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the parent face object.</p>
+</td></tr>
+<tr><td class="val" id="base_glyph">base_glyph</td><td class="desc">
+<p>The glyph index for which to retrieve the root paint table.</p>
+</td></tr>
+<tr><td class="val" id="root_transform">root_transform</td><td class="desc">
+<p>Specifies whether an initially computed root is returned by the <code><a href="ft2-layer_management.html#ft_painttransform">FT_PaintTransform</a></code> operation to account for the activated size (see <code><a href="ft2-sizes_management.html#ft_activate_size">FT_Activate_Size</a></code>) and the configured transform and translate (see <code><a href="ft2-sizing_and_scaling.html#ft_set_transform">FT_Set_Transform</a></code>).</p>
+<p>This root transform is returned before nodes of the glyph graph of the font are returned. Subsequent <code><a href="ft2-layer_management.html#ft_colr_paint">FT_COLR_Paint</a></code> structures contain unscaled and untransformed values. The inserted root transform enables the client application to apply an initial transform to its graphics context. When executing subsequent FT_COLR_Paint operations, values from <code><a href="ft2-layer_management.html#ft_colr_paint">FT_COLR_Paint</a></code> operations will ultimately be correctly scaled because of the root transform applied to the graphics context. Use <code><a href="ft2-layer_management.html#ft_color_root_transform">FT_COLOR_INCLUDE_ROOT_TRANSFORM</a></code> to include the root transform, use <code><a href="ft2-layer_management.html#ft_color_root_transform">FT_COLOR_NO_ROOT_TRANSFORM</a></code> to not include it. The latter may be useful when traversing the &lsquo;COLR&rsquo; v1 glyph graph and reaching a <code><a href="ft2-layer_management.html#ft_paintcolrglyph">FT_PaintColrGlyph</a></code>. When recursing into <code><a href="ft2-layer_management.html#ft_paintcolrglyph">FT_PaintColrGlyph</a></code> and painting that inline, no additional root transform is needed as it has already been applied to the graphics context at the beginning of drawing this glyph.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="paint">paint</td><td class="desc">
+<p>The <code><a href="ft2-layer_management.html#ft_opaquepaint">FT_OpaquePaint</a></code> object that references the actual paint table.</p>
+<p>The respective actual <code><a href="ft2-layer_management.html#ft_colr_paint">FT_COLR_Paint</a></code> object is retrieved via <code><a href="ft2-layer_management.html#ft_get_paint">FT_Get_Paint</a></code>.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>Value&nbsp;1 if everything is OK. If no color glyph is found, or the root paint could not be retrieved, value&nbsp;0 gets returned. In case of an error, value&nbsp;0 is returned also.</p>
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+
+<h2 id="ft_get_color_glyph_clipbox">FT_Get_Color_Glyph_ClipBox<a class="headerlink" href="#ft_get_color_glyph_clipbox" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_bool">FT_Bool</a> )
+  <b>FT_Get_Color_Glyph_ClipBox</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>      face,
+                              <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>      base_glyph,
+                              <a href="ft2-layer_management.html#ft_clipbox">FT_ClipBox</a>*  clip_box );
+</code></pre></div>
+
+<p>Search for a &lsquo;COLR&rsquo; v1 clip box for the specified <code>base_glyph</code> and fill the <code>clip_box</code> parameter with the &lsquo;COLR&rsquo; v1 &lsquo;ClipBox&rsquo; information if one is found.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the parent face object.</p>
+</td></tr>
+<tr><td class="val" id="base_glyph">base_glyph</td><td class="desc">
+<p>The glyph index for which to retrieve the clip box.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="clip_box">clip_box</td><td class="desc">
+<p>The clip box for the requested <code>base_glyph</code> if one is found. The clip box is computed taking scale and transformations configured on the <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code> into account. <code><a href="ft2-layer_management.html#ft_clipbox">FT_ClipBox</a></code> contains <code><a href="ft2-basic_types.html#ft_vector">FT_Vector</a></code> values in 26.6 format.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>Value&nbsp;1 if a clip box is found. If no clip box is found or an error occured, value&nbsp;0 is returned.</p>
+<h4>note</h4>
+
+<p>To retrieve the clip box in font units, reset scale to units-per-em and remove transforms configured using <code><a href="ft2-sizing_and_scaling.html#ft_set_transform">FT_Set_Transform</a></code>.</p>
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+
+<h2 id="ft_get_paint_layers">FT_Get_Paint_Layers<a class="headerlink" href="#ft_get_paint_layers" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_bool">FT_Bool</a> )
+  <b>FT_Get_Paint_Layers</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>            face,
+                       <a href="ft2-layer_management.html#ft_layeriterator">FT_LayerIterator</a>*  iterator,
+                       <a href="ft2-layer_management.html#ft_opaquepaint">FT_OpaquePaint</a>*    paint );
+</code></pre></div>
+
+<p>Access the layers of a <code>PaintColrLayers</code> table.</p>
+<p>If the root paint of a color glyph, or a nested paint of a &lsquo;COLR&rsquo; glyph is a <code>PaintColrLayers</code> table, this function retrieves the layers of the <code>PaintColrLayers</code> table.</p>
+<p>The <code><a href="ft2-layer_management.html#ft_paintcolrlayers">FT_PaintColrLayers</a></code> object contains an <code><a href="ft2-layer_management.html#ft_layeriterator">FT_LayerIterator</a></code>, which is used here to iterate over the layers. Each layer is returned as an <code><a href="ft2-layer_management.html#ft_opaquepaint">FT_OpaquePaint</a></code> object, which then can be used with <code><a href="ft2-layer_management.html#ft_get_paint">FT_Get_Paint</a></code> to retrieve the actual paint object.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the parent face object.</p>
+</td></tr>
+</table>
+
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="iterator">iterator</td><td class="desc">
+<p>The <code><a href="ft2-layer_management.html#ft_layeriterator">FT_LayerIterator</a></code> from an <code><a href="ft2-layer_management.html#ft_paintcolrlayers">FT_PaintColrLayers</a></code> object, for which the layers are to be retrieved. The internal state of the iterator is incremented after one call to this function for retrieving one layer.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="paint">paint</td><td class="desc">
+<p>The <code><a href="ft2-layer_management.html#ft_opaquepaint">FT_OpaquePaint</a></code> object that references the actual paint table. The respective actual <code><a href="ft2-layer_management.html#ft_colr_paint">FT_COLR_Paint</a></code> object is retrieved via <code><a href="ft2-layer_management.html#ft_get_paint">FT_Get_Paint</a></code>.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>Value&nbsp;1 if everything is OK. Value&nbsp;0 gets returned when the paint object can not be retrieved or any other error occurs.</p>
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+
+<h2 id="ft_get_colorline_stops">FT_Get_Colorline_Stops<a class="headerlink" href="#ft_get_colorline_stops" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_bool">FT_Bool</a> )
+  <b>FT_Get_Colorline_Stops</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>                face,
+                          <a href="ft2-layer_management.html#ft_colorstop">FT_ColorStop</a>*          color_stop,
+                          <a href="ft2-layer_management.html#ft_colorstopiterator">FT_ColorStopIterator</a>*  iterator );
+</code></pre></div>
+
+<p>This is an interface to color gradient information in a &lsquo;COLR&rsquo; v1 table in OpenType fonts to iteratively retrieve the gradient and solid fill information for colored glyph layers for a specified glyph ID.</p>
+<p><a href="https://github.com/googlefonts/colr-gradients-spec">https://github.com/googlefonts/colr-gradients-spec</a></p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the parent face object.</p>
+</td></tr>
+</table>
+
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="iterator">iterator</td><td class="desc">
+<p>The retrieved <code><a href="ft2-layer_management.html#ft_colorstopiterator">FT_ColorStopIterator</a></code>, configured on an <code><a href="ft2-layer_management.html#ft_colorline">FT_ColorLine</a></code>, which in turn got retrieved via paint information in <code><a href="ft2-layer_management.html#ft_paintlineargradient">FT_PaintLinearGradient</a></code> or <code><a href="ft2-layer_management.html#ft_paintradialgradient">FT_PaintRadialGradient</a></code>.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="color_stop">color_stop</td><td class="desc">
+<p>Color index and alpha value for the retrieved color stop.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>Value&nbsp;1 if everything is OK. If there are no more color stops, value&nbsp;0 gets returned. In case of an error, value&nbsp;0 is returned also.</p>
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+
+<h2 id="ft_get_paint">FT_Get_Paint<a class="headerlink" href="#ft_get_paint" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_COLOR_H (freetype/ftcolor.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_bool">FT_Bool</a> )
+  <b>FT_Get_Paint</b>( <a href="ft2-face_creation.html#ft_face">FT_Face</a>         face,
+                <a href="ft2-layer_management.html#ft_opaquepaint">FT_OpaquePaint</a>  opaque_paint,
+                <a href="ft2-layer_management.html#ft_colr_paint">FT_COLR_Paint</a>*  paint );
+</code></pre></div>
+
+<p>Access the details of a paint using an <code><a href="ft2-layer_management.html#ft_opaquepaint">FT_OpaquePaint</a></code> opaque paint object, which internally stores the offset to the respective <code>Paint</code> object in the &lsquo;COLR&rsquo; table.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="face">face</td><td class="desc">
+<p>A handle to the parent face object.</p>
+</td></tr>
+<tr><td class="val" id="opaque_paint">opaque_paint</td><td class="desc">
+<p>The opaque paint object for which the underlying <code><a href="ft2-layer_management.html#ft_colr_paint">FT_COLR_Paint</a></code> data is to be retrieved.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="paint">paint</td><td class="desc">
+<p>The specific <code><a href="ft2-layer_management.html#ft_colr_paint">FT_COLR_Paint</a></code> object containing information coming from one of the font's <code>Paint*</code> tables.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>Value&nbsp;1 if everything is OK. Value&nbsp;0 if no details can be found for this paint or any other error occured.</p>
+<h4>since</h4>
+
+<p>2.13</p>
+<hr>
+                
+              
+              
+                
+
+
+              
+            </article>
+          </div>
+        </div>
+        
+      </main>
+      
+        
+<footer class="md-footer">
+  
+    <nav class="md-footer__inner md-grid" aria-label="Footer">
+      
+        
+        <a href="ft2-color_management.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: Glyph Color Management" rel="prev">
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+          </div>
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              Glyph Color Management
+            </div>
+          </div>
+        </a>
+      
+      
+        
+        <a href="ft2-glyph_management.html" class="md-footer__link md-footer__link--next" aria-label="Next: Glyph Management" rel="next">
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              Glyph Management
+            </div>
+          </div>
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11H4z"/></svg>
+          </div>
+        </a>
+      
+    </nav>
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-footer-copyright">
+        
+          <div class="md-footer-copyright__highlight">
+            Copyright 2023 <a href = "https://www.freetype.org/license.html">The FreeType Project</a>.
+          </div>
+        
+        Made with
+        <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+          Material for MkDocs
+        </a>
+        
+      </div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    <script id="__config" type="application/json">{"base": ".", "features": [], "search": "assets/javascripts/workers/search.477d984a.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.config.lang": "en", "search.config.pipeline": "trimmer, stopWordFilter", "search.config.separator": "[\\s\\-]+", "search.placeholder": "Search", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version.title": "Select version"}, "version": null}</script>
+    
+    
+      <script src="assets/javascripts/bundle.82b56eb2.min.js"></script>
+      
+        <script src="javascripts/extra.js"></script>
+      
+    
+  </body>
+</html>

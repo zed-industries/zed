@@ -1,0 +1,9 @@
+package foo:foo;
+
+world bar {
+    include foo;
+}
+
+world foo {
+    include bar;
+}

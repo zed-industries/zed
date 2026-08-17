@@ -1,0 +1,24 @@
+flowchart LR
+  subgraph SmallPath
+    direction TB
+    S1[Start]
+    S2[Check]
+    S3[Done]
+    S1 --> S2 --> S3
+  end
+
+  subgraph BigPath
+    direction TB
+    B1[Input]
+    B2[Decode]
+    B3[Validate]
+    B4[Transform]
+    B5[Enrich]
+    B6[Persist]
+    B7[Index]
+    B8[Publish]
+    B1 --> B2 --> B3 --> B4 --> B5 --> B6 --> B7 --> B8
+  end
+
+  S2 -.audit.-> B4
+  B8 -.notify.-> S3

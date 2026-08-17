@@ -1,0 +1,2107 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="API Reference Documentation for FreeType-2.13.2">
+      
+      
+      
+        <meta name="author" content="FreeType Contributors">
+      
+      
+      <link rel="icon" href="images/favico.ico">
+      <meta name="generator" content="mkdocs-1.4.3, mkdocs-material-7.1.9">
+    
+    
+      
+        <title>Glyph Management - FreeType-2.13.2 API Reference</title>
+      
+    
+    
+      <link rel="stylesheet" href="assets/stylesheets/main.ca7ac06f.min.css">
+      
+        
+        <link rel="stylesheet" href="assets/stylesheets/palette.f1a3b89f.min.css">
+        
+          
+          
+          <meta name="theme-color" content="#4cae4f">
+        
+      
+    
+    
+    
+      
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Noto+Serif:300,400,400i,700%7CRoboto+Mono&display=fallback">
+        <style>:root{--md-text-font-family:"Noto Serif";--md-code-font-family:"Roboto Mono"}</style>
+      
+    
+    
+    
+      <link rel="stylesheet" href="stylesheets/extra.css">
+    
+    
+      
+
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <script>function __prefix(e){return new URL(".",location).pathname+"."+e}function __get(e,t=localStorage){return JSON.parse(t.getItem(__prefix(e)))}</script>
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#glyph-management" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-header__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            FreeType-2.13.2 API Reference
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Glyph Management
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+      </label>
+      
+<div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" data-md-state="active" required>
+      <label class="md-search__icon md-icon" for="__search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/></svg>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+      </label>
+      <button type="reset" class="md-search__icon md-icon" aria-label="Clear" tabindex="-1">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
+      </button>
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+  </nav>
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="index.html" title="FreeType-2.13.2 API Reference" class="md-nav__button md-logo" aria-label="FreeType-2.13.2 API Reference" data-md-component="logo">
+      
+  <img src="images/favico.ico" alt="logo">
+
+    </a>
+    FreeType-2.13.2 API Reference
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="index.html" class="md-nav__link">
+        TOC
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-index.html" class="md-nav__link">
+        Index
+      </a>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_3" type="checkbox" id="__nav_3" >
+      
+      <label class="md-nav__link" for="__nav_3">
+        General Remarks
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="General Remarks" data-md-level="1">
+        <label class="md-nav__title" for="__nav_3">
+          <span class="md-nav__icon md-icon"></span>
+          General Remarks
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-preamble.html" class="md-nav__link">
+        Preamble
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_inclusion.html" class="md-nav__link">
+        FreeType's header inclusion scheme
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-user_allocation.html" class="md-nav__link">
+        User allocation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_4" type="checkbox" id="__nav_4" >
+      
+      <label class="md-nav__link" for="__nav_4">
+        Core API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Core API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_4">
+          <span class="md-nav__icon md-icon"></span>
+          Core API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-basic_types.html" class="md-nav__link">
+        Basic Data Types
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-library_setup.html" class="md-nav__link">
+        Library Setup
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-face_creation.html" class="md-nav__link">
+        Face Creation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_testing_macros.html" class="md-nav__link">
+        Font Testing Macros
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizing_and_scaling.html" class="md-nav__link">
+        Sizing and Scaling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_retrieval.html" class="md-nav__link">
+        Glyph Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-character_mapping.html" class="md-nav__link">
+        Character Mapping
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-information_retrieval.html" class="md-nav__link">
+        Information Retrieval
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-other_api_data.html" class="md-nav__link">
+        Other API Data
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+    
+  
+  
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_5" type="checkbox" id="__nav_5" checked>
+      
+      <label class="md-nav__link" for="__nav_5">
+        Extended API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Extended API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_5">
+          <span class="md-nav__icon md-icon"></span>
+          Extended API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_variants.html" class="md-nav__link">
+        Unicode Variation Sequences
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-color_management.html" class="md-nav__link">
+        Glyph Color Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-layer_management.html" class="md-nav__link">
+        Glyph Layer Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+    
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" data-md-toggle="toc" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          Glyph Management
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="ft2-glyph_management.html" class="md-nav__link md-nav__link--active">
+        Glyph Management
+      </a>
+      
+        
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_glyph" class="md-nav__link">
+    FT_Glyph
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_glyphrec" class="md-nav__link">
+    FT_GlyphRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_bitmapglyph" class="md-nav__link">
+    FT_BitmapGlyph
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_bitmapglyphrec" class="md-nav__link">
+    FT_BitmapGlyphRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_outlineglyph" class="md-nav__link">
+    FT_OutlineGlyph
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_outlineglyphrec" class="md-nav__link">
+    FT_OutlineGlyphRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_svgglyph" class="md-nav__link">
+    FT_SvgGlyph
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_svgglyphrec" class="md-nav__link">
+    FT_SvgGlyphRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_new_glyph" class="md-nav__link">
+    FT_New_Glyph
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_glyph" class="md-nav__link">
+    FT_Get_Glyph
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_glyph_copy" class="md-nav__link">
+    FT_Glyph_Copy
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_glyph_transform" class="md-nav__link">
+    FT_Glyph_Transform
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_glyph_bbox_mode" class="md-nav__link">
+    FT_Glyph_BBox_Mode
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_glyph_get_cbox" class="md-nav__link">
+    FT_Glyph_Get_CBox
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_glyph_to_bitmap" class="md-nav__link">
+    FT_Glyph_To_Bitmap
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_done_glyph" class="md-nav__link">
+    FT_Done_Glyph
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-mac_specific.html" class="md-nav__link">
+        Mac Specific Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sizes_management.html" class="md-nav__link">
+        Size Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-header_file_macros.html" class="md-nav__link">
+        Header File Macros
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_6" type="checkbox" id="__nav_6" >
+      
+      <label class="md-nav__link" for="__nav_6">
+        Format-Specific API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Format-Specific API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_6">
+          <span class="md-nav__icon md-icon"></span>
+          Format-Specific API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-multiple_masters.html" class="md-nav__link">
+        Multiple Masters
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_tables.html" class="md-nav__link">
+        TrueType Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-type1_tables.html" class="md-nav__link">
+        Type 1 Tables
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-sfnt_names.html" class="md-nav__link">
+        SFNT Names
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bdf_fonts.html" class="md-nav__link">
+        BDF and PCF Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cid_fonts.html" class="md-nav__link">
+        CID Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pfr_fonts.html" class="md-nav__link">
+        PFR Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-winfnt_fonts.html" class="md-nav__link">
+        Window FNT Files
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-svg_fonts.html" class="md-nav__link">
+        OpenType SVG Fonts
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-font_formats.html" class="md-nav__link">
+        Font Formats
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gasp_table.html" class="md-nav__link">
+        Gasp Table
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_7" type="checkbox" id="__nav_7" >
+      
+      <label class="md-nav__link" for="__nav_7">
+        Controlling FreeType Modules
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Controlling FreeType Modules" data-md-level="1">
+        <label class="md-nav__title" for="__nav_7">
+          <span class="md-nav__icon md-icon"></span>
+          Controlling FreeType Modules
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-auto_hinter.html" class="md-nav__link">
+        The auto-hinter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cff_driver.html" class="md-nav__link">
+        The CFF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-t1_cid_driver.html" class="md-nav__link">
+        The Type 1 and CID drivers
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-tt_driver.html" class="md-nav__link">
+        The TrueType driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-pcf_driver.html" class="md-nav__link">
+        The PCF driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_svg_driver.html" class="md-nav__link">
+        The SVG driver
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-properties.html" class="md-nav__link">
+        Driver properties
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-parameter_tags.html" class="md-nav__link">
+        Parameter Tags
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lcd_rendering.html" class="md-nav__link">
+        Subpixel Rendering
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_8" type="checkbox" id="__nav_8" >
+      
+      <label class="md-nav__link" for="__nav_8">
+        Cache Sub-System
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Cache Sub-System" data-md-level="1">
+        <label class="md-nav__title" for="__nav_8">
+          <span class="md-nav__icon md-icon"></span>
+          Cache Sub-System
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-cache_subsystem.html" class="md-nav__link">
+        Cache Sub-System
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_9" type="checkbox" id="__nav_9" >
+      
+      <label class="md-nav__link" for="__nav_9">
+        Support API
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Support API" data-md-level="1">
+        <label class="md-nav__title" for="__nav_9">
+          <span class="md-nav__icon md-icon"></span>
+          Support API
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-computations.html" class="md-nav__link">
+        Computations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-list_processing.html" class="md-nav__link">
+        List Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-outline_processing.html" class="md-nav__link">
+        Outline Processing
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-quick_advance.html" class="md-nav__link">
+        Quick retrieval of advance values
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bitmap_handling.html" class="md-nav__link">
+        Bitmap Handling
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-raster.html" class="md-nav__link">
+        Scanline Converter
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-glyph_stroker.html" class="md-nav__link">
+        Glyph Stroker
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-system_interface.html" class="md-nav__link">
+        System Interface
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-module_management.html" class="md-nav__link">
+        Module Management
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gzip.html" class="md-nav__link">
+        GZIP Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-lzw.html" class="md-nav__link">
+        LZW Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-bzip2.html" class="md-nav__link">
+        BZIP2 Streams
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-debugging_apis.html" class="md-nav__link">
+        External Debugging APIs
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_10" type="checkbox" id="__nav_10" >
+      
+      <label class="md-nav__link" for="__nav_10">
+        Error Codes
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Error Codes" data-md-level="1">
+        <label class="md-nav__title" for="__nav_10">
+          <span class="md-nav__icon md-icon"></span>
+          Error Codes
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_enumerations.html" class="md-nav__link">
+        Error Enumerations
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-error_code_values.html" class="md-nav__link">
+        Error Code Values
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+      
+      
+      
+
+  
+  
+  
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+      
+        <input class="md-nav__toggle md-toggle" data-md-toggle="__nav_11" type="checkbox" id="__nav_11" >
+      
+      <label class="md-nav__link" for="__nav_11">
+        Miscellaneous
+        <span class="md-nav__icon md-icon"></span>
+      </label>
+      <nav class="md-nav" aria-label="Miscellaneous" data-md-level="1">
+        <label class="md-nav__title" for="__nav_11">
+          <span class="md-nav__icon md-icon"></span>
+          Miscellaneous
+        </label>
+        <ul class="md-nav__list" data-md-scrollfix>
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-gx_validation.html" class="md-nav__link">
+        TrueTypeGX/AAT Validation
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-incremental.html" class="md-nav__link">
+        Incremental Loading
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-truetype_engine.html" class="md-nav__link">
+        The TrueType Engine
+      </a>
+    </li>
+  
+
+          
+            
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ft2-ot_validation.html" class="md-nav__link">
+        OpenType Validation
+      </a>
+    </li>
+  
+
+          
+        </ul>
+      </nav>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    Synopsis
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_glyph" class="md-nav__link">
+    FT_Glyph
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_glyphrec" class="md-nav__link">
+    FT_GlyphRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_bitmapglyph" class="md-nav__link">
+    FT_BitmapGlyph
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_bitmapglyphrec" class="md-nav__link">
+    FT_BitmapGlyphRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_outlineglyph" class="md-nav__link">
+    FT_OutlineGlyph
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_outlineglyphrec" class="md-nav__link">
+    FT_OutlineGlyphRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_svgglyph" class="md-nav__link">
+    FT_SvgGlyph
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_svgglyphrec" class="md-nav__link">
+    FT_SvgGlyphRec
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_new_glyph" class="md-nav__link">
+    FT_New_Glyph
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_get_glyph" class="md-nav__link">
+    FT_Get_Glyph
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_glyph_copy" class="md-nav__link">
+    FT_Glyph_Copy
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_glyph_transform" class="md-nav__link">
+    FT_Glyph_Transform
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_glyph_bbox_mode" class="md-nav__link">
+    FT_Glyph_BBox_Mode
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_glyph_get_cbox" class="md-nav__link">
+    FT_Glyph_Get_CBox
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_glyph_to_bitmap" class="md-nav__link">
+    FT_Glyph_To_Bitmap
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft_done_glyph" class="md-nav__link">
+    FT_Done_Glyph
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          <div class="md-content" data-md-component="content">
+            <article class="md-content__inner md-typeset">
+              
+                
+                
+                <p><a href="https://www.freetype.org">FreeType</a> &raquo; <a href="../">Docs</a> &raquo; <a href="index.html#extended-api">Extended API</a> &raquo; Glyph Management</p>
+<hr />
+<h1 id="glyph-management">Glyph Management<a class="headerlink" href="#glyph-management" title="Permanent link">&para;</a></h1>
+<h2 id="synopsis">Synopsis<a class="headerlink" href="#synopsis" title="Permanent link">&para;</a></h2>
+<p>This section contains definitions used to manage glyph data through generic <code><a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a></code> objects. Each of them can contain a bitmap, a vector outline, or even images in other formats. These objects are detached from <code><a href="ft2-face_creation.html#ft_face">FT_Face</a></code>, contrary to <code><a href="ft2-glyph_retrieval.html#ft_glyphslot">FT_GlyphSlot</a></code>.</p>
+<h2 id="ft_glyph">FT_Glyph<a class="headerlink" href="#ft_glyph" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_GLYPH_H (freetype/ftglyph.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span> FT_GlyphRec_*  <b>FT_Glyph</b>;
+</code></pre></div>
+
+<p>Handle to an object used to model generic glyph images. It is a pointer to the <code><a href="ft2-glyph_management.html#ft_glyphrec">FT_GlyphRec</a></code> structure and can contain a glyph bitmap or pointer.</p>
+<h4>note</h4>
+
+<p>Glyph objects are not owned by the library. You must thus release them manually (through <code><a href="ft2-glyph_management.html#ft_done_glyph">FT_Done_Glyph</a></code>) <em>before</em> calling <code><a href="ft2-library_setup.html#ft_done_freetype">FT_Done_FreeType</a></code>.</p>
+<hr>
+
+<h2 id="ft_glyphrec">FT_GlyphRec<a class="headerlink" href="#ft_glyphrec" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_GLYPH_H (freetype/ftglyph.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_GlyphRec_
+  {
+    <a href="ft2-library_setup.html#ft_library">FT_Library</a>             library;
+    <span class="keyword">const</span> FT_Glyph_Class*  clazz;
+    <a href="ft2-basic_types.html#ft_glyph_format">FT_Glyph_Format</a>        format;
+    <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>              advance;
+
+  } <b>FT_GlyphRec</b>;
+</code></pre></div>
+
+<p>The root glyph structure contains a given glyph image plus its advance width in 16.16 fixed-point format.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="library">library</td><td class="desc">
+<p>A handle to the FreeType library object.</p>
+</td></tr>
+<tr><td class="val" id="clazz">clazz</td><td class="desc">
+<p>A pointer to the glyph's class. Private.</p>
+</td></tr>
+<tr><td class="val" id="format">format</td><td class="desc">
+<p>The format of the glyph's image.</p>
+</td></tr>
+<tr><td class="val" id="advance">advance</td><td class="desc">
+<p>A 16.16 vector that gives the glyph's advance width.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_bitmapglyph">FT_BitmapGlyph<a class="headerlink" href="#ft_bitmapglyph" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_GLYPH_H (freetype/ftglyph.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span> FT_BitmapGlyphRec_*  <b>FT_BitmapGlyph</b>;
+</code></pre></div>
+
+<p>A handle to an object used to model a bitmap glyph image. This is a &lsquo;sub-class&rsquo; of <code><a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a></code>, and a pointer to <code><a href="ft2-glyph_management.html#ft_bitmapglyphrec">FT_BitmapGlyphRec</a></code>.</p>
+<hr>
+
+<h2 id="ft_bitmapglyphrec">FT_BitmapGlyphRec<a class="headerlink" href="#ft_bitmapglyphrec" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_GLYPH_H (freetype/ftglyph.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_BitmapGlyphRec_
+  {
+    <a href="ft2-glyph_management.html#ft_glyphrec">FT_GlyphRec</a>  root;
+    <a href="ft2-basic_types.html#ft_int">FT_Int</a>       left;
+    <a href="ft2-basic_types.html#ft_int">FT_Int</a>       top;
+    <a href="ft2-basic_types.html#ft_bitmap">FT_Bitmap</a>    bitmap;
+
+  } <b>FT_BitmapGlyphRec</b>;
+</code></pre></div>
+
+<p>A structure used for bitmap glyph images. This really is a &lsquo;sub-class&rsquo; of <code><a href="ft2-glyph_management.html#ft_glyphrec">FT_GlyphRec</a></code>.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="root">root</td><td class="desc">
+<p>The root fields of <code><a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a></code>.</p>
+</td></tr>
+<tr><td class="val" id="left">left</td><td class="desc">
+<p>The left-side bearing, i.e., the horizontal distance from the current pen position to the left border of the glyph bitmap.</p>
+</td></tr>
+<tr><td class="val" id="top">top</td><td class="desc">
+<p>The top-side bearing, i.e., the vertical distance from the current pen position to the top border of the glyph bitmap. This distance is positive for upwards&nbsp;y!</p>
+</td></tr>
+<tr><td class="val" id="bitmap">bitmap</td><td class="desc">
+<p>A descriptor for the bitmap.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>You can typecast an <code><a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a></code> to <code><a href="ft2-glyph_management.html#ft_bitmapglyph">FT_BitmapGlyph</a></code> if you have <code>glyph-&gt;format == FT_GLYPH_FORMAT_BITMAP</code>. This lets you access the bitmap's contents easily.</p>
+<p>The corresponding pixel buffer is always owned by <code><a href="ft2-glyph_management.html#ft_bitmapglyph">FT_BitmapGlyph</a></code> and is thus created and destroyed with it.</p>
+<hr>
+
+<h2 id="ft_outlineglyph">FT_OutlineGlyph<a class="headerlink" href="#ft_outlineglyph" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_GLYPH_H (freetype/ftglyph.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span> FT_OutlineGlyphRec_*  <b>FT_OutlineGlyph</b>;
+</code></pre></div>
+
+<p>A handle to an object used to model an outline glyph image. This is a &lsquo;sub-class&rsquo; of <code><a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a></code>, and a pointer to <code><a href="ft2-glyph_management.html#ft_outlineglyphrec">FT_OutlineGlyphRec</a></code>.</p>
+<hr>
+
+<h2 id="ft_outlineglyphrec">FT_OutlineGlyphRec<a class="headerlink" href="#ft_outlineglyphrec" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_GLYPH_H (freetype/ftglyph.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_OutlineGlyphRec_
+  {
+    <a href="ft2-glyph_management.html#ft_glyphrec">FT_GlyphRec</a>  root;
+    <a href="ft2-outline_processing.html#ft_outline">FT_Outline</a>   outline;
+
+  } <b>FT_OutlineGlyphRec</b>;
+</code></pre></div>
+
+<p>A structure used for outline (vectorial) glyph images. This really is a &lsquo;sub-class&rsquo; of <code><a href="ft2-glyph_management.html#ft_glyphrec">FT_GlyphRec</a></code>.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="root">root</td><td class="desc">
+<p>The root <code><a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a></code> fields.</p>
+</td></tr>
+<tr><td class="val" id="outline">outline</td><td class="desc">
+<p>A descriptor for the outline.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>You can typecast an <code><a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a></code> to <code><a href="ft2-glyph_management.html#ft_outlineglyph">FT_OutlineGlyph</a></code> if you have <code>glyph-&gt;format == FT_GLYPH_FORMAT_OUTLINE</code>. This lets you access the outline's content easily.</p>
+<p>As the outline is extracted from a glyph slot, its coordinates are expressed normally in 26.6 pixels, unless the flag <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_NO_SCALE</a></code> was used in <code><a href="ft2-glyph_retrieval.html#ft_load_glyph">FT_Load_Glyph</a></code> or <code><a href="ft2-character_mapping.html#ft_load_char">FT_Load_Char</a></code>.</p>
+<p>The outline's tables are always owned by the object and are destroyed with it.</p>
+<hr>
+
+<h2 id="ft_svgglyph">FT_SvgGlyph<a class="headerlink" href="#ft_svgglyph" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_GLYPH_H (freetype/ftglyph.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span> FT_SvgGlyphRec_*  <b>FT_SvgGlyph</b>;
+</code></pre></div>
+
+<p>A handle to an object used to model an SVG glyph. This is a &lsquo;sub-class&rsquo; of <code><a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a></code>, and a pointer to <code><a href="ft2-glyph_management.html#ft_svgglyphrec">FT_SvgGlyphRec</a></code>.</p>
+<h4>since</h4>
+
+<p>2.12</p>
+<hr>
+
+<h2 id="ft_svgglyphrec">FT_SvgGlyphRec<a class="headerlink" href="#ft_svgglyphrec" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_GLYPH_H (freetype/ftglyph.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">struct</span>  FT_SvgGlyphRec_
+  {
+    <a href="ft2-glyph_management.html#ft_glyphrec">FT_GlyphRec</a>  root;
+
+    <a href="ft2-basic_types.html#ft_byte">FT_Byte</a>*  svg_document;
+    <a href="ft2-basic_types.html#ft_ulong">FT_ULong</a>  svg_document_length;
+
+    <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>  glyph_index;
+
+    <a href="ft2-sizing_and_scaling.html#ft_size_metrics">FT_Size_Metrics</a>  metrics;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>        units_per_EM;
+
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  start_glyph_id;
+    <a href="ft2-basic_types.html#ft_ushort">FT_UShort</a>  end_glyph_id;
+
+    <a href="ft2-basic_types.html#ft_matrix">FT_Matrix</a>  transform;
+    <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>  delta;
+
+  } <b>FT_SvgGlyphRec</b>;
+</code></pre></div>
+
+<p>A structure used for OT-SVG glyphs. This is a &lsquo;sub-class&rsquo; of <code><a href="ft2-glyph_management.html#ft_glyphrec">FT_GlyphRec</a></code>.</p>
+<h4>fields</h4>
+<table class="fields">
+<tr><td class="val" id="root">root</td><td class="desc">
+<p>The root <code><a href="ft2-glyph_management.html#ft_glyphrec">FT_GlyphRec</a></code> fields.</p>
+</td></tr>
+<tr><td class="val" id="svg_document">svg_document</td><td class="desc">
+<p>A pointer to the SVG document.</p>
+</td></tr>
+<tr><td class="val" id="svg_document_length">svg_document_length</td><td class="desc">
+<p>The length of <code>svg_document</code>.</p>
+</td></tr>
+<tr><td class="val" id="glyph_index">glyph_index</td><td class="desc">
+<p>The index of the glyph to be rendered.</p>
+</td></tr>
+<tr><td class="val" id="metrics">metrics</td><td class="desc">
+<p>A metrics object storing the size information.</p>
+</td></tr>
+<tr><td class="val" id="units_per_em">units_per_EM</td><td class="desc">
+<p>The size of the EM square.</p>
+</td></tr>
+<tr><td class="val" id="start_glyph_id">start_glyph_id</td><td class="desc">
+<p>The first glyph ID in the glyph range covered by this document.</p>
+</td></tr>
+<tr><td class="val" id="end_glyph_id">end_glyph_id</td><td class="desc">
+<p>The last glyph ID in the glyph range covered by this document.</p>
+</td></tr>
+<tr><td class="val" id="transform">transform</td><td class="desc">
+<p>A 2x2 transformation matrix to apply to the glyph while rendering it.</p>
+</td></tr>
+<tr><td class="val" id="delta">delta</td><td class="desc">
+<p>Translation to apply to the glyph while rendering.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>The Glyph Management API requires <code><a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a></code> or its &lsquo;sub-class&rsquo; to have all the information needed to completely define the glyph's rendering. Outline-based glyphs can directly apply transformations to the outline but this is not possible for an SVG document that hasn't been parsed. Therefore, the transformation is stored along with the document. In the absence of a &lsquo;ViewBox&rsquo; or &lsquo;Width&rsquo;/'Height' attribute, the size of the ViewPort should be assumed to be &lsquo;units_per_EM&rsquo;.</p>
+<hr>
+
+<h2 id="ft_new_glyph">FT_New_Glyph<a class="headerlink" href="#ft_new_glyph" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_GLYPH_H (freetype/ftglyph.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_New_Glyph</b>( <a href="ft2-library_setup.html#ft_library">FT_Library</a>       library,
+                <a href="ft2-basic_types.html#ft_glyph_format">FT_Glyph_Format</a>  format,
+                <a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a>         *aglyph );
+</code></pre></div>
+
+<p>A function used to create a new empty glyph image. Note that the created <code><a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a></code> object must be released with <code><a href="ft2-glyph_management.html#ft_done_glyph">FT_Done_Glyph</a></code>.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="library">library</td><td class="desc">
+<p>A handle to the FreeType library object.</p>
+</td></tr>
+<tr><td class="val" id="format">format</td><td class="desc">
+<p>The format of the glyph's image.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="aglyph">aglyph</td><td class="desc">
+<p>A handle to the glyph object.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>since</h4>
+
+<p>2.10</p>
+<hr>
+
+<h2 id="ft_get_glyph">FT_Get_Glyph<a class="headerlink" href="#ft_get_glyph" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_GLYPH_H (freetype/ftglyph.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Get_Glyph</b>( <a href="ft2-glyph_retrieval.html#ft_glyphslot">FT_GlyphSlot</a>  slot,
+                <a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a>     *aglyph );
+</code></pre></div>
+
+<p>A function used to extract a glyph image from a slot. Note that the created <code><a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a></code> object must be released with <code><a href="ft2-glyph_management.html#ft_done_glyph">FT_Done_Glyph</a></code>.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="slot">slot</td><td class="desc">
+<p>A handle to the source glyph slot.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="aglyph">aglyph</td><td class="desc">
+<p>A handle to the glyph object. <code>NULL</code> in case of error.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>Because <code>*aglyph-&gt;advance.x</code> and <code>*aglyph-&gt;advance.y</code> are 16.16 fixed-point numbers, <code>slot-&gt;advance.x</code> and <code>slot-&gt;advance.y</code> (which are in 26.6 fixed-point format) must be in the range ]-32768;32768[.</p>
+<hr>
+
+<h2 id="ft_glyph_copy">FT_Glyph_Copy<a class="headerlink" href="#ft_glyph_copy" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_GLYPH_H (freetype/ftglyph.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Glyph_Copy</b>( <a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a>   source,
+                 <a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a>  *target );
+</code></pre></div>
+
+<p>A function used to copy a glyph image. Note that the created <code><a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a></code> object must be released with <code><a href="ft2-glyph_management.html#ft_done_glyph">FT_Done_Glyph</a></code>.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="source">source</td><td class="desc">
+<p>A handle to the source glyph object.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="target">target</td><td class="desc">
+<p>A handle to the target glyph object. <code>NULL</code> in case of error.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<hr>
+
+<h2 id="ft_glyph_transform">FT_Glyph_Transform<a class="headerlink" href="#ft_glyph_transform" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_GLYPH_H (freetype/ftglyph.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Glyph_Transform</b>( <a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a>          glyph,
+                      <span class="keyword">const</span> <a href="ft2-basic_types.html#ft_matrix">FT_Matrix</a>*  matrix,
+                      <span class="keyword">const</span> <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>*  delta );
+</code></pre></div>
+
+<p>Transform a glyph image if its format is scalable.</p>
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="glyph">glyph</td><td class="desc">
+<p>A handle to the target glyph object.</p>
+</td></tr>
+</table>
+
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="matrix">matrix</td><td class="desc">
+<p>A pointer to a 2x2 matrix to apply.</p>
+</td></tr>
+<tr><td class="val" id="delta">delta</td><td class="desc">
+<p>A pointer to a 2d vector to apply. Coordinates are expressed in 1/64 of a pixel.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code (if not 0, the glyph format is not scalable).</p>
+<h4>note</h4>
+
+<p>The 2x2 transformation matrix is also applied to the glyph's advance vector.</p>
+<hr>
+
+<h2 id="ft_glyph_bbox_mode">FT_Glyph_BBox_Mode<a class="headerlink" href="#ft_glyph_bbox_mode" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_GLYPH_H (freetype/ftglyph.h).</p>
+<div class = "codehilite"><pre><code>  <span class="keyword">typedef</span> <span class="keyword">enum</span>  FT_Glyph_BBox_Mode_
+  {
+    <a href="ft2-glyph_management.html#ft_glyph_bbox_unscaled">FT_GLYPH_BBOX_UNSCALED</a>  = 0,
+    <a href="ft2-glyph_management.html#ft_glyph_bbox_subpixels">FT_GLYPH_BBOX_SUBPIXELS</a> = 0,
+    <a href="ft2-glyph_management.html#ft_glyph_bbox_gridfit">FT_GLYPH_BBOX_GRIDFIT</a>   = 1,
+    <a href="ft2-glyph_management.html#ft_glyph_bbox_truncate">FT_GLYPH_BBOX_TRUNCATE</a>  = 2,
+    <a href="ft2-glyph_management.html#ft_glyph_bbox_pixels">FT_GLYPH_BBOX_PIXELS</a>    = 3
+
+  } <b>FT_Glyph_BBox_Mode</b>;
+
+
+  /* these constants are deprecated; use the corresponding */
+  /* `<b>FT_Glyph_BBox_Mode</b>` values instead                   */
+#<span class="keyword">define</span> ft_glyph_bbox_unscaled   <a href="ft2-glyph_management.html#ft_glyph_bbox_unscaled">FT_GLYPH_BBOX_UNSCALED</a>
+#<span class="keyword">define</span> ft_glyph_bbox_subpixels  <a href="ft2-glyph_management.html#ft_glyph_bbox_subpixels">FT_GLYPH_BBOX_SUBPIXELS</a>
+#<span class="keyword">define</span> ft_glyph_bbox_gridfit    <a href="ft2-glyph_management.html#ft_glyph_bbox_gridfit">FT_GLYPH_BBOX_GRIDFIT</a>
+#<span class="keyword">define</span> ft_glyph_bbox_truncate   <a href="ft2-glyph_management.html#ft_glyph_bbox_truncate">FT_GLYPH_BBOX_TRUNCATE</a>
+#<span class="keyword">define</span> ft_glyph_bbox_pixels     <a href="ft2-glyph_management.html#ft_glyph_bbox_pixels">FT_GLYPH_BBOX_PIXELS</a>
+</code></pre></div>
+
+<p>The mode how the values of <code><a href="ft2-glyph_management.html#ft_glyph_get_cbox">FT_Glyph_Get_CBox</a></code> are returned.</p>
+<h4>values</h4>
+<table class="fields">
+<tr><td class="val" id="ft_glyph_bbox_unscaled">FT_GLYPH_BBOX_UNSCALED</td><td class="desc">
+<p>Return unscaled font units.</p>
+</td></tr>
+<tr><td class="val" id="ft_glyph_bbox_subpixels">FT_GLYPH_BBOX_SUBPIXELS</td><td class="desc">
+<p>Return unfitted 26.6 coordinates.</p>
+</td></tr>
+<tr><td class="val" id="ft_glyph_bbox_gridfit">FT_GLYPH_BBOX_GRIDFIT</td><td class="desc">
+<p>Return grid-fitted 26.6 coordinates.</p>
+</td></tr>
+<tr><td class="val" id="ft_glyph_bbox_truncate">FT_GLYPH_BBOX_TRUNCATE</td><td class="desc">
+<p>Return coordinates in integer pixels.</p>
+</td></tr>
+<tr><td class="val" id="ft_glyph_bbox_pixels">FT_GLYPH_BBOX_PIXELS</td><td class="desc">
+<p>Return grid-fitted pixel coordinates.</p>
+</td></tr>
+</table>
+
+<hr>
+
+<h2 id="ft_glyph_get_cbox">FT_Glyph_Get_CBox<a class="headerlink" href="#ft_glyph_get_cbox" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_GLYPH_H (freetype/ftglyph.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <span class="keyword">void</span> )
+  <b>FT_Glyph_Get_CBox</b>( <a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a>  glyph,
+                     <a href="ft2-basic_types.html#ft_uint">FT_UInt</a>   bbox_mode,
+                     <a href="ft2-basic_types.html#ft_bbox">FT_BBox</a>  *acbox );
+</code></pre></div>
+
+<p>Return a glyph's &lsquo;control box&rsquo;. The control box encloses all the outline's points, including Bezier control points. Though it coincides with the exact bounding box for most glyphs, it can be slightly larger in some situations (like when rotating an outline that contains Bezier outside arcs).</p>
+<p>Computing the control box is very fast, while getting the bounding box can take much more time as it needs to walk over all segments and arcs in the outline. To get the latter, you can use the &lsquo;ftbbox&rsquo; component, which is dedicated to this single task.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="glyph">glyph</td><td class="desc">
+<p>A handle to the source glyph object.</p>
+</td></tr>
+<tr><td class="val" id="mode">mode</td><td class="desc">
+<p>The mode that indicates how to interpret the returned bounding box values.</p>
+</td></tr>
+</table>
+
+<h4>output</h4>
+<table class="fields">
+<tr><td class="val" id="acbox">acbox</td><td class="desc">
+<p>The glyph coordinate bounding box. Coordinates are expressed in 1/64 of pixels if it is grid-fitted.</p>
+</td></tr>
+</table>
+
+<h4>note</h4>
+
+<p>Coordinates are relative to the glyph origin, using the y&nbsp;upwards convention.</p>
+<p>If the glyph has been loaded with <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_NO_SCALE</a></code>, <code>bbox_mode</code> must be set to <code><a href="ft2-glyph_management.html#ft_glyph_bbox_mode">FT_GLYPH_BBOX_UNSCALED</a></code> to get unscaled font units in 26.6 pixel format. The value <code><a href="ft2-glyph_management.html#ft_glyph_bbox_mode">FT_GLYPH_BBOX_SUBPIXELS</a></code> is another name for this constant.</p>
+<p>If the font is tricky and the glyph has been loaded with <code><a href="ft2-glyph_retrieval.html#ft_load_xxx">FT_LOAD_NO_SCALE</a></code>, the resulting CBox is meaningless. To get reasonable values for the CBox it is necessary to load the glyph at a large ppem value (so that the hinting instructions can properly shift and scale the subglyphs), then extracting the CBox, which can be eventually converted back to font units.</p>
+<p>Note that the maximum coordinates are exclusive, which means that one can compute the width and height of the glyph image (be it in integer or 26.6 pixels) as:
+<div class="highlight"><pre><span></span><code>  width  = bbox.xMax - bbox.xMin;
+  height = bbox.yMax - bbox.yMin;
+</code></pre></div></p>
+<p>Note also that for 26.6 coordinates, if <code>bbox_mode</code> is set to <code><a href="ft2-glyph_management.html#ft_glyph_bbox_mode">FT_GLYPH_BBOX_GRIDFIT</a></code>, the coordinates will also be grid-fitted, which corresponds to:
+<div class="highlight"><pre><span></span><code>  bbox.xMin = FLOOR(bbox.xMin);
+  bbox.yMin = FLOOR(bbox.yMin);
+  bbox.xMax = CEILING(bbox.xMax);
+  bbox.yMax = CEILING(bbox.yMax);
+</code></pre></div></p>
+<p>To get the bbox in pixel coordinates, set <code>bbox_mode</code> to <code><a href="ft2-glyph_management.html#ft_glyph_bbox_mode">FT_GLYPH_BBOX_TRUNCATE</a></code>.</p>
+<p>To get the bbox in grid-fitted pixel coordinates, set <code>bbox_mode</code> to <code><a href="ft2-glyph_management.html#ft_glyph_bbox_mode">FT_GLYPH_BBOX_PIXELS</a></code>.</p>
+<hr>
+
+<h2 id="ft_glyph_to_bitmap">FT_Glyph_To_Bitmap<a class="headerlink" href="#ft_glyph_to_bitmap" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_GLYPH_H (freetype/ftglyph.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <a href="ft2-basic_types.html#ft_error">FT_Error</a> )
+  <b>FT_Glyph_To_Bitmap</b>( <a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a>*         the_glyph,
+                      <a href="ft2-glyph_retrieval.html#ft_render_mode">FT_Render_Mode</a>    render_mode,
+                      <span class="keyword">const</span> <a href="ft2-basic_types.html#ft_vector">FT_Vector</a>*  origin,
+                      <a href="ft2-basic_types.html#ft_bool">FT_Bool</a>           destroy );
+</code></pre></div>
+
+<p>Convert a given glyph object to a bitmap glyph object.</p>
+<h4>inout</h4>
+<table class="fields">
+<tr><td class="val" id="the_glyph">the_glyph</td><td class="desc">
+<p>A pointer to a handle to the target glyph.</p>
+</td></tr>
+</table>
+
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="render_mode">render_mode</td><td class="desc">
+<p>An enumeration that describes how the data is rendered.</p>
+</td></tr>
+<tr><td class="val" id="origin">origin</td><td class="desc">
+<p>A pointer to a vector used to translate the glyph image before rendering. Can be&nbsp;0 (if no translation). The origin is expressed in 26.6 pixels.</p>
+</td></tr>
+<tr><td class="val" id="destroy">destroy</td><td class="desc">
+<p>A boolean that indicates that the original glyph image should be destroyed by this function. It is never destroyed in case of error.</p>
+</td></tr>
+</table>
+
+<h4>return</h4>
+
+<p>FreeType error code. 0&nbsp;means success.</p>
+<h4>note</h4>
+
+<p>This function does nothing if the glyph format isn't scalable.</p>
+<p>The glyph image is translated with the <code>origin</code> vector before rendering.</p>
+<p>The first parameter is a pointer to an <code><a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a></code> handle that will be <em>replaced</em> by this function (with newly allocated data). Typically, you would do something like the following (omitting error handling).
+<div class="highlight"><pre><span></span><code>  FT_Glyph        glyph;
+  FT_BitmapGlyph  glyph_bitmap;
+
+
+  // load glyph
+  error = FT_Load_Char( face, glyph_index, FT_LOAD_DEFAULT );
+
+  // extract glyph image
+  error = FT_Get_Glyph( face-&gt;glyph, &amp;glyph );
+
+  // convert to a bitmap (default render mode + destroying old)
+  if ( glyph-&gt;format != FT_GLYPH_FORMAT_BITMAP )
+  {
+    error = FT_Glyph_To_Bitmap( &amp;glyph, FT_RENDER_MODE_NORMAL,
+                                0, 1 );
+    if ( error ) // `glyph&#39; unchanged
+      ...
+  }
+
+  // access bitmap content by typecasting
+  glyph_bitmap = (FT_BitmapGlyph)glyph;
+
+  // do funny stuff with it, like blitting/drawing
+  ...
+
+  // discard glyph image (bitmap or not)
+  FT_Done_Glyph( glyph );
+</code></pre></div></p>
+<p>Here is another example, again without error handling.
+<div class="highlight"><pre><span></span><code>  FT_Glyph  glyphs[MAX_GLYPHS]
+
+
+  ...
+
+  for ( idx = 0; i &lt; MAX_GLYPHS; i++ )
+    error = FT_Load_Glyph( face, idx, FT_LOAD_DEFAULT ) ||
+            FT_Get_Glyph ( face-&gt;glyph, &amp;glyphs[idx] );
+
+  ...
+
+  for ( idx = 0; i &lt; MAX_GLYPHS; i++ )
+  {
+    FT_Glyph  bitmap = glyphs[idx];
+
+
+    ...
+
+    // after this call, `bitmap&#39; no longer points into
+    // the `glyphs&#39; array (and the old value isn&#39;t destroyed)
+    FT_Glyph_To_Bitmap( &amp;bitmap, FT_RENDER_MODE_MONO, 0, 0 );
+
+    ...
+
+    FT_Done_Glyph( bitmap );
+  }
+
+  ...
+
+  for ( idx = 0; i &lt; MAX_GLYPHS; i++ )
+    FT_Done_Glyph( glyphs[idx] );
+</code></pre></div></p>
+<hr>
+
+<h2 id="ft_done_glyph">FT_Done_Glyph<a class="headerlink" href="#ft_done_glyph" title="Permanent link">&para;</a></h2>
+<p>Defined in FT_GLYPH_H (freetype/ftglyph.h).</p>
+<div class = "codehilite"><pre><code>  FT_EXPORT( <span class="keyword">void</span> )
+  <b>FT_Done_Glyph</b>( <a href="ft2-glyph_management.html#ft_glyph">FT_Glyph</a>  glyph );
+</code></pre></div>
+
+<p>Destroy a given glyph.</p>
+<h4>input</h4>
+<table class="fields">
+<tr><td class="val" id="glyph">glyph</td><td class="desc">
+<p>A handle to the target glyph object. Can be <code>NULL</code>.</p>
+</td></tr>
+</table>
+
+<hr>
+                
+              
+              
+                
+
+
+              
+            </article>
+          </div>
+        </div>
+        
+      </main>
+      
+        
+<footer class="md-footer">
+  
+    <nav class="md-footer__inner md-grid" aria-label="Footer">
+      
+        
+        <a href="ft2-layer_management.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: Glyph Layer Management" rel="prev">
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+          </div>
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              Glyph Layer Management
+            </div>
+          </div>
+        </a>
+      
+      
+        
+        <a href="ft2-mac_specific.html" class="md-footer__link md-footer__link--next" aria-label="Next: Mac Specific Interface" rel="next">
+          <div class="md-footer__title">
+            <div class="md-ellipsis">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              Mac Specific Interface
+            </div>
+          </div>
+          <div class="md-footer__button md-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11H4z"/></svg>
+          </div>
+        </a>
+      
+    </nav>
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-footer-copyright">
+        
+          <div class="md-footer-copyright__highlight">
+            Copyright 2023 <a href = "https://www.freetype.org/license.html">The FreeType Project</a>.
+          </div>
+        
+        Made with
+        <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+          Material for MkDocs
+        </a>
+        
+      </div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    <script id="__config" type="application/json">{"base": ".", "features": [], "search": "assets/javascripts/workers/search.477d984a.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.config.lang": "en", "search.config.pipeline": "trimmer, stopWordFilter", "search.config.separator": "[\\s\\-]+", "search.placeholder": "Search", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version.title": "Select version"}, "version": null}</script>
+    
+    
+      <script src="assets/javascripts/bundle.82b56eb2.min.js"></script>
+      
+        <script src="javascripts/extra.js"></script>
+      
+    
+  </body>
+</html>

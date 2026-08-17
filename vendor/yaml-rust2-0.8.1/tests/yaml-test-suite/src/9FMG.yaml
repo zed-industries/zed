@@ -1,0 +1,45 @@
+---
+- name: Multi-level Mapping Indent
+  from: https://github.com/ingydotnet/yaml-pegex-pm/blob/master/test/indent.tml
+  tags: mapping indent
+  yaml: |
+    a:
+      b:
+        c: d
+      e:
+        f: g
+    h: i
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :a
+       +MAP
+        =VAL :b
+        +MAP
+         =VAL :c
+         =VAL :d
+        -MAP
+        =VAL :e
+        +MAP
+         =VAL :f
+         =VAL :g
+        -MAP
+       -MAP
+       =VAL :h
+       =VAL :i
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "a": {
+        "b": {
+          "c": "d"
+        },
+        "e": {
+          "f": "g"
+        }
+      },
+      "h": "i"
+    }

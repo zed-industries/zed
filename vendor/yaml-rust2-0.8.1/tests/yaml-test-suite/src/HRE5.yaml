@@ -1,0 +1,13 @@
+---
+- name: Double quoted scalar with escaped single quote
+  from: https://github.com/yaml/libyaml/issues/68
+  tags: double error single
+  fail: true
+  yaml: |
+    ---
+    double: "quoted \' scalar"
+  tree: |
+    +STR
+     +DOC ---
+      +MAP
+       =VAL :double

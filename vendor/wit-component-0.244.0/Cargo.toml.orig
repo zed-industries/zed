@@ -1,0 +1,61 @@
+[package]
+name = "wit-component"
+authors = ["Peter Huene <peter@huene.dev>"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+readme = "README.md"
+repository = "https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wit-component"
+homepage = "https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wit-component"
+documentation = "https://docs.rs/wit-component"
+description = """
+Tooling for working with `*.wit` and component files together.
+"""
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+
+[dependencies]
+anyhow = { workspace = true }
+bitflags = "2.3.3"
+indexmap = { workspace = true }
+log = "0.4.17"
+serde = { workspace = true }
+serde_derive = { workspace = true }
+serde_json = { workspace = true }
+wasm-encoder = { workspace = true, features = ['std', 'wasmparser'] }
+wasm-metadata = { workspace = true }
+wasmparser = { workspace = true, features = ['std', 'component-model', 'simd'] }
+wast = { workspace = true, optional = true }
+wat = { workspace = true, optional = true }
+wit-parser = { workspace = true, features = ['decoding', 'serde'] }
+
+[dev-dependencies]
+env_logger = { workspace = true }
+glob = "0.3.0"
+libtest-mimic = { workspace = true }
+pretty_assertions = "1.3.0"
+wasmparser = { workspace = true, features = ['std', 'component-model', 'features'] }
+wasmprinter = { workspace = true, features = ['component-model'] }
+wat = { workspace = true, features = ['component-model'] }
+wasm-metadata = { workspace = true, features = ['oci'] }
+
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+wasmtime = { workspace = true }
+
+[features]
+dummy-module = ['dep:wat']
+wat = ['dep:wast', 'dep:wat']
+semver-check = ['dummy-module']
+
+[[test]]
+name = "components"
+harness = false
+
+[[test]]
+name = "interfaces"
+harness = false

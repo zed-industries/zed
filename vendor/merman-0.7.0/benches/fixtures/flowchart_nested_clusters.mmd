@@ -1,0 +1,44 @@
+flowchart TD
+  subgraph RegionA[Region A]
+    direction LR
+    subgraph AZ1[AZ-1]
+      direction TB
+      A1[Ingress]
+      A2[App]
+      A3[Cache]
+      A1 --> A2 --> A3
+    end
+    subgraph AZ2[AZ-2]
+      direction TB
+      B1[Ingress]
+      B2[App]
+      B3[Cache]
+      B1 --> B2 --> B3
+    end
+    A2 --> B2
+    A3 --> B3
+  end
+
+  subgraph RegionB[Region B]
+    direction LR
+    subgraph AZ3[AZ-3]
+      direction TB
+      C1[Ingress]
+      C2[App]
+      C3[Cache]
+      C1 --> C2 --> C3
+    end
+    subgraph AZ4[AZ-4]
+      direction TB
+      D1[Ingress]
+      D2[App]
+      D3[Cache]
+      D1 --> D2 --> D3
+    end
+    C2 --> D2
+    C3 --> D3
+  end
+
+  B2 -.replicate.-> C2
+  B3 -.replicate.-> C3
+  D2 -.health.-> A2

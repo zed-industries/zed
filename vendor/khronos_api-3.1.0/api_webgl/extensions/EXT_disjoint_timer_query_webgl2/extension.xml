@@ -1,0 +1,243 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<extension href="EXT_disjoint_timer_query_webgl2/">
+  <name>EXT_disjoint_timer_query_webgl2</name>
+
+  <contact> <a href="https://www.khronos.org/webgl/public-mailing-list/">WebGL
+  working group</a> (public_webgl 'at' khronos.org) </contact>
+
+  <contributors>
+    <contributor>Contributors to ARB_occlusion_query</contributor>
+    <contributor>Contributors to EXT_timer_query</contributor>
+    <contributor>Contributors to ARB_timer_query</contributor>
+    <contributor>Ben Vanik, Google Inc.</contributor>
+    <contributor>Daniel Koch, TransGaming Inc.</contributor>
+    <contributor>Florian Boesch (pyalot 'at' gmail.com)</contributor>
+    <contributor>Members of the WebGL working group</contributor>
+  </contributors>
+
+  <number>33</number>
+
+  <depends>
+    <api version="2.0"/>
+  </depends>
+
+  <overview>
+    <mirrors href="http://www.khronos.org/registry/gles/extensions/EXT/EXT_disjoint_timer_query.txt"
+             name="EXT_disjoint_timer_query">
+      <addendum>
+        Specifies that queries' results only become available at certain well-defined times.
+      </addendum>
+    </mirrors>
+
+    <features>
+      <feature>
+        This extension provides the same functionality as <a
+        href="../EXT_disjoint_timer_query/">EXT_disjoint_timer_query</a>. The IDL, description, and
+        extension name are specialized for WebGL 2.0, which incorporates query objects into the core
+        specification.
+      </feature>
+    </features>
+  </overview>
+
+  <idl xml:space="preserve">
+typedef unsigned long long GLuint64EXT;
+
+[NoInterfaceObject]
+interface EXT_disjoint_timer_query_webgl2 {
+  const GLenum QUERY_COUNTER_BITS_EXT      = 0x8864;
+  const GLenum TIME_ELAPSED_EXT            = 0x88BF;
+  const GLenum TIMESTAMP_EXT               = 0x8E28;
+  const GLenum GPU_DISJOINT_EXT            = 0x8FBB;
+
+  void queryCounterEXT(WebGLQuery query, GLenum target);
+};
+  </idl>
+
+  <newtok>
+    <function name="beginQuery" type="">
+      <param name="target" type="GLenum"/>
+      <param name="query" type="WebGLQuery?"/>
+      <code>target</code> accepts <code>TIME_ELAPSED_EXT</code>.
+    </function>
+  </newtok>
+
+  <newtok>
+    <function name="endQuery" type="void">
+      <param name="target" type="GLenum"/>
+      <code>target</code> accepts <code>TIME_ELAPSED_EXT</code>.
+    </function>
+  </newtok>
+
+  <newfun>
+    <function name="queryCounterEXT" type="void">
+      <param name="query" type="WebGLQuery"/>
+      <param name="target" type="GLenum"/>
+      <code>target</code> accepts <code>TIMESTAMP_EXT</code>.
+    </function>
+  </newfun>
+
+  <newtok>
+    <function name="getQuery" type="any">
+      <param name="target" type="GLenum"/>
+      <param name="pname" type="GLenum"/>
+      <code>target</code> and <code>pname</code> accept the following combinations of
+      parameters. The return type of this method now depends on the parameter queried.
+      <br/>
+      <table width="30%">
+      <tr><th>target</th><th>pname</th><th>returned type</th></tr>
+      <tr><td>TIME_ELAPSED_EXT</td><td>CURRENT_QUERY</td><td>WebGLQuery?</td></tr>
+      <tr><td>TIMESTAMP_EXT</td><td>CURRENT_QUERY</td><td>null</td></tr>
+      <tr><td>TIME_ELAPSED_EXT</td><td>QUERY_COUNTER_BITS_EXT</td><td>GLint</td></tr>
+      <tr><td>TIMESTAMP_EXT</td><td>QUERY_COUNTER_BITS_EXT</td><td>GLint</td></tr>
+      </table>      
+    </function>
+  </newtok>
+
+  <newtok>
+    <function name="getParameter" type="any">
+      <param name="pname" type="GLenum"/>
+      <code>pname</code> accepts <code>TIMESTAMP_EXT</code> or <code>GPU_DISJOINT_EXT</code>.
+      <br/>
+
+      The return type depends on the parameter queried:
+      <table width="30%">
+      <tr><th>pname</th><th>returned type</th></tr>
+      <tr><td>TIMESTAMP_EXT</td><td>GLuint64EXT</td></tr>
+      <tr><td>GPU_DISJOINT_EXT</td><td>boolean</td></tr>
+      </table>      
+    </function>
+  </newtok>
+
+  <samplecode xml:space="preserve">
+    <pre>
+        // Example (1) -- uses beginQuery/endQuery.
+        var ext = gl.getExtension('EXT_disjoint_timer_query_webgl2');
+        var query = gl.createQuery();
+        gl.beginQuery(ext.TIME_ELAPSED_EXT, query);
+
+        // Draw object
+        gl.drawElements(...);
+
+        gl.endQuery(ext.TIME_ELAPSED_EXT);
+
+        // ...at some point in the future, after returning control to the browser and being called again:
+        var available = gl.getQueryParameter(query, gl.QUERY_RESULT_AVAILABLE);
+        var disjoint = gl.getParameter(ext.GPU_DISJOINT_EXT);
+
+        if (available &amp;&amp; !disjoint) {
+          // See how much time the rendering of the object took in nanoseconds.
+          var timeElapsed = gl.getQueryParameter(query, gl.QUERY_RESULT);
+
+          // Do something useful with the time.  Note that care should be
+          // taken to use all significant bits of the result, not just the
+          // least significant 32 bits.
+          adjustObjectLODBasedOnDrawTime(timeElapsed);
+        }
+
+        //----------------------------------------------------------------------
+
+        // Example (2) -- same as the example above, but uses queryCounterEXT instead.
+        var ext = gl.getExtension('EXT_disjoint_timer_query_webgl2');
+        var startQuery = gl.createQuery();
+        var endQuery = gl.createQuery();
+        ext.queryCounterEXT(startQuery, ext.TIMESTAMP_EXT);
+
+        // Draw object
+        gl.drawElements(...);
+
+        ext.queryCounterEXT(endQuery, ext.TIMESTAMP_EXT);
+
+        // ...at some point in the future, after returning control to the browser and being called again:
+        var available = gl.getQueryParameter(endQuery, gl.QUERY_RESULT_AVAILABLE);
+        var disjoint = gl.getParameter(ext.GPU_DISJOINT_EXT);
+
+        if (available &amp;&amp; !disjoint) {
+          // See how much time the rendering of the object took in nanoseconds.
+          var timeStart = gl.getQueryParameter(startQuery, gl.QUERY_RESULT);
+          var timeEnd = gl.getQueryParameter(endQuery, gl.QUERY_RESULT);
+
+          // Do something useful with the time.  Note that care should be
+          // taken to use all significant bits of the result, not just the
+          // least significant 32 bits.
+          adjustObjectLODBasedOnDrawTime(timeEnd - timeStart);
+        }
+
+        //----------------------------------------------------------------------
+
+        // Example (3) -- check the number of timestamp bits to determine how to best
+        // measure elapsed time.
+        var ext = gl.getExtension('EXT_disjoint_timer_query_webgl2');
+        var timeElapsedQuery;
+        var startQuery;
+        var endQuery;
+
+        var useTimestamps = false;
+
+        if (gl.getQuery(ext.TIMESTAMP_EXT, ext.QUERY_COUNTER_BITS_EXT) > 0) {
+          useTimestamps = true;
+        }
+
+        // Clear the disjoint state before starting to work with queries to increase
+        // the chances that the results will be valid.
+        gl.getParameter(ext.GPU_DISJOINT_EXT);
+
+        if (useTimestamps) {
+          startQuery = gl.createQuery();
+          endQuery = gl.createQuery();
+          ext.queryCounterEXT(startQuery, ext.TIMESTAMP_EXT);
+        } else {
+          timeElapsedQuery = gl.createQuery();
+          gl.beginQuery(ext.TIME_ELAPSED_EXT, timeElapsedQuery);
+        }
+
+        // Draw object
+        gl.drawElements(...);
+
+        if (useTimestamps) {
+          ext.queryCounterEXT(endQuery, ext.TIMESTAMP_EXT);
+        } else {
+          gl.endQuery(ext.TIME_ELAPSED_EXT);
+        }
+
+        // ...at some point in the future, after returning control to the browser and being called again:
+        var disjoint = gl.getParameter(ext.GPU_DISJOINT_EXT);
+        if (disjoint) {
+          // Have to redo all of the measurements.
+        } else {
+          var available;
+          if (useTimestamps) {
+            available = gl.getQueryParameter(endQuery, gl.QUERY_RESULT_AVAILABLE);
+          } else {
+            available = gl.getQueryParameter(timeElapsedQuery, gl.QUERY_RESULT_AVAILABLE);
+          }
+
+          if (available) {
+            var timeElapsed;
+            if (useTimestamps) {
+              // See how much time the rendering of the object took in nanoseconds.
+              var timeStart = gl.getQueryParameter(startQuery, gl.QUERY_RESULT);
+              var timeEnd = gl.getQueryParameter(endQuery, gl.QUERY_RESULT);
+              timeElapsed = timeEnd - timeStart;
+            } else {
+              timeElapsed = gl.getQueryParameter(query, gl.QUERY_RESULT);
+            }
+
+            // Do something useful with the time.  Note that care should be
+            // taken to use all significant bits of the result, not just the
+            // least significant 32 bits.
+            adjustObjectLODBasedOnDrawTime(timeElapsed);
+          }
+        }
+    </pre>
+  </samplecode>
+
+  <history>
+    <revision date="2016/09/30">
+      <change>Split WebGL 2.0 specification of this extension into its own file
+      for better comprehensibility.</change>
+    </revision>
+    <revision date="2016/10/11">
+      <change>Fixed errors in sample code pointed out by @juj.</change>
+    </revision>
+  </history>
+</extension>

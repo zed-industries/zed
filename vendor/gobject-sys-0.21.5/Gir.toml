@@ -1,0 +1,18 @@
+[options]
+work_mode = "sys"
+library = "GObject"
+version = "2.0"
+min_cfg_version = "2.56"
+single_version_file = "."
+girs_directories = ["../../gir-files"]
+
+external_libraries = [
+    "GLib",
+]
+extra_versions = [
+    "2.82"
+]
+ignore = [
+    "GObject.VaClosureMarshal",
+    "GObject.SignalCVaMarshaller",
+]

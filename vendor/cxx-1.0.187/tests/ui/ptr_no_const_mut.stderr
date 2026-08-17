@@ -1,0 +1,18 @@
+error: expected `mut` or `const` keyword in raw pointer type
+ --> tests/ui/ptr_no_const_mut.rs:6:43
+  |
+6 |         fn get_neither_const_nor_mut() -> *C;
+  |                                           ^
+  |
+help: add `mut` or `const` here
+  |
+6 |         fn get_neither_const_nor_mut() -> *mut C;
+  |                                            +++
+6 |         fn get_neither_const_nor_mut() -> *const C;
+  |                                            +++++
+
+error: expected `const` or `mut`
+ --> tests/ui/ptr_no_const_mut.rs:6:44
+  |
+6 |         fn get_neither_const_nor_mut() -> *C;
+  |                                            ^

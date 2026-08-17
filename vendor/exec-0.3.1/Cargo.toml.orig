@@ -1,0 +1,16 @@
+[package]
+authors = ["Eric Kidd <git@randomhacks.net>"]
+description = "Use the POSIX exec function to replace the running program with another"
+documentation = "https://docs.rs/exec/"
+license = "MIT/Apache-2.0"
+name = "exec"
+readme = "README.md"
+repository = "https://github.com/faradayio/exec-rs"
+version = "0.3.1"
+
+[dependencies]
+errno = "0.2"
+libc = "0.2.8"
+
+[features]
+unstable = []

@@ -1,0 +1,48 @@
+[package]
+authors = ["Josh Chase <josh@prevoty.com>"]
+description = "Rust bindings to the JNI"
+documentation = "https://docs.rs/jni"
+readme = "README.md"
+keywords = [
+    "ffi",
+    "jni",
+    "java",
+]
+categories = ["api-bindings"]
+license = "MIT/Apache-2.0"
+name = "jni"
+repository = "https://github.com/jni-rs/jni-rs"
+# ¡When bumping version please also update it in examples and documentation!
+version = "0.21.1"
+edition = "2018"
+
+[dependencies]
+cfg-if = "1.0.0"
+cesu8 = "1.1.0"
+combine = "4.1.0"
+java-locator = { version = "0.1", optional = true }
+jni-sys = "0.3.0"
+libloading = { version = "0.7", optional = true }
+log = "0.4.4"
+thiserror = "1.0.20"
+
+[build-dependencies]
+walkdir = "2"
+
+[dev-dependencies]
+assert_matches = "1.5.0"
+lazy_static = "1"
+rusty-fork = "0.3.0"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.45.0", features = ["Win32_Globalization"] }
+
+[target.'cfg(windows)'.dev-dependencies]
+bytemuck = "1.13.0"
+
+[features]
+invocation = ["java-locator", "libloading"]
+default = []
+
+[package.metadata.docs.rs]
+features = ["invocation"]

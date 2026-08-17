@@ -1,0 +1,17 @@
+---
+- name: Bad indentation in mapping (2)
+  from: '@perlpunk'
+  tags: error mapping indent double
+  fail: true
+  yaml: |
+    map:
+      key1: "quoted1"
+       key2: "bad indentation"
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :map
+       +MAP
+        =VAL :key1
+        =VAL "quoted1

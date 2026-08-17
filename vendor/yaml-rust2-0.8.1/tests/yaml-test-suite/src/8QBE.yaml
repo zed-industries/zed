@@ -1,0 +1,31 @@
+---
+- name: Block Sequence in Block Mapping
+  from: NimYAML tests
+  tags: mapping sequence
+  yaml: |
+    key:
+     - item1
+     - item2
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :key
+       +SEQ
+        =VAL :item1
+        =VAL :item2
+       -SEQ
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "key": [
+        "item1",
+        "item2"
+      ]
+    }
+  dump: |
+    key:
+    - item1
+    - item2

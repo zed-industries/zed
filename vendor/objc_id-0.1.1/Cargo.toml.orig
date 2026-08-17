@@ -1,0 +1,16 @@
+[package]
+name = "objc_id"
+version = "0.1.1"
+authors = ["Steven Sheldon"]
+
+description = "Rust smart pointers for Objective-C reference counting."
+keywords = ["objective-c", "osx", "ios"]
+readme = "README.md"
+repository = "http://github.com/SSheldon/rust-objc-id"
+documentation = "http://ssheldon.github.io/rust-objc/objc_id/"
+license = "MIT"
+
+exclude = [".gitignore"]
+
+[dependencies]
+objc = "0.2.4"

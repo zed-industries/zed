@@ -1,0 +1,62 @@
+{
+  "worlds": [
+    {
+      "name": "foo",
+      "imports": {},
+      "exports": {
+        "foo": {
+          "function": {
+            "name": "foo",
+            "kind": "freestanding",
+            "params": [],
+            "result": "f32"
+          }
+        }
+      },
+      "package": 0
+    },
+    {
+      "name": "bar",
+      "imports": {
+        "foo": {
+          "type": 0
+        }
+      },
+      "exports": {
+        "foo": {
+          "function": {
+            "name": "foo",
+            "kind": "freestanding",
+            "params": [],
+            "result": "f32"
+          }
+        }
+      },
+      "package": 0
+    }
+  ],
+  "interfaces": [],
+  "types": [
+    {
+      "name": "foo",
+      "kind": {
+        "record": {
+          "fields": []
+        }
+      },
+      "owner": {
+        "world": 1
+      }
+    }
+  ],
+  "packages": [
+    {
+      "name": "foo:bar",
+      "interfaces": {},
+      "worlds": {
+        "foo": 0,
+        "bar": 1
+      }
+    }
+  ]
+}

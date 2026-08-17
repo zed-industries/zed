@@ -1,0 +1,157 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: full
+
+jobs:
+  test:
+    name: Build & test
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+        rust:
+          - stable
+          - beta
+          - nightly
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          default: true
+          profile: minimal
+
+      - name: Restore cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build & test
+        env:
+          RUST_VERSION: ${{ matrix.rust }}
+          OS: ${{ matrix.os }}
+          RUSTFLAGS: -D warnings
+        run: cargo test
+
+  no_std_builds:
+    name: Build no_std targets
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - thumbv7m-none-eabi
+        rust:
+          - stable
+          - beta
+          - nightly
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          target: ${{ matrix.target }}
+          default: true
+          profile: minimal
+
+      - name: Restore cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --no-default-features --release --target ${{ matrix.target }}
+
+  rustfmt:
+    name: Check formatting
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          default: true
+          components: rustfmt
+
+      - run: cargo fmt --all -- --check
+
+  links:
+    name: Check documentation links
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          default: true
+
+      - name: Restore cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check links
+        run: cargo rustdoc --all-features -- -D warnings
+
+  clippy:
+    name: Clippy lints
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          default: true
+          components: clippy
+
+      - name: Restore cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run clippy linter
+        run: cargo clippy --all --tests -- -D clippy::all -D warnings
+
+  miri:
+    name: Miri checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          profile: minimal
+          default: true
+          components: "miri"
+
+      - name: Restore cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run miri
+        env:
+          PROPTEST_CASES: "10"
+          MIRIFLAGS: "-Zmiri-disable-isolation"
+        run: cargo miri test --all-features

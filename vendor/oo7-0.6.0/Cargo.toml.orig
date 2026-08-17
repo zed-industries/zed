@@ -1,0 +1,115 @@
+[package]
+name = "oo7"
+description = "James Bond went on a new mission and this time as a Secret Service provider"
+categories.workspace = true
+keywords.workspace = true
+authors.workspace = true
+edition.workspace = true
+exclude.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+aes = { version = "0.8", features = ["zeroize"], optional = true }
+ashpd = { workspace = true, features = ["secret"] }
+async-fs = { version = "2.2.0", optional = true }
+async-io = { version = "2.6.0", optional = true }
+async-lock = { version = "3.4.2", optional = true }
+blocking = { version = "1.5.1", optional = true }
+cbc = { version = "0.1", features = ["zeroize"], optional = true }
+cipher = { version = "0.4", features = ["zeroize"], optional = true }
+digest = { version = "0.10", optional = true }
+endi.workspace = true
+futures-lite = { workspace = true, optional = true }
+futures-util.workspace = true
+getrandom = "0.4"
+oo7-macros = { path = "../macros", version = "0.6", optional = true }
+hkdf = { version = "0.12", optional = true }
+hmac = { version = "0.12", optional = true }
+md-5 = { version = "0.10", optional = true }
+num = "0.4.0"
+num-bigint-dig.workspace = true
+openssl = { version = "0.10", optional = true }
+pbkdf2 = { version = "0.12", optional = true }
+serde.workspace = true
+serde_bytes = "0.11"
+sha2 = { version = "0.10", optional = true }
+subtle = { version = "2.5", optional = true }
+tokio = { workspace = true, features = [
+    "sync",
+    "fs",
+    "io-util",
+], optional = true, default-features = false }
+tracing = { workspace = true, optional = true }
+zbus.workspace = true
+zbus_macros.workspace = true
+zvariant.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+serial_test = "3.3"
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+[features]
+default = ["tokio", "native_crypto"]
+# Enables unstable low-level API
+unstable = []
+async-std = [
+    "zbus/async-io",
+    "dep:async-fs",
+    "dep:async-io",
+    "dep:async-lock",
+    "dep:blocking",
+    "dep:futures-lite",
+    "ashpd/async-io",
+]
+tokio = ["zbus/tokio", "dep:tokio", "ashpd/tokio"]
+native_crypto = [
+    "dep:aes",
+    "dep:cbc",
+    "dep:cipher",
+    "dep:digest",
+    "dep:hkdf",
+    "dep:hmac",
+    "dep:md-5",
+    "dep:pbkdf2",
+    "dep:sha2",
+    "dep:subtle",
+]
+openssl_crypto = ["dep:openssl"]
+tracing = ["dep:tracing", "ashpd/tracing"]
+schema = ["dep:oo7-macros"]
+
+[package.metadata.docs.rs]
+features = ["unstable"]
+rustdoc-args = ["--generate-link-to-definition"]
+
+[[example]]
+name = "basic"
+path = "examples/basic.rs"
+required-features = ["tokio"]
+
+[[example]]
+name = "basic_2"
+path = "examples/basic_2.rs"
+required-features = ["tokio"]
+
+[[example]]
+name = "dbus_service"
+path = "examples/dbus_service.rs"
+required-features = ["tokio"]
+
+[[example]]
+name = "file_tracing"
+path = "examples/file_tracing.rs"
+required-features = ["tokio", "tracing"]
+
+[[example]]
+name = "schema"
+path = "examples/schema.rs"
+required-features = ["tokio", "schema"]

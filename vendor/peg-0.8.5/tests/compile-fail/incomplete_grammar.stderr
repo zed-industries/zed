@@ -1,0 +1,17 @@
+error: expected one of "#", "grammar", "pub" at end of input
+ --> tests/compile-fail/incomplete_grammar.rs:2:1
+  |
+2 | peg::parser!();
+  | ^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the macro `peg::parser` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: expected one of "::", "<", "{" at end of input
+ --> tests/compile-fail/incomplete_grammar.rs:4:1
+  |
+4 | / peg::parser!(
+5 | |     grammar parser() for str
+6 | | );
+  | |_^
+  |
+  = note: this error originates in the macro `peg::parser` (in Nightly builds, run with -Z macro-backtrace for more info)

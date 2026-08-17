@@ -1,0 +1,29 @@
+[package]
+name = "maybe-owned"
+version = "0.3.4"
+authors = [
+	"Philipp korber <philippkorber@gmail.com>",
+	"darkstalker <slayerbeast@gmail.com>",
+    "daboross <daboross@daboross.net>",
+    "Zac Burns (That3Percent) <that3percent@gmail.com>"
+]
+description = "provides a `MaybeOwned` (and `MaybeOwnedMut`) type similar to std's `Cow` but it implements `From<T>` and `From<&'a T>` and does not require `ToOwned`"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/rustonaut/maybe-owned"
+readme = "./README.md"
+categories = []
+keywords = [
+    "maybe", "owned", "Cow"
+]
+
+
+[badges]
+travis-ci = { repository = "rustonaut/maybe-owned", branch = "0.3" }
+maintenance = { status = "passively-maintained" }
+
+[dependencies]
+serde = { version = "1", optional = true }
+
+[dev-dependencies]
+serde_json = "1"
+serde_derive = "1"

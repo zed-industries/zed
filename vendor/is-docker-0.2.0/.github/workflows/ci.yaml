@@ -1,0 +1,25 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+  schedule: [cron: "40 1 * * *"]
+  
+permissions: 
+  contents: read
+
+jobs: 
+  test:
+    name: Test on Ubuntu
+    runs-on: ubuntu-latest
+    strategy: 
+      fail-fast: false
+      matrix: 
+        rust: [stable, beta]
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@master
+        name: Install toolchain
+        with: 
+          toolchain: ${{ matrix.rust }}
+      - run: cargo test

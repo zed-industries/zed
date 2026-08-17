@@ -1,0 +1,87 @@
+---
+- name: Trailing tabs in double quoted
+  from: '@ingydotnet'
+  tags: double whitespace
+  yaml: |
+    "1 trailing\t
+        tab"
+  tree: |
+    +STR
+     +DOC
+      =VAL "1 trailing\t tab
+     -DOC
+    -STR
+  json: |
+    "1 trailing\t tab"
+  dump: |
+    "1 trailing\t tab"
+
+- yaml: |
+    "2 trailing\t␣␣
+        tab"
+  tree: |
+    +STR
+     +DOC
+      =VAL "2 trailing\t tab
+     -DOC
+    -STR
+  json: |
+    "2 trailing\t tab"
+  dump: |
+    "2 trailing\t tab"
+
+- yaml: |
+    "3 trailing\————»
+        tab"
+  tree: |
+    +STR
+     +DOC
+      =VAL "3 trailing\t tab
+     -DOC
+    -STR
+  json: |
+    "3 trailing\t tab"
+  dump: |
+    "3 trailing\t tab"
+
+- yaml: |
+    "4 trailing\————»␣␣
+        tab"
+  tree: |
+    +STR
+     +DOC
+      =VAL "4 trailing\t tab
+     -DOC
+    -STR
+  json: |
+    "4 trailing\t tab"
+  dump: |
+    "4 trailing\t tab"
+
+- yaml: |
+    "5 trailing—»
+        tab"
+  tree: |
+    +STR
+     +DOC
+      =VAL "5 trailing tab
+     -DOC
+    -STR
+  json: |
+    "5 trailing tab"
+  dump: |
+    "5 trailing tab"
+
+- yaml: |
+    "6 trailing—»␣␣
+        tab"
+  tree: |
+    +STR
+     +DOC
+      =VAL "6 trailing tab
+     -DOC
+    -STR
+  json: |
+    "6 trailing tab"
+  dump: |
+    "6 trailing tab"

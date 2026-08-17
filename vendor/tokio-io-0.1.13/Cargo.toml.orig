@@ -1,0 +1,28 @@
+[package]
+name = "tokio-io"
+# When releasing to crates.io:
+# - Remove path dependencies
+# - Update html_root_url.
+# - Update doc url
+#   - Cargo.toml
+#   - README.md
+# - Update CHANGELOG.md.
+# - Create "v0.1.x" git tag.
+version = "0.1.13"
+authors = ["Carl Lerche <me@carllerche.com>"]
+license = "MIT"
+repository = "https://github.com/tokio-rs/tokio"
+homepage = "https://tokio.rs"
+documentation = "https://docs.rs/tokio-io/0.1.13/tokio_io"
+description = """
+Core I/O primitives for asynchronous I/O in Rust.
+"""
+categories = ["asynchronous"]
+
+[dependencies]
+bytes = "0.4.7"
+futures = "0.1.18"
+log = "0.4"
+
+[dev-dependencies]
+tokio-current-thread = "0.1.1"

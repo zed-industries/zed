@@ -1,0 +1,10 @@
+package foo:foo;
+
+interface %interface {
+  type %type = u32;
+  type %world = %type;
+
+  record %record {
+    %variant: %world,
+  }
+}

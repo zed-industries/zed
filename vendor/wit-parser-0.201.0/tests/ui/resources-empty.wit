@@ -1,0 +1,10 @@
+package foo:resources-empty;
+
+interface resources-empty {
+  t1: func(a: own<r1>) -> ();
+  t2: func(a: borrow<r1>) -> ();
+
+  resource r1 {
+  }
+}
+

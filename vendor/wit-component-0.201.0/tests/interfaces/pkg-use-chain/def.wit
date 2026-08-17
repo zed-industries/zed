@@ -1,0 +1,13 @@
+package foo:chain;
+
+interface def {
+  use a.{a};
+
+  enum name {
+    other,
+  }
+}
+
+interface a {
+  type a = u8;
+}

@@ -1,0 +1,4 @@
+[undeadleech@archhq saved_cursor_alt]$ echo -e "\e(0\e[10;$(tput cols)H \e[?1049h\e7 \e[?1049l \e(B\e[H \e[?1049h test\e8xxx"
+(0[10;139H [?1049h7 [?1049l (B[H [?1049h test8xxx
+[undeadleech@archhq saved_cursor_alt]$ exit
+exit

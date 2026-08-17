@@ -1,0 +1,5 @@
+expected ':', found '}'
+     --> tests/ui/parse-fail/invalid-toplevel.wit:5:1
+      |
+    5 | }
+      | ^

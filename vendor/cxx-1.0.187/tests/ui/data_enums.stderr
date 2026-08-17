@@ -1,0 +1,5 @@
+error: enums with data are not supported yet
+ --> tests/ui/data_enums.rs:4:9
+  |
+4 |         Field(u64),
+  |         ^^^^^^^^^^

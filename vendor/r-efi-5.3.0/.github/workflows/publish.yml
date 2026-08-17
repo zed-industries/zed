@@ -1,0 +1,39 @@
+#
+# Publish Releases
+#
+# This workflow can be manually triggered and will then publish the
+# specified release to the configured release channels.
+#
+
+name: "Publish Releases"
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Git-Tag to Publish"
+        default: ""
+        required: true
+      verify:
+        description: "Verify package before publishing"
+        default: "yes"
+        required: false
+
+defaults:
+  run:
+    shell: "bash"
+
+jobs:
+  publish:
+    name: "Publish Crate"
+    uses: readaheadeu/rae-actions/.github/workflows/lib-publish-rust.yml@v1
+
+    permissions:
+      contents: write
+
+    secrets:
+      ciotoken: ${{ secrets.DEPLOY_CRATESIO_TOKEN }}
+
+    with:
+      tag: ${{ github.event.inputs.tag }}
+      verify: ${{ github.event.inputs.verify == 'yes' || false }}

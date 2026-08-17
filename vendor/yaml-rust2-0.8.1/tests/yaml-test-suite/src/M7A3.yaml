@@ -1,0 +1,29 @@
+---
+- name: Spec Example 9.3. Bare Documents
+  from: http://www.yaml.org/spec/1.2/spec.html#id2801226
+  tags: spec footer 1.3-err
+  yaml: |
+    Bare
+    document
+    ...
+    # No document
+    ...
+    |
+    %!PS-Adobe-2.0 # Not the first line
+  tree: |
+    +STR
+     +DOC
+      =VAL :Bare document
+     -DOC ...
+     +DOC
+      =VAL |%!PS-Adobe-2.0 # Not the first line\n
+     -DOC
+    -STR
+  json: |
+    "Bare document"
+    "%!PS-Adobe-2.0 # Not the first line\n"
+  emit: |
+    Bare document
+    ...
+    |
+      %!PS-Adobe-2.0 # Not the first line

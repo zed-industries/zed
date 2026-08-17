@@ -1,0 +1,29 @@
+[package]
+name = "pest_generator"
+description = "pest code generator"
+version = "2.8.3"
+edition = "2021"
+authors = ["Dragoș Tiselice <dragostiselice@gmail.com>"]
+homepage = "https://pest.rs/"
+repository = "https://github.com/pest-parser/pest"
+documentation = "https://docs.rs/pest"
+keywords = ["pest", "generator"]
+categories = ["parsing"]
+license = "MIT OR Apache-2.0"
+readme = "_README.md"
+rust-version = "1.81"
+
+[features]
+default = ["std"]
+std = ["pest/std"]
+not-bootstrap-in-src = ["pest_meta/not-bootstrap-in-src"]
+grammar-extras = ["pest_meta/grammar-extras"]
+# Export internal API that is not intended to be stable
+export-internal = []
+
+[dependencies]
+pest = { path = "../pest", version = "2.8.3", default-features = false }
+pest_meta = { path = "../meta", version = "2.8.3" }
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = "2.0"

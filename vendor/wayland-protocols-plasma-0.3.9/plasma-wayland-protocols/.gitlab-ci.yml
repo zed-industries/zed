@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: 2020 Volker Krause <vkrause@kde.org>
+# SPDX-License-Identifier: CC0-1.0
+
+include:
+  - project: sysadmin/ci-utilities
+    file:
+      - /gitlab-templates/linux.yml
+      - /gitlab-templates/linux-static.yml  
+      - /gitlab-templates/linux-qt6.yml
+      - /gitlab-templates/linux-qt6-static.yml
+      - /gitlab-templates/freebsd.yml
+      - /gitlab-templates/freebsd-qt6.yml
+      - /gitlab-templates/alpine-qt6.yml

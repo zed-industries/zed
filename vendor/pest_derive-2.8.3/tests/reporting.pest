@@ -1,0 +1,27 @@
+// pest. The Elegant Parser
+// Copyright (c) 2018 Dragoș Tiselice
+//
+// Licensed under the Apache License, Version 2.0
+// <LICENSE-APACHE or http://www.apache.org/licenses/LICENSE-2.0> or the MIT
+// license <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. All files in the project carrying such notice may not be copied,
+// modified, or distributed except according to those terms.
+
+a = { "a" }
+b = { "b" }
+c = { "c" }
+d = { ANY }
+
+choices = _{ a | b | c }
+choices_no_progress = { a | b | c }
+choices_a_progress = { a ~ a | b | c }
+choices_b_progress = { a | b ~ b | c }
+
+level1 = _{ level2 }
+level2 = _{ a | b | c }
+
+negative = _{ !d }
+negative_match = _{ !a ~ b }
+mixed = _{ !d | a }
+mixed_progress = _{ (!d | a | b) ~ a }
+

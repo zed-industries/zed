@@ -1,0 +1,6 @@
+r#"vsftpd is licensed under version 2 of the GNU GPL.
+As copyright holder, I give permission for vsftpd to be linked to the OpenSSL
+libraries. This includes permission for vsftpd binaries to be distributed
+linked against the OpenSSL libraries. All other obligations under the GPL v2
+remain intact.
+"#

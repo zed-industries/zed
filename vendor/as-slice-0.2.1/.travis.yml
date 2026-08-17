@@ -1,0 +1,12 @@
+language: rust
+
+cache: cargo
+
+branches:
+  only:
+    - staging
+    - trying
+
+notifications:
+  email:
+    on_success: never

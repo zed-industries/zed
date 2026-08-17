@@ -1,0 +1,44 @@
+framework = "AVFAudio"
+crate = "objc2-avf-audio"
+required-crates = ["objc2", "objc2-foundation"]
+custom-lib-rs = true
+flags = [
+    # Make AudioToolbox less dependent on CoreServices
+    "-DAUDIOCOMPONENT_NOCARBONINSTANCES=1",
+]
+# The documentation says something newer here, but since AVFAudio was
+# originally available as part of AVFoundation, the linker is able to figure
+# out that it actually needs to link AVFoundation because of the $ld$previous$
+# directives in AVFAudio.tdb.
+macos = "10.7"
+maccatalyst = "13.1"
+ios = "2.2"
+tvos = "9.0"
+watchos = "3.0"
+visionos = "1.0"
+
+# AUMIDIEventListBlock not currently exported by AudioToolbox
+class.AVAudioEngine.methods."connectMIDI:to:format:eventListBlock:".skipped = true
+class.AVAudioEngine.methods."connectMIDI:toNodes:format:eventListBlock:".skipped = true
+
+# Both the NSObject superclass and the AVAudioSessionDeprecated category defines this
+class.AVAudioSession.methods.init.skipped = true
+class.AVAudioSession.methods.new.skipped = true # Use sharedInstance
+
+# Integer return type in error method, unclear how to handle yet
+class.AVAudioSequencer.methods."hostTimeForBeats:error:".skipped = true
+class.AVAudioSequencer.methods."beatsForHostTime:error:".skipped = true
+class.AVAudioEngine.methods."renderOffline:toBuffer:error:".skipped = true
+
+# Needs AppKit or UIKit
+class.AVAudioUnitComponent.methods.icon.skipped = true
+
+# Needs CASpatialAudioExperience, which is not available on macOS (where header-translator runs).
+class.AVAudioOutputNode.methods.intendedSpatialExperience.skipped = true
+class.AVAudioOutputNode.methods."setIntendedSpatialExperience:".skipped = true
+class.AVAudioPlayer.methods.intendedSpatialExperience.skipped = true
+class.AVAudioPlayer.methods."setIntendedSpatialExperience:".skipped = true
+
+class.AVAudioBuffer.skipped-protocols = ["NSMutableCopying"]
+class.AVAudioPCMBuffer.skipped-protocols = ["NSMutableCopying"]
+class.AVAudioCompressedBuffer.skipped-protocols = ["NSMutableCopying"]

@@ -1,0 +1,11 @@
+// parse-fail
+
+package foo:foo;
+
+interface foo {
+  use bar.{x};
+}
+
+interface bar {
+  x: func();
+}

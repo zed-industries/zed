@@ -1,0 +1,17 @@
+error: use of deprecated associated function `num_enum::UnsafeFromPrimitive::from_unchecked`: Prefer to use `unchecked_transmute_from`, `from_unchecked` will be removed in a future release.
+  --> tests/try_build/compile_fail/from_unchecked_deprecated_warning.rs:14:26
+   |
+14 |         assert_eq!(Enum::from_unchecked(0_u8), Enum::Zero);
+   |                          ^^^^^^^^^^^^^^
+   |
+note: the lint level is defined here
+  --> tests/try_build/compile_fail/from_unchecked_deprecated_warning.rs:1:9
+   |
+1  | #![deny(deprecated)]
+   |         ^^^^^^^^^^
+
+error: use of deprecated associated function `num_enum::UnsafeFromPrimitive::from_unchecked`: Prefer to use `unchecked_transmute_from`, `from_unchecked` will be removed in a future release.
+  --> tests/try_build/compile_fail/from_unchecked_deprecated_warning.rs:15:26
+   |
+15 |         assert_eq!(Enum::from_unchecked(1_u8), Enum::One);
+   |                          ^^^^^^^^^^^^^^

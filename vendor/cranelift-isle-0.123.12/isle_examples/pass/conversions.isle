@@ -1,0 +1,27 @@
+(type T (enum (A) (B)))
+(type U (enum (C) (D)))
+(type V (enum (E) (F)))
+
+(convert T U t_to_u)
+(convert U T u_to_t)
+(convert U V u_to_v)
+
+(decl t_to_u (T) U)
+(decl u_to_t (U) T)
+(decl u_to_v (U) V)
+
+(rule (t_to_u (T.A)) (U.C))
+(rule (t_to_u (T.B)) (U.D))
+
+(rule (u_to_t (U.C)) (T.A))
+(rule (u_to_t (U.D)) (T.B))
+
+(rule (u_to_v (U.C)) (V.E))
+(rule (u_to_v (U.D)) (V.F))
+
+(extern extractor u_to_t u_to_t)
+      
+
+(decl X (T U) V)
+(rule (X (U.C) (U.D))
+      (U.D))

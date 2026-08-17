@@ -1,0 +1,132 @@
+[package]
+name = "naga"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "Shader translator and validator. Part of the wgpu project"
+repository.workspace = true
+keywords = ["shader", "SPIR-V", "GLSL", "MSL"]
+license.workspace = true
+exclude = ["bin/**/*", "tests/**/*", "Cargo.lock", "target/**/*"]
+
+# Override the workspace's `rust-version` key. Firefox uses `cargo vendor` to
+# copy the crates it actually uses out of the workspace, so it's meaningful for
+# them to have less restrictive MSRVs individually than the workspace as a
+# whole, if their code permits. See `../README.md` for details.
+rust-version = "1.87"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+default = []
+dot-out = []
+glsl-in = ["dep:pp-rs"]
+glsl-out = []
+
+## Enables outputting to the Metal Shading Language (MSL).
+##
+## This enables MSL output regardless of the target platform.
+## If you want to enable it only when targeting iOS/tvOS/watchOS/macOS, use `naga/msl-out-if-target-apple`.
+msl-out = []
+
+## Enables outputting to the Metal Shading Language (MSL) only if the target platform is iOS/tvOS/watchOS/macOS.
+##
+## If you want to enable MSL output it regardless of the target platform, use `naga/msl-out`.
+msl-out-if-target-apple = []
+
+serialize = [
+    "dep:serde",
+    "bitflags/serde",
+    "half/serde",
+    "hashbrown/serde",
+    "indexmap/serde",
+]
+deserialize = [
+    "dep:serde",
+    "bitflags/serde",
+    "half/serde",
+    "hashbrown/serde",
+    "indexmap/serde",
+]
+arbitrary = [
+    "dep:arbitrary",
+    "bitflags/arbitrary",
+    "indexmap/arbitrary",
+    "half/arbitrary",
+    "half/std",
+]
+spv-in = ["dep:petgraph", "petgraph/graphmap", "dep:spirv"]
+spv-out = ["dep:spirv"]
+wgsl-in = ["dep:hexf-parse", "dep:unicode-ident"]
+wgsl-out = []
+
+## Enables outputting to HLSL (Microsoft's High-Level Shader Language).
+##
+## This enables HLSL output regardless of the target platform.
+## If you want to enable it only when targeting Windows, use `hlsl-out-if-target-windows`.
+hlsl-out = []
+
+## Enables outputting to HLSL (Microsoft's High-Level Shader Language) only if the target platform is Windows.
+##
+## If you want to enable HLSL output it regardless of the target platform, use `naga/hlsl-out`.
+hlsl-out-if-target-windows = []
+
+## Enables colored output through codespan-reporting and termcolor.
+termcolor = ["codespan-reporting/termcolor"]
+
+## Enables writing output to stderr.
+stderr = ["codespan-reporting/std"]
+
+## Enables integration with the underlying filesystem.
+fs = []
+
+[dependencies]
+arbitrary = { workspace = true, features = ["derive"], optional = true }
+arrayvec.workspace = true
+bitflags.workspace = true
+bit-set.workspace = true
+cfg-if.workspace = true
+codespan-reporting = { workspace = true }
+hashbrown.workspace = true
+half = { workspace = true, features = ["num-traits"] }
+rustc-hash.workspace = true
+indexmap.workspace = true
+libm = { workspace = true, default-features = false }
+log.workspace = true
+num-traits.workspace = true
+once_cell = { workspace = true, features = ["alloc", "race"] }
+spirv = { workspace = true, optional = true }
+thiserror.workspace = true
+serde = { workspace = true, features = ["alloc", "derive"], optional = true }
+petgraph = { workspace = true, optional = true }
+pp-rs = { workspace = true, optional = true }
+hexf-parse = { workspace = true, optional = true }
+unicode-ident = { workspace = true, optional = true }
+
+[build-dependencies]
+cfg_aliases.workspace = true
+
+[dev-dependencies]
+diff.workspace = true
+env_logger.workspace = true
+hashbrown = { workspace = true, features = ["serde"] }
+hlsl-snapshots.workspace = true
+itertools.workspace = true
+naga-test.workspace = true
+ron.workspace = true
+rspirv.workspace = true
+# So we don't actually need this, however if we remove this, it
+# brakes calling `--features spirv` at the workspace level. I think
+# this is because there is a `dep:spirv` in the regular feature set,
+# so cargo tries to match the feature against that, fails as it's a optional dep,
+# and then refuses to build instead of ignoring it.
+spirv.workspace = true
+serde = { workspace = true, features = ["default", "derive"] }
+strum = { workspace = true }
+walkdir.workspace = true
+
+[lints.clippy]
+std_instead_of_alloc = "warn"
+std_instead_of_core = "warn"
+alloc_instead_of_core = "warn"

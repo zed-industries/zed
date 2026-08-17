@@ -1,0 +1,11 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+libdir=@LIBDIR_FOR_PC_FILE@
+includedir=@INCLUDEDIR_FOR_PC_FILE@
+
+Name: AWS-LC-lib@CRYPTO_LIB_NAME@
+Description: AWS-LC Cryptographic Library (@SOFTWARE_VERSION@)
+URL: https://github.com/aws/aws-lc
+Version: @REPORTED_PKGCONFIG_VERSION@
+Libs: -L${libdir} -l@CRYPTO_LIB_NAME@
+Libs.private: @PKGCONFIG_LIBS_PRIVATE@
+Cflags: -I${includedir}

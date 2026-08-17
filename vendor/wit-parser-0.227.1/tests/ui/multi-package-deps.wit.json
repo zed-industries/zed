@@ -1,0 +1,161 @@
+{
+  "worlds": [],
+  "interfaces": [
+    {
+      "name": "i2",
+      "types": {
+        "t": 0
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "i1",
+      "types": {
+        "t": 1,
+        "o": 2
+      },
+      "functions": {},
+      "package": 1
+    },
+    {
+      "name": "nesty",
+      "types": {
+        "o": 3,
+        "l": 4
+      },
+      "functions": {},
+      "package": 2
+    },
+    {
+      "name": "i0",
+      "types": {
+        "o": 5,
+        "l": 6,
+        "r": 7,
+        "r1": 8
+      },
+      "functions": {},
+      "package": 3
+    }
+  ],
+  "types": [
+    {
+      "name": "t",
+      "kind": {
+        "type": "string"
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "t",
+      "kind": {
+        "type": 0
+      },
+      "owner": {
+        "interface": 1
+      }
+    },
+    {
+      "name": "o",
+      "kind": {
+        "option": 1
+      },
+      "owner": {
+        "interface": 1
+      }
+    },
+    {
+      "name": "o",
+      "kind": {
+        "type": 2
+      },
+      "owner": {
+        "interface": 2
+      }
+    },
+    {
+      "name": "l",
+      "kind": {
+        "list": 3
+      },
+      "owner": {
+        "interface": 2
+      }
+    },
+    {
+      "name": "o",
+      "kind": {
+        "type": 2
+      },
+      "owner": {
+        "interface": 3
+      }
+    },
+    {
+      "name": "l",
+      "kind": {
+        "type": 4
+      },
+      "owner": {
+        "interface": 3
+      }
+    },
+    {
+      "name": "r",
+      "kind": {
+        "result": {
+          "ok": 5,
+          "err": null
+        }
+      },
+      "owner": {
+        "interface": 3
+      }
+    },
+    {
+      "name": "r1",
+      "kind": {
+        "result": {
+          "ok": 6,
+          "err": null
+        }
+      },
+      "owner": {
+        "interface": 3
+      }
+    }
+  ],
+  "packages": [
+    {
+      "name": "foo:dep2",
+      "interfaces": {
+        "i2": 0
+      },
+      "worlds": {}
+    },
+    {
+      "name": "foo:dep1",
+      "interfaces": {
+        "i1": 1
+      },
+      "worlds": {}
+    },
+    {
+      "name": "foo:nest",
+      "interfaces": {
+        "nesty": 2
+      },
+      "worlds": {}
+    },
+    {
+      "name": "foo:root",
+      "interfaces": {
+        "i0": 3
+      },
+      "worlds": {}
+    }
+  ]
+}

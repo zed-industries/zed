@@ -1,0 +1,27 @@
+---
+- name: Multiple Pair Block Mapping
+  from: https://github.com/ingydotnet/yaml-pegex-pm/blob/master/test/mapping.tml
+  tags: mapping
+  yaml: |
+    foo: blue
+    bar: arrr
+    baz: jazz
+  tree: |
+    +STR
+     +DOC
+      +MAP
+       =VAL :foo
+       =VAL :blue
+       =VAL :bar
+       =VAL :arrr
+       =VAL :baz
+       =VAL :jazz
+      -MAP
+     -DOC
+    -STR
+  json: |
+    {
+      "foo": "blue",
+      "bar": "arrr",
+      "baz": "jazz"
+    }

@@ -1,0 +1,134 @@
+[package]
+name = "octocrab"
+version = "0.49.7"
+resolver = "2"
+authors = ["XAMPPRocky <xampprocky@gmail.com>"]
+edition = "2018"
+readme = "README.md"
+homepage = "https://github.com/XAMPPRocky/octocrab"
+repository = "https://github.com/XAMPPRocky/octocrab.git"
+description = "A modern, extensible GitHub API client."
+license = "MIT OR Apache-2.0"
+documentation = "https://docs.rs/octocrab"
+categories = ["web-programming::http-client"]
+keywords = ["github", "github-api"]
+rust-version = "1.73.0"
+
+[package.metadata.github-api]
+request-headers = ["X-GitHub-Api-Version: 2022-11-28"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[package.metadata.docs.rs]
+# Cannot use all-features because jwt-aws-lc-rs and jwt-rust-crypto are mutually exclusive.
+# This list should include all features EXCEPT jwt-aws-lc-rs.
+# When adding new features, remember to add them here too.
+features = [
+    "default-client",
+    "follow-redirect",
+    "jwt-rust-crypto",
+    # "jwt-aws-lc-rs",  # Excluded: conflicts with jwt-rust-crypto
+    "opentls",
+    "retry",
+    "rustls",
+    "rustls-aws-lc-rs",
+    "rustls-ring",
+    "rustls-webpki-tokio",
+    "stream",
+    "timeout",
+    "tracing",
+]
+rustdoc-args = ["--cfg", "docsrs"]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[dependencies]
+async-trait = "0.1.50"
+arc-swap = "1.3.0"
+base64 = "0.22.0"
+bytes = "1.0.1"
+chrono = { version = "0.4.19", default-features = false, features = [
+    "serde",
+    "clock",
+    "wasmbind",
+] }
+web-time = { version = "1.1.0", features = ["serde"] }
+cfg-if = "1.0.0"
+either = "1.8.0"
+futures = { version = "0.3.15" }
+futures-core = { version = "0.3", optional = true }
+futures-util = { version = "0.3", optional = true }
+getrandom = { version = "0.2.15", features = ["js"] }
+jsonwebtoken = { version = "10", default-features = false, features = ["use_pem"] }
+http = "1.0.0"
+http-body = "1.0.0"
+http-body-util = "0.1.0"
+hyper = "1.1.0"
+hyper-rustls = { version = "0.27.0", optional = true, default-features = false, features = [
+    "http1",
+    "logging",
+    "native-tokio",
+    "tls12",
+] }
+hyper-timeout = { version = "0.5.1", optional = true }
+hyper-tls = { version = "0.6.0", optional = true }
+hyper-util = { version = "0.1.3", features = ["http1"] }
+once_cell = "1.7.2"
+percent-encoding = "2.2.0"
+pin-project = "1.0.12"
+secrecy = "0.10.3"
+serde = { version = "1.0.126", features = ["derive"] }
+serde_json = "1.0.64"
+serde_path_to_error = "0.1.4"
+serde_urlencoded = "0.7.1"
+snafu = "0.8"
+tokio = { version = "1.17.0", default-features = false, features = [
+    "time",
+], optional = true }
+tower = { version = "0.5.1", default-features = false, features = [
+    "util",
+    "buffer",
+] }
+tower-http = { version = "0.6.1", features = ["map-response-body", "trace"] }
+tracing = { version = "0.1.37", features = ["log"], optional = true }
+url = { version = "2.2.2", features = ["serde"] }
+
+[dev-dependencies]
+tokio = { version = "1.17.0", default-features = false, features = [
+    "macros",
+    "rt-multi-thread",
+    "time",
+] }
+tokio-test = "0.4.2"
+wiremock = "0.6.0"
+crypto_box = { version = "0.8.2", features = ["seal"] }
+base64 = "0.22.0"
+pretty_assertions = "1.4.0"
+graphql_client = "0.14.0"
+
+[build-dependencies]
+cargo_metadata = "0.23.0"
+
+# NOTE: When adding new features, also add them to [package.metadata.docs.rs].features
+[features]
+default = [
+    "follow-redirect",
+    "retry",
+    "rustls",
+    "timeout",
+    "tracing",
+    "default-client",
+    "rustls-ring",
+    "jwt-rust-crypto",
+]
+
+follow-redirect = ["tower-http/follow-redirect"]
+retry = ["tower/retry", "futures-util"]
+rustls = ["hyper-rustls"]
+rustls-ring = ["hyper-rustls/ring"]
+rustls-aws-lc-rs = ["hyper-rustls/aws-lc-rs"]
+jwt-aws-lc-rs = ["jsonwebtoken/aws_lc_rs"]
+jwt-rust-crypto = ["jsonwebtoken/rust_crypto"]
+rustls-webpki-tokio = ["hyper-rustls/webpki-tokio"]
+opentls = ["hyper-tls"]
+stream = ["futures-core", "futures-util"]
+timeout = ["hyper-timeout", "tokio", "tower/timeout"]
+default-client = ["hyper-util/client-legacy"]

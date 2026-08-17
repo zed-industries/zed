@@ -1,0 +1,53 @@
+{
+  "worlds": [],
+  "interfaces": [
+    {
+      "name": "foo",
+      "types": {
+        "foo": 0
+      },
+      "functions": {},
+      "package": 0
+    },
+    {
+      "name": "name",
+      "types": {
+        "foo": 1
+      },
+      "functions": {},
+      "package": 0
+    }
+  ],
+  "types": [
+    {
+      "name": "foo",
+      "kind": {
+        "record": {
+          "fields": []
+        }
+      },
+      "owner": {
+        "interface": 0
+      }
+    },
+    {
+      "name": "foo",
+      "kind": {
+        "type": 0
+      },
+      "owner": {
+        "interface": 1
+      }
+    }
+  ],
+  "packages": [
+    {
+      "name": "foo:name",
+      "interfaces": {
+        "foo": 0,
+        "name": 1
+      },
+      "worlds": {}
+    }
+  ]
+}

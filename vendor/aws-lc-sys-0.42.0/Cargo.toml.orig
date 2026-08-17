@@ -1,0 +1,85 @@
+[package]
+name = "aws-lc-sys"
+description = "AWS-LC is a general-purpose cryptographic library maintained by the AWS Cryptography team for AWS and their customers. It іs based on code from the Google BoringSSL project and the OpenSSL project."
+version = "0.42.0"
+links = "aws_lc_0_42_0"
+authors = ["AWS-LC"]
+edition = "2021"
+repository = "https://github.com/aws/aws-lc-rs"
+license = "ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)"
+rust-version = "1.71.0"
+include = [
+    "LICENSE",
+    "/aws-lc/**/*.c",
+    "/aws-lc/**/*.cc",
+    "/aws-lc/**/*.pl",
+    "/aws-lc/**/*.h",
+    "/aws-lc/**/*.h.in",
+    "/aws-lc/**/*.pc.in",
+    "/aws-lc/**/*.i",
+    "/aws-lc/**/*.S",
+    "/aws-lc/**/*.asm",
+    "/aws-lc/**/CMakeLists.txt",
+    "/aws-lc/**/*.cmake",
+    "/aws-lc/**/*.errordata",
+    "/aws-lc/**/err_data_generate.go",
+    "/aws-lc/**/*.lds",
+    "/aws-lc/**/*.inc",
+    "!/aws-lc/bindings/**",
+    "!/aws-lc/docs/**",
+    "!/aws-lc/fuzz/**",
+    "!/aws-lc/generated-src/crypto_test_data.cc",
+    "!/aws-lc/tests/**",
+    "!/aws-lc/third_party/**",
+    "!/aws-lc/util/**",
+    "!/aws-lc/tool/**",
+    "!/aws-lc/tool-openssl/**",
+    "/aws-lc/tests/compiler_features_tests/**.c",
+    "/aws-lc/third_party/fiat/**/LICENSE",
+    "/aws-lc/third_party/fiat/**/*.h",
+    "/aws-lc/third_party/s2n-bignum/**/*.S",
+    "/aws-lc/third_party/s2n-bignum/**/*.h",
+    "/aws-lc/third_party/jitterentropy/**/*.c",
+    "/aws-lc/third_party/jitterentropy/**/*.h",
+    "/aws-lc/third_party/jitterentropy/CMakeLists.txt",
+    "!/aws-lc/third_party/jitterentropy/jitterentropy-library/tests/**",
+    "/aws-lc/util/fipstools/**/CMakeLists.txt",
+    "/aws-lc/util/fipstools/**/*.c",
+    "/CMakeLists.txt",
+    "/builder/**/*.rs",
+    "/builder/**/*.bat",
+    "/builder/**/*.sh",
+    "/builder/**/*.obj",
+    "/builder/**/*.c",
+    "/Cargo.toml",
+    "/generated-include/**",
+    "/include/**",
+    "/src/**/*.rs",
+    "/tests/**/*.rs",
+]
+build = "builder/main.rs"
+
+[features]
+asan = []
+ssl = ['bindgen', 'all-bindings']
+bindgen = ["dep:bindgen"] # Generate the bindings on the targeted platform as a fallback mechanism.
+disable-prebuilt-nasm = []
+prebuilt-nasm = []
+all-bindings = []
+default = ['all-bindings']
+fips = ['dep:bindgen']
+
+[build-dependencies]
+cmake.workspace = true
+dunce.workspace = true
+fs_extra.workspace = true
+cc = { workspace = true, features = ["parallel"] }
+bindgen = { workspace = true, optional = true }
+
+[target.'cfg(unix)'.build-dependencies]
+# Used only for auto-detecting a system-installed AWS-LC on Unix; not available
+# (and not used) on Windows/MSVC.
+pkg-config = { workspace = true }
+
+[package.metadata.aws-lc-sys]
+commit-hash = "6283365b1d43abadfa9b997812cef06b095f7f04"

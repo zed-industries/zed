@@ -1,0 +1,28 @@
+[package]
+name = "page_size"
+version = "0.6.0"
+authors = ["Philip Woods <elzairthesorcerer@gmail.com>"]
+description = "Provides an easy, fast, cross-platform way to retrieve the memory page size"
+readme = "README.md"
+license = "MIT/Apache-2.0"
+documentation = "https://docs.rs/page_size/"
+homepage = "https://github.com/Elzair/page_size_rs"
+repository = "https://github.com/Elzair/page_size_rs"
+keywords = ["page", "memory", "ram", "page_size"]
+categories = ["os"]
+
+[badges]
+travis-ci = { repository = "Elzair/page_size_rs" }
+appveyor = { repository = "Elzair/page_size_rs" }
+
+[features]
+no_std = ["spin"]
+
+[dependencies]
+spin = { version = "0.9.8", optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "^0.2"
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3.9", features = ["sysinfoapi"] }

@@ -1,0 +1,93 @@
+name: Rust
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs: 
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+    - name: Build
+      run: cargo build --verbose
+    - name: Run tests
+      run: cargo test --verbose
+    - name: Run tests on no_std
+      run: cargo test --no-default-features --verbose
+    - name: Run tests for serde
+      run: cargo test --features serde --verbose
+    - run: cargo test --no-default-features --features serde_no_std
+    - run: cargo test --features borsh
+    - run: cargo test --features miniserde
+      
+  miri:
+    name: "Miri"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Miri
+        run: |
+          rustup toolchain install nightly --component miri
+          rustup override set nightly
+          cargo miri setup
+      - name: Test with Miri
+        run: MIRIFLAGS=-Zmiri-strict-provenance cargo miri test
+  
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  msrv:
+    name: Rust ${{matrix.rust}}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: [1.82.0, 1.83.0]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{matrix.rust}}
+      - run: cargo build
+      - run: cargo test
+      - run: cargo test --no-default-features
+      - run: cargo test --no-default-features --features serde_no_std
+      - run: cargo test --features serde
+      - run: cargo test --features miniserde
+      - run: cargo test --features borsh
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+            toolchain: stable
+            components: clippy
+      - run: cargo clippy --workspace --tests --examples
+
+  docs:
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -Dwarnings
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - uses: swatinem/rust-cache@v2
+      - run: cargo doc --workspace --no-deps

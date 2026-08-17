@@ -1,0 +1,116 @@
+---
+source: brush-parser/src/parser.rs
+expression: "ParseResult { input, result: &seq }"
+---
+ParseResult(
+  input: "foo() { echo 1; } 2>&1 | cat",
+  result: [
+    Function(FunctionDefinition(
+      fname: W(
+        v: "foo",
+        loc: Some(Loc(
+          start: Pos(
+            idx: 0,
+            line: 1,
+            col: 1,
+          ),
+          end: Pos(
+            idx: 3,
+            line: 1,
+            col: 4,
+          ),
+        )),
+      ),
+      body: FunctionBody(BraceGroup(BraceGroupCommand(
+        list: List([
+          Item(AndOr(
+            first: Pipeline(
+              seq: [
+                Simple(Simple(
+                  w: Some(W(
+                    v: "echo",
+                    loc: Some(Loc(
+                      start: Pos(
+                        idx: 8,
+                        line: 1,
+                        col: 9,
+                      ),
+                      end: Pos(
+                        idx: 12,
+                        line: 1,
+                        col: 13,
+                      ),
+                    )),
+                  )),
+                  suffix: Some(Suffix([
+                    Word(W(
+                      v: "1",
+                      loc: Some(Loc(
+                        start: Pos(
+                          idx: 13,
+                          line: 1,
+                          col: 14,
+                        ),
+                        end: Pos(
+                          idx: 14,
+                          line: 1,
+                          col: 15,
+                        ),
+                      )),
+                    )),
+                  ])),
+                )),
+              ],
+            ),
+          ), Sequence),
+        ]),
+        loc: Loc(
+          start: Pos(
+            idx: 6,
+            line: 1,
+            col: 7,
+          ),
+          end: Pos(
+            idx: 17,
+            line: 1,
+            col: 18,
+          ),
+        ),
+      )), Some(RedirectList([
+        File(Some(2), DuplicateOutput, Duplicate(W(
+          v: "1",
+          loc: Some(Loc(
+            start: Pos(
+              idx: 21,
+              line: 1,
+              col: 22,
+            ),
+            end: Pos(
+              idx: 22,
+              line: 1,
+              col: 23,
+            ),
+          )),
+        ))),
+      ]))),
+      source: "",
+    )),
+    Simple(Simple(
+      w: Some(W(
+        v: "cat",
+        loc: Some(Loc(
+          start: Pos(
+            idx: 25,
+            line: 1,
+            col: 26,
+          ),
+          end: Pos(
+            idx: 28,
+            line: 1,
+            col: 29,
+          ),
+        )),
+      )),
+    )),
+  ],
+)

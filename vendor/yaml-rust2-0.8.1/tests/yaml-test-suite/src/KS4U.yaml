@@ -1,0 +1,17 @@
+---
+- name: Invalid item after end of flow sequence
+  from: '@perlpunk'
+  tags: error flow sequence
+  fail: true
+  yaml: |
+    ---
+    [
+    sequence item
+    ]
+    invalid item
+  tree: |
+    +STR
+     +DOC ---
+      +SEQ []
+       =VAL :sequence item
+      -SEQ

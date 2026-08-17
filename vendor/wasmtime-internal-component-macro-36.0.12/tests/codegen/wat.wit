@@ -1,0 +1,10 @@
+package same:name;
+
+interface this-name-is-duplicated {
+  resource this-name-is-duplicated {
+  }
+}
+
+world example {
+  export this-name-is-duplicated;
+}

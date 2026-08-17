@@ -1,0 +1,3 @@
+GET /example1/example2/../..?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIDEXAMPLE%2F20150830%2Fus-east-1%2Fservice%2Faws4_request&X-Amz-Date=20150830T123600Z&X-Amz-SignedHeaders=host&X-Amz-Expires=3600&X-Amz-Signature=b45db0bfd1cf15003493b733e33aa208dd981bd0e63037a6ed953f71d2118a16 HTTP/1.1
+Host:example.amazonaws.com
+

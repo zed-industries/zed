@@ -1,0 +1,67 @@
+package wasmtime:test@0.1.0;
+
+interface unknown-stability-interface {
+    resource unknown-stability-resource {
+    }
+    stable-func: func();
+}
+
+@unstable(feature = active)
+interface unstable-interface {
+    @unstable(feature = active)
+    resource unstable-resource {
+    }
+    @unstable(feature = active)
+    unstable-func: func();
+}
+
+@since(version = 0.1.0)
+interface stable-interface {
+    @since(version = 0.1.0)
+    resource stable-resource {
+    }
+    @since(version = 0.1.0)
+    stable-func: func();
+}
+
+world unknown-stability {
+    import unknown-stability-interface;
+}
+
+world unstable {
+    @unstable(feature = active)
+    import unstable-interface;
+}
+
+world stable{
+    @since(version = 0.1.0)
+    import stable-interface;
+}
+
+world simple-include {
+    include unstable;
+    include stable;
+    include unknown-stability;
+}
+
+world unstable-include-in-package 
+{
+    include unstable;
+}
+
+world dup-include-in-package {
+    include simple-include;
+    include unstable-include-in-package;
+}
+
+world dup-use-package {
+    @unstable(feature = active)
+    use stable-interface.{stable-resource};
+    include simple-include;
+}
+
+world dup-use-package-ordered {
+    include simple-include;
+    @unstable(feature = active)
+    use stable-interface.{stable-resource};
+}

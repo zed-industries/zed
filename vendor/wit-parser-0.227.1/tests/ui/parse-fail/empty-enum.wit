@@ -1,0 +1,6 @@
+// parse-fail
+package foo:foo;
+
+interface foo {
+  enum t {}
+}

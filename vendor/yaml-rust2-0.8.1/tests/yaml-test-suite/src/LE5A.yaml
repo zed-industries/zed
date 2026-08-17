@@ -1,0 +1,30 @@
+---
+- name: Spec Example 7.24. Flow Nodes
+  from: http://www.yaml.org/spec/1.2/spec.html#id2793490
+  tags: spec tag alias
+  yaml: |
+    - !!str "a"
+    - 'b'
+    - &anchor "c"
+    - *anchor
+    - !!str
+  tree: |
+    +STR
+     +DOC
+      +SEQ
+       =VAL <tag:yaml.org,2002:str> "a
+       =VAL 'b
+       =VAL &anchor "c
+       =ALI *anchor
+       =VAL <tag:yaml.org,2002:str> :
+      -SEQ
+     -DOC
+    -STR
+  json: |
+    [
+      "a",
+      "b",
+      "c",
+      "c",
+      ""
+    ]
