@@ -7,6 +7,8 @@ pub mod connection_manager;
 pub mod context_server_store;
 pub mod debounced_delay;
 pub mod debugger;
+// The resolver is consumed by the downstream bookmark migration.
+#[allow(dead_code)]
 pub mod durable_source_location;
 pub mod git_store;
 pub mod image_store;
