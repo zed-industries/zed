@@ -12188,7 +12188,14 @@ impl LspStore {
             if is_supporting {
                 supporting_diagnostics.insert(
                     (source, diagnostic.code.clone(), range),
-                    (diagnostic.severity, is_unnecessary),
+                    (
+                        diagnostic.severity,
+                        is_unnecessary,
+                        diagnostic
+                            .related_information
+                            .as_ref()
+                            .map(|infos| Arc::from(infos.as_slice())),
+                    ),
                 );
             } else {
                 let group_id = post_inc(&mut self.as_local_mut().unwrap().next_diagnostic_group_id);
@@ -12221,6 +12228,10 @@ impl LspStore {
                         underline,
                         data: diagnostic.data.clone(),
                         registration_id: registration_id.clone(),
+                        related_information: diagnostic
+                            .related_information
+                            .as_ref()
+                            .map(|infos| Arc::from(infos.as_slice())),
                     },
                 });
                 if let Some(infos) = &diagnostic.related_information {
@@ -12249,6 +12260,7 @@ impl LspStore {
                                     underline,
                                     data: diagnostic.data.clone(),
                                     registration_id: registration_id.clone(),
+                                    related_information: None,
                                 },
                             });
                         }
@@ -12261,15 +12273,18 @@ impl LspStore {
             let diagnostic = &mut entry.diagnostic;
             if !diagnostic.is_primary {
                 let source = *sources_by_group_id.get(&diagnostic.group_id).unwrap();
-                if let Some(&(severity, is_unnecessary)) = supporting_diagnostics.get(&(
-                    source,
-                    diagnostic.code.clone(),
-                    entry.range.clone(),
-                )) {
+                if let Some((severity, is_unnecessary, related_information)) =
+                    supporting_diagnostics.get(&(
+                        source,
+                        diagnostic.code.clone(),
+                        entry.range.clone(),
+                    ))
+                {
                     if let Some(severity) = severity {
-                        diagnostic.severity = severity;
+                        diagnostic.severity = *severity;
                     }
-                    diagnostic.is_unnecessary = is_unnecessary;
+                    diagnostic.is_unnecessary = *is_unnecessary;
+                    diagnostic.related_information = related_information.clone();
                 }
             }
         }
