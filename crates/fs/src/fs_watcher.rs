@@ -1,3 +1,4 @@
+use futures::FutureExt as _;
 use gpui::{BackgroundExecutor, Task};
 use notify::{Event, EventKind};
 use parking_lot::Mutex;
@@ -12,6 +13,10 @@ use std::{
 use util::{ResultExt, paths::SanitizedPath};
 
 use crate::{PathEvent, PathEventKind, Watcher};
+
+const RESCAN_BURST_QUIET_PERIOD: Duration = Duration::from_secs(1);
+const WATCHER_LOG_BURST_PERIOD: Duration = Duration::from_secs(1);
+const WATCHER_LOG_BURST_LIMIT: usize = 20;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum WatcherMode {
@@ -610,24 +615,32 @@ fn push_notify_event(
 
 fn watcher_logging_rate_limited() -> bool {
     static LAST_WARN: Mutex<Option<(Instant, usize)>> = Mutex::new(None);
-    let Some((ref mut started, ref mut emitted)) = *LAST_WARN.lock() else {
-        *LAST_WARN.lock() = Some((Instant::now(), 0));
-        return false;
+    let (rate_limited, announce_limit) =
+        watcher_log_rate_limit(&mut LAST_WARN.lock(), Instant::now());
+    if announce_limit {
+        log::warn!("filesystem watcher lost sync for many files, not logging more");
+    }
+    rate_limited
+}
+
+fn watcher_log_rate_limit(state: &mut Option<(Instant, usize)>, now: Instant) -> (bool, bool) {
+    let Some((started, emitted)) = state.as_mut() else {
+        *state = Some((now, 1));
+        return (false, false);
     };
 
-    if started.elapsed().as_secs() < 1 {
-        if *emitted < 20 {
-            log::warn!("filesystem watcher lost sync for many files, not logging more");
-            return true;
-        } else {
-            *emitted += 1;
-        }
-    } else {
-        *emitted = 0;
-        *started = Instant::now()
+    if now.duration_since(*started) >= WATCHER_LOG_BURST_PERIOD {
+        *started = now;
+        *emitted = 1;
+        return (false, false);
     }
 
-    true
+    *emitted += 1;
+    if *emitted <= WATCHER_LOG_BURST_LIMIT {
+        (false, false)
+    } else {
+        (true, *emitted == WATCHER_LOG_BURST_LIMIT + 1)
+    }
 }
 
 fn coalesce_pending_rescans(pending_paths: &mut Vec<PathEvent>, path_events: &mut Vec<PathEvent>) {
@@ -806,6 +819,67 @@ impl<T: notify::Watcher + Send> WatchBackend for T {
 
 type DispatchEvent = (WatcherMode, Result<notify::Event, notify::Error>);
 
+#[derive(Default)]
+struct RescanBurstState {
+    quiet_deadline: Option<Instant>,
+    trailing_rescan_pending: bool,
+}
+
+#[derive(Default)]
+struct RescanCoalescer {
+    native: RescanBurstState,
+    poll: RescanBurstState,
+}
+
+impl RescanCoalescer {
+    fn state_mut(&mut self, mode: WatcherMode) -> &mut RescanBurstState {
+        match mode {
+            WatcherMode::Native => &mut self.native,
+            WatcherMode::Poll => &mut self.poll,
+        }
+    }
+
+    /// Returns whether this rescan should be dispatched immediately.
+    ///
+    /// The first rescan in a burst is delivered without delay. Later rescans
+    /// extend the quiet deadline and collapse into one trailing rescan, so a
+    /// watcher-overflow storm cannot queue an unbounded number of full scans.
+    fn observe_rescan(&mut self, mode: WatcherMode, now: Instant) -> bool {
+        let state = self.state_mut(mode);
+        if state.quiet_deadline.is_none_or(|deadline| now >= deadline) {
+            state.quiet_deadline = Some(now + RESCAN_BURST_QUIET_PERIOD);
+            state.trailing_rescan_pending = false;
+            true
+        } else {
+            state.quiet_deadline = Some(now + RESCAN_BURST_QUIET_PERIOD);
+            state.trailing_rescan_pending = true;
+            false
+        }
+    }
+
+    fn next_deadline(&self) -> Option<Instant> {
+        [self.native.quiet_deadline, self.poll.quiet_deadline]
+            .into_iter()
+            .flatten()
+            .min()
+    }
+
+    fn take_due_trailing_rescans(&mut self, now: Instant) -> Vec<WatcherMode> {
+        let mut due = Vec::with_capacity(2);
+        for mode in [WatcherMode::Native, WatcherMode::Poll] {
+            let state = self.state_mut(mode);
+            if state.quiet_deadline.is_some_and(|deadline| now >= deadline) {
+                if state.trailing_rescan_pending {
+                    due.push(mode);
+                }
+                state.quiet_deadline = None;
+                state.trailing_rescan_pending = false;
+            }
+        }
+        due
+    }
+}
+
 pub struct GlobalWatcher {
     state: Mutex<WatcherState>,
 
@@ -940,31 +1014,70 @@ impl GlobalWatcher {
         }
     }
 
+    fn dispatch_event(
+        &self,
+        (mode, event): DispatchEvent,
+        rescan_coalescer: &mut RescanCoalescer,
+        now: &mut impl FnMut() -> Instant,
+    ) {
+        if event.as_ref().is_ok_and(notify::Event::need_rescan)
+            && !rescan_coalescer.observe_rescan(mode, now())
+        {
+            return;
+        }
+        self.dispatch(mode, event);
+    }
+
     fn dispatch_batch(
         &self,
         first: DispatchEvent,
         event_rx: &async_channel::Receiver<DispatchEvent>,
+        rescan_coalescer: &mut RescanCoalescer,
+        mut now: impl FnMut() -> Instant,
     ) {
-        // A single backend overflow can enqueue many rescan markers. One rescan
-        // per mode covers the entire drained batch; ordinary events still run.
-        let mut native_rescan_dispatched = false;
-        let mut poll_rescan_dispatched = false;
+        for event in std::iter::once(first).chain(std::iter::from_fn(|| event_rx.try_recv().ok())) {
+            self.dispatch_event(event, rescan_coalescer, &mut now);
+        }
+    }
 
-        for (mode, event) in
-            std::iter::once(first).chain(std::iter::from_fn(|| event_rx.try_recv().ok()))
-        {
-            let rescan_dispatched = match mode {
-                WatcherMode::Native => &mut native_rescan_dispatched,
-                WatcherMode::Poll => &mut poll_rescan_dispatched,
-            };
-            if event.as_ref().is_ok_and(notify::Event::need_rescan) {
-                if *rescan_dispatched {
-                    continue;
+    fn dispatch_due_trailing_rescans(&self, rescan_coalescer: &mut RescanCoalescer, now: Instant) {
+        for mode in rescan_coalescer.take_due_trailing_rescans(now) {
+            let rescan = notify::Event::new(EventKind::Other).set_flag(notify::event::Flag::Rescan);
+            self.dispatch(mode, Ok(rescan));
+        }
+    }
+
+    async fn run_dispatch_loop(&self, event_rx: async_channel::Receiver<DispatchEvent>) {
+        let mut rescan_coalescer = RescanCoalescer::default();
+        loop {
+            self.dispatch_due_trailing_rescans(&mut rescan_coalescer, Instant::now());
+            if let Some(deadline) = rescan_coalescer.next_deadline() {
+                let next_event = event_rx.recv().fuse();
+                let quiet_timer = smol::Timer::at(deadline).fuse();
+                futures::pin_mut!(next_event, quiet_timer);
+                futures::select_biased! {
+                    event = next_event => {
+                        let Ok(first) = event else { break };
+                        self.dispatch_batch(
+                            first,
+                            &event_rx,
+                            &mut rescan_coalescer,
+                            Instant::now,
+                        );
+                    }
+                    _ = quiet_timer => {
+                        self.dispatch_due_trailing_rescans(
+                            &mut rescan_coalescer,
+                            Instant::now(),
+                        );
+                    }
                 }
-                *rescan_dispatched = true;
+            } else {
+                let Ok(first) = event_rx.recv().await else {
+                    break;
+                };
+                self.dispatch_batch(first, &event_rx, &mut rescan_coalescer, Instant::now);
             }
-
-            self.dispatch(mode, event);
         }
     }
 
@@ -1117,9 +1230,7 @@ fn global_watcher() -> &'static GlobalWatcher {
         std::thread::Builder::new()
             .name("fs-watcher-dispatch".to_owned())
             .spawn(move || {
-                while let Ok(first) = event_rx.recv_blocking() {
-                    global_watcher().dispatch_batch(first, &event_rx);
-                }
+                smol::block_on(global_watcher().run_dispatch_loop(event_rx));
             })
             .expect("failed to spawn fs watcher dispatch thread");
         GlobalWatcher {
@@ -1560,6 +1671,8 @@ mod tests {
         let (watcher, fired) = recording_watcher();
         let (event_tx, event_rx) = async_channel::unbounded();
         let rescan = || notify::Event::new(EventKind::Other).set_flag(notify::event::Flag::Rescan);
+        let now = Instant::now();
+        let mut rescan_coalescer = RescanCoalescer::default();
 
         event_tx
             .try_send((WatcherMode::Native, Ok(rescan())))
@@ -1567,7 +1680,12 @@ mod tests {
         event_tx
             .try_send((WatcherMode::Native, Ok(modify_event("/repo/a/file.txt"))))
             .unwrap();
-        watcher.dispatch_batch((WatcherMode::Native, Ok(rescan())), &event_rx);
+        watcher.dispatch_batch(
+            (WatcherMode::Native, Ok(rescan())),
+            &event_rx,
+            &mut rescan_coalescer,
+            || now,
+        );
 
         let mut got = fired.lock().clone();
         got.sort();
@@ -1579,6 +1697,112 @@ mod tests {
                 "/repo/a/nested".to_owned(),
                 "/repo/b".to_owned(),
             ]
+        );
+
+        watcher
+            .dispatch_due_trailing_rescans(&mut rescan_coalescer, now + RESCAN_BURST_QUIET_PERIOD);
+        let mut got = fired.lock().clone();
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                "/repo/a".to_owned(),
+                "/repo/a".to_owned(),
+                "/repo/a".to_owned(),
+                "/repo/a/nested".to_owned(),
+                "/repo/a/nested".to_owned(),
+                "/repo/b".to_owned(),
+                "/repo/b".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn queued_rescans_extend_quiet_deadline_from_the_last_rescan() {
+        let (watcher, _fired) = recording_watcher();
+        let (event_tx, event_rx) = async_channel::unbounded();
+        let rescan = || notify::Event::new(EventKind::Other).set_flag(notify::event::Flag::Rescan);
+        let start = Instant::now();
+        let last_rescan_at = start + Duration::from_millis(900);
+        let mut rescan_times = [start, last_rescan_at].into_iter();
+        let mut rescan_coalescer = RescanCoalescer::default();
+
+        event_tx
+            .try_send((WatcherMode::Native, Ok(rescan())))
+            .unwrap();
+        watcher.dispatch_batch(
+            (WatcherMode::Native, Ok(rescan())),
+            &event_rx,
+            &mut rescan_coalescer,
+            || rescan_times.next().expect("timestamp for each rescan"),
+        );
+
+        assert_eq!(
+            rescan_coalescer.next_deadline(),
+            Some(last_rescan_at + RESCAN_BURST_QUIET_PERIOD)
+        );
+        assert!(
+            rescan_coalescer
+                .take_due_trailing_rescans(
+                    last_rescan_at + RESCAN_BURST_QUIET_PERIOD - Duration::from_millis(1)
+                )
+                .is_empty()
+        );
+        assert_eq!(
+            rescan_coalescer.take_due_trailing_rescans(last_rescan_at + RESCAN_BURST_QUIET_PERIOD),
+            vec![WatcherMode::Native]
+        );
+    }
+
+    #[test]
+    fn rescan_burst_waits_for_quiet_before_trailing_dispatch() {
+        let start = Instant::now();
+        let mut coalescer = RescanCoalescer::default();
+
+        assert!(coalescer.observe_rescan(WatcherMode::Native, start));
+        for offset in 1..44 {
+            assert!(!coalescer.observe_rescan(
+                WatcherMode::Native,
+                start + Duration::from_millis(offset * 40),
+            ));
+        }
+        let last_rescan_at = start + Duration::from_millis(43 * 40);
+        assert!(
+            coalescer
+                .take_due_trailing_rescans(
+                    last_rescan_at + RESCAN_BURST_QUIET_PERIOD - Duration::from_millis(1)
+                )
+                .is_empty()
+        );
+        assert_eq!(
+            coalescer.take_due_trailing_rescans(last_rescan_at + RESCAN_BURST_QUIET_PERIOD),
+            vec![WatcherMode::Native]
+        );
+        assert!(coalescer.next_deadline().is_none());
+    }
+
+    #[test]
+    fn watcher_log_rate_limit_logs_once_when_limit_is_reached() {
+        let start = Instant::now();
+        let mut state = None;
+
+        for offset in 0..WATCHER_LOG_BURST_LIMIT {
+            assert_eq!(
+                watcher_log_rate_limit(&mut state, start + Duration::from_millis(offset as u64)),
+                (false, false)
+            );
+        }
+        assert_eq!(
+            watcher_log_rate_limit(&mut state, start + Duration::from_millis(50)),
+            (true, true)
+        );
+        assert_eq!(
+            watcher_log_rate_limit(&mut state, start + Duration::from_millis(51)),
+            (true, false)
+        );
+        assert_eq!(
+            watcher_log_rate_limit(&mut state, start + WATCHER_LOG_BURST_PERIOD),
+            (false, false)
         );
     }
 
