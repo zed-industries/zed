@@ -1539,13 +1539,74 @@ fn mask_chunks<'a>(chunks: impl Iterator<Item = Chunk<'a>>) -> impl Iterator<Ite
     })
 }
 
+#[derive(Clone, Copy)]
+pub struct UnwrappedRowGrid<'a> {
+    snapshot: &'a DisplaySnapshot,
+    row: DisplayRow,
+    fold_start: FoldPoint,
+    byte_len: u32,
+    scalar_len: u32,
+}
+
+impl UnwrappedRowGrid<'_> {
+    pub(crate) fn byte_len(&self) -> u32 {
+        self.byte_len
+    }
+
+    pub(crate) fn scalar_len(&self) -> u32 {
+        self.scalar_len
+    }
+
+    pub(crate) fn scalar_column_for_byte_column(&self, column: u32, bias: Bias) -> (u32, u32) {
+        let point = self
+            .snapshot
+            .clip_ignoring_line_ends(DisplayPoint::new(self.row, column.min(self.byte_len)), bias);
+        let fold_end = self.snapshot.display_point_to_fold_point(point, bias);
+        let fold_summary = self
+            .snapshot
+            .fold_snapshot()
+            .text_summary_for_range(self.fold_start..fold_end);
+        let fold_chars = u32::try_from(fold_summary.chars).unwrap_or(u32::MAX);
+        let fold_bytes = fold_end.column().saturating_sub(self.fold_start.column());
+        // Display columns include tab expansion, while fold summaries count each tab once.
+        let tab_expansion = point.column().saturating_sub(fold_bytes);
+        (point.column(), fold_chars.saturating_add(tab_expansion))
+    }
+
+    pub(crate) fn byte_column_for_scalar_column(&self, column: u32, bias: Bias) -> u32 {
+        let target = column.min(self.scalar_len);
+        let mut low = 0;
+        let mut high = self.byte_len;
+        while low < high {
+            let middle = low + (high - low) / 2;
+            let (_, scalar_column) = self.scalar_column_for_byte_column(middle, Bias::Right);
+            if scalar_column < target {
+                low = middle.saturating_add(1);
+            } else {
+                high = middle;
+            }
+        }
+
+        let (left_byte, left_scalar) = self.scalar_column_for_byte_column(low, Bias::Left);
+        let (right_byte, right_scalar) = self.scalar_column_for_byte_column(low, Bias::Right);
+        if target <= left_scalar {
+            left_byte
+        } else if target >= right_scalar {
+            right_byte
+        } else {
+            match bias {
+                Bias::Left => left_byte,
+                Bias::Right => right_byte,
+            }
+        }
+    }
+}
+
 pub enum RowLayout<'a> {
     Shaped(Arc<LineLayout>),
     Grid {
-        snapshot: &'a DisplaySnapshot,
-        row: DisplayRow,
+        grid: UnwrappedRowGrid<'a>,
         cell_width: Pixels,
-        len: u32,
     },
 }
 
@@ -1553,19 +1614,21 @@ impl RowLayout<'_> {
     pub fn width(&self) -> ScrollPixelOffset {
         match self {
             Self::Shaped(layout) => ScrollPixelOffset::from(layout.width),
-            Self::Grid {
-                cell_width, len, ..
-            } => ScrollPixelOffset::from(*cell_width) * *len as ScrollPixelOffset,
+            Self::Grid { grid, cell_width } => {
+                ScrollPixelOffset::from(*cell_width) * grid.scalar_len() as ScrollPixelOffset
+            }
         }
     }
 
     pub fn x_for_index(&self, index: usize) -> ScrollPixelOffset {
         match self {
             Self::Shaped(layout) => ScrollPixelOffset::from(layout.x_for_index(index)),
-            Self::Grid {
-                cell_width, len, ..
-            } => {
-                ScrollPixelOffset::from(*cell_width) * index.min(*len as usize) as ScrollPixelOffset
+            Self::Grid { grid, cell_width } => {
+                let (_, scalar_column) = grid.scalar_column_for_byte_column(
+                    u32::try_from(index).unwrap_or(u32::MAX),
+                    Bias::Left,
+                );
+                ScrollPixelOffset::from(*cell_width) * scalar_column as ScrollPixelOffset
             }
         }
     }
@@ -1573,28 +1636,13 @@ impl RowLayout<'_> {
     pub fn closest_index_for_x(&self, x: ScrollPixelOffset) -> usize {
         match self {
             Self::Shaped(layout) => layout.closest_index_for_x(Pixels::from(x)),
-            Self::Grid {
-                snapshot,
-                row,
-                cell_width,
-                len,
-            } => {
+            Self::Grid { grid, cell_width } => {
                 if *cell_width <= Pixels::ZERO {
                     return 0;
                 }
                 let cells = (x / ScrollPixelOffset::from(*cell_width)).max(0.);
-                let column = (cells.round() as u32).min(*len);
-                let point = DisplayPoint::new(*row, column);
-                let left = snapshot.clip_point(point, Bias::Left).column();
-                let right = snapshot.clip_point(point, Bias::Right).column();
-                let column = if cells - ScrollPixelOffset::from(left)
-                    <= ScrollPixelOffset::from(right) - cells
-                {
-                    left
-                } else {
-                    right
-                };
-                column as usize
+                let scalar_column = (cells.round() as u32).min(grid.scalar_len());
+                grid.byte_column_for_scalar_column(scalar_column, Bias::Left) as usize
             }
         }
     }
@@ -1619,6 +1667,20 @@ pub struct DisplaySnapshot {
 }
 
 impl DisplaySnapshot {
+    pub(crate) fn unwrapped_row_grid(&self, row: DisplayRow) -> UnwrappedRowGrid<'_> {
+        let byte_len = self.line_len(row);
+        let fold_start = self.display_point_to_fold_point(DisplayPoint::new(row, 0), Bias::Left);
+        let mut grid = UnwrappedRowGrid {
+            snapshot: self,
+            row,
+            fold_start,
+            byte_len,
+            scalar_len: 0,
+        };
+        grid.scalar_len = grid.scalar_column_for_byte_column(byte_len, Bias::Right).1;
+        grid
+    }
+
     pub fn companion_snapshot(&self) -> Option<&DisplaySnapshot> {
         self.companion_display_snapshot.as_deref()
     }
@@ -2169,10 +2231,8 @@ impl DisplaySnapshot {
             let line_len = self.line_len(display_row);
             if line_len as usize > MAX_LINE_LEN {
                 return RowLayout::Grid {
-                    snapshot: self,
-                    row: display_row,
+                    grid: self.unwrapped_row_grid(display_row),
                     cell_width: self.grid_cell_width(details),
-                    len: line_len,
                 };
             }
         }
@@ -2900,7 +2960,7 @@ pub mod tests {
     use multi_buffer::PathKey;
     use rand::{Rng, prelude::*};
     use settings::{SettingsContent, SettingsStore};
-    use std::{env, sync::Arc};
+    use std::{env, num::NonZeroU32, sync::Arc};
     use text::PointUtf16;
     use theme::{LoadThemes, SyntaxTheme};
     use unindent::Unindent as _;
@@ -3682,6 +3742,160 @@ pub mod tests {
     }
 
     #[gpui::test]
+    async fn test_unwrapped_row_grid_maps_unicode_and_tabs(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            init_test(cx, &|settings| {
+                settings.project.all_languages.defaults.tab_size = NonZeroU32::new(4);
+            })
+        });
+
+        let text = format!("{}\t{}", "é".repeat(50), "漢".repeat(400));
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
+        let map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer,
+                test_font(),
+                px(14.),
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+        let grid = snapshot.unwrapped_row_grid(DisplayRow(0));
+
+        assert_eq!(grid.byte_len(), 1_302);
+        assert_eq!(grid.scalar_len(), 452);
+        assert_eq!(
+            grid.scalar_column_for_byte_column(100, Bias::Left),
+            (100, 50)
+        );
+        assert_eq!(
+            grid.scalar_column_for_byte_column(101, Bias::Left),
+            (100, 50)
+        );
+        assert_eq!(
+            grid.scalar_column_for_byte_column(101, Bias::Right),
+            (102, 52)
+        );
+        assert_eq!(
+            grid.scalar_column_for_byte_column(103, Bias::Left),
+            (102, 52)
+        );
+        assert_eq!(
+            grid.scalar_column_for_byte_column(103, Bias::Right),
+            (105, 53)
+        );
+        assert_eq!(
+            grid.scalar_column_for_byte_column(432, Bias::Left),
+            (432, 162)
+        );
+        assert_eq!(grid.byte_column_for_scalar_column(50, Bias::Left), 100);
+        assert_eq!(grid.byte_column_for_scalar_column(51, Bias::Left), 100);
+        assert_eq!(grid.byte_column_for_scalar_column(51, Bias::Right), 102);
+        assert_eq!(grid.byte_column_for_scalar_column(52, Bias::Left), 102);
+        assert_eq!(grid.byte_column_for_scalar_column(162, Bias::Left), 432);
+
+        let text = format!("e\u{301}{}", "x".repeat(MAX_LINE_LEN * 2));
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
+        let map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer,
+                test_font(),
+                px(14.),
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+        let grid = snapshot.unwrapped_row_grid(DisplayRow(0));
+        assert_eq!(grid.byte_column_for_scalar_column(1, Bias::Left), 0);
+        assert_eq!(grid.byte_column_for_scalar_column(1, Bias::Right), 3);
+    }
+
+    #[gpui::test]
+    async fn test_unwrapped_row_grid_maps_unicode_inlays_and_folds(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| init_test(cx, &|_| {}));
+
+        let suffix = "x".repeat(MAX_LINE_LEN * 2);
+        let text = format!("abCDEFgh{suffix}");
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
+        let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+        let map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer,
+                test_font(),
+                px(14.),
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+
+        map.update(cx, |map, cx| {
+            map.splice_inlays(
+                &[],
+                vec![Inlay::mock_hint(
+                    0,
+                    buffer_snapshot.anchor_after(MultiBufferOffset(2)),
+                    "λ🙂",
+                )],
+                cx,
+            );
+
+            let mut placeholder = FoldPlaceholder::test();
+            placeholder.collapsed_text = Some("漢🙂".into());
+            map.fold(
+                vec![Crease::simple(
+                    MultiBufferPoint::new(0, 3)..MultiBufferPoint::new(0, 6),
+                    placeholder,
+                )],
+                cx,
+            );
+        });
+
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+        assert_eq!(snapshot.text(), format!("abλ🙂C漢🙂gh{suffix}"));
+        let grid = snapshot.unwrapped_row_grid(DisplayRow(0));
+        assert_eq!(grid.byte_len(), 2_066);
+        assert_eq!(grid.scalar_len(), 2_057);
+
+        for (byte_column, scalar_column) in
+            [(0, 0), (2, 2), (9, 5), (16, 7), (18, 9), (2_066, 2_057)]
+        {
+            for bias in [Bias::Left, Bias::Right] {
+                assert_eq!(
+                    grid.scalar_column_for_byte_column(byte_column, bias),
+                    (byte_column, scalar_column),
+                );
+                assert_eq!(
+                    grid.byte_column_for_scalar_column(scalar_column, bias),
+                    byte_column,
+                );
+            }
+        }
+
+        assert_eq!(grid.scalar_column_for_byte_column(4, Bias::Left), (2, 2));
+        assert_eq!(grid.scalar_column_for_byte_column(4, Bias::Right), (9, 5));
+        assert_eq!(grid.byte_column_for_scalar_column(3, Bias::Left), 2);
+        assert_eq!(grid.byte_column_for_scalar_column(3, Bias::Right), 9);
+        assert_eq!(grid.scalar_column_for_byte_column(12, Bias::Left), (9, 5));
+        assert_eq!(grid.scalar_column_for_byte_column(12, Bias::Right), (16, 7));
+        assert_eq!(grid.byte_column_for_scalar_column(6, Bias::Left), 9);
+        assert_eq!(grid.byte_column_for_scalar_column(6, Bias::Right), 16);
+    }
+
+    #[gpui::test]
     async fn test_masked_text_chunks_preserve_newlines(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| init_test(cx, &|_| {}));
 
@@ -3804,8 +4018,8 @@ pub mod tests {
                     &text_layout_details,
                 )
                 .unwrap();
-            assert_eq!(selection.start, Point::new(1, 100));
-            assert_eq!(selection.end, Point::new(1, 200));
+            assert_eq!(selection.start, Point::new(1, 101 * 'α'.len_utf8() as u32));
+            assert_eq!(selection.end, Point::new(1, 200 * 'α'.len_utf8() as u32));
         });
     }
 
@@ -3844,7 +4058,7 @@ pub mod tests {
             );
             assert_eq!(
                 snapshot.display_column_for_x(DisplayRow(1), odd_x, &text_layout_details),
-                (long_len - 10) as u32
+                ((long_len - 9) * 'α'.len_utf8()) as u32
             );
         });
     }
