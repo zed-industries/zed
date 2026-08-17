@@ -11580,7 +11580,7 @@ async fn test_restaging_hunk_after_optimistic_unstage(cx: &mut gpui::TestAppCont
         repo.load_index_text(RepoPath::from_rel_path(rel_path("file.txt")))
             .await
             .unwrap(),
-        file_contents,
+        file_contents.as_bytes(),
         "the re-stage should have overridden the in-flight unstage"
     );
 
@@ -11605,7 +11605,73 @@ async fn test_restaging_hunk_after_optimistic_unstage(cx: &mut gpui::TestAppCont
         repo.load_index_text(RepoPath::from_rel_path(rel_path("file.txt")))
             .await
             .unwrap(),
-        file_contents
+        file_contents.as_bytes()
+    );
+}
+
+#[gpui::test]
+async fn test_staging_non_utf8_hunk_preserves_index_encoding(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let committed_text = "строка один\nстрока два\n";
+    let file_text = "строка один\nстрока три\n";
+    let (committed_bytes, _, _) = encoding_rs::WINDOWS_1251.encode(committed_text);
+    let (file_bytes, _, _) = encoding_rs::WINDOWS_1251.encode(file_text);
+    let committed_bytes = committed_bytes.into_owned();
+    let file_bytes = file_bytes.into_owned();
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(path!("/dir"), json!({ ".git": {} })).await;
+    fs.insert_file(path!("/dir/file.txt"), file_bytes.clone())
+        .await;
+    fs.with_git_state(path!("/dir/.git").as_ref(), true, |state| {
+        state
+            .head_contents
+            .insert(repo_path("file.txt"), committed_bytes.clone());
+        state
+            .index_contents
+            .insert(repo_path("file.txt"), committed_bytes.clone());
+        state.refs.insert("HEAD".into(), "deadbeef".into());
+    })
+    .unwrap();
+    let repo = fs
+        .open_repo(path!("/dir/.git").as_ref(), Some("git".as_ref()))
+        .unwrap();
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/file.txt"), cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.encoding()),
+        encoding_rs::WINDOWS_1251
+    );
+
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let uncommitted_diff = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+    let range = snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_before(Point::new(2, 0));
+
+    project
+        .update(cx, |project, cx| {
+            let unstaged_diff = uncommitted_diff.read(cx).secondary_diff().unwrap();
+            project.stage_hunks(buffer.clone(), unstaged_diff, vec![range], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    assert_eq!(
+        repo.load_index_text(RepoPath::from_rel_path(rel_path("file.txt")))
+            .await
+            .unwrap(),
+        file_bytes
     );
 }
 
@@ -11705,7 +11771,7 @@ async fn test_staging_random_hunks(
         repo.load_index_text(RepoPath::from_rel_path(rel_path("file.txt")))
             .await
             .unwrap(),
-        index_text
+        index_text.as_bytes()
     );
     fs.unpause_events_and_flush();
     cx.run_until_parked();
@@ -11762,9 +11828,12 @@ async fn test_staging_random_hunks(
 
     log::info!(
         "index text:\n{}",
-        repo.load_index_text(RepoPath::from_rel_path(rel_path("file.txt")))
-            .await
-            .unwrap()
+        String::from_utf8_lossy(
+            &repo
+                .load_index_text(RepoPath::from_rel_path(rel_path("file.txt")))
+                .await
+                .unwrap()
+        )
     );
 
     uncommitted_diff.update(cx, |diff, cx| {
@@ -11794,14 +11863,16 @@ async fn test_staging_random_hunks_with_edits(
     init_test(cx);
 
     fn disk_index_text(fs: &FakeFs) -> String {
-        fs.with_git_state(path!("/dir/.git").as_ref(), false, |state| {
-            state
-                .index_contents
-                .get(&repo_path("file.txt"))
-                .cloned()
-                .expect("file is always present in the index")
-        })
-        .unwrap()
+        let bytes = fs
+            .with_git_state(path!("/dir/.git").as_ref(), false, |state| {
+                state
+                    .index_contents
+                    .get(&repo_path("file.txt"))
+                    .cloned()
+                    .expect("file is always present in the index")
+            })
+            .unwrap();
+        String::from_utf8(bytes).expect("test index contents are valid UTF-8")
     }
 
     fn random_row_range(
@@ -12190,10 +12261,12 @@ async fn test_staging_random_hunks_with_edits(
     let old_staged_state = capture_diff_state(&staged_diff, cx);
     let old_uncommitted_state = capture_diff_state(&uncommitted_diff, cx);
 
-    let disk_index_text = repo
-        .load_index_text(RepoPath::from_rel_path(rel_path("file.txt")))
-        .await
-        .unwrap();
+    let disk_index_text = String::from_utf8(
+        repo.load_index_text(RepoPath::from_rel_path(rel_path("file.txt")))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
     assert_eq!(
         old_unstaged_state.1.as_deref(),
         Some(disk_index_text.as_str()),
@@ -14948,10 +15021,10 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
         |state| {
             state
                 .head_contents
-                .insert(repo_path("src/b.txt"), "b".to_owned());
+                .insert(repo_path("src/b.txt"), b"b".to_vec());
             state
                 .index_contents
-                .insert(repo_path("src/b.txt"), "b".to_owned());
+                .insert(repo_path("src/b.txt"), b"b".to_vec());
         },
     )
     .unwrap();
@@ -15001,10 +15074,10 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
         |state| {
             state
                 .head_contents
-                .insert(repo_path("c.txt"), "c".to_owned());
+                .insert(repo_path("c.txt"), b"c".to_vec());
             state
                 .index_contents
-                .insert(repo_path("c.txt"), "c".to_owned());
+                .insert(repo_path("c.txt"), b"c".to_vec());
         },
     )
     .unwrap();
@@ -16695,14 +16768,16 @@ async fn test_staging_hunks_with_ambiguous_placement(cx: &mut gpui::TestAppConte
     }
 
     fn index_text(fs: &FakeFs) -> String {
-        fs.with_git_state(path!("/dir/.git").as_ref(), false, |state| {
-            state
-                .index_contents
-                .get(&repo_path("test.txt"))
-                .cloned()
-                .expect("file is present in the index")
-        })
-        .unwrap()
+        let bytes = fs
+            .with_git_state(path!("/dir/.git").as_ref(), false, |state| {
+                state
+                    .index_contents
+                    .get(&repo_path("test.txt"))
+                    .cloned()
+                    .expect("file is present in the index")
+            })
+            .unwrap();
+        String::from_utf8(bytes).expect("test index contents are valid UTF-8")
     }
 
     use DiffHunkSecondaryStatus::*;
