@@ -322,7 +322,7 @@ impl UnstagedDiff {
         let editor = diff.editor().read(cx).rhs_editor().clone();
         let editor = editor.read(cx);
         let snapshot = diff.multibuffer().read(cx).snapshot(cx);
-        let prev_next = snapshot.diff_hunks().nth(1).is_some();
+        let prev_next = snapshot.diff_hunks().next().is_some();
         let (selection, ranges) = diff.selected_ranges(cx);
         let stage = editor
             .diff_hunks_in_ranges(&ranges, &snapshot)

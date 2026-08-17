@@ -908,6 +908,7 @@ impl VsCodeSettings {
             default_height: None,
             default_width: None,
             dock: None,
+            starts_open: None,
             font_fallbacks,
             font_family,
             font_features: None,
@@ -1091,6 +1092,7 @@ impl VsCodeSettings {
     fn worktree_settings_content(&self) -> WorktreeSettingsContent {
         WorktreeSettingsContent {
             prevent_sharing_in_public_channels: false,
+            file_scan_depth: None,
             file_scan_exclusions: self
                 .read_value("files.watcherExclude")
                 .and_then(|v| v.as_array())

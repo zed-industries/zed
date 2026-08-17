@@ -4577,15 +4577,26 @@ async fn test_rename_survives_window_deactivation(cx: &mut gpui::TestAppContext)
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
     let cx = &mut VisualTestContext::from_window(window.into(), cx);
-    let panel = workspace.update_in(cx, ProjectPanel::new);
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        let panel = ProjectPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        panel
+    });
     cx.run_until_parked();
 
     select_path(&panel, "root/file1.txt", cx);
     panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
+    cx.run_until_parked();
     assert!(
         panel.read_with(cx, |panel, _| panel.state.edit_state.is_some()),
         "Rename should have started"
     );
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(
+            panel.filename_editor.read(cx).is_focused(window),
+            "The filename editor must be focused, otherwise deactivating the window blurs nothing"
+        );
+    });
 
     cx.deactivate_window();
 
@@ -11315,6 +11326,7 @@ pub(crate) fn init_test(cx: &mut TestAppContext) {
                     .get_or_insert_default()
                     .auto_fold_dirs = Some(false);
                 settings.project.worktree.file_scan_exclusions = Some(Vec::new());
+                settings.project.worktree.file_scan_depth = Some(0);
             });
         });
     });
@@ -11334,7 +11346,8 @@ fn init_test_with_editor(cx: &mut TestAppContext) {
                     .project_panel
                     .get_or_insert_default()
                     .auto_fold_dirs = Some(false);
-                settings.project.worktree.file_scan_exclusions = Some(Vec::new())
+                settings.project.worktree.file_scan_exclusions = Some(Vec::new());
+                settings.project.worktree.file_scan_depth = Some(0);
             });
         });
     });
@@ -11355,7 +11368,8 @@ fn init_test_with_git_ui(cx: &mut TestAppContext) {
                     .project_panel
                     .get_or_insert_default()
                     .auto_fold_dirs = Some(false);
-                settings.project.worktree.file_scan_exclusions = Some(Vec::new())
+                settings.project.worktree.file_scan_exclusions = Some(Vec::new());
+                settings.project.worktree.file_scan_depth = Some(0);
             });
         });
     });

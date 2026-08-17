@@ -60,7 +60,10 @@ use paths::{
     local_debug_file_relative_path, local_settings_file_relative_path,
     local_tasks_file_relative_path,
 };
-use project::{DirectoryLister, DisableAiSettings, ProjectItem};
+use project::{
+    DirectoryLister, DisableAiSettings, ProjectItem,
+    project_settings::{SettingsObserver, SettingsObserverEvent},
+};
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
 use recent_projects::open_remote_project;
@@ -436,6 +439,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
     init_cursor_hide_mode(cx);
     init_app_appearance(cx);
     init_reduce_motion(cx);
+    init_global_config_error_notifications(cx);
 
     cx.observe_new(|_multi_workspace: &mut MultiWorkspace, window, cx| {
         let Some(window) = window else {
@@ -476,6 +480,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
                 if cx
                     .update(|window, cx| {
                         input_latency_ui::report_input_latency_telemetry(window, cx);
+                        input_latency_ui::report_frame_duration_telemetry(window, cx);
                     })
                     .is_err()
                 {
@@ -1023,6 +1028,14 @@ fn register_actions(
         .register_action(|_, _: &ToggleFullScreen, window, _| {
             window.toggle_fullscreen();
         })
+        .register_action(|_, _: &zed_actions::dev::ToggleFpsOverlay, window, _| {
+            window.cycle_debug_frame_overlay_mode();
+        })
+        .register_action(
+            |_, _: &zed_actions::dev::ResetFrameOverlayStats, window, _| {
+                window.reset_debug_frame_overlay_stats();
+            },
+        )
         .register_action(|_, action: &OpenZedUrl, _, cx| {
             OpenListener::global(cx).open(RawOpenRequest {
                 urls: vec![String::from(&*action.url)],
@@ -2045,6 +2058,46 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
     };
 }
 
+fn init_global_config_error_notifications(cx: &mut App) {
+    cx.observe_new(|_: &mut SettingsObserver, _, cx| {
+        cx.subscribe_self::<SettingsObserverEvent>(|_, event, cx| {
+            let (result, file_kind, on_click): (_, _, fn(&mut Window, &mut App)) = match event {
+                SettingsObserverEvent::GlobalTasksUpdated(result) => {
+                    (result, "tasks", |window, cx| {
+                        window.dispatch_action(OpenTasks.boxed_clone(), cx)
+                    })
+                }
+                SettingsObserverEvent::GlobalDebugScenariosUpdated(result) => {
+                    (result, "debug scenarios", |window, cx| {
+                        window.dispatch_action(OpenDebugTasks.boxed_clone(), cx)
+                    })
+                }
+                _ => return,
+            };
+            let id = NotificationId::Named(format!("invalid-global-{file_kind}-file").into());
+            match result {
+                Ok(_) => dismiss_app_notification(&id, cx),
+                Err(error) => {
+                    let message = format!("Invalid global {file_kind} file\n{error}");
+                    show_app_notification(id, cx, move |cx| {
+                        cx.new(|cx| {
+                            MessageNotification::new(message.clone(), cx)
+                                .primary_message("Open File")
+                                .primary_icon(IconName::Settings)
+                                .primary_on_click(move |window, cx| {
+                                    on_click(window, cx);
+                                    cx.emit(DismissEvent);
+                                })
+                        })
+                    });
+                }
+            }
+        })
+        .detach();
+    })
+    .detach();
+}
+
 #[derive(Copy, Clone, Debug, settings::RegisterSetting)]
 struct CursorHideModeSetting(gpui::CursorHideMode);
 
@@ -2917,6 +2970,87 @@ mod tests {
             .unwrap();
 
         futures::future::join_all(all_tasks).await;
+    }
+
+    #[gpui::test]
+    async fn test_partial_file_index_status_bar_message(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        set_file_scan_depth(cx, 1);
+
+        let fs = app_state.fs.as_fake();
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "junk": {
+                    "a": {
+                        "b": {
+                            "deep.txt": ""
+                        }
+                    }
+                },
+                "top.txt": ""
+            }),
+        )
+        .await;
+
+        let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let languages = project.read_with(cx, |project, _| project.languages().clone());
+        let indicator = workspace.update_in(cx, |workspace, window, cx| {
+            activity_indicator::ActivityIndicator::new(workspace, languages, window, cx)
+        });
+        cx.run_until_parked();
+
+        indicator.update(cx, |indicator, cx| {
+            assert_eq!(
+                indicator.message_to_render(cx),
+                Some("Partial file index".to_string())
+            );
+        });
+
+        set_file_scan_depth(cx, 0);
+        cx.run_until_parked();
+
+        indicator.update(cx, |indicator, cx| {
+            assert_eq!(indicator.message_to_render(cx), None);
+        });
+
+        set_file_scan_depth(cx, 1);
+        cx.run_until_parked();
+
+        indicator.update(cx, |indicator, cx| {
+            assert_eq!(
+                indicator.message_to_render(cx),
+                Some("Partial file index".to_string())
+            );
+        });
+
+        cx.executor().advance_clock(
+            activity_indicator::DEFERRED_SCAN_MESSAGE_TIMEOUT + Duration::from_secs(1),
+        );
+        cx.run_until_parked();
+
+        indicator.update(cx, |indicator, cx| {
+            assert_eq!(indicator.message_to_render(cx), None);
+        });
+
+        fs.insert_tree(
+            path!("/root/other"),
+            json!({
+                "x": {
+                    "y": ""
+                }
+            }),
+        )
+        .await;
+        cx.run_until_parked();
+
+        indicator.update(cx, |indicator, cx| {
+            assert_eq!(indicator.message_to_render(cx), None);
+        });
     }
 
     #[gpui::test]
@@ -5773,7 +5907,6 @@ mod tests {
                 "context_server",
                 "copilot",
                 "copilot_edit_predictions",
-                "csv",
                 "debug_panel",
                 "debugger",
                 "dev",
@@ -5827,6 +5960,7 @@ mod tests {
                 "svg",
                 "syntax_tree_view",
                 "tab_switcher",
+                "tabular_data",
                 "task",
                 "terminal",
                 "terminal_panel",
@@ -5996,6 +6130,16 @@ mod tests {
 
     pub(crate) fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         init_test_with_state(cx, cx.update(AppState::test))
+    }
+
+    fn set_file_scan_depth(cx: &mut TestAppContext, depth: u32) {
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.worktree.file_scan_depth = Some(depth);
+                });
+            });
+        });
     }
 
     fn init_test_with_state(
@@ -6255,6 +6399,71 @@ mod tests {
         cx.run_until_parked();
 
         // If this panics, the test has failed
+    }
+
+    #[gpui::test]
+    async fn test_invalid_global_tasks_file_shows_notification_on_startup(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let tasks_file_path = paths::tasks_file().as_path();
+        app_state
+            .fs
+            .create_dir(tasks_file_path.parent().unwrap())
+            .await
+            .unwrap();
+        app_state
+            .fs
+            .save(
+                tasks_file_path,
+                &r#"[{ "label": "first" }] [{ "label": "trailing garbage" }]"#.into(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
+
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.run_until_parked();
+
+        let workspace = window
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let notification_id = NotificationId::Named("invalid-global-tasks-file".into());
+        let shown_notifications = workspace.read_with(cx, |workspace, _| {
+            workspace
+                .notification_ids()
+                .into_iter()
+                .filter(|id| *id == notification_id)
+                .count()
+        });
+        assert_eq!(
+            shown_notifications, 1,
+            "invalid global tasks file at startup should show an app notification"
+        );
+
+        app_state
+            .fs
+            .save(
+                tasks_file_path,
+                &r#"[{ "label": "first", "command": "echo" }]"#.into(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let shown_notifications = workspace.read_with(cx, |workspace, _| {
+            workspace
+                .notification_ids()
+                .into_iter()
+                .filter(|id| *id == notification_id)
+                .count()
+        });
+        assert_eq!(
+            shown_notifications, 0,
+            "fixing the global tasks file should dismiss the notification"
+        );
     }
 
     #[gpui::test]

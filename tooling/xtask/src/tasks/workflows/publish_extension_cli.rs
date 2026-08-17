@@ -90,6 +90,7 @@ fn update_sha_in_zed(publish_job: &NamedJob, message: &WorkflowInput) -> NamedJo
             .for_repository(RepositoryTarget::current())
             .with_permissions([
                 (TokenPermissions::Contents, Level::Write),
+                (TokenPermissions::Issues, Level::Write),
                 (TokenPermissions::PullRequests, Level::Write),
                 (TokenPermissions::Workflows, Level::Write),
             ])
@@ -159,6 +160,7 @@ fn update_sha_in_extensions(publish_job: &NamedJob, message: &WorkflowInput) -> 
             .for_repository(extensions_repo)
             .with_permissions([
                 (TokenPermissions::Contents, Level::Write),
+                (TokenPermissions::Issues, Level::Write),
                 (TokenPermissions::PullRequests, Level::Write),
                 (TokenPermissions::Workflows, Level::Write),
             ])

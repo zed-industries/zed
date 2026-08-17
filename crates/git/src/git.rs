@@ -225,7 +225,7 @@ impl Oid {
         &self.bytes[..self.format.byte_len()]
     }
 
-    pub(crate) fn is_zero(&self) -> bool {
+    pub fn is_zero(&self) -> bool {
         self.as_bytes().iter().all(|byte| *byte == 0)
     }
 

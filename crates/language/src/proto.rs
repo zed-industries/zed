@@ -473,6 +473,8 @@ pub fn deserialize_diagnostics(
                         proto::diagnostic::SourceKind::Other => DiagnosticSourceKind::Other,
                     },
                     data,
+                    // Not serialized: only the peer talking to the language server sends these back.
+                    related_information: None,
                 },
             })
         })
