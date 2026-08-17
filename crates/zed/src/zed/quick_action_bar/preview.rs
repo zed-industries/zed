@@ -1,9 +1,9 @@
-use tabular_data_preview::{CsvPreviewView, TabularDataPreviewFeatureFlag};
 use editor::{Editor, MultiBuffer};
 use feature_flags::FeatureFlagAppExt as _;
 use gpui::{AnyElement, Entity, Modifiers};
 use markdown_preview::markdown_preview_view::MarkdownPreviewView;
 use svg_preview::svg_preview_view::SvgPreviewView;
+use tabular_data_preview::{CsvPreviewView, TabularDataPreviewFeatureFlag};
 use ui::{Tooltip, prelude::*, text_for_keystroke};
 
 use super::QuickActionBar;
