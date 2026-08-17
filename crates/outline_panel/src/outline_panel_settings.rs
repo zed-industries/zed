@@ -1,7 +1,7 @@
 use editor::{EditorSettings, ui_scrollbar_settings_from_raw};
 use gpui::{App, Pixels};
 use settings::RegisterSetting;
-pub use settings::{DockSide, Settings, ShowIndentGuides};
+pub use settings::{DockSide, FolderIndicator, Settings, ShowIndentGuides};
 use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 
 #[derive(Debug, Clone, Copy, PartialEq, RegisterSetting)]
@@ -10,7 +10,7 @@ pub struct OutlinePanelSettings {
     pub default_width: Pixels,
     pub dock: DockSide,
     pub file_icons: bool,
-    pub folder_icons: bool,
+    pub folder_indicator: FolderIndicator,
     pub git_status: bool,
     pub indent_size: f32,
     pub indent_guides: IndentGuidesSettings,
@@ -53,7 +53,7 @@ impl Settings for OutlinePanelSettings {
             default_width: panel.default_width.map(gpui::px).unwrap(),
             dock: panel.dock.unwrap(),
             file_icons: panel.file_icons.unwrap(),
-            folder_icons: panel.folder_icons.unwrap(),
+            folder_indicator: panel.folder_indicator.unwrap(),
             git_status: panel.git_status.unwrap()
                 && content
                     .git

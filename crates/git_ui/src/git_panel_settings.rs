@@ -3,7 +3,8 @@ use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    GitPanelClickBehavior, GitPanelGroupBy, GitPanelSortBy, RegisterSetting, Settings, StatusStyle,
+    FolderIndicator, GitPanelClickBehavior, GitPanelGroupBy, GitPanelSortBy, RegisterSetting,
+    Settings, StatusStyle,
 };
 use ui::{
     px,
@@ -23,7 +24,7 @@ pub struct GitPanelSettings {
     pub default_width: Pixels,
     pub status_style: StatusStyle,
     pub file_icons: bool,
-    pub folder_icons: bool,
+    pub folder_indicator: FolderIndicator,
     pub scrollbar: ScrollbarSettings,
     pub fallback_branch_name: String,
     pub sort_by: GitPanelSortBy,
@@ -66,7 +67,7 @@ impl Settings for GitPanelSettings {
             default_width: px(git_panel.default_width.unwrap()),
             status_style: git_panel.status_style.unwrap(),
             file_icons: git_panel.file_icons.unwrap(),
-            folder_icons: git_panel.folder_icons.unwrap(),
+            folder_indicator: git_panel.folder_indicator.unwrap(),
             scrollbar: ScrollbarSettings {
                 show: git_panel
                     .scrollbar
