@@ -6061,10 +6061,7 @@ mod tests {
         });
         cx.run_until_parked();
         cx.update(|_window, cx| {
-            let html = markdown
-                .read(cx)
-                .parsed_markdown()
-                .html_for_selection(0..0);
+            let html = markdown.read(cx).parsed_markdown().html_for_selection(0..0);
             assert!(html.starts_with("<h1>Heading</h1>"), "got: {html}");
             assert!(
                 !html.contains("title: Post"),
@@ -6084,10 +6081,7 @@ mod tests {
         });
         cx.run_until_parked();
         cx.update(|_window, cx| {
-            let html = markdown
-                .read(cx)
-                .parsed_markdown()
-                .html_for_selection(0..0);
+            let html = markdown.read(cx).parsed_markdown().html_for_selection(0..0);
             assert!(
                 html.contains("title: Post"),
                 "frontmatter should leak without the metadata option, got: {html}"
@@ -6123,8 +6117,12 @@ mod tests {
             md.selection.start = 2;
             md.selection.end = 6;
         });
-        markdown.update_in(cx, |md, window, cx| md.copy_as_html(&rendered_text, window, cx));
-        let clipboard = cx.read_from_clipboard().expect("clipboard should have content");
+        markdown.update_in(cx, |md, window, cx| {
+            md.copy_as_html(&rendered_text, window, cx)
+        });
+        let clipboard = cx
+            .read_from_clipboard()
+            .expect("clipboard should have content");
         assert_eq!(clipboard.text().as_deref(), Some("bold"));
         assert_eq!(
             clipboard.html().as_deref(),
@@ -6136,14 +6134,20 @@ mod tests {
             md.selection.start = 0;
             md.selection.end = 0;
         });
-        markdown.update_in(cx, |md, window, cx| md.copy_as_html(&rendered_text, window, cx));
-        let clipboard = cx.read_from_clipboard().expect("clipboard should have content");
+        markdown.update_in(cx, |md, window, cx| {
+            md.copy_as_html(&rendered_text, window, cx)
+        });
+        let clipboard = cx
+            .read_from_clipboard()
+            .expect("clipboard should have content");
         assert_eq!(clipboard.text().as_deref(), Some("bold text"));
-        assert!(clipboard
-            .html()
-            .as_deref()
-            .unwrap()
-            .contains("<strong>bold</strong>"));
+        assert!(
+            clipboard
+                .html()
+                .as_deref()
+                .unwrap()
+                .contains("<strong>bold</strong>")
+        );
     }
 
     #[gpui::test]
