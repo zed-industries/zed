@@ -420,12 +420,16 @@ struct IndexedSymbol {
 
 impl SourceLocationIndex {
     fn new(snapshot: &language::BufferSnapshot) -> Self {
-        let outline = snapshot.outline(None);
+        // Exclude `@context.extra` captures (e.g. parameter lists) from symbol
+        // text: the text is persisted, and extra context is the part of a
+        // signature most likely to churn. Duplicate paths are disambiguated by
+        // ordinal instead.
+        let items = snapshot.outline_items_as_points_containing(0..snapshot.len(), false, None);
         let mut path_stack = Vec::new();
         let mut next_ordinal_by_path = HashMap::<Vec<SharedString>, u32>::new();
-        let mut symbols = Vec::with_capacity(outline.items.len());
+        let mut symbols = Vec::with_capacity(items.len());
 
-        for item in &outline.items {
+        for item in items {
             path_stack.truncate(item.depth);
             path_stack.push(item.text.clone());
             let symbol_path = path_stack.clone();
@@ -436,8 +440,7 @@ impl SourceLocationIndex {
             symbols.push(IndexedSymbol {
                 symbol_path,
                 symbol_ordinal,
-                range: item.range.start.summary::<Point>(snapshot)
-                    ..item.range.end.summary::<Point>(snapshot),
+                range: item.range,
             });
         }
 
@@ -445,13 +448,6 @@ impl SourceLocationIndex {
             symbols,
             rows_by_line_text: OnceCell::new(),
         }
-    }
-
-    fn ordinal_for(&self, range: &Range<Point>, symbol_path: &[SharedString]) -> Option<u32> {
-        self.symbols
-            .iter()
-            .find(|symbol| symbol.range == *range && symbol.symbol_path == symbol_path)
-            .map(|symbol| symbol.symbol_ordinal)
     }
 
     fn rows_matching_line(
@@ -476,27 +472,26 @@ impl SourceLocationIndex {
     }
 }
 
+/// Finds the innermost indexed symbol containing `row`. The symbol path and
+/// ordinal come from the same index used at resolution time, so serialization
+/// and resolution cannot disagree about a symbol's identity.
 fn compute_symbol_ref(
     snapshot: &language::BufferSnapshot,
     index: &SourceLocationIndex,
     row: u32,
 ) -> Option<SymbolRef> {
-    let containing = snapshot.symbols_containing(syntax_lookup_point(snapshot, row), None);
-    let innermost = containing.last()?;
-    let symbol_path = containing
+    let point = syntax_lookup_point(snapshot, row);
+    // Indexed symbols preserve outline order — sorted by start ascending, then
+    // end descending — so the last symbol containing `point` is the innermost.
+    let innermost = index
+        .symbols
         .iter()
-        .map(|item| item.text.clone())
-        .collect::<Vec<_>>();
-
-    let range = innermost.range.start.summary::<Point>(snapshot)
-        ..innermost.range.end.summary::<Point>(snapshot);
-    let line_offset_in_symbol = row.saturating_sub(range.start.row);
-    let symbol_ordinal = index.ordinal_for(&range, &symbol_path)?;
+        .rfind(|symbol| symbol.range.start <= point && point <= symbol.range.end)?;
 
     Some(SymbolRef {
-        symbol_path,
-        symbol_ordinal,
-        line_offset_in_symbol,
+        symbol_path: innermost.symbol_path.clone(),
+        symbol_ordinal: innermost.symbol_ordinal,
+        line_offset_in_symbol: row.saturating_sub(innermost.range.start.row),
     })
 }
 
@@ -1243,6 +1238,62 @@ mod tests {
         assert_eq!(first_symbol.symbol_path, second_symbol.symbol_path);
         assert_eq!(first_symbol.symbol_ordinal, 0);
         assert_eq!(second_symbol.symbol_ordinal, 1);
+    }
+
+    #[gpui::test]
+    fn test_syntactic_location_excludes_extra_context_from_symbol_path(cx: &mut TestAppContext) {
+        let language = Arc::new(
+            Language::new(
+                LanguageConfig {
+                    name: "TypeScript".into(),
+                    ..Default::default()
+                },
+                Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+            )
+            .with_outline_query(
+                r#"
+                (function_declaration
+                    "function" @context
+                    name: (_) @name
+                    parameters: (formal_parameters
+                        "(" @context.extra
+                        ")" @context.extra)) @item
+                "#,
+            )
+            .expect("valid outline query with extra context"),
+        );
+        let buffer = cx.new(|cx| {
+            Buffer::local(
+                "function bookmarked(value: number) {\n    target();\n}\n",
+                cx,
+            )
+            .with_language(language.clone(), cx)
+        });
+        let location = cx.update(|cx| {
+            let snapshot = buffer.read(cx).snapshot();
+            let anchor = snapshot.anchor_after(Point::new(1, 0));
+            compute_syntactic_location(&snapshot, anchor)
+        });
+
+        let symbol = location.symbol.as_ref().expect("expected an enclosing symbol");
+        assert_eq!(
+            symbol.symbol_path,
+            vec![SharedString::from("function bookmarked")]
+        );
+
+        let resolved = resolve_location(
+            "function unrelated() {}\n\nfunction bookmarked(value: number) {\n    target();\n}\n",
+            Some(language),
+            &location,
+            cx,
+        );
+        assert_eq!(
+            resolved,
+            ResolvedSourceLocation {
+                row: 3,
+                kind: SourceLocationResolutionKind::ExactSymbolOffset,
+            }
+        );
     }
 
     #[gpui::test]
