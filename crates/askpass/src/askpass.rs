@@ -520,8 +520,8 @@ fn generate_gpg_wrapper_script(
     //      (e.g. when gpg agent's `pinentry-program` is not configured)
     //
     // git streams the payload on stdin (readable once) and reads the signature
-    // from stdout, so we buffer stdin to replay it into both attempts and buffer
-    // the first attempt's output, forwarding it only if it succeeds. The
+    // from stdout, so we buffer stdin to replay it into each attempt and buffer
+    // each attempt's output, forwarding it only if it succeeds. The
     // passphrase goes to fd 3 via a pipe.
     Ok(format!(
         r#"#!/bin/sh
@@ -541,7 +541,7 @@ if [ -z "${{is_signing}}" ]; then
     exec {gpg_program} "$@"
 fi
 
-# Signing. Buffer stdin (the payload) and the first attempt's output
+# Signing. Buffer stdin (the payload) and each attempt's output
 # so we can retry cleanly on failure without git seeing partial output.
 tmpdir=$(mktemp -d) || exit 1
 trap 'rm -rf "$tmpdir"' EXIT
