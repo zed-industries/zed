@@ -22854,7 +22854,6 @@ dependencies = [
  "anyhow",
  "async-channel 2.5.0",
  "async-lock",
- "chardetng",
  "clock",
  "collections",
  "encoding_rs",

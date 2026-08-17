@@ -9916,6 +9916,7 @@ impl Repository {
                                 path.as_ref()
                             )
                         })?;
+                        let content = decode_git_text(content)?;
                         anyhow::Ok((content, blame))
                     }
                     RepositoryState::Remote(RemoteRepositoryState { client, project_id }) => {
