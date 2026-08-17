@@ -1379,6 +1379,7 @@ impl PlatformWindow for MacWindow {
             let archiver: id = msg_send![class!(NSKeyedArchiver), alloc];
             let archiver: id = msg_send![archiver, initRequiringSecureCoding: YES];
             if archiver.is_null() {
+                log::error!("failed to create archiver for restorable window state");
                 return None;
             }
             let delegate: id = msg_send![SPACES_ARCHIVER_DELEGATE_CLASS, new];
@@ -1391,6 +1392,7 @@ impl PlatformWindow for MacWindow {
 
             let data: id = msg_send![archiver, encodedData];
             let result = if data.is_null() || data.bytes().is_null() {
+                log::error!("archiver produced no data for restorable window state");
                 None
             } else {
                 let bytes =
@@ -1441,6 +1443,12 @@ impl PlatformWindow for MacWindow {
             let unarchiver: id =
                 msg_send![unarchiver, initForReadingFromData: data error: &mut error];
             if unarchiver.is_null() {
+                let message: id = if error == nil {
+                    nil
+                } else {
+                    msg_send![error, localizedDescription]
+                };
+                log::error!("failed to unarchive restorable window state: {message:?}");
                 return;
             }
             let _: () = msg_send![native_window, restoreStateWithCoder: unarchiver];
