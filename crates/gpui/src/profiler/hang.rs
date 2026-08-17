@@ -63,11 +63,20 @@ impl HangDetector {
     }
 }
 
+/// Incidents whose active window begins within this duration of app startup
+/// are tagged with the `"startup"` phase.
+pub const STARTUP_PHASE_CUTOFF: Duration = Duration::from_secs(10);
+
 /// A [`HangIncident`] in a telemetry-friendly form: timestamps and durations
 /// in fractional milliseconds since app startup (microsecond precision),
 /// locations as plain data, contributor count capped by the converter.
 #[derive(Debug, Clone, Serialize)]
 pub struct SerializedHangIncident {
+    /// `"startup"` when the active window began within
+    /// [`STARTUP_PHASE_CUTOFF`] of app startup, otherwise `"steady"`.
+    /// Separates initialization hangs from steady-state hangs without
+    /// suppressing either.
+    pub phase: &'static str,
     /// When the incident's active window started, in milliseconds since app
     /// startup: the sealing frame's first invalidation, or the earliest
     /// contributor's start when nothing was pending a repaint. Foreground
@@ -184,6 +193,11 @@ impl SerializedHangIncident {
                 .min(1.0)
         };
         Self {
+            phase: if active_start.saturating_duration_since(startup) < STARTUP_PHASE_CUTOFF {
+                "startup"
+            } else {
+                "steady"
+            },
             start_ms: since_startup(active_start),
             active_ms: as_millis(active),
             stall_ms: incident

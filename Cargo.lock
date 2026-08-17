@@ -23355,7 +23355,6 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "gpui_tokio",
- "hdrhistogram",
  "http_client",
  "image",
  "image_viewer",

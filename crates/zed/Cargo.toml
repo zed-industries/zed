@@ -123,7 +123,6 @@ go_to_line.workspace = true
 gpui = { workspace = true, features = [ "profiler" ] }
 gpui_platform = { workspace = true, features = [ "screen-capture", "font-kit", "wayland", "x11" ] }
 gpui_tokio.workspace = true
-hdrhistogram.workspace = true
 image = { workspace = true, optional = true }
 itertools.workspace = true
 rayon.workspace = true
