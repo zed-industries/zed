@@ -13364,6 +13364,56 @@ async fn test_autoindent_syntax_aware_applies_syntax_indent(cx: &mut TestAppCont
 }
 
 #[gpui::test]
+async fn test_ime_composition_keeps_manual_indent(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.auto_indent = Some(settings::AutoIndentMode::SyntaxAware)
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                brackets: BracketPairConfig {
+                    pairs: vec![BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: false,
+                        surround: false,
+                        newline: false,
+                    }],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_indents_query(r#"(_ "{" "}" @end) @indent"#)
+        .unwrap(),
+    );
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    cx.set_state("fn foo() {ˇ\n}");
+    cx.condition(|editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Newline, window, cx);
+        // A manual indent here
+        editor.tab(&Tab, window, cx);
+    });
+    assert_eq!(cx.buffer_text(), "fn foo() {\n        \n}");
+
+    cx.update_editor(|editor, window, cx| {
+        editor.replace_and_mark_text_in_range(None, "n", None, window, cx);
+        editor.replace_and_mark_text_in_range(None, "nn", None, window, cx);
+    });
+
+    cx.run_until_parked();
+
+    assert_eq!(cx.buffer_text(), "fn foo() {\n        nn\n}");
+}
+
+#[gpui::test]
 async fn test_autoindent_disabled_with_nested_language(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.auto_indent = Some(settings::AutoIndentMode::SyntaxAware);
