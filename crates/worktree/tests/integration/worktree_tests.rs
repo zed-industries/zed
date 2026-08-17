@@ -5591,7 +5591,8 @@ async fn test_load_file_encoding(cx: &mut TestAppContext) {
         }
         let loaded = loaded.unwrap();
         assert_eq!(
-            loaded.text, case.expected_text,
+            loaded.text.to_string(),
+            case.expected_text,
             "Encoding mismatch for file: {}",
             case.name
         );

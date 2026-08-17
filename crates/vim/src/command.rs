@@ -736,7 +736,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                         &task
                             .await
                             .log_err()
-                            .map(|loaded_file| loaded_file.text)
+                            .map(|loaded_file| loaded_file.text.to_string())
                             .unwrap_or_default(),
                     );
                 }
