@@ -1361,10 +1361,47 @@ mod tests {
 
     #[test]
     fn test_compact_request_pauses_at_minimum_trigger() {
-        let request =
-            request_with_assistant_content(vec![MessageContent::Text("Response".to_string())])
-                .into_compact_request();
+        let mut request =
+            request_with_assistant_content(vec![MessageContent::Text("Response".to_string())]);
+        request.tools.push(crate::Tool {
+            name: "search".to_string(),
+            description: "Search the project.".to_string(),
+            input_schema: serde_json::json!({"type": "object"}),
+            eager_input_streaming: false,
+            cache_control: None,
+        });
+        request.tool_choice = Some(crate::ToolChoice::Auto);
+        let request = request.into_compact_request();
 
+        assert_eq!(
+            serde_json::to_value(
+                request
+                    .messages
+                    .last()
+                    .expect("compact request should contain a final message")
+            )
+            .expect("compact request message should serialize"),
+            serde_json::json!({
+                "role": "user",
+                "content": [{
+                    "type": "text",
+                    "text": "Compact the conversation so far."
+                }]
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(&request.tools).expect("compact request tools should serialize"),
+            serde_json::json!([{
+                "name": "search",
+                "description": "Search the project.",
+                "input_schema": {"type": "object"}
+            }])
+        );
+        assert_eq!(
+            serde_json::to_value(&request.tool_choice)
+                .expect("compact request tool choice should serialize"),
+            serde_json::json!({"type": "none"})
+        );
         assert_eq!(
             serde_json::to_value(&request.context_management).unwrap(),
             serde_json::json!({

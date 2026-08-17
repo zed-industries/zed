@@ -912,11 +912,29 @@ pub struct Request {
 impl Request {
     /// Configures this request to stop after native compaction.
     ///
-    /// Tools are removed because Anthropic's internal summarizer may otherwise
-    /// invoke one instead of producing replacement context.
+    /// Tool definitions remain in the request so the trigger observes the same
+    /// context and prompt-cache prefix as normal generation. Tool choice is
+    /// disabled because explicit compaction must only produce replacement
+    /// context.
+    ///
+    /// Claude 4.6 and later reject requests ending in an assistant message as
+    /// unsupported prefill, so completed conversations receive a final user
+    /// turn that requests compaction.
     pub fn into_compact_request(mut self) -> Self {
-        self.tools.clear();
-        self.tool_choice = None;
+        self.tool_choice = (!self.tools.is_empty()).then_some(ToolChoice::None);
+        if self
+            .messages
+            .last()
+            .is_some_and(|message| message.role == Role::Assistant)
+        {
+            self.messages.push(Message {
+                role: Role::User,
+                content: vec![RequestContent::Text {
+                    text: "Compact the conversation so far.".to_string(),
+                    cache_control: None,
+                }],
+            });
+        }
         self.context_management = Some(ContextManagement {
             edits: vec![ContextManagementEdit::Compact {
                 trigger: Some(CompactionTrigger::InputTokens {
