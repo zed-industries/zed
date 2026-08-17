@@ -505,15 +505,23 @@ fn generate_gpg_wrapper_script(
         .context("Failed to shell-escape gpg passphrase prompt")?;
 
     // The wrapper only intervenes when git asks gpg to *sign* (e.g. `gpg -bsau
-    // <key>`); other invocations like `--verify` run unchanged. For signing we
-    // first try plain gpg so gpg-agent/keychain can supply a cached or empty
-    // passphrase silently, and only fall back to asking Zed (loopback mode, fd
-    // 3) when that fails, e.g. the "Inappropriate ioctl for device" case with no
-    // TTY for pinentry.
+    // <key>`); other invocations like `--verify` run unchanged. Signing runs in
+    // three stages, most silent first, so every pinentry configuration works
+    // without Zed getting in the way:
+    //   1. `--pinentry-mode error`: succeeds only via gpg-agent's passphrase
+    //      cache or an unprotected key; guaranteed to never prompt anywhere.
+    //   2. Default pinentry mode: lets the configured pinentry run. GUI
+    //      pinentries (e.g. pinentry-mac reading the macOS Keychain) need no
+    //      TTY and can sign silently or show their native dialog, exactly like
+    //      terminal git; TTY pinentries fail fast ("Inappropriate ioctl for
+    //      device") because git spawns gpg without a TTY.
+    //   3. Loopback mode with the passphrase from Zed's askpass modal (fd 3),
+    //      for setups where gpg cannot prompt at all.
+    //      (e.g. when gpg agent's `pinentry-program` is not configured)
     //
     // git streams the payload on stdin (readable once) and reads the signature
-    // from stdout, so we buffer stdin to replay it into both attempts and buffer
-    // the first attempt's output, forwarding it only if it succeeds. The
+    // from stdout, so we buffer stdin to replay it into each attempt and buffer
+    // each attempt's output, forwarding it only if it succeeds. The
     // passphrase goes to fd 3 via a pipe.
     Ok(format!(
         r#"#!/bin/sh
@@ -533,7 +541,7 @@ if [ -z "${{is_signing}}" ]; then
     exec {gpg_program} "$@"
 fi
 
-# Signing. Buffer stdin (the payload) and the first attempt's output
+# Signing. Buffer stdin (the payload) and each attempt's output
 # so we can retry cleanly on failure without git seeing partial output.
 tmpdir=$(mktemp -d) || exit 1
 trap 'rm -rf "$tmpdir"' EXIT
@@ -542,17 +550,28 @@ signature="$tmpdir/signature"
 status="$tmpdir/status"
 cat > "$payload" || exit 1
 
-# First try letting gpg-agent/keychain supply the passphrase without any
-# interactive pinentry. If that succeeds (cached passphrase)
-# forward its output and we're done, so Zed never shows a modal.
+# Stage 1: fully silent. Only succeeds if gpg-agent already has the passphrase
+# cached or the key is unprotected; `--pinentry-mode error` forbids launching
+# any pinentry, so this can never prompt anywhere.
 if {gpg_program} --pinentry-mode error "$@" < "$payload" > "$signature" 2> "$status"; then
     cat "$status" >&2
     cat "$signature"
     exit 0
 fi
 
-# The silent attempt failed: ask Zed for the passphrase, then hand it to gpg on
-# fd 3 using loopback mode so no pinentry/terminal is required.
+# Stage 2: let gpg launch the configured pinentry, matching terminal git. GUI
+# pinentries work without a TTY and may fetch the passphrase from an OS
+# keychain silently (or show their native dialog); TTY pinentries fail fast
+# with "Inappropriate ioctl for device" since gpg has no TTY here.
+if {gpg_program} "$@" < "$payload" > "$signature" 2> "$status"; then
+    cat "$status" >&2
+    cat "$signature"
+    exit 0
+fi
+
+# Stage 3: gpg cannot obtain the passphrase on its own. Ask Zed for it, then
+# hand it to gpg on fd 3 using loopback mode so no pinentry/terminal is
+# required.
 passphrase=$(printf '%s\0' {prompt} | {askpass_program} --askpass={askpass_socket} 2>/dev/null)
 printf '%s\n' "$passphrase" |
 {gpg_program} --pinentry-mode loopback --passphrase-fd 3 "$@" 3<&0 < "$payload"
