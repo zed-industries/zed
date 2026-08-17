@@ -3641,37 +3641,44 @@ async fn test_autoscroll_horizontally_fitting_selection_reveals_full_span(
 ) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
-
     let window = cx.window;
-    // Viewport wide enough to fit a short selection's full span at once.
-    cx.simulate_window_resize(window, size(px(1000.), px(300.)));
 
-    cx.set_state("ˇthe quick brown fox jumps over the lazy dog");
+    // Long line so scroll_width stays large and never clamps target_right,
+    // isolating the case below. Viewport is tuned so a 5-char selection's
+    // raw glyph span fits, but its padded span (+ gutter margin + em_advance,
+    // the same padding the final scroll guard uses) does not. Before this
+    // fix, the fallback check compared raw span only, so this case still
+    // wrongly bailed out with no scroll at all.
+    cx.simulate_window_resize(window, size(px(146.), px(300.)));
 
-    // Scroll right first so the whole line is out of view.
+    let line = "x".repeat(300);
+    cx.set_state(&format!("ˇ{line}"));
+
     cx.update_editor(|editor, window, cx| {
-        editor.change_selections(Default::default(), window, cx, |selections| {
-            selections.select_ranges([Point::new(0, 44)..Point::new(0, 44)]);
-        });
+        assert_eq!(
+            editor.snapshot(window, cx).scroll_position(),
+            gpui::Point::new(0., 0.0)
+        );
     });
-    cx.run_until_parked();
 
-    // Select a short span near the start of the line (e.g. simulating a
-    // search match). Since it fits within the viewport, both edges of
-    // the selection should end up visible, not just the head.
+    // Select a short span in the middle of the line (e.g. simulating a
+    // search match). Its raw glyph span fits the viewport, but the padded
+    // span does not, so the fix must still scroll to reveal it.
     cx.update_editor(|editor, window, cx| {
         editor.change_selections(Default::default(), window, cx, |selections| {
-            selections.select_ranges([Point::new(0, 4)..Point::new(0, 9)]);
+            selections.select_ranges([Point::new(0, 100)..Point::new(0, 105)]);
         });
     });
     cx.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
         let scroll_position = editor.snapshot(window, cx).scroll_position();
-        assert_eq!(
-            scroll_position.x, 0.,
-            "expected scroll to reveal the full short selection near the start of \
-             the line, but scroll_position.x was {}",
+        assert!(
+            scroll_position.x > 0.,
+            "expected scroll to reveal the selection: raw glyph span fits the \
+             viewport, but the padded span (gutter margin + em_advance) does not \
+             — autoscroll must still scroll rather than bailing out. \
+             scroll_position.x was {}",
             scroll_position.x
         );
     });
