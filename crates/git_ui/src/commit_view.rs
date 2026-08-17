@@ -2,11 +2,11 @@ use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
 use collections::HashMap;
 use editor::{
-    Addon, Editor, EditorEvent, EditorSettings, MultiBuffer, SplittableEditor,
-    hover_markdown_style, multibuffer_context_lines,
+    Addon, Editor, EditorEvent, EditorSettings, MultiBuffer, RestoreOnlyDiffHunkDelegate,
+    SplittableEditor, hover_markdown_style, multibuffer_context_lines,
 };
 use futures_lite::future::yield_now;
-use git::repository::{CommitDetails, CommitDiff, RepoPath, is_binary_content};
+use git::repository::{CommitDetails, RepoPath};
 use git::status::{FileStatus, StatusCode, TrackedStatus};
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, ParsedGitRemote,
@@ -24,7 +24,10 @@ use language::{
 };
 use markdown::{Markdown, MarkdownElement};
 use multi_buffer::PathKey;
-use project::{Project, ProjectPath, WorktreeId, git_store::Repository};
+use project::{
+    Project, ProjectPath, WorktreeId,
+    git_store::{CommitDiff, Repository},
+};
 use settings::{DiffViewStyle, Settings};
 use std::{
     any::{Any, TypeId},
@@ -82,16 +85,39 @@ pub struct CommitView {
     stash: Option<usize>,
     multibuffer: Entity<MultiBuffer>,
     repository: Entity<Repository>,
+    project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     remote: Option<GitRemote>,
+    _load_diff_task: Task<Result<()>>,
 }
 
-struct GitBlob {
-    path: RepoPath,
-    worktree_id: WorktreeId,
-    is_deleted: bool,
-    is_binary: bool,
-    display_name: String,
+pub(crate) struct GitBlob {
+    pub(crate) path: RepoPath,
+    pub(crate) worktree_id: WorktreeId,
+    pub(crate) is_deleted: bool,
+    pub(crate) is_binary: bool,
+    pub(crate) display_name: String,
+}
+
+pub(crate) fn worktree_id_for_repo_path(
+    repository: &Repository,
+    project: &Project,
+    path: &RepoPath,
+    cx: &App,
+) -> Option<WorktreeId> {
+    repository
+        .repo_path_to_project_path(path, cx)
+        .map(|project_path| project_path.worktree_id)
+        .or_else(|| {
+            let (worktree, _) = project.find_worktree(&repository.work_directory_abs_path, cx)?;
+            Some(worktree.read(cx).id())
+        })
+        .or_else(|| {
+            project
+                .worktrees(cx)
+                .next()
+                .map(|worktree| worktree.read(cx).id())
+        })
 }
 
 struct CommitDiffAddon {
@@ -274,7 +300,7 @@ impl CommitView {
                 window,
                 cx,
             );
-            editor.disable_diff_hunk_controls(cx);
+            editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyDiffHunkDelegate)), cx);
 
             editor.rhs_editor().update(cx, |editor, cx| {
                 editor.set_show_bookmarks(false, cx);
@@ -286,15 +312,10 @@ impl CommitView {
         });
         let commit_sha = Arc::<str>::from(commit.sha.as_ref());
 
-        let first_worktree_id = project
-            .read(cx)
-            .worktrees(cx)
-            .next()
-            .map(|worktree| worktree.read(cx).id());
-
         let repository_clone = repository.clone();
+        let project_clone = project.clone();
 
-        cx.spawn_in(window, async move |this, cx| {
+        let load_diff_task = cx.spawn_in(window, async move |this, cx| {
             let mut binary_buffer_ids: HashSet<language::BufferId> = HashSet::default();
             let mut file_statuses: HashMap<language::BufferId, FileStatus> = HashMap::default();
 
@@ -304,11 +325,7 @@ impl CommitView {
                 let raw_new_text = file.new_text.unwrap_or_default();
                 let raw_old_text = file.old_text;
 
-                let is_binary = file.is_binary
-                    || is_binary_content(raw_new_text.as_bytes())
-                    || raw_old_text
-                        .as_ref()
-                        .is_some_and(|text| is_binary_content(text.as_bytes()));
+                let is_binary = file.is_binary;
 
                 let new_text = if is_binary {
                     "(binary file not shown)".to_string()
@@ -317,14 +334,18 @@ impl CommitView {
                 };
                 let old_text = if is_binary { None } else { raw_old_text };
                 let worktree_id = repository_clone
-                    .update(cx, |repository, cx| {
-                        repository
-                            .repo_path_to_project_path(&file.path, cx)
-                            .map(|path| path.worktree_id)
-                            .or(first_worktree_id)
+                    .read_with(cx, |repository, cx| {
+                        worktree_id_for_repo_path(
+                            repository,
+                            project_clone.read(cx),
+                            &file.path,
+                            cx,
+                        )
                     })
                     .context("project has no worktrees")?;
-                let short_sha = commit_sha.get(0..7).unwrap_or(&commit_sha);
+                let short_sha = commit_sha
+                    .get(0..git::SHORT_SHA_LENGTH)
+                    .unwrap_or(&commit_sha);
                 let file_name = file
                     .path
                     .file_name()
@@ -365,7 +386,15 @@ impl CommitView {
                 let buffer_diff = if is_binary {
                     cx.update(|_, cx| {
                         let snapshot = buffer.read(cx).snapshot();
-                        cx.new(|cx| BufferDiff::new_unchanged(&snapshot, cx))
+                        cx.new(|cx| {
+                            BufferDiff::new_unchanged(
+                                &snapshot,
+                                snapshot.language().cloned(),
+                                Some(language_registry.clone()),
+                                buffer_diff::DiffBaseKind::Oid,
+                                cx,
+                            )
+                        })
                     })?
                 } else {
                     build_buffer_diff(old_text, &buffer, &language_registry, cx).await?
@@ -442,8 +471,7 @@ impl CommitView {
             })?;
 
             anyhow::Ok(())
-        })
-        .detach();
+        });
 
         let snapshot = repository.read(cx).snapshot();
         let remote_url = snapshot
@@ -469,8 +497,10 @@ impl CommitView {
             multibuffer,
             stash,
             repository,
+            project,
             workspace,
             remote,
+            _load_diff_task: load_diff_task,
         }
     }
 
@@ -555,7 +585,7 @@ impl CommitView {
             time_format::TimestampFormat::MediumAbsolute,
         );
 
-        let avatar_size = rems_from_px(40.);
+        let avatar_size = rems_from_px(40_f32);
         let avatar_size_px = avatar_size.to_pixels(window.rem_size());
         let gutter_width = self.editor.update(cx, |editor, cx| {
             let editor = editor.rhs_editor().clone();
@@ -569,7 +599,7 @@ impl CommitView {
                     .full_width()
             })
         });
-        let avatar_min_side_padding = rems_from_px(6.).to_pixels(window.rem_size());
+        let avatar_min_side_padding = rems_from_px(6_f32).to_pixels(window.rem_size());
         let avatar_container_min = avatar_size_px + avatar_min_side_padding;
         let avatar_container_width = gutter_width.max(avatar_container_min);
 
@@ -945,7 +975,7 @@ impl language::File for GitBlob {
     }
 }
 
-async fn build_buffer(
+pub(crate) async fn build_buffer(
     mut text: String,
     blob: Arc<dyn File>,
     language_registry: &Arc<language::LanguageRegistry>,
@@ -956,9 +986,9 @@ async fn build_buffer(
     let text = Rope::from(text);
     let language =
         cx.update(|_, cx| language_registry.language_for_file(&blob, Some(&text), cx))?;
-    let language = if let Some(language) = language {
+    let language = if let Some(language_id) = language {
         language_registry
-            .load_language(&language)
+            .load_language(language_id)
             .await
             .ok()
             .and_then(|e| e.log_err())
@@ -992,23 +1022,22 @@ async fn build_buffer_diff(
     let language = cx.update(|_, cx| buffer.read(cx).language().cloned())?;
     let buffer = cx.update(|_, cx| buffer.read(cx).snapshot())?;
 
-    let diff = cx.new(|cx| BufferDiff::new(&buffer.text, cx));
-
-    let update = diff
-        .update(cx, |diff, cx| {
-            diff.update_diff(
-                buffer.text.clone(),
-                old_text.map(|old_text| Arc::from(old_text.as_str())),
-                Some(true),
-                language.clone(),
-                cx,
-            )
-        })
-        .await;
+    let diff = cx.new(|cx| {
+        BufferDiff::new(
+            &buffer.text,
+            language,
+            Some(language_registry.clone()),
+            buffer_diff::DiffBaseKind::Oid,
+            cx,
+        )
+    });
 
     diff.update(cx, |diff, cx| {
-        diff.language_changed(language, Some(language_registry.clone()), cx);
-        diff.set_snapshot(update, &buffer.text, cx)
+        diff.set_base_text(
+            old_text.map(|old_text| Arc::from(old_text.as_str())),
+            buffer.text.clone(),
+            cx,
+        )
     })
     .await;
 
@@ -1171,7 +1200,7 @@ impl Item for CommitView {
         let Some(workspace_entity) = self.workspace.upgrade() else {
             return Task::ready(None);
         };
-        let project = workspace_entity.read(cx).project().clone();
+        let project = self.project.clone();
         let diff_view_style = self.editor.read(cx).diff_view_style();
         let multibuffer = self.multibuffer.clone();
         Task::ready(Some(cx.new(|cx| {
@@ -1190,7 +1219,7 @@ impl Item for CommitView {
                         window,
                         cx,
                     );
-                    editor.disable_diff_hunk_controls(cx);
+                    editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyDiffHunkDelegate)), cx);
                     editor.rhs_editor().update(cx, |editor, cx| {
                         editor.set_show_bookmarks(false, cx);
                         editor.set_show_breakpoints(false, cx);
@@ -1221,8 +1250,10 @@ impl Item for CommitView {
                 commit: self.commit.clone(),
                 stash: self.stash,
                 repository: self.repository.clone(),
+                project: self.project.clone(),
                 workspace: self.workspace.clone(),
                 remote: self.remote.clone(),
+                _load_diff_task: Task::ready(Ok(())),
             }
         })))
     }
@@ -1332,7 +1363,7 @@ impl Render for CommitViewToolbar {
                         }),
                 )
                 .children(remote_info.map(|(provider_name, url)| {
-                    let icon = crate::get_provider_icon(provider_name.as_str());
+                    let icon = ui::git_hosting_provider_icon(provider_name.as_str());
 
                     IconButton::new("view_on_provider", icon)
                         .icon_size(IconSize::Small)

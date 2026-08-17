@@ -77,6 +77,12 @@ impl HighlightedLabel {
         self.base = self.base.truncate_start();
         self
     }
+
+    /// Truncates overflowing text with an ellipsis (`…`) in the middle if needed.
+    pub fn truncate_middle(mut self) -> Self {
+        self.base = self.base.truncate_middle();
+        self
+    }
 }
 
 impl HighlightedLabel {

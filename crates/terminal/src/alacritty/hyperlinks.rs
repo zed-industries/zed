@@ -19,7 +19,7 @@ use util::paths::{PathStyle, UrlExt};
 
 use crate::Range;
 
-const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`']+"#;
+const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://|zed://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`']+"#;
 const WIDE_CHAR_SPACERS: Flags =
     Flags::from_bits(Flags::LEADING_WIDE_CHAR_SPACER.bits() | Flags::WIDE_CHAR_SPACER.bits())
         .unwrap();
@@ -517,6 +517,11 @@ mod tests {
                 "https://website1.com",
                 "mailto:bob@example.com",
             ],
+        );
+        re_test(
+            URL_REGEX,
+            "open zed://channel/the-channel and zed://settings/theme now",
+            vec!["zed://channel/the-channel", "zed://settings/theme"],
         );
     }
 
@@ -1767,7 +1772,7 @@ mod tests {
             let format_path_with_position_and_match =
                 |path_with_position: &PathWithPosition, hyperlink_match: &Match| {
                     let mut result =
-                        format!("Path = «{}»", &path_with_position.path.to_string_lossy());
+                        format!("Path = «{}»", path_with_position.path.to_string_lossy());
                     if let Some(row) = path_with_position.row {
                         result += &format!(", line = {row}");
                         if let Some(column) = path_with_position.column {

@@ -7,7 +7,7 @@ use crate::{
     authorize_with_sensitive_settings, decide_permission_for_path,
 };
 use action_log::ActionLog;
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use agent_settings::AgentSettings;
 use futures::{FutureExt as _, SinkExt, StreamExt, channel::mpsc};
 use gpui::{App, AppContext, Entity, SharedString, Task};
@@ -247,9 +247,7 @@ impl AgentTool for DeletePathTool {
             }
 
             let deletion_task = project
-                .update(cx, |project, cx| {
-                    project.delete_file(project_path, false, cx)
-                })
+                .update(cx, |project, cx| project.delete_file(project_path, cx))
                 .ok_or_else(|| {
                     format!("Couldn't delete {path} because that path isn't in this project.")
                 })?;

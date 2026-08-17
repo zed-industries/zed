@@ -342,6 +342,7 @@ impl ActionRegistry {
         Ok(self.build_action(name, None)?)
     }
 
+    #[cfg(feature = "profiler")]
     pub(crate) fn try_resolve_action(&self, type_id: &TypeId) -> Option<&'static str> {
         self.names_by_type_id.get(type_id).copied()
     }

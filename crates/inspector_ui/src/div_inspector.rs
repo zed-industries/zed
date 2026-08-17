@@ -466,7 +466,7 @@ impl DivInspector {
 
         let project_path = worktree.read_with(cx, |worktree, _cx| ProjectPath {
             worktree_id: worktree.id(),
-            path: RelPath::empty().into(),
+            path: RelPath::empty_arc(),
         });
 
         let buffer = project
@@ -623,7 +623,7 @@ fn guess_rust_code_from_style(goal_style: &StyleRefinement) -> (String, StyleRef
         let before_change = style.clone();
         style = method.invoke(style);
         if before_change != style {
-            let _ = write!(code, "\n        .{}()", &method.name);
+            let _ = write!(code, "\n        .{}()", method.name);
         }
     }
     code.push_str("\n}");
@@ -667,6 +667,7 @@ impl CompletionProvider for RustStyleCompletionProvider {
                     match_start: None,
                     snippet_deduplication_key: None,
                     icon_path: None,
+                    icon_color: None,
                     documentation: method.documentation.map(|documentation| {
                         CompletionDocumentation::MultiLineMarkdown(documentation.into())
                     }),

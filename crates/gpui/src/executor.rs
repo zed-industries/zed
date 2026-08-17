@@ -84,6 +84,27 @@ impl BackgroundExecutor {
         self.inner.clone()
     }
 
+    /// Spawn a closure on a fresh session pinned to its own [`SchedulerLocalExecutor`].
+    /// The closure runs on a new OS thread under the platform scheduler, or on
+    /// the test scheduler's loop in tests.
+    ///
+    /// Prefer this over [`Self::spawn`] for futures whose polls need more stack
+    /// than shared background threads guarantee. Dedicated threads get the
+    /// standard library's default 2 MiB, while `spawn` polls futures on
+    /// whatever threads the platform dispatcher provides — on macOS those are
+    /// GCD workers whose stacks are fixed at 512 KiB by the kernel (see `PTH_DEFAULT_STACKSIZE` in
+    /// <https://github.com/apple-oss-distributions/libpthread/blob/42d026df5b07825070f60134b980a1ec2552dfee/kern/kern_internal.h#L154>),
+    /// the tightest background-stack budget of any platform.
+    #[track_caller]
+    pub fn spawn_dedicated<F, Fut>(&self, f: F) -> Task<Fut::Output>
+    where
+        F: FnOnce(SchedulerLocalExecutor) -> Fut + Send + 'static,
+        Fut: Future + 'static,
+        Fut::Output: Send + Sync + 'static,
+    {
+        self.inner.spawn_dedicated(f)
+    }
+
     /// Enqueues the given future to be run to completion on a background thread.
     #[track_caller]
     pub fn spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
@@ -330,6 +351,40 @@ impl ForegroundExecutor {
     {
         // Priority is ignored for foreground tasks - they run in order on the main thread
         self.inner.spawn(future)
+    }
+
+    /// On platforms with dedicated support, enqueues the given future to run
+    /// on the main thread during platform idle time. Without a `timeout`,
+    /// polls may be deferred indefinitely while the platform stays busy;
+    /// with one, a poll still waiting after that long runs as ordinary main-thread work.
+    /// Each poll occupies part of one idle slice, so long synchronous stretches
+    /// should bound themselves against [`Self::idle_time_remaining`] and yield.
+    ///
+    /// On platforms without dedicated support, schedules the given future to run
+    /// with a low priority, ignoring `timeout`.
+    #[track_caller]
+    pub fn spawn_when_idle<R>(
+        &self,
+        timeout: Option<Duration>,
+        future: impl Future<Output = R> + 'static,
+    ) -> Task<R>
+    where
+        R: 'static,
+    {
+        let dispatcher = self.dispatcher.clone();
+        self.inner
+            .spawn_with_dispatch(future.boxed_local(), move |runnable| {
+                dispatcher.dispatch_on_main_thread_when_idle(runnable, timeout);
+            })
+    }
+
+    /// The time remaining in the current idle slice, when called from a task
+    /// spawned via [`Self::spawn_when_idle`] on a platform that meters idle
+    /// time. `None` when idle time is unmetered (or the caller is not inside
+    /// an idle slice); work that must bound itself should then fall back to a
+    /// budget of its own.
+    pub fn idle_time_remaining(&self) -> Option<Duration> {
+        self.dispatcher.idle_time_remaining()
     }
 
     /// Used by the test harness to run an async test in a synchronous fashion.

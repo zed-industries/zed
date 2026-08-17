@@ -4,7 +4,7 @@ use super::edit_session::{
 };
 use crate::{AgentTool, Thread, ToolCallEventStream, ToolInput, ToolInputPayload};
 use action_log::ActionLog;
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use futures::FutureExt as _;
 use gpui::{App, AsyncApp, Entity, Task, WeakEntity};
 use language::LanguageRegistry;
@@ -537,10 +537,11 @@ mod tests {
         let rust_language = Arc::new(language::Language::new(
             language::LanguageConfig {
                 name: "Rust".into(),
-                matcher: language::LanguageMatcher {
+                matcher: (language::LanguageMatcher {
                     path_suffixes: vec!["rs".to_string()],
                     ..Default::default()
-                },
+                })
+                .into(),
                 ..Default::default()
             },
             None,
@@ -1345,9 +1346,10 @@ mod tests {
             .await
             .unwrap();
 
-        // The prompt is dismissed by transitioning to InProgress.
-        let dismiss = stream_rx.expect_update_fields().await;
-        assert_eq!(dismiss.status, Some(acp::ToolCallStatus::InProgress));
+        // The prompt is dismissed by resolving the pending authorization.
+        let (_, outcome) = stream_rx.expect_authorization_resolved().await;
+        assert_eq!(outcome.option_id, acp::PermissionOptionId::new("keep"));
+        assert_eq!(outcome.option_kind, acp::PermissionOptionKind::RejectOnce);
         drop(auth);
 
         // The overwrite is cancelled with an error.
