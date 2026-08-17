@@ -70,10 +70,23 @@ impl HangDetector {
 pub struct SerializedHangIncident {
     /// When the interval started, in milliseconds since app startup.
     pub start_ms: f64,
-    /// Length of the interval in milliseconds.
-    pub duration_ms: f64,
-    /// Why the interval sealed: `"draw"` or `"timeout"`.
-    pub reason: &'static str,
+    /// Length of the interval (the time between the two frames bracketing the
+    /// hang, or up to the seal timeout when nothing drew) in milliseconds.
+    /// This is context, not the hang's length; see `stall_ms` for that.
+    pub interval_ms: f64,
+    /// The longest single block of foreground work in the interval, in
+    /// milliseconds: the best estimate of the freeze a user perceived. Always
+    /// the duration of the first contributor.
+    pub stall_ms: f64,
+    /// For draw-sealed intervals, how long the frame that closed the interval
+    /// had been dirty before reaching the screen, in milliseconds: how long a
+    /// needed repaint kept the user waiting.
+    pub dirty_to_draw_ms: Option<f64>,
+    /// What closed the interval: `"draw"` (a frame was produced) or
+    /// `"timeout"` (nothing drew for the seal timeout). This labels the
+    /// interval's boundary, not the hang's cause — the cause is the first
+    /// contributor.
+    pub sealed_by: &'static str,
     /// Fraction of the interval the foreground spent working, `0.0..=1.0`.
     pub busy_fraction: f64,
     /// Total events recorded in the interval (before the contributor cap).
@@ -159,12 +172,23 @@ impl SerializedHangIncident {
         let snapshot = &incident.snapshot;
         Self {
             start_ms: since_startup(snapshot.interval_start),
-            duration_ms: as_millis(
+            interval_ms: as_millis(
                 snapshot
                     .interval_end
                     .duration_since(snapshot.interval_start),
             ),
-            reason: match snapshot.reason {
+            stall_ms: incident
+                .contributors
+                .first()
+                .map(|event| as_millis(event.duration()))
+                .unwrap_or(0.0),
+            dirty_to_draw_ms: match snapshot.events.last() {
+                Some(ForegroundEvent::Draw(timing)) => {
+                    timing.dirty_to_draw_duration().map(as_millis)
+                }
+                _ => None,
+            },
+            sealed_by: match snapshot.reason {
                 super::journal::SealReason::Draw => "draw",
                 super::journal::SealReason::Timeout => "timeout",
             },
