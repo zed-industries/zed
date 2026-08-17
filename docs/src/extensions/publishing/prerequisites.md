@@ -76,17 +76,17 @@ Passing everything on this list? Let's [get your extension published!](./publish
 
 # Requirements Post Publishing
 
-After you extension has been published, there are no further requirements from our side. Thank you for enriching the Zed extension collection, we really appreciate it!
+After your extension has been published, there are no further requirements from our side. Thank you for enriching the Zed extension collection, we really appreciate it!
 
-However, not every extension is perfect when it is first published and issues might arise, requiring maintenance effort. Generally, we expect
+However, not every extension is perfect when it is first published and issues might arise, requiring maintenance effort. While we do not demand this effort from anyone, we generally expect
 
-- users to report issues in the original extension repository as well as
+- users and contributors to report issues and propose improvements in the original extension repository first, rather than publishing a competing extension, as well as
 - extension owners to get back to those users within a reasonable timeframe
 
-Now, maintaining an extension might not be everyones cup of tea or things might have changed since publishing - that is totally fine! We fully understand that maintenance can take a lot of time and as mentioned above, do not require it.
-Yet, at the same time, we do not want existing extensions to go stale in a bad state in an effort to provide a good experience to users of that extension, which obviously clashes with the aforementioned. Due to this, we intentionally do not just want to live with stale extensions.
+Now, maintaining an extension might not be everyone's cup of tea or things might have changed since publishing - that is totally fine! We fully understand that maintenance can take a lot of time and, as mentioned above, we do not require it.
+At the same time, we do not want existing extensions to go stale in a bad state, as that leaves users of that extension with a poor experience. These two goals obviously clash: we cannot both leave maintenance entirely optional and just live with stale extensions.
 
-Thus, in the case an extension owner no longer wants to maintain an extension or is unresponsive, we provide the following options:
+To resolve this, in the case an extension owner no longer wants to maintain an extension or is unresponsive, we provide the following options:
 
 - The current owner may transfer ownership of the repository to a new owner.
 - A contributor may fork the extension and publish their fork as a replacement for the current extension.
