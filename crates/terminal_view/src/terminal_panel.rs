@@ -253,31 +253,14 @@ impl TerminalPanel {
             panel._restoration = cx.spawn_in(window, {
                 let workspace = workspace.clone();
                 async move |terminal_panel, cx| {
-                    Self::restore_serialized_state(workspace, terminal_panel.clone(), cx)
-                        .await
-                        .log_err();
+                    let restored =
+                        Self::restore_serialized_state(workspace, terminal_panel.clone(), cx)
+                            .await
+                            .log_err()
+                            .unwrap_or(false);
                     let default_shell_task = terminal_panel
                         .update_in(cx, |terminal_panel, window, cx| {
-                            terminal_panel.restoring = false;
-                            terminal_panel.serialize(cx);
-                            cx.notify();
-                            if terminal_panel.active && terminal_panel.has_no_terminals(cx) {
-                                let working_directory = terminal_panel
-                                    .workspace
-                                    .update(cx, |workspace, cx| {
-                                        default_working_directory(workspace, cx)
-                                    })
-                                    .ok()
-                                    .flatten();
-                                Some(terminal_panel.add_terminal_shell(
-                                    working_directory,
-                                    RevealStrategy::Always,
-                                    window,
-                                    cx,
-                                ))
-                            } else {
-                                None
-                            }
+                            terminal_panel.finish_restoration(restored, window, cx)
                         })
                         .ok()
                         .flatten();
@@ -291,11 +274,40 @@ impl TerminalPanel {
         Ok(terminal_panel)
     }
 
+    fn finish_restoration(
+        &mut self,
+        restored: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<WeakEntity<Terminal>>>> {
+        self.restoring = false;
+        let has_terminals = self
+            .center
+            .panes()
+            .into_iter()
+            .any(|pane| pane.read(cx).items_len() > 0);
+        if restored || has_terminals {
+            self.serialize(cx);
+        }
+        cx.notify();
+        if self.active && self.has_no_terminals(cx) {
+            let working_directory = self
+                .workspace
+                .update(cx, |workspace, cx| default_working_directory(workspace, cx))
+                .ok()
+                .flatten();
+            Some(self.add_terminal_shell(working_directory, RevealStrategy::Always, window, cx))
+        } else {
+            None
+        }
+    }
+
     async fn restore_serialized_state(
         workspace: WeakEntity<Workspace>,
         terminal_panel: WeakEntity<Self>,
         cx: &mut AsyncWindowContext,
-    ) -> Result<()> {
+    ) -> Result<bool> {
+        let mut restored = false;
         if let Some((database_id, serialization_key, kvp)) = workspace
             .read_with(cx, |workspace, cx| {
                 workspace
@@ -316,7 +328,7 @@ impl TerminalPanel {
                 .flatten()
         {
             let started_at = std::time::Instant::now();
-            workspace
+            let deserialized = workspace
                 .update_in(cx, |workspace, window, cx| {
                     deserialize_terminal_panel(
                         workspace.weak_handle(),
@@ -328,25 +340,18 @@ impl TerminalPanel {
                         cx,
                     )
                 })?
-                .await?;
-            let restored_terminals = terminal_panel
-                .read_with(cx, |terminal_panel, cx| {
-                    terminal_panel
-                        .center
-                        .panes()
-                        .into_iter()
-                        .map(|pane| pane.read(cx).items_len())
-                        .sum::<usize>()
-                })
-                .unwrap_or(0);
-            log::info!(
-                "terminal panel: restored {restored_terminals} serialized terminal(s) in {:?}",
-                started_at.elapsed()
-            );
+                .await;
+            if let Some(restored_terminals) = deserialized.log_err() {
+                restored = restored_terminals > 0;
+                log::info!(
+                    "terminal panel: restored {restored_terminals} serialized terminal(s) in {:?}",
+                    started_at.elapsed()
+                );
+            }
         }
 
         // Since panels/docks are loaded outside from the workspace, we cleanup here, instead of through the workspace.
-        let cleanup_task = workspace.update_in(cx, |workspace, window, cx| {
+        let cleanup = workspace.update_in(cx, |workspace, window, cx| {
             let alive_item_ids = terminal_panel.upgrade().map(|terminal_panel| {
                 terminal_panel
                     .read(cx)
@@ -360,11 +365,36 @@ impl TerminalPanel {
             alive_item_ids
                 .zip(workspace.database_id())
                 .map(|(alive_item_ids, workspace_id)| {
-                    TerminalView::cleanup(workspace_id, alive_item_ids, window, cx)
+                    let cleanup_task =
+                        TerminalView::cleanup(workspace_id, alive_item_ids.clone(), window, cx);
+                    (cleanup_task, alive_item_ids)
                 })
         })?;
-        if let Some(task) = cleanup_task {
-            task.await.log_err();
+        if let Some((cleanup_task, alive_item_ids)) = cleanup {
+            cleanup_task.await.log_err();
+            terminal_panel
+                .update(cx, |terminal_panel, cx| {
+                    let terminals_to_reserialize = terminal_panel
+                        .center
+                        .panes()
+                        .into_iter()
+                        .flat_map(|pane| {
+                            pane.read(cx)
+                                .items()
+                                .filter(|item| {
+                                    !alive_item_ids.contains(&(item.item_id().as_u64() as ItemId))
+                                })
+                                .filter_map(|item| item.act_as::<TerminalView>(cx))
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>();
+                    for terminal_view in terminals_to_reserialize {
+                        terminal_view.update(cx, |terminal_view, cx| {
+                            terminal_view.mark_needs_serialize(cx)
+                        });
+                    }
+                })
+                .ok();
         }
 
         let should_focus = workspace
@@ -385,7 +415,7 @@ impl TerminalPanel {
                 })
                 .ok();
         }
-        Ok(())
+        Ok(restored)
     }
 
     fn handle_pane_event(
@@ -855,55 +885,58 @@ impl TerminalPanel {
         cx: &mut Context<Self>,
     ) -> Task<Result<WeakEntity<Terminal>>> {
         let workspace = self.workspace.clone();
+        let mut pending_terminal_guard = PendingTerminalGuard::register(self, cx);
         cx.spawn_in(window, async move |terminal_panel, cx| {
-            if workspace.update(cx, |workspace, cx| !is_enabled_in_workspace(workspace, cx))? {
-                anyhow::bail!("terminal not yet supported for remote projects");
-            }
-            terminal_panel.update(cx, |terminal_panel, cx| {
-                terminal_panel.pending_terminals_to_add += 1;
-                cx.notify();
-            })?;
-            let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
-            let terminal = project
-                .update(cx, |project, cx| project.create_terminal_task(task, cx))
-                .await?;
-            let pane = terminal_panel
-                .read_with(cx, |terminal_panel, _| terminal_panel.active_pane.clone())?;
-            let result = workspace.update_in(cx, |workspace, window, cx| {
-                let terminal_view = Box::new(cx.new(|cx| {
-                    TerminalView::new(
-                        terminal.clone(),
-                        workspace.weak_handle(),
-                        workspace.database_id(),
-                        workspace.project().downgrade(),
-                        window,
-                        cx,
-                    )
-                }));
-
-                match reveal_strategy {
-                    RevealStrategy::Always => {
-                        workspace.focus_panel::<Self>(window, cx);
-                    }
-                    RevealStrategy::NoFocus => {
-                        workspace.open_panel::<Self>(window, cx);
-                    }
-                    RevealStrategy::Never => {}
+            let result = async {
+                if workspace.update(cx, |workspace, cx| !is_enabled_in_workspace(workspace, cx))? {
+                    anyhow::bail!("terminal not yet supported for remote projects");
                 }
+                let project =
+                    workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
+                let terminal = project
+                    .update(cx, |project, cx| project.create_terminal_task(task, cx))
+                    .await?;
+                let pane = terminal_panel
+                    .read_with(cx, |terminal_panel, _| terminal_panel.active_pane.clone())?;
+                workspace.update_in(cx, |workspace, window, cx| {
+                    let terminal_view = Box::new(cx.new(|cx| {
+                        TerminalView::new(
+                            terminal.clone(),
+                            workspace.weak_handle(),
+                            workspace.database_id(),
+                            workspace.project().downgrade(),
+                            window,
+                            cx,
+                        )
+                    }));
 
-                pane.update(cx, |pane, cx| {
-                    let focus = matches!(reveal_strategy, RevealStrategy::Always);
-                    pane.add_item(terminal_view, true, focus, None, window, cx);
-                });
+                    match reveal_strategy {
+                        RevealStrategy::Always => {
+                            workspace.focus_panel::<Self>(window, cx);
+                        }
+                        RevealStrategy::NoFocus => {
+                            workspace.open_panel::<Self>(window, cx);
+                        }
+                        RevealStrategy::Never => {}
+                    }
 
-                Ok(terminal.downgrade())
-            })?;
-            terminal_panel.update(cx, |terminal_panel, cx| {
-                terminal_panel.pending_terminals_to_add =
-                    terminal_panel.pending_terminals_to_add.saturating_sub(1);
-                cx.notify();
-                terminal_panel.serialize(cx)
-            })?;
+                    pane.update(cx, |pane, cx| {
+                        let focus = matches!(reveal_strategy, RevealStrategy::Always);
+                        pane.add_item(terminal_view, true, focus, None, window, cx);
+                    });
+
+                    anyhow::Ok(terminal.downgrade())
+                })?
+            }
+            .await;
+            terminal_panel
+                .update(cx, |terminal_panel, cx| {
+                    pending_terminal_guard.disarm(terminal_panel, cx);
+                    if result.is_ok() {
+                        terminal_panel.serialize(cx);
+                    }
+                })
+                .ok();
             result
         })
     }
@@ -936,31 +969,28 @@ impl TerminalPanel {
         cx: &mut Context<Self>,
     ) -> Task<Result<WeakEntity<Terminal>>> {
         let workspace = self.workspace.clone();
-
+        let mut pending_terminal_guard = PendingTerminalGuard::register(self, cx);
         cx.spawn_in(window, async move |terminal_panel, cx| {
-            if workspace.update(cx, |workspace, cx| !is_enabled_in_workspace(workspace, cx))? {
-                anyhow::bail!("terminal not yet supported for collaborative projects");
-            }
-            terminal_panel.update(cx, |terminal_panel, cx| {
-                terminal_panel.pending_terminals_to_add += 1;
-                cx.notify();
-            })?;
-            let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
-            let terminal = if force_local {
-                project
-                    .update(cx, |project, cx| project.create_local_terminal(cx))
-                    .await
-            } else {
-                project
-                    .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))
-                    .await
-            };
+            let result = async {
+                if workspace.update(cx, |workspace, cx| !is_enabled_in_workspace(workspace, cx))? {
+                    anyhow::bail!("terminal not yet supported for collaborative projects");
+                }
+                let project =
+                    workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
+                let terminal = if force_local {
+                    project
+                        .update(cx, |project, cx| project.create_local_terminal(cx))
+                        .await
+                } else {
+                    project
+                        .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))
+                        .await
+                };
 
-            let pane = terminal_panel
-                .read_with(cx, |terminal_panel, _| terminal_panel.active_pane.clone())?;
-            match terminal {
-                Ok(terminal) => {
-                    let result = workspace.update_in(cx, |workspace, window, cx| {
+                let pane = terminal_panel
+                    .read_with(cx, |terminal_panel, _| terminal_panel.active_pane.clone())?;
+                match terminal {
+                    Ok(terminal) => workspace.update_in(cx, |workspace, window, cx| {
                         let terminal_view = Box::new(cx.new(|cx| {
                             TerminalView::new(
                                 terminal.clone(),
@@ -987,33 +1017,31 @@ impl TerminalPanel {
                             pane.add_item(terminal_view, true, focus, None, window, cx);
                         });
 
-                        Ok(terminal.downgrade())
-                    })?;
-                    terminal_panel.update(cx, |terminal_panel, cx| {
-                        terminal_panel.pending_terminals_to_add =
-                            terminal_panel.pending_terminals_to_add.saturating_sub(1);
-                        cx.notify();
-                        terminal_panel.serialize(cx)
-                    })?;
-                    result
-                }
-                Err(error) => {
-                    terminal_panel.update(cx, |terminal_panel, cx| {
-                        terminal_panel.pending_terminals_to_add =
-                            terminal_panel.pending_terminals_to_add.saturating_sub(1);
-                        cx.notify();
-                    })?;
-                    pane.update_in(cx, |pane, window, cx| {
-                        let focus = pane.has_focus(window, cx);
-                        let failed_to_spawn = cx.new(|cx| FailedToSpawnTerminal {
-                            error: error.to_string(),
-                            focus_handle: cx.focus_handle(),
-                        });
-                        pane.add_item(Box::new(failed_to_spawn), true, focus, None, window, cx);
-                    })?;
-                    Err(error)
+                        anyhow::Ok(terminal.downgrade())
+                    })?,
+                    Err(error) => {
+                        pane.update_in(cx, |pane, window, cx| {
+                            let focus = pane.has_focus(window, cx);
+                            let failed_to_spawn = cx.new(|cx| FailedToSpawnTerminal {
+                                error: error.to_string(),
+                                focus_handle: cx.focus_handle(),
+                            });
+                            pane.add_item(Box::new(failed_to_spawn), true, focus, None, window, cx);
+                        })?;
+                        Err(error)
+                    }
                 }
             }
+            .await;
+            terminal_panel
+                .update(cx, |terminal_panel, cx| {
+                    pending_terminal_guard.disarm(terminal_panel, cx);
+                    if result.is_ok() {
+                        terminal_panel.serialize(cx);
+                    }
+                })
+                .ok();
+            result
         })
     }
 
@@ -1360,6 +1388,49 @@ async fn wait_for_terminals_tasks(
         })
     });
     join_all(pending_tasks).await;
+}
+
+struct PendingTerminalGuard {
+    terminal_panel: Option<WeakEntity<TerminalPanel>>,
+    cx: AsyncApp,
+}
+
+impl PendingTerminalGuard {
+    fn register(terminal_panel: &mut TerminalPanel, cx: &mut Context<TerminalPanel>) -> Self {
+        terminal_panel.pending_terminals_to_add += 1;
+        cx.notify();
+        Self {
+            terminal_panel: Some(cx.weak_entity()),
+            cx: cx.to_async(),
+        }
+    }
+
+    fn disarm(&mut self, terminal_panel: &mut TerminalPanel, cx: &mut Context<TerminalPanel>) {
+        if self.terminal_panel.take().is_some() {
+            terminal_panel.pending_terminals_to_add =
+                terminal_panel.pending_terminals_to_add.saturating_sub(1);
+            cx.notify();
+        }
+    }
+}
+
+impl Drop for PendingTerminalGuard {
+    fn drop(&mut self) {
+        let Some(terminal_panel) = self.terminal_panel.take() else {
+            return;
+        };
+        self.cx
+            .spawn(async move |cx| {
+                terminal_panel
+                    .update(cx, |terminal_panel, cx| {
+                        terminal_panel.pending_terminals_to_add =
+                            terminal_panel.pending_terminals_to_add.saturating_sub(1);
+                        cx.notify();
+                    })
+                    .ok();
+            })
+            .detach();
+    }
 }
 
 struct FailedToSpawnTerminal {
@@ -1852,11 +1923,12 @@ mod tests {
     use std::num::NonZero;
 
     use super::*;
+    use crate::persistence::{SerializedPane, SerializedPaneGroup};
     use gpui::{Modifiers, TestAppContext, UpdateGlobal as _, VisualTestContext};
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use settings::SettingsStore;
-    use workspace::MultiWorkspace;
+    use workspace::{MultiWorkspace, WorkspaceId};
 
     #[test]
     fn test_prepare_empty_task() {
@@ -2006,9 +2078,391 @@ mod tests {
                             .any(|item| item.downcast::<FailedToSpawnTerminal>().is_some()),
                         "should spawn `FailedToSpawnTerminal` pane"
                     );
+                    assert_eq!(terminal_panel.pending_terminals_to_add, 0);
                 })
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_failed_task_spawn_does_not_leak_pending_terminal_count(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+        let terminal_panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    cx.new(|cx| TerminalPanel::new(workspace, window, cx))
+                })
+            })
+            .unwrap();
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                terminal_panel.update(cx, |terminal_panel, cx| {
+                    terminal_panel.add_terminal_task(
+                        SpawnInTerminal {
+                            command: Some("__nonexistent_program__".to_owned()),
+                            ..SpawnInTerminal::default()
+                        },
+                        RevealStrategy::Never,
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap_err();
+
+        cx.run_until_parked();
+        terminal_panel.read_with(cx, |terminal_panel, cx| {
+            assert_eq!(terminal_panel.pending_terminals_to_add, 0);
+            assert_eq!(terminal_panel.active_pane.read(cx).items_len(), 0);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_pending_terminal_count_tracks_spawn_lifecycle(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+        let terminal_panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    cx.new(|cx| TerminalPanel::new(workspace, window, cx))
+                })
+            })
+            .unwrap();
+
+        let task = window_handle
+            .update(cx, |_, window, cx| {
+                terminal_panel.update(cx, |terminal_panel, cx| {
+                    let task =
+                        terminal_panel.add_terminal_shell(None, RevealStrategy::Never, window, cx);
+                    assert_eq!(
+                        terminal_panel.pending_terminals_to_add, 1,
+                        "pending count should be incremented synchronously to avoid double default terminal spawns"
+                    );
+                    assert!(!terminal_panel.has_no_terminals(cx));
+                    task
+                })
+            })
+            .unwrap();
+        task.await.unwrap();
+
+        cx.run_until_parked();
+        terminal_panel.read_with(cx, |terminal_panel, cx| {
+            assert_eq!(terminal_panel.pending_terminals_to_add, 0);
+            assert_eq!(terminal_panel.active_pane.read(cx).items_len(), 1);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_pending_terminal_count_resets_when_spawn_cancelled(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+        let terminal_panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    cx.new(|cx| TerminalPanel::new(workspace, window, cx))
+                })
+            })
+            .unwrap();
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                terminal_panel.update(cx, |terminal_panel, cx| {
+                    let task =
+                        terminal_panel.add_terminal_shell(None, RevealStrategy::Never, window, cx);
+                    assert_eq!(terminal_panel.pending_terminals_to_add, 1);
+                    drop(task);
+                })
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+        terminal_panel.read_with(cx, |terminal_panel, _| {
+            assert_eq!(terminal_panel.pending_terminals_to_add, 0);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_load_without_serialized_state_does_not_persist_empty_state(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+        let serialization_key = window_handle
+            .update(cx, |multi_workspace, _, cx| {
+                TerminalPanel::serialization_key(multi_workspace.workspace().read(cx)).unwrap()
+            })
+            .unwrap();
+
+        let terminal_panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().downgrade();
+                window.spawn(cx, async move |cx| {
+                    TerminalPanel::load(workspace, cx.clone()).await
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap();
+
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+
+        terminal_panel.read_with(cx, |terminal_panel, cx| {
+            assert!(!terminal_panel.restoring);
+            assert_eq!(terminal_panel.active_pane.read(cx).items_len(), 0);
+        });
+        let serialized_state = cx
+            .update(|cx| KeyValueStore::global(cx))
+            .read_kvp(&serialization_key)
+            .unwrap();
+        assert_eq!(serialized_state, None);
+    }
+
+    #[gpui::test]
+    async fn test_terminal_added_during_restore_is_serialized_after_restore(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+        let serialization_key = window_handle
+            .update(cx, |multi_workspace, _, cx| {
+                TerminalPanel::serialization_key(multi_workspace.workspace().read(cx)).unwrap()
+            })
+            .unwrap();
+
+        let terminal_panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    cx.new(|cx| TerminalPanel::new(workspace, window, cx))
+                })
+            })
+            .unwrap();
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                terminal_panel.update(cx, |terminal_panel, cx| {
+                    terminal_panel.restoring = true;
+                    terminal_panel.add_terminal_shell(None, RevealStrategy::Never, window, cx)
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap();
+
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+        let suppressed_state = cx
+            .update(|cx| KeyValueStore::global(cx))
+            .read_kvp(&serialization_key)
+            .unwrap();
+        assert_eq!(
+            suppressed_state, None,
+            "serialization should stay suppressed while the panel is restoring"
+        );
+
+        let default_shell_task = window_handle
+            .update(cx, |_, window, cx| {
+                terminal_panel.update(cx, |terminal_panel, cx| {
+                    terminal_panel.finish_restoration(false, window, cx)
+                })
+            })
+            .unwrap();
+        assert!(
+            default_shell_task.is_none(),
+            "no default terminal should spawn when a terminal already exists"
+        );
+
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+        let serialized_state = cx
+            .update(|cx| KeyValueStore::global(cx))
+            .read_kvp(&serialization_key)
+            .unwrap();
+        assert!(
+            serialized_state.is_some(),
+            "terminal added during restore must be serialized once restoration finishes"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_legacy_serialized_restore_keeps_interim_terminal_active(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+        let terminal_panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    cx.new(|cx| TerminalPanel::new(workspace, window, cx))
+                })
+            })
+            .unwrap();
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                terminal_panel.update(cx, |terminal_panel, cx| {
+                    terminal_panel.add_terminal_shell(None, RevealStrategy::Never, window, cx)
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        let interim_item_id = terminal_panel.read_with(cx, |terminal_panel, cx| {
+            let pane = terminal_panel.active_pane.read(cx);
+            assert_eq!(pane.items_len(), 1);
+            pane.active_item().unwrap().item_id()
+        });
+
+        let restored_items = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                let project = workspace.read(cx).project().clone();
+                deserialize_terminal_panel(
+                    workspace.downgrade(),
+                    project,
+                    WorkspaceId::default(),
+                    SerializedTerminalPanel {
+                        items: SerializedItems::NoSplits(vec![12345]),
+                        active_item_id: Some(12345),
+                    },
+                    terminal_panel.downgrade(),
+                    window,
+                    cx,
+                )
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        assert_eq!(restored_items, 1);
+        terminal_panel.read_with(cx, |terminal_panel, cx| {
+            let pane = terminal_panel.active_pane.read(cx);
+            assert_eq!(pane.items_len(), 2);
+            assert_eq!(
+                pane.active_item().map(|item| item.item_id()),
+                Some(interim_item_id),
+                "interim terminal must stay active after a legacy format restore"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_split_restore_grafts_interim_pane(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+        let terminal_panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    cx.new(|cx| TerminalPanel::new(workspace, window, cx))
+                })
+            })
+            .unwrap();
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                terminal_panel.update(cx, |terminal_panel, cx| {
+                    terminal_panel.add_terminal_shell(None, RevealStrategy::Never, window, cx)
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        let interim_pane =
+            terminal_panel.read_with(cx, |terminal_panel, _| terminal_panel.active_pane.clone());
+
+        let restored_items = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                let project = workspace.read(cx).project().clone();
+                deserialize_terminal_panel(
+                    workspace.downgrade(),
+                    project,
+                    WorkspaceId::default(),
+                    SerializedTerminalPanel {
+                        items: SerializedItems::WithSplits(SerializedPaneGroup::Pane(
+                            SerializedPane {
+                                active: true,
+                                children: vec![12345],
+                                active_item: Some(12345),
+                                pinned_count: 0,
+                            },
+                        )),
+                        active_item_id: None,
+                    },
+                    terminal_panel.downgrade(),
+                    window,
+                    cx,
+                )
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        assert_eq!(restored_items, 1);
+        terminal_panel.read_with(cx, |terminal_panel, cx| {
+            let panes = terminal_panel.center.panes();
+            assert_eq!(
+                panes.len(),
+                2,
+                "both the restored pane and the interim pane must survive"
+            );
+            let interim_panes_kept = panes.iter().filter(|pane| **pane == &interim_pane).count();
+            assert_eq!(
+                interim_panes_kept, 1,
+                "interim pane must be grafted into the restored center"
+            );
+            assert_eq!(interim_pane.read(cx).items_len(), 1);
+            assert_ne!(
+                terminal_panel.active_pane, interim_pane,
+                "unfocused interim pane must not become the active pane"
+            );
+        });
     }
 
     #[gpui::test]

@@ -290,6 +290,7 @@ pub struct Dock {
     focus_follows_mouse: FocusFollowsMouse,
     pub(crate) serialized_dock: Option<DockData>,
     restoring_state: bool,
+    restoration_finished: bool,
     zoom_layer_open: bool,
     modal_layer: Entity<ModalLayer>,
     _subscriptions: [Subscription; 2],
@@ -439,6 +440,7 @@ impl Dock {
                 _subscriptions: [focus_subscription, zoom_subscription],
                 serialized_dock: None,
                 restoring_state: false,
+                restoration_finished: false,
                 zoom_layer_open: false,
                 modal_layer,
             }
@@ -802,17 +804,25 @@ impl Dock {
 
     pub fn restore_state(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if let Some(serialized) = self.serialized_dock.clone() {
-            self.restoring_state = true;
             let mut waiting_for_active_panel = false;
+            let mut panel_to_activate = None;
             if let Some(active_panel) = serialized.active_panel.filter(|_| serialized.visible) {
-                if let Some(idx) = self.panel_index_for_persistent_name(active_panel.as_str(), cx) {
-                    self.activate_panel(idx, window, cx);
-                } else {
-                    waiting_for_active_panel = true;
+                match self.panel_index_for_persistent_name(active_panel.as_str(), cx) {
+                    Some(idx) => panel_to_activate = Some(idx),
+                    None if self.restoration_finished => {
+                        self.serialized_dock = None;
+                        return false;
+                    }
+                    None => waiting_for_active_panel = true,
                 }
             }
 
+            self.restoring_state = true;
+            if let Some(idx) = panel_to_activate {
+                self.activate_panel(idx, window, cx);
+            }
             if serialized.zoom
+                && !waiting_for_active_panel
                 && let Some(panel) = self.active_panel()
             {
                 panel.set_zoomed(true, window, cx)
@@ -825,6 +835,11 @@ impl Dock {
             return true;
         }
         false
+    }
+
+    pub(crate) fn finish_restoration(&mut self) {
+        self.restoration_finished = true;
+        self.serialized_dock = None;
     }
 
     pub fn remove_panel<T: Panel>(

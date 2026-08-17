@@ -2276,6 +2276,14 @@ impl Workspace {
         }
     }
 
+    pub fn finish_dock_restoration(&self, cx: &mut App) {
+        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
+            dock.update(cx, |dock, _| {
+                dock.finish_restoration();
+            });
+        }
+    }
+
     /// Returns which dock currently has focus, or `None` if focus is in the
     /// center pane or elsewhere. Does NOT fall back to any global state.
     pub fn focused_dock_position(&self, window: &Window, cx: &App) -> Option<DockPosition> {
@@ -17464,6 +17472,7 @@ mod tests {
         let second_panel = workspace.update_in(cx, |workspace, window, cx| {
             let panel = cx.new(|cx| SecondTestPanel {
                 focus_handle: cx.focus_handle(),
+                zoomed: false,
             });
             workspace.add_panel(panel.clone(), window, cx);
             panel
@@ -17536,6 +17545,7 @@ mod tests {
         workspace.update_in(cx, |workspace, window, cx| {
             let panel = cx.new(|cx| SecondTestPanel {
                 focus_handle: cx.focus_handle(),
+                zoomed: false,
             });
             workspace.add_panel(panel, window, cx);
         });
@@ -17545,8 +17555,156 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_stale_serialized_dock_state_discarded_when_panel_loading_finishes(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.bottom_dock().update(cx, |dock, cx| {
+                dock.serialized_dock = Some(DockData {
+                    visible: true,
+                    active_panel: Some(SecondTestPanel::persistent_name().to_string()),
+                    zoom: false,
+                });
+                dock.restore_state(window, cx);
+            });
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.finish_dock_restoration(cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| SecondTestPanel {
+                focus_handle: cx.focus_handle(),
+                zoomed: false,
+            });
+            workspace.add_panel(panel, window, cx);
+        });
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(
+                workspace
+                    .bottom_dock()
+                    .read(cx)
+                    .active_panel()
+                    .map(|panel| panel.panel_id()),
+                None,
+                "stale dock restoration state should not replay after panel loading finished",
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_serialized_state_for_missing_panel_dropped_after_restoration_finishes(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.finish_dock_restoration(cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.bottom_dock().update(cx, |dock, cx| {
+                dock.serialized_dock = Some(DockData {
+                    visible: true,
+                    active_panel: Some(SecondTestPanel::persistent_name().to_string()),
+                    zoom: false,
+                });
+                dock.restore_state(window, cx);
+            });
+        });
+        workspace.read_with(cx, |workspace, cx| {
+            let dock = workspace.bottom_dock().read(cx);
+            assert!(
+                !dock.is_open(),
+                "dock must not open for a panel that can no longer register",
+            );
+            assert_eq!(dock.serialized_dock, None);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| SecondTestPanel {
+                focus_handle: cx.focus_handle(),
+                zoomed: false,
+            });
+            workspace.add_panel(panel, window, cx);
+        });
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(
+                !workspace.bottom_dock().read(cx).is_open(),
+                "stale dock state must not replay when the panel registers much later",
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_serialized_zoom_not_applied_while_waiting_for_serialized_panel(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let first_panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Bottom, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.toggle_panel_focus::<TestPanel>(window, cx);
+            panel
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.bottom_dock().update(cx, |dock, cx| {
+                dock.serialized_dock = Some(DockData {
+                    visible: true,
+                    active_panel: Some(SecondTestPanel::persistent_name().to_string()),
+                    zoom: true,
+                });
+                dock.restore_state(window, cx);
+            });
+        });
+        workspace.read_with(cx, |_, cx| {
+            assert!(
+                !first_panel.read(cx).zoomed,
+                "serialized zoom should not apply to another panel while the serialized active panel is loading",
+            );
+        });
+
+        let second_panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| SecondTestPanel {
+                focus_handle: cx.focus_handle(),
+                zoomed: false,
+            });
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+        workspace.read_with(cx, |workspace, cx| {
+            let dock = workspace.bottom_dock().read(cx);
+            assert!(dock.is_open());
+            assert_eq!(
+                dock.active_panel().map(|panel| panel.panel_id()),
+                Some(second_panel.entity_id()),
+            );
+            assert!(!first_panel.read(cx).zoomed);
+            assert!(second_panel.read(cx).zoomed);
+        });
+    }
+
     struct SecondTestPanel {
         focus_handle: FocusHandle,
+        zoomed: bool,
     }
 
     impl EventEmitter<PanelEvent> for SecondTestPanel {}
@@ -17602,6 +17760,14 @@ mod tests {
 
         fn activation_priority(&self) -> u32 {
             200
+        }
+
+        fn is_zoomed(&self, _: &Window, _: &App) -> bool {
+            self.zoomed
+        }
+
+        fn set_zoomed(&mut self, zoomed: bool, _: &mut Window, _: &mut Context<Self>) {
+            self.zoomed = zoomed;
         }
     }
 }
