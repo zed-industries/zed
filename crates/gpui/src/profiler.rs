@@ -18,6 +18,8 @@ use std::{
 
 mod actions;
 #[cfg(feature = "profiler")]
+pub mod hang;
+#[cfg(feature = "profiler")]
 pub mod journal;
 pub use actions::{ActionStatistics, ActionTiming, take_action_stats};
 
@@ -874,6 +876,7 @@ enum WindowActivity {
 pub struct WindowProfiler {
     window_id: WindowId,
     active_activities: SmallVec<[WindowActivity; 4]>,
+    active_actions: SmallVec<[(&'static str, Instant); 2]>,
     draw_duration_histogram: Histogram<u64>,
     present_interval_histogram: Histogram<u64>,
     first_input_at: Option<Instant>,
@@ -893,6 +896,7 @@ impl WindowProfiler {
         Ok(Self {
             window_id,
             active_activities: SmallVec::new(),
+            active_actions: SmallVec::new(),
             draw_duration_histogram: Histogram::new(3).map_err(|error| {
                 anyhow::anyhow!("Failed to create draw duration histogram: {error}")
             })?,
@@ -952,14 +956,25 @@ impl WindowProfiler {
 
     /// Records the beginning of an action handler.
     pub fn begin_action_handler(&mut self, action: &(dyn Action + 'static), cx: &mut App) {
-        actions::update_running_action(action, cx);
+        let name = actions::update_running_action(action, cx);
+        self.active_actions.push((name, Instant::now()));
     }
 
     /// Records the end of the current action handler.
     pub fn end_action_handler(&mut self) {
-        if let Some(timing) = actions::save_action_timing() {
-            journal::record_action(timing);
-        }
+        // Dual-write to the legacy aggregate store; its single global running
+        // slot misbehaves when tests run actions concurrently, which is why
+        // the journal entry is tracked here on the window instead.
+        actions::save_action_timing();
+        let Some((name, start)) = self.active_actions.pop() else {
+            debug_assert!(false, "action handler must be begun before it ends");
+            return;
+        };
+        journal::record_action(ActionTiming {
+            name,
+            start,
+            end: Instant::now(),
+        });
     }
 
     /// Records the beginning of a window draw.

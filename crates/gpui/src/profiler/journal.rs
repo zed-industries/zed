@@ -97,6 +97,13 @@ impl ForegroundEvent {
             Self::SmallPolls(flush) => flush.until,
         }
     }
+
+    /// How long the work described by this event took. For
+    /// [`Self::SmallPolls`] this is the span the summary covers, not time
+    /// spent polling; use the summary's `total` for occupancy.
+    pub fn duration(&self) -> Duration {
+        self.end_time().duration_since(self.start_time())
+    }
 }
 
 /// Timing of one platform input dispatch on a window.

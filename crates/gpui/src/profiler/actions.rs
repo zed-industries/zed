@@ -81,7 +81,7 @@ impl ActionStatistics {
     pub fn update_running_action(&mut self, _action: &'static str, _started: Instant) {}
 
     #[cfg(feature = "profiler")]
-    pub fn save_action_timing(&mut self) -> Option<ActionTiming> {
+    pub fn save_action_timing(&mut self) {
         let now = Instant::now();
 
         let Some((action, started)) = self.running.take() else {
@@ -92,7 +92,7 @@ impl ActionStatistics {
             // concurrently that is no longer true. But that is fine, we do not
             // need to track action timings in tests.
             std::hint::cold_path();
-            return None;
+            return;
         };
 
         let timing = ActionTiming {
@@ -125,7 +125,6 @@ impl ActionStatistics {
                 .min()
                 .expect("never empty");
         }
-        Some(timing)
     }
     #[cfg(not(feature = "profiler"))]
     pub fn save_action_timing(&mut self) {}
@@ -183,17 +182,21 @@ static ACTION_STATISTICS: spin::Mutex<ActionStatistics> =
 
 #[doc(hidden)]
 #[cfg(feature = "profiler")]
-pub(crate) fn update_running_action(action: &(dyn Action + 'static), cx: &mut crate::App) {
+pub(crate) fn update_running_action(
+    action: &(dyn Action + 'static),
+    cx: &mut crate::App,
+) -> &'static str {
     let now = Instant::now();
     let action = action.type_id();
     let action = cx.actions.try_resolve_action(&action).unwrap_or("un-named");
     ACTION_STATISTICS.lock().update_running_action(action, now);
+    action
 }
 
 #[doc(hidden)]
 #[cfg(feature = "profiler")]
-pub(crate) fn save_action_timing() -> Option<ActionTiming> {
-    ACTION_STATISTICS.lock().save_action_timing()
+pub(crate) fn save_action_timing() {
+    ACTION_STATISTICS.lock().save_action_timing();
 }
 
 #[doc(hidden)]
