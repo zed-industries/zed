@@ -12510,6 +12510,49 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_layout_line_shapes_char_aligned_window_of_long_unicode_rows(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let text = "e\u{301} العربية क्षि ก้ 漢字 🧑🏽‍💻 ".repeat(100);
+        assert!(text.len() > MAX_LINE_LEN);
+        let requested_start = (MAX_LINE_LEN..text.len())
+            .find(|index| !text.is_char_boundary(*index))
+            .expect("the test text must contain a multibyte character after the shaping limit");
+        let requested_end = (requested_start + 400).min(text.len());
+        let window = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple(&text, cx);
+            Editor::new(EditorMode::full(), buffer, None, window, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        let editor = window.root(cx).unwrap();
+        let style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
+
+        window
+            .update(cx, |editor, window, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                let layout = layout_line(
+                    DisplayRow(0),
+                    &snapshot,
+                    &style,
+                    px(500.),
+                    Some(requested_start..requested_end),
+                    |_| false,
+                    window,
+                    cx,
+                );
+                let shaped_end = layout.shaped_start_index + layout.shaped_len();
+
+                assert_eq!(layout.full_len, text.len());
+                assert!(layout.shaped_start_index <= requested_start);
+                assert!(shaped_end >= requested_end);
+                assert!(text.is_char_boundary(layout.shaped_start_index));
+                assert!(text.is_char_boundary(shaped_end));
+                assert!(layout.shaped_len() < text.len());
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
     async fn test_soft_wrap_toggle_on_huge_line_while_scrolled(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
