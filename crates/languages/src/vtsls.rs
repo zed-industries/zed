@@ -82,15 +82,7 @@ impl VtslsLspAdapter {
 
         let result = QUOTED_REGEX
             .replace_all(message, |caps: &Captures| {
-                let before = &caps[1];
-                let content = &caps[2];
-                let after = &caps[3];
-
-                if content.contains('\n') || content.contains(' ') {
-                    format!("{before}\n```typescript\n{content}\n```\n{after}")
-                } else {
-                    format!("{before}`{content}`{after}")
-                }
+                format!("{}`{}`{}", &caps[1], &caps[2], &caps[3])
             })
             .to_string();
 
@@ -419,7 +411,7 @@ mod tests {
         // Parses both multi-word and single-word correctly
         let message = "Property 'baz' is missing in type '{ foo: string; bar: string; }' but required in type 'User'.";
 
-        let expected = "Property `baz` is missing in type \n```typescript\n{ foo: string; bar: string; }\n```\n but required in type `User`.";
+        let expected = "Property `baz` is missing in type `{ foo: string; bar: string; }` but required in type `User`.";
 
         assert_eq!(
             VtslsLspAdapter::enhance_diagnostic_message(message).expect("Should be some"),
@@ -429,7 +421,7 @@ mod tests {
         // Parses multi-and-single word in any order, and ignores existing newlines
         let message = "Type '() => { foo: string; bar: string; }' is not assignable to type 'GetUserFunction'.\n  Property 'baz' is missing in type '{ foo: string; bar: string; }' but required in type 'User'.";
 
-        let expected = "Type \n```typescript\n() => { foo: string; bar: string; }\n```\n is not assignable to type `GetUserFunction`.\n  Property `baz` is missing in type \n```typescript\n{ foo: string; bar: string; }\n```\n but required in type `User`.";
+        let expected = "Type `() => { foo: string; bar: string; }` is not assignable to type `GetUserFunction`.\n  Property `baz` is missing in type `{ foo: string; bar: string; }` but required in type `User`.";
 
         assert_eq!(
             VtslsLspAdapter::enhance_diagnostic_message(message).expect("Should be some"),
@@ -439,7 +431,7 @@ mod tests {
         // Check if ' used in normal English language (isn't, possessive 's, etc) are not converted into `
         let message = "Element implicitly has an 'any' type because expression of type '\"a\" | \"c\"' can't be used to index type '{ a: number; b: string; }'. Property 'c' does not exist on type '{ a: number; b: string; }'.";
 
-        let expected = "Element implicitly has an `any` type because expression of type \n```typescript\n\"a\" | \"c\"\n```\n can't be used to index type \n```typescript\n{ a: number; b: string; }\n```\n. Property `c` does not exist on type \n```typescript\n{ a: number; b: string; }\n```\n.";
+        let expected = "Element implicitly has an `any` type because expression of type `\"a\" | \"c\"` can't be used to index type `{ a: number; b: string; }`. Property `c` does not exist on type `{ a: number; b: string; }`.";
 
         assert_eq!(
             VtslsLspAdapter::enhance_diagnostic_message(message)
