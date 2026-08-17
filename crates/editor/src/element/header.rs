@@ -27,7 +27,7 @@ use util::ResultExt;
 use workspace::{ItemHandle, ItemSettings, OpenInTerminal, OpenTerminal, RevealInProjectPanel};
 
 use super::{
-    BlockLayout, EditorElement, EditorLayout, LineWithInvisibles, byte_columns_to_shape,
+    BlockLayout, EditorElement, EditorLayout, LineWithInvisibles, grid_columns_to_shape,
     layout_line, render_breadcrumb_text, visible_columns,
 };
 use crate::{
@@ -252,8 +252,8 @@ impl EditorElement {
         let font_id = window.text_system().resolve_font(&self.style.text.font());
         let font_size = self.style.text.font_size.to_pixels(window.rem_size());
         let cell_width = window.text_system().em_layout_width(font_id, font_size);
-        let byte_columns = (cell_width > Pixels::ZERO).then(|| {
-            byte_columns_to_shape(
+        let grid_columns = (cell_width > Pixels::ZERO).then(|| {
+            grid_columns_to_shape(
                 scroll_pixel_position.x / f64::from(cell_width),
                 visible_columns(editor_width, cell_width),
             )
@@ -270,7 +270,7 @@ impl EditorElement {
                 snapshot,
                 &self.style,
                 editor_width,
-                byte_columns.clone(),
+                grid_columns.clone(),
                 is_row_soft_wrapped,
                 window,
                 cx,
