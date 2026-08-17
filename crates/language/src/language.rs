@@ -102,7 +102,9 @@ pub use buffer::Operation;
 pub use buffer::*;
 pub use diagnostic::{Diagnostic, DiagnosticSourceKind};
 pub use diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup};
-pub use file_content::{ByteContent, FILE_ANALYSIS_BYTES, analyze_byte_content};
+pub use file_content::{
+    ByteContent, DecodedText, FILE_ANALYSIS_BYTES, analyze_byte_content, decode_text, encode_text,
+};
 pub use language_registry::{
     BinaryStatus, LanguageNotFound, LanguageQueries, LanguageRegistry, QUERY_FILENAME_PREFIXES,
 };
