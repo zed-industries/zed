@@ -1151,7 +1151,7 @@ pub(crate) fn render_split_button_chevron_trigger(
     id: impl Into<ElementId>,
     menu_open: bool,
 ) -> ButtonLike {
-    let chevron_button_size = rems_from_px(20.);
+    let chevron_button_size = rems_from_px(20_f32);
     let chevron_icon = if menu_open {
         IconName::ChevronUp
     } else {

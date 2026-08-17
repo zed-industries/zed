@@ -547,14 +547,14 @@ pub enum CommitFileStatus {
 #[derive(Debug)]
 pub struct CommitFile {
     pub path: RepoPath,
-    pub old_text: Option<String>,
-    pub new_text: Option<String>,
+    pub old_content: Option<Vec<u8>>,
+    pub new_content: Option<Vec<u8>>,
     pub is_binary: bool,
 }
 
 impl CommitFile {
     pub fn status(&self) -> CommitFileStatus {
-        match (&self.old_text, &self.new_text) {
+        match (&self.old_content, &self.new_content) {
             (None, Some(_)) => CommitFileStatus::Added,
             (Some(_), None) => CommitFileStatus::Deleted,
             _ => CommitFileStatus::Modified,
@@ -576,7 +576,7 @@ pub fn is_binary_content(content: &[u8]) -> bool {
 }
 
 struct LoadedCommitObject {
-    text: String,
+    content: Vec<u8>,
     is_binary: bool,
 }
 
@@ -599,11 +599,7 @@ async fn read_commit_blob<R: smol::io::AsyncBufRead + Unpin>(
 
     let is_binary = is_binary_content(&bytes);
     Ok(LoadedCommitObject {
-        text: if is_binary {
-            String::new()
-        } else {
-            String::from_utf8_lossy(&bytes).to_string()
-        },
+        content: bytes,
         is_binary,
     })
 }
@@ -617,7 +613,7 @@ async fn load_commit_object<R: smol::io::AsyncBufRead + Unpin>(
     match object {
         Some(object) if object.kind == CommitDiffObjectKind::Gitlink => {
             Ok(Some(LoadedCommitObject {
-                text: format!("Subproject commit {}\n", object.oid),
+                content: format!("Subproject commit {}\n", object.oid).into_bytes(),
                 is_binary: false,
             }))
         }
@@ -754,7 +750,7 @@ pub trait GitRepository: Send + Sync {
     /// Returns the contents of an entry in the repository's index, or None if there is no entry for the given path.
     ///
     /// Also returns `None` for symlinks.
-    fn load_index_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
+    fn load_index_text(&self, path: RepoPath) -> BoxFuture<'_, Option<Vec<u8>>> {
         let future = self.load_revisions(vec![format!(":{}", path.as_unix_str())]);
         async move { future.await.ok()?.pop()? }.boxed()
     }
@@ -762,16 +758,16 @@ pub trait GitRepository: Send + Sync {
     /// Returns the contents of an entry in the repository's HEAD, or None if HEAD does not exist or has no entry for the given path.
     ///
     /// Also returns `None` for symlinks.
-    fn load_committed_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
+    fn load_committed_text(&self, path: RepoPath) -> BoxFuture<'_, Option<Vec<u8>>> {
         let future = self.load_revisions(vec![format!("HEAD:{}", path.as_unix_str())]);
         async move { future.await.ok()?.pop()? }.boxed()
     }
-    fn load_blob_content(&self, oid: Oid) -> BoxFuture<'_, Result<String>>;
+    fn load_blob_content(&self, oid: Oid) -> BoxFuture<'_, Result<Vec<u8>>>;
 
     fn set_index_text(
         &self,
         path: RepoPath,
-        content: Option<String>,
+        content: Option<Vec<u8>>,
         env: Arc<HashMap<String, String>>,
         is_executable: bool,
     ) -> BoxFuture<'_, anyhow::Result<()>>;
@@ -789,7 +785,8 @@ pub trait GitRepository: Send + Sync {
     /// Resolve a list of refs to SHAs.
     fn revparse_batch(&self, revs: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>>;
 
-    fn load_revisions(&self, revisions: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>>;
+    fn load_revisions(&self, revisions: Vec<String>)
+    -> BoxFuture<'_, Result<Vec<Option<Vec<u8>>>>>;
 
     fn head_sha(&self) -> BoxFuture<'_, Option<String>> {
         async move {
@@ -889,6 +886,12 @@ pub trait GitRepository: Send + Sync {
         line_ending: LineEnding,
     ) -> BoxFuture<'_, Result<crate::blame::Blame>>;
 
+    fn blame_at_revision(
+        &self,
+        path: RepoPath,
+        revision: Oid,
+    ) -> BoxFuture<'_, Result<crate::blame::Blame>>;
+
     /// Returns the absolute path to the repository. For worktrees, this will be the path to the
     /// worktree's gitdir within the main repository (typically `.git/worktrees/<name>`).
     fn path(&self) -> PathBuf;
@@ -934,6 +937,7 @@ pub trait GitRepository: Send + Sync {
     fn stash_paths(
         &self,
         paths: Vec<RepoPath>,
+        message: Option<String>,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>>;
 
@@ -1454,25 +1458,13 @@ impl GitRepository for RealGitRepository {
                         .await?;
                 let is_binary = new_object.as_ref().is_some_and(|object| object.is_binary)
                     || old_object.as_ref().is_some_and(|object| object.is_binary);
-                let new_text = new_object.map(|object| {
-                    if is_binary {
-                        String::new()
-                    } else {
-                        object.text
-                    }
-                });
-                let old_text = old_object.map(|object| {
-                    if is_binary {
-                        String::new()
-                    } else {
-                        object.text
-                    }
-                });
+                let new_content = new_object.map(|object| object.content);
+                let old_content = old_object.map(|object| object.content);
 
                 files.push(CommitFile {
                     path: RepoPath(Arc::from(rel_path)),
-                    old_text,
-                    new_text,
+                    old_content,
+                    new_content,
                     is_binary,
                 })
             }
@@ -1540,11 +1532,23 @@ impl GitRepository for RealGitRepository {
         .boxed()
     }
 
-    fn load_blob_content(&self, oid: Oid) -> BoxFuture<'_, Result<String>> {
+    fn load_blob_content(&self, oid: Oid) -> BoxFuture<'_, Result<Vec<u8>>> {
         let git_binary = self.git_binary();
         let oid_str = oid.to_string();
         self.executor
-            .spawn(async move { git_binary.run_raw(&["cat-file", "blob", &oid_str]).await })
+            .spawn(async move {
+                let mut command = git_binary.build_command(&["cat-file", "blob", &oid_str]);
+                let output = command.output().await?;
+                anyhow::ensure!(
+                    output.status.success(),
+                    GitBinaryCommandError {
+                        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+                        status: output.status,
+                    }
+                );
+                Ok(output.stdout)
+            })
             .boxed()
     }
 
@@ -1593,7 +1597,7 @@ impl GitRepository for RealGitRepository {
     fn set_index_text(
         &self,
         path: RepoPath,
-        content: Option<String>,
+        content: Option<Vec<u8>>,
         env: Arc<HashMap<String, String>>,
         is_executable: bool,
     ) -> BoxFuture<'_, anyhow::Result<()>> {
@@ -1604,17 +1608,32 @@ impl GitRepository for RealGitRepository {
 
                 if let Some(content) = content {
                     let mut child = git
-                        .build_command(&["hash-object", "-w", "--stdin"])
+                        .build_command(&[
+                            "hash-object",
+                            "-w",
+                            "--stdin",
+                            "--path",
+                            path.as_unix_str(),
+                        ])
                         .envs(env.iter())
                         .stdin(Stdio::piped())
                         .stdout(Stdio::piped())
+                        .stderr(Stdio::piped())
                         .spawn()?;
-                    let mut stdin = child.stdin.take().unwrap();
-                    stdin.write_all(content.as_bytes()).await?;
+                    let mut stdin = child.stdin.take().context("hash-object has no stdin")?;
+                    stdin.write_all(&content).await?;
                     stdin.flush().await?;
                     drop(stdin);
-                    let output = child.output().await?.stdout;
-                    let sha = str::from_utf8(&output)?.trim();
+                    let output = child.output().await?;
+                    anyhow::ensure!(
+                        output.status.success(),
+                        GitBinaryCommandError {
+                            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+                            status: output.status,
+                        }
+                    );
+                    let sha = str::from_utf8(&output.stdout)?.trim();
 
                     log::debug!("indexing SHA: {sha}, path {path:?}");
 
@@ -1715,12 +1734,20 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn load_revisions(&self, revisions: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>> {
+    fn load_revisions(
+        &self,
+        revisions: Vec<String>,
+    ) -> BoxFuture<'_, Result<Vec<Option<Vec<u8>>>>> {
         let git = self.git_binary();
         self.executor
             .spawn(async move {
                 if revisions.is_empty() {
                     return Ok(Vec::new());
+                }
+                if let Some(revision) = revisions.iter().find(|revision| revision.contains('\n')) {
+                    anyhow::bail!(
+                        "revision spec {revision:?} contains a newline and cannot be passed to git cat-file --batch"
+                    );
                 }
 
                 let mut process = git
@@ -1761,7 +1788,7 @@ impl GitRepository for RealGitRepository {
                             stdout.read_exact(&mut newline).await?;
 
                             if object_type == "blob" {
-                                results.push(String::from_utf8(content).ok());
+                                results.push(Some(content));
                             } else {
                                 results.push(None);
                             }
@@ -2372,6 +2399,21 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
+    fn blame_at_revision(
+        &self,
+        path: RepoPath,
+        revision: Oid,
+    ) -> BoxFuture<'_, Result<crate::blame::Blame>> {
+        let git = self.git_binary_in_worktree();
+
+        self.executor
+            .spawn(async move {
+                let git = git?;
+                crate::blame::Blame::for_path_at_revision(&git, &path, revision).await
+            })
+            .boxed()
+    }
+
     fn diff(&self, diff: DiffType) -> BoxFuture<'_, Result<String>> {
         let git = self.git_binary_in_worktree();
         self.executor
@@ -2490,14 +2532,20 @@ impl GitRepository for RealGitRepository {
     fn stash_paths(
         &self,
         paths: Vec<RepoPath>,
+        message: Option<String>,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
         let git = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
                 let git = git?;
+                let mut args = vec!["stash", "push", "--quiet", "--include-untracked"];
+                if let Some(message) = message.as_deref() {
+                    args.extend_from_slice(&["--message", message]);
+                }
+                args.push("--");
                 let output = git
-                    .build_command(&["stash", "push", "--quiet", "--include-untracked", "--"])
+                    .build_command(&args)
                     .envs(env.iter())
                     .args(paths.iter().map(|p| p.as_unix_str()))
                     .output()
@@ -4477,8 +4525,11 @@ mod tests {
             .first()
             .expect("type-changed file should be present");
         assert_eq!(file.path.as_unix_str(), "file.txt");
-        assert_eq!(file.old_text.as_deref(), Some("regular contents\n"));
-        assert_eq!(file.new_text.as_deref(), Some("target"));
+        assert_eq!(
+            file.old_content.as_deref(),
+            Some(b"regular contents\n".as_slice())
+        );
+        assert_eq!(file.new_content.as_deref(), Some(b"target".as_slice()));
         assert_eq!(file.status(), CommitFileStatus::Modified);
     }
 
@@ -4527,10 +4578,10 @@ mod tests {
             .find(|file| file.path.as_unix_str() == "modules/example")
             .expect("gitlink should be present alongside the regular file");
         assert_eq!(gitlink.status(), CommitFileStatus::Added);
-        assert_eq!(gitlink.old_text, None);
+        assert_eq!(gitlink.old_content, None);
         assert_eq!(
-            gitlink.new_text.as_deref(),
-            Some("Subproject commit 1111111111111111111111111111111111111111\n")
+            gitlink.new_content.as_deref(),
+            Some(b"Subproject commit 1111111111111111111111111111111111111111\n".as_slice())
         );
         assert!(!gitlink.is_binary);
 
@@ -4555,12 +4606,12 @@ mod tests {
         };
         assert_eq!(gitlink.status(), CommitFileStatus::Modified);
         assert_eq!(
-            gitlink.old_text.as_deref(),
-            Some("Subproject commit 1111111111111111111111111111111111111111\n")
+            gitlink.old_content.as_deref(),
+            Some(b"Subproject commit 1111111111111111111111111111111111111111\n".as_slice())
         );
         assert_eq!(
-            gitlink.new_text.as_deref(),
-            Some("Subproject commit 2222222222222222222222222222222222222222\n")
+            gitlink.new_content.as_deref(),
+            Some(b"Subproject commit 2222222222222222222222222222222222222222\n".as_slice())
         );
         assert!(!gitlink.is_binary);
 
@@ -4576,10 +4627,10 @@ mod tests {
         };
         assert_eq!(gitlink.status(), CommitFileStatus::Deleted);
         assert_eq!(
-            gitlink.old_text.as_deref(),
-            Some("Subproject commit 2222222222222222222222222222222222222222\n")
+            gitlink.old_content.as_deref(),
+            Some(b"Subproject commit 2222222222222222222222222222222222222222\n".as_slice())
         );
-        assert_eq!(gitlink.new_text, None);
+        assert_eq!(gitlink.new_content, None);
         assert!(!gitlink.is_binary);
     }
 
@@ -5431,14 +5482,82 @@ mod tests {
         assert_eq!(
             results,
             vec![
-                Some("file1 committed contents".into()),
-                Some("file1 index contents".into()),
-                Some("file2 committed contents".into()),
-                Some("file2 committed contents".into()), // untouched in index, should match HEAD
+                Some(b"file1 committed contents".to_vec()),
+                Some(b"file1 index contents".to_vec()),
+                Some(b"file2 committed contents".to_vec()),
+                Some(b"file2 committed contents".to_vec()), // untouched in index, should match HEAD
                 None,
-                Some("space file committed contents".into()),
+                Some(b"space file committed contents".to_vec()),
                 None,
             ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_blame_at_revision(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let file_name = "ürlich file1";
+        fs::write(repo_dir.path().join(file_name), "line one\n").unwrap();
+        git_command(repo_dir.path(), ["add", "-A"]);
+        git_command(repo_dir.path(), ["commit", "-m", "First commit"]);
+        let first_sha = git_command_output(repo_dir.path(), ["rev-parse", "HEAD"]);
+
+        fs::write(repo_dir.path().join(file_name), "line one\nline two\n").unwrap();
+        git_command(repo_dir.path(), ["add", "-A"]);
+        git_command(repo_dir.path(), ["commit", "-m", "Second commit"]);
+        let second_sha = git_command_output(repo_dir.path(), ["rev-parse", "HEAD"]);
+
+        let blame_at_head = repo
+            .blame_at_revision(repo_path(file_name), second_sha.parse().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            blame_at_head
+                .entries
+                .iter()
+                .map(|entry| {
+                    (
+                        entry.sha.to_string(),
+                        entry.range.clone(),
+                        entry.filename.clone(),
+                        entry.previous.clone(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            vec![
+                (first_sha.clone(), 0..1, file_name.to_owned(), None),
+                (
+                    second_sha.clone(),
+                    1..2,
+                    file_name.to_owned(),
+                    Some(format!("{first_sha} {file_name}"))
+                ),
+            ]
+        );
+
+        let blame_at_first = repo
+            .blame_at_revision(repo_path(file_name), first_sha.parse().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            blame_at_first
+                .entries
+                .iter()
+                .map(|entry| (entry.sha.to_string(), entry.range.clone()))
+                .collect::<Vec<_>>(),
+            vec![(first_sha.clone(), 0..1)]
         );
     }
 

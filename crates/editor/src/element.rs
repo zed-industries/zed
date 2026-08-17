@@ -509,7 +509,11 @@ impl EditorElement {
         register_action(editor, window, Editor::copy_file_location);
         register_action(editor, window, Editor::toggle_git_blame);
         register_action(editor, window, Editor::toggle_git_blame_inline);
-        register_action(editor, window, Editor::open_git_blame_commit);
+        if editor.read(cx).blame().is_some() {
+            register_action(editor, window, Editor::open_git_blame_commit);
+            register_action(editor, window, Editor::blame_revision);
+            register_action(editor, window, Editor::blame_previous_revision);
+        }
         register_action(editor, window, Editor::toggle_selected_diff_hunks);
         register_action(editor, window, Editor::toggle_staged_selected_diff_hunks);
         register_action(editor, window, Editor::stage_and_next);
@@ -843,7 +847,7 @@ impl EditorElement {
                             .eq(&Ordering::Greater))
                 {
                     let drag_cursor_layout = SelectionLayout::new(
-                        drop_cursor.clone(),
+                        *drop_cursor,
                         false,
                         editor.cursor_offset_on_selection,
                         CursorShape::Bar,
@@ -6899,7 +6903,7 @@ pub fn render_breadcrumb_text(
             )
             .into_any_element(),
         None => element
-            .h(rems_from_px(22.)) // Match the height and padding of the `ButtonLike` in the other arm.
+            .h(rems_from_px(22_f32)) // Match the height and padding of the `ButtonLike` in the other arm.
             .pl_1()
             .child(breadcrumbs)
             .into_any_element(),
