@@ -2362,11 +2362,7 @@ fn editor_page() -> SettingsPage {
                         },
                         write: |settings_content, value, _| {
                             let gutter = settings_content.editor.gutter.get_or_insert_default();
-                            let Some(value) = value else {
-                                gutter.git_gutter_width = None;
-                                return;
-                            };
-                            gutter.git_gutter_width = Some(match value {
+                            gutter.git_gutter_width = value.map(|value| match value {
                                 settings::GitGutterWidthDiscriminants::Default => {
                                     settings::GitGutterWidth::Default
                                 }
@@ -2409,7 +2405,7 @@ fn editor_page() -> SettingsPage {
                                     .editor
                                     .gutter
                                     .as_ref()
-                                    .and_then(|g| g.git_gutter_width.as_ref())
+                                    .and_then(|gutter| gutter.git_gutter_width.as_ref())
                                 {
                                     Some(settings::GitGutterWidth::Custom(value)) => Some(value),
                                     _ => None,
@@ -2423,7 +2419,7 @@ fn editor_page() -> SettingsPage {
                                             .editor
                                             .gutter
                                             .as_mut()
-                                            .and_then(|g| g.git_gutter_width.as_mut())
+                                            .and_then(|gutter| gutter.git_gutter_width.as_mut())
                                     {
                                         *width = f32::max(value, 0.0);
                                     }
