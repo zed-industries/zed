@@ -14621,9 +14621,6 @@ mod tests {
         let workspace =
             multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
 
-        workspace.update(cx, |workspace, _| {
-            workspace.bounds.size.width = px(900.);
-        });
         let (first_panel, second_panel) = workspace.update_in(cx, |workspace, window, cx| {
             let first_panel = cx.new(|cx| {
                 let mut panel = TestPanel::new(DockPosition::Left, 100, cx);
@@ -14646,18 +14643,14 @@ mod tests {
         });
 
         cx.dispatch_action(ResetOpenDocksSize);
-        cx.run_until_parked();
 
         workspace.update_in(cx, |workspace, window, cx| {
             let dock = workspace.left_dock().read(cx);
-            assert_eq!(
-                dock.stored_panel_size(&first_panel, window, cx),
-                Some(px(350.))
-            );
-            assert_eq!(
-                dock.stored_panel_size(&second_panel, window, cx),
-                Some(px(350.))
-            );
+            let first_panel_size = dock.stored_panel_size(&first_panel, window, cx);
+            let second_panel_size = dock.stored_panel_size(&second_panel, window, cx);
+
+            assert_eq!(first_panel_size, Some(px(350.)));
+            assert_eq!(second_panel_size, Some(px(350.)));
         });
 
         workspace.update_in(cx, |workspace, window, cx| {
@@ -14667,18 +14660,14 @@ mod tests {
             workspace.resize_left_dock(px(450.), window, cx);
         });
         cx.dispatch_action(ResetOpenDocksSize);
-        cx.run_until_parked();
 
         workspace.update_in(cx, |workspace, window, cx| {
             let dock = workspace.left_dock().read(cx);
-            assert_eq!(
-                dock.stored_panel_size(&first_panel, window, cx),
-                Some(px(500.))
-            );
-            assert_eq!(
-                dock.stored_panel_size(&second_panel, window, cx),
-                Some(px(500.))
-            );
+            let first_panel_size = dock.stored_panel_size(&first_panel, window, cx);
+            let second_panel_size = dock.stored_panel_size(&second_panel, window, cx);
+
+            assert_eq!(first_panel_size, Some(px(500.)));
+            assert_eq!(second_panel_size, Some(px(500.)));
         });
 
         first_panel.update(cx, |panel, _| panel.flexible = true);
@@ -14689,18 +14678,19 @@ mod tests {
                 dock.reset_panel_sizes(window, cx);
             });
             let dock = workspace.left_dock().read(cx);
+            let first_panel_flex = dock
+                .stored_panel_size_state(&first_panel)
+                .and_then(|state| state.flex);
+            let second_panel_flex = dock
+                .stored_panel_size_state(&second_panel)
+                .and_then(|state| state.flex);
+
             assert_eq!(
                 workspace.dock_size(&dock, window, cx),
                 Some(workspace.bounds.size.width / 2.)
             );
-            assert!(
-                dock.stored_panel_size_state(&first_panel)
-                    .is_some_and(|state| state.flex.is_none())
-            );
-            assert!(
-                dock.stored_panel_size_state(&second_panel)
-                    .is_some_and(|state| state.flex.is_none())
-            );
+            assert!(first_panel_flex.is_none());
+            assert!(second_panel_flex.is_none());
         });
 
         cx.update_global(|store: &mut SettingsStore, cx| {
@@ -14720,14 +14710,143 @@ mod tests {
             });
 
             let dock = workspace.left_dock().read(cx);
-            assert_eq!(
-                dock.stored_panel_size(&first_panel, window, cx),
-                Some(px(350.))
-            );
-            assert_eq!(
-                dock.stored_panel_size(&second_panel, window, cx),
-                Some(px(500.))
-            );
+            let first_panel_size = dock.stored_panel_size(&first_panel, window, cx);
+            let second_panel_size = dock.stored_panel_size(&second_panel, window, cx);
+
+            assert_eq!(first_panel_size, Some(px(350.)));
+            assert_eq!(second_panel_size, Some(px(500.)));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_reset_panel_mixed_modes(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.resize_all_panels_in_dock =
+                    Some(vec![settings::DockPosition::Left]);
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+
+        // Create 4 panels, 2 with fixed width and another 2 with flexible width
+        // so that we can later confirm that updating a flexible width panel
+        // only affects other flexible panels, and the same with fixed width
+        // panels.
+        let (fixed_panel_a, fixed_panel_b, flexible_panel_a, flexible_panel_b) = workspace
+            .update_in(cx, |workspace, window, cx| {
+                let fixed_panel_a = cx.new(|cx| {
+                    let mut panel = TestPanel::new(DockPosition::Left, 100, cx);
+                    panel.default_size = px(350.);
+                    panel
+                });
+
+                let fixed_panel_b = cx.new(|cx| {
+                    let mut panel = TestPanel::new(DockPosition::Left, 200, cx);
+                    panel.default_size = px(375.);
+                    panel
+                });
+
+                let flexible_panel_a =
+                    cx.new(|cx| TestPanel::new_flexible(DockPosition::Left, 300, cx));
+
+                let flexible_panel_b =
+                    cx.new(|cx| TestPanel::new_flexible(DockPosition::Left, 400, cx));
+
+                workspace.add_panel(fixed_panel_a.clone(), window, cx);
+                workspace.add_panel(fixed_panel_b.clone(), window, cx);
+                workspace.add_panel(flexible_panel_a.clone(), window, cx);
+                workspace.add_panel(flexible_panel_b.clone(), window, cx);
+
+                (
+                    fixed_panel_a,
+                    fixed_panel_b,
+                    flexible_panel_a,
+                    flexible_panel_b,
+                )
+            });
+
+        // We'll start by activating one of the flexible panels and ensuring
+        // that resizing the dock will sync the state between the flexible
+        // panels.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.left_dock().update(cx, |dock, cx| {
+                dock.activate_panel(2, window, cx);
+                dock.set_open(true, window, cx);
+            });
+
+            workspace.resize_left_dock(px(450.0), window, cx);
+
+            let dock = workspace.left_dock().read(cx);
+            let fixed_panel_a_size = dock.stored_panel_size(&fixed_panel_a, window, cx);
+            let fixed_panel_b_size = dock.stored_panel_size(&fixed_panel_b, window, cx);
+            let flexible_panel_a_flex = dock
+                .stored_panel_size_state(&flexible_panel_a)
+                .and_then(|state| state.flex);
+            let flexible_panel_b_flex = dock
+                .stored_panel_size_state(&flexible_panel_b)
+                .and_then(|state| state.flex);
+
+            assert_eq!(fixed_panel_a_size, Some(px(350.)));
+            assert_eq!(fixed_panel_b_size, Some(px(375.)));
+            assert!(flexible_panel_a_flex.is_some());
+            assert_eq!(flexible_panel_a_flex, flexible_panel_b_flex);
+        });
+
+        // Resetting the active panel's size should continue syncing the state
+        // between flexible width panels but not affect fixed width panels.
+        cx.dispatch_action(ResetOpenDocksSize);
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let dock = workspace.left_dock().read(cx);
+            let fixed_panel_a_size = dock.stored_panel_size(&fixed_panel_a, window, cx);
+            let fixed_panel_b_size = dock.stored_panel_size(&fixed_panel_b, window, cx);
+            let flexible_panel_a_flex = dock
+                .stored_panel_size_state(&flexible_panel_a)
+                .and_then(|state| state.flex);
+            let flexible_panel_b_flex = dock
+                .stored_panel_size_state(&flexible_panel_b)
+                .and_then(|state| state.flex);
+
+            assert_eq!(fixed_panel_a_size, Some(px(350.)));
+            assert_eq!(fixed_panel_b_size, Some(px(375.)));
+            assert_eq!(flexible_panel_a_flex, None);
+            assert_eq!(flexible_panel_b_flex, None);
+        });
+
+        // Lastly, activate a fixed width panel and ensure that resetting its
+        // size will affect all other fixed width panels.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.left_dock().update(cx, |dock, cx| {
+                dock.activate_panel(0, window, cx);
+            });
+
+            workspace.resize_left_dock(px(450.), window, cx);
+        });
+
+        cx.dispatch_action(ResetOpenDocksSize);
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let dock = workspace.left_dock().read(cx);
+            let fixed_panel_a_size = dock.stored_panel_size(&fixed_panel_a, window, cx);
+            let fixed_panel_b_size = dock.stored_panel_size(&fixed_panel_b, window, cx);
+            let flexible_panel_a_flex = dock
+                .stored_panel_size_state(&flexible_panel_a)
+                .and_then(|state| state.flex);
+            let flexible_panel_b_flex = dock
+                .stored_panel_size_state(&flexible_panel_b)
+                .and_then(|state| state.flex);
+
+            assert_eq!(fixed_panel_a_size, Some(px(350.)));
+            assert_eq!(fixed_panel_b_size, Some(px(350.)));
+            assert_eq!(flexible_panel_a_flex, None);
+            assert_eq!(flexible_panel_b_flex, None);
         });
     }
 

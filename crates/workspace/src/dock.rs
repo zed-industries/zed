@@ -1028,6 +1028,8 @@ impl Dock {
         }
     }
 
+    /// Resizes the active panel and, when this dock is included in
+    /// `resize_all_panels_in_dock`, all panels using the same sizing mode.
     pub fn resize_panel_sizes(
         &mut self,
         size: Option<Pixels>,
@@ -1042,6 +1044,8 @@ impl Dock {
         }
     }
 
+    /// Resets the active panel and, when this dock is included in
+    /// `resize_all_panels_in_dock`, all panels using the same sizing mode.
     pub fn reset_panel_sizes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.should_resize_all_panels(cx) {
             self.reset_all_panel_sizes(window, cx);
@@ -1051,22 +1055,8 @@ impl Dock {
     }
 
     fn reset_active_panel_size(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(entry) = self.active_panel_entry_mut() else {
-            return;
-        };
-        entry.size_state = PanelSizeState::default();
-        entry.panel.size_state_changed(window, cx);
-
-        let panel_key = entry.panel.panel_key();
-        let workspace = self.workspace.clone();
-        cx.defer(move |cx| {
-            if let Some(workspace) = workspace.upgrade() {
-                workspace.update(cx, |workspace, cx| {
-                    workspace.persist_panel_size_state(panel_key, PanelSizeState::default(), cx);
-                });
-            }
-        });
-        cx.notify();
+        let state = PanelSizeState::default();
+        self.resize_active_panel(state.size, state.flex, window, cx);
     }
 
     fn reset_all_panel_sizes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
