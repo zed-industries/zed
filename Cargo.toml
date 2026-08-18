@@ -600,6 +600,7 @@ derive_more = { version = "2.1.1", features = [
     "deref",
     "deref_mut",
     "display",
+    "from",
     "from_str",
     "mul",
     "mul_assign",
