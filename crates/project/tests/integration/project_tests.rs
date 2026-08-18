@@ -7705,141 +7705,156 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
 
     assert_eq!(
         buffer
-            .diagnostics_in_range::<_, Point>(0..buffer.len(), false)
+            .diagnostic_entries_in_range(0..buffer.len(), false)
+            .map(|entry| entry.clone().map_coordinates(|range| {
+                range.start.to_point(&buffer)..range.end.to_point(&buffer)
+            }))
             .collect::<Vec<_>>(),
         &[
-            DiagnosticEntry::new(
-                Point::new(1, 8)..Point::new(1, 9),
-                Diagnostic {
+            DiagnosticEntry {
+                range: Point::new(1, 8)..Point::new(1, 9),
+                related_information: expected_related_information(&error_1_related_information),
+                diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::WARNING,
                     message: "error 1".to_string(),
                     group_id: 1,
                     is_primary: true,
                     source_kind: DiagnosticSourceKind::Pushed,
-                    related_information: Some(error_1_related_information.clone()),
                     ..Diagnostic::default()
-                }
-            ),
-            DiagnosticEntry::new(
-                Point::new(1, 8)..Point::new(1, 9),
-                Diagnostic {
+                },
+            },
+            DiagnosticEntry {
+                range: Point::new(1, 8)..Point::new(1, 9),
+                related_information: expected_related_information(
+                    &error_1_hint_related_information
+                ),
+                diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::HINT,
                     message: "error 1 hint 1".to_string(),
                     group_id: 1,
                     is_primary: false,
                     source_kind: DiagnosticSourceKind::Pushed,
-                    related_information: Some(error_1_hint_related_information.clone()),
                     ..Diagnostic::default()
-                }
-            ),
-            DiagnosticEntry::new(
-                Point::new(1, 13)..Point::new(1, 15),
-                Diagnostic {
+                },
+            },
+            DiagnosticEntry {
+                range: Point::new(1, 13)..Point::new(1, 15),
+                related_information: expected_related_information(
+                    &error_2_hint_related_information
+                ),
+                diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::HINT,
                     message: "error 2 hint 1".to_string(),
                     group_id: 0,
                     is_primary: false,
                     source_kind: DiagnosticSourceKind::Pushed,
-                    related_information: Some(error_2_hint_related_information.clone()),
                     ..Diagnostic::default()
-                }
-            ),
-            DiagnosticEntry::new(
-                Point::new(1, 13)..Point::new(1, 15),
-                Diagnostic {
+                },
+            },
+            DiagnosticEntry {
+                range: Point::new(1, 13)..Point::new(1, 15),
+                related_information: expected_related_information(
+                    &error_2_hint_related_information
+                ),
+                diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::HINT,
                     message: "error 2 hint 2".to_string(),
                     group_id: 0,
                     is_primary: false,
                     source_kind: DiagnosticSourceKind::Pushed,
-                    related_information: Some(error_2_hint_related_information.clone()),
                     ..Diagnostic::default()
-                }
-            ),
-            DiagnosticEntry::new(
-                Point::new(2, 8)..Point::new(2, 17),
-                Diagnostic {
+                },
+            },
+            DiagnosticEntry {
+                range: Point::new(2, 8)..Point::new(2, 17),
+                related_information: expected_related_information(&error_2_related_information),
+                diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::ERROR,
                     message: "error 2".to_string(),
                     group_id: 0,
                     is_primary: true,
                     source_kind: DiagnosticSourceKind::Pushed,
-                    related_information: Some(error_2_related_information.clone()),
                     ..Diagnostic::default()
-                }
-            )
+                },
+            }
         ]
     );
 
     assert_eq!(
         buffer.diagnostic_group::<Point>(0).collect::<Vec<_>>(),
         &[
-            DiagnosticEntry::new(
-                Point::new(1, 13)..Point::new(1, 15),
-                Diagnostic {
+            DiagnosticEntry {
+                range: Point::new(1, 13)..Point::new(1, 15),
+                related_information: expected_related_information(
+                    &error_2_hint_related_information
+                ),
+                diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::HINT,
                     message: "error 2 hint 1".to_string(),
                     group_id: 0,
                     is_primary: false,
                     source_kind: DiagnosticSourceKind::Pushed,
-                    related_information: Some(error_2_hint_related_information.clone()),
                     ..Diagnostic::default()
-                }
-            ),
-            DiagnosticEntry::new(
-                Point::new(1, 13)..Point::new(1, 15),
-                Diagnostic {
+                },
+            },
+            DiagnosticEntry {
+                range: Point::new(1, 13)..Point::new(1, 15),
+                related_information: expected_related_information(
+                    &error_2_hint_related_information
+                ),
+                diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::HINT,
                     message: "error 2 hint 2".to_string(),
                     group_id: 0,
                     is_primary: false,
                     source_kind: DiagnosticSourceKind::Pushed,
-                    related_information: Some(error_2_hint_related_information),
                     ..Diagnostic::default()
-                }
-            ),
-            DiagnosticEntry::new(
-                Point::new(2, 8)..Point::new(2, 17),
-                Diagnostic {
+                },
+            },
+            DiagnosticEntry {
+                range: Point::new(2, 8)..Point::new(2, 17),
+                related_information: expected_related_information(&error_2_related_information),
+                diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::ERROR,
                     message: "error 2".to_string(),
                     group_id: 0,
                     is_primary: true,
                     source_kind: DiagnosticSourceKind::Pushed,
-                    related_information: Some(error_2_related_information),
                     ..Diagnostic::default()
-                }
-            )
+                },
+            }
         ]
     );
 
     assert_eq!(
         buffer.diagnostic_group::<Point>(1).collect::<Vec<_>>(),
         &[
-            DiagnosticEntry::new(
-                Point::new(1, 8)..Point::new(1, 9),
-                Diagnostic {
+            DiagnosticEntry {
+                range: Point::new(1, 8)..Point::new(1, 9),
+                related_information: expected_related_information(&error_1_related_information),
+                diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::WARNING,
                     message: "error 1".to_string(),
                     group_id: 1,
                     is_primary: true,
                     source_kind: DiagnosticSourceKind::Pushed,
-                    related_information: Some(error_1_related_information),
                     ..Diagnostic::default()
-                }
-            ),
-            DiagnosticEntry::new(
-                Point::new(1, 8)..Point::new(1, 9),
-                Diagnostic {
+                },
+            },
+            DiagnosticEntry {
+                range: Point::new(1, 8)..Point::new(1, 9),
+                related_information: expected_related_information(
+                    &error_1_hint_related_information
+                ),
+                diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::HINT,
                     message: "error 1 hint 1".to_string(),
                     group_id: 1,
                     is_primary: false,
                     source_kind: DiagnosticSourceKind::Pushed,
-                    related_information: Some(error_1_hint_related_information),
                     ..Diagnostic::default()
-                }
-            ),
+                },
+            },
         ]
     );
 }
@@ -10042,22 +10057,7 @@ async fn test_code_actions_preserve_supporting_diagnostic_entry(cx: &mut gpui::T
 
 #[gpui::test]
 async fn test_code_actions_related_information_follows_edits(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/dir"),
-        json!({
-            "a.ts": "aaa\nbbb\nccc\nddd\neee\nfff\nggg\nhhh\n",
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-    language_registry.add(typescript_lang());
-    let mut fake_language_servers = language_registry.register_fake_lsp(
-        "TypeScript",
+    let (project, buffer, _handle, fake_server) = code_action_project_with(
         FakeLspAdapter {
             name: "test-language-server",
             capabilities: lsp::ServerCapabilities {
@@ -10066,16 +10066,9 @@ async fn test_code_actions_related_information_follows_edits(cx: &mut gpui::Test
             },
             ..FakeLspAdapter::default()
         },
-    );
-
-    let (buffer, _handle) = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp(path!("/dir/a.ts"), cx)
-        })
-        .await
-        .unwrap();
-    let fake_server = fake_language_servers.next().await.unwrap();
-    cx.executor().run_until_parked();
+        cx,
+    )
+    .await;
 
     let uri = Uri::from_file_path(path!("/dir/a.ts")).unwrap();
     let note_line = 5;
@@ -10145,24 +10138,91 @@ async fn test_code_actions_related_information_follows_edits(cx: &mut gpui::Test
 }
 
 #[gpui::test]
-async fn test_code_actions_related_information_drifts_across_merges(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/dir"),
-        json!({
-            "a.ts": "aaa\nbbb\nccc\nddd\neee\nfff\nggg\nhhh\n",
-        }),
+async fn test_code_actions_related_information_of_disk_based_diagnostics(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (project, buffer, _handle, fake_server) = code_action_project_with(
+        FakeLspAdapter {
+            name: "test-language-server",
+            disk_based_diagnostics_sources: vec!["disk".into()],
+            capabilities: lsp::ServerCapabilities {
+                code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+        cx,
     )
     .await;
 
-    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
-    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-    language_registry.add(typescript_lang());
-    let mut fake_language_servers = language_registry.register_fake_lsp(
-        "TypeScript",
+    // The diagnostic below is computed against the file on disk, so its positions have
+    // to be moved by this edit, which the buffer has not saved.
+    let unsaved_lines = 1;
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "zzz\n")], None, cx);
+    });
+    cx.executor().run_until_parked();
+
+    let uri = Uri::from_file_path(path!("/dir/a.ts")).unwrap();
+    let note_line = 5;
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+        uri: uri.clone(),
+        version: None,
+        diagnostics: vec![lsp::Diagnostic {
+            range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 3)),
+            severity: Some(DiagnosticSeverity::ERROR),
+            source: Some("disk".to_string()),
+            message: "primary diagnostic".to_string(),
+            related_information: Some(vec![lsp::DiagnosticRelatedInformation {
+                location: lsp::Location {
+                    uri,
+                    range: lsp::Range::new(
+                        lsp::Position::new(note_line, 0),
+                        lsp::Position::new(note_line, 3),
+                    ),
+                },
+                message: "note".to_string(),
+            }]),
+            ..Default::default()
+        }],
+    });
+    cx.executor().run_until_parked();
+
+    let mut request_handled = fake_server
+        .set_request_handler::<lsp::request::CodeActionRequest, _, _>(
+            move |params, _| async move {
+                let primary = &params.context.diagnostics[0];
+                let flattened_note = &params.context.diagnostics[1];
+                let related_note = &primary
+                    .related_information
+                    .as_ref()
+                    .expect("the primary diagnostic carries its related information")[0];
+
+                assert_eq!(primary.range.start.line, 1 + unsaved_lines);
+                assert_eq!(flattened_note.range.start.line, note_line + unsaved_lines);
+                assert_eq!(
+                    related_note.location.range.start.line, flattened_note.range.start.line,
+                    "the related information is moved by the unsaved edits like the rest"
+                );
+                Ok(Some(Vec::new()))
+            },
+        );
+
+    let buffer_length = buffer.read_with(cx, |buffer, _| buffer.len());
+    let code_actions_task = project.update(cx, |project, cx| {
+        project.code_actions(&buffer, 0..buffer_length, None, cx)
+    });
+
+    request_handled
+        .next()
+        .await
+        .expect("The code action request should have been triggered");
+    assert!(code_actions_task.await.unwrap().unwrap().is_empty());
+}
+
+#[gpui::test]
+async fn test_code_actions_related_information_drifts_across_merges(cx: &mut gpui::TestAppContext) {
+    let (project, buffer, _handle, fake_server) = code_action_project_with(
         FakeLspAdapter {
             name: "test-language-server",
             capabilities: lsp::ServerCapabilities {
@@ -10197,16 +10257,10 @@ async fn test_code_actions_related_information_drifts_across_merges(cx: &mut gpu
             })),
             ..FakeLspAdapter::default()
         },
-    );
-
-    let (buffer, _handle) = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp(path!("/dir/a.ts"), cx)
-        })
-        .await
-        .unwrap();
-    let fake_server = fake_language_servers.next().await.unwrap();
-    cx.executor().run_until_parked();
+        cx,
+    )
+    .await;
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
 
     let uri = Uri::from_file_path(path!("/dir/a.ts")).unwrap();
     let note_line = 5;
@@ -17560,6 +17614,66 @@ async fn test_staging_hunks_with_ambiguous_placement(cx: &mut gpui::TestAppConte
             (row(12, 13), HasSecondaryHunk),
         ]
     );
+}
+
+fn expected_related_information(
+    infos: &[lsp::DiagnosticRelatedInformation],
+) -> Option<Arc<[language::RelatedInformation<Point>]>> {
+    Some(
+        infos
+            .iter()
+            .map(|info| language::RelatedInformation {
+                location: language::RelatedLocation::InBuffer(
+                    Point::new(
+                        info.location.range.start.line,
+                        info.location.range.start.character,
+                    )
+                        ..Point::new(
+                            info.location.range.end.line,
+                            info.location.range.end.character,
+                        ),
+                ),
+                message: info.message.clone(),
+            })
+            .collect(),
+    )
+}
+
+async fn code_action_project_with(
+    adapter: FakeLspAdapter,
+    cx: &mut gpui::TestAppContext,
+) -> (
+    Entity<Project>,
+    Entity<Buffer>,
+    project::lsp_store::OpenLspBufferHandle,
+    lsp::FakeLanguageServer,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "a.ts": "aaa\nbbb\nccc\nddd\neee\nfff\nggg\nhhh\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(typescript_lang());
+    let mut fake_language_servers = language_registry.register_fake_lsp("TypeScript", adapter);
+
+    let (buffer, handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.ts"), cx)
+        })
+        .await
+        .unwrap();
+    let fake_server = fake_language_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    (project, buffer, handle, fake_server)
 }
 
 async fn code_action_project(

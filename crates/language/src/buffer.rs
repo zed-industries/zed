@@ -5094,12 +5094,26 @@ impl BufferSnapshot {
         T: 'a + Clone + ToOffset,
         O: 'a + FromAnchor,
     {
+        self.diagnostic_entries_in_range(search_range, reversed)
+            .map(|entry| entry.resolve(self))
+    }
+
+    /// Returns the stored entries that intersect the given range, with their ranges
+    /// and related information left in the buffer's own coordinates.
+    pub fn diagnostic_entries_in_range<'a, T>(
+        &'a self,
+        search_range: Range<T>,
+        reversed: bool,
+    ) -> impl 'a + Iterator<Item = &'a DiagnosticEntry<Anchor>>
+    where
+        T: 'a + Clone + ToOffset,
+    {
         let mut iterators: Vec<_> = self
             .diagnostics
             .iter()
             .map(|(_, collection)| {
                 collection
-                    .range::<T, text::Anchor>(search_range.clone(), self, true, reversed)
+                    .entries_in_range::<T>(search_range.clone(), self, true, reversed)
                     .peekable()
             })
             .collect();
@@ -5120,15 +5134,7 @@ impl BufferSnapshot {
                         .then(a.diagnostic.group_id.cmp(&b.diagnostic.group_id));
                     if reversed { cmp.reverse() } else { cmp }
                 })?;
-            iterators[next_ix]
-                .next()
-                .map(
-                    |DiagnosticEntryRef { range, diagnostic }| DiagnosticEntryRef {
-                        diagnostic,
-                        range: FromAnchor::from_anchor(&range.start, self)
-                            ..FromAnchor::from_anchor(&range.end, self),
-                    },
-                )
+            iterators[next_ix].next()
         })
     }
 
