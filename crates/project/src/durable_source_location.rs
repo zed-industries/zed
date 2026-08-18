@@ -12,7 +12,9 @@ const CONTEXT_ROW_RADIUS: u32 = 2;
 /// Format version for [`SerializedSyntacticLocation`].
 ///
 /// This must be incremented when its fields or the inputs to
-/// [`SerializedContentMarker::context_hash`] change.
+/// [`SerializedContentMarker::context_hash`] change. The version is embedded
+/// in every serialized payload, and [`SerializedSyntacticLocation::validate`]
+/// rejects payloads with any other version.
 pub const SYNTACTIC_LOCATION_FORMAT_VERSION: u32 = 1;
 
 /// An in-memory description of a source location, re-resolved against a buffer's
@@ -63,6 +65,9 @@ struct ContentMarker {
 /// location.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SerializedSyntacticLocation {
+    /// The format this payload was serialized with; see
+    /// [`SYNTACTIC_LOCATION_FORMAT_VERSION`].
+    pub version: u32,
     /// The enclosing symbol, or `None` when no parser-backed symbol is
     /// available.
     pub symbol: Option<SerializedSymbolRef>,
@@ -73,8 +78,8 @@ pub struct SerializedSyntacticLocation {
 /// A source location that can be re-resolved after its buffer is reopened.
 ///
 /// Consumers choose how to persist this storage-agnostic envelope. The
-/// syntactic payload's format is versioned by
-/// [`SYNTACTIC_LOCATION_FORMAT_VERSION`].
+/// syntactic payload embeds its format version
+/// ([`SYNTACTIC_LOCATION_FORMAT_VERSION`]).
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct DurableSourceLocation {
     /// The last known row, used when stronger metadata cannot resolve.
@@ -86,9 +91,10 @@ pub struct DurableSourceLocation {
 /// Resolves and serializes durable source locations against one coherent buffer
 /// snapshot.
 ///
-/// The resolver captures the buffer's text, syntax state, and syntactic index
-/// when it is created. Callers should reuse it for a batch of locations, then
-/// create a new resolver after the buffer changes or finishes parsing.
+/// The resolver captures the buffer's text and syntax state when it is
+/// created, and builds its lookup indexes lazily on first use. Callers should
+/// reuse it for a batch of locations, then create a new resolver after the
+/// buffer changes or finishes parsing.
 ///
 /// This type does not retain pending locations or subscribe to buffer events.
 /// Consumers are responsible for preserving prior complete metadata and
@@ -148,9 +154,10 @@ pub(crate) enum SourceLocationSerialization {
     /// highest available fidelity, including symbol information when an
     /// enclosing symbol exists.
     Complete(DurableSourceLocation),
-    /// Parser-backed syntax was not ready (parsing, or no language assigned),
-    /// so the serialized location contains a current row and content marker
-    /// but deliberately omits symbol information.
+    /// Parser-backed syntax was not ready (parsing, no language assigned, or a
+    /// language without syntax such as Plain Text), so the serialized location
+    /// contains a current row and content marker but deliberately omits symbol
+    /// information.
     ///
     /// Consumers with previously complete metadata should preserve that
     /// metadata and update its fallback row instead of replacing it with this
@@ -181,6 +188,12 @@ pub struct SerializedContentMarker {
 impl SerializedSyntacticLocation {
     /// Validates invariants required by the resolver.
     pub fn validate(&self) -> Result<()> {
+        if self.version != SYNTACTIC_LOCATION_FORMAT_VERSION {
+            anyhow::bail!(
+                "unsupported syntactic location format version {}",
+                self.version
+            );
+        }
         if self
             .symbol
             .as_ref()
@@ -217,6 +230,7 @@ impl SerializedSyntacticLocation {
 impl From<&SyntacticLocation> for SerializedSyntacticLocation {
     fn from(location: &SyntacticLocation) -> Self {
         Self {
+            version: SYNTACTIC_LOCATION_FORMAT_VERSION,
             symbol: location.symbol.as_ref().map(|symbol| SerializedSymbolRef {
                 symbol_path: symbol
                     .symbol_path
@@ -235,8 +249,8 @@ impl From<&SyntacticLocation> for SerializedSyntacticLocation {
 }
 
 impl SourceLocationResolver {
-    /// Captures a buffer snapshot and builds the index shared by subsequent
-    /// serialization and resolution operations.
+    /// Captures a buffer snapshot and prepares the lazily built index shared
+    /// by subsequent serialization and resolution operations.
     pub fn for_buffer(buffer: &Buffer) -> Self {
         let snapshot = buffer.snapshot();
         let mut parse_status = buffer.parse_status();
@@ -252,7 +266,7 @@ impl SourceLocationResolver {
         };
 
         Self {
-            index: SourceLocationIndex::new(&snapshot),
+            index: SourceLocationIndex::new(),
             snapshot,
             syntax_state,
         }
@@ -269,53 +283,43 @@ impl SourceLocationResolver {
     /// while syntax is unavailable or parsing, with a provisional row that is
     /// still resolved from the content marker whenever it matches. Symbol-less
     /// content markers can resolve without parser-backed syntax. Invalid
-    /// serialized data is returned as an error.
+    /// serialized data, including payloads from a different format version, is
+    /// returned as an error.
     pub fn resolve(&self, location: &DurableSourceLocation) -> Result<SourceLocationResolution> {
-        if let Some(syntactic_location) = &location.syntactic_location {
-            syntactic_location.validate()?;
-        }
-
-        let deferred_location = location
+        let Some(syntactic_location) = location
             .syntactic_location
             .as_ref()
-            .filter(|syntactic_location| {
-                syntactic_location.symbol.is_some()
-                    && matches!(
-                        self.syntax_state,
-                        SourceLocationSyntaxState::Parsing | SourceLocationSyntaxState::Unavailable
-                    )
-            });
-        if let Some(syntactic_location) = deferred_location {
+            .map(|serialized| serialized.to_syntactic_location(location.fallback_row))
+            .transpose()?
+        else {
+            return Ok(self.resolve_fallback_row(location.fallback_row));
+        };
+
+        let symbol_resolution_must_wait = syntactic_location.symbol.is_some()
+            && matches!(
+                self.syntax_state,
+                SourceLocationSyntaxState::Parsing | SourceLocationSyntaxState::Unavailable
+            );
+        if symbol_resolution_must_wait {
             // Content markers don't depend on syntax, so a deferred location
             // can usually still land on the exact line; only symbol-based
             // recovery has to wait for the parser. This also keeps locations
             // useful in buffers that never get one.
-            let content_marker = ContentMarker {
-                line_text: syntactic_location.content_marker.line_text.clone().into(),
-                context_hash: syntactic_location.content_marker.context_hash,
-            };
             let provisional_row = resolve_content_only(
                 &self.snapshot,
                 &self.index,
-                &content_marker,
+                &syntactic_location.content_marker,
                 location.fallback_row,
             )
             .unwrap_or_else(|| location.fallback_row.min(self.snapshot.max_point().row));
             return Ok(SourceLocationResolution::Deferred { provisional_row });
         }
 
-        let resolved = match location.syntactic_location.as_ref() {
-            Some(syntactic_location) => {
-                let syntactic_location =
-                    syntactic_location.to_syntactic_location(location.fallback_row)?;
-                resolve_syntactic_location(&self.snapshot, &self.index, &syntactic_location)
-            }
-            None => resolve_from_fallback_row(&self.snapshot, location.fallback_row),
-        };
-
-        Ok(resolved
-            .map(SourceLocationResolution::from)
-            .unwrap_or(SourceLocationResolution::Unresolvable))
+        Ok(
+            resolve_syntactic_location(&self.snapshot, &self.index, &syntactic_location)
+                .map(SourceLocationResolution::from)
+                .unwrap_or(SourceLocationResolution::Unresolvable),
+        )
     }
 
     /// Resolves only a fallback row.
@@ -352,6 +356,7 @@ impl SourceLocationResolver {
             SourceLocationSerialization::Provisional(DurableSourceLocation {
                 fallback_row: row,
                 syntactic_location: Some(SerializedSyntacticLocation {
+                    version: SYNTACTIC_LOCATION_FORMAT_VERSION,
                     symbol: None,
                     content_marker: SerializedContentMarker {
                         line_text: content_marker.line_text.to_string(),
@@ -410,7 +415,7 @@ fn compute_syntactic_location(
     snapshot: &language::BufferSnapshot,
     anchor: text::Anchor,
 ) -> SyntacticLocation {
-    let index = SourceLocationIndex::new(snapshot);
+    let index = SourceLocationIndex::new();
     syntactic_location_for_anchor(snapshot, &index, anchor)
 }
 
@@ -431,8 +436,12 @@ fn syntactic_location_for_anchor(
     }
 }
 
+/// Lookup structures derived from the captured snapshot, each built lazily on
+/// first use: a resolver may only ever serialize provisionally or resolve by
+/// row, in which case the outline walk and the full-buffer line scan are both
+/// unnecessary.
 struct SourceLocationIndex {
-    symbols: Vec<IndexedSymbol>,
+    symbols: OnceCell<Vec<IndexedSymbol>>,
     rows_by_line_text: OnceCell<HashMap<SharedString, Vec<u32>>>,
 }
 
@@ -443,35 +452,41 @@ struct IndexedSymbol {
 }
 
 impl SourceLocationIndex {
-    fn new(snapshot: &language::BufferSnapshot) -> Self {
-        // Exclude `@context.extra` captures (e.g. parameter lists) from symbol
-        // text: the text is persisted, and extra context is the part of a
-        // signature most likely to churn. Duplicate paths are disambiguated by
-        // ordinal instead.
-        let items = snapshot.outline_items_as_points_containing(0..snapshot.len(), false, None);
-        let mut path_stack = Vec::new();
-        let mut next_ordinal_by_path = HashMap::<Vec<SharedString>, u32>::new();
-        let mut symbols = Vec::with_capacity(items.len());
-
-        for item in items {
-            path_stack.truncate(item.depth);
-            path_stack.push(item.text.clone());
-            let symbol_path = path_stack.clone();
-            let next_ordinal = next_ordinal_by_path.entry(symbol_path.clone()).or_default();
-            let symbol_ordinal = *next_ordinal;
-            *next_ordinal += 1;
-
-            symbols.push(IndexedSymbol {
-                symbol_path,
-                symbol_ordinal,
-                range: item.range,
-            });
-        }
-
+    fn new() -> Self {
         Self {
-            symbols,
+            symbols: OnceCell::new(),
             rows_by_line_text: OnceCell::new(),
         }
+    }
+
+    fn symbols(&self, snapshot: &language::BufferSnapshot) -> &[IndexedSymbol] {
+        self.symbols.get_or_init(|| {
+            // Exclude `@context.extra` captures (e.g. parameter lists) from
+            // symbol text: the text is persisted, and extra context is the
+            // part of a signature most likely to churn. Duplicate paths are
+            // disambiguated by ordinal instead.
+            let items =
+                snapshot.outline_items_as_points_containing(0..snapshot.len(), false, None);
+            let mut path_stack = Vec::new();
+            let mut next_ordinal_by_path = HashMap::<Vec<SharedString>, u32>::new();
+            let mut symbols = Vec::with_capacity(items.len());
+
+            for item in items {
+                path_stack.truncate(item.depth);
+                path_stack.push(item.text.clone());
+                let symbol_path = path_stack.clone();
+                let next_ordinal = next_ordinal_by_path.entry(symbol_path.clone()).or_default();
+                let symbol_ordinal = *next_ordinal;
+                *next_ordinal += 1;
+
+                symbols.push(IndexedSymbol {
+                    symbol_path,
+                    symbol_ordinal,
+                    range: item.range,
+                });
+            }
+            symbols
+        })
     }
 
     fn rows_matching_line(
@@ -508,7 +523,7 @@ fn compute_symbol_ref(
     // Indexed symbols preserve outline order — sorted by start ascending, then
     // end descending — so the last symbol containing `point` is the innermost.
     let innermost = index
-        .symbols
+        .symbols(snapshot)
         .iter()
         .rfind(|symbol| symbol.range.start <= point && point <= symbol.range.end)?;
 
@@ -639,7 +654,7 @@ fn resolve_with_symbol(
     fallback_row: u32,
 ) -> Option<ResolvedSourceLocation> {
     let matching_symbols = index
-        .symbols
+        .symbols(snapshot)
         .iter()
         .filter(|candidate| candidate.symbol_path == symbol.symbol_path)
         .collect::<Vec<_>>();
@@ -746,6 +761,11 @@ fn best_context_match(candidates: &[SymbolCandidate]) -> Option<ResolvedSourceLo
 /// Falls back to the line match closest to the symbol-relative offset within
 /// the symbol occurrence that has the stored ordinal, even though no context
 /// hash matched.
+///
+/// This deliberately outranks context-confirmed matches outside the stored
+/// symbol path: while that symbol still contains the line's text, symbol
+/// identity is the stronger signal, and the content-only escape in
+/// [`resolve_with_symbol`] only runs once the symbol no longer contains it.
 fn closest_line_match_in_preferred_symbol(
     candidates: &[SymbolCandidate],
 ) -> Option<ResolvedSourceLocation> {
@@ -910,7 +930,7 @@ mod tests {
         });
         cx.update(|cx| {
             let snapshot = buffer.read(cx).snapshot();
-            let index = SourceLocationIndex::new(&snapshot);
+            let index = SourceLocationIndex::new();
             resolve_syntactic_location(&snapshot, &index, location)
                 .expect("expected the source location to resolve")
         })
@@ -924,6 +944,7 @@ mod tests {
         DurableSourceLocation {
             fallback_row,
             syntactic_location: Some(SerializedSyntacticLocation {
+                version: SYNTACTIC_LOCATION_FORMAT_VERSION,
                 symbol,
                 content_marker: SerializedContentMarker {
                     line_text: line_text.to_string(),
@@ -1583,6 +1604,35 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_line_text_in_stored_symbol_outranks_context_match_elsewhere(cx: &mut TestAppContext) {
+        let location = syntactic_location_at_row(
+            "fn alpha() {\n    one();\n    setup();\n    target();\n    teardown();\n    two();\n}\n\nfn beta() {\n    other();\n}\n",
+            3,
+            true,
+            cx,
+        );
+
+        // `fn alpha` still contains `target();` (with new surroundings), while
+        // `fn beta` now contains a context-confirmed copy of the original
+        // window at row 11. The stored symbol wins while it still contains the
+        // line's text.
+        let resolved = resolve_location(
+            "fn alpha() {\n    changed_one();\n    changed_two();\n    changed_three();\n    target();\n    changed_four();\n}\n\nfn beta() {\n    one();\n    setup();\n    target();\n    teardown();\n    two();\n}\n",
+            Some(rust_lang()),
+            &location,
+            cx,
+        );
+
+        assert_eq!(
+            resolved,
+            ResolvedSourceLocation {
+                row: 4,
+                kind: SourceLocationResolutionKind::ContentWithinSymbol,
+            }
+        );
+    }
+
+    #[gpui::test]
     fn test_symbol_without_matching_content_resolves_to_symbol_offset(cx: &mut TestAppContext) {
         let location = syntactic_location_at_row(
             "fn bookmarked() {\n    setup();\n    target();\n    teardown();\n}\n",
@@ -1753,6 +1803,7 @@ mod tests {
     #[test]
     fn test_serialized_syntactic_location_rejects_empty_symbol_path() {
         let serialized = SerializedSyntacticLocation {
+            version: SYNTACTIC_LOCATION_FORMAT_VERSION,
             symbol: Some(SerializedSymbolRef {
                 symbol_path: Vec::new(),
                 symbol_ordinal: 0,
@@ -1764,6 +1815,21 @@ mod tests {
             },
         };
 
+        assert!(serialized.to_syntactic_location(0).is_err());
+    }
+
+    #[test]
+    fn test_serialized_syntactic_location_rejects_other_format_versions() {
+        let serialized = SerializedSyntacticLocation {
+            version: SYNTACTIC_LOCATION_FORMAT_VERSION + 1,
+            symbol: None,
+            content_marker: SerializedContentMarker {
+                line_text: "bookmarked".to_string(),
+                context_hash: 0,
+            },
+        };
+
+        assert!(serialized.validate().is_err());
         assert!(serialized.to_syntactic_location(0).is_err());
     }
 }
