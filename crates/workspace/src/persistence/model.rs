@@ -408,8 +408,17 @@ impl SerializedPane {
                 }
             })?;
         }
+
+        // `items` keeps a `None` for every item that failed to deserialize, and those
+        // were never added to the pane. Counting them would leave the pinned count
+        // pointing past the pinned tabs and pin unpinned ones in their place.
+        let pinned_count = items
+            .iter()
+            .take(self.pinned_count)
+            .filter(|item| item.is_some())
+            .count();
         pane.update(cx, |pane, _| {
-            pane.set_pinned_count(self.pinned_count.min(items.len()));
+            pane.set_pinned_count(pinned_count);
         })?;
 
         anyhow::Ok(items)
