@@ -1876,15 +1876,9 @@ impl BreadcrumbNavigationMenu {
         cx.emit(DismissEvent);
     }
 
-    fn dismiss_on_mouse_up_out(
-        &mut self,
-        _: &MouseUpEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !std::mem::take(&mut self.pressed_outside) {
-            return;
-        }
+    /// Deferred and re-checked: a press outside can be a click on another breadcrumb segment,
+    /// which retargets the menu instead of closing it.
+    fn dismiss_after_release_outside(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let listing = self.listing.clone();
         cx.defer_in(window, move |this, _window, cx| {
             if this.listing == listing {
@@ -1940,6 +1934,99 @@ impl gpui::Focusable for BreadcrumbNavigationMenu {
 
 impl EventEmitter<DismissEvent> for BreadcrumbNavigationMenu {}
 
+/// Judges the press and the release against the same geometry. GPUI's `on_mouse_down_out`
+/// tests `contains` while `on_mouse_up_out` tests `is_hovered`, and the two disagree over the
+/// picker's scrollbar: its thumb blocks hit testing, so a release on the thumb reads as outside
+/// the popup and closes it in the middle of a drag.
+struct OutsideClickBoundary {
+    child: gpui::AnyElement,
+    menu: WeakEntity<BreadcrumbNavigationMenu>,
+}
+
+impl gpui::IntoElement for OutsideClickBoundary {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl gpui::Element for OutsideClickBoundary {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+        (self.child.request_layout(window, cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self::PrepaintState {
+        self.child.prepaint(window, cx);
+    }
+
+    fn paint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        _prepaint: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.child.paint(window, cx);
+
+        let menu = self.menu.clone();
+        window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+            if phase != DispatchPhase::Capture {
+                return;
+            }
+            let pressed_outside = matches!(
+                event.button,
+                MouseButton::Left | MouseButton::Right | MouseButton::Middle
+            ) && !bounds.contains(&window.mouse_position());
+            menu.update(cx, |menu, _| menu.pressed_outside = pressed_outside)
+                .ok();
+        });
+
+        let menu = self.menu.clone();
+        window.on_mouse_event(move |_: &MouseUpEvent, phase, window, cx| {
+            if phase != DispatchPhase::Capture {
+                return;
+            }
+            // Cleared on every release, so an arm can never be judged by a later press.
+            let was_pressed_outside = menu
+                .update(cx, |menu, _| std::mem::take(&mut menu.pressed_outside))
+                .unwrap_or(false);
+            if was_pressed_outside && !bounds.contains(&window.mouse_position()) {
+                menu.update(cx, |menu, cx| menu.dismiss_after_release_outside(window, cx))
+                    .ok();
+            }
+        });
+    }
+}
+
 impl Render for BreadcrumbNavigationMenu {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(picker) = self.picker.clone() else {
@@ -1951,38 +2038,15 @@ impl Render for BreadcrumbNavigationMenu {
         WithRemSize::new(ui_font_size)
             .font_family(ui_font_family)
             .occlude()
-            .child(
-                div()
+            .child(OutsideClickBoundary {
+                child: div()
                     .id("breadcrumb-navigation-menu")
                     .debug_selector(|| "breadcrumb-navigation-menu".into())
                     .key_context("BreadcrumbNavigationMenu")
-                    // Geometric out-test rather than an inside listener: the scrollbar blocks
-                    // hit testing over its thumb, so a press there reaches no hitbox listener
-                    // of ours. The two clearing paths are mutually exclusive and cover every
-                    // release between them, so no press is ever judged by an earlier one.
-                    .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, _| {
-                        this.pressed_outside = matches!(
-                            event.button,
-                            MouseButton::Left | MouseButton::Right | MouseButton::Middle
-                        );
-                    }))
-                    .capture_any_mouse_up(cx.listener(|this, _, _, _| {
-                        this.pressed_outside = false;
-                    }))
-                    .on_mouse_up_out(
-                        MouseButton::Left,
-                        cx.listener(Self::dismiss_on_mouse_up_out),
-                    )
-                    .on_mouse_up_out(
-                        MouseButton::Right,
-                        cx.listener(Self::dismiss_on_mouse_up_out),
-                    )
-                    .on_mouse_up_out(
-                        MouseButton::Middle,
-                        cx.listener(Self::dismiss_on_mouse_up_out),
-                    )
-                    .child(picker),
-            )
+                    .child(picker)
+                    .into_any_element(),
+                menu: cx.entity().downgrade(),
+            })
             .into_any_element()
     }
 }

@@ -1129,6 +1129,114 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_breadcrumb_menu_survives_release_on_an_occluded_part_of_itself(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use gpui::{MouseButton, point, px};
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use util::path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "alpha.txt": "" }))
+            .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        cx.run_until_parked();
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        let dismissed = Rc::new(AtomicBool::new(false));
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                // Stands in for the picker's scrollbar thumb: a hitbox painted over part of
+                // the popup, which the real thumb is and which a test cannot get at because
+                // the thumb autohides. What matters is only that it blocks hit testing inside
+                // the popup's own rectangle.
+                div()
+                    .size_full()
+                    .child(self.menu.clone())
+                    .child(div().absolute().top_0().left_0().size(px(24.)).occlude())
+            }
+        }
+
+        let host_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(buffer, window, cx));
+            let menu = BreadcrumbNavigationMenu::new(
+                editor.downgrade(),
+                workspace.downgrade(),
+                BreadcrumbListing::Directory {
+                    worktree_id,
+                    path: RelPath::empty().into_arc(),
+                },
+                None,
+                false,
+                window,
+                cx,
+            );
+            MenuHost { menu }
+        });
+        let menu = host_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.menu.clone());
+        let cx = &mut VisualTestContext::from_window(*host_window, cx);
+        let _sub = cx.update(|_, cx| {
+            let dismissed = dismissed.clone();
+            cx.subscribe(&menu, move |_, _: &DismissEvent, _| {
+                dismissed.store(true, Ordering::SeqCst);
+            })
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+
+        let menu_bounds = cx
+            .debug_bounds("breadcrumb-navigation-menu")
+            .expect("menu should paint");
+        let occluded = point(px(12.), px(12.));
+        assert!(
+            menu_bounds.contains(&occluded),
+            "the overlay has to sit inside the popup for this to test anything, popup at \
+             {menu_bounds:?}"
+        );
+        let outside = point(
+            menu_bounds.right() + px(40.),
+            menu_bounds.bottom() + px(40.),
+        );
+
+        cx.simulate_mouse_down(outside, MouseButton::Left, gpui::Modifiers::none());
+        cx.simulate_mouse_up(occluded, MouseButton::Left, gpui::Modifiers::none());
+        cx.run_until_parked();
+
+        assert!(
+            !dismissed.load(Ordering::SeqCst),
+            "a release inside the popup must not close it just because something is painted \
+             over that spot"
+        );
+    }
+
+    #[gpui::test]
     async fn test_breadcrumb_menu_survives_drag_release_outside(cx: &mut TestAppContext) {
         use crate::editor_tests::init_test;
         use crate::test::build_editor;
