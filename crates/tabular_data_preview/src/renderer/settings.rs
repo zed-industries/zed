@@ -1,6 +1,7 @@
 use gpui::{Anchor, Entity};
 use ui::{
-    ContextMenu, IconButton, IconName, IconPosition, IconSize, PopoverMenu, Tooltip, prelude::*,
+    ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconName, IconPosition,
+    IconSize, Label, PopoverMenu, Tooltip, prelude::*,
 };
 
 use crate::{
@@ -10,21 +11,33 @@ use crate::{
 
 ///// Settings related /////
 
-/// Adds a toggleable entry that applies `set` to the pane's settings when clicked.
+/// Adds a toggleable entry that applies `set` to the pane's settings when clicked. `description`,
+/// when given, shows as a documentation aside explaining what the entry does.
 fn toggle_entry(
     menu: ContextMenu,
     label: &'static str,
+    description: Option<&'static str>,
     selected: bool,
     view_entity: &Entity<TabularDataPreviewPane>,
     set: impl Fn(&mut TabularDataPreviewSettings) + 'static,
 ) -> ContextMenu {
     let view_entity = view_entity.clone();
-    menu.toggleable_entry(label, selected, IconPosition::Start, None, move |_, cx| {
-        view_entity.update(cx, |this, cx| {
-            set(&mut this.settings);
-            cx.notify();
+    let entry = ContextMenuEntry::new(label)
+        .toggleable(IconPosition::Start, selected)
+        .handler(move |_, cx| {
+            view_entity.update(cx, |this, cx| {
+                set(&mut this.settings);
+                cx.notify();
+            });
         });
-    })
+    let entry = if let Some(description) = description {
+        entry.documentation_aside(DocumentationSide::Left, move |_| {
+            Label::new(description).into_any_element()
+        })
+    } else {
+        entry
+    };
+    menu.item(entry)
 }
 
 pub(crate) fn settings_popover_menu(
@@ -49,6 +62,7 @@ pub(crate) fn settings_popover_menu(
                     let menu = toggle_entry(
                         menu.header("Text Alignment"),
                         "Top",
+                        Some("Choose vertical text alignment within cells"),
                         matches!(settings.vertical_alignment, VerticalAlignment::Top),
                         &view_entity,
                         |settings| settings.vertical_alignment = VerticalAlignment::Top,
@@ -56,6 +70,7 @@ pub(crate) fn settings_popover_menu(
                     let menu = toggle_entry(
                         menu,
                         "Center",
+                        None,
                         matches!(settings.vertical_alignment, VerticalAlignment::Center),
                         &view_entity,
                         |settings| settings.vertical_alignment = VerticalAlignment::Center,
@@ -65,6 +80,7 @@ pub(crate) fn settings_popover_menu(
                     let menu = toggle_entry(
                         menu,
                         "A-Z, then Count",
+                        Some("Choose how filter values are sorted in the filter menu"),
                         settings.filter_sort_order == FilterSortOrder::AlphaThenCount,
                         &view_entity,
                         |settings| settings.filter_sort_order = FilterSortOrder::AlphaThenCount,
@@ -72,6 +88,7 @@ pub(crate) fn settings_popover_menu(
                     let menu = toggle_entry(
                         menu,
                         "Count, then A-Z",
+                        None,
                         settings.filter_sort_order == FilterSortOrder::CountThenAlpha,
                         &view_entity,
                         |settings| settings.filter_sort_order = FilterSortOrder::CountThenAlpha,
@@ -80,6 +97,10 @@ pub(crate) fn settings_popover_menu(
                     let menu = toggle_entry(
                         menu.separator(),
                         "Display multiline rows",
+                        Some(
+                            "When enabled, row height grows to show all content. \
+                             When disabled, only the first line is visible — hover a cell to see the rest.",
+                        ),
                         settings.multiline_cells_enabled,
                         &view_entity,
                         |settings| settings.multiline_cells_enabled = !settings.multiline_cells_enabled,
@@ -106,6 +127,10 @@ fn append_dev_only_entries(
     let menu = toggle_entry(
         menu,
         "Variable Height",
+        Some(
+            "Dev-only section used for debugging purposes.\n\
+             Will be removed on public release of the tabular data preview feature",
+        ),
         settings.rendering_with == RowRenderMechanism::VariableList,
         view_entity,
         |settings| settings.rendering_with = RowRenderMechanism::VariableList,
@@ -113,6 +138,7 @@ fn append_dev_only_entries(
     let menu = toggle_entry(
         menu,
         "Uniform Height",
+        None,
         settings.rendering_with == RowRenderMechanism::UniformList,
         view_entity,
         |settings| settings.rendering_with = RowRenderMechanism::UniformList,
@@ -121,6 +147,7 @@ fn append_dev_only_entries(
     let menu = toggle_entry(
         menu.separator(),
         "Show perf metrics",
+        None,
         settings.show_perf_metrics_overlay,
         view_entity,
         |settings| settings.show_perf_metrics_overlay = !settings.show_perf_metrics_overlay,
@@ -128,6 +155,7 @@ fn append_dev_only_entries(
     toggle_entry(
         menu,
         "Show cell positions",
+        None,
         settings.show_debug_info,
         view_entity,
         |settings| settings.show_debug_info = !settings.show_debug_info,
