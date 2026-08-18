@@ -48,7 +48,7 @@ pub struct Scene {
     pub quads: Vec<Quad>,
     pub paths: Vec<PaintedPath>,
     pub path_paints: Vec<PathPaint>,
-    pub path_curves: Vec<PathCurve>,
+
     pub path_tiles: Vec<PathTile>,
     pub path_tile_curves: Vec<TileCurve>,
     pub underlines: Vec<Underline>,
@@ -66,7 +66,7 @@ impl Scene {
         self.layer_stack.clear();
         self.paths.clear();
         self.path_paints.clear();
-        self.path_curves.clear();
+
         self.path_tiles.clear();
         self.path_tile_curves.clear();
         self.shadows.clear();
@@ -174,7 +174,6 @@ impl Scene {
 
     fn flatten_paths(&mut self) {
         self.path_paints.clear();
-        self.path_curves.clear();
         self.path_tiles.clear();
         self.path_tile_curves.clear();
 
@@ -184,16 +183,11 @@ impl Scene {
             }
 
             let paint = self.path_paints.len() as u32;
-            let curve_base = self.path_curves.len() as u32;
             let entry_base = self.path_tile_curves.len() as u32;
             self.path_paints.push(path.paint);
-            self.path_curves.extend_from_slice(&path.curves);
-
-            self.path_tile_curves
-                .extend(path.tile_curves.iter().map(|entry| TileCurve {
-                    curve: entry.curve + curve_base,
-                    ..*entry
-                }));
+            // Tile curves carry their geometry inline, so they concatenate
+            // verbatim; only the tiles' index into them needs globalizing.
+            self.path_tile_curves.extend_from_slice(&path.tile_curves);
             self.path_tiles
                 .extend(path.tiles.iter().map(|tile| PathTile {
                     paint,
@@ -858,7 +852,8 @@ pub struct PaintedPath {
     pub paint: PathPaint,
     /// The device-space tiles of this path, one GPU instance each.
     pub tiles: Vec<PathTile>,
-    /// The device-space curves the tiles reference.
+    /// The device-space curves, the binner's working form. Not uploaded:
+    /// each tile's list carries its curves inline.
     pub curves: Vec<PathCurve>,
     /// Concatenated per-tile curve lists, indexed by
     /// [`PathTile::curve_start`].

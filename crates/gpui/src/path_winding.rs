@@ -41,14 +41,23 @@ const MAX_TILES: usize = 1 << 22;
 /// Marks the end of a tile's curve list.
 const NO_ENTRY: u32 = u32::MAX;
 
-/// High bit of [`TileCurve::curve`]: the curve crosses this tile's downward
-/// leg below the sample point. Booked once during binning, from the same
+/// Bit 0 of [`TileCurve::flags`]: the contour ran upward through this curve,
+/// so its winding contributions carry `-1`. The shader recovers the sign as
+/// `1 - 2 * (flags & 1)`.
+const TILE_CURVE_SIGN_NEGATIVE: u32 = 1;
+
+/// Bits 1-2 of [`TileCurve::flags`] hold `sx + 1`, so the shader recovers the
+/// x-direction as `((flags >> 1) & 3) - 1`.
+const TILE_CURVE_SX_SHIFT: u32 = 1;
+
+/// Bit 3 of [`TileCurve::flags`]: the curve crosses this tile's downward leg
+/// below the sample point. Booked once during binning, from the same
 /// bucketing the backdrop is built on, and uploaded; the shader never
 /// re-derives crossing ownership. It encodes a convention, not a geometric
 /// fact, which is why it rides alongside the crossing coordinate instead of
 /// being derivable from it. Mirrored in `shaders.hlsl`'s
 /// `path_tile_fragment`.
-const CURVE_DOWNWARD_LEG_FLAG: u32 = 1 << 31;
+const TILE_CURVE_DOWNWARD_LEG: u32 = 1 << 3;
 
 /// Snap a device-pixel coordinate to the 1/256-pixel lattice the winding
 /// bookkeeping operates on. Applied once, in [`MonotoneCurve::scaled`] —
@@ -78,8 +87,9 @@ pub(crate) struct MonotoneCurve {
 /// ran through it, with its polynomial coefficients precomputed:
 /// `x(t) = ax·t² + bx·t + p0.x` and `y(t) = ay·t² + by·t + p0.y`.
 ///
-/// Produced by [`MonotoneCurve::scaled`] once per paint and uploaded;
-/// `repr(C)` and layout-matched to its HLSL counterpart. The coefficients
+/// Produced by [`MonotoneCurve::scaled`] once per paint. It is the binner's
+/// working form; what reaches the GPU is a [`TileCurve`] per (tile, curve)
+/// pair, carrying a copy of these fields. The coefficients
 /// are computed once here so the CPU binning and the shader consume
 /// bit-identical values instead of each deriving them from a control point
 /// — the decided-once-and-uploaded principle the leg bookings follow,
@@ -116,8 +126,7 @@ pub struct PathCurve {
 
 // The GPU consumes these layouts verbatim (HLSL structured buffers add no
 // hidden padding for these field types, and neither may Rust).
-const _: () = assert!(std::mem::size_of::<PathCurve>() == 40);
-const _: () = assert!(std::mem::size_of::<TileCurve>() == 8);
+const _: () = assert!(std::mem::size_of::<TileCurve>() == 40);
 const _: () = assert!(std::mem::size_of::<PathTile>() == 28);
 const _: () = assert!(std::mem::size_of::<PathPaint>() == 108);
 
@@ -220,16 +229,31 @@ pub struct PathTile {
     pub run: u32,
 }
 
-/// One element of a tile's curve list: which curve, whether its crossing of
-/// the tile's downward leg counts, and where that crossing is. Everything
-/// per-(tile, curve) the fragment shader would otherwise re-derive per
-/// pixel. `repr(C)` and layout-matched to its HLSL counterpart.
+/// One element of a tile's curve list: a whole curve, plus the two facts
+/// that depend on which tile is looking at it.
+///
+/// The curve is stored inline rather than referenced by index. Indexing
+/// would save memory — a curve's monotone trail typically crosses two tiles,
+/// so the duplication roughly doubles this buffer — but it costs the
+/// fragment shader a *dependent* load on every loop iteration: read the
+/// index, wait, then read the curve it names, inside a loop the compiler
+/// cannot unroll. Inline, a tile's list is one sequential run whose
+/// addresses are all known before the loop starts. `repr(C)` and
+/// layout-matched to its HLSL counterpart.
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct TileCurve {
-    /// Low bits index the path's curves (path-local); the high bit is the
-    /// tile-specific downward-leg booking ([`CURVE_DOWNWARD_LEG_FLAG`]).
-    pub curve: u32,
+    /// Upper endpoint of the xy-monotone curve, in device pixels.
+    pub p0: Point<f32>,
+    /// Lower endpoint.
+    pub p1: Point<f32>,
+    /// Quadratic coefficients `(ax, ay)` of `x(t)` and `y(t)`. Exactly zero
+    /// for line curves — set, not derived, so no rounding can perturb them
+    /// — keeping every solve against a line in
+    /// `monotone_quadratic_root`'s linear branch.
+    pub a: Point<f32>,
+    /// Linear coefficients `(bx, by)`.
+    pub b: Point<f32>,
     /// The y at which the curve crosses the tile's left-edge line
     /// (`x = corner.x`), solved once here. Meaningful — and read by the
     /// shader — only when the curve's x-range straddles that line; zero
@@ -238,6 +262,10 @@ pub struct TileCurve {
     /// height even when the leg does not count the crossing (one above the
     /// sample point belongs to the backdrop).
     pub leg_y: f32,
+    /// Winding sign, x-direction, and the downward-leg booking, packed as
+    /// [`TILE_CURVE_SIGN_NEGATIVE`], [`TILE_CURVE_SX_SHIFT`] and
+    /// [`TILE_CURVE_DOWNWARD_LEG`].
+    pub flags: u32,
 }
 
 thread_local! {
@@ -379,10 +407,9 @@ impl PaintedPath {
             scratch.tile_heads.resize(cells, NO_ENTRY);
             scratch.entries.clear();
 
-            debug_assert!(self.curves.len() < CURVE_DOWNWARD_LEG_FLAG as usize);
             let grid_right = grid.left + grid.columns as f32 * TILE_SIZE;
             let grid_bottom = grid.top + grid.rows as f32 * TILE_SIZE;
-            for (index, curve) in self.curves.iter().enumerate() {
+            for curve in &self.curves {
                 // Geometry that can't cross a sample line or a pixel window
                 // inside the grid: above, below, or right of it. Left is
                 // different — crossings out there feed the visible backdrops
@@ -393,7 +420,7 @@ impl PaintedPath {
                 {
                     continue;
                 }
-                add_curve(scratch, &grid, index as u32, curve);
+                add_curve(scratch, &grid, curve);
             }
 
             // An exclusive prefix sum along each row turns the per-tile
@@ -513,13 +540,8 @@ impl PaintedPath {
                 // rightward-leg gate rejects it, and it cannot carry a
                 // downward-leg booking, which requires straddling the
                 // tile's left edge.
-                let curves = &self.curves;
                 self.tile_curves[curve_start as usize..].sort_unstable_by(|a, b| {
-                    let min_x = |entry: &TileCurve| {
-                        let curve = &curves[(entry.curve & !CURVE_DOWNWARD_LEG_FLAG) as usize];
-                        curve.p0.x.min(curve.p1.x)
-                    };
-                    min_x(a).total_cmp(&min_x(b))
+                    a.p0.x.min(a.p1.x).total_cmp(&b.p0.x.min(b.p1.x))
                 });
                 self.tiles.push(PathTile {
                     paint: 0,
@@ -537,9 +559,15 @@ impl PaintedPath {
 /// Bucket one device-space curve into every tile its monotone trail touches
 /// — booking its downward-leg crossings into the entries' flag bits — and
 /// scatter the winding deltas it contributes at the tiles' sample heights.
-fn add_curve(scratch: &mut BinScratch, grid: &Grid, index: u32, curve: &PathCurve) {
+fn add_curve(scratch: &mut BinScratch, grid: &Grid, curve: &PathCurve) {
     let horizontal = curve.p1.y <= curve.p0.y;
     let delta = if curve.sign < 0.0 { -1 } else { 1 };
+    // Constant across every tile this curve lands in, so it is packed once.
+    let flags = if curve.sign < 0.0 {
+        TILE_CURVE_SIGN_NEGATIVE
+    } else {
+        0
+    } | (((curve.sx as i32 + 1) as u32) << TILE_CURVE_SX_SHIFT);
     let min_x = curve.p0.x.min(curve.p1.x);
     let max_x = curve.p0.x.max(curve.p1.x);
     let first_row = grid.row_of(curve.p0.y);
@@ -637,13 +665,12 @@ fn add_curve(scratch: &mut BinScratch, grid: &Grid, index: u32, curve: &PathCurv
             let cell = grid.cell(row, column);
             scratch.entries.push(ScratchEntry {
                 entry: TileCurve {
-                    curve: index
-                        | if crosses_leg {
-                            CURVE_DOWNWARD_LEG_FLAG
-                        } else {
-                            0
-                        },
+                    p0: curve.p0,
+                    p1: curve.p1,
+                    a: point(curve.ax, curve.ay),
+                    b: point(curve.bx, curve.by),
                     leg_y,
+                    flags: flags | if crosses_leg { TILE_CURVE_DOWNWARD_LEG } else { 0 },
                 },
                 next: scratch.tile_heads[cell],
             });
@@ -1273,16 +1300,8 @@ mod tests {
             tile.corner.x, tile.corner.y, tile.backdrop, tile.curve_count
         );
         for i in tile.curve_start..tile.curve_start + tile.curve_count {
-            let entry = path.tile_curves[i as usize];
-            let curve = &path.curves[(entry.curve & !CURVE_DOWNWARD_LEG_FLAG) as usize];
-            let crosses_downward_leg = entry.curve & CURVE_DOWNWARD_LEG_FLAG != 0;
-            let contribution = emulated_curve_winding(
-                curve,
-                tile.corner,
-                pixel,
-                crosses_downward_leg,
-                entry.leg_y,
-            );
+            let curve = &path.tile_curves[i as usize];
+            let contribution = emulated_curve_winding(curve, tile.corner, pixel);
             description.push_str(&format!(
                 "  curve p0 ({}, {}) p1 ({}, {}) a ({}, {}) b ({}, {}) \
                 sign {} sx {} leg {} -> {}\n",
@@ -1290,13 +1309,13 @@ mod tests {
                 curve.p0.y,
                 curve.p1.x,
                 curve.p1.y,
-                curve.ax,
-                curve.ay,
-                curve.bx,
-                curve.by,
-                curve.sign,
-                curve.sx,
-                crosses_downward_leg,
+                curve.a.x,
+                curve.a.y,
+                curve.b.x,
+                curve.b.y,
+                curve_sign(curve),
+                curve_sx(curve),
+                curve.flags & TILE_CURVE_DOWNWARD_LEG != 0,
                 contribution,
             ));
         }
@@ -1355,20 +1374,12 @@ mod tests {
         let pixel = point(pixel_x as f32, pixel_y as f32);
         let mut winding = tile.backdrop as f32;
         for i in tile.curve_start..tile.curve_start + tile.curve_count {
-            let entry = path.tile_curves[i as usize];
-            let curve = &path.curves[(entry.curve & !CURVE_DOWNWARD_LEG_FLAG) as usize];
+            let curve = &path.tile_curves[i as usize];
             // The shader's sorted early-out, mirrored.
             if curve.p0.x.min(curve.p1.x) >= pixel.x + 1.0 {
                 break;
             }
-            let crosses_downward_leg = entry.curve & CURVE_DOWNWARD_LEG_FLAG != 0;
-            winding += emulated_curve_winding(
-                curve,
-                tile.corner,
-                pixel,
-                crosses_downward_leg,
-                entry.leg_y,
-            );
+            winding += emulated_curve_winding(curve, tile.corner, pixel);
         }
         if path.paint.even_odd.as_bool() {
             (winding - 2.0 * (winding * 0.5).round()).abs()
@@ -1377,20 +1388,28 @@ mod tests {
         }
     }
 
+    /// `1 - 2 * (flags & 1)` from shaders.hlsl, transcribed.
+    fn curve_sign(curve: &TileCurve) -> f32 {
+        1.0 - 2.0 * (curve.flags & TILE_CURVE_SIGN_NEGATIVE) as f32
+    }
+
+    /// `((flags >> 1) & 3) - 1` from shaders.hlsl, transcribed.
+    fn curve_sx(curve: &TileCurve) -> f32 {
+        ((curve.flags >> TILE_CURVE_SX_SHIFT) & 3) as f32 - 1.0
+    }
+
     /// `curve_winding` from shaders.hlsl, transcribed. HLSL `clamp`/`saturate`
     /// are `min(max(..))`, which never panics on an inverted range, so the
     /// transcription uses `max().min()` rather than Rust's checked `clamp`.
-    fn emulated_curve_winding(
-        curve: &PathCurve,
-        corner: Point<f32>,
-        pixel: Point<f32>,
-        crosses_downward_leg: bool,
-        leg_y: f32,
-    ) -> f32 {
-        let ax = curve.ax;
-        let bx = curve.bx;
-        let ay = curve.ay;
-        let by = curve.by;
+    fn emulated_curve_winding(curve: &TileCurve, corner: Point<f32>, pixel: Point<f32>) -> f32 {
+        let ax = curve.a.x;
+        let bx = curve.b.x;
+        let ay = curve.a.y;
+        let by = curve.b.y;
+        let leg_y = curve.leg_y;
+        let sign = curve_sign(curve);
+        let sx = curve_sx(curve);
+        let crosses_downward_leg = curve.flags & TILE_CURVE_DOWNWARD_LEG != 0;
         let mut winding = 0.0;
 
         let mut ya = pixel.y.max(curve.p0.y);
@@ -1417,13 +1436,13 @@ mod tests {
                 }
                 if live {
                     if xa.max(xb) <= pixel.x {
-                        winding += curve.sign * (yb - ya);
+                        winding += sign * (yb - ya);
                     } else if ax == 0.0 && ay == 0.0 {
-                        winding += curve.sign
+                        winding += sign
                             * ((yb - ya)
                                 - emulated_line_column_area(window, xa - pixel.x, xb - pixel.x));
                     } else {
-                        winding += curve.sign
+                        winding += sign
                             * ((yb - ya)
                                 - emulated_curve_column_area(
                                     ax,
@@ -1443,7 +1462,7 @@ mod tests {
         }
 
         if crosses_downward_leg {
-            winding -= curve.sign * curve.sx * (pixel.y + 1.0 - leg_y).clamp(0.0, 1.0);
+            winding -= sign * sx * (pixel.y + 1.0 - leg_y).clamp(0.0, 1.0);
         }
 
         winding

@@ -958,15 +958,22 @@ float4 shadow_fragment(ShadowFragmentInput input): SV_TARGET {
 **
 */
 
-struct PathCurve {
+// One element of a tile's curve list: a whole curve, plus the two facts that
+// depend on which tile is looking at it. Stored inline rather than indexed,
+// so the fragment loop is one sequential run of reads whose addresses are
+// known before it starts, instead of a dependent index-then-curve chase on
+// every iteration.
+struct TileCurve {
     float2 p0;
     float2 p1;
-    float ax;
-    float bx;
-    float ay;
-    float by;
-    float sign;
-    float sx;
+    // Quadratic coefficients (ax, ay); exactly zero for line curves.
+    float2 a;
+    // Linear coefficients (bx, by).
+    float2 b;
+    float leg_y;
+    // Bit 0: winding sign is negative. Bits 1-2: sx + 1. Bit 3: the curve
+    // crosses this tile's downward leg below the sample point.
+    uint flags;
 };
 
 static const float PATH_TILE_SIZE = 8.0;
@@ -987,15 +994,9 @@ struct PathPaint {
     uint even_odd;
 };
 
-struct TileCurve {
-    uint curve;
-    float leg_y;
-};
-
 StructuredBuffer<PathTile> path_tiles: register(t1);
 StructuredBuffer<TileCurve> tile_curves: register(t2);
-StructuredBuffer<PathCurve> path_curves: register(t3);
-StructuredBuffer<PathPaint> path_paints: register(t4);
+StructuredBuffer<PathPaint> path_paints: register(t3);
 
 // A tile is one wave's worth of pixels, so every interpolant is paid once per
 // wave with nothing to amortize it against. Passing the tile and its paint
@@ -1113,12 +1114,15 @@ float curve_column_area(float ax, float bx, float cx, float ay, float by, float 
 // downward leg it is -sign(dx) = -curve.sign * curve.sx. The rightward leg
 // matches what the CPU counted along the grid row line, so the backdrop and
 // these corrections compose into the true winding.
-float curve_winding(PathCurve curve, float2 corner, float2 pixel,
-                    bool crosses_downward_leg, float leg_y) {
-    float ax = curve.ax;
-    float bx = curve.bx;
-    float ay = curve.ay;
-    float by = curve.by;
+float curve_winding(TileCurve curve, float2 corner, float2 pixel) {
+    float ax = curve.a.x;
+    float bx = curve.b.x;
+    float ay = curve.a.y;
+    float by = curve.b.y;
+    float leg_y = curve.leg_y;
+    float sign = 1.0 - 2.0 * float(curve.flags & 1u);
+    float sx = float((curve.flags >> 1u) & 3u) - 1.0;
+    bool crosses_downward_leg = (curve.flags & 8u) != 0u;
     float winding = 0.0;
 
     // Rightward leg, from the tile's left edge to the sample. Clamping to
@@ -1173,7 +1177,7 @@ float curve_winding(PathCurve curve, float2 corner, float2 pixel,
             }
             if (live) {
                 if (max(xa, xb) <= pixel.x) {
-                    winding += curve.sign * (yb - ya);
+                    winding += sign * (yb - ya);
                 } else if (ax == 0.0 && ay == 0.0) {
                     // Lines carry exact-zero quadratic coefficients (set,
                     // not derived, in MonotoneCurve::scaled), so this branch
@@ -1184,11 +1188,11 @@ float curve_winding(PathCurve curve, float2 corner, float2 pixel,
                     // part's integrand is zero. The line formula couples
                     // height and x-range through the slope, so it must see
                     // matching full-window values for both.
-                    winding += curve.sign * ((yb - ya)
+                    winding += sign * ((yb - ya)
                         - line_column_area(window, xa - pixel.x, xb - pixel.x));
                 } else {
                     // clamp(px + 1 - x_c, 0, 1) = 1 - clamp(x_c - px, 0, 1).
-                    winding += curve.sign * ((yb - ya)
+                    winding += sign * ((yb - ya)
                         - curve_column_area(ax, bx, curve.p0.x - pixel.x, ay, by, curve.p0.y,
                                             ta, tb, xa - pixel.x, xb - pixel.x));
                 }
@@ -1205,7 +1209,7 @@ float curve_winding(PathCurve curve, float2 corner, float2 pixel,
     // lower gate is needed; the weight zeroes crossings below the pixel by
     // itself.
     if (crosses_downward_leg) {
-        winding -= curve.sign * curve.sx * clamp(pixel.y + 1.0 - leg_y, 0.0, 1.0);
+        winding -= sign * sx * clamp(pixel.y + 1.0 - leg_y, 0.0, 1.0);
     }
 
     return winding;
@@ -1225,13 +1229,11 @@ float4 path_tile_fragment(PathTileFragmentInput input): SV_Target {
     float winding = float(tile.backdrop);
     [loop]
     for (uint i = 0u; i < tile.curve_count; i++) {
-        TileCurve entry = tile_curves[tile.curve_start + i];
-        PathCurve curve = path_curves[entry.curve & 0x7fffffffu];
+        TileCurve curve = tile_curves[tile.curve_start + i];
         if (min(curve.p0.x, curve.p1.x) >= pixel.x + 1.0) {
             break;
         }
-        winding += curve_winding(curve, tile.corner, pixel,
-            (entry.curve & 0x80000000u) != 0u, entry.leg_y);
+        winding += curve_winding(curve, tile.corner, pixel);
     }
 
     float coverage = path_paints[tile.paint].even_odd != 0u

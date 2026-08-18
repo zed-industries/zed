@@ -80,7 +80,6 @@ struct DirectXRenderPipelines {
     quad_pipeline: PipelineState<Quad>,
     path_tile_pipeline: PipelineState<PathTile>,
     path_tile_curves: StructuredBuffer<TileCurve>,
-    path_curves: StructuredBuffer<PathCurve>,
     path_paints: StructuredBuffer<PathPaint>,
     underline_pipeline: PipelineState<Underline>,
     mono_sprites: PipelineState<MonochromeSprite>,
@@ -541,11 +540,6 @@ impl DirectXRenderer {
                 &devices.device_context,
                 &scene.path_tiles,
             )?;
-            self.pipelines.path_curves.write(
-                &devices.device,
-                &devices.device_context,
-                &scene.path_curves,
-            )?;
             self.pipelines.path_tile_curves.write(
                 &devices.device,
                 &devices.device_context,
@@ -634,7 +628,6 @@ impl DirectXRenderer {
         let devices = self.devices.as_ref().context("devices missing")?;
         let curve_buffers = [
             self.pipelines.path_tile_curves.view.clone(),
-            self.pipelines.path_curves.view.clone(),
             self.pipelines.path_paints.view.clone(),
         ];
         self.pipelines.path_tile_pipeline.draw_range(
@@ -866,7 +859,6 @@ impl DirectXRenderPipelines {
             create_blend_state(device)?,
         )?;
         let path_tile_curves = StructuredBuffer::new(device, "path_tile_curves", 256)?;
-        let path_curves = StructuredBuffer::new(device, "path_curves", 256)?;
         let path_paints = StructuredBuffer::new(device, "path_paints", 64)?;
         let underline_pipeline = PipelineState::new(
             device,
@@ -902,7 +894,6 @@ impl DirectXRenderPipelines {
             quad_pipeline,
             path_tile_pipeline,
             path_tile_curves,
-            path_curves,
             path_paints,
             underline_pipeline,
             mono_sprites,
