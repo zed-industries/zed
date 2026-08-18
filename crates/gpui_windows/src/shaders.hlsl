@@ -67,6 +67,20 @@ struct Background {
     uint pad;
 };
 
+// The colour half of a resolved paint, on its own. Two flat interpolants,
+// and the expensive half to compute: `hsla_to_rgba` per colour, plus
+// `srgb_to_oklab`'s three `pow` calls per colour for Oklab gradients. Every
+// pipeline resolves this in its vertex shader.
+struct PreparedBackgroundColors {
+    nointerpolation float4 color0: COLOR1;
+    nointerpolation float4 color1: COLOR2;
+};
+
+// Both halves. The geometry half is two further interpolants and is cheap to
+// recompute, so it is worth carrying only when an instance covers many waves
+// — true of quads, false of path tiles, which are one wave each. Pipelines
+// whose primitives are small keep `PreparedBackgroundColors` in their varying
+// and call `prepare_background_geometry` per fragment instead.
 struct PreparedBackground {
     nointerpolation float4 color0: COLOR1;
     nointerpolation float4 color1: COLOR2;
@@ -332,23 +346,37 @@ float quad_sdf(float2 pt, Bounds bounds, Corners corner_radii) {
     return quad_sdf_impl(corner_center_to_point, corner_radius);
 }
 
-PreparedBackground prepare_background(Background background, Bounds bounds) {
+PreparedBackgroundColors prepare_background_colors(Background background) {
+    PreparedBackgroundColors output;
+    output.color1 = float4(0.0, 0.0, 0.0, 0.0);
+
+    if (background.tag == 1) {
+        output.color0 = hsla_to_rgba(background.colors[0].color);
+        output.color1 = hsla_to_rgba(background.colors[1].color);
+        // Interpolating in Oklab means converting the endpoints once rather
+        // than at every stop evaluation.
+        if (background.color_space == 1) {
+            output.color0 = srgb_to_oklab(output.color0);
+            output.color1 = srgb_to_oklab(output.color1);
+        }
+    } else {
+        output.color0 = hsla_to_rgba(background.solid);
+    }
+
+    return output;
+}
+
+PreparedBackground prepare_background_geometry(PreparedBackgroundColors colors,
+                                               Background background, Bounds bounds) {
     PreparedBackground output;
     output.kind = uint2(background.tag, background.color_space);
-    output.color0 = float4(0.0, 0.0, 0.0, 0.0);
-    output.color1 = float4(0.0, 0.0, 0.0, 0.0);
+    output.color0 = colors.color0;
+    output.color1 = colors.color1;
     output.basis = float4(0.0, 0.0, 0.0, 0.0);
     output.pivot = bounds.origin;
 
     switch (background.tag) {
         case 1: {
-            output.color0 = hsla_to_rgba(background.colors[0].color);
-            output.color1 = hsla_to_rgba(background.colors[1].color);
-            if (background.color_space == 1) {
-                output.color0 = srgb_to_oklab(output.color0);
-                output.color1 = srgb_to_oklab(output.color1);
-            }
-
             // -90 degrees to match the CSS gradient angle.
             float radians = (fmod(background.gradient_angle_or_pattern_height, 360.0) - 90.0)
                 * (M_PI_F / 180.0);
@@ -384,7 +412,6 @@ PreparedBackground prepare_background(Background background, Bounds bounds) {
             break;
         }
         case 2: {
-            output.color0 = hsla_to_rgba(background.solid);
             float pattern_height_encoded = background.gradient_angle_or_pattern_height;
             float pattern_width = (pattern_height_encoded / 65535.0) / 255.0;
             float pattern_interval = fmod(pattern_height_encoded, 65535.0) / 255.0;
@@ -399,16 +426,16 @@ PreparedBackground prepare_background(Background background, Bounds bounds) {
             break;
         }
         case 3: {
-            output.color0 = hsla_to_rgba(background.solid);
             output.basis = float4(background.gradient_angle_or_pattern_height, 0.0, 0.0, 0.0);
             break;
         }
-        default:
-            output.color0 = hsla_to_rgba(background.solid);
-            break;
     }
 
     return output;
+}
+
+PreparedBackground prepare_background(Background background, Bounds bounds) {
+    return prepare_background_geometry(prepare_background_colors(background), background, bounds);
 }
 
 // Ordered (Bayer 4x4) dither threshold, remapped to [-1, +1].
@@ -1002,9 +1029,15 @@ StructuredBuffer<PathPaint> path_paints: register(t3);
 // wave with nothing to amortize it against. Passing the tile and its paint
 // down measured -32% wave occupancy on Adreno and was slower despite issuing
 // 71% fewer buffer loads, so both stay in memory and the fragment reads them.
+// A tile is 8x8 pixels, about one wave, so every interpolant is paid once per
+// wave with nothing to amortize it against — passing the tile itself down
+// measured -32% wave occupancy on Adreno. The paint's colours are the
+// exception: they cost two interpolants and save `srgb_to_oklab`'s `pow`
+// calls from running per fragment. The geometry half stays in the fragment.
 struct PathTileFragmentInput {
     float4 position: SV_Position;
     nointerpolation uint tile_id: TEXCOORD0;
+    PreparedBackgroundColors background;
 };
 
 PathTileFragmentInput path_tile_vertex(uint vertex_id: SV_VertexID, uint tile_id: SV_InstanceID) {
@@ -1021,6 +1054,7 @@ PathTileFragmentInput path_tile_vertex(uint vertex_id: SV_VertexID, uint tile_id
     PathTileFragmentInput output;
     output.position = to_device_position_impl(vertex.position);
     output.tile_id = tile_index;
+    output.background = prepare_background_colors(paint.color);
     return output;
 }
 
@@ -1263,10 +1297,12 @@ float4 path_tile_fragment(PathTileFragmentInput input): SV_Target {
         return float4(0.0, 0.0, 0.0, 0.0);
     }
 
-    // Only reached by pixels with ink, so the paint — the cold half of
-    // `PathPaint` — is read behind this branch rather than up front.
+    // Only reached by pixels with ink, so the paint's geometry is resolved
+    // behind this branch rather than up front. Its colours already arrived in
+    // registers.
     PathPaint paint = path_paints[tile.paint];
-    float4 color = background_color(prepare_background(paint.color, paint.bounds),
+    float4 color = background_color(
+        prepare_background_geometry(input.background, paint.color, paint.bounds),
         input.position.xy);
     return float4(color.rgb, color.a * coverage);
 }
