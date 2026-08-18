@@ -3446,6 +3446,15 @@ impl GitStore {
 
         let message = envelope.payload.message;
 
+        if envelope.payload.staged.unwrap_or(false) {
+            repository_handle
+                .update(&mut cx, |repository_handle, cx| {
+                    repository_handle.stash_staged(message, cx)
+                })
+                .await?;
+            return Ok(proto::Ack {});
+        }
+
         let entries = envelope
             .payload
             .paths
@@ -7921,6 +7930,27 @@ impl Repository {
         self.stash_entries(to_stash, message, cx)
     }
 
+    pub fn stash_tracked(
+        &mut self,
+        message: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        // `is_created` rather than `is_untracked`, so that staging a new file does not
+        // move it out of the untracked set: `git add` makes it `Tracked { Added }`, but
+        // the panel still lists it under "Untracked" and the user expects it left alone.
+        let to_stash: Vec<_> = self
+            .cached_status()
+            .filter(|entry| !entry.status.is_created())
+            .map(|entry| entry.repo_path)
+            .collect();
+
+        // An empty pathspec would make `git stash push` stash everything.
+        if to_stash.is_empty() {
+            return Task::ready(Ok(()));
+        }
+        self.stash_entries(to_stash, message, cx)
+    }
+
     pub fn stash_entries(
         &mut self,
         entries: Vec<RepoPath>,
@@ -7948,6 +7978,43 @@ impl Repository {
                                         .map(|repo_path| repo_path.as_unix_str().to_owned())
                                         .collect(),
                                     message,
+                                    staged: None,
+                                })
+                                .await?;
+                            Ok(())
+                        }
+                    }
+                })
+            })?
+            .await??;
+            Ok(())
+        })
+    }
+
+    pub fn stash_staged(
+        &mut self,
+        message: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        let id = self.id;
+
+        cx.spawn(async move |this, cx| {
+            this.update(cx, |this, _| {
+                this.send_job("stash_staged", None, move |git_repo, _cx| async move {
+                    match git_repo {
+                        RepositoryState::Local(LocalRepositoryState {
+                            backend,
+                            environment,
+                            ..
+                        }) => backend.stash_staged(message, environment).await,
+                        RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                            client
+                                .request(proto::Stash {
+                                    project_id: project_id.0,
+                                    repository_id: id.to_proto(),
+                                    paths: Vec::new(),
+                                    message,
+                                    staged: Some(true),
                                 })
                                 .await?;
                             Ok(())
