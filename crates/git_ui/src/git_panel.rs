@@ -6640,7 +6640,10 @@ impl GitPanel {
             self._repo_subscriptions.push(cx.subscribe(
                 &active_repository,
                 |this, _repo, event, cx| {
-                    if let RepositoryEvent::GraphEvent(_, _) = event {
+                    if matches!(
+                        event,
+                        RepositoryEvent::GraphEvent(_, _) | RepositoryEvent::TagsChanged
+                    ) {
                         if this.active_tab == GitPanelTab::History {
                             this.fetch_commit_history_entries(cx);
                         }
