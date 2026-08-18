@@ -655,9 +655,11 @@ impl SshRemoteConnection {
             let socket = SshSocket::new(connection_options, reused_path).await?;
             (socket, None)
         } else {
-            let askpass_delegate = askpass::AskPassDelegate::new(cx, {
+            let askpass_delegate = askpass::AskPassDelegate::new_with_cancellation(cx, {
                 let delegate = delegate.clone();
-                move |prompt, tx, cx| delegate.ask_password(prompt, tx, cx)
+                move |prompt, tx, cancellation, cx| {
+                    delegate.ask_password(prompt, tx, cancellation, cx)
+                }
             });
 
             let mut askpass =
@@ -717,9 +719,11 @@ impl SshRemoteConnection {
 
         #[cfg(windows)]
         let (socket, master_process_option) = {
-            let askpass_delegate = askpass::AskPassDelegate::new(cx, {
+            let askpass_delegate = askpass::AskPassDelegate::new_with_cancellation(cx, {
                 let delegate = delegate.clone();
-                move |prompt, tx, cx| delegate.ask_password(prompt, tx, cx)
+                move |prompt, tx, cancellation, cx| {
+                    delegate.ask_password(prompt, tx, cancellation, cx)
+                }
             });
 
             let mut askpass =

@@ -614,12 +614,48 @@ pub struct Repository {
     job_debug_queue: job_debug_queue::GitJobDebugQueue,
     pending_ops: SumTree<PendingOps>,
     job_id: JobId,
-    askpass_delegates: Arc<Mutex<HashMap<u64, AskPassDelegate>>>,
+    askpass_delegates: RemoteAskPassDelegates,
     latest_askpass_id: u64,
     repository_state: Shared<Task<Result<RepositoryState, String>>>,
     initial_graph_data: HashMap<(LogSource, LogOrder), InitialGitGraphData>,
     commit_data_handler: CommitDataHandlerState,
     commit_data: HashMap<Oid, CommitDataState>,
+}
+
+type RemoteAskPassDelegates = Arc<Mutex<HashMap<u64, RemoteAskPassDelegate>>>;
+
+struct RemoteAskPassDelegate {
+    delegate: AskPassDelegate,
+    active_request_cancellation: Option<oneshot::Sender<()>>,
+}
+
+struct RemoteAskPassOperation {
+    askpass_id: u64,
+    delegates: RemoteAskPassDelegates,
+}
+
+impl RemoteAskPassOperation {
+    fn new(askpass_id: u64, delegate: AskPassDelegate, delegates: RemoteAskPassDelegates) -> Self {
+        let previous = delegates.lock().insert(
+            askpass_id,
+            RemoteAskPassDelegate {
+                delegate,
+                active_request_cancellation: None,
+            },
+        );
+        debug_assert!(previous.is_none());
+        Self {
+            askpass_id,
+            delegates,
+        }
+    }
+}
+
+impl Drop for RemoteAskPassOperation {
+    fn drop(&mut self) {
+        let delegate = self.delegates.lock().remove(&self.askpass_id);
+        debug_assert!(delegate.is_some());
+    }
 }
 
 impl std::ops::Deref for Repository {
@@ -4469,19 +4505,12 @@ impl GitStore {
         let repository = Self::repository_for_request(&this, repository_id, &mut cx)?;
 
         let delegates = cx.update(|cx| repository.read(cx).askpass_delegates.clone());
-        let Some(mut askpass) = delegates.lock().remove(&envelope.payload.askpass_id) else {
-            debug_panic!("no askpass found");
-            anyhow::bail!("no askpass found");
-        };
-
-        let response = askpass
-            .ask_password(envelope.payload.prompt)
-            .await
-            .ok_or_else(|| anyhow::anyhow!("askpass cancelled"))?;
-
-        delegates
-            .lock()
-            .insert(envelope.payload.askpass_id, askpass);
+        let response = request_remote_password(
+            &delegates,
+            envelope.payload.askpass_id,
+            envelope.payload.prompt,
+        )
+        .await?;
 
         // In fact, we don't quite know what we're doing here, as we're sending askpass password unencrypted, but..
         Ok(proto::AskPassResponse {
@@ -5810,6 +5839,41 @@ fn make_remote_delegate(
             .detach_and_log_err(cx);
         });
     })
+}
+
+async fn request_remote_password(
+    delegates: &RemoteAskPassDelegates,
+    askpass_id: u64,
+    prompt: String,
+) -> Result<EncryptedPassword> {
+    let (password_request, operation_cancellation) = {
+        let mut delegates = delegates.lock();
+        let delegate = delegates
+            .get_mut(&askpass_id)
+            .context("remote Git operation no longer exists")?;
+        if delegate.active_request_cancellation.is_some() {
+            bail!("another askpass request is already active");
+        }
+
+        let (cancellation_sender, cancellation_receiver) = oneshot::channel();
+        let password_request = delegate.delegate.ask_password(prompt);
+        delegate.active_request_cancellation = Some(cancellation_sender);
+        (password_request.fuse(), cancellation_receiver.fuse())
+    };
+
+    futures::pin_mut!(password_request, operation_cancellation);
+    let response = futures::select_biased! {
+        response = password_request => response,
+        _ = operation_cancellation => None,
+    };
+
+    let mut delegates = delegates.lock();
+    let delegate = delegates
+        .get_mut(&askpass_id)
+        .context("remote Git operation ended while awaiting askpass")?;
+    delegate.active_request_cancellation.take();
+
+    response.context("askpass cancelled")
 }
 
 impl RepositoryId {
@@ -8301,11 +8365,8 @@ impl Repository {
                             .await
                     }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
-                        askpass_delegates.lock().insert(askpass_id, askpass);
-                        let _defer = util::defer(|| {
-                            let askpass_delegate = askpass_delegates.lock().remove(&askpass_id);
-                            debug_assert!(askpass_delegate.is_some());
-                        });
+                        let _askpass_operation =
+                            RemoteAskPassOperation::new(askpass_id, askpass, askpass_delegates);
                         let (name, email) = name_and_email.unzip();
                         client
                             .request(proto::Commit {
@@ -8404,11 +8465,8 @@ impl Repository {
                         result
                     }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
-                        askpass_delegates.lock().insert(askpass_id, askpass);
-                        let _defer = util::defer(|| {
-                            let askpass_delegate = askpass_delegates.lock().remove(&askpass_id);
-                            debug_assert!(askpass_delegate.is_some());
-                        });
+                        let _askpass_operation =
+                            RemoteAskPassOperation::new(askpass_id, askpass, askpass_delegates);
 
                         let response = client
                             .request(proto::Fetch {
@@ -8487,11 +8545,8 @@ impl Repository {
                         result
                     }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
-                        askpass_delegates.lock().insert(askpass_id, askpass);
-                        let _defer = util::defer(|| {
-                            let askpass_delegate = askpass_delegates.lock().remove(&askpass_id);
-                            debug_assert!(askpass_delegate.is_some());
-                        });
+                        let _askpass_operation =
+                            RemoteAskPassOperation::new(askpass_id, askpass, askpass_delegates);
                         let response = client
                             .request(proto::Push {
                                 project_id: project_id.0,
@@ -8563,11 +8618,8 @@ impl Repository {
                             .await
                     }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
-                        askpass_delegates.lock().insert(askpass_id, askpass);
-                        let _defer = util::defer(|| {
-                            let askpass_delegate = askpass_delegates.lock().remove(&askpass_id);
-                            debug_assert!(askpass_delegate.is_some());
-                        });
+                        let _askpass_operation =
+                            RemoteAskPassOperation::new(askpass_id, askpass, askpass_delegates);
                         let response = client
                             .request(proto::Pull {
                                 project_id: project_id.0,
@@ -11076,6 +11128,165 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    type TestPasswordPrompt = (
+        String,
+        oneshot::Sender<EncryptedPassword>,
+        oneshot::Receiver<()>,
+    );
+
+    fn test_askpass_delegate(
+        cx: &mut TestAppContext,
+    ) -> (AskPassDelegate, mpsc::UnboundedReceiver<TestPasswordPrompt>) {
+        let (prompt_sender, prompt_receiver) = mpsc::unbounded();
+        let delegate = AskPassDelegate::new_with_cancellation(
+            &mut cx.to_async(),
+            move |prompt, response_sender, cancellation, _| {
+                prompt_sender
+                    .unbounded_send((prompt, response_sender, cancellation))
+                    .expect("prompt receiver should remain open");
+            },
+        );
+        (delegate, prompt_receiver)
+    }
+
+    #[gpui::test]
+    async fn ending_remote_operation_cancels_active_askpass(cx: &mut TestAppContext) {
+        let delegates = RemoteAskPassDelegates::default();
+        let (delegate, mut prompts) = test_askpass_delegate(cx);
+        let operation = RemoteAskPassOperation::new(1, delegate, delegates.clone());
+        let password_request = cx.executor().spawn({
+            let delegates = delegates.clone();
+            async move { request_remote_password(&delegates, 1, "Password:".to_string()).await }
+        });
+        let (_, response_sender, cancellation) = prompts
+            .next()
+            .await
+            .expect("password prompt should be received");
+
+        drop(operation);
+
+        assert!(cancellation.await.is_err());
+        let Err(error) = password_request.await else {
+            panic!("password request should be cancelled")
+        };
+        assert!(error.to_string().contains("remote Git operation ended"));
+        assert!(delegates.lock().is_empty());
+        drop(response_sender);
+    }
+
+    #[gpui::test]
+    async fn successful_remote_askpass_allows_another_prompt(cx: &mut TestAppContext) {
+        let delegates = RemoteAskPassDelegates::default();
+        let (delegate, mut prompts) = test_askpass_delegate(cx);
+        let operation = RemoteAskPassOperation::new(1, delegate, delegates.clone());
+
+        for expected_prompt in ["Username:", "Password:"] {
+            let password_request =
+                cx.executor().spawn({
+                    let delegates = delegates.clone();
+                    async move {
+                        request_remote_password(&delegates, 1, expected_prompt.to_string()).await
+                    }
+                });
+            let (prompt, response_sender, cancellation) = prompts
+                .next()
+                .await
+                .expect("password prompt should be received");
+            assert_eq!(prompt, expected_prompt);
+            assert!(
+                response_sender
+                    .send(
+                        EncryptedPassword::try_from("secret")
+                            .expect("test password should be encryptable")
+                    )
+                    .is_ok()
+            );
+            assert!(password_request.await.is_ok());
+            assert!(cancellation.await.is_err());
+            assert!(
+                delegates
+                    .lock()
+                    .get(&1)
+                    .expect("operation should remain registered")
+                    .active_request_cancellation
+                    .is_none()
+            );
+        }
+
+        drop(operation);
+    }
+
+    #[gpui::test]
+    async fn concurrent_remote_askpass_request_is_rejected(cx: &mut TestAppContext) {
+        let delegates = RemoteAskPassDelegates::default();
+        let (delegate, mut prompts) = test_askpass_delegate(cx);
+        let operation = RemoteAskPassOperation::new(1, delegate, delegates.clone());
+        let first_request = cx.executor().spawn({
+            let delegates = delegates.clone();
+            async move { request_remote_password(&delegates, 1, "First:".to_string()).await }
+        });
+        let (_, response_sender, cancellation) = prompts
+            .next()
+            .await
+            .expect("first password prompt should be received");
+
+        let Err(error) = request_remote_password(&delegates, 1, "Second:".to_string()).await else {
+            panic!("concurrent prompt should be rejected");
+        };
+
+        assert!(error.to_string().contains("already active"));
+        assert!(prompts.next().now_or_never().is_none());
+
+        drop(operation);
+        assert!(cancellation.await.is_err());
+        assert!(first_request.await.is_err());
+        drop(response_sender);
+    }
+
+    #[gpui::test]
+    async fn remote_askpass_is_rejected_after_operation_ends(cx: &mut TestAppContext) {
+        let delegates = RemoteAskPassDelegates::default();
+        let (delegate, mut prompts) = test_askpass_delegate(cx);
+        let operation = RemoteAskPassOperation::new(1, delegate, delegates.clone());
+        drop(operation);
+
+        let Err(error) = request_remote_password(&delegates, 1, "Password:".to_string()).await
+        else {
+            panic!("prompt should be rejected after operation ends");
+        };
+
+        assert!(error.to_string().contains("no longer exists"));
+        assert!(prompts.next().now_or_never().is_none());
+    }
+
+    #[gpui::test]
+    async fn late_remote_askpass_response_does_not_restore_operation(cx: &mut TestAppContext) {
+        let delegates = RemoteAskPassDelegates::default();
+        let (delegate, mut prompts) = test_askpass_delegate(cx);
+        let operation = RemoteAskPassOperation::new(1, delegate, delegates.clone());
+        let password_request = cx.executor().spawn({
+            let delegates = delegates.clone();
+            async move { request_remote_password(&delegates, 1, "Password:".to_string()).await }
+        });
+        let (_, response_sender, cancellation) = prompts
+            .next()
+            .await
+            .expect("password prompt should be received");
+
+        drop(operation);
+        assert!(cancellation.await.is_err());
+        assert!(
+            response_sender
+                .send(
+                    EncryptedPassword::try_from("secret")
+                        .expect("test password should be encryptable")
+                )
+                .is_err()
+        );
+        assert!(password_request.await.is_err());
+        assert!(delegates.lock().is_empty());
     }
 
     #[test]
