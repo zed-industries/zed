@@ -18,6 +18,7 @@ use gpui::ReadGlobal as _;
 use gpui::SharedString;
 #[cfg(unix)]
 use std::ffi::CString;
+use util::ResultExt as _;
 use util::command::new_command;
 
 #[cfg(unix)]
@@ -3441,7 +3442,7 @@ pub async fn copy_recursive<'a>(
                     anyhow::bail!("{target_item:?} already exists");
                 }
             }
-            if let Err(error) = fs
+            let _ = fs
                 .remove_dir(
                     &target_item,
                     RemoveOptions {
@@ -3450,13 +3451,16 @@ pub async fn copy_recursive<'a>(
                     },
                 )
                 .await
-            {
-                log::error!("failed to remove target directory {target_item:?}: {error:#}");
-            }
-            fs.create_dir(&target_item).await?;
+                .with_context(|| format!("removing target directory {target_item:?}"))
+                .log_err();
+
+            fs.create_dir(&target_item)
+                .await
+                .with_context(|| format!("creating target directory {target_item:?}"))?;
         } else {
             fs.copy_file(&item, &target_item, options.copy_options)
-                .await?;
+                .await
+                .with_context(|| format!("copying file {item:?} to {target_item:?}"))?;
         }
     }
     Ok(())
