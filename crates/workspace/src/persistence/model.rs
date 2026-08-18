@@ -395,17 +395,17 @@ impl SerializedPane {
             }
         }
 
-        if let Some(active_item_index) = active_item_index {
+        if let Some(active_item) = active_item_index.and_then(|index| items.get(index)?.clone()) {
             pane.update_in(cx, |pane, window, cx| {
-                pane.activate_item(active_item_index, false, false, window, cx);
+                if let Some(index) = pane.index_for_item(active_item.as_ref()) {
+                    pane.activate_item(index, false, false, window, cx);
+                }
             })?;
         }
 
-        if let Some(preview_item_index) = preview_item_index {
+        if let Some(preview_item) = preview_item_index.and_then(|index| items.get(index)?.clone()) {
             pane.update(cx, |pane, cx| {
-                if let Some(item) = pane.item_for_index(preview_item_index) {
-                    pane.set_preview_item_id(Some(item.item_id()), cx);
-                }
+                pane.set_preview_item_id(Some(preview_item.item_id()), cx);
             })?;
         }
 
