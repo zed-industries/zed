@@ -149,6 +149,17 @@ pub struct WorktreeSettingsContent {
     /// Default: expanded
     pub scan_symlinks: Option<ScanSymlinksSetting>,
 
+    /// Maximum directory depth to eagerly index outside of git repositories;
+    /// contents of directories at this depth or deeper are indexed on demand.
+    /// Repositories rooted shallower than this depth are always indexed fully.
+    /// In projects that are not rooted at a git repository, repositories directly
+    /// inside a root folder activate their git features immediately; deeper ones
+    /// activate on first use.
+    /// `0` means no limit and activates all git repositories immediately.
+    ///
+    /// Default: 5
+    pub file_scan_depth: Option<u32>,
+
     /// Treat the files matching these globs as `.env` files.
     /// Default: ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"]
     pub private_files: Option<ExtendingVec<String>>,
@@ -234,6 +245,11 @@ pub struct GlobalLspSettingsContent {
     ///
     /// Default: `120`
     pub request_timeout: Option<u64>,
+    /// The maximum line length a buffer may contain before language server features are disabled for the entire buffer.
+    ///
+    /// Default: `20000`
+    #[schemars(range(min = 1))]
+    pub max_buffer_line_length: Option<u32>,
     /// Settings for language server notifications
     pub notifications: Option<LspNotificationSettingsContent>,
     /// Rules for rendering LSP semantic tokens.
@@ -540,10 +556,16 @@ pub struct GitSettings {
     ///
     /// Default: on
     pub branch_picker: Option<BranchPickerSettingsContent>,
+    /// File diff settings.
+    pub file_diff: Option<FileDiffSettingsContent>,
     /// How hunks are displayed visually in the editor.
     ///
     /// Default: staged_hollow
     pub hunk_style: Option<GitHunkStyleSetting>,
+    /// Which base git features (gutter, file colors, git::Diff) diff against.
+    ///
+    /// Default: head
+    pub diff_base: Option<GitDiffBaseSetting>,
     /// How file paths are displayed in the git gutter.
     ///
     /// Default: file_name_first
@@ -691,6 +713,16 @@ pub struct BranchPickerSettingsContent {
     pub show_author_name: Option<bool>,
 }
 
+#[with_fallible_options]
+#[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub struct FileDiffSettingsContent {
+    /// Whether newly opened file diffs show the full file instead of changes only.
+    ///
+    /// Default: true
+    pub show_full_file: Option<bool>,
+}
+
 #[derive(
     Clone,
     Copy,
@@ -711,6 +743,32 @@ pub enum GitHunkStyleSetting {
     StagedHollow,
     /// Show unstaged hunks hollow and staged hunks with a filled background.
     UnstagedHollow,
+}
+
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitDiffBaseSetting {
+    /// Diff against HEAD: show working (uncommitted) changes.
+    #[default]
+    Head,
+    /// Diff against the merge base between HEAD and the repository's
+    /// default branch: show all changes on the branch.
+    ///
+    /// Repositories where no default branch can be resolved fall back
+    /// to `head` behavior.
+    DefaultBranch,
 }
 
 #[with_fallible_options]

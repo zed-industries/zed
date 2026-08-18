@@ -9,6 +9,19 @@ Zed has built-in Git support that lets you manage version control without leavin
 
 For operations that Zed doesn't support natively, you can use the integrated terminal.
 
+## Repository Activation
+
+When a project is rooted at a git repository, or at a subdirectory of one, all repositories in it are active immediately.
+
+When a project is not rooted at a repository (a home directory, a folder of projects), repositories directly inside the project root are also active immediately, and deeper ones activate when a file inside them is opened, in local and remote projects alike.
+
+Inactive repositories are fully indexed and searchable; only git features (status, diffs, branches) wait for activation.
+
+This behavior is tied to the [`file_scan_depth`](./reference/all-settings.md#file-scan-depth) setting, but not to its value: any non-zero `file_scan_depth` defers activation for repositories that are not directly inside a project root folder, and repositories rooted at or deeper than the limit are not even discovered until their directories are indexed on demand.
+In multi-folder projects, depth and activation are measured from each root folder separately.
+
+Setting `file_scan_depth` to `0` turns deferred activation off: every discovered repository activates immediately.
+
 ## Git Panel
 
 The Git Panel shows the state of your working tree and Git's staging area.
@@ -244,6 +257,8 @@ Git stash allows you to temporarily save your uncommitted changes and revert you
 
 To stash all your current changes, use the {#action git::StashAll} action. This will save both staged and unstaged changes to a new stash entry and clean your working directory.
 
+The action first prompts for an optional stash name. Confirming with an empty prompt lets git generate its usual `WIP on ...` description.
+
 ### Managing Stashes
 
 Zed provides a stash picker accessible via {#action git::ViewStash} or from the Git Panel's overflow menu. From the stash picker, you can:
@@ -293,7 +308,7 @@ See [Feature-specific models](./ai/agent-settings.md#feature-specific-models) fo
 }
 ```
 
-To add custom commit instructions for the model, use the global `AGENTS.md` file located `~/.config/zed/AGENTS.md` on macOS and Linux, `%APPDATA%\Zed\AGENTS.md` on Windows.
+To add custom commit instructions for the model, use the global `AGENTS.md` file located at `~/.config/zed/AGENTS.md` on macOS and Linux, `%APPDATA%\Zed\AGENTS.md` on Windows.
 
 To add custom instructions that apply only to commit message generation, use the `commit_message_instructions` field in your agent settings:
 
@@ -305,7 +320,7 @@ To add custom instructions that apply only to commit message generation, use the
 }
 ```
 
-These instructions are sent to the model in addition to any instruction files, such as `.rules` or `AGENTS.md`. To add instructions that apply to both commit messages and the agent more broadly, use the global `AGENTS.md` file located `~/.config/zed/AGENTS.md` on macOS and Linux, `%APPDATA%\Zed\AGENTS.md` on Windows.
+These instructions are sent to the model in addition to any instruction files, such as `.rules` or `AGENTS.md`. To add instructions that apply to both commit messages and the agent more broadly, use the global `AGENTS.md` file located at `~/.config/zed/AGENTS.md` on macOS and Linux, `%APPDATA%\Zed\AGENTS.md` on Windows.
 
 > Before Zed v1.4.0, this was done through the Rules Library, which has been removed.
 > See [Migrating from Rules](./ai/instructions.md#migrating-from-rules) for more information.

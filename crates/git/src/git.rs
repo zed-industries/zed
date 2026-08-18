@@ -21,6 +21,8 @@ pub const GITIGNORE: &str = ".gitignore";
 pub const FSMONITOR_DAEMON: &str = "fsmonitor--daemon";
 pub const LFS_DIR: &str = "lfs";
 pub const OBJECTS_DIR: &str = "objects";
+pub const REFS_DIR: &str = "refs";
+pub const REFTABLE_DIR: &str = "reftable";
 pub const HOOKS_DIR: &str = "hooks";
 pub const LOGS_DIR: &str = "logs";
 pub const LOGS_REF_STASH: &str = "logs/refs/stash";
@@ -98,6 +100,8 @@ actions!(
         FetchFrom,
         /// Creates a new commit with staged changes.
         Commit,
+        /// Runs the next commit with `git commit --no-verify`.
+        SkipHooks,
         /// Amends the last commit with staged changes.
         Amend,
         /// Enable the --signoff option.
@@ -221,7 +225,7 @@ impl Oid {
         &self.bytes[..self.format.byte_len()]
     }
 
-    pub(crate) fn is_zero(&self) -> bool {
+    pub fn is_zero(&self) -> bool {
         self.as_bytes().iter().all(|byte| *byte == 0)
     }
 

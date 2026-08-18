@@ -9,7 +9,9 @@ use crate::{
     udiff::prediction_edits_for_single_file_diff,
 };
 use anyhow::{Context as _, Result};
-use cloud_llm_client::{AcceptEditPredictionBody, predict_edits_v3::RawCompletionRequest};
+use cloud_llm_client::{
+    AcceptEditPredictionBody, EditPredictionRejectReason, predict_edits_v3::RawCompletionRequest,
+};
 use edit_prediction_types::PredictedCursorPosition;
 use gpui::{App, AppContext as _, Entity, Task, TaskExt, WeakEntity, prelude::*};
 use language::{
@@ -516,26 +518,41 @@ pub(crate) fn request_prediction_with_zeta(
                 snapshot: fallback_snapshot,
                 patch,
             } => {
-                let Some((buffer, snapshot, edits, cursor_position)) =
-                    prediction_edits_for_single_file_diff(&patch, &project, cx).await?
-                else {
-                    return Ok(Some(
-                        EditPredictionResult::new(
-                            id,
-                            &fallback_buffer,
-                            &fallback_snapshot,
-                            Arc::new([]),
-                            None,
-                            None,
-                            inputs,
-                            model_version,
-                            trigger,
-                            request_duration,
-                            cx,
-                        )
-                        .await,
-                    ));
-                };
+                let (buffer, snapshot, edits, cursor_position) =
+                    match prediction_edits_for_single_file_diff(&patch, &project, cx).await {
+                        Ok(Some(edits)) => edits,
+                        Ok(None) => {
+                            return Ok(Some(
+                                EditPredictionResult::new(
+                                    id,
+                                    &fallback_buffer,
+                                    &fallback_snapshot,
+                                    Arc::new([]),
+                                    None,
+                                    None,
+                                    inputs,
+                                    model_version,
+                                    trigger,
+                                    request_duration,
+                                    cx,
+                                )
+                                .await,
+                            ));
+                        }
+                        Err(error) => {
+                            log::error!("failed to apply edit prediction patch: {error:?}");
+                            return Ok(Some(EditPredictionResult::new_rejected(
+                                id,
+                                &fallback_buffer,
+                                &fallback_snapshot,
+                                inputs,
+                                model_version,
+                                trigger,
+                                request_duration,
+                                EditPredictionRejectReason::PatchApplyFailed,
+                            )));
+                        }
+                    };
                 let editable_range_in_buffer =
                     edits
                         .iter()

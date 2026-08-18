@@ -356,9 +356,14 @@ fn validate_release_assets(deps: &[&NamedJob]) -> NamedJob {
     };
 
     named::job(
-        dependant_job(deps).runs_on(runners::LINUX_SMALL).add_step(
-            named::bash(&validation_script).add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN)),
-        ),
+        dependant_job(deps)
+            .runs_on(runners::LINUX_SMALL)
+            // The release is still a draft at this point, and draft releases are
+            // only visible to tokens with write access to repository contents.
+            .permissions(Permissions::default().contents(Level::Write))
+            .add_step(
+                named::bash(&validation_script).add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN)),
+            ),
     )
 }
 
@@ -422,7 +427,10 @@ fn auto_release_preview(deps: &[&NamedJob]) -> (NamedJob, JobOutput) {
         .add_env(("GITHUB_TOKEN", token))
     }
 
-    let (authenticate, token) = steps::authenticate_as_zippy().into();
+    let (authenticate, token) = steps::authenticate_as_zippy()
+        .for_repository(steps::RepositoryTarget::current())
+        .with_permissions([(steps::TokenPermissions::Contents, Level::Write)])
+        .into();
     let auto_release_preview_step = auto_release_preview(&token);
     let release_published = StepOutput::new(&auto_release_preview_step, "release_published");
 
@@ -493,6 +501,7 @@ fn create_draft_release() -> NamedJob {
     }
 
     let (authenticate_step, token) = steps::authenticate_as_zippy()
+        .for_repository(steps::RepositoryTarget::current())
         .with_permissions([(TokenPermissions::Contents, Level::Write)])
         .into();
 

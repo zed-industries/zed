@@ -1,4 +1,4 @@
-use gpui::{AnyElement, ClickEvent, prelude::*};
+use gpui::{AnyElement, AnyView, ClickEvent, prelude::*};
 
 use crate::{ButtonLike, CircularProgress, CommonAnimationExt, Tooltip, prelude::*};
 
@@ -13,7 +13,7 @@ pub struct UpdateButton {
     icon_animate: bool,
     icon_color: Option<Color>,
     message: SharedString,
-    tooltip: Option<SharedString>,
+    tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
     disabled: bool,
     show_dismiss: bool,
     progress: Option<f32>,
@@ -51,7 +51,17 @@ impl UpdateButton {
 
     /// Sets the tooltip text shown on hover.
     pub fn tooltip(mut self, tooltip: impl Into<SharedString>) -> Self {
-        self.tooltip = Some(tooltip.into());
+        self.tooltip = Some(Box::new(Tooltip::text(tooltip.into())));
+        self
+    }
+
+    /// Sets a tooltip builder invoked on every render, so the tooltip can
+    /// display content that changes while it stays visible.
+    pub fn tooltip_fn(
+        mut self,
+        tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
+    ) -> Self {
+        self.tooltip = Some(Box::new(tooltip));
         self
     }
 
@@ -95,9 +105,8 @@ impl UpdateButton {
             .disabled(true)
     }
 
-    pub fn downloading(version: impl Into<SharedString>, progress: Option<f32>) -> Self {
+    pub fn downloading(progress: Option<f32>) -> Self {
         Self::new(IconName::Download, "Downloading Zed Update…")
-            .tooltip(version)
             .progress(progress)
             .disabled(true)
     }
@@ -120,6 +129,24 @@ impl UpdateButton {
             .icon_color(Color::Warning)
             .tooltip(error)
             .with_dismiss()
+    }
+
+    pub fn version_tooltip_message(version: impl std::fmt::Display) -> String {
+        format!("Update to Version: {version}")
+    }
+
+    pub fn downloading_tooltip_message(
+        version: impl std::fmt::Display,
+        progress: Option<f32>,
+    ) -> String {
+        let message = Self::version_tooltip_message(version);
+        match progress {
+            Some(progress) => format!(
+                "{message} ({:.0}% downloaded)",
+                progress.clamp(0.0, 1.0) * 100.0
+            ),
+            None => message,
+        }
     }
 }
 
@@ -154,7 +181,10 @@ impl RenderOnce for UpdateButton {
             }
         };
 
-        let tooltip = self.tooltip.clone();
+        let tooltip = self.tooltip;
+
+        let button_id = ElementId::Name(self.message.clone());
+        let dismiss_button_id = ElementId::Name(format!("dismiss-{}", self.message).into());
 
         let label_row = h_flex()
             .h_full()
@@ -168,18 +198,16 @@ impl RenderOnce for UpdateButton {
             .border_1()
             .border_color(border_color)
             .child(
-                ButtonLike::new("update-button")
+                ButtonLike::new(button_id)
                     .child(label_row)
-                    .when_some(tooltip, |this, tooltip| {
-                        this.tooltip(Tooltip::text(tooltip))
-                    })
+                    .when_some(tooltip, |this, tooltip| this.tooltip(tooltip))
                     .disabled(self.disabled)
                     .when_some(self.on_click, |this, handler| this.on_click(handler)),
             )
             .when(self.show_dismiss, |this| {
                 this.child(
                     div().border_l_1().border_color(border_color).child(
-                        IconButton::new("dismiss-update-button", IconName::Close)
+                        IconButton::new(dismiss_button_id, IconName::Close)
                             .icon_size(IconSize::Indicator)
                             .when_some(self.on_dismiss, |this, handler| this.on_click(handler))
                             .tooltip(Tooltip::text("Dismiss")),
@@ -215,7 +243,12 @@ impl Component for UpdateButton {
                         single_example("Checking", UpdateButton::checking().into_any_element()),
                         single_example(
                             "Downloading",
-                            UpdateButton::downloading(version, Some(0.45)).into_any_element(),
+                            UpdateButton::downloading(Some(0.45))
+                                .tooltip(UpdateButton::downloading_tooltip_message(
+                                    version,
+                                    Some(0.45),
+                                ))
+                                .into_any_element(),
                         ),
                         single_example(
                             "Installing",
@@ -238,5 +271,85 @@ impl Component for UpdateButton {
                 ),
             ])
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{Render, TestAppContext, point, px};
+    use std::cell::Cell;
+    use std::rc::Rc;
+    use std::time::Duration;
+
+    struct TestTooltip {
+        rendered: Rc<Cell<u32>>,
+    }
+
+    impl Render for TestTooltip {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            self.rendered.set(self.rendered.get() + 1);
+            div().child("tooltip")
+        }
+    }
+
+    struct PreviewLikeButtons {
+        tooltip_built: Rc<Cell<bool>>,
+        tooltip_rendered: Rc<Cell<u32>>,
+    }
+
+    impl Render for PreviewLikeButtons {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let tooltip_built = self.tooltip_built.clone();
+            let tooltip_rendered = self.tooltip_rendered.clone();
+            crate::v_flex()
+                .size_full()
+                .child(UpdateButton::checking())
+                .child(
+                    UpdateButton::downloading(Some(0.5)).tooltip_fn(move |_, cx| {
+                        tooltip_built.set(true);
+                        let rendered = tooltip_rendered.clone();
+                        cx.new(|_| TestTooltip { rendered }).into()
+                    }),
+                )
+                .child(UpdateButton::updated("Update to Version: 1.0.0"))
+        }
+    }
+
+    #[gpui::test]
+    async fn test_downloading_tooltip_shows_in_preview_like_layout(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+        let tooltip_built = Rc::new(Cell::new(false));
+        let tooltip_rendered = Rc::new(Cell::new(0));
+        let (_view, cx) = cx.add_window_view({
+            let tooltip_built = tooltip_built.clone();
+            let tooltip_rendered = tooltip_rendered.clone();
+            |_, _| PreviewLikeButtons {
+                tooltip_built,
+                tooltip_rendered,
+            }
+        });
+
+        cx.simulate_mouse_move(point(px(30.), px(30.)), None, gpui::Modifiers::default());
+        cx.run_until_parked();
+        cx.simulate_mouse_move(point(px(31.), px(30.)), None, gpui::Modifiers::default());
+        cx.run_until_parked();
+
+        cx.executor().advance_clock(Duration::from_millis(600));
+        cx.run_until_parked();
+
+        assert!(tooltip_built.get(), "tooltip should have been built");
+
+        tooltip_rendered.set(0);
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        assert!(
+            tooltip_rendered.get() > 0,
+            "tooltip should still be rendered after another frame"
+        );
     }
 }
