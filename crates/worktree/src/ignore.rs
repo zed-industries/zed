@@ -4,6 +4,7 @@ use std::{ffi::OsStr, path::Path, sync::Arc};
 #[derive(Clone, Debug)]
 pub struct IgnoreStack {
     pub repo_root: Option<Arc<Path>>,
+    pub global_ignore_root: Option<Arc<Path>>,
     pub top: Arc<IgnoreStackEntry>,
 }
 
@@ -35,6 +36,7 @@ impl IgnoreStack {
     pub fn none() -> Self {
         Self {
             repo_root: None,
+            global_ignore_root: None,
             top: Arc::new(IgnoreStackEntry::None),
         }
     }
@@ -42,6 +44,7 @@ impl IgnoreStack {
     pub fn all() -> Self {
         Self {
             repo_root: None,
+            global_ignore_root: None,
             top: Arc::new(IgnoreStackEntry::All),
         }
     }
@@ -49,6 +52,7 @@ impl IgnoreStack {
     pub fn global(ignore: Arc<Gitignore>) -> Self {
         Self {
             repo_root: None,
+            global_ignore_root: None,
             top: Arc::new(IgnoreStackEntry::Global { ignore }),
         }
     }
@@ -70,6 +74,7 @@ impl IgnoreStack {
         };
         Self {
             repo_root: self.repo_root,
+            global_ignore_root: self.global_ignore_root,
             top,
         }
     }
@@ -84,10 +89,10 @@ impl IgnoreStack {
             IgnoreStackEntry::All => true,
             IgnoreStackEntry::Global { ignore } => {
                 let combined_path;
-                let abs_path = if let Some(repo_root) = self.repo_root.as_ref() {
-                    let Ok(relative_path) = abs_path.strip_prefix(repo_root) else {
-                        // The provided absolute path is outside of the repository's
-                        // folder and cannot be ignored by this global ignore.
+                let abs_path = if let Some(global_ignore_root) = self.global_ignore_root.as_ref() {
+                    let Ok(relative_path) = abs_path.strip_prefix(global_ignore_root) else {
+                        // The provided absolute path is outside of the repository or
+                        // worktree and cannot be ignored by this global ignore.
                         return false;
                     };
 
@@ -107,6 +112,7 @@ impl IgnoreStack {
                 if !abs_path.starts_with(ignore.path()) {
                     return IgnoreStack {
                         repo_root: self.repo_root.clone(),
+                        global_ignore_root: self.global_ignore_root.clone(),
                         top: parent.clone(),
                     }
                     .is_abs_path_ignored(abs_path, is_dir);
@@ -115,6 +121,7 @@ impl IgnoreStack {
                 match ignore.matched(abs_path, is_dir) {
                     ignore::Match::None => IgnoreStack {
                         repo_root: self.repo_root.clone(),
+                        global_ignore_root: self.global_ignore_root.clone(),
                         top: parent.clone(),
                     }
                     .is_abs_path_ignored(abs_path, is_dir),
@@ -129,6 +136,7 @@ impl IgnoreStack {
             } => match ignore.matched(abs_path.strip_prefix(abs_base_path).unwrap(), is_dir) {
                 ignore::Match::None => IgnoreStack {
                     repo_root: self.repo_root.clone(),
+                    global_ignore_root: self.global_ignore_root.clone(),
                     top: prev.clone(),
                 }
                 .is_abs_path_ignored(abs_path, is_dir),
