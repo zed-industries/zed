@@ -5441,7 +5441,7 @@ mod tests {
                         .then(|| task_list_marker_for_item(&events, index))
                         .flatten()
                 })
-                .map(|(range, checked)| (markdown[range.clone()].to_string(), checked))
+                .map(|(range, checked)| (markdown[range].to_string(), checked))
                 .collect::<Vec<_>>()
         };
 
