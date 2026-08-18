@@ -18,6 +18,8 @@ const OLLAMA_MODEL_PLACEHOLDER: &str = "qwen2.5-coder:3b-base";
 const OPEN_AI_COMPATIBLE_API_URL_PLACEHOLDER: &str = "http://localhost:8080/v1/completions";
 const OPEN_AI_COMPATIBLE_MODEL_PLACEHOLDER: &str = "qwen2.5-coder:3b-base";
 
+const AMAZON_BEDROCK_MODEL_PLACEHOLDER: &str = "qwen.qwen3-coder-30b-a3b-instruct";
+
 use crate::{
     SettingField, SettingItem, SettingsFieldMetadata, SettingsPageItem, SettingsWindow, USER,
     components::{SettingsInputField, SettingsSectionHeader},
@@ -96,6 +98,7 @@ pub(crate) fn render_edit_prediction_setup_page(
             )
             .into_any_element(),
         ),
+        Some(render_amazon_bedrock_provider(settings_window, window, cx).into_any_element()),
     ];
 
     div()
@@ -491,6 +494,257 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
                         .max_output_tokens = value;
                 },
                 json_path: Some("edit_predictions.ollama.max_output_tokens"),
+            }),
+            metadata: None,
+            files: USER,
+        }),
+    ])
+}
+
+fn render_amazon_bedrock_provider(
+    settings_window: &SettingsWindow,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> impl IntoElement {
+    let amazon_bedrock_settings = amazon_bedrock_settings();
+    let additional_fields = settings_window
+        .render_sub_page_items_section(amazon_bedrock_settings.iter().enumerate(), true, window, cx)
+        .into_any_element();
+
+    v_flex()
+        .id("amazon-bedrock")
+        .min_w_0()
+        .pt_8()
+        .gap_1p5()
+        .child(
+            SettingsSectionHeader::new("Amazon Bedrock")
+                .icon(IconName::AiBedrock)
+                .no_padding(true),
+        )
+        .child(div().px_neg_8().child(additional_fields))
+}
+
+fn amazon_bedrock_settings() -> Box<[SettingsPageItem]> {
+    Box::new([
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Model",
+            description: "The Bedrock model id to use for edit predictions.",
+            field: Box::new(SettingField {
+                organization_override: None,
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .amazon_bedrock
+                        .as_ref()?
+                        .model
+                        .as_ref()
+                },
+                write: |settings, value, _app: &App| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .amazon_bedrock
+                        .get_or_insert_default()
+                        .model = value;
+                },
+                json_path: Some("edit_predictions.amazon_bedrock.model"),
+            }),
+            metadata: Some(Box::new(SettingsFieldMetadata {
+                placeholder: Some(AMAZON_BEDROCK_MODEL_PLACEHOLDER),
+                ..Default::default()
+            })),
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Backend",
+            description: "Which Bedrock endpoint family to send completions to.",
+            field: Box::new(SettingField {
+                organization_override: None,
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .amazon_bedrock
+                        .as_ref()?
+                        .backend
+                        .as_ref()
+                },
+                write: |settings, value, _app: &App| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .amazon_bedrock
+                        .get_or_insert_default()
+                        .backend = value;
+                },
+                json_path: Some("edit_predictions.amazon_bedrock.backend"),
+            }),
+            metadata: None,
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "AWS Profile",
+            description: "The AWS profile to resolve credentials from. When empty, the default AWS credential provider chain is used.",
+            field: Box::new(SettingField {
+                organization_override: None,
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .amazon_bedrock
+                        .as_ref()?
+                        .profile
+                        .as_ref()
+                },
+                write: |settings, value, _app: &App| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .amazon_bedrock
+                        .get_or_insert_default()
+                        .profile = value;
+                },
+                json_path: Some("edit_predictions.amazon_bedrock.profile"),
+            }),
+            metadata: None,
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "AWS Region",
+            description: "The AWS region to sign requests for and to derive the endpoint from.",
+            field: Box::new(SettingField {
+                organization_override: None,
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .amazon_bedrock
+                        .as_ref()?
+                        .region
+                        .as_ref()
+                },
+                write: |settings, value, _app: &App| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .amazon_bedrock
+                        .get_or_insert_default()
+                        .region = value;
+                },
+                json_path: Some("edit_predictions.amazon_bedrock.region"),
+            }),
+            metadata: Some(Box::new(SettingsFieldMetadata {
+                placeholder: Some("us-east-1"),
+                ..Default::default()
+            })),
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Prompt Format",
+            description: "The prompt format to use when requesting predictions. Set to Infer to have the format inferred based on the model name.",
+            field: Box::new(SettingField {
+                organization_override: None,
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .amazon_bedrock
+                        .as_ref()?
+                        .prompt_format
+                        .as_ref()
+                },
+                write: |settings, value, _app: &App| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .amazon_bedrock
+                        .get_or_insert_default()
+                        .prompt_format = value;
+                },
+                json_path: Some("edit_predictions.amazon_bedrock.prompt_format"),
+            }),
+            metadata: None,
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Max Output Tokens",
+            description: "The maximum number of tokens to generate.",
+            field: Box::new(SettingField {
+                organization_override: None,
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .amazon_bedrock
+                        .as_ref()?
+                        .max_output_tokens
+                        .as_ref()
+                },
+                write: |settings, value, _app: &App| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .amazon_bedrock
+                        .get_or_insert_default()
+                        .max_output_tokens = value;
+                },
+                json_path: Some("edit_predictions.amazon_bedrock.max_output_tokens"),
+            }),
+            metadata: None,
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "System Prompt",
+            description: "Overrides the system message that instructs the model to reply with only the code belonging at the cursor. Leave empty to use the built-in prompt.",
+            field: Box::new(SettingField {
+                organization_override: None,
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .amazon_bedrock
+                        .as_ref()?
+                        .system_prompt
+                        .as_ref()
+                },
+                write: |settings, value, _app: &App| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .amazon_bedrock
+                        .get_or_insert_default()
+                        .system_prompt = value;
+                },
+                json_path: Some("edit_predictions.amazon_bedrock.system_prompt"),
             }),
             metadata: None,
             files: USER,

@@ -393,6 +393,62 @@ Your OpenAI-compatible server must implement the OpenAI `/v1/completions` endpoi
 }
 ```
 
+### Amazon Bedrock {#amazon-bedrock}
+
+Amazon Bedrock serves edit predictions from its OpenAI-compatible endpoints,
+authenticated with SigV4 using your AWS credentials. To use it as your
+provider:
+
+1. Open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows)
+2. Search for "Edit Predictions" and click **Configure Providers**
+3. Find the Amazon Bedrock section and set the model id, backend, AWS profile,
+   and region
+
+Alternatively, click the edit prediction icon in the status bar and select
+**Configure Providers** from the menu, or set it directly in your settings
+file:
+
+```json [settings]
+{
+  "edit_predictions": {
+    "provider": "amazon_bedrock",
+    "amazon_bedrock": {
+      "backend": "mantle",
+      "model": "qwen.qwen3-coder-30b-a3b-instruct",
+      "prompt_format": "qwen",
+      "max_output_tokens": 256,
+      "profile": "bedrock-profile",
+      "region": "us-east-1"
+    }
+  }
+}
+```
+
+The `backend` setting selects the endpoint family: `"mantle"` sends requests to
+`bedrock-mantle.{region}.api.aws` and `"runtime"` to
+`bedrock-runtime.{region}.amazonaws.com`. The two backends expose different
+model catalogs (and different ids for the same model), so pick the `model`
+from the backend you use.
+
+Model choice matters more than any other setting: only models trained on
+fill-in-the-middle completion produce reliable edit predictions. The
+Qwen3-coder family (e.g. `qwen.qwen3-coder-30b-a3b-instruct` for low latency)
+is recommended; the GLM family (with `"prompt_format": "glm"`) also works.
+General instruct models without FIM training (e.g. Ministral, Devstral, Gemma)
+tend to re-emit surrounding code or produce unrelated code instead of
+completing at the cursor, and are not recommended.
+
+Credentials are resolved with the standard AWS credential provider chain —
+`profile` selects a named profile from `~/.aws/config` (including SSO and
+`credential_process`-based profiles); leave it empty to use the default chain
+(environment variables, instance metadata, and so on).
+
+Bedrock only exposes chat-shaped APIs, so the FIM prompt is wrapped in a chat
+message with a system message instructing the model to reply with only the
+completion. `system_prompt` may be set to replace that instruction (useful for
+tuning behavior per model), and `endpoint_url` to override the derived
+OpenAI-compatible base URL.
+
 ## See also
 
 - [Agent Panel](./agent-panel.md): Agentic editing with file read/write and terminal access

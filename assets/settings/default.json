@@ -1833,6 +1833,20 @@
       "prompt_format": "infer",
       "max_output_tokens": 64,
     },
+    "amazon_bedrock": {
+      // Which Bedrock endpoint family to use: "mantle" or "runtime".
+      "backend": "mantle",
+      "model": "",
+      "prompt_format": "infer",
+      "max_output_tokens": 256,
+      // AWS profile to resolve credentials from; when empty, the default
+      // AWS credential provider chain is used.
+      "profile": "",
+      "region": "us-east-1",
+      // Overrides the system message that instructs the model to reply with
+      // only the code belonging at the cursor; empty uses the built-in prompt.
+      "system_prompt": "",
+    },
     // Controls whether Zed may collect training data when using Zed's Edit Predictions.
     // Data is only captured when the project is detected as open source.
     // Possible values:
