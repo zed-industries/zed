@@ -4,12 +4,12 @@ use std::ops::Range;
 use ui::{ColumnWidthConfig, ResizableColumnsState, Table, UncheckedTableRow, div, prelude::*};
 
 use crate::{
-    CsvPreviewView,
+    TabularDataPreviewPane,
     settings::RowRenderMechanism,
     types::{AnyColumn, DisplayCellId, DisplayRow},
 };
 
-impl CsvPreviewView {
+impl TabularDataPreviewPane {
     /// Creates a new table.
     /// Column number is derived from the `ResizableColumnsState` entity.
     pub(crate) fn create_table(
@@ -109,12 +109,12 @@ impl CsvPreviewView {
     ///
     /// Used both by UniformList and VariableRowHeightList
     fn render_single_table_row(
-        this: &CsvPreviewView,
+        this: &TabularDataPreviewPane,
         cols: usize,
         display_row: DisplayRow,
         row_identifier_text_color: gpui::Hsla,
         row_height: Pixels,
-        cx: &Context<CsvPreviewView>,
+        cx: &Context<TabularDataPreviewPane>,
     ) -> Option<UncheckedTableRow<AnyElement>> {
         // Get the actual row index from our sorted indices
         let data_row = this.engine.d2d_mapping().get_data_row(display_row)?;
@@ -143,7 +143,7 @@ impl CsvPreviewView {
                             .overflow_hidden()
                     },
                 )
-                .child(CsvPreviewView::create_selectable_cell(
+                .child(TabularDataPreviewPane::create_selectable_cell(
                     display_cell_id,
                     cell_content,
                     this.settings.vertical_alignment,

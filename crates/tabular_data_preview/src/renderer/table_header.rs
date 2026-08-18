@@ -17,7 +17,7 @@ use ui::{
 };
 
 use crate::{
-    CsvPreviewView,
+    TabularDataPreviewPane,
     renderer::table_cell::with_copy_on_right_click,
     settings::FilterSortOrder,
     table_data_engine::{
@@ -45,7 +45,7 @@ enum ColumnFilterListEntry {
 
 struct ColumnFilterDelegate {
     col: AnyColumn,
-    view: Entity<CsvPreviewView>,
+    view: Entity<TabularDataPreviewPane>,
     /// Row order frozen at open time (available entries sorted per the
     /// column's `FilterSortOrder`, then entries hidden by other columns'
     /// filters). Kept stable so toggling a value doesn't reshuffle the list
@@ -66,7 +66,7 @@ struct ColumnFilterDelegate {
 impl ColumnFilterDelegate {
     fn new(
         col: AnyColumn,
-        view: Entity<CsvPreviewView>,
+        view: Entity<TabularDataPreviewPane>,
         sort_order: FilterSortOrder,
         column_filters: Arc<Vec<(FilterEntry, FilterEntryState)>>,
         cx: &mut Context<Picker<Self>>,
@@ -518,12 +518,12 @@ impl PickerDelegate for ColumnFilterDelegate {
     }
 }
 
-impl CsvPreviewView {
+impl TabularDataPreviewPane {
     /// Create header for data, which is orderable with text on the left and sort button on the right
     pub(crate) fn create_header_element_with_sort_button(
         &self,
         header_text: SharedString,
-        cx: &mut Context<'_, CsvPreviewView>,
+        cx: &mut Context<'_, TabularDataPreviewPane>,
         col_idx: AnyColumn,
     ) -> AnyElement {
         let has_active_filter = self.engine.has_active_filters(col_idx);
@@ -594,7 +594,7 @@ impl CsvPreviewView {
 
     fn create_sort_button(
         &self,
-        cx: &mut Context<'_, CsvPreviewView>,
+        cx: &mut Context<'_, TabularDataPreviewPane>,
         col_idx: AnyColumn,
     ) -> Button {
         Button::new(
@@ -648,7 +648,7 @@ impl CsvPreviewView {
 
     fn create_filter_button(
         &self,
-        cx: &mut Context<'_, CsvPreviewView>,
+        cx: &mut Context<'_, TabularDataPreviewPane>,
         col: AnyColumn,
     ) -> PopoverMenu<Picker<ColumnFilterDelegate>> {
         let has_active_filters = self.engine.has_active_filters(col);

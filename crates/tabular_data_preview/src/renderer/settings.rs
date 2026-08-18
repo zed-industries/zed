@@ -5,12 +5,12 @@ use ui::{
 };
 
 use crate::{
-    CsvPreviewView,
+    TabularDataPreviewPane,
     settings::{FilterSortOrder, VerticalAlignment},
 };
 
 ///// Settings related /////
-impl CsvPreviewView {
+impl TabularDataPreviewPane {
     /// Render settings panel above the table
     pub(crate) fn render_settings_panel(
         &self,
@@ -166,7 +166,7 @@ impl CsvPreviewView {
 
 #[cfg(feature = "dev-tools")]
 fn create_dev_only_popover_menu(
-    cx: &mut Context<'_, CsvPreviewView>,
+    cx: &mut Context<'_, TabularDataPreviewPane>,
 ) -> ui::PopoverMenu<ContextMenu> {
     use crate::settings::RowRenderMechanism;
     use ui::{IconButton, IconName, IconPosition, IconSize, PopoverMenu};

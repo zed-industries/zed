@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    CsvPreviewView,
+    TabularDataPreviewPane,
     types::TableLikeContent,
     types::{LineNumber, TableCell},
 };
@@ -52,7 +52,7 @@ impl TabularFormat {
     }
 }
 
-impl CsvPreviewView {
+impl TabularDataPreviewPane {
     pub(crate) fn parse_csv_from_active_editor(
         &mut self,
         wait_for_debounce: bool,

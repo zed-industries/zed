@@ -33,7 +33,7 @@ impl FeatureFlag for TabularDataPreviewFeatureFlag {
 }
 register_feature_flag!(TabularDataPreviewFeatureFlag);
 
-pub struct CsvPreviewView {
+pub struct TabularDataPreviewPane {
     pub(crate) engine: TableDataEngine,
 
     pub(crate) focus_handle: FocusHandle,
@@ -59,12 +59,12 @@ pub struct CsvPreviewView {
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
-        CsvPreviewView::register(workspace);
+        TabularDataPreviewPane::register(workspace);
     })
     .detach()
 }
 
-impl CsvPreviewView {
+impl TabularDataPreviewPane {
     pub(crate) fn sync_column_widths(&self, cx: &mut Context<Self>) {
         // plus 1 for the row identifier column
         let cols = self.engine.contents.headers.cols() + 1;
@@ -159,7 +159,7 @@ impl CsvPreviewView {
         editor: &Entity<Editor>,
         cx: &App,
     ) -> Option<usize> {
-        pane.items_of_type::<CsvPreviewView>()
+        pane.items_of_type::<TabularDataPreviewPane>()
             .find(|view| &view.read(cx).active_editor_state.editor == editor)
             .and_then(|view| pane.index_for_item(&view))
     }
@@ -175,7 +175,7 @@ impl CsvPreviewView {
         cx.new(|cx| {
             let subscription = cx.subscribe(
                 editor,
-                |this: &mut CsvPreviewView, _editor, event: &EditorEvent, cx| {
+                |this: &mut TabularDataPreviewPane, _editor, event: &EditorEvent, cx| {
                     match event {
                         EditorEvent::Edited { .. } | EditorEvent::DirtyChanged => {
                             this.parse_csv_from_active_editor(true, cx);
@@ -186,7 +186,7 @@ impl CsvPreviewView {
             );
 
             let row_height = window.pixel_snap(window.line_height());
-            let mut view = CsvPreviewView {
+            let mut view = TabularDataPreviewPane {
                 focus_handle: cx.focus_handle(),
                 active_editor_state: EditorState {
                     editor: editor.clone(),
@@ -286,15 +286,15 @@ impl CsvPreviewView {
     }
 }
 
-impl Focusable for CsvPreviewView {
+impl Focusable for TabularDataPreviewPane {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl EventEmitter<()> for CsvPreviewView {}
+impl EventEmitter<()> for TabularDataPreviewPane {}
 
-impl Item for CsvPreviewView {
+impl Item for TabularDataPreviewPane {
     type Event = ();
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
@@ -366,7 +366,7 @@ pub(crate) struct ColumnWidths {
 }
 
 impl ColumnWidths {
-    pub(crate) fn new(cx: &mut Context<CsvPreviewView>, cols: usize) -> Self {
+    pub(crate) fn new(cx: &mut Context<TabularDataPreviewPane>, cols: usize) -> Self {
         Self {
             widths: cx.new(|_cx| {
                 ResizableColumnsState::new(

@@ -5,9 +5,9 @@
 
 use ui::{ActiveTheme, Context, IntoElement, ParentElement, Styled, StyledTypography, div};
 
-use crate::{CsvPreviewView, PerformanceMetrics};
+use crate::{TabularDataPreviewPane, PerformanceMetrics};
 
-impl CsvPreviewView {
+impl TabularDataPreviewPane {
     /// Renders a semi-transparent performance metrics overlay in the bottom-right corner.
     ///
     /// Shows CSV parsing duration for debugging and performance monitoring.
