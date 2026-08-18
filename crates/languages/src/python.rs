@@ -278,15 +278,30 @@ fn normalize_pyright_analysis_configuration(
         return;
     };
 
-    let analysis_section = format!("{configuration_section}.analysis");
-    let analysis = workspace_configuration
+    let flat_analysis_section = format!("{configuration_section}.analysis");
+
+    let nested_analysis = workspace_configuration
         .get(configuration_section)
         .and_then(Value::as_object)
         .and_then(|server_configuration| server_configuration.get("analysis"))
-        .cloned()
-        .or_else(|| workspace_configuration.get(&analysis_section).cloned());
-    let Some(analysis) = analysis else {
-        return;
+        .and_then(Value::as_object);
+    let flat_analysis = workspace_configuration
+        .get(&flat_analysis_section)
+        .and_then(Value::as_object);
+
+    let nested_analysis = match (nested_analysis, flat_analysis) {
+        (Some(nested_analysis), Some(flat_analysis)) => {
+            let mut merged_analysis = nested_analysis.clone();
+            for (key, value) in flat_analysis {
+                merged_analysis
+                    .entry(key.clone())
+                    .or_insert_with(|| value.clone());
+            }
+            Value::Object(merged_analysis)
+        }
+        (Some(nested_analysis), None) => Value::Object(nested_analysis.clone()),
+        (None, Some(flat_analysis)) => Value::Object(flat_analysis.clone()),
+        (None, None) => return,
     };
 
     let server_configuration = workspace_configuration
@@ -295,9 +310,9 @@ fn normalize_pyright_analysis_configuration(
     let Some(server_configuration) = server_configuration.as_object_mut() else {
         return;
     };
-    server_configuration.insert("analysis".to_owned(), analysis.clone());
+    server_configuration.insert("analysis".to_owned(), nested_analysis.clone());
 
-    workspace_configuration.insert(analysis_section, analysis);
+    workspace_configuration.insert(flat_analysis_section, nested_analysis);
 }
 
 pub struct TyLspAdapter {
@@ -2820,30 +2835,34 @@ mod tests {
     }
 
     #[test]
-    fn test_nested_basedpyright_analysis_configuration_takes_precedence() {
+    fn test_normalize_merges_both_analysis_configuration_with_conflicts() {
         let mut workspace_configuration = serde_json::json!({
             "basedpyright": {
                 "analysis": {
-                    "typeCheckingMode": "basic"
+                    "diagnosticMode": "workspace",
                 }
             },
             "basedpyright.analysis": {
-                "typeCheckingMode": "strict"
+                "typeCheckingMode": "standard",
+                "diagnosticMode": "openFilesOnly"
             }
         });
 
         normalize_pyright_analysis_configuration(&mut workspace_configuration, "basedpyright");
 
+        // Settings from both forms survive, with the nested form winning on conflicting keys.
         assert_eq!(
             workspace_configuration,
             serde_json::json!({
                 "basedpyright": {
                     "analysis": {
-                        "typeCheckingMode": "basic"
+                        "diagnosticMode": "workspace",
+                        "typeCheckingMode": "standard",
                     }
                 },
                 "basedpyright.analysis": {
-                    "typeCheckingMode": "basic"
+                    "diagnosticMode": "workspace",
+                    "typeCheckingMode": "standard",
                 }
             })
         );
