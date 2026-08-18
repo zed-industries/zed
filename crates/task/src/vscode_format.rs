@@ -354,6 +354,88 @@ mod tests {
         let vscode_definitions: VsCodeTaskFile = serde_json_lenient::from_str(SHELL_TASKS).unwrap();
         let expected = vec![
             VsCodeTaskDefinition {
+                label: "Without args".to_string(),
+                command: Some(Command::Shell {
+                    command: "cargo build --package rust-analyzer".to_string(),
+                    args: Default::default(),
+                }),
+                options: None,
+                other_attributes: Default::default(),
+            },
+            VsCodeTaskDefinition {
+                label: "With args".to_string(),
+                command: Some(Command::Shell {
+                    command: "node".to_string(),
+                    args: vec![
+                        "${workspaceFolder}/node_modules/typescript/lib/tsc.js".to_string(),
+                        "--build".to_string(),
+                        "${workspaceFolder}/src".to_string(),
+                        "--watch".to_string(),
+                    ],
+                }),
+                options: None,
+                other_attributes: Default::default(),
+            },
+            VsCodeTaskDefinition {
+                label: "Ignored task without type".to_string(),
+                command: None,
+                options: None,
+                other_attributes: Default::default(),
+            },
+        ];
+        assert_eq!(vscode_definitions.tasks.len(), expected.len());
+        vscode_definitions
+            .tasks
+            .iter()
+            .zip(expected)
+            .for_each(|(lhs, rhs)| compare_without_other_attributes(lhs.clone(), rhs));
+        let expected = vec![
+            TaskTemplate {
+                label: "Without args".to_string(),
+                command: "cargo build --package rust-analyzer".to_string(),
+                ..Default::default()
+            },
+            TaskTemplate {
+                label: "With args".to_string(),
+                command: "node".to_string(),
+                args: vec![
+                    "${ZED_WORKTREE_ROOT}/node_modules/typescript/lib/tsc.js".to_string(),
+                    "--build".to_string(),
+                    "${ZED_WORKTREE_ROOT}/src".to_string(),
+                    "--watch".to_string(),
+                ],
+                ..Default::default()
+            },
+        ];
+        let tasks: TaskTemplates = vscode_definitions.try_into().unwrap();
+        assert_eq!(tasks.0, expected);
+    }
+
+    #[test]
+    fn can_deserialize_rust_analyzer_tasks() {
+        const RUST_ANALYZER_TASKS: &str = include_str!("../test_data/rust-analyzer.json");
+        let vscode_definitions: VsCodeTaskFile =
+            serde_json_lenient::from_str(RUST_ANALYZER_TASKS).unwrap();
+        let expected = vec![
+            VsCodeTaskDefinition {
+                label: "Build Extension in Background".to_string(),
+                command: Some(Command::Npm {
+                    script: "watch".to_string(),
+                    path: Some("editors/code/".to_string()),
+                }),
+                options: None,
+                other_attributes: Default::default(),
+            },
+            VsCodeTaskDefinition {
+                label: "Build Extension".to_string(),
+                command: Some(Command::Npm {
+                    script: "build".to_string(),
+                    path: Some("editors/code/".to_string()),
+                }),
+                options: None,
+                other_attributes: Default::default(),
+            },
+            VsCodeTaskDefinition {
                 label: "Build Server".to_string(),
                 command: Some(Command::Shell {
                     command: "cargo build --package rust-analyzer".to_string(),
@@ -367,6 +449,15 @@ mod tests {
                 command: Some(Command::Shell {
                     command: "cargo build --release --package rust-analyzer".to_string(),
                     args: Default::default(),
+                }),
+                options: None,
+                other_attributes: Default::default(),
+            },
+            VsCodeTaskDefinition {
+                label: "Pretest".to_string(),
+                command: Some(Command::Npm {
+                    script: "pretest".to_string(),
+                    path: Some("editors/code/".to_string()),
                 }),
                 options: None,
                 other_attributes: Default::default(),
@@ -392,6 +483,20 @@ mod tests {
             .for_each(|(lhs, rhs)| compare_without_other_attributes(lhs.clone(), rhs));
         let expected = vec![
             TaskTemplate {
+                label: "Build Extension in Background".to_string(),
+                command: "npm".to_string(),
+                args: vec!["run".to_string(), "watch".to_string()],
+                cwd: Some("$ZED_WORKTREE_ROOT/editors/code/".to_string()),
+                ..Default::default()
+            },
+            TaskTemplate {
+                label: "Build Extension".to_string(),
+                command: "npm".to_string(),
+                args: vec!["run".to_string(), "build".to_string()],
+                cwd: Some("$ZED_WORKTREE_ROOT/editors/code/".to_string()),
+                ..Default::default()
+            },
+            TaskTemplate {
                 label: "Build Server".to_string(),
                 command: "cargo build --package rust-analyzer".to_string(),
                 ..Default::default()
@@ -399,6 +504,13 @@ mod tests {
             TaskTemplate {
                 label: "Build Server (Release)".to_string(),
                 command: "cargo build --release --package rust-analyzer".to_string(),
+                ..Default::default()
+            },
+            TaskTemplate {
+                label: "Pretest".to_string(),
+                command: "npm".to_string(),
+                args: vec!["run".to_string(), "pretest".to_string()],
+                cwd: Some("$ZED_WORKTREE_ROOT/editors/code/".to_string()),
                 ..Default::default()
             },
         ];

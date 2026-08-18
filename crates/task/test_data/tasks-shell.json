@@ -2,27 +2,27 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Build Server",
+      "label": "Without args",
       "group": "build",
       "type": "shell",
       "command": "cargo build --package rust-analyzer",
       "problemMatcher": "$rustc"
     },
     {
-      "label": "Build Server (Release)",
-      "group": "build",
+      "label": "With args",
       "type": "shell",
-      "command": "cargo build --release --package rust-analyzer",
-      "problemMatcher": "$rustc"
+      "command": "node",
+      "args": [
+        "${workspaceFolder}/node_modules/typescript/lib/tsc.js",
+        "--build",
+        "${workspaceFolder}/src",
+        "--watch"
+      ],
+      "group": "build"
     },
     {
-      "label": "Build Server and Extension",
-      "dependsOn": ["Build Server", "Build Extension"],
-      "problemMatcher": "$rustc"
-    },
-    {
-      "label": "Build Server (Release) and Extension",
-      "dependsOn": ["Build Server (Release)", "Build Extension"],
+      "label": "Ignored task without type",
+      "dependsOn": ["Without args", "With args"],
       "problemMatcher": "$rustc"
     }
   ]
