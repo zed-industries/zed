@@ -25,11 +25,11 @@ PRs that do not adhere to these rules will be closed without further feedback. R
 
 > **Note:** It is very helpful if you fork the `zed-industries/extensions` repo to a personal GitHub account instead of a GitHub organization, as this allows Zed staff to push any needed changes to your PR to expedite the publishing process.
 
-2. Clone the repo to your local machine
+2. Clone the repo to your local machine.
 
 ```sh
-# Substitute the url of your fork here:
-# git clone https://github.com/zed-industries/extensions
+# Substitute the URL of your fork here:
+git clone https://github.com/your-username/extensions
 cd extensions
 git submodule init
 git submodule update
@@ -41,7 +41,7 @@ To publish an extension, open a PR to [the `zed-industries/extensions` repo](htt
 
 In your PR, do the following:
 
-1. Add your extension as a Git submodule within the `extensions/` directory under the `extensions/{extension-id}` path
+1. Add your extension as a Git submodule within the `extensions/` directory under the `extensions/{extension-id}` path.
    - The submodule must use an HTTPS URL and not an SSH URL (`git@github.com`).
    - Your extension repository must be publicly available.
    - The checked out submodule commit must be present on a branch and thus not be a detached commit.
@@ -69,7 +69,7 @@ path = "packages/zed"
 version = "0.0.1"
 ```
 
-3. Run `pnpm sort-extensions` to ensure `extensions.toml` and `.gitmodules` are sorted
+3. Run `pnpm sort-extensions` to ensure `extensions.toml` and `.gitmodules` are sorted.
 
 That's it! Once your PR is accepted and merged, the extension will be packaged and published to the Zed extension registry.
 
@@ -77,4 +77,4 @@ That's it! Once your PR is accepted and merged, the extension will be packaged a
 
 We do our best to get back to you in a reasonable time frame. However, we are very aware that this is currently not always the case - we sincerely apologize for that! Please be informed we are continuously iterating on the process in an effort to provide every submission much more quickly with feedback and with an overall better contribution experience.
 
-At the same time, we do have to enforce a strict time frame for PR authors: as stated in the [pull request rules](#pull-request-rules), submissions will be closed after **3 weeks of no response to maintainer feedback**. We do this in the interest of everybody to keep the queue in a more manageable state. After your PR was closed, you may open a new and fresh PR and we will take another look.
+At the same time, we do have to enforce a strict time frame for PR authors: as stated in the [pull request rules](#pull-request-rules), submissions will be closed after **3 weeks of no response to maintainer feedback**. We do this in the interest of everybody to keep the queue in a more manageable state. After your PR was closed, you may open a fresh PR and we will take another look.

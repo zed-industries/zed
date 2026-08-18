@@ -19,9 +19,9 @@ The following licenses are accepted:
 - [zlib](https://opensource.org/license/zlib)
 
 This allows us to distribute the resulting binary produced from your extension code to our users.
-Without a valid license, the pull request to add or update your extension in the following steps will fail CI.
+Without a valid license, the pull request to add or update your extension will fail CI.
 
-Your license file should be at the root of your extension, yet not necessarily the repository. If your extension is in a subdirectory within its repository, the license must reside within that subdirectory; a license at the repository root will not work. You may symlink an existing license into the extension directory or choose another accepted license for the extension code.
+Your license file should be at the root of your extension, though not necessarily at the root of the repository. If your extension is in a subdirectory within its repository, the license must reside within that subdirectory; a license at the repository root will not work. You may symlink an existing license into the extension directory or choose another accepted license for the extension code.
 
 Any filename that has `LICENCE` or `LICENSE` as a prefix (case insensitive) will be inspected to ensure it matches one of the accepted licenses. See the [license validation source code](https://github.com/zed-industries/extensions/blob/main/src/lib/license.js).
 

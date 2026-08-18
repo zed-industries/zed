@@ -7,19 +7,19 @@ description: "Review the requirements for publishing an extension to the Zed Ext
 
 Before submitting your extension for publishing, make sure it meets the following requirements.
 
-Note that maintainers will raise non-compliance during the publishing process. Should you chose to not follow these requirements, publishing will be delayed or may outright be rejected.
+Note that maintainers will raise non-compliance during the publishing process. Should you choose not to follow these requirements, publishing will be delayed or may outright be rejected.
 
 ## General Requirements
 
-- Test your extension locally at the submodule commit you are submitting it at.
-- Publish functionality that is not already available in the extension marketplace.
+- Test your extension locally at the submodule commit you are submitting.
+- Publish functionality that is not already available in the extension registry.
   - If you face issues with an existing extension, first try contributing to the existing extension. See [Updating and Maintenance](./updating-and-maintenance.md#maintenance) for more details on this requirement.
 - Do not misuse the extension API to work around its current limitations.
   - In rare cases, we may accept a reasonable workaround.
   - Acceptance of a workaround is at the maintainers' discretion.
 - Use an appropriate ID for your extension. The ID must:
   - be unique
-  - be camel-cased
+  - be kebab-cased
   - not include the words `zed` or `extension`
   - be a good indicator for what your extension provides (more on this below)
 - Include only the resources your extension needs to function.
@@ -64,7 +64,7 @@ Note that maintainers will raise non-compliance during the publishing process. S
 
 ## MCP Server Extensions
 
-> MCP server extensions will be deprecated in favor of the MCP registry in the future, progress for this is tracked in [#59351](https://github.com/zed-industries/zed/issues/59351). Please make sure to also publish your server against the registry to be sure it can be used with future versions of Zed.
+> MCP server extensions will be deprecated in favor of the MCP registry in the future; progress for this is tracked in [#59351](https://github.com/zed-industries/zed/issues/59351). Please make sure to also publish your server to the registry to ensure it can be used with future versions of Zed.
 
 - Only provide one MCP server and nothing else.
 - Make sure your extension ID indicates it is an MCP server (e.g., by prefixing it with `mcp-server-` or suffixing it with `-mcp-server`).

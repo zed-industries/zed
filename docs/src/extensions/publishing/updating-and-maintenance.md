@@ -11,7 +11,7 @@ To update an extension, open a PR to [the `zed-industries/extensions` repo](http
 
 > Update PRs are subject to the same [pull request rules](./publishing-guide.md#pull-request-rules) as new submissions.
 
-In your PR do the following:
+In your PR, do the following:
 
 1. Update the extension's submodule to the commit of the new version. For this, you can run
 
@@ -22,7 +22,7 @@ git submodule update --remote extensions/your-extension-name
 
 to update your extension to the latest commit available in your remote repository.
 
-2. Update the `version` field for the extension in `extensions.toml`
+2. Update the `version` field for the extension in `extensions.toml`.
    - Make sure the `version` matches the one set in `extension.toml` at the particular commit.
 
 If you'd like to automate this process, there is a [community GitHub Action](https://github.com/huacnlee/zed-extension-action) you can use.
@@ -52,4 +52,4 @@ Switching to a fork does not have to be permanent: should the original extension
 Please note: In order for **any** of these options to be applicable, we require either:
 
 - written permission from the current extension owner, or
-- proof of the reporting contributor that the upstream extension owner has been unresponsive to change requests for at least two months
+- proof from the reporting contributor that the upstream extension owner has been unresponsive to change requests for at least two months
