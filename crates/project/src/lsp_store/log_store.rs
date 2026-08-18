@@ -9,6 +9,7 @@ use futures::{StreamExt, channel::mpsc};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, Global, Subscription, TaskExt, WeakEntity,
 };
+use indexmap::IndexMap;
 use lsp::{
     IoKind, LanguageServer, LanguageServerId, LanguageServerName, LanguageServerSelector,
     MessageType, RequestId, TraceValue,
@@ -21,6 +22,7 @@ use crate::{LanguageServerLogType, LspStore, Project, ProjectItem as _};
 
 const MAX_STORED_LOG_ENTRIES: usize = 2000;
 const MAX_PENDING_REQUESTS: usize = MAX_STORED_LOG_ENTRIES;
+const MAX_RETAINED_STOPPED_SERVERS: usize = 16;
 
 pub fn init(on_headless_host: bool, cx: &mut App) -> Entity<LogStore> {
     let log_store = cx.new(|cx| LogStore::new(on_headless_host, cx));
@@ -48,7 +50,7 @@ pub struct LogStore {
     projects: HashMap<WeakEntity<Project>, ProjectState>,
     pub language_servers: HashMap<LanguageServerId, LanguageServerState>,
     pub stopped_language_servers:
-        HashMap<(LanguageServerName, Option<WorktreeId>), LanguageServerState>,
+        IndexMap<(LanguageServerName, Option<WorktreeId>), LanguageServerState>,
     io_tx: mpsc::UnboundedSender<(LanguageServerId, IoKind, String, Instant)>,
 }
 
@@ -343,7 +345,7 @@ impl LogStore {
         let log_store = Self {
             projects: HashMap::default(),
             language_servers: HashMap::default(),
-            stopped_language_servers: HashMap::default(),
+            stopped_language_servers: IndexMap::default(),
 
             on_headless_host,
             io_tx,
@@ -509,7 +511,7 @@ impl LogStore {
     ) -> Option<&mut LanguageServerState> {
         let stopped_state = name.as_ref().and_then(|name| {
             self.stopped_language_servers
-                .remove(&(name.clone(), worktree_id))
+                .shift_remove(&(name.clone(), worktree_id))
         });
 
         let server_state = self.language_servers.entry(server_id).or_insert_with(|| {
@@ -764,6 +766,10 @@ impl LogStore {
                     .insert((name, state.worktree_id), state);
             }
         }
+
+        while self.stopped_language_servers.len() > MAX_RETAINED_STOPPED_SERVERS {
+            self.stopped_language_servers.shift_remove_index(0);
+        }
         cx.notify();
     }
 
@@ -791,7 +797,11 @@ impl LogStore {
     pub fn server_ids_for_project<'a>(
         &'a self,
         lookup_project: &'a WeakEntity<Project>,
+        cx: &App,
     ) -> impl Iterator<Item = LanguageServerId> + 'a {
+        let lookup_project_lsp_store = lookup_project
+            .upgrade()
+            .map(|project| project.read(cx).lsp_store().downgrade());
         self.language_servers
             .iter()
             .filter_map(move |(id, state)| match &state.kind {
@@ -802,7 +812,16 @@ impl LogStore {
                         None
                     }
                 }
-                LanguageServerKind::Global | LanguageServerKind::LocalSsh { .. } => Some(*id),
+                LanguageServerKind::Global => Some(*id),
+                LanguageServerKind::LocalSsh {
+                    lsp_store: ssh_lsp_store,
+                } => {
+                    if lookup_project_lsp_store.as_ref() == Some(ssh_lsp_store) {
+                        Some(*id)
+                    } else {
+                        None
+                    }
+                }
             })
     }
 

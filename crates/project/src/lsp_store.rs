@@ -11795,10 +11795,10 @@ impl LspStore {
         self.shutdown_all_language_servers(cx).detach();
     }
 
-    pub fn stopped_language_servers(&self) -> HashMap<LanguageServerName, HashSet<WorktreeId>> {
-        self.as_local()
-            .map(|local| local.stopped_language_servers.clone())
-            .unwrap_or_default()
+    pub fn stopped_language_servers(
+        &self,
+    ) -> Option<&HashMap<LanguageServerName, HashSet<WorktreeId>>> {
+        self.as_local().map(|local| &local.stopped_language_servers)
     }
 
     pub fn shutdown_all_language_servers(&mut self, cx: &mut Context<Self>) -> Task<()> {

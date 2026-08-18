@@ -159,7 +159,6 @@ struct LanguageServers {
     health_statuses: HashMap<LanguageServerId, LanguageServerHealthStatus>,
     binary_statuses: HashMap<LanguageServerId, LanguageServerBinaryStatus>,
     servers_per_buffer_abs_path: HashMap<PathBuf, ServersForPath>,
-    stopped_servers: HashSet<(LanguageServerName, WeakEntity<Worktree>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -670,6 +669,9 @@ impl LanguageServerState {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
+        let Some(lsp_store) = self.lsp_store.upgrade() else {
+            return;
+        };
 
         let buffers = workspace
             .read(cx)
@@ -678,19 +680,26 @@ impl LanguageServerState {
             .buffer_store()
             .read(cx)
             .buffers()
+            .filter(|buffer| {
+                buffer.read(cx).language().is_some_and(|language| {
+                    lsp_store
+                        .read(cx)
+                        .languages
+                        .lsp_adapters(&language.name())
+                        .iter()
+                        .any(|adapter| adapter.name() == server_name)
+                })
+            })
             .collect();
 
-        let lsp_store = self.lsp_store.clone();
-        lsp_store
-            .update(cx, |lsp_store, cx| {
-                lsp_store.restart_language_servers_for_buffers(
-                    buffers,
-                    HashSet::from_iter([LanguageServerSelector::Name(server_name)]),
-                    true,
-                    cx,
-                );
-            })
-            .log_err();
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.restart_language_servers_for_buffers(
+                buffers,
+                HashSet::from_iter([LanguageServerSelector::Name(server_name)]),
+                true,
+                cx,
+            );
+        });
     }
 }
 
@@ -745,15 +754,11 @@ impl LanguageServers {
     }
 
     fn is_empty(&self) -> bool {
-        self.binary_statuses.is_empty()
-            && self.health_statuses.is_empty()
-            && self.stopped_servers.is_empty()
+        self.binary_statuses.is_empty() && self.health_statuses.is_empty()
     }
 
     /// Drop all state for a server that has been removed: its id is dead and
-    /// every id-keyed record for it is garbage. The (name, worktree) record in
-    /// `stopped_servers` is intentionally preserved — it survives the id and
-    /// keeps the "Stopped" row visible.
+    /// every id-keyed record for it is garbage.
     fn remove_server(&mut self, server_id: LanguageServerId) {
         self.health_statuses.remove(&server_id);
         self.binary_statuses.remove(&server_id);
@@ -906,17 +911,6 @@ impl LspButton {
             );
         }
 
-        let project = workspace.project().read(cx);
-        for (name, worktree_ids) in lsp_store.read(cx).stopped_language_servers() {
-            for worktree in project.worktrees(cx) {
-                if worktree_ids.contains(&worktree.read(cx).id()) {
-                    language_servers
-                        .stopped_servers
-                        .insert((name.clone(), worktree.downgrade()));
-                }
-            }
-        }
-
         let lsp_store_subscription =
             cx.subscribe_in(&lsp_store, window, |lsp_button, _, e, window, cx| {
                 lsp_button.on_lsp_store_event(e, window, cx)
@@ -950,6 +944,10 @@ impl LspButton {
                 .language_servers
                 .binary_statuses
                 .is_empty()
+            || lsp_store
+                .read(cx)
+                .stopped_language_servers()
+                .is_some_and(|stopped| !stopped.is_empty())
         {
             lsp_button.refresh_lsp_menu(true, window, cx);
         }
@@ -976,9 +974,6 @@ impl LspButton {
                 message: proto::update_language_server::Variant::StatusUpdate(status_update),
             } => match &status_update.status {
                 Some(proto::status_update::Status::Binary(binary_status)) => {
-                    if name.is_none() {
-                        return;
-                    };
                     if let Some(binary_status) = proto::ServerBinaryStatus::from_i32(*binary_status)
                     {
                         let binary_status = match binary_status {
@@ -1043,13 +1038,6 @@ impl LspButton {
                     }) else {
                         return;
                     };
-                    if let Some(worktree) = &worktree {
-                        state.language_servers.stopped_servers.retain(
-                            |(stopped_name, stopped_worktree)| {
-                                Some(stopped_name) != name.as_ref() || stopped_worktree != worktree
-                            },
-                        );
-                    }
                     let entry = state
                         .language_servers
                         .servers_per_buffer_abs_path
@@ -1200,45 +1188,31 @@ impl LspButton {
             }
 
             if let Some(lsp_store) = state.lsp_store.upgrade() {
-                let stopped_servers_from_store = lsp_store
-                    .read(cx)
-                    .stopped_language_servers()
-                    .into_iter()
-                    .flat_map(|(name, worktree_ids)| {
-                        worktree_ids
-                            .into_iter()
-                            .filter_map(|worktree_id| {
-                                lsp_store
+                if let Some(stopped_language_servers) =
+                    lsp_store.read(cx).stopped_language_servers()
+                {
+                    stopped_language_servers
+                        .iter()
+                        .for_each(|(server_name, worktree_ids)| {
+                            worktree_ids.iter().for_each(|worktree_id| {
+                                if let Some(worktree) = lsp_store
                                     .read(cx)
                                     .worktree_store()
                                     .read(cx)
-                                    .worktree_for_id(worktree_id, cx)
-                                    .map(|worktree| (name.clone(), worktree.downgrade()))
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .collect::<Vec<_>>();
-
-                for (name, worktree) in stopped_servers_from_store {
-                    state
-                        .language_servers
-                        .stopped_servers
-                        .insert((name, worktree));
+                                    .worktree_for_id(*worktree_id, cx)
+                                {
+                                    let worktree_name =
+                                        SharedString::new(worktree.read(cx).root_name_str());
+                                    servers_per_worktree.entry(worktree_name).or_default().push(
+                                        ServerData::WithStoppedStatus {
+                                            server_name,
+                                            worktree_id: *worktree_id,
+                                        },
+                                    );
+                                }
+                            });
+                        });
                 }
-            }
-
-            for (server_name, worktree) in state.language_servers.stopped_servers.iter() {
-                let Some(worktree) = worktree.upgrade() else {
-                    continue;
-                };
-                let worktree_name = SharedString::new(worktree.read(cx).root_name_str());
-                servers_per_worktree
-                    .entry(worktree_name.clone())
-                    .or_default()
-                    .push(ServerData::WithStoppedStatus {
-                        server_name,
-                        worktree_id: worktree.read(cx).id(),
-                    });
             }
 
             let mut new_lsp_items = Vec::with_capacity(servers_per_worktree.len() + 1);

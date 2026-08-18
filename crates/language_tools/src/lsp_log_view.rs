@@ -155,8 +155,10 @@ impl LspLogView {
         let weak_project = project.downgrade();
         let model_changes_subscription =
             cx.observe_in(&log_store, window, move |this, store, window, cx| {
-                let first_server_id_for_project =
-                    store.read(cx).server_ids_for_project(&weak_project).next();
+                let first_server_id_for_project = store
+                    .read(cx)
+                    .server_ids_for_project(&weak_project, cx)
+                    .next();
                 if let Some(current_lsp) = this.current_server_id {
                     if !store.read(cx).contains_language_server(current_lsp)
                         && let Some(server_id) = first_server_id_for_project
@@ -421,11 +423,15 @@ impl LspLogView {
         self.try_ensure_copilot_for_project(cx);
 
         let weak_project = self.project.downgrade();
+        let project_lsp_store = self.project.read(cx).lsp_store().downgrade();
         let is_for_project = |kind: &LanguageServerKind| {
             matches!(
                 kind,
-                LanguageServerKind::Global | LanguageServerKind::LocalSsh { .. }
-            ) || kind.project() == Some(&weak_project)
+                LanguageServerKind::LocalSsh {
+                    lsp_store: ssh_lsp_store
+                } if *ssh_lsp_store == project_lsp_store
+            ) || matches!(kind, LanguageServerKind::Global)
+                || kind.project() == Some(&weak_project)
         };
 
         let mut rows = Vec::new();
