@@ -269,7 +269,7 @@ impl SoloDiffView {
         let editor = self.editor.read(cx).rhs_editor().read(cx);
         let multibuffer = editor.buffer().read(cx);
         let snapshot = multibuffer.snapshot(cx);
-        let prev_next = snapshot.diff_hunks().nth(1).is_some();
+        let prev_next = snapshot.diff_hunks().next().is_some();
         let mut selection = true;
 
         let mut ranges = editor

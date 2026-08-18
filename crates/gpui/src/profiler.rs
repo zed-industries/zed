@@ -952,19 +952,20 @@ impl WindowProfiler {
         });
     }
 
-    /// Records the end of a window draw.
-    pub fn end_draw(&mut self, dirty_at: Option<Instant>, invalidations: u64) {
+    /// Records the end of a window draw and returns the draw duration.
+    pub fn end_draw(&mut self, dirty_at: Option<Instant>, invalidations: u64) -> Duration {
         let Some(WindowActivity::Draw {
             started_at: draw_start,
         }) = self.active_activities.pop()
         else {
             debug_assert!(false, "draw activity must be the current window activity");
-            return;
+            return Duration::ZERO;
         };
 
         self.drew_since_last_present = true;
         let draw_end = Instant::now();
-        self.record_draw_duration(draw_end.duration_since(draw_start));
+        let draw_duration = draw_end.duration_since(draw_start);
+        self.record_draw_duration(draw_duration);
         record_frame_event(FrameEvent::Draw(FrameTiming {
             window_id: self.window_id,
             dirty_at,
@@ -972,6 +973,7 @@ impl WindowProfiler {
             draw_start,
             draw_end,
         }));
+        draw_duration
     }
 
     /// Records that a frame was presented.
