@@ -141,29 +141,6 @@ ClippedVertex clip_to_mask(float2 unit_vertex, Bounds bounds, Bounds mask) {
     return result;
 }
 
-// Whether the transformation only scales and translates, keeping rectangles
-// axis-aligned in screen space. Zero scale is excluded so callers can safely
-// invert the transformation.
-bool transform_is_axis_aligned(TransformationMatrix transformation) {
-    return transformation.rotation_scale[0][1] == 0.0 &&
-           transformation.rotation_scale[1][0] == 0.0 &&
-           transformation.rotation_scale[0][0] != 0.0 &&
-           transformation.rotation_scale[1][1] != 0.0;
-}
-
-// Maps the screen-space mask into pre-transform space. Only valid for
-// axis-aligned transformations; min/max normalization handles negative scale
-// (e.g. rotation by 180 degrees).
-Bounds mask_in_transform_space(Bounds mask, TransformationMatrix transformation) {
-    float2 scale = float2(transformation.rotation_scale[0][0], transformation.rotation_scale[1][1]);
-    float2 p0 = (mask.origin - transformation.translation) / scale;
-    float2 p1 = (mask.origin + mask.size - transformation.translation) / scale;
-    Bounds result;
-    result.origin = min(p0, p1);
-    result.size = max(p0, p1) - result.origin;
-    return result;
-}
-
 // Convert linear RGB to sRGB
 float3 linear_to_srgb(float3 color) {
     return pow(color, float3(2.2, 2.2, 2.2));
@@ -317,17 +294,12 @@ float pick_corner_radius(float2 center_to_point, Corners corner_radii) {
     }
 }
 
-float4 to_device_position_transformed_impl(float2 position,
-                                           TransformationMatrix transformation) {
+float4 to_device_position_transformed(float2 unit_vertex, Bounds bounds,
+                                      TransformationMatrix transformation) {
+    float2 position = unit_vertex * bounds.size + bounds.origin;
     float2 transformed = mul(position, transformation.rotation_scale) + transformation.translation;
     float2 device_position = transformed / global_viewport_size * float2(2.0, -2.0) + float2(-1.0, 1.0);
     return float4(device_position, 0.0, 1.0);
-}
-
-float4 to_device_position_transformed(float2 unit_vertex, Bounds bounds,
-                                      TransformationMatrix transformation) {
-    return to_device_position_transformed_impl(
-        unit_vertex * bounds.size + bounds.origin, transformation);
 }
 
 // Implementation of quad signed distance field
@@ -1204,23 +1176,11 @@ MonochromeSpriteVertexOutput monochrome_sprite_vertex(uint vertex_id: SV_VertexI
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     uint sprite_id = batch_start_index + instance_id;
     MonochromeSprite sprite = mono_sprites[sprite_id];
-    float4 device_position;
-    float2 tile_position;
-    float4 clip_distance;
-    if (transform_is_axis_aligned(sprite.transformation)) {
-        Bounds mask = mask_in_transform_space(sprite.content_mask, sprite.transformation);
-        ClippedVertex vertex = clip_to_mask(unit_vertex, sprite.bounds, mask);
-        device_position =
-            to_device_position_transformed_impl(vertex.position, sprite.transformation);
-        tile_position = to_tile_position(vertex.unit_vertex, sprite.tile);
-        clip_distance = float4(1.0, 1.0, 1.0, 1.0);
-    } else {
-        // A rotated sprite intersected with the axis-aligned mask isn't
-        // representable as a quad, so fall back to hardware clip distances.
-        device_position = to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation);
-        tile_position = to_tile_position(unit_vertex, sprite.tile);
-        clip_distance = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds, sprite.content_mask, sprite.transformation);
-    }
+    float4 device_position =
+        to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation);
+    float2 tile_position = to_tile_position(unit_vertex, sprite.tile);
+    float4 clip_distance = distance_from_clip_rect_transformed(
+        unit_vertex, sprite.bounds, sprite.content_mask, sprite.transformation);
     float4 color = hsla_to_rgba(sprite.color);
 
     MonochromeSpriteVertexOutput output;
