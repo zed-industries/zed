@@ -6414,50 +6414,6 @@ mod tests {
         });
     }
 
-    /// Renders a paragraph followed by a fenced code block at the given
-    /// `buffer_line_height`, returning the rendered line heights of the
-    /// paragraph and of the first code block row.
-    ///
-    /// Note that this does not reproduce the `WithRemSize` wrapper the real
-    /// preview renders inside, so rem-derived lengths (such as the `rems(1.3)`
-    /// prose leading) resolve against the default rem size rather than
-    /// `markdown_preview_font_size`. Code block metrics are unaffected, since
-    /// the code font size is set as absolute pixels.
-    fn rendered_prose_and_code_line_heights(
-        cx: &mut TestAppContext,
-        font_size: f32,
-        buffer_line_height: f32,
-    ) -> (Pixels, Pixels) {
-        ensure_theme_initialized(cx);
-        cx.update(|cx| {
-            settings::SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings.theme.markdown_preview_font_size = Some(font_size.into());
-                    settings.theme.buffer_line_height =
-                        Some(settings::BufferLineHeight::Custom(buffer_line_height));
-                });
-            });
-        });
-        cx.run_until_parked();
-
-        let style = {
-            let window = cx.add_empty_window();
-            window.update(|window, cx| MarkdownStyle::themed(MarkdownFont::Preview, window, cx))
-        };
-
-        let markdown =
-            cx.new(|cx| Markdown::new("Body text\n\n```\nfoo\nbar\n```\n".into(), None, None, cx));
-        let rendered = render_markdown_entity_in_view(markdown, style, None, None, cx);
-
-        let [prose, code] = &rendered.lines[..] else {
-            panic!(
-                "expected a prose line and a code block line, got {} lines",
-                rendered.lines.len()
-            )
-        };
-        (prose.layout.line_height(), code.layout.line_height())
-    }
-
     #[gpui::test]
     fn test_code_block_line_height_follows_buffer_line_height_setting(cx: &mut TestAppContext) {
         let font_size = 14.0;
@@ -6504,10 +6460,6 @@ mod tests {
             window.update(|window, cx| MarkdownStyle::themed(MarkdownFont::Preview, window, cx))
         };
 
-        // Callers such as the agent panel override the code font size after
-        // building the style. The line height is stored as a fraction so it
-        // follows that override; an absolute value computed from the theme's
-        // font size would stay at 14 * 1.5 instead.
         let overridden_font_size = 28.0;
         style.code_block.text.font_size = Some(px(overridden_font_size).into());
 
@@ -6691,5 +6643,49 @@ mod tests {
         assert!(quad_bounds.left() < px(0.));
         assert!(visible_bounds.left() >= px(0.));
         assert!(visible_bounds.right() <= window_width);
+    }
+
+    /// Renders a paragraph followed by a fenced code block at the given
+    /// `buffer_line_height`, returning the rendered line heights of the
+    /// paragraph and of the first code block row.
+    ///
+    /// Note that this does not reproduce the `WithRemSize` wrapper the real
+    /// preview renders inside, so rem-derived lengths (such as the `rems(1.3)`
+    /// prose leading) resolve against the default rem size rather than
+    /// `markdown_preview_font_size`. Code block metrics are unaffected, since
+    /// the code font size is set as absolute pixels.
+    fn rendered_prose_and_code_line_heights(
+        cx: &mut TestAppContext,
+        font_size: f32,
+        buffer_line_height: f32,
+    ) -> (Pixels, Pixels) {
+        ensure_theme_initialized(cx);
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.markdown_preview_font_size = Some(font_size.into());
+                    settings.theme.buffer_line_height =
+                        Some(settings::BufferLineHeight::Custom(buffer_line_height));
+                });
+            });
+        });
+        cx.run_until_parked();
+
+        let style = {
+            let window = cx.add_empty_window();
+            window.update(|window, cx| MarkdownStyle::themed(MarkdownFont::Preview, window, cx))
+        };
+
+        let markdown =
+            cx.new(|cx| Markdown::new("Body text\n\n```\nfoo\nbar\n```\n".into(), None, None, cx));
+        let rendered = render_markdown_entity_in_view(markdown, style, None, None, cx);
+
+        let [prose, code] = &rendered.lines[..] else {
+            panic!(
+                "expected a prose line and a code block line, got {} lines",
+                rendered.lines.len()
+            )
+        };
+        (prose.layout.line_height(), code.layout.line_height())
     }
 }
