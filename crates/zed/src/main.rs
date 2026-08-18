@@ -1441,8 +1441,7 @@ pub(crate) async fn restore_or_create_workspace(
                     let paths = multi_workspace
                         .active_workspace
                         .paths
-                        .paths()
-                        .iter()
+                        .ordered_paths()
                         .map(PathBuf::from)
                         .collect::<Vec<_>>();
                     let state = multi_workspace.state.clone();
