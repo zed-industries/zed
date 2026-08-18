@@ -38,7 +38,7 @@ use gpui::{
     ImageFormat, ImageSource, KeyContext, Length, MouseButton, MouseDownEvent, MouseEvent,
     MouseMoveEvent, MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle,
     StyleRefinement, StyledImage, StyledText, Subscription, Task, TextAlign, TextLayout, TextRun,
-    TextStyle, TextStyleRefinement, WrappedLineLayout, actions, canvas, img, point, quad,
+    TextStyle, TextStyleRefinement, WrappedLineLayout, actions, canvas, img, point, quad, relative,
 };
 use language::{CharClassifier, Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
@@ -270,6 +270,7 @@ impl MarkdownStyle {
                     font_features: Some(theme_settings.buffer_font.features.clone()),
                     font_size: Some(buffer_font_size.into()),
                     font_weight: Some(buffer_font_weight),
+                    line_height: Some(relative(theme_settings.buffer_line_height.value())),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -6464,6 +6465,74 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_code_block_line_height_follows_buffer_line_height_setting(cx: &mut TestAppContext) {
+        let font_size = 14.0;
+        let (tight_prose, tight_code) = rendered_prose_and_code_line_heights(cx, font_size, 1.2);
+        let (loose_prose, loose_code) = rendered_prose_and_code_line_heights(cx, font_size, 1.8);
+
+        // Left unset, code blocks fall back to the ambient default of ~1.618
+        // regardless of this setting.
+        assert!(
+            (tight_code - px(font_size * 1.2)).abs() <= px(0.5),
+            "code block line height ({tight_code:?}) should be ~{} at buffer_line_height 1.2",
+            font_size * 1.2
+        );
+        assert!(
+            (loose_code - px(font_size * 1.8)).abs() <= px(0.5),
+            "code block line height ({loose_code:?}) should be ~{} at buffer_line_height 1.8",
+            font_size * 1.8
+        );
+
+        // Prose leading is set per element as `rems(1.3)` and is a typographic
+        // choice independent of the buffer's line height, so it must not move.
+        assert_eq!(
+            tight_prose, loose_prose,
+            "prose line height should not follow buffer_line_height"
+        );
+    }
+
+    #[gpui::test]
+    fn test_code_block_line_height_tracks_overridden_code_font_size(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.markdown_preview_font_size = Some(14.0.into());
+                    settings.theme.buffer_line_height =
+                        Some(settings::BufferLineHeight::Custom(1.5));
+                });
+            });
+        });
+        cx.run_until_parked();
+
+        let mut style = {
+            let window = cx.add_empty_window();
+            window.update(|window, cx| MarkdownStyle::themed(MarkdownFont::Preview, window, cx))
+        };
+
+        let overridden_font_size = 28.0;
+        style.code_block.text.font_size = Some(px(overridden_font_size).into());
+
+        let markdown =
+            cx.new(|cx| Markdown::new("Body text\n\n```\nfoo\nbar\n```\n".into(), None, None, cx));
+        let rendered = render_markdown_entity_in_view(markdown, style, None, None, cx);
+        let [_, code] = &rendered.lines[..] else {
+            panic!(
+                "expected a prose line and a code block line, got {} lines",
+                rendered.lines.len()
+            )
+        };
+
+        let code_line_height = code.layout.line_height();
+        assert!(
+            (code_line_height - px(overridden_font_size * 1.5)).abs() <= px(0.5),
+            "code block line height ({code_line_height:?}) should follow the overridden \
+             font size, expected ~{}",
+            overridden_font_size * 1.5
+        );
+    }
+
+    #[gpui::test]
     fn test_wide_table_scrolls_horizontally(cx: &mut TestAppContext) {
         ensure_theme_initialized(cx);
         let source = indoc::indoc! {r#"
@@ -6624,5 +6693,49 @@ mod tests {
         assert!(quad_bounds.left() < px(0.));
         assert!(visible_bounds.left() >= px(0.));
         assert!(visible_bounds.right() <= window_width);
+    }
+
+    /// Renders a paragraph followed by a fenced code block at the given
+    /// `buffer_line_height`, returning the rendered line heights of the
+    /// paragraph and of the first code block row.
+    ///
+    /// Note that this does not reproduce the `WithRemSize` wrapper the real
+    /// preview renders inside, so rem-derived lengths (such as the `rems(1.3)`
+    /// prose leading) resolve against the default rem size rather than
+    /// `markdown_preview_font_size`. Code block metrics are unaffected, since
+    /// the code font size is set as absolute pixels.
+    fn rendered_prose_and_code_line_heights(
+        cx: &mut TestAppContext,
+        font_size: f32,
+        buffer_line_height: f32,
+    ) -> (Pixels, Pixels) {
+        ensure_theme_initialized(cx);
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.markdown_preview_font_size = Some(font_size.into());
+                    settings.theme.buffer_line_height =
+                        Some(settings::BufferLineHeight::Custom(buffer_line_height));
+                });
+            });
+        });
+        cx.run_until_parked();
+
+        let style = {
+            let window = cx.add_empty_window();
+            window.update(|window, cx| MarkdownStyle::themed(MarkdownFont::Preview, window, cx))
+        };
+
+        let markdown =
+            cx.new(|cx| Markdown::new("Body text\n\n```\nfoo\nbar\n```\n".into(), None, None, cx));
+        let rendered = render_markdown_entity_in_view(markdown, style, None, None, cx);
+
+        let [prose, code] = &rendered.lines[..] else {
+            panic!(
+                "expected a prose line and a code block line, got {} lines",
+                rendered.lines.len()
+            )
+        };
+        (prose.layout.line_height(), code.layout.line_height())
     }
 }
