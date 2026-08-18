@@ -382,9 +382,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parsing_basic() {
-        let table_text = "Name,Age,City\nJohn,30,New York\nJane,25,Los Angeles";
-        let parsed = TableLikeContent::from_str(table_text.to_string());
+    fn test_csv_parsing_basic() {
+        let csv_data = "Name,Age,City\nJohn,30,New York\nJane,25,Los Angeles";
+        let parsed = TableLikeContent::from_str(csv_data.to_string());
 
         assert_eq!(parsed.headers.cols(), 3);
         assert_eq!(parsed.headers[0].display_value().unwrap().as_ref(), "Name");
@@ -401,11 +401,11 @@ mod tests {
     }
 
     #[test]
-    fn test_parsing_with_quotes() {
-        let table_text = r#"Name,Description
+    fn test_csv_parsing_with_quotes() {
+        let csv_data = r#"Name,Description
 "John Doe","A person with ""special"" characters"
 Jane,"Simple name""#;
-        let parsed = TableLikeContent::from_str(table_text.to_string());
+        let parsed = TableLikeContent::from_str(csv_data.to_string());
 
         assert_eq!(parsed.headers.cols(), 2);
         assert_eq!(parsed.rows.len(), 2);
@@ -416,9 +416,9 @@ Jane,"Simple name""#;
     }
 
     #[test]
-    fn test_parsing_with_newlines_in_quotes() {
-        let table_text = "Name,Description,Status\n\"John\nDoe\",\"A person with\nmultiple lines\",Active\n\"Jane Smith\",\"Simple\",\"Also\nActive\"";
-        let parsed = TableLikeContent::from_str(table_text.to_string());
+    fn test_csv_parsing_with_newlines_in_quotes() {
+        let csv_data = "Name,Description,Status\n\"John\nDoe\",\"A person with\nmultiple lines\",Active\n\"Jane Smith\",\"Simple\",\"Also\nActive\"";
+        let parsed = TableLikeContent::from_str(csv_data.to_string());
 
         assert_eq!(parsed.headers.cols(), 3);
         assert_eq!(parsed.headers[0].display_value().unwrap().as_ref(), "Name");
@@ -526,9 +526,9 @@ Jane,"Simple name""#;
     }
 
     #[test]
-    fn test_parsing_quote_offset_handling() {
-        let table_text = r#"first,"se,cond",third"#;
-        let (parsed_cells, _) = parse_delimited_text_with_positions(table_text, ',');
+    fn test_csv_parsing_quote_offset_handling() {
+        let csv_data = r#"first,"se,cond",third"#;
+        let (parsed_cells, _) = parse_delimited_text_with_positions(csv_data, ',');
 
         assert_eq!(parsed_cells.len(), 1); // One row
         assert_eq!(parsed_cells[0].len(), 3); // Three cells
@@ -550,11 +550,11 @@ Jane,"Simple name""#;
     }
 
     #[test]
-    fn test_parsing_complex_quotes() {
-        let table_text = r#"id,"name with spaces","description, with commas",status
+    fn test_csv_parsing_complex_quotes() {
+        let csv_data = r#"id,"name with spaces","description, with commas",status
 1,"John Doe","A person with ""quotes"" and, commas",active
 2,"Jane Smith","Simple description",inactive"#;
-        let (parsed_cells, _) = parse_delimited_text_with_positions(table_text, ',');
+        let (parsed_cells, _) = parse_delimited_text_with_positions(csv_data, ',');
 
         assert_eq!(parsed_cells.len(), 3); // header + 2 rows
 
