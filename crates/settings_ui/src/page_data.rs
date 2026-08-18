@@ -2368,8 +2368,10 @@ fn editor_page() -> SettingsPage {
                                 }
                                 settings::GitGutterWidthDiscriminants::Custom => {
                                     let width = match gutter.git_gutter_width {
-                                        Some(settings::GitGutterWidth::Custom(w)) => w,
-                                        _ => 3.0,
+                                        Some(settings::GitGutterWidth::Custom(width)) => {
+                                            settings::PixelSetting(*width)
+                                        }
+                                        _ => settings::PixelSetting(3.0),
                                     };
                                     settings::GitGutterWidth::Custom(width)
                                 }
@@ -2421,7 +2423,7 @@ fn editor_page() -> SettingsPage {
                                             .as_mut()
                                             .and_then(|gutter| gutter.git_gutter_width.as_mut())
                                     {
-                                        *width = f32::max(value, 0.0);
+                                        *width = value;
                                     }
                                 },
                             }),

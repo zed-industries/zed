@@ -501,7 +501,7 @@ pub enum GitGutterWidth {
     #[default]
     Default,
     /// A fixed pixel width for the git diff indicators.
-    Custom(#[serde(serialize_with = "crate::serialize_f32_with_two_decimal_places")] f32),
+    Custom(crate::PixelSetting),
 }
 
 /// Gutter related settings
