@@ -1,6 +1,8 @@
 //! Handles conversions of `language` items to and from the [`rpc`] protocol.
 
-use crate::{CursorShape, Diagnostic, DiagnosticSourceKind, diagnostic_set::DiagnosticEntry};
+use crate::{
+    CursorShape, Diagnostic, DiagnosticOrigin, DiagnosticSourceKind, diagnostic_set::DiagnosticEntry,
+};
 use anyhow::{Context as _, Result};
 use clock::ReplicaId;
 use gpui::SharedString;
@@ -239,6 +241,16 @@ pub fn serialize_diagnostics<'a>(
                 .map(|s| s.to_string()),
             is_disk_based: entry.diagnostic.is_disk_based,
             is_unnecessary: entry.diagnostic.is_unnecessary,
+            related_origin_label: entry
+                .diagnostic
+                .related_origin
+                .as_ref()
+                .map(|origin| origin.label.to_string()),
+            related_origin_uri: entry
+                .diagnostic
+                .related_origin
+                .as_ref()
+                .map(|origin| origin.uri.to_string()),
             data: entry.diagnostic.data.as_ref().map(|data| data.to_string()),
             registration_id: entry
                 .diagnostic
@@ -464,6 +476,13 @@ pub fn deserialize_diagnostics(
                     is_disk_based: diagnostic.is_disk_based,
                     is_unnecessary: diagnostic.is_unnecessary,
                     underline: diagnostic.underline,
+                    related_origin: diagnostic
+                        .related_origin_label
+                        .zip(diagnostic.related_origin_uri)
+                        .map(|(label, uri)| DiagnosticOrigin {
+                            label: label.into(),
+                            uri: uri.into(),
+                        }),
                     registration_id: diagnostic.registration_id.map(SharedString::from),
                     source_kind: match proto::diagnostic::SourceKind::from_i32(
                         diagnostic.source_kind,

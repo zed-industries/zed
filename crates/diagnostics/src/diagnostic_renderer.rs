@@ -43,11 +43,16 @@ impl DiagnosticRenderer {
                 append_source_and_code(&mut markdown, diagnostic);
 
                 for (ix, entry) in diagnostic_group.iter().enumerate() {
-                    if entry.range.start.row.abs_diff(primary.range.start.row) >= 5 {
+                    if let Some(origin) = &entry.diagnostic.related_origin {
+                        markdown.push_str("\n- [");
+                        markdown.push_str(&Markdown::escape(&origin.label));
+                        markdown.push_str(&format!("]({}): ", origin.uri));
+                        markdown.push_str(&Markdown::escape(&entry.diagnostic.message));
+                    } else if entry.range.start.row.abs_diff(primary.range.start.row) >= 5 {
                         markdown.push_str("\n- hint: [");
                         markdown.push_str(&Markdown::escape(&entry.diagnostic.message));
                         markdown.push_str(&format!(
-                            "](file://#diagnostic-{buffer_id}-{group_id}-{ix})\n",
+                            "](file://#diagnostic-{buffer_id}-{group_id}-{ix})",
                         ))
                     }
                 }
@@ -62,6 +67,13 @@ impl DiagnosticRenderer {
                     }),
                 });
             } else {
+                if let Some(origin) = &entry.diagnostic.related_origin {
+                    markdown = format!(
+                        "[{}]({}): {markdown}",
+                        Markdown::escape(&origin.label),
+                        origin.uri
+                    );
+                }
                 append_source_and_code(&mut markdown, entry.diagnostic);
 
                 if entry.range.start.row.abs_diff(primary.range.start.row) >= 5 {
