@@ -405,50 +405,36 @@ fn blend_color(color: vec4<f32>, alpha_factor: f32) -> vec4<f32> {
 }
 
 
-struct GradientColor {
-    solid: vec4<f32>,
+struct PreparedBackground {
     color0: vec4<f32>,
     color1: vec4<f32>,
+    // Per-mode coefficients, measured from `pivot`:
+    //   linear gradient: (direction.xy, offset, unused)
+    //   pattern slash:   (cos, sin, period, threshold)
+    //   checkerboard:    (cell size, unused, unused, unused)
+    basis: vec4<f32>,
+    pivot: vec2<f32>,
+    kind: vec2<u32>,
 }
 
-fn prepare_gradient_color(tag: u32, color_space: u32,
-    solid: Hsla, colors: array<LinearColorStop, 2>) -> GradientColor {
-    var result = GradientColor();
-
-    if (tag == 0u || tag == 2u || tag == 3u) {
-        result.solid = hsla_to_rgba(solid);
-    } else if (tag == 1u) {
-        result.color0 = hsla_to_rgba(colors[0].color);
-        result.color1 = hsla_to_rgba(colors[1].color);
-
-        // Prepare color space in vertex for avoid conversion
-        // in fragment shader for performance reasons
-        if (color_space == 1u) {
-            // Oklab
-            result.color0 = srgb_to_oklab(result.color0);
-            result.color1 = srgb_to_oklab(result.color1);
-        }
-    }
-
-    return result;
-}
-
-fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
-    solid_color: vec4<f32>, color0: vec4<f32>, color1: vec4<f32>) -> vec4<f32> {
-    var background_color = vec4<f32>(0.0);
+fn prepare_background(background: Background, bounds: Bounds) -> PreparedBackground {
+    var output = PreparedBackground();
+    output.kind = vec2<u32>(background.tag, background.color_space);
+    output.pivot = bounds.origin;
 
     switch (background.tag) {
-        default: {
-            return solid_color;
-        }
         case 1u: {
-            // Linear gradient background.
+            output.color0 = hsla_to_rgba(background.colors[0].color);
+            output.color1 = hsla_to_rgba(background.colors[1].color);
+            if (background.color_space == 1u) {
+                output.color0 = srgb_to_oklab(output.color0);
+                output.color1 = srgb_to_oklab(output.color1);
+            }
+
             // -90 degrees to match the CSS gradient angle.
-            let angle = background.gradient_angle_or_pattern_height;
-            let radians = (angle % 360.0 - 90.0) * M_PI_F / 180.0;
+            let radians = (fmod(background.gradient_angle_or_pattern_height, 360.0) - 90.0)
+                * (M_PI_F / 180.0);
             var direction = vec2<f32>(cos(radians), sin(radians));
-            let stop0_percentage = background.colors[0].percentage;
-            let stop1_percentage = background.colors[1].percentage;
 
             // Expand the short side to be the same as the long side
             if (bounds.size.x > bounds.size.y) {
@@ -457,66 +443,107 @@ fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
                 direction.x *= bounds.size.x / bounds.size.y;
             }
 
-            // Get the t value for the linear gradient with the color stop percentages.
-            let half_size = bounds.size / 2.0;
-            let center = bounds.origin + half_size;
-            let center_to_point = position - center;
-            var t = dot(center_to_point, direction) / length(direction);
-            // Check the direct to determine the use x or y
+            var extent = bounds.size.y;
             if (abs(direction.x) > abs(direction.y)) {
-                t = (t + half_size.x) / bounds.size.x;
+                extent = bounds.size.x;
+            }
+            let direction_length = length(direction);
+            let span = background.colors[1].percentage - background.colors[0].percentage;
+            // The half-extent term is exactly half of `extent`, so the
+            // position-independent part reduces to this.
+            let offset = 0.5 - background.colors[0].percentage;
+
+            if (direction_length == 0.0 || extent == 0.0) {
+                output.basis = vec4<f32>(0.0);
+            } else if (span == 0.0) {
+                const STEP: f32 = 1e30;
+                output.basis = vec4<f32>(
+                    direction / (direction_length * extent) * STEP,
+                    offset * STEP,
+                    0.0,
+                );
             } else {
-                t = (t + half_size.y) / bounds.size.y;
+                output.basis = vec4<f32>(
+                    direction / (direction_length * extent * span),
+                    offset / span,
+                    0.0,
+                );
             }
-
-            // Adjust t based on the stop percentages
-            t = (t - stop0_percentage) / (stop1_percentage - stop0_percentage);
-            t = clamp(t, 0.0, 1.0);
-
-            switch (background.color_space) {
-                default: {
-                    background_color = mix(color0, color1, t);
-                }
-                case 1u: {
-                    let oklab_color = mix(color0, color1, t);
-                    background_color = oklab_to_srgb(oklab_color);
-                }
-            }
+            output.pivot = bounds.origin + bounds.size * 0.5;
         }
         case 2u: {
-            // pattern slash
-            let gradient_angle_or_pattern_height = background.gradient_angle_or_pattern_height;
-            let pattern_width = (gradient_angle_or_pattern_height / 65535.0f) / 255.0f;
-            let pattern_interval = (gradient_angle_or_pattern_height % 65535.0f) / 255.0f;
+            output.color0 = hsla_to_rgba(background.solid);
+            let pattern_height_encoded = background.gradient_angle_or_pattern_height;
+            let pattern_width = (pattern_height_encoded / 65535.0) / 255.0;
+            let pattern_interval = fmod(pattern_height_encoded, 65535.0) / 255.0;
             let pattern_height = pattern_width + pattern_interval;
+            // Only the rotated x coordinate is used, and a row-vector multiply
+            // by the rotation reduces it to dot(v, vec2<f32>(cos(a), sin(a))).
             let stripe_angle = M_PI_F / 4.0;
+            let stripe_direction = vec2<f32>(cos(stripe_angle), sin(stripe_angle));
             let pattern_period = pattern_height * sin(stripe_angle);
-            let rotation = mat2x2<f32>(
-                cos(stripe_angle), -sin(stripe_angle),
-                sin(stripe_angle), cos(stripe_angle)
-            );
-            let relative_position = position - bounds.origin;
-            let rotated_point = rotation * relative_position;
-            let pattern = rotated_point.x % pattern_period;
-            let distance = min(pattern, pattern_period - pattern) - pattern_period * (pattern_width / pattern_height) /  2.0f;
-            background_color = solid_color;
-            background_color.a *= saturate(0.5 - distance);
+            let threshold = pattern_period * (pattern_width / pattern_height) / 2.0;
+            output.basis = vec4<f32>(stripe_direction, pattern_period, threshold);
         }
         case 3u: {
-            // checkerboard
-            let size = background.gradient_angle_or_pattern_height;
-            let relative_position = position - bounds.origin;
-
-            let x_index = floor(relative_position.x / size);
-            let y_index = floor(relative_position.y / size);
-            let should_be_colored = (x_index + y_index) % 2.0;
-
-            background_color = solid_color;
-            background_color.a *= saturate(should_be_colored);
+            output.color0 = hsla_to_rgba(background.solid);
+            output.basis = vec4<f32>(background.gradient_angle_or_pattern_height, 0.0, 0.0, 0.0);
+        }
+        default: {
+            output.color0 = hsla_to_rgba(background.solid);
         }
     }
 
-    return background_color;
+    return output;
+}
+
+// Ordered (Bayer 4x4) dither threshold, remapped to [-1, +1].
+fn dither_offset(position: vec2<f32>) -> f32 {
+    let cell = vec2<u32>(position) & vec2<u32>(3u);
+    let z = cell.x ^ cell.y;
+    let threshold = ((z & 1u) << 3u)
+        | ((cell.y & 1u) << 2u)
+        | (z & 2u)
+        | ((cell.y & 2u) >> 1u);
+    return (f32(threshold) + 0.5) * (1.0 / 8.0) - 1.0;
+}
+
+fn background_color(background: PreparedBackground, position: vec2<f32>) -> vec4<f32> {
+    let relative_position = position - background.pivot;
+    var color = background.color0;
+
+    switch (background.kind.x) {
+        case 1u: {
+            let t = saturate(dot(relative_position, background.basis.xy) + background.basis.z);
+            color = mix(background.color0, background.color1, t);
+            if (background.kind.y == 1u) {
+                color = oklab_to_srgb(color);
+            }
+
+            // Dither to reduce banding in gradients (especially dark/alpha).
+            let dither = dither_offset(position);
+            color = vec4<f32>(
+                color.rgb + dither * 1.0 / 255.0,
+                color.a + dither * 1.5 / 255.0,
+            );
+        }
+        case 2u: {
+            let period = background.basis.z;
+            let pattern = fmod(dot(relative_position, background.basis.xy), period);
+            let distance = min(pattern, period - pattern) - background.basis.w;
+            color.a *= saturate(0.5 - distance);
+        }
+        case 3u: {
+            // checkerboard
+            let cell_size = background.basis.x;
+            let x_index = floor(relative_position.x / cell_size);
+            let y_index = floor(relative_position.y / cell_size);
+            color.a *= saturate((x_index + y_index) % 2.0);
+        }
+        default: {}
+    }
+
+    return color;
 }
 
 // --- quads --- //
@@ -532,58 +559,67 @@ struct Quad {
     border_widths: Edges,
 }
 
-struct QuadVarying {
+fn has_rounded_corners(corner_radii: Corners) -> bool {
+    return corner_radii.top_left != 0.0
+        || corner_radii.top_right != 0.0
+        || corner_radii.bottom_right != 0.0
+        || corner_radii.bottom_left != 0.0;
+}
+
+fn has_border(border_widths: Edges) -> bool {
+    return border_widths.top != 0.0
+        || border_widths.right != 0.0
+        || border_widths.bottom != 0.0
+        || border_widths.left != 0.0;
+}
+
+struct QuadFragmentInput {
     @builtin(position) position: vec4<f32>,
     @location(0) @interpolate(flat) border_color: vec4<f32>,
-    @location(1) @interpolate(flat) quad_id: u32,
-    @location(2) @interpolate(flat) background_solid: vec4<f32>,
-    @location(3) @interpolate(flat) background_color0: vec4<f32>,
-    @location(4) @interpolate(flat) background_color1: vec4<f32>,
+    // (quad_id, background tag, background color space, is_simple)
+    @location(1) @interpolate(flat) metadata: vec4<u32>,
+    @location(2) @interpolate(flat) background_color0: vec4<f32>,
+    @location(3) @interpolate(flat) background_color1: vec4<f32>,
+    @location(4) @interpolate(flat) background_basis: vec4<f32>,
+    @location(5) @interpolate(flat) background_pivot: vec2<f32>,
 }
 
 @vertex
-fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> QuadVarying {
+fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> QuadFragmentInput {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
     let quad = load_quad(instance_id);
 
-    var out = QuadVarying();
+    var out = QuadFragmentInput();
     let vertex = clip_to_mask(unit_vertex, quad.bounds, quad.content_mask);
     out.position = to_device_position_impl(vertex.position);
 
-    let gradient = prepare_gradient_color(
-        quad.background.tag,
-        quad.background.color_space,
-        quad.background.solid,
-        quad.background.colors
-    );
-    out.background_solid = gradient.solid;
-    out.background_color0 = gradient.color0;
-    out.background_color1 = gradient.color1;
+    let background = prepare_background(quad.background, quad.bounds);
+    out.background_color0 = background.color0;
+    out.background_color1 = background.color1;
+    out.background_basis = background.basis;
+    out.background_pivot = background.pivot;
     out.border_color = hsla_to_rgba(quad.border_color);
-    out.quad_id = instance_id;
+    let is_simple = !has_rounded_corners(quad.corner_radii) && !has_border(quad.border_widths);
+    out.metadata = vec4<u32>(instance_id, background.kind, select(0u, 1u, is_simple));
     return out;
 }
 
 @fragment
-fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
-    let quad = load_quad(input.quad_id);
-
-    let background_color = gradient_color(quad.background, input.position.xy, quad.bounds,
-        input.background_solid, input.background_color0, input.background_color1);
-
-    let unrounded = quad.corner_radii.top_left == 0.0 &&
-        quad.corner_radii.bottom_left == 0.0 &&
-        quad.corner_radii.top_right == 0.0 &&
-        quad.corner_radii.bottom_right == 0.0;
-
-    // Fast path when the quad is not rounded and doesn't have any border
-    if (quad.border_widths.top == 0.0 &&
-            quad.border_widths.left == 0.0 &&
-            quad.border_widths.right == 0.0 &&
-            quad.border_widths.bottom == 0.0 &&
-            unrounded) {
+fn fs_quad(input: QuadFragmentInput) -> @location(0) vec4<f32> {
+    let background = PreparedBackground(
+        input.background_color0,
+        input.background_color1,
+        input.background_basis,
+        input.background_pivot,
+        input.metadata.yz,
+    );
+    let background_color = background_color(background, input.position.xy);
+    if (input.metadata.w != 0u) {
         return blend_color(background_color, 1.0);
     }
+
+    let quad = load_quad(input.metadata.x);
+    let unrounded = !has_rounded_corners(quad.corner_radii);
 
     let size = quad.bounds.size;
     let half_size = size / 2.0;
@@ -962,14 +998,14 @@ struct Shadow {
     pad: u32, // align to 8 bytes
 }
 
-struct ShadowVarying {
+struct ShadowFragmentInput {
     @builtin(position) position: vec4<f32>,
     @location(0) @interpolate(flat) color: vec4<f32>,
     @location(1) @interpolate(flat) shadow_id: u32,
 }
 
 @vertex
-fn vs_shadow(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> ShadowVarying {
+fn vs_shadow(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> ShadowFragmentInput {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
     var shadow = load_shadow(instance_id);
 
@@ -984,7 +1020,7 @@ fn vs_shadow(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) ins
         geometry.size += 2.0 * vec2<f32>(margin);
     }
 
-    var out = ShadowVarying();
+    var out = ShadowFragmentInput();
     let vertex = clip_to_mask(unit_vertex, geometry, shadow.content_mask);
     out.position = to_device_position_impl(vertex.position);
     out.color = hsla_to_rgba(shadow.color);
@@ -993,7 +1029,7 @@ fn vs_shadow(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) ins
 }
 
 @fragment
-fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
+fn fs_shadow(input: ShadowFragmentInput) -> @location(0) vec4<f32> {
     let shadow = load_shadow(input.shadow_id);
     let half_size = shadow.bounds.size / 2.0;
     let center = shadow.bounds.origin + half_size;
@@ -1075,8 +1111,6 @@ fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) vec4<f
     }
 
     let v = load_path_vertex(input.vertex_id);
-    let background = v.color;
-    let bounds = v.bounds;
 
     var alpha: f32;
     if (length(vec2<f32>(dx.x, dy.x)) < 0.001) {
@@ -1088,14 +1122,7 @@ fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) vec4<f
         let distance = f / length(gradient);
         alpha = saturate(0.5 - distance);
     }
-    let prepared_gradient = prepare_gradient_color(
-        background.tag,
-        background.color_space,
-        background.solid,
-        background.colors,
-    );
-    let color = gradient_color(background, input.position.xy, bounds,
-        prepared_gradient.solid, prepared_gradient.color0, prepared_gradient.color1);
+    let color = background_color(prepare_background(v.color, v.bounds), input.position.xy);
     return vec4<f32>(color.rgb * color.a * alpha, color.a * alpha);
 }
 
@@ -1147,36 +1174,39 @@ struct Underline {
 }
 
 
-struct UnderlineVarying {
+struct UnderlineFragmentInput {
     @builtin(position) position: vec4<f32>,
     @location(0) @interpolate(flat) color: vec4<f32>,
     @location(1) @interpolate(flat) underline_id: u32,
+    // Straight underlines are the common case and need nothing but the color, so
+    // this rides along to spare them the instance read entirely.
+    @location(2) @interpolate(flat) wavy: u32,
 }
 
 @vertex
-fn vs_underline(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> UnderlineVarying {
+fn vs_underline(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> UnderlineFragmentInput {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
     let underline = load_underline(instance_id);
 
-    var out = UnderlineVarying();
+    var out = UnderlineFragmentInput();
     let vertex = clip_to_mask(unit_vertex, underline.bounds, underline.content_mask);
     out.position = to_device_position_impl(vertex.position);
     out.color = hsla_to_rgba(underline.color);
     out.underline_id = instance_id;
+    out.wavy = underline.wavy;
     return out;
 }
 
 @fragment
-fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
+fn fs_underline(input: UnderlineFragmentInput) -> @location(0) vec4<f32> {
     const WAVE_FREQUENCY: f32 = 2.0;
     const WAVE_HEIGHT_RATIO: f32 = 0.8;
 
-    let underline = load_underline(input.underline_id);
-    if (underline.wavy == 0u)
-    {
+    if (input.wavy == 0u) {
         return blend_color(input.color, input.color.a);
     }
 
+    let underline = load_underline(input.underline_id);
     let half_thickness = underline.thickness * 0.5;
 
     let st = (input.position.xy - underline.bounds.origin) / underline.bounds.size.y - vec2<f32>(0.0, 0.5);
@@ -1206,7 +1236,7 @@ struct MonochromeSprite {
 }
 
 
-struct MonoSpriteVarying {
+struct MonochromeSpriteFragmentInput {
     @builtin(position) position: vec4<f32>,
     @location(0) tile_position: vec2<f32>,
     @location(1) @interpolate(flat) color: vec4<f32>,
@@ -1214,11 +1244,11 @@ struct MonoSpriteVarying {
 }
 
 @vertex
-fn vs_mono_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> MonoSpriteVarying {
+fn vs_mono_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> MonochromeSpriteFragmentInput {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
     let sprite = load_mono_sprite(instance_id);
 
-    var out = MonoSpriteVarying();
+    var out = MonochromeSpriteFragmentInput();
     if (transform_is_axis_aligned(sprite.transformation)) {
         let mask = mask_in_transform_space(sprite.content_mask, sprite.transformation);
         let vertex = clip_to_mask(unit_vertex, sprite.bounds, mask);
@@ -1237,7 +1267,7 @@ fn vs_mono_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
 }
 
 @fragment
-fn fs_mono_sprite(input: MonoSpriteVarying) -> @location(0) vec4<f32> {
+fn fs_mono_sprite(input: MonochromeSpriteFragmentInput) -> @location(0) vec4<f32> {
     let sample = textureSample(t_sprite, s_sprite, input.tile_position).r;
     let alpha_corrected = apply_contrast_and_gamma_correction(sample, input.color.rgb, gamma_params.grayscale_enhanced_contrast, gamma_params.gamma_ratios);
 
@@ -1262,19 +1292,19 @@ struct PolychromeSprite {
 }
 
 
-struct PolySpriteVarying {
+struct PolychromeSpriteFragmentInput {
     @builtin(position) position: vec4<f32>,
     @location(0) tile_position: vec2<f32>,
     @location(1) @interpolate(flat) sprite_id: u32,
 }
 
 @vertex
-fn vs_poly_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> PolySpriteVarying {
+fn vs_poly_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> PolychromeSpriteFragmentInput {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
     let sprite = load_poly_sprite(instance_id);
     let vertex = clip_to_mask(unit_vertex, sprite.bounds, sprite.content_mask);
 
-    var out = PolySpriteVarying();
+    var out = PolychromeSpriteFragmentInput();
     out.position = to_device_position_impl(vertex.position);
     out.tile_position = to_tile_position(vertex.unit_vertex, sprite.tile);
     out.sprite_id = instance_id;
@@ -1282,7 +1312,7 @@ fn vs_poly_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
 }
 
 @fragment
-fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
+fn fs_poly_sprite(input: PolychromeSpriteFragmentInput) -> @location(0) vec4<f32> {
     let sample = textureSample(t_sprite, s_sprite, input.tile_position);
     let sprite = load_poly_sprite(input.sprite_id);
     let distance = quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
@@ -1314,24 +1344,24 @@ const ycbcr_to_RGB = mat4x4<f32>(
     vec4<f32>(-0.7010f,  0.5291f, -0.8860f, 1.0),
 );
 
-struct SurfaceVarying {
+struct SurfaceFragmentInput {
     @builtin(position) position: vec4<f32>,
     @location(0) texture_position: vec2<f32>,
 }
 
 @vertex
-fn vs_surface(@builtin(vertex_index) vertex_id: u32) -> SurfaceVarying {
+fn vs_surface(@builtin(vertex_index) vertex_id: u32) -> SurfaceFragmentInput {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
     let vertex = clip_to_mask(unit_vertex, surface_locals.bounds, surface_locals.content_mask);
 
-    var out = SurfaceVarying();
+    var out = SurfaceFragmentInput();
     out.position = to_device_position_impl(vertex.position);
     out.texture_position = vertex.unit_vertex;
     return out;
 }
 
 @fragment
-fn fs_surface(input: SurfaceVarying) -> @location(0) vec4<f32> {
+fn fs_surface(input: SurfaceFragmentInput) -> @location(0) vec4<f32> {
     let y_cb_cr = vec4<f32>(
         textureSampleLevel(t_y, s_surface, input.texture_position, 0.0).r,
         textureSampleLevel(t_cb_cr, s_surface, input.texture_position, 0.0).rg,

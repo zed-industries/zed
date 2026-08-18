@@ -42,35 +42,33 @@ float blur_along_x(float x, float y, float sigma, float corner,
                    float2 half_size);
 float4 over(float4 below, float4 above);
 float radians(float degrees);
-float4 fill_color(Background background, float2 position, Bounds_ScaledPixels bounds,
-  float4 solid_color, float4 color0, float4 color1);
 
-struct GradientColor {
-  float4 solid;
-  float4 color0;
-  float4 color1;
+struct PreparedBackground {
+  float4 color0 [[flat]];
+  float4 color1 [[flat]];
+  // Per-mode coefficients, measured from `pivot`:
+  //   linear gradient: (direction.xy, offset, unused)
+  //   pattern slash:   (cos, sin, period, threshold)
+  //   checkerboard:    (cell size, unused, unused, unused)
+  float4 basis [[flat]];
+  float2 pivot [[flat]];
+  uint2 kind [[flat]];
 };
-GradientColor prepare_fill_color(uint tag, uint color_space, Hsla solid, Hsla color0, Hsla color1);
 
-struct QuadVertexOutput {
-  uint quad_id [[flat]];
-  float4 position [[position]];
-  float4 border_color [[flat]];
-  float4 background_solid [[flat]];
-  float4 background_color0 [[flat]];
-  float4 background_color1 [[flat]];
-};
+PreparedBackground prepare_background(Background background, Bounds_ScaledPixels bounds);
+float4 background_color(PreparedBackground background, float2 position);
+bool has_rounded_corners(Corners_ScaledPixels corner_radii);
+bool has_border(Edges_ScaledPixels border_widths);
 
 struct QuadFragmentInput {
   uint quad_id [[flat]];
   float4 position [[position]];
   float4 border_color [[flat]];
-  float4 background_solid [[flat]];
-  float4 background_color0 [[flat]];
-  float4 background_color1 [[flat]];
+  uint is_simple [[flat]];
+  PreparedBackground background;
 };
 
-vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
+vertex QuadFragmentInput quad_vertex(uint unit_vertex_id [[vertex_id]],
                                     uint quad_id [[instance_id]],
                                     constant float2 *unit_vertices
                                     [[buffer(QuadInputIndex_Vertices)]],
@@ -85,44 +83,29 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
   float4 device_position =
       to_device_position_impl(vertex.position, viewport_size);
   float4 border_color = hsla_to_rgba(quad.border_color);
+  bool is_simple = !has_rounded_corners(quad.corner_radii) &&
+                   !has_border(quad.border_widths);
+  PreparedBackground background =
+      prepare_background(quad.background, quad.bounds);
 
-  GradientColor gradient = prepare_fill_color(
-    quad.background.tag,
-    quad.background.color_space,
-    quad.background.solid,
-    quad.background.colors[0].color,
-    quad.background.colors[1].color
-  );
-
-  return QuadVertexOutput{
+  return QuadFragmentInput{
       quad_id,
       device_position,
       border_color,
-      gradient.solid,
-      gradient.color0,
-      gradient.color1};
+      is_simple ? 1u : 0u,
+      background};
 }
 
 fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
                               constant Quad *quads
                               [[buffer(QuadInputIndex_Quads)]]) {
-  Quad quad = quads[input.quad_id];
-  float4 background_color = fill_color(quad.background, input.position.xy, quad.bounds,
-    input.background_solid, input.background_color0, input.background_color1);
-
-  bool unrounded = quad.corner_radii.top_left == 0.0 &&
-    quad.corner_radii.bottom_left == 0.0 &&
-    quad.corner_radii.top_right == 0.0 &&
-    quad.corner_radii.bottom_right == 0.0;
-
-  // Fast path when the quad is not rounded and doesn't have any border
-  if (quad.border_widths.top == 0.0 &&
-      quad.border_widths.left == 0.0 &&
-      quad.border_widths.right == 0.0 &&
-      quad.border_widths.bottom == 0.0 &&
-      unrounded) {
-    return background_color;
+  float4 background = background_color(input.background, input.position.xy);
+  if (input.is_simple != 0u) {
+    return background;
   }
+
+  Quad quad = quads[input.quad_id];
+  bool unrounded = !has_rounded_corners(quad.corner_radii);
 
   float2 size = float2(quad.bounds.size.width, quad.bounds.size.height);
   float2 half_size = size / 2.0;
@@ -181,7 +164,7 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
 
   // Fast path for points that must be part of the background
   if (is_within_inner_straight_border && !is_near_rounded_corner) {
-    return background_color;
+    return background;
   }
 
   // Signed distance of the point to the outside edge of the quad's border
@@ -214,7 +197,7 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
   // Negative when inside the border
   float border_sdf = max(inner_sdf, outer_sdf);
 
-  float4 color = background_color;
+  float4 color = background;
   if (border_sdf < antialias_threshold) {
     float4 border_color = input.border_color;
 
@@ -394,8 +377,8 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
 
     // Blend the border on top of the background and then linearly interpolate
     // between the two as we slide inside the background.
-    float4 blended_border = over(background_color, border_color);
-    color = mix(background_color, blended_border,
+    float4 blended_border = over(background, border_color);
+    color = mix(background, blended_border,
                 saturate(antialias_threshold - inner_sdf));
   }
 
@@ -452,19 +435,13 @@ float quarter_ellipse_sdf(float2 point, float2 radii) {
   return unit_circle_sdf * (radii.x + radii.y) * -0.5;
 }
 
-struct ShadowVertexOutput {
-  float4 position [[position]];
-  float4 color [[flat]];
-  uint shadow_id [[flat]];
-};
-
 struct ShadowFragmentInput {
   float4 position [[position]];
   float4 color [[flat]];
   uint shadow_id [[flat]];
 };
 
-vertex ShadowVertexOutput shadow_vertex(
+vertex ShadowFragmentInput shadow_vertex(
     uint unit_vertex_id [[vertex_id]], uint shadow_id [[instance_id]],
     constant float2 *unit_vertices [[buffer(ShadowInputIndex_Vertices)]],
     constant Shadow *shadows [[buffer(ShadowInputIndex_Shadows)]],
@@ -492,7 +469,7 @@ vertex ShadowVertexOutput shadow_vertex(
       to_device_position_impl(vertex.position, viewport_size);
   float4 color = hsla_to_rgba(shadow.color);
 
-  return ShadowVertexOutput{
+  return ShadowFragmentInput{
       device_position,
       color,
       shadow_id};
@@ -558,19 +535,16 @@ fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
   return input.color * float4(1., 1., 1., alpha);
 }
 
-struct UnderlineVertexOutput {
-  float4 position [[position]];
-  float4 color [[flat]];
-  uint underline_id [[flat]];
-};
-
 struct UnderlineFragmentInput {
   float4 position [[position]];
   float4 color [[flat]];
   uint underline_id [[flat]];
+  // Straight underlines are the common case and need nothing but the color, so
+  // this rides along to spare them the instance read entirely.
+  uint wavy [[flat]];
 };
 
-vertex UnderlineVertexOutput underline_vertex(
+vertex UnderlineFragmentInput underline_vertex(
     uint unit_vertex_id [[vertex_id]], uint underline_id [[instance_id]],
     constant float2 *unit_vertices [[buffer(UnderlineInputIndex_Vertices)]],
     constant Underline *underlines [[buffer(UnderlineInputIndex_Underlines)]],
@@ -583,10 +557,11 @@ vertex UnderlineVertexOutput underline_vertex(
   float4 device_position =
       to_device_position_impl(vertex.position, viewport_size);
   float4 color = hsla_to_rgba(underline.color);
-  return UnderlineVertexOutput{
+  return UnderlineFragmentInput{
       device_position,
       color,
-      underline_id};
+      underline_id,
+      underline.wavy};
 }
 
 fragment float4 underline_fragment(UnderlineFragmentInput input [[stage_in]],
@@ -595,37 +570,30 @@ fragment float4 underline_fragment(UnderlineFragmentInput input [[stage_in]],
   const float WAVE_FREQUENCY = 2.0;
   const float WAVE_HEIGHT_RATIO = 0.8;
 
-  Underline underline = underlines[input.underline_id];
-  if (underline.wavy) {
-    float half_thickness = underline.thickness * 0.5;
-    float2 origin =
-        float2(underline.bounds.origin.x, underline.bounds.origin.y);
-
-    float2 st = ((input.position.xy - origin) / underline.bounds.size.height) -
-                float2(0., 0.5);
-    float frequency = (M_PI_F * WAVE_FREQUENCY * underline.thickness) / underline.bounds.size.height;
-    float amplitude = (underline.thickness * WAVE_HEIGHT_RATIO) / underline.bounds.size.height;
-
-    float sine = sin(st.x * frequency) * amplitude;
-    float dSine = cos(st.x * frequency) * amplitude * frequency;
-    float distance = (st.y - sine) / sqrt(1. + dSine * dSine);
-    float distance_in_pixels = distance * underline.bounds.size.height;
-    float distance_from_top_border = distance_in_pixels - half_thickness;
-    float distance_from_bottom_border = distance_in_pixels + half_thickness;
-    float alpha = saturate(
-        0.5 - max(-distance_from_bottom_border, distance_from_top_border));
-    return input.color * float4(1., 1., 1., alpha);
-  } else {
+  if (input.wavy == 0u) {
     return input.color;
   }
-}
 
-struct MonochromeSpriteVertexOutput {
-  float4 position [[position]];
-  float2 tile_position;
-  float4 color [[flat]];
-  float4 clip_distance;
-};
+  Underline underline = underlines[input.underline_id];
+  float half_thickness = underline.thickness * 0.5;
+  float2 origin =
+      float2(underline.bounds.origin.x, underline.bounds.origin.y);
+
+  float2 st = ((input.position.xy - origin) / underline.bounds.size.height) -
+              float2(0., 0.5);
+  float frequency = (M_PI_F * WAVE_FREQUENCY * underline.thickness) / underline.bounds.size.height;
+  float amplitude = (underline.thickness * WAVE_HEIGHT_RATIO) / underline.bounds.size.height;
+
+  float sine = sin(st.x * frequency) * amplitude;
+  float dSine = cos(st.x * frequency) * amplitude * frequency;
+  float distance = (st.y - sine) / sqrt(1. + dSine * dSine);
+  float distance_in_pixels = distance * underline.bounds.size.height;
+  float distance_from_top_border = distance_in_pixels - half_thickness;
+  float distance_from_bottom_border = distance_in_pixels + half_thickness;
+  float alpha = saturate(
+      0.5 - max(-distance_from_bottom_border, distance_from_top_border));
+  return input.color * float4(1., 1., 1., alpha);
+}
 
 struct MonochromeSpriteFragmentInput {
   float4 position [[position]];
@@ -634,7 +602,7 @@ struct MonochromeSpriteFragmentInput {
   float4 clip_distance;
 };
 
-vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
+vertex MonochromeSpriteFragmentInput monochrome_sprite_vertex(
     uint unit_vertex_id [[vertex_id]], uint sprite_id [[instance_id]],
     constant float2 *unit_vertices [[buffer(SpriteInputIndex_Vertices)]],
     constant MonochromeSprite *sprites [[buffer(SpriteInputIndex_Sprites)]],
@@ -650,7 +618,7 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
                                                  sprite.content_mask.bounds, sprite.transformation);
   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
   float4 color = hsla_to_rgba(sprite.color);
-  return MonochromeSpriteVertexOutput{
+  return MonochromeSpriteFragmentInput{
       device_position,
       tile_position,
       color,
@@ -674,19 +642,13 @@ fragment float4 monochrome_sprite_fragment(
   return color;
 }
 
-struct PolychromeSpriteVertexOutput {
-  float4 position [[position]];
-  float2 tile_position;
-  uint sprite_id [[flat]];
-};
-
 struct PolychromeSpriteFragmentInput {
   float4 position [[position]];
   float2 tile_position;
   uint sprite_id [[flat]];
 };
 
-vertex PolychromeSpriteVertexOutput polychrome_sprite_vertex(
+vertex PolychromeSpriteFragmentInput polychrome_sprite_vertex(
     uint unit_vertex_id [[vertex_id]], uint sprite_id [[instance_id]],
     constant float2 *unit_vertices [[buffer(SpriteInputIndex_Vertices)]],
     constant PolychromeSprite *sprites [[buffer(SpriteInputIndex_Sprites)]],
@@ -703,7 +665,7 @@ vertex PolychromeSpriteVertexOutput polychrome_sprite_vertex(
       to_device_position_impl(vertex.position, viewport_size);
   float2 tile_position =
       to_tile_position(vertex.unit_vertex, sprite.tile, atlas_size);
-  return PolychromeSpriteVertexOutput{
+  return PolychromeSpriteFragmentInput{
       device_position,
       tile_position,
       sprite_id};
@@ -793,22 +755,8 @@ fragment float4 path_rasterization_fragment(
     alpha = saturate(0.5 - distance);
   }
 
-  GradientColor gradient_color = prepare_fill_color(
-    background.tag,
-    background.color_space,
-    background.solid,
-    background.colors[0].color,
-    background.colors[1].color
-  );
-
-  float4 color = fill_color(
-    background,
-    input.position.xy,
-    path_bounds,
-    gradient_color.solid,
-    gradient_color.color0,
-    gradient_color.color1
-  );
+  float4 color = background_color(
+    prepare_background(background, path_bounds), input.position.xy);
   return float4(color.rgb * color.a * alpha, alpha * color.a);
 }
 
@@ -848,17 +796,12 @@ fragment float4 path_sprite_fragment(
   return intermediate_texture.sample(intermediate_texture_sampler, input.texture_coords);
 }
 
-struct SurfaceVertexOutput {
-  float4 position [[position]];
-  float2 texture_position;
-};
-
 struct SurfaceFragmentInput {
   float4 position [[position]];
   float2 texture_position;
 };
 
-vertex SurfaceVertexOutput surface_vertex(
+vertex SurfaceFragmentInput surface_vertex(
     uint unit_vertex_id [[vertex_id]], uint surface_id [[instance_id]],
     constant float2 *unit_vertices [[buffer(SurfaceInputIndex_Vertices)]],
     constant SurfaceBounds *surfaces [[buffer(SurfaceInputIndex_Surfaces)]],
@@ -875,7 +818,7 @@ vertex SurfaceVertexOutput surface_vertex(
   // We are going to copy the whole texture, so the texture position
   // corresponds to the vertex's fraction within the surface bounds.
   float2 texture_position = vertex.unit_vertex;
-  return SurfaceVertexOutput{
+  return SurfaceFragmentInput{
       device_position,
       texture_position};
 }
@@ -1159,128 +1102,157 @@ float4 over(float4 below, float4 above) {
   return result;
 }
 
-GradientColor prepare_fill_color(uint tag, uint color_space, Hsla solid,
-                                     Hsla color0, Hsla color1) {
-  GradientColor out;
-  if (tag == 0 || tag == 2 || tag == 3) {
-    out.solid = hsla_to_rgba(solid);
-  } else if (tag == 1) {
-    out.color0 = hsla_to_rgba(color0);
-    out.color1 = hsla_to_rgba(color1);
-
-    // Prepare color space in vertex for avoid conversion
-    // in fragment shader for performance reasons
-    if (color_space == 1) {
-      // Oklab
-      out.color0 = srgb_to_oklab(out.color0);
-      out.color1 = srgb_to_oklab(out.color1);
-    }
-  }
-
-  return out;
+bool has_rounded_corners(Corners_ScaledPixels corner_radii) {
+  return corner_radii.top_left != 0.0 ||
+         corner_radii.top_right != 0.0 ||
+         corner_radii.bottom_right != 0.0 ||
+         corner_radii.bottom_left != 0.0;
 }
 
-float2x2 rotate2d(float angle) {
-    float s = sin(angle);
-    float c = cos(angle);
-    return float2x2(c, -s, s, c);
+bool has_border(Edges_ScaledPixels border_widths) {
+  return border_widths.top != 0.0 ||
+         border_widths.right != 0.0 ||
+         border_widths.bottom != 0.0 ||
+         border_widths.left != 0.0;
 }
 
-float4 fill_color(Background background,
-                      float2 position,
-                      Bounds_ScaledPixels bounds,
-                      float4 solid_color, float4 color0, float4 color1) {
-  float4 color;
+PreparedBackground prepare_background(Background background,
+                                     Bounds_ScaledPixels bounds) {
+  PreparedBackground output;
+  output.kind = uint2(background.tag, background.color_space);
+  output.color0 = float4(0.0);
+  output.color1 = float4(0.0);
+  output.basis = float4(0.0);
+  output.pivot = float2(bounds.origin.x, bounds.origin.y);
 
   switch (background.tag) {
-    case 0:
-      color = solid_color;
-      break;
     case 1: {
+      output.color0 = hsla_to_rgba(background.colors[0].color);
+      output.color1 = hsla_to_rgba(background.colors[1].color);
+      if (background.color_space == 1) {
+        output.color0 = srgb_to_oklab(output.color0);
+        output.color1 = srgb_to_oklab(output.color1);
+      }
+
       // -90 degrees to match the CSS gradient angle.
-      float gradient_angle = background.gradient_angle_or_pattern_height;
-      float radians = (fmod(gradient_angle, 360.0) - 90.0) * (M_PI_F / 180.0);
+      float radians =
+          (fmod(background.gradient_angle_or_pattern_height, 360.0) - 90.0) *
+          (M_PI_F / 180.0);
       float2 direction = float2(cos(radians), sin(radians));
+      float2 bounds_size = float2(bounds.size.width, bounds.size.height);
 
       // Expand the short side to be the same as the long side
-      if (bounds.size.width > bounds.size.height) {
-          direction.y *= bounds.size.height / bounds.size.width;
+      if (bounds_size.x > bounds_size.y) {
+        direction.y *= bounds_size.y / bounds_size.x;
       } else {
-          direction.x *=  bounds.size.width / bounds.size.height;
+        direction.x *= bounds_size.x / bounds_size.y;
       }
 
-      // Get the t value for the linear gradient with the color stop percentages.
-      float2 half_size = float2(bounds.size.width, bounds.size.height) / 2.;
-      float2 center = float2(bounds.origin.x, bounds.origin.y) + half_size;
-      float2 center_to_point = position - center;
-      float t = dot(center_to_point, direction) / length(direction);
-      // Check the direction to determine whether to use x or y
-      if (abs(direction.x) > abs(direction.y)) {
-          t = (t + half_size.x) / bounds.size.width;
+      float extent = abs(direction.x) > abs(direction.y) ? bounds_size.x
+                                                         : bounds_size.y;
+      float direction_length = length(direction);
+      float span = background.colors[1].percentage -
+                   background.colors[0].percentage;
+      // The half-extent term is exactly half of `extent`, so the
+      // position-independent part reduces to this.
+      float offset = 0.5 - background.colors[0].percentage;
+
+      if (direction_length == 0.0 || extent == 0.0) {
+        output.basis = float4(0.0);
+      } else if (span == 0.0) {
+        const float step = 1e30;
+        output.basis = float4(
+            direction / (direction_length * extent) * step,
+            offset * step,
+            0.0);
       } else {
-          t = (t + half_size.y) / bounds.size.height;
+        output.basis = float4(
+            direction / (direction_length * extent * span),
+            offset / span,
+            0.0);
       }
-
-      // Adjust t based on the stop percentages
-      t = (t - background.colors[0].percentage)
-        / (background.colors[1].percentage
-        - background.colors[0].percentage);
-      t = clamp(t, 0.0, 1.0);
-
-      switch (background.color_space) {
-        case 0:
-          color = mix(color0, color1, t);
-          break;
-        case 1: {
-          float4 oklab_color = mix(color0, color1, t);
-          color = oklab_to_srgb(oklab_color);
-          break;
-        }
-      }
-
-      // Dither to reduce banding in gradients (especially dark/alpha).
-      // Triangular-distributed noise breaks up 8-bit quantization steps.
-      // ±2/255 for RGB (enough for dark-on-dark compositing),
-      // ±3/255 for alpha (needs more because alpha × dark color = tiny steps).
-      {
-        float2 seed = position * 0.6180339887; // golden ratio spread
-        float r1 = fract(sin(dot(seed, float2(12.9898, 78.233))) * 43758.5453);
-        float r2 = fract(sin(dot(seed, float2(39.3460, 11.135))) * 24634.6345);
-        float tri = r1 + r2 - 1.0; // triangular PDF, range [-1, +1]
-        color.rgb += tri * 2.0 / 255.0;
-        color.a   += tri * 3.0 / 255.0;
-      }
-
+      output.pivot =
+          float2(bounds.origin.x, bounds.origin.y) + bounds_size * 0.5;
       break;
     }
     case 2: {
-        float gradient_angle_or_pattern_height = background.gradient_angle_or_pattern_height;
-        float pattern_width = (gradient_angle_or_pattern_height / 65535.0f) / 255.0f;
-        float pattern_interval = fmod(gradient_angle_or_pattern_height, 65535.0f) / 255.0f;
-        float pattern_height = pattern_width + pattern_interval;
-        float stripe_angle = M_PI_F / 4.0;
-        float pattern_period = pattern_height * sin(stripe_angle);
-        float2x2 rotation = rotate2d(stripe_angle);
-        float2 relative_position = position - float2(bounds.origin.x, bounds.origin.y);
-        float2 rotated_point = rotation * relative_position;
-        float pattern = fmod(rotated_point.x, pattern_period);
-        float distance = min(pattern, pattern_period - pattern) - pattern_period * (pattern_width / pattern_height) /  2.0f;
-        color = solid_color;
-        color.a *= saturate(0.5 - distance);
-        break;
+      output.color0 = hsla_to_rgba(background.solid);
+      float pattern_height_encoded =
+          background.gradient_angle_or_pattern_height;
+      float pattern_width = (pattern_height_encoded / 65535.0) / 255.0;
+      float pattern_interval = fmod(pattern_height_encoded, 65535.0) / 255.0;
+      float pattern_height = pattern_width + pattern_interval;
+      // Only the rotated x coordinate is used, and a row-vector multiply
+      // by the rotation reduces it to dot(v, float2(cos a, sin a)).
+      float stripe_angle = M_PI_F / 4.0;
+      float2 stripe_direction =
+          float2(cos(stripe_angle), sin(stripe_angle));
+      float pattern_period = pattern_height * sin(stripe_angle);
+      float threshold =
+          pattern_period * (pattern_width / pattern_height) / 2.0;
+      output.basis =
+          float4(stripe_direction, pattern_period, threshold);
+      break;
     }
     case 3: {
-        // checkerboard
-        float size = background.gradient_angle_or_pattern_height;
-        float2 relative_position = position - float2(bounds.origin.x, bounds.origin.y);
+      output.color0 = hsla_to_rgba(background.solid);
+      output.basis = float4(
+          background.gradient_angle_or_pattern_height, 0.0, 0.0, 0.0);
+      break;
+    }
+    default:
+      output.color0 = hsla_to_rgba(background.solid);
+      break;
+  }
 
-        float x_index = floor(relative_position.x / size);
-        float y_index = floor(relative_position.y / size);
-        float should_be_colored = fmod(x_index + y_index, 2.0);
+  return output;
+}
 
-        color = solid_color;
-        color.a *= saturate(should_be_colored);
-        break;
+// Ordered (Bayer 4x4) dither threshold, remapped to [-1, +1].
+float dither_offset(float2 position) {
+  uint2 cell = uint2(position) & 3u;
+  uint z = cell.x ^ cell.y;
+  uint threshold = ((z & 1u) << 3) |
+                   ((cell.y & 1u) << 2) |
+                   (z & 2u) |
+                   ((cell.y & 2u) >> 1);
+  return (float(threshold) + 0.5) * (1.0 / 8.0) - 1.0;
+}
+
+float4 background_color(PreparedBackground background, float2 position) {
+  float2 relative_position = position - background.pivot;
+  float4 color = background.color0;
+
+  switch (background.kind.x) {
+    case 1: {
+      float t = saturate(
+          dot(relative_position, background.basis.xy) + background.basis.z);
+      color = mix(background.color0, background.color1, t);
+      if (background.kind.y == 1) {
+        color = oklab_to_srgb(color);
+      }
+
+      // Dither to reduce banding in gradients (especially dark/alpha).
+      float dither = dither_offset(position);
+      color.rgb += dither * 1.0 / 255.0;
+      color.a += dither * 1.5 / 255.0;
+      break;
+    }
+    case 2: {
+      float period = background.basis.z;
+      float pattern =
+          fmod(dot(relative_position, background.basis.xy), period);
+      float distance = min(pattern, period - pattern) - background.basis.w;
+      color.a *= saturate(0.5 - distance);
+      break;
+    }
+    case 3: {
+      // checkerboard
+      float cell_size = background.basis.x;
+      float x_index = floor(relative_position.x / cell_size);
+      float y_index = floor(relative_position.y / cell_size);
+      color.a *= saturate(fmod(x_index + y_index, 2.0));
+      break;
     }
   }
 

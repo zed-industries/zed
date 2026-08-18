@@ -67,7 +67,7 @@ struct Background {
     uint pad;
 };
 
-struct BackgroundVarying {
+struct PreparedBackground {
     nointerpolation float4 color0: COLOR1;
     nointerpolation float4 color1: COLOR2;
     // Per-mode coefficients, measured from `pivot`:
@@ -332,8 +332,8 @@ float quad_sdf(float2 pt, Bounds bounds, Corners corner_radii) {
     return quad_sdf_impl(corner_center_to_point, corner_radius);
 }
 
-BackgroundVarying prepare_background(Background background, Bounds bounds) {
-    BackgroundVarying output;
+PreparedBackground prepare_background(Background background, Bounds bounds) {
+    PreparedBackground output;
     output.kind = uint2(background.tag, background.color_space);
     output.color0 = float4(0.0, 0.0, 0.0, 0.0);
     output.color1 = float4(0.0, 0.0, 0.0, 0.0);
@@ -422,7 +422,7 @@ float dither_offset(float2 position) {
     return (float(threshold) + 0.5) * (1.0 / 8.0) - 1.0;
 }
 
-float4 background_color(BackgroundVarying background, float2 position) {
+float4 background_color(PreparedBackground background, float2 position) {
     float2 relative_position = position - background.pivot;
     float4 color = background.color0;
 
@@ -542,25 +542,17 @@ bool has_border(Edges border_widths) {
         || border_widths.left != 0.0;
 }
 
-struct QuadVertexOutput {
-    nointerpolation uint quad_id: TEXCOORD0;
-    float4 position: SV_Position;
-    nointerpolation float4 border_color: COLOR0;
-    nointerpolation uint is_simple: TEXCOORD3;
-    BackgroundVarying background;
-};
-
 struct QuadFragmentInput {
     nointerpolation uint quad_id: TEXCOORD0;
     float4 position: SV_Position;
     nointerpolation float4 border_color: COLOR0;
     nointerpolation uint is_simple: TEXCOORD3;
-    BackgroundVarying background;
+    PreparedBackground background;
 };
 
 StructuredBuffer<Quad> quads: register(t1);
 
-QuadVertexOutput quad_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
+QuadFragmentInput quad_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     uint quad_id = batch_start_index + instance_id;
     Quad quad = quads[quad_id];
@@ -572,7 +564,7 @@ QuadVertexOutput quad_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_I
     bool is_simple = !has_rounded_corners(quad.corner_radii)
         && !has_border(quad.border_widths);
 
-    QuadVertexOutput output;
+    QuadFragmentInput output;
     output.position = device_position;
     output.border_color = border_color;
     output.quad_id = quad_id;
@@ -881,21 +873,15 @@ struct Shadow {
     uint pad; // align to 8 bytes
 };
 
-struct ShadowVertexOutput {
+struct ShadowFragmentInput {
     nointerpolation uint shadow_id: TEXCOORD0;
     float4 position: SV_Position;
     nointerpolation float4 color: COLOR;
 };
 
-struct ShadowFragmentInput {
-  nointerpolation uint shadow_id: TEXCOORD0;
-  float4 position: SV_Position;
-  nointerpolation float4 color: COLOR;
-};
-
 StructuredBuffer<Shadow> shadows: register(t1);
 
-ShadowVertexOutput shadow_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
+ShadowFragmentInput shadow_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     uint shadow_id = batch_start_index + instance_id;
     Shadow shadow = shadows[shadow_id];
@@ -915,7 +901,7 @@ ShadowVertexOutput shadow_vertex(uint vertex_id: SV_VertexID, uint instance_id: 
     float4 device_position = to_device_position_impl(vertex.position);
     float4 color = hsla_to_rgba(shadow.color);
 
-    ShadowVertexOutput output;
+    ShadowFragmentInput output;
     output.position = device_position;
     output.color = color;
     output.shadow_id = shadow_id;
@@ -1081,7 +1067,7 @@ struct Underline {
     uint wavy;
 };
 
-struct UnderlineVertexOutput {
+struct UnderlineFragmentInput {
   nointerpolation uint underline_id: TEXCOORD0;
   float4 position: SV_Position;
   nointerpolation float4 color: COLOR;
@@ -1090,16 +1076,9 @@ struct UnderlineVertexOutput {
   nointerpolation uint wavy: TEXCOORD1;
 };
 
-struct UnderlineFragmentInput {
-  nointerpolation uint underline_id: TEXCOORD0;
-  float4 position: SV_Position;
-  nointerpolation float4 color: COLOR;
-  nointerpolation uint wavy: TEXCOORD1;
-};
-
 StructuredBuffer<Underline> underlines: register(t1);
 
-UnderlineVertexOutput underline_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
+UnderlineFragmentInput underline_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     uint underline_id = batch_start_index + instance_id;
     Underline underline = underlines[underline_id];
@@ -1107,7 +1086,7 @@ UnderlineVertexOutput underline_vertex(uint vertex_id: SV_VertexID, uint instanc
     float4 device_position = to_device_position_impl(vertex.position);
     float4 color = hsla_to_rgba(underline.color);
 
-    UnderlineVertexOutput output;
+    UnderlineFragmentInput output;
     output.position = device_position;
     output.color = color;
     output.underline_id = underline_id;
@@ -1158,13 +1137,6 @@ struct MonochromeSprite {
     TransformationMatrix transformation;
 };
 
-struct MonochromeSpriteVertexOutput {
-    float4 position: SV_Position;
-    float2 tile_position: POSITION;
-    nointerpolation float4 color: COLOR;
-    float4 clip_distance: SV_ClipDistance;
-};
-
 struct MonochromeSpriteFragmentInput {
     float4 position: SV_Position;
     float2 tile_position: POSITION;
@@ -1174,7 +1146,7 @@ struct MonochromeSpriteFragmentInput {
 
 StructuredBuffer<MonochromeSprite> mono_sprites: register(t1);
 
-MonochromeSpriteVertexOutput monochrome_sprite_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
+MonochromeSpriteFragmentInput monochrome_sprite_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     uint sprite_id = batch_start_index + instance_id;
     MonochromeSprite sprite = mono_sprites[sprite_id];
@@ -1184,7 +1156,7 @@ MonochromeSpriteVertexOutput monochrome_sprite_vertex(uint vertex_id: SV_VertexI
     float2 tile_position = to_tile_position(unit_vertex, sprite.tile);
     float4 color = hsla_to_rgba(sprite.color);
 
-    MonochromeSpriteVertexOutput output;
+    MonochromeSpriteFragmentInput output;
     output.position = device_position;
     output.tile_position = tile_position;
     output.color = color;
@@ -1198,7 +1170,7 @@ float4 monochrome_sprite_fragment(MonochromeSpriteFragmentInput input): SV_Targe
     return float4(input.color.rgb, input.color.a * alpha_corrected);
 }
 
-MonochromeSpriteVertexOutput subpixel_sprite_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
+MonochromeSpriteFragmentInput subpixel_sprite_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
     return monochrome_sprite_vertex(vertex_id, instance_id);
 }
 
@@ -1232,12 +1204,6 @@ struct PolychromeSprite {
     AtlasTile tile;
 };
 
-struct PolychromeSpriteVertexOutput {
-    nointerpolation uint sprite_id: TEXCOORD0;
-    float4 position: SV_Position;
-    float2 tile_position: POSITION;
-};
-
 struct PolychromeSpriteFragmentInput {
     nointerpolation uint sprite_id: TEXCOORD0;
     float4 position: SV_Position;
@@ -1246,7 +1212,7 @@ struct PolychromeSpriteFragmentInput {
 
 StructuredBuffer<PolychromeSprite> poly_sprites: register(t1);
 
-PolychromeSpriteVertexOutput polychrome_sprite_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
+PolychromeSpriteFragmentInput polychrome_sprite_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     uint sprite_id = batch_start_index + instance_id;
     PolychromeSprite sprite = poly_sprites[sprite_id];
@@ -1254,7 +1220,7 @@ PolychromeSpriteVertexOutput polychrome_sprite_vertex(uint vertex_id: SV_VertexI
     float4 device_position = to_device_position_impl(vertex.position);
     float2 tile_position = to_tile_position(vertex.unit_vertex, sprite.tile);
 
-    PolychromeSpriteVertexOutput output;
+    PolychromeSpriteFragmentInput output;
     output.position = device_position;
     output.tile_position = tile_position;
     output.sprite_id = sprite_id;
