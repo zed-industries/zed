@@ -5582,18 +5582,42 @@ mod tests {
         host_window
             .read_with(cx, |host, cx| {
                 let menu = host.menu.read(cx);
-                assert!(
-                    matches!(
-                        menu.listing(),
-                        BreadcrumbListing::Symbols { parent: None, .. }
+                match menu.listing() {
+                    BreadcrumbListing::Symbols { parent, .. } => assert_eq!(parent, &None),
+                    listing => panic!(
+                        "right must run menu::SelectChild (drill), not editor cursor motion, \
+                         got {listing:?}"
                     ),
-                    "right must run menu::SelectChild (drill), not editor cursor motion"
-                );
+                }
                 // set_listing clears the filter; editor MoveRight would have left "mai".
-                assert!(
-                    menu.filter().is_empty(),
+                assert_eq!(
+                    menu.filter(),
+                    "",
                     "menu drill clears filter via set_listing; editor right would leave the query"
                 );
+            })
+            .unwrap();
+
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+        cx.simulate_keystrokes("left");
+        cx.run_until_parked();
+
+        host_window
+            .read_with(cx, |host, cx| {
+                let menu = host.menu.read(cx);
+                match menu.listing() {
+                    BreadcrumbListing::Directory { path, .. } => assert_eq!(
+                        path.as_unix_str(),
+                        "",
+                        "left steps out of the symbols and back to the file's directory"
+                    ),
+                    listing => panic!(
+                        "left must run menu::SelectParent, not editor cursor motion, \
+                         got {listing:?}"
+                    ),
+                }
             })
             .unwrap();
     }
