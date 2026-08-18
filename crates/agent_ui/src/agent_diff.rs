@@ -29,11 +29,11 @@ use std::{
     sync::Arc,
 };
 use ui::{CommonAnimationExt, Divider, IconButtonShape, KeyBinding, Tooltip, prelude::*};
-use util::ResultExt;
+use util::{ResultExt, truncate_and_trailoff};
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
-    item::{ItemEvent, SaveOptions, TabContentParams},
+    item::{ItemEvent, SaveOptions, TabContentParams, TabTooltipContent},
     searchable::SearchableItemHandle,
 };
 use zed_actions::assistant::ToggleFocus;
@@ -528,23 +528,33 @@ impl Item for AgentDiffPane {
             .update(cx, |editor, cx| editor.navigate(data, window, cx))
     }
 
-    fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
-        Some("Agent Diff".into())
+    fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
+        let label_content = self.tab_content_text(params.detail.unwrap_or_default(), cx);
+
+        Label::new(label_content)
+            .when(!params.selected, |this| this.color(Color::Muted))
+            .into_any_element()
     }
 
-    fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
+    fn tab_tooltip_content(&self, cx: &App) -> Option<TabTooltipContent> {
         let title = self.thread.read(cx).title();
-        Label::new(if let Some(title) = title {
-            format!("Review: {}", title)
-        } else {
-            "Review".to_string()
-        })
-        .color(if params.selected {
-            Color::Default
-        } else {
-            Color::Muted
-        })
-        .into_any_element()
+
+        Some(TabTooltipContent::Custom(Box::new(Tooltip::element({
+            let title = title.map(|title| title.to_string());
+
+            move |_, _| {
+                v_flex()
+                    .child(Label::new(
+                        title.clone().unwrap_or_else(|| "Review".to_string()),
+                    ))
+                    .child(
+                        Label::new("Agent Diff")
+                            .color(Color::Muted)
+                            .size(LabelSize::Small),
+                    )
+                    .into_any_element()
+            }
+        }))))
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -666,8 +676,11 @@ impl Item for AgentDiffPane {
         });
     }
 
-    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
-        "Agent Diff".into()
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
+        match self.thread.read(cx).title() {
+            Some(title) => format!("Review: {}", truncate_and_trailoff(&title, 20)).into(),
+            None => "Review".into(),
+        }
     }
 }
 
@@ -820,7 +833,7 @@ fn render_diff_hunk_controls(
                 .disabled(is_created_file)
                 .key_binding(
                     KeyBinding::for_action_in(&Reject, &editor.read(cx).focus_handle(cx), cx)
-                        .map(|kb| kb.size(rems_from_px(12.))),
+                        .map(|kb| kb.size(rems_from_px(12_f32))),
                 )
                 .on_click({
                     let editor = editor.clone();
@@ -843,7 +856,7 @@ fn render_diff_hunk_controls(
             Button::new(("keep", row as u64), "Keep")
                 .key_binding(
                     KeyBinding::for_action_in(&Keep, &editor.read(cx).focus_handle(cx), cx)
-                        .map(|kb| kb.size(rems_from_px(12.))),
+                        .map(|kb| kb.size(rems_from_px(12_f32))),
                 )
                 .on_click({
                     let editor = editor.clone();
@@ -1148,7 +1161,7 @@ impl Render for AgentDiffToolbar {
                                             &editor_focus_handle,
                                             cx,
                                         )
-                                        .map(|kb| kb.size(rems_from_px(12.)))
+                                        .map(|kb| kb.size(rems_from_px(12_f32)))
                                     })
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.dispatch_action(&RejectAll, window, cx)
@@ -1162,7 +1175,7 @@ impl Render for AgentDiffToolbar {
                                             &editor_focus_handle,
                                             cx,
                                         )
-                                        .map(|kb| kb.size(rems_from_px(12.)))
+                                        .map(|kb| kb.size(rems_from_px(12_f32)))
                                     })
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.dispatch_action(&KeepAll, window, cx)
@@ -1240,7 +1253,7 @@ impl Render for AgentDiffToolbar {
                                 Button::new("reject-all", "Reject All")
                                     .key_binding({
                                         KeyBinding::for_action_in(&RejectAll, &focus_handle, cx)
-                                            .map(|kb| kb.size(rems_from_px(12.)))
+                                            .map(|kb| kb.size(rems_from_px(12_f32)))
                                     })
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.dispatch_action(&RejectAll, window, cx)
@@ -1250,7 +1263,7 @@ impl Render for AgentDiffToolbar {
                                 Button::new("keep-all", "Keep All")
                                     .key_binding({
                                         KeyBinding::for_action_in(&KeepAll, &focus_handle, cx)
-                                            .map(|kb| kb.size(rems_from_px(12.)))
+                                            .map(|kb| kb.size(rems_from_px(12_f32)))
                                     })
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.dispatch_action(&KeepAll, window, cx)

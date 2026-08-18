@@ -1,25 +1,31 @@
 mod image_info;
 mod image_viewer_settings;
 
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use anyhow::Context as _;
-use editor::{EditorSettings, RevealInFileManager, items::entry_git_aware_label_color};
+use editor::{
+    Editor, EditorEvent, EditorSettings, RevealInFileManager, actions::SelectAll,
+    items::entry_git_aware_label_color,
+};
 use file_icons::FileIcons;
 use gpui::{
     AnyElement, App, Bounds, Context, DispatchPhase, Element, ElementId, Entity, EventEmitter,
     FocusHandle, Focusable, Font, GlobalElementId, InspectorElementId, InteractiveElement,
     IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, PinchEvent, Pixels, Point, Render, ScrollDelta, ScrollWheelEvent, Style, Styled,
-    Task, WeakEntity, Window, actions, checkerboard, div, img, point, px, size,
+    ParentElement, PinchEvent, Pixels, Point, Render, RenderImage, ScrollDelta, ScrollWheelEvent,
+    Style, Styled, Subscription, Task, WeakEntity, Window, actions, checkerboard, div, img, point,
+    px, size,
 };
 use language::File as _;
 use persistence::ImageViewerDb;
-use project::{ImageItem, Project, ProjectPath, image_store::ImageItemEvent};
+use project::{
+    ImageItem, Project, ProjectPath, git_store::GitStoreEvent, image_store::ImageItemEvent,
+};
 use settings::Settings;
 use theme_settings::ThemeSettings;
 use ui::{Tooltip, prelude::*};
-use util::paths::PathExt;
+use util::{ResultExt as _, paths::PathExt};
 use workspace::{
     ItemId, ItemSettings, Pane, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
     WorkspaceId, delete_unloaded_items,
@@ -51,6 +57,10 @@ const MAX_ZOOM: f32 = 20.0;
 const ZOOM_STEP: f32 = 1.1;
 const SCROLL_LINE_MULTIPLIER: f32 = 20.0;
 const BASE_SQUARE_SIZE: f32 = 32.0;
+const ZOOM_EDITOR_MIN_DIGITS: usize = 3; // Reserve room for common values like 100%.
+const ZOOM_EDITOR_MAX_DIGITS: usize = 4; // MAX_ZOOM is 2000%.
+const ZOOM_EDITOR_APPROX_CHAR_WIDTH: f32 = 8.0; // Approximate width of one small UI digit.
+const ZOOM_EDITOR_HORIZONTAL_PADDING: f32 = 12.0; // Extra room for cursor and editor edge padding.
 
 pub struct ImageView {
     image_item: Entity<ImageItem>,
@@ -61,11 +71,71 @@ pub struct ImageView {
     last_mouse_position: Option<Point<Pixels>>,
     container_bounds: Option<Bounds<Pixels>>,
     image_size: Option<(u32, u32)>,
+    pending_image: Option<Arc<gpui::Image>>,
+    displayed_image: Option<DisplayedImage>,
+}
+
+struct DisplayedImage {
+    source_image: Arc<gpui::Image>,
+    render_image: Arc<RenderImage>,
+}
+
+impl DisplayedImage {
+    fn drop_atlas_entry(&self, window: &mut Window) {
+        window.drop_image(self.render_image.clone()).log_err();
+    }
+
+    fn release(self, window: &mut Window, cx: &mut App) {
+        self.drop_atlas_entry(window);
+        self.source_image.remove_asset(cx);
+    }
 }
 
 impl ImageView {
     fn is_dragging(&self) -> bool {
         self.last_mouse_position.is_some()
+    }
+
+    fn update_displayed_image(
+        &mut self,
+        image: &Arc<gpui::Image>,
+        render_image: Option<Arc<RenderImage>>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if let Some(pending_image) = self.pending_image.take() {
+            if pending_image.id() != image.id() {
+                pending_image.remove_asset(cx);
+            } else if render_image.is_none() {
+                self.pending_image = Some(pending_image);
+            }
+        }
+
+        let Some(render_image) = render_image else {
+            self.pending_image.get_or_insert_with(|| image.clone());
+            return;
+        };
+
+        if self
+            .displayed_image
+            .as_ref()
+            .is_some_and(|displayed_image| displayed_image.render_image.id == render_image.id)
+        {
+            return;
+        }
+
+        if let Some(previous) = self.displayed_image.take() {
+            if previous.source_image.id() == image.id() {
+                previous.drop_atlas_entry(window);
+            } else {
+                previous.release(window, cx);
+            }
+        }
+
+        self.displayed_image = Some(DisplayedImage {
+            source_image: image.clone(),
+            render_image,
+        });
     }
 
     pub fn new(
@@ -76,11 +146,17 @@ impl ImageView {
     ) -> Self {
         // Start loading the image to render in the background to prevent the view
         // from flickering in most cases.
-        let _ = image_item.update(cx, |image, cx| {
-            image.image.clone().get_render_image(window, cx)
-        });
+        let pending_image = image_item.read(cx).image.clone();
+        let _render_image = pending_image.clone().get_render_image(window, cx);
 
         cx.subscribe(&image_item, Self::on_image_event).detach();
+        let git_store = project.read(cx).git_store().clone();
+        cx.subscribe(&git_store, |_, _, event, cx| {
+            if matches!(event, GitStoreEvent::DiffBaseChanged(_)) {
+                cx.emit(ImageViewEvent::TitleChanged);
+            }
+        })
+        .detach();
         cx.on_release_in(window, |this, window, cx| {
             let image_data = this.image_item.read(cx).image.clone();
             if let Some(image) = image_data.clone().get_render_image(window, cx) {
@@ -104,6 +180,8 @@ impl ImageView {
             last_mouse_position: None,
             container_bounds: None,
             image_size,
+            pending_image: Some(pending_image),
+            displayed_image: None,
         }
     }
 
@@ -377,7 +455,9 @@ impl Element for ImageContentElement {
             top = center_y - (scaled_height / 2.0) + pan_offset.y;
         }
 
-        self.image_view.update(cx, |this, _| {
+        self.image_view.update(cx, |this, cx| {
+            let render_image = image.clone().use_render_image(window, cx);
+            this.update_displayed_image(&image, render_image, window, cx);
             this.container_bounds = Some(bounds);
             if let Some(initial_zoom_level) = initial_zoom_level {
                 this.zoom_level = initial_zoom_level;
@@ -490,7 +570,9 @@ impl Item for ImageView {
             let git_status = self
                 .project
                 .read(cx)
-                .project_path_git_status(&project_path, cx)
+                .git_store()
+                .read(cx)
+                .display_status_for_project_path(&project_path, cx)
                 .map(|status| status.summary())
                 .unwrap_or_default();
 
@@ -559,7 +641,7 @@ impl Item for ImageView {
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
-        _: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Option<Entity<Self>>>
     where
@@ -574,6 +656,8 @@ impl Item for ImageView {
             last_mouse_position: None,
             container_bounds: None,
             image_size: self.image_size,
+            pending_image: None,
+            displayed_image: None,
         })))
     }
 
@@ -586,7 +670,7 @@ impl Item for ImageView {
 }
 
 fn breadcrumbs_text_for_image(project: &Project, image: &ImageItem, cx: &App) -> String {
-    let mut path = image.file.path().clone();
+    let mut path = image.file.path().to_rel_path_buf();
     if project.visible_worktrees(cx).count() > 1
         && let Some(worktree) = project.worktree_for_id(image.project_path(cx).worktree_id, cx)
     {
@@ -751,6 +835,8 @@ impl ProjectItem for ImageView {
 pub struct ImageViewToolbarControls {
     image_view: Option<WeakEntity<ImageView>>,
     _subscription: Option<gpui::Subscription>,
+    zoom_editor: Option<Entity<Editor>>,
+    _zoom_subscription: Option<Subscription>,
 }
 
 impl ImageViewToolbarControls {
@@ -758,7 +844,93 @@ impl ImageViewToolbarControls {
         Self {
             image_view: None,
             _subscription: None,
+            zoom_editor: None,
+            _zoom_subscription: None,
         }
+    }
+
+    fn start_editing_zoom(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(image_view) = self.image_view.as_ref().and_then(|v| v.upgrade()) else {
+            return;
+        };
+        let zoom_level = image_view.read(cx).zoom_level;
+        let zoom_percentage = (zoom_level * 100.0).round() as i32;
+
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_text(zoom_percentage.to_string(), window, cx);
+            editor.set_text_style_refinement(gpui::TextStyleRefinement {
+                color: Some(cx.theme().colors().text),
+                text_align: Some(gpui::TextAlign::Center),
+                font_size: Some(TextSize::Small.rems(cx).into()),
+                ..Default::default()
+            });
+            editor.select_all(&SelectAll, window, cx);
+            editor
+        });
+
+        let subscription = cx.subscribe_in(&editor, window, {
+            move |this, editor, event, window, cx| match event {
+                EditorEvent::Blurred => this.commit_edit(cx),
+                EditorEvent::Edited { .. } => {
+                    let text = editor.read(cx).text(cx);
+                    let sanitized = text
+                        .chars()
+                        .filter(|ch| ch.is_ascii_digit())
+                        .take(ZOOM_EDITOR_MAX_DIGITS)
+                        .collect::<String>();
+                    if sanitized != text {
+                        editor.update(cx, |editor, cx| editor.set_text(sanitized, window, cx));
+                    }
+                    cx.notify();
+                }
+                _ => {}
+            }
+        });
+
+        editor.focus_handle(cx).focus(window, cx);
+
+        self.zoom_editor = Some(editor);
+        self._zoom_subscription = Some(subscription);
+
+        cx.notify();
+    }
+
+    fn commit_edit(&mut self, cx: &mut Context<Self>) {
+        let Some(editor) = self.zoom_editor.as_ref() else {
+            self.cancel_edit(cx);
+            return;
+        };
+
+        let input = editor.read(cx).text(cx);
+        let parsed = input
+            .trim()
+            .parse::<u32>()
+            .ok()
+            .filter(|parsed| *parsed > 0);
+
+        let Some(parsed) = parsed else {
+            self.cancel_edit(cx);
+            return;
+        };
+
+        self._zoom_subscription = None;
+        self.zoom_editor = None;
+
+        let new_zoom = (parsed as f32 / 100.0).clamp(MIN_ZOOM, MAX_ZOOM);
+        if let Some(image_view) = self.image_view.as_ref().and_then(|v| v.upgrade()) {
+            image_view.update(cx, |this, cx| {
+                this.set_zoom(new_zoom, None, cx);
+            });
+        }
+
+        cx.notify();
+    }
+
+    fn cancel_edit(&mut self, cx: &mut Context<Self>) {
+        self.zoom_editor = None;
+        self._zoom_subscription = None;
+        cx.notify();
     }
 }
 
@@ -767,9 +939,6 @@ impl Render for ImageViewToolbarControls {
         let Some(image_view) = self.image_view.as_ref().and_then(|v| v.upgrade()) else {
             return div().into_any_element();
         };
-
-        let zoom_level = image_view.read(cx).zoom_level;
-        let zoom_percentage = format!("{}%", (zoom_level * 100.0).round() as i32);
 
         h_flex()
             .gap_1()
@@ -788,11 +957,57 @@ impl Render for ImageViewToolbarControls {
                         }
                     }),
             )
-            .child(
-                Button::new("zoom-level", zoom_percentage)
-                    .label_size(LabelSize::Small)
-                    .tooltip(|_window, cx| Tooltip::for_action("Reset Zoom", &ResetZoom, cx))
-                    .on_click({
+            .child(if let Some(editor) = self.zoom_editor.as_ref() {
+                // Grow with input, defaulting to 3-digit zoom.
+                let editor_width = px((editor
+                    .read(cx)
+                    .text(cx)
+                    .chars()
+                    .count()
+                    .clamp(ZOOM_EDITOR_MIN_DIGITS, ZOOM_EDITOR_MAX_DIGITS)
+                    as f32
+                    * ZOOM_EDITOR_APPROX_CHAR_WIDTH)
+                    + ZOOM_EDITOR_HORIZONTAL_PADDING);
+
+                h_flex()
+                    .w(editor_width)
+                    .capture_key_down(|event, _window, cx| {
+                        if event.keystroke.modifiers.control || event.keystroke.modifiers.platform {
+                            return;
+                        }
+
+                        // Only allow digits to be entered
+                        if let Some(text) = event.keystroke.key_char.as_deref()
+                            && !text.chars().all(|ch| ch.is_ascii_digit())
+                        {
+                            cx.stop_propagation();
+                        }
+                    })
+                    .child(editor.clone())
+                    .on_action::<menu::Confirm>({
+                        move |_: &menu::Confirm, window, _| {
+                            window.blur();
+                        }
+                    })
+                    .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
+                        this.cancel_edit(cx);
+                    }))
+                    .into_any_element()
+            } else {
+                let zoom_level = image_view.read(cx).zoom_level;
+                let zoom_percentage = format!("{}%", (zoom_level * 100.0).round() as i32);
+                h_flex()
+                    .px_1()
+                    .cursor_pointer()
+                    .child(Label::new(zoom_percentage).size(LabelSize::Small))
+                    .id("zoom-label")
+                    .tooltip(|_window, cx| {
+                        Tooltip::with_meta("Edit Zoom", None, "Right-click to reset to 100%.", cx)
+                    })
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.start_editing_zoom(window, cx);
+                    }))
+                    .on_mouse_down(MouseButton::Right, {
                         let image_view = image_view.downgrade();
                         move |_, window, cx| {
                             if let Some(view) = image_view.upgrade() {
@@ -801,12 +1016,13 @@ impl Render for ImageViewToolbarControls {
                                 });
                             }
                         }
-                    }),
-            )
+                    })
+                    .into_any_element()
+            })
             .child(
                 IconButton::new("zoom-in", IconName::Plus)
                     .icon_size(IconSize::Small)
-                    .tooltip(|_window, cx| Tooltip::for_action("Zoom In", &ZoomIn, cx))
+                    .tooltip(|_, cx| Tooltip::for_action("Zoom In", &ZoomIn, cx))
                     .on_click({
                         let image_view = image_view.downgrade();
                         move |_, window, cx| {
@@ -848,6 +1064,8 @@ impl ToolbarItemView for ImageViewToolbarControls {
     ) -> ToolbarItemLocation {
         self.image_view = None;
         self._subscription = None;
+        self.zoom_editor = None;
+        self._zoom_subscription = None;
 
         if let Some(item) = active_pane_item.and_then(|i| i.downcast::<ImageView>()) {
             self._subscription = Some(cx.observe(&item, |_, _, cx| {
@@ -865,6 +1083,271 @@ impl ToolbarItemView for ImageViewToolbarControls {
 pub fn init(cx: &mut App) {
     workspace::register_project_item::<ImageView>(cx);
     workspace::register_serializable_item::<ImageView>(cx);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::{FakeFs, Fs as _};
+    use gpui::{TestAppContext, VisualTestContext};
+    use settings::SettingsStore;
+    use util::rel_path::rel_path;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+    }
+
+    fn test_image(red: u8) -> Arc<gpui::Image> {
+        let bytes = format!("P3\n1 1\n255\n{red} 0 0\n").into_bytes();
+        Arc::new(gpui::Image::from_bytes(gpui::ImageFormat::Pnm, bytes))
+    }
+
+    async fn open_test_image(cx: &mut TestAppContext) -> (Entity<Project>, Entity<ImageItem>) {
+        let fs = FakeFs::new(cx.executor());
+        fs.create_dir(Path::new("/root"))
+            .await
+            .expect("test root should be created");
+        fs.insert_file("/root/image.ppm", test_image(0).bytes.clone())
+            .await;
+
+        let project = Project::test(fs, [Path::new("/root")], cx).await;
+        let worktree_id = cx.update(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .expect("test project should contain a worktree")
+                .read(cx)
+                .id()
+        });
+        let image_item = project
+            .update(cx, |project, cx| {
+                project.open_image(
+                    ProjectPath {
+                        worktree_id,
+                        path: rel_path("image.ppm").into(),
+                    },
+                    cx,
+                )
+            })
+            .await
+            .expect("test image should open");
+
+        (project, image_item)
+    }
+
+    fn draw_window(cx: &mut VisualTestContext) {
+        cx.update(|window, cx| {
+            window.refresh();
+            window.draw(cx).clear(cx);
+        });
+    }
+
+    fn displayed_source_id(image_view: &Entity<ImageView>, cx: &VisualTestContext) -> Option<u64> {
+        cx.read(|cx| {
+            image_view
+                .read(cx)
+                .displayed_image
+                .as_ref()
+                .map(|displayed_image| displayed_image.source_image.id())
+        })
+    }
+
+    fn displayed_render_image(
+        image_view: &Entity<ImageView>,
+        cx: &VisualTestContext,
+    ) -> Option<Arc<RenderImage>> {
+        cx.read(|cx| {
+            image_view
+                .read(cx)
+                .displayed_image
+                .as_ref()
+                .map(|displayed_image| displayed_image.render_image.clone())
+        })
+    }
+
+    fn replace_image(
+        image_item: &Entity<ImageItem>,
+        image: Arc<gpui::Image>,
+        cx: &mut VisualTestContext,
+    ) {
+        cx.update(|_window, cx| {
+            image_item.update(cx, |image_item, cx| {
+                image_item.image = image;
+                cx.emit(ImageItemEvent::Reloaded);
+            });
+        });
+    }
+
+    fn replace_image_and_draw(
+        image_item: &Entity<ImageItem>,
+        image: Arc<gpui::Image>,
+        cx: &mut VisualTestContext,
+    ) {
+        replace_image(image_item, image, cx);
+        draw_window(cx);
+    }
+
+    fn image_is_cached(image: &Arc<gpui::Image>, cx: &VisualTestContext) -> bool {
+        cx.read(|cx| image.is_asset_cached(cx))
+    }
+
+    #[gpui::test]
+    async fn test_reloading_removes_replaced_image_from_asset_cache(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (project, image_item) = open_test_image(cx).await;
+        let original_image = cx.read(|cx| image_item.read(cx).image.clone());
+
+        let (image_view, cx) = cx
+            .add_window_view(|window, cx| ImageView::new(image_item.clone(), project, window, cx));
+
+        cx.run_until_parked();
+        draw_window(cx);
+        assert_eq!(
+            displayed_source_id(&image_view, cx),
+            Some(original_image.id()),
+            "the original image should finish decoding and be displayed"
+        );
+
+        let reloaded_image = test_image(1);
+        replace_image_and_draw(&image_item, reloaded_image.clone(), cx);
+        cx.run_until_parked();
+        draw_window(cx);
+
+        assert_eq!(
+            displayed_source_id(&image_view, cx),
+            Some(reloaded_image.id()),
+            "the reloaded image should replace the original"
+        );
+        assert!(
+            !image_is_cached(&original_image, cx),
+            "the replaced image remained in GPUI's asset cache"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_superseded_in_flight_image_is_removed_from_asset_cache(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (project, image_item) = open_test_image(cx).await;
+
+        let (image_view, cx) = cx
+            .add_window_view(|window, cx| ImageView::new(image_item.clone(), project, window, cx));
+
+        let superseded_image = test_image(1);
+        replace_image_and_draw(&image_item, superseded_image.clone(), cx);
+        assert_ne!(
+            displayed_source_id(&image_view, cx),
+            Some(superseded_image.id()),
+            "the superseded image should still be decoding"
+        );
+
+        let current_image = test_image(2);
+        replace_image_and_draw(&image_item, current_image.clone(), cx);
+        assert_ne!(
+            displayed_source_id(&image_view, cx),
+            Some(current_image.id()),
+            "the current image should start decoding before the superseded decode completes"
+        );
+
+        cx.run_until_parked();
+        draw_window(cx);
+
+        assert_eq!(
+            displayed_source_id(&image_view, cx),
+            Some(current_image.id()),
+            "the current image should finish decoding"
+        );
+        assert!(
+            !image_is_cached(&superseded_image, cx),
+            "the superseded image remained in GPUI's asset cache"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_superseded_constructor_prefetch_is_removed_from_asset_cache(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (project, image_item) = open_test_image(cx).await;
+        let prefetched_image = cx.read(|cx| image_item.read(cx).image.clone());
+
+        let cx = cx.add_empty_window();
+        let image_view = cx.update(|window, cx| {
+            cx.new(|cx| ImageView::new(image_item.clone(), project, window, cx))
+        });
+
+        let current_image = test_image(1);
+        replace_image(&image_item, current_image, cx);
+        cx.draw(point(px(0.), px(0.)), size(px(1.), px(1.)), |_, _| {
+            image_view.clone().into_any_element()
+        });
+        cx.run_until_parked();
+
+        assert!(
+            !image_is_cached(&prefetched_image, cx),
+            "the superseded constructor prefetch remained in GPUI's asset cache"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_releasing_one_split_keeps_shared_atlas_entry(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (project, image_item) = open_test_image(cx).await;
+
+        let cx = cx.add_empty_window();
+        let original_image_view = cx.update(|window, cx| {
+            cx.new(|cx| ImageView::new(image_item.clone(), project, window, cx))
+        });
+        let split_image_view = original_image_view
+            .update_in(cx, |image_view, window, cx| {
+                image_view.clone_on_split(None, window, cx)
+            })
+            .await
+            .expect("image view should support splitting");
+
+        let draw_split_views = |cx: &mut VisualTestContext| {
+            cx.draw(point(px(0.), px(0.)), size(px(2.), px(1.)), |_, _| {
+                div()
+                    .size_full()
+                    .child(original_image_view.clone())
+                    .child(split_image_view.clone())
+            });
+        };
+
+        draw_split_views(cx);
+        cx.run_until_parked();
+        draw_split_views(cx);
+
+        let original_render_image = displayed_render_image(&original_image_view, cx)
+            .expect("the original image view should finish decoding");
+        let split_render_image = displayed_render_image(&split_image_view, cx)
+            .expect("the split image view should finish decoding");
+        assert_eq!(
+            original_render_image.id, split_render_image.id,
+            "both image views should share the decoded render image"
+        );
+        assert!(
+            cx.update(|window, _| window.has_image_atlas_entry(&original_render_image)),
+            "the shared image should be present in the window atlas"
+        );
+
+        drop(original_image_view);
+        cx.update(|_, _| {});
+        cx.run_until_parked();
+
+        assert!(
+            cx.update(|window, _| window.has_image_atlas_entry(&split_render_image)),
+            "releasing one image view removed an atlas entry still used by its split"
+        );
+
+        cx.draw(point(px(0.), px(0.)), size(px(1.), px(1.)), |_, _| {
+            split_image_view.clone().into_any_element()
+        });
+    }
 }
 
 mod persistence {

@@ -57,7 +57,7 @@ use std::{
 };
 use task::TaskTemplates;
 use url::Url;
-use util::{ResultExt, paths::RemotePathBuf, rel_path::PathExt};
+use util::{PathExt, ResultExt, paths::RemotePathBuf};
 use wasm_host::{
     WasmExtension, WasmHost,
     wit::{is_supported_wasm_api_version, wasm_api_version_range},
@@ -249,7 +249,7 @@ pub struct ExtensionIndexIconThemeEntry {
 pub struct ExtensionIndexLanguageEntry {
     pub extension: Arc<str>,
     pub path: PathBuf,
-    pub matcher: LanguageMatcher,
+    pub matcher: Arc<LanguageMatcher>,
     pub hidden: bool,
     pub grammar: Option<Arc<str>>,
 }

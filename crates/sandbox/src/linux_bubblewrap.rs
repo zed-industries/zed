@@ -48,6 +48,7 @@ const LAUNCHER_FLAG: &str = "--zed-linux-sandbox-launcher";
 /// capture must happen WSL-side because a Windows process holds no Linux fds.
 /// See `README.md`. Shared with the Windows side via `crate::WSL_SANDBOX_HELPER_FLAG`.
 const WSL_HELPER_FLAG: &str = crate::WSL_SANDBOX_HELPER_FLAG;
+const WSL_RESOLVE_FLAG: &str = crate::WSL_SANDBOX_RESOLVE_FLAG;
 /// Sentinel argv token meaning "this optional field is absent".
 const LAUNCHER_NONE: &str = "-";
 const PROXY_SOCKET_SANDBOX_PATH_PREFIX: &str = "/tmp/zed-sandbox";
@@ -608,17 +609,21 @@ pub fn wrap_invocation(
         );
     }
 
-    // Create the requested writable directories up front, with the agent's
-    // ambient permissions, so each can be bind-mounted at its exact path (see
-    // `build_bwrap_args`). Without this a not-yet-existing writable path could
-    // not be bound, and the command could not create it either (its parent is
-    // read-only inside the sandbox). Best-effort: a directory we can't create is
-    // left unbound rather than widening the sandbox to an existing ancestor.
+    // Every writable path must already exist: `bwrap` can't bind a nonexistent
+    // source, and the command can't create it either (its parent is read-only
+    // inside the sandbox). Callers hand us captured canonical paths whose
+    // inodes were pinned at policy-construction time, so a missing path here
+    // means the location vanished since capture. Never create it with the
+    // agent's ambient permissions — recreating from path text would bind a
+    // fresh, unapproved object in place of the pinned one (and historically
+    // this materialized bogus paths, e.g. a granted *file* path springing into
+    // existence as a directory). Running anyway would give the command silently
+    // less access than it believes it has — so fail closed with a clear error.
     if !permissions.allow_fs_write {
         for directory in writable_dirs {
-            if let Err(error) = std::fs::create_dir_all(directory) {
-                log::warn!(
-                    "[sandbox] could not create writable directory {}: {error}",
+            if !directory.exists() {
+                bail!(
+                    "failed to provide writable sandbox path {}: it no longer exists",
                     directory.display()
                 );
             }
@@ -652,41 +657,41 @@ pub fn wrap_invocation(
         NetworkAccess::None | NetworkAccess::All => None,
     };
 
-    // The launcher is only needed when there is something for it to do: validate
-    // writable binds, and/or run the restricted-network bridge. Otherwise the
-    // command runs directly under bwrap.
-    if validation_socket.is_some() || bridge.is_some() {
-        bwrap_args.push(bridge_program.to_string());
-        bwrap_args.push(LAUNCHER_FLAG.to_string());
-        // Field 1: validation socket (in-sandbox path) or sentinel.
-        bwrap_args.push(match validation_socket {
-            Some(socket) => socket.sandbox_socket_path.to_string_lossy().into_owned(),
-            None => LAUNCHER_NONE.to_string(),
-        });
-        // Fields 2-3: bridge socket (in-sandbox path) + port, or sentinels.
-        match &bridge {
-            Some((socket, port)) => {
-                bwrap_args.push(socket.to_string_lossy().into_owned());
-                bwrap_args.push(port.to_string());
-            }
-            None => {
-                bwrap_args.push(LAUNCHER_NONE.to_string());
-                bwrap_args.push(LAUNCHER_NONE.to_string());
-            }
+    // Always route through the in-sandbox launcher, even when there are no
+    // writable binds to validate and no restricted-network bridge: the launcher
+    // is where the seccomp filter is installed on the untrusted command (see
+    // `exec_command` / `run_bridge`). Absent fields are passed as the `-`
+    // sentinel, and `run_launcher` then just installs the filter and `exec`s.
+    bwrap_args.push(bridge_program.to_string());
+    bwrap_args.push(LAUNCHER_FLAG.to_string());
+    // Field 1: validation socket (in-sandbox path) or sentinel.
+    bwrap_args.push(match validation_socket {
+        Some(socket) => socket.sandbox_socket_path.to_string_lossy().into_owned(),
+        None => LAUNCHER_NONE.to_string(),
+    });
+    // Fields 2-3: bridge socket (in-sandbox path) + port, or sentinels.
+    match &bridge {
+        Some((socket, port)) => {
+            bwrap_args.push(socket.to_string_lossy().into_owned());
+            bwrap_args.push(port.to_string());
         }
-        // Field 4: the writable bind-destination paths to validate (count, then
-        // the paths), in the same order the host sends their fds.
-        let validation_paths: &[&Path] = if validation_socket.is_some() {
-            writable_dirs
-        } else {
-            &[]
-        };
-        bwrap_args.push(validation_paths.len().to_string());
-        for path in validation_paths {
-            bwrap_args.push(path.to_string_lossy().into_owned());
+        None => {
+            bwrap_args.push(LAUNCHER_NONE.to_string());
+            bwrap_args.push(LAUNCHER_NONE.to_string());
         }
-        bwrap_args.push("--".to_string());
     }
+    // Field 4: the writable bind-destination paths to validate (count, then
+    // the paths), in the same order the host sends their fds.
+    let validation_paths: &[&Path] = if validation_socket.is_some() {
+        writable_dirs
+    } else {
+        &[]
+    };
+    bwrap_args.push(validation_paths.len().to_string());
+    for path in validation_paths {
+        bwrap_args.push(path.to_string_lossy().into_owned());
+    }
+    bwrap_args.push("--".to_string());
 
     bwrap_args.push(program.to_string());
     bwrap_args.extend(args.iter().cloned());
@@ -859,9 +864,126 @@ fn validate_binds(socket_path: &Path, paths: &[PathBuf]) -> Result<()> {
     Ok(())
 }
 
+/// Build the seccomp-BPF program installed on the untrusted command before it
+/// runs. This is the syscall-level half of preventing session-IPC-socket
+/// sandbox escapes: a read-only bind mount does not stop `connect()` to a unix
+/// socket, so instead we stop the command from ever *obtaining* a non-IP socket.
+///
+/// The program (default action: allow):
+/// - `socket()` is denied (`EPERM`) unless the family is `AF_INET`/`AF_INET6`/
+///   `AF_NETLINK` — so no `AF_UNIX` (session IPC) or `AF_VSOCK` (VM host) sockets.
+/// - `socketpair()` is allowed only for `AF_UNIX` (a process-local pair that
+///   cannot reach anything outside the sandbox).
+/// - `io_uring_*` is denied, so its ring ops can't create/connect sockets
+///   without going through the filtered syscalls.
+/// - `ptrace`/`process_vm_*` are denied.
+///
+/// `connect`/`recvmsg`/`sendmsg`/`bind`/`listen`/`accept` stay allowed: with no
+/// way to create a forbidden socket (and — by fd hygiene — no forbidden fd
+/// inherited), there is nothing dangerous for them to act on, and blocking
+/// `connect` would break legitimate loopback/proxy use. Foreign-architecture
+/// syscalls are killed by seccompiler's arch check, closing the 32-bit-ABI
+/// (`socketcall`) bypass.
+///
+/// Returns `None` on an architecture seccompiler can't target (we ship on
+/// x86_64/aarch64, so that is not a configuration we run in practice).
+fn build_command_seccomp_program() -> Result<Option<seccompiler::BpfProgram>> {
+    use seccompiler::{
+        BpfProgram, SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition, SeccompFilter,
+        SeccompRule, TargetArch,
+    };
+    use std::collections::BTreeMap;
+
+    let Ok(target_arch) = TargetArch::try_from(std::env::consts::ARCH) else {
+        return Ok(None);
+    };
+
+    // `socket(domain, ...)`: deny unless `domain` (arg0, an `int` — compare the
+    // low 32 bits) is an allowed IP/netlink family. The rule matches when the
+    // family is none of the allowed ones, and a matched rule takes the deny
+    // action; an allowed family matches no rule and falls through to `Allow`.
+    let socket_deny = SeccompRule::new(vec![
+        SeccompCondition::new(
+            0,
+            SeccompCmpArgLen::Dword,
+            SeccompCmpOp::Ne,
+            libc::AF_INET as u64,
+        )?,
+        SeccompCondition::new(
+            0,
+            SeccompCmpArgLen::Dword,
+            SeccompCmpOp::Ne,
+            libc::AF_INET6 as u64,
+        )?,
+        SeccompCondition::new(
+            0,
+            SeccompCmpArgLen::Dword,
+            SeccompCmpOp::Ne,
+            libc::AF_NETLINK as u64,
+        )?,
+    ])?;
+    // `socketpair(domain, ...)`: allow only `AF_UNIX`.
+    let socketpair_deny = SeccompRule::new(vec![SeccompCondition::new(
+        0,
+        SeccompCmpArgLen::Dword,
+        SeccompCmpOp::Ne,
+        libc::AF_UNIX as u64,
+    )?])?;
+
+    let mut rules: BTreeMap<i64, Vec<SeccompRule>> = BTreeMap::new();
+    rules.insert(libc::SYS_socket, vec![socket_deny]);
+    rules.insert(libc::SYS_socketpair, vec![socketpair_deny]);
+    // Unconditional denials (an empty rule chain always takes the match action).
+    for syscall in [
+        libc::SYS_io_uring_setup,
+        libc::SYS_io_uring_enter,
+        libc::SYS_io_uring_register,
+        libc::SYS_ptrace,
+        libc::SYS_process_vm_readv,
+        libc::SYS_process_vm_writev,
+    ] {
+        rules.insert(syscall, Vec::new());
+    }
+
+    let filter = SeccompFilter::new(
+        rules,
+        SeccompAction::Allow,
+        SeccompAction::Errno(libc::EPERM as u32),
+        target_arch,
+    )
+    .context("building sandbox command seccomp filter")?;
+    let program =
+        BpfProgram::try_from(filter).context("compiling sandbox command seccomp filter")?;
+    Ok(Some(program))
+}
+
+/// Install [`build_command_seccomp_program`] on the calling thread, which is
+/// about to become (or `exec` into) the untrusted command; the filter survives
+/// `exec`. `apply_filter` also sets `PR_SET_NO_NEW_PRIVS`. On an unsupported
+/// architecture there is no filter to install — log and proceed rather than
+/// break the sandbox on a platform we don't ship.
+fn install_command_seccomp_filter() -> Result<()> {
+    match build_command_seccomp_program()? {
+        Some(program) => seccompiler::apply_filter(&program)
+            .context("installing sandbox command seccomp filter")?,
+        None => log::warn!(
+            "[sandbox] seccomp is unavailable on {}; the unix-socket syscall guard \
+             was not installed",
+            std::env::consts::ARCH
+        ),
+    }
+    Ok(())
+}
+
 /// Replace this process with the sandboxed command. Only returns (after logging)
 /// if `exec` itself fails.
 fn exec_command(program: &OsStr, args: &[OsString]) -> ! {
+    // Lock down socket/io_uring/ptrace syscalls right before handing control to
+    // the untrusted command; the filter survives `exec`.
+    if let Err(error) = install_command_seccomp_filter() {
+        eprintln!("zed: failed to install sandbox seccomp filter: {error:#}");
+        std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
+    }
     let error = Command::new(program).args(args).exec();
     eprintln!("zed: failed to exec sandboxed command: {error}");
     std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
@@ -889,7 +1011,32 @@ fn run_bridge(socket_path: PathBuf, port: u16, program: &OsStr, program_args: &[
         std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
     }
 
-    let mut child = match Command::new(program).args(program_args).spawn() {
+    // The command runs under the syscall filter, installed in the child via
+    // `pre_exec` — *this* bridge process must NOT be filtered, since it keeps
+    // using `AF_UNIX` to reach the host proxy for every request the command
+    // makes. Build the program before the fork; the child only applies it.
+    let seccomp_program = match build_command_seccomp_program() {
+        Ok(program) => program,
+        Err(error) => {
+            eprintln!("zed: failed to build sandbox seccomp filter: {error:#}");
+            std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
+        }
+    };
+    let mut command = Command::new(program);
+    command.args(program_args);
+    // SAFETY: the closure runs in the forked child after `fork` and before
+    // `exec`. It only calls `seccompiler::apply_filter` (a `prctl` on a program
+    // built before the fork) — async-signal-safe and allocation-free.
+    unsafe {
+        command.pre_exec(move || {
+            if let Some(program) = &seccomp_program {
+                seccompiler::apply_filter(program)
+                    .map_err(|error| std::io::Error::other(format!("seccomp: {error}")))?;
+            }
+            Ok(())
+        });
+    }
+    let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
             eprintln!("zed: failed to spawn sandboxed command: {error}");
@@ -986,18 +1133,6 @@ fn lstat_dev_ino(path: &Path) -> std::io::Result<(u64, u64)> {
     Ok((metadata.dev(), metadata.ino()))
 }
 
-/// Open an `O_PATH` descriptor pinning `path`'s inode (read/write on contents is
-/// not granted), the same capture the native-Linux policy layer performs in
-/// `HostFilesystemLocation::new`.
-fn open_o_path_fd(path: &Path) -> std::io::Result<OwnedFd> {
-    use std::os::unix::fs::OpenOptionsExt as _;
-    let file = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_PATH | libc::O_CLOEXEC)
-        .open(path)?;
-    Ok(OwnedFd::from(file))
-}
-
 /// A decoded WSL-helper invocation (`--wsl-sandbox-helper`). All fields are
 /// produced by the trusted Windows side and parsed before any untrusted command
 /// runs.
@@ -1019,7 +1154,48 @@ struct WslHelperInvocation {
 /// Handle a possible re-exec of this binary as the WSL-side sandbox helper. Does
 /// not return if it was invoked as one.
 pub fn run_wsl_helper_if_invoked() {
-    let Some(invocation) = parse_wsl_helper_args(std::env::args_os()) else {
+    let args: Vec<OsString> = std::env::args_os().collect();
+    if args.get(1).and_then(|arg| arg.to_str()) == Some(WSL_RESOLVE_FLAG) {
+        let Some(path) = args.get(2) else {
+            eprintln!("zed: malformed WSL canonical-path resolver invocation");
+            std::process::exit(127);
+        };
+        if args.len() != 3 {
+            eprintln!("zed: malformed WSL canonical-path resolver invocation");
+            std::process::exit(127);
+        }
+        match crate::util::CanonicalPathBuf::resolve(PathBuf::from(path.as_os_str())) {
+            Ok(canonical) => {
+                let Some(canonical) = canonical.path().to_str() else {
+                    eprintln!("zed: canonical WSL sandbox grant is not valid UTF-8");
+                    std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
+                };
+                let Ok(distro) = std::env::var("WSL_DISTRO_NAME") else {
+                    eprintln!("zed: WSL_DISTRO_NAME is unavailable while resolving sandbox grant");
+                    std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
+                };
+                // Classify the backing filesystem of the *canonical* target (the
+                // path that will actually be bound), so the Windows side can
+                // persist whether this grant lives on a Windows-hosted (DrvFs)
+                // filesystem, whose sandbox-integrity guarantees are weaker.
+                let fs_class = if path_is_on_windows_fs(Path::new(canonical)) {
+                    "windows-fs"
+                } else {
+                    "native-fs"
+                };
+                println!("{distro}");
+                println!("{canonical}");
+                println!("{fs_class}");
+                std::process::exit(0);
+            }
+            Err(error) => {
+                eprintln!("zed: could not resolve WSL sandbox grant: {error}");
+                std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
+            }
+        }
+    }
+
+    let Some(invocation) = parse_wsl_helper_args(args) else {
         return;
     };
     let invocation = match invocation {
@@ -1030,6 +1206,29 @@ pub fn run_wsl_helper_if_invoked() {
         }
     };
     run_wsl_helper(invocation);
+}
+
+/// Whether `path` resides on a Windows-hosted filesystem exposed to WSL via
+/// DrvFs. Inside WSL the Windows drives (`/mnt/<letter>`) are served by either
+/// 9p or virtiofs, whereas the distro's own filesystems are native (ext4/btrfs/
+/// overlay/tmpfs). We use the backing filesystem type rather than a `/mnt/`
+/// path prefix so a reconfigured automount root, or a symlink that lands on a
+/// Windows drive, is still classified correctly. Fails safe: if the type can't
+/// be determined we report `true` (weaker guarantees ⇒ warn) rather than
+/// silently treating it as native.
+fn path_is_on_windows_fs(path: &Path) -> bool {
+    // `statfs.f_type` magics for the DrvFs transports. virtiofs is FUSE-backed.
+    const V9FS_MAGIC: u64 = 0x0102_1997;
+    const FUSE_SUPER_MAGIC: u64 = 0x6573_5546;
+    match nix::sys::statfs::statfs(path) {
+        Ok(stat) => {
+            // `f_type` is `i64` on glibc but `u64` on musl, so widen it
+            // losslessly instead of comparing against a fixed-width constant.
+            u64::try_from(stat.filesystem_type().0)
+                .is_ok_and(|fs_type| fs_type == V9FS_MAGIC || fs_type == FUSE_SUPER_MAGIC)
+        }
+        Err(_) => true,
+    }
 }
 
 fn parse_wsl_helper_args(
@@ -1096,16 +1295,15 @@ fn parse_count(value: OsString, what: &str) -> Result<usize> {
     reason = "the WSL helper is a dedicated per-command process that must spawn and wait for bwrap"
 )]
 fn run_wsl_helper(invocation: WslHelperInvocation) -> ! {
-    // Capture an `O_PATH` fd per writable bind *here*, inside WSL — this is the
-    // capture-at-validation step that on native Linux happens in the Zed process.
     let mut fds = Vec::with_capacity(invocation.writable_paths.len());
     for path in &invocation.writable_paths {
-        match open_o_path_fd(path) {
+        let fd = crate::util::CanonicalPathBuf::from_canonical(path.clone())
+            .and_then(|canonical| canonical.dup_fd());
+        match fd {
             Ok(fd) => fds.push(fd),
             Err(error) => {
-                // Fail closed: a writable bind we can't pin can't be verified.
                 eprintln!(
-                    "zed: WSL sandbox helper could not open writable bind {}: {error}",
+                    "zed: WSL sandbox helper could not verify canonical writable bind {}: {error}",
                     path.display()
                 );
                 std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
@@ -1134,29 +1332,42 @@ fn run_wsl_helper(invocation: WslHelperInvocation) -> ! {
     };
 
     let mut args = invocation.base_args.clone();
+    // Always re-exec ourselves as the in-sandbox launcher, even when there is
+    // nothing to validate: the launcher is where the seccomp filter is installed
+    // on the untrusted command (see `exec_command`). When there are writable
+    // binds, also bind the validation socket so the launcher can verify them.
+    // WSL has no restricted-network bridge, so both bridge fields are the absent
+    // sentinel.
     if let Some(sender) = &validation {
-        // Bind the validation socket in (after the base args' tmpfs and writable
-        // binds so it isn't shadowed), then re-exec ourselves inside the sandbox
-        // as the validator before the real command. WSL has no restricted-network
-        // bridge, so both bridge fields are the absent sentinel.
+        // Bind the validation socket in, after the base args' tmpfs and writable
+        // binds so it isn't shadowed.
         args.push(OsString::from("--bind"));
         args.push(sender.host_socket_path().as_os_str().to_os_string());
         args.push(sender.sandbox_socket_path().as_os_str().to_os_string());
-        args.push(OsString::from("--"));
-        args.push(current_exe.into_os_string());
-        args.push(OsString::from(LAUNCHER_FLAG));
-        args.push(sender.sandbox_socket_path().as_os_str().to_os_string());
-        args.push(OsString::from(LAUNCHER_NONE));
-        args.push(OsString::from(LAUNCHER_NONE));
-        args.push(OsString::from(invocation.writable_paths.len().to_string()));
-        for path in &invocation.writable_paths {
-            args.push(path.clone().into_os_string());
-        }
-        args.push(OsString::from("--"));
-    } else {
-        // Nothing to validate — run the command directly under bwrap.
-        args.push(OsString::from("--"));
     }
+    args.push(OsString::from("--"));
+    args.push(current_exe.into_os_string());
+    args.push(OsString::from(LAUNCHER_FLAG));
+    // Field 1: validation socket (in-sandbox path) or sentinel.
+    match &validation {
+        Some(sender) => args.push(sender.sandbox_socket_path().as_os_str().to_os_string()),
+        None => args.push(OsString::from(LAUNCHER_NONE)),
+    }
+    // Fields 2-3: bridge socket + port (WSL has no bridge).
+    args.push(OsString::from(LAUNCHER_NONE));
+    args.push(OsString::from(LAUNCHER_NONE));
+    // Field 4: writable bind-destination paths to validate (count, then paths);
+    // empty when there is nothing to validate.
+    let validation_paths: &[PathBuf] = if validation.is_some() {
+        &invocation.writable_paths
+    } else {
+        &[]
+    };
+    args.push(OsString::from(validation_paths.len().to_string()));
+    for path in validation_paths {
+        args.push(path.clone().into_os_string());
+    }
+    args.push(OsString::from("--"));
     args.push(invocation.program.clone());
     args.extend(invocation.args.iter().cloned());
 
@@ -1662,6 +1873,106 @@ mod tests {
         assert!(
             error.to_string().contains("descriptor"),
             "unexpected error: {error:#}"
+        );
+    }
+
+    // The filter compiles to a non-empty BPF program on architectures
+    // seccompiler can target (the ones we ship). On others it's `None`, which is
+    // acceptable — no filter is installed there.
+    #[test]
+    fn test_command_seccomp_program_builds() {
+        let program = build_command_seccomp_program().expect("build seccomp program");
+        if let Some(program) = program {
+            assert!(!program.is_empty(), "seccomp program must not be empty");
+        }
+    }
+
+    // Actually enforce the filter: in a child process, apply it and confirm that
+    // `socket(AF_UNIX)` is denied while `socket(AF_INET)` and
+    // `socketpair(AF_UNIX)` still work — the exact guarantee that closes the
+    // unix-socket sandbox escape.
+    #[test]
+    fn test_command_seccomp_filter_blocks_unix_but_allows_ip() {
+        // Build in the parent (this allocates); the child only applies the
+        // prebuilt program and makes raw syscalls.
+        let Some(program) = build_command_seccomp_program().expect("build seccomp program") else {
+            return; // unsupported arch: nothing to enforce
+        };
+
+        // SAFETY: after `fork`, the child calls only async-signal-safe
+        // libc/`prctl` (via `apply_filter` on a program built before the fork)
+        // and `_exit`; it never returns to Rust or allocates.
+        let pid = unsafe { libc::fork() };
+        assert!(pid >= 0, "fork failed");
+        if pid == 0 {
+            if seccompiler::apply_filter(&program).is_err() {
+                unsafe { libc::_exit(10) };
+            }
+            // AF_UNIX socket creation must be denied.
+            if unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0) } >= 0 {
+                unsafe { libc::_exit(11) };
+            }
+            // AF_INET socket creation must still work.
+            let inet = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
+            if inet < 0 {
+                unsafe { libc::_exit(12) };
+            }
+            // AF_UNIX socketpair (process-local) must still work.
+            let mut fds = [0i32; 2];
+            if unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) }
+                != 0
+            {
+                unsafe { libc::_exit(13) };
+            }
+            unsafe { libc::_exit(0) };
+        }
+
+        let mut status = 0i32;
+        let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+        assert_eq!(waited, pid, "waitpid failed");
+        assert!(
+            libc::WIFEXITED(status),
+            "child did not exit normally: {status:#x}"
+        );
+        let code = libc::WEXITSTATUS(status);
+        assert_eq!(
+            code, 0,
+            "child reported a seccomp mismatch (exit {code}): 10=apply failed, \
+             11=AF_UNIX allowed, 12=AF_INET blocked, 13=socketpair blocked"
+        );
+    }
+
+    // A requested writable path that doesn't exist must fail the whole
+    // invocation — never be created with the agent's ambient permissions, and
+    // never run the command with silently less write access than the agent
+    // asked for. This check runs before `resolve_bwrap`, so the test needs no
+    // real `bwrap`.
+    #[test]
+    fn test_wrap_invocation_fails_when_writable_path_cannot_be_provided() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let unbindable = file.path().join("subdir");
+        let result = wrap_invocation(
+            "/proc/self/exe",
+            SandboxPermissions {
+                network: NetworkAccess::None,
+                allow_fs_write: false,
+            },
+            &[unbindable.as_path()],
+            &[],
+            None,
+            "/bin/true",
+            &[],
+            None,
+            None,
+        );
+        let error = result.expect_err("must fail closed when a writable path can't be provided");
+        assert!(
+            error.to_string().contains("writable sandbox path"),
+            "unexpected error: {error:#}"
+        );
+        assert!(
+            !unbindable.exists(),
+            "wrap_invocation must never create a missing writable path"
         );
     }
 }

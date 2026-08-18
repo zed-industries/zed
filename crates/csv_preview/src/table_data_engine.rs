@@ -103,7 +103,7 @@ impl DisplayToDataMapping {
     }
 
     fn apply_filtering(&mut self, filter_stack: &FilterStack, rows: &[TableRow<TableCell>]) {
-        self.retained_rows = retain_rows(rows, filter_stack);
+        self.retained_rows = retain_rows(rows, filter_stack, None);
     }
 
     /// Merges pre-computed sorting and filtering into the final display mapping

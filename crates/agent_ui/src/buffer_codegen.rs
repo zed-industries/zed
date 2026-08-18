@@ -525,18 +525,18 @@ impl CodegenAlternative {
             messages.push(user_message);
 
             let tools = vec![
-                LanguageModelRequestTool {
-                    name: REWRITE_SECTION_TOOL_NAME.to_string(),
-                    description: "Replaces text in <rewrite_this></rewrite_this> tags with your replacement_text.".to_string(),
-                    input_schema: language_model::tool_schema::root_schema_for::<RewriteSectionInput>(tool_input_format).to_value(),
-                    use_input_streaming: false,
-                },
-                LanguageModelRequestTool {
-                    name: FAILURE_MESSAGE_TOOL_NAME.to_string(),
-                    description: "Use this tool to provide a message to the user when you're unable to complete a task.".to_string(),
-                    input_schema: language_model::tool_schema::root_schema_for::<FailureMessageInput>(tool_input_format).to_value(),
-                    use_input_streaming: false,
-                },
+                LanguageModelRequestTool::function(
+                    REWRITE_SECTION_TOOL_NAME.to_string(),
+                    "Replaces text in <rewrite_this></rewrite_this> tags with your replacement_text.".to_string(),
+                    language_model::tool_schema::root_schema_for::<RewriteSectionInput>(tool_input_format).to_value(),
+                    false,
+                ),
+                LanguageModelRequestTool::function(
+                    FAILURE_MESSAGE_TOOL_NAME.to_string(),
+                    "Use this tool to provide a message to the user when you're unable to complete a task.".to_string(),
+                    language_model::tool_schema::root_schema_for::<FailureMessageInput>(tool_input_format).to_value(),
+                    false,
+                ),
             ];
 
             LanguageModelRequest {
@@ -1179,9 +1179,7 @@ impl CodegenAlternative {
                 let mut chars_read_by_tool_id = chars_read_by_tool_id.lock();
                 match tool_use.name.as_ref() {
                     REWRITE_SECTION_TOOL_NAME => {
-                        let Ok(input) =
-                            serde_json::from_value::<RewriteSectionInput>(tool_use.input)
-                        else {
+                        let Ok(input) = tool_use.input.parse::<RewriteSectionInput>() else {
                             return None;
                         };
                         let chars_read_so_far =
@@ -1198,9 +1196,7 @@ impl CodegenAlternative {
                         })
                     }
                     FAILURE_MESSAGE_TOOL_NAME => {
-                        let Ok(mut input) =
-                            serde_json::from_value::<FailureMessageInput>(tool_use.input)
-                        else {
+                        let Ok(mut input) = tool_use.input.parse::<FailureMessageInput>() else {
                             return None;
                         };
                         Some(ToolUseOutput::Failure(std::mem::take(&mut input.message)))
@@ -2011,7 +2007,9 @@ mod tests {
             id: id.into(),
             name: REWRITE_SECTION_TOOL_NAME.into(),
             raw_input: serde_json::to_string(&input).unwrap(),
-            input: serde_json::to_value(&input).unwrap(),
+            input: language_model::LanguageModelToolUseInput::Json(
+                serde_json::to_value(&input).unwrap(),
+            ),
             is_input_complete: is_complete,
             thought_signature: None,
         })
