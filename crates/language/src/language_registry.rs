@@ -9,7 +9,7 @@ use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, HashMap, HashSet, hash_map};
 pub use language_core::{
     BinaryStatus, LanguageName, LanguageQueries, LanguageServerStatusUpdate, QueryFile,
-    QueryFileContents, ServerHealth,
+    QueryFileContents, QueryFiles, ServerHealth,
 };
 use settings::{AllLanguageSettingsContent, LanguageSettingsContent};
 

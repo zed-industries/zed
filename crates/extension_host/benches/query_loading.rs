@@ -4,6 +4,7 @@ use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use extension_host::{load_plugin_language, load_plugin_queries};
 use fs::{Fs, RealFs};
 use gpui::{TestAppContext, TestDispatcher};
+use language::QueryFiles;
 use serde_json::json;
 use util::test::TempTree;
 
@@ -22,17 +23,24 @@ fn query_loading(criterion: &mut Criterion) {
         "outline.scm": "outline query",
         "overrides.scm": "overrides query",
         "textobjects.scm": "text objects query",
-        "locals.scm": "unrelated query",
     }));
     let root_path = queries.path().to_path_buf();
     let fs: Arc<dyn Fs> = Arc::new(RealFs::new(None, cx.executor()));
+    let query_files = QueryFiles::BRACKETS
+        | QueryFiles::HIGHLIGHTS
+        | QueryFiles::INDENTS
+        | QueryFiles::INJECTIONS
+        | QueryFiles::OUTLINE
+        | QueryFiles::OVERRIDES
+        | QueryFiles::TEXT_OBJECTS;
 
     criterion.bench_function("load_plugin_queries", |bencher| {
         bencher.iter(|| {
-            black_box(
-                cx.foreground_executor()
-                    .block_on(load_plugin_queries(fs.clone(), &root_path)),
-            );
+            black_box(cx.foreground_executor().block_on(load_plugin_queries(
+                fs.clone(),
+                &root_path,
+                Some(query_files),
+            )));
         });
     });
 
@@ -40,7 +48,11 @@ fn query_loading(criterion: &mut Criterion) {
         bencher.iter(|| {
             black_box(
                 cx.foreground_executor()
-                    .block_on(load_plugin_language(fs.clone(), &root_path))
+                    .block_on(load_plugin_language(
+                        fs.clone(),
+                        &root_path,
+                        Some(query_files),
+                    ))
                     .unwrap(),
             );
         });

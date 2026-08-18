@@ -104,7 +104,8 @@ pub use diagnostic::{Diagnostic, DiagnosticSourceKind};
 pub use diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup};
 pub use file_content::{ByteContent, FILE_ANALYSIS_BYTES, analyze_byte_content};
 pub use language_registry::{
-    BinaryStatus, LanguageNotFound, LanguageQueries, LanguageRegistry, QueryFile, QueryFileContents,
+    BinaryStatus, LanguageNotFound, LanguageQueries, LanguageRegistry, QueryFile,
+    QueryFileContents, QueryFiles,
 };
 pub use lsp::{LanguageServerId, LanguageServerName};
 pub use outline::*;

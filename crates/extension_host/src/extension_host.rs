@@ -37,7 +37,7 @@ use gpui::{
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{
     LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LoadedLanguage, QueryFile,
-    QueryFileContents, Rope,
+    QueryFileContents, QueryFiles, Rope,
 };
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
@@ -253,6 +253,8 @@ pub struct ExtensionIndexLanguageEntry {
     pub matcher: Arc<LanguageMatcher>,
     pub hidden: bool,
     pub grammar: Option<Arc<str>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query_files: Option<QueryFiles>,
 }
 
 actions!(
@@ -1414,10 +1416,12 @@ impl ExtensionStore {
                 language.hidden,
                 Arc::new({
                     let fs = self.fs.clone();
+                    let query_files = language.query_files;
                     move || {
                         let fs = fs.clone();
                         let language_path = language_path.clone();
-                        async move { load_plugin_language(fs, &language_path).await }.boxed()
+                        async move { load_plugin_language(fs, &language_path, query_files).await }
+                            .boxed()
                     }
                 }),
             );
@@ -1656,11 +1660,22 @@ impl ExtensionStore {
                 if !fs_metadata.is_dir {
                     continue;
                 }
-                let language_config_path = language_path.join(LanguageConfig::FILE_NAME);
-                let config = fs.load(&language_config_path).await.with_context(|| {
-                    format!("loading language config from {language_config_path:?}")
-                })?;
-                let config = ::toml::from_str::<LanguageConfig>(&config)?;
+                let config = {
+                    let fs = fs.clone();
+                    let language_config_path = language_path.join(LanguageConfig::FILE_NAME);
+                    async move {
+                        let config = fs.load(&language_config_path).await.with_context(|| {
+                            format!("loading language config from {language_config_path:?}")
+                        })?;
+                        ::toml::from_str::<LanguageConfig>(&config).map_err(anyhow::Error::from)
+                    }
+                };
+                let query_files = async {
+                    Ok(discover_query_files(fs.clone(), &language_path)
+                        .await
+                        .log_err())
+                };
+                let (config, query_files) = futures::try_join!(config, query_files)?;
 
                 let relative_path = relative_path.to_rel_path_buf()?;
                 if !extension_manifest.languages.contains(&relative_path) {
@@ -1675,6 +1690,7 @@ impl ExtensionStore {
                         matcher: config.matcher,
                         hidden: config.hidden,
                         grammar: config.grammar,
+                        query_files,
                     },
                 );
             }
@@ -1953,7 +1969,11 @@ impl ExtensionStore {
     }
 }
 
-pub async fn load_plugin_language(fs: Arc<dyn Fs>, language_path: &Path) -> Result<LoadedLanguage> {
+pub async fn load_plugin_language(
+    fs: Arc<dyn Fs>,
+    language_path: &Path,
+    query_files: Option<QueryFiles>,
+) -> Result<LoadedLanguage> {
     let config = {
         let fs = fs.clone();
         let config_path = language_path.join(LanguageConfig::FILE_NAME);
@@ -1977,7 +1997,7 @@ pub async fn load_plugin_language(fs: Arc<dyn Fs>, language_path: &Path) -> Resu
     };
     let (config, queries, context_provider) = futures::try_join!(
         config,
-        async move { Ok(load_plugin_queries(fs, &language_path).await) },
+        async move { Ok(load_plugin_queries(fs, &language_path, query_files).await) },
         async move { Ok(context_provider.await) }
     )?;
 
@@ -1990,10 +2010,30 @@ pub async fn load_plugin_language(fs: Arc<dyn Fs>, language_path: &Path) -> Resu
     })
 }
 
-pub async fn load_plugin_queries(fs: Arc<dyn Fs>, root_path: &Path) -> LanguageQueries {
-    use strum::IntoEnumIterator;
+async fn discover_query_files(fs: Arc<dyn Fs>, root_path: &Path) -> Result<QueryFiles> {
+    let mut paths = fs.read_dir(root_path).await?;
+    let mut query_files = QueryFiles::empty();
+    while let Some(path) = paths.next().await {
+        let path = path?;
+        let Some(query_file) = path
+            .file_name()
+            .and_then(|file_name| file_name.to_str())
+            .and_then(|file_name| file_name.parse::<QueryFile>().ok())
+        else {
+            continue;
+        };
+        query_files.insert(query_file.into());
+    }
+    Ok(query_files)
+}
 
-    let files = join_all(QueryFile::iter().map(|query_file| {
+pub async fn load_plugin_queries(
+    fs: Arc<dyn Fs>,
+    root_path: &Path,
+    query_files: Option<QueryFiles>,
+) -> LanguageQueries {
+    let query_files = query_files.unwrap_or_else(QueryFiles::all);
+    let files = join_all(query_files.query_files().map(|query_file| {
         let fs = fs.clone();
         let path = root_path.join(query_file.file_name());
         async move {

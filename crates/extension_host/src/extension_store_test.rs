@@ -10,7 +10,7 @@ use fs::{FakeFs, Fs, RealFs};
 use futures::{AsyncReadExt, FutureExt, StreamExt, io::BufReader};
 use gpui::{AppContext as _, BackgroundExecutor, TaskExt, TestAppContext};
 use http_client::{FakeHttpClient, Response};
-use language::{BinaryStatus, LanguageMatcher, LanguageName, LanguageRegistry};
+use language::{BinaryStatus, LanguageMatcher, LanguageName, LanguageRegistry, QueryFiles};
 use language_extension::LspAccess;
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
@@ -48,7 +48,17 @@ async fn test_load_plugin_queries(executor: BackgroundExecutor) {
     )
     .await;
 
-    let queries = load_plugin_queries(fs, Path::new("/queries")).await;
+    let queries = load_plugin_queries(
+        fs.clone(),
+        Path::new("/queries"),
+        Some(QueryFiles::HIGHLIGHTS),
+    )
+    .await;
+    assert_eq!(queries.highlights.as_deref(), Some("highlight query"));
+    assert!(queries.outline.is_none());
+    assert!(queries.brackets.is_none());
+
+    let queries = load_plugin_queries(fs, Path::new("/queries"), None).await;
     assert_eq!(queries.highlights.as_deref(), Some("highlight query"));
     assert_eq!(queries.outline.as_deref(), Some("outline query"));
     assert!(queries.brackets.is_none());
@@ -79,7 +89,18 @@ fn remote_sync_language_entry(extension: &str, path: &str) -> ExtensionIndexLang
         matcher: LanguageMatcher::default().into(),
         hidden: false,
         grammar: None,
+        query_files: None,
     }
+}
+
+#[test]
+fn legacy_language_index_entry_has_no_query_files() {
+    let entry = remote_sync_language_entry("extension", "languages/example");
+    let serialized = serde_json::to_string(&entry).unwrap();
+    assert!(!serialized.contains("query_files"));
+
+    let deserialized = serde_json::from_str::<ExtensionIndexLanguageEntry>(&serialized).unwrap();
+    assert_eq!(deserialized.query_files, None);
 }
 
 fn remote_sync_extension_ids(index: &ExtensionIndex) -> Vec<String> {
@@ -317,6 +338,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                                 path_suffixes = ["rb"]
                             "#,
                             "highlights.scm": "",
+                            "outline.scm": "",
                         },
                         "erb": {
                             "config.toml": r#"
@@ -419,6 +441,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         ..LanguageMatcher::default()
                     })
                     .into(),
+                    query_files: Some(QueryFiles::HIGHLIGHTS),
                 },
             ),
             (
@@ -434,6 +457,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         ..LanguageMatcher::default()
                     })
                     .into(),
+                    query_files: Some(QueryFiles::HIGHLIGHTS | QueryFiles::OUTLINE),
                 },
             ),
         ]
