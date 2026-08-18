@@ -75,6 +75,6 @@ That's it! Once your PR is accepted and merged, the extension will be packaged a
 
 ## Review process {#review-process}
 
-We do our best to get back to you in a reasonable time frame. However, we are very aware that this is currently not always the case - we sincerely apologize for that! Please be informed we are continuously iterating on the process in an effort to provide every submission much more quickly with feedback and with an overall better contribution experience.
+Once your PR is open, a maintainer will review it and may request changes. Keep the [pull request rules](#pull-request-rules) in mind: submissions are closed after **3 weeks of no response to maintainer feedback**.
 
-At the same time, we do have to enforce a strict time frame for PR authors: as stated in the [pull request rules](#pull-request-rules), submissions will be closed after **3 weeks of no response to maintainer feedback**. We do this in the interest of everybody to keep the queue in a more manageable state. After your PR was closed, you may open a fresh PR and we will take another look.
+For everything beyond that - how long reviews take, why we enforce the timeframe, or what to do after a PR was closed - see the [FAQ](./faq.md).

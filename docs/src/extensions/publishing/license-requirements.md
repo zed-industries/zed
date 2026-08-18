@@ -29,4 +29,4 @@ Please note that:
 
 - This license requirement applies only to your extension code itself (the code that gets compiled into the extension binary).
 - It does not apply to any tools your extension may download or interact with, such as language servers or other external dependencies.
-- If your repository contains both extension code and other projects (like a language server), you are not required to relicense those other projects — only the extension code needs to be one of the aforementioned accepted licenses.
+- If your repository contains both extension code and other projects (like a language server), you are not required to relicense those other projects; only the extension code needs to be one of the aforementioned accepted licenses.

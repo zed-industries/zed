@@ -13,7 +13,7 @@ Note that maintainers will raise non-compliance during the publishing process. S
 
 - Test your extension locally at the submodule commit you are submitting.
 - Publish functionality that is not already available in the extension registry.
-  - If you face issues with an existing extension, first try contributing to the existing extension. See [Updating and Maintenance](./updating-and-maintenance.md#maintenance) for more details on this requirement.
+  - If you face issues with an existing extension, first try contributing to the existing extension. See the [FAQ](./faq.md#reporting-issues-and-improvements) for more details on this requirement.
 - Do not misuse the extension API to work around its current limitations.
   - In rare cases, we may accept a reasonable workaround.
   - Acceptance of a workaround is at the maintainers' discretion.
@@ -33,7 +33,7 @@ Note that maintainers will raise non-compliance during the publishing process. S
 ## Language Extensions
 
 - Only provide support for the language your extension targets, as well as any dialects that are directly associated with that language.
-- You may also provide language servers and snippets for that language.
+- You may also provide language servers, debuggers and snippets for that language.
 - Choose an extension ID and name similar or equal to the name of the primary language you intend to add.
 - Do not include any Rust code should your extension not also provide language servers.
 
