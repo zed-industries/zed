@@ -93,14 +93,17 @@ impl TabularDataPreviewPane {
         workspace.register_action_renderer(|div, _, _, cx| {
             div.when(cx.has_flag::<TabularDataPreviewFeatureFlag>(), |div| {
                 div.on_action(cx.listener(|workspace, _: &OpenPreview, window, cx| {
-                    if let Some(editor) = Self::resolve_active_item_as_tabular_data_editor(workspace, cx) {
+                    if let Some(editor) =
+                        Self::resolve_active_item_as_tabular_data_editor(workspace, cx)
+                    {
                         let pane = workspace.active_pane().clone();
                         Self::open_preview_in_pane(editor, pane, window, cx);
                     }
                 }))
                 .on_action(cx.listener(
                     |workspace, _: &OpenPreviewToTheSide, window, cx| {
-                        if let Some(editor) = Self::resolve_active_item_as_tabular_data_editor(workspace, cx)
+                        if let Some(editor) =
+                            Self::resolve_active_item_as_tabular_data_editor(workspace, cx)
                         {
                             let pane = workspace.active_pane().clone();
                             Self::open_preview_to_the_side_of_pane(

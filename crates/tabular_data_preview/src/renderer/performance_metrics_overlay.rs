@@ -5,7 +5,7 @@
 
 use ui::{ActiveTheme, Context, IntoElement, ParentElement, Styled, StyledTypography, div};
 
-use crate::{TabularDataPreviewPane, PerformanceMetrics};
+use crate::{PerformanceMetrics, TabularDataPreviewPane};
 
 impl TabularDataPreviewPane {
     /// Renders a semi-transparent performance metrics overlay in the bottom-right corner.

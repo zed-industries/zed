@@ -162,7 +162,8 @@ pub fn from_buffer_with_delimiter(
         return TableLikeContent::default();
     }
 
-    let (parsed_cells_with_positions, line_numbers) = parse_delimited_text_with_positions(&text, delimiter);
+    let (parsed_cells_with_positions, line_numbers) =
+        parse_delimited_text_with_positions(&text, delimiter);
     if parsed_cells_with_positions.is_empty() {
         return TableLikeContent::default();
     }
