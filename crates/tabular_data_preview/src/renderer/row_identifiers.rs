@@ -3,11 +3,10 @@ use crate::{
     settings::RowIdentifiers,
     types::{DataRow, DisplayRow, LineNumber},
 };
-use ui::Clickable;
 use ui::{
-    ActiveTheme as _, AnyElement, ButtonCommon as _, ButtonSize, Context, FluentBuilder as _,
-    IconButton, IconButtonShape, IconName, IconSize, IntoElement as _, ParentElement as _,
-    SharedString, Styled as _, StyledTypography as _, Tooltip, div, h_flex,
+    ActiveTheme as _, AnyElement, ButtonCommon as _, ButtonSize, Clickable, Context,
+    FluentBuilder as _, IconButton, IconButtonShape, IconName, IconSize, IntoElement as _,
+    ParentElement as _, SharedString, Styled as _, StyledTypography as _, Tooltip, div, h_flex,
 };
 
 use super::settings::settings_popover_menu;
