@@ -120,16 +120,24 @@ float4 distance_from_clip_rect_transformed(float2 unit_vertex, Bounds bounds, Bo
     return distance_from_clip_rect_impl(transformed, clip_bounds);
 }
 
-// Intersects `bounds` with `mask` so the emitted geometry never covers pixels
-// outside the content mask, making per-fragment clipping unnecessary. An empty
-// intersection collapses to zero size, which rasterizes to nothing. Fragment
-// shaders reload the original bounds by instance id, so their math is
-// unaffected by the shrunken geometry.
-Bounds clip_to_mask(Bounds bounds, Bounds mask) {
-    Bounds result;
-    result.origin = max(bounds.origin, mask.origin);
-    float2 extent = min(bounds.origin + bounds.size, mask.origin + mask.size);
-    result.size = max(extent - result.origin, float2(0.0, 0.0));
+struct ClippedVertex {
+    float2 position;
+    // The corner as a fraction of the original bounds.
+    float2 unit_vertex;
+};
+
+// An empty intersection collapses to zero size, which rasterizes to nothing.
+ClippedVertex clip_to_mask(float2 unit_vertex, Bounds bounds, Bounds mask) {
+    float2 origin = max(bounds.origin, mask.origin);
+    float2 corner = min(bounds.origin + bounds.size, mask.origin + mask.size);
+    float2 size = max(corner - origin, float2(0.0, 0.0));
+
+    ClippedVertex result;
+    result.position = origin + unit_vertex * size;
+    // The clipped rect is a subset of `bounds`, so a zero-extent axis has a
+    // zero numerator too; the guard only keeps 0/0 out of the result.
+    result.unit_vertex =
+        (result.position - bounds.origin) / max(bounds.size, float2(1e-30, 1e-30));
     return result;
 }
 
@@ -309,12 +317,17 @@ float pick_corner_radius(float2 center_to_point, Corners corner_radii) {
     }
 }
 
-float4 to_device_position_transformed(float2 unit_vertex, Bounds bounds,
-                                      TransformationMatrix transformation) {
-    float2 position = unit_vertex * bounds.size + bounds.origin;
+float4 to_device_position_transformed_impl(float2 position,
+                                           TransformationMatrix transformation) {
     float2 transformed = mul(position, transformation.rotation_scale) + transformation.translation;
     float2 device_position = transformed / global_viewport_size * float2(2.0, -2.0) + float2(-1.0, 1.0);
     return float4(device_position, 0.0, 1.0);
+}
+
+float4 to_device_position_transformed(float2 unit_vertex, Bounds bounds,
+                                      TransformationMatrix transformation) {
+    return to_device_position_transformed_impl(
+        unit_vertex * bounds.size + bounds.origin, transformation);
 }
 
 // Implementation of quad signed distance field
@@ -564,7 +577,8 @@ QuadVertexOutput quad_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_I
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     uint quad_id = batch_start_index + instance_id;
     Quad quad = quads[quad_id];
-    float4 device_position = to_device_position(unit_vertex, clip_to_mask(quad.bounds, quad.content_mask));
+    float4 device_position =
+        to_device_position_impl(clip_to_mask(unit_vertex, quad.bounds, quad.content_mask).position);
 
     GradientColor gradient = prepare_gradient_color(
         quad.background.tag,
@@ -924,7 +938,8 @@ ShadowVertexOutput shadow_vertex(uint vertex_id: SV_VertexID, uint instance_id: 
         bounds.size += 2.0 * margin;
     }
 
-    float4 device_position = to_device_position(unit_vertex, clip_to_mask(bounds, shadow.content_mask));
+    float4 device_position =
+        to_device_position_impl(clip_to_mask(unit_vertex, bounds, shadow.content_mask).position);
     float4 color = hsla_to_rgba(shadow.color);
 
     ShadowVertexOutput output;
@@ -1115,8 +1130,8 @@ UnderlineVertexOutput underline_vertex(uint vertex_id: SV_VertexID, uint instanc
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     uint underline_id = batch_start_index + instance_id;
     Underline underline = underlines[underline_id];
-    float4 device_position = to_device_position(
-        unit_vertex, clip_to_mask(underline.bounds, underline.content_mask));
+    float4 device_position = to_device_position_impl(
+        clip_to_mask(unit_vertex, underline.bounds, underline.content_mask).position);
     float4 color = hsla_to_rgba(underline.color);
 
     UnderlineVertexOutput output;
@@ -1194,10 +1209,10 @@ MonochromeSpriteVertexOutput monochrome_sprite_vertex(uint vertex_id: SV_VertexI
     float4 clip_distance;
     if (transform_is_axis_aligned(sprite.transformation)) {
         Bounds mask = mask_in_transform_space(sprite.content_mask, sprite.transformation);
-        Bounds clipped = clip_to_mask(sprite.bounds, mask);
-        device_position = to_device_position_transformed(unit_vertex, clipped, sprite.transformation);
-        float2 local_position = unit_vertex * clipped.size + clipped.origin;
-        tile_position = to_tile_position((local_position - sprite.bounds.origin) / sprite.bounds.size, sprite.tile);
+        ClippedVertex vertex = clip_to_mask(unit_vertex, sprite.bounds, mask);
+        device_position =
+            to_device_position_transformed_impl(vertex.position, sprite.transformation);
+        tile_position = to_tile_position(vertex.unit_vertex, sprite.tile);
         clip_distance = float4(1.0, 1.0, 1.0, 1.0);
     } else {
         // A rotated sprite intersected with the axis-aligned mask isn't
@@ -1274,10 +1289,9 @@ PolychromeSpriteVertexOutput polychrome_sprite_vertex(uint vertex_id: SV_VertexI
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     uint sprite_id = batch_start_index + instance_id;
     PolychromeSprite sprite = poly_sprites[sprite_id];
-    Bounds clipped = clip_to_mask(sprite.bounds, sprite.content_mask);
-    float4 device_position = to_device_position(unit_vertex, clipped);
-    float2 position = unit_vertex * clipped.size + clipped.origin;
-    float2 tile_position = to_tile_position((position - sprite.bounds.origin) / sprite.bounds.size, sprite.tile);
+    ClippedVertex vertex = clip_to_mask(unit_vertex, sprite.bounds, sprite.content_mask);
+    float4 device_position = to_device_position_impl(vertex.position);
+    float2 tile_position = to_tile_position(vertex.unit_vertex, sprite.tile);
 
     PolychromeSpriteVertexOutput output;
     output.position = device_position;

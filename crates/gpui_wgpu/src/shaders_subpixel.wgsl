@@ -31,10 +31,9 @@ fn vs_subpixel_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_i
     var out = SubpixelSpriteOutput();
     if (transform_is_axis_aligned(sprite.transformation)) {
         let mask = mask_in_transform_space(sprite.content_mask, sprite.transformation);
-        let clipped = clip_to_mask(sprite.bounds, mask);
-        out.position = to_device_position_transformed(unit_vertex, clipped, sprite.transformation);
-        let local_position = unit_vertex * clipped.size + clipped.origin;
-        out.tile_position = to_tile_position((local_position - sprite.bounds.origin) / sprite.bounds.size, sprite.tile);
+        let vertex = clip_to_mask(unit_vertex, sprite.bounds, mask);
+        out.position = to_device_position_transformed_impl(vertex.position, sprite.transformation);
+        out.tile_position = to_tile_position(vertex.unit_vertex, sprite.tile);
         out.clip_distances = vec4<f32>(1.0);
     } else {
         // A rotated sprite intersected with the axis-aligned mask isn't
