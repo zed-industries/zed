@@ -531,7 +531,7 @@ impl ActivityIndicator {
             return Some(Content {
                 icon: ActivityIcon::Icon(IconName::Download),
                 message: format!(
-                    "Downloading {}...",
+                    "Downloading {}…",
                     downloading.iter().map(|name| name.as_ref()).fold(
                         String::new(),
                         |mut acc, s| {
@@ -556,7 +556,7 @@ impl ActivityIndicator {
             return Some(Content {
                 icon: ActivityIcon::Icon(IconName::Download),
                 message: format!(
-                    "Checking for updates to {}...",
+                    "Checking for updates to {}…",
                     checking_for_update.iter().map(|name| name.as_ref()).fold(
                         String::new(),
                         |mut acc, s| {

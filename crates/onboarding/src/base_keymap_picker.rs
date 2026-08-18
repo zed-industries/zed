@@ -107,7 +107,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Select a base keymap...".into()
+        "Select a base keymap…".into()
     }
 
     fn match_count(&self) -> usize {
