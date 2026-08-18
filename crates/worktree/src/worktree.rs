@@ -59,6 +59,7 @@ use std::{
     ffi::OsStr,
     fmt,
     future::Future,
+    io::Read,
     mem::{self},
     ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
@@ -7176,6 +7177,25 @@ impl fs::Watcher for NullWatcher {
     }
 }
 
+/// Reads the beginning of `file` to determine its kind and encoding, returning
+/// the bytes consumed and whether the file ended within them.
+fn read_file_header(file: &mut dyn Read, abs_path: &Path) -> Result<(Vec<u8>, bool)> {
+    let mut header = Vec::with_capacity(FILE_ANALYSIS_BYTES);
+    let mut buf = [0u8; FILE_ANALYSIS_BYTES];
+    let mut reached_eof = false;
+    while header.len() < FILE_ANALYSIS_BYTES {
+        let n = file
+            .read(&mut buf)
+            .with_context(|| format!("reading bytes of the file {abs_path:?}"))?;
+        if n == 0 {
+            reached_eof = true;
+            break;
+        }
+        header.extend_from_slice(&buf[..n]);
+    }
+    Ok((header, reached_eof))
+}
+
 pub async fn decode_file_text(
     fs: &dyn Fs,
     abs_path: &Path,
@@ -7185,24 +7205,7 @@ pub async fn decode_file_text(
         .await
         .with_context(|| format!("opening file {abs_path:?}"))?;
 
-    // First, read the beginning of the file to determine its kind and encoding.
-    // We do not want to load an entire large blob into memory only to discard it.
-    let mut file_first_bytes = Vec::with_capacity(FILE_ANALYSIS_BYTES);
-    let mut buf = [0u8; FILE_ANALYSIS_BYTES];
-    let mut reached_eof = false;
-    loop {
-        if file_first_bytes.len() >= FILE_ANALYSIS_BYTES {
-            break;
-        }
-        let n = file
-            .read(&mut buf)
-            .with_context(|| format!("reading bytes of the file {abs_path:?}"))?;
-        if n == 0 {
-            reached_eof = true;
-            break;
-        }
-        file_first_bytes.extend_from_slice(&buf[..n]);
-    }
+    let (file_first_bytes, reached_eof) = read_file_header(&mut *file, abs_path)?;
     let (_, byte_content) = decode_byte_header(&file_first_bytes);
     anyhow::ensure!(
         byte_content != ByteContent::Binary,
@@ -7240,24 +7243,7 @@ pub async fn decode_file_text_to_rope(
         .await
         .with_context(|| format!("opening file {abs_path:?}"))?;
 
-    // First, read the beginning of the file to determine its kind and encoding.
-    // We do not want to load an entire large blob into memory only to discard it.
-    let mut prefix = Vec::with_capacity(FILE_ANALYSIS_BYTES);
-    let mut buf = [0u8; FILE_ANALYSIS_BYTES];
-    let mut reached_eof = false;
-    loop {
-        if prefix.len() >= FILE_ANALYSIS_BYTES {
-            break;
-        }
-        let n = file
-            .read(&mut buf)
-            .with_context(|| format!("reading bytes of the file {abs_path:?}"))?;
-        if n == 0 {
-            reached_eof = true;
-            break;
-        }
-        prefix.extend_from_slice(&buf[..n]);
-    }
+    let (prefix, reached_eof) = read_file_header(&mut *file, abs_path)?;
     let (bom_encoding, byte_content) = decode_byte_header(&prefix);
     anyhow::ensure!(
         byte_content != ByteContent::Binary,
@@ -7269,7 +7255,7 @@ pub async fn decode_file_text_to_rope(
     if bom_encoding.is_none()
         && byte_content == ByteContent::Unknown
         && let Some((rope, line_ending)) =
-            stream_utf8_into_rope(&mut file, prefix, reached_eof, abs_path)?
+            stream_utf8_into_rope(&mut *file, prefix, reached_eof, abs_path)?
     {
         return Ok((rope, line_ending, encoding_rs::UTF_8, false));
     }
@@ -7288,7 +7274,7 @@ pub async fn decode_file_text_to_rope(
 /// caller re-reads it and decodes it the slow way. `prefix` is the portion of
 /// the file already consumed from `file` for encoding detection.
 fn stream_utf8_into_rope(
-    file: &mut Box<dyn std::io::Read + Send + Sync>,
+    file: &mut dyn Read,
     prefix: Vec<u8>,
     reached_eof: bool,
     abs_path: &Path,
@@ -7408,8 +7394,7 @@ mod tests {
     /// Streams `bytes` the way `decode_file_text_to_rope` would, returning the
     /// decoded text and detected line ending, or `None` if the fast path bailed.
     fn stream(bytes: &[u8]) -> Option<(String, LineEnding)> {
-        let mut reader: Box<dyn std::io::Read + Send + Sync> =
-            Box::new(std::io::Cursor::new(bytes.to_vec()));
+        let mut reader = std::io::Cursor::new(bytes.to_vec());
         stream_utf8_into_rope(&mut reader, Vec::new(), false, Path::new("test"))
             .unwrap()
             .map(|(rope, line_ending)| (rope.to_string(), line_ending))
