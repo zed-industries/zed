@@ -471,6 +471,7 @@
       "alt-.": "vim::RepeatFind",
       "alt-b": "editor::MoveToStartOfLargerSyntaxNode",
       "alt-e": "editor::MoveToEndOfLargerSyntaxNode",
+      "shift-g": "vim::HelixGotoLine",
 
       // Changes
       "shift-r": "editor::Paste",
