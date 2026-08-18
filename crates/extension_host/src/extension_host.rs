@@ -1969,7 +1969,7 @@ impl ExtensionStore {
     }
 }
 
-pub async fn load_plugin_language(
+async fn load_plugin_language(
     fs: Arc<dyn Fs>,
     language_path: &Path,
     query_files: Option<QueryFiles>,
@@ -2027,7 +2027,7 @@ async fn discover_query_files(fs: Arc<dyn Fs>, root_path: &Path) -> Result<Query
     Ok(query_files)
 }
 
-pub async fn load_plugin_queries(
+async fn load_plugin_queries(
     fs: Arc<dyn Fs>,
     root_path: &Path,
     query_files: Option<QueryFiles>,

@@ -77,9 +77,5 @@ zlog.workspace = true
 name = "extension_compilation_benchmark"
 harness = false
 
-[[bench]]
-name = "query_loading"
-harness = false
-
 [package.metadata.cargo-machete]
 ignored = ["tracing"]
