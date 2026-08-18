@@ -223,52 +223,87 @@ mod tests {
     }
 
     #[test]
-    fn can_deserialize_ts_tasks() {
-        const TYPESCRIPT_TASKS: &str = include_str!("../test_data/typescript.json");
-        let vscode_definitions: VsCodeTaskFile =
-            serde_json_lenient::from_str(TYPESCRIPT_TASKS).unwrap();
+    fn can_deserialize_gulp_tasks() {
+        const GULP_TASKS: &str = include_str!("../test_data/tasks-gulp.json");
+        let vscode_definitions: VsCodeTaskFile = serde_json_lenient::from_str(GULP_TASKS).unwrap();
+
+        let expected = vec![VsCodeTaskDefinition {
+            label: "gulp: build tests".to_string(),
+            command: Some(Command::Gulp {
+                task: "build".to_string(),
+            }),
+            other_attributes: Default::default(),
+            options: None,
+        }];
+
+        assert_eq!(vscode_definitions.tasks.len(), expected.len());
+        vscode_definitions
+            .tasks
+            .iter()
+            .zip(expected)
+            .for_each(|(lhs, rhs)| compare_without_other_attributes(lhs.clone(), rhs));
+
+        let expected = vec![TaskTemplate {
+            label: "gulp: build tests".to_string(),
+            command: "gulp".to_string(),
+            args: vec!["build".to_string()],
+            ..Default::default()
+        }];
+
+        let tasks: TaskTemplates = vscode_definitions.try_into().unwrap();
+        assert_eq!(tasks.0, expected);
+    }
+
+    #[test]
+    fn can_deserialize_npm_tasks() {
+        const NPM_TASKS: &str = include_str!("../test_data/tasks-npm.json");
+        let vscode_definitions: VsCodeTaskFile = serde_json_lenient::from_str(NPM_TASKS).unwrap();
 
         let expected = vec![
             VsCodeTaskDefinition {
-                label: "gulp: tests".to_string(),
+                label: "With env".to_string(),
                 command: Some(Command::Npm {
-                    script: "build:tests:notypecheck".to_string(),
+                    script: "build".to_string(),
                     path: None,
+                }),
+                other_attributes: Default::default(),
+                options: Some(super::TaskOptions {
+                    cwd: None,
+                    env: HashMap::from_iter([("NODE_ENV".to_string(), "production".to_string())]),
+                }),
+            },
+            VsCodeTaskDefinition {
+                label: "With path".to_string(),
+                command: Some(Command::Npm {
+                    script: "build".to_string(),
+                    path: Some("packages/components".to_string()),
                 }),
                 other_attributes: Default::default(),
                 options: None,
             },
             VsCodeTaskDefinition {
-                label: "tsc: watch ./src".to_string(),
-                command: Some(Command::Shell {
-                    command: "node".to_string(),
-                    args: vec![
-                        "${workspaceFolder}/node_modules/typescript/lib/tsc.js".to_string(),
-                        "--build".to_string(),
-                        "${workspaceFolder}/src".to_string(),
-                        "--watch".to_string(),
-                    ],
-                }),
-                other_attributes: Default::default(),
-                options: None,
-            },
-            VsCodeTaskDefinition {
-                label: "npm: build:compiler".to_string(),
+                label: "With cwd".to_string(),
                 command: Some(Command::Npm {
-                    script: "build:compiler".to_string(),
+                    script: "build".to_string(),
                     path: None,
                 }),
                 other_attributes: Default::default(),
-                options: None,
+                options: Some(super::TaskOptions {
+                    cwd: Some("${workspaceFolder}/packages/app".to_string()),
+                    env: Default::default(),
+                }),
             },
             VsCodeTaskDefinition {
-                label: "npm: build:tests".to_string(),
+                label: "With path and cwd".to_string(),
                 command: Some(Command::Npm {
-                    script: "build:tests:notypecheck".to_string(),
-                    path: None,
+                    script: "build".to_string(),
+                    path: Some("packages/components".to_string()),
                 }),
                 other_attributes: Default::default(),
-                options: None,
+                options: Some(super::TaskOptions {
+                    cwd: Some("${workspaceFolder}/packages/app".to_string()),
+                    env: Default::default(),
+                }),
             },
         ];
 
@@ -281,55 +316,28 @@ mod tests {
 
         let expected = vec![
             TaskTemplate {
-                label: "gulp: tests".to_string(),
-                command: "npm".to_string(),
-                args: vec!["run".to_string(), "build:tests:notypecheck".to_string()],
-                ..Default::default()
-            },
-            TaskTemplate {
-                label: "tsc: watch ./src".to_string(),
-                command: "node".to_string(),
-                args: vec![
-                    "${ZED_WORKTREE_ROOT}/node_modules/typescript/lib/tsc.js".to_string(),
-                    "--build".to_string(),
-                    "${ZED_WORKTREE_ROOT}/src".to_string(),
-                    "--watch".to_string(),
-                ],
-                ..Default::default()
-            },
-            TaskTemplate {
-                label: "npm: build:compiler".to_string(),
-                command: "npm".to_string(),
-                args: vec!["run".to_string(), "build:compiler".to_string()],
-                ..Default::default()
-            },
-            TaskTemplate {
-                label: "npm: build:tests".to_string(),
-                command: "npm".to_string(),
-                args: vec!["run".to_string(), "build:tests:notypecheck".to_string()],
-                ..Default::default()
-            },
-        ];
-
-        let tasks: TaskTemplates = vscode_definitions.try_into().unwrap();
-        assert_eq!(tasks.0, expected);
-    }
-
-    #[test]
-    fn can_deserialize_npm_monorepo_tasks() {
-        const NPM_TASKS: &str = include_str!("../test_data/npm-monorepo.json");
-        let vscode_definitions: VsCodeTaskFile = serde_json_lenient::from_str(NPM_TASKS).unwrap();
-        let expected = vec![
-            TaskTemplate {
-                label: "Build components".to_string(),
+                label: "With env".to_string(),
                 command: "npm".to_string(),
                 args: vec!["run".to_string(), "build".to_string()],
                 env: HashMap::from_iter([("NODE_ENV".to_string(), "production".to_string())]),
+                ..Default::default()
+            },
+            TaskTemplate {
+                label: "With path".to_string(),
+                command: "npm".to_string(),
+                args: vec!["run".to_string(), "build".to_string()],
                 cwd: Some("$ZED_WORKTREE_ROOT/packages/components".to_string()),
                 ..Default::default()
             },
             TaskTemplate {
-                label: "Build app".to_string(),
+                label: "With cwd".to_string(),
+                command: "npm".to_string(),
+                args: vec!["run".to_string(), "build".to_string()],
+                cwd: Some("${ZED_WORKTREE_ROOT}/packages/app".to_string()),
+                ..Default::default()
+            },
+            TaskTemplate {
+                label: "With path and cwd".to_string(),
                 command: "npm".to_string(),
                 args: vec!["run".to_string(), "build".to_string()],
                 cwd: Some("${ZED_WORKTREE_ROOT}/packages/app".to_string()),
@@ -341,29 +349,10 @@ mod tests {
     }
 
     #[test]
-    fn can_deserialize_rust_analyzer_tasks() {
-        const RUST_ANALYZER_TASKS: &str = include_str!("../test_data/rust-analyzer.json");
-        let vscode_definitions: VsCodeTaskFile =
-            serde_json_lenient::from_str(RUST_ANALYZER_TASKS).unwrap();
+    fn can_deserialize_shell_tasks() {
+        const SHELL_TASKS: &str = include_str!("../test_data/tasks-shell.json");
+        let vscode_definitions: VsCodeTaskFile = serde_json_lenient::from_str(SHELL_TASKS).unwrap();
         let expected = vec![
-            VsCodeTaskDefinition {
-                label: "Build Extension in Background".to_string(),
-                command: Some(Command::Npm {
-                    script: "watch".to_string(),
-                    path: Some("editors/code/".to_string()),
-                }),
-                options: None,
-                other_attributes: Default::default(),
-            },
-            VsCodeTaskDefinition {
-                label: "Build Extension".to_string(),
-                command: Some(Command::Npm {
-                    script: "build".to_string(),
-                    path: Some("editors/code/".to_string()),
-                }),
-                options: None,
-                other_attributes: Default::default(),
-            },
             VsCodeTaskDefinition {
                 label: "Build Server".to_string(),
                 command: Some(Command::Shell {
@@ -378,15 +367,6 @@ mod tests {
                 command: Some(Command::Shell {
                     command: "cargo build --release --package rust-analyzer".to_string(),
                     args: Default::default(),
-                }),
-                options: None,
-                other_attributes: Default::default(),
-            },
-            VsCodeTaskDefinition {
-                label: "Pretest".to_string(),
-                command: Some(Command::Npm {
-                    script: "pretest".to_string(),
-                    path: Some("editors/code/".to_string()),
                 }),
                 options: None,
                 other_attributes: Default::default(),
@@ -412,20 +392,6 @@ mod tests {
             .for_each(|(lhs, rhs)| compare_without_other_attributes(lhs.clone(), rhs));
         let expected = vec![
             TaskTemplate {
-                label: "Build Extension in Background".to_string(),
-                command: "npm".to_string(),
-                args: vec!["run".to_string(), "watch".to_string()],
-                cwd: Some("$ZED_WORKTREE_ROOT/editors/code/".to_string()),
-                ..Default::default()
-            },
-            TaskTemplate {
-                label: "Build Extension".to_string(),
-                command: "npm".to_string(),
-                args: vec!["run".to_string(), "build".to_string()],
-                cwd: Some("$ZED_WORKTREE_ROOT/editors/code/".to_string()),
-                ..Default::default()
-            },
-            TaskTemplate {
                 label: "Build Server".to_string(),
                 command: "cargo build --package rust-analyzer".to_string(),
                 ..Default::default()
@@ -433,13 +399,6 @@ mod tests {
             TaskTemplate {
                 label: "Build Server (Release)".to_string(),
                 command: "cargo build --release --package rust-analyzer".to_string(),
-                ..Default::default()
-            },
-            TaskTemplate {
-                label: "Pretest".to_string(),
-                command: "npm".to_string(),
-                args: vec!["run".to_string(), "pretest".to_string()],
-                cwd: Some("$ZED_WORKTREE_ROOT/editors/code/".to_string()),
                 ..Default::default()
             },
         ];

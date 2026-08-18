@@ -1,0 +1,29 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build Server",
+      "group": "build",
+      "type": "shell",
+      "command": "cargo build --package rust-analyzer",
+      "problemMatcher": "$rustc"
+    },
+    {
+      "label": "Build Server (Release)",
+      "group": "build",
+      "type": "shell",
+      "command": "cargo build --release --package rust-analyzer",
+      "problemMatcher": "$rustc"
+    },
+    {
+      "label": "Build Server and Extension",
+      "dependsOn": ["Build Server", "Build Extension"],
+      "problemMatcher": "$rustc"
+    },
+    {
+      "label": "Build Server (Release) and Extension",
+      "dependsOn": ["Build Server (Release)", "Build Extension"],
+      "problemMatcher": "$rustc"
+    }
+  ]
+}
