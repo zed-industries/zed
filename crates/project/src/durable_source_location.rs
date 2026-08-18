@@ -240,10 +240,16 @@ impl From<&SyntacticLocation> for SerializedSyntacticLocation {
                 symbol_ordinal: symbol.symbol_ordinal,
                 line_offset_in_symbol: symbol.line_offset_in_symbol,
             }),
-            content_marker: SerializedContentMarker {
-                line_text: location.content_marker.line_text.to_string(),
-                context_hash: location.content_marker.context_hash,
-            },
+            content_marker: (&location.content_marker).into(),
+        }
+    }
+}
+
+impl From<&ContentMarker> for SerializedContentMarker {
+    fn from(marker: &ContentMarker) -> Self {
+        Self {
+            line_text: marker.line_text.to_string(),
+            context_hash: marker.context_hash,
         }
     }
 }
@@ -358,10 +364,7 @@ impl SourceLocationResolver {
                 syntactic_location: Some(SerializedSyntacticLocation {
                     version: SYNTACTIC_LOCATION_FORMAT_VERSION,
                     symbol: None,
-                    content_marker: SerializedContentMarker {
-                        line_text: content_marker.line_text.to_string(),
-                        context_hash: content_marker.context_hash,
-                    },
+                    content_marker: (&content_marker).into(),
                 }),
             })
         } else {
