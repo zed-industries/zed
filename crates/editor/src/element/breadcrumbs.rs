@@ -4381,7 +4381,7 @@ mod tests {
         };
         let selected_label = |cx: &mut VisualTestContext| {
             let menu = editor.read_with(cx, |editor, _| editor.breadcrumb_navigation_menu().cloned());
-            menu.map(|menu| {
+            menu.and_then(|menu| {
                 menu.update(cx, |menu, cx| {
                     menu.apply_initial_selection_for_test(cx);
                     let rows = menu.published_row_labels(cx);
@@ -4389,7 +4389,6 @@ mod tests {
                         .and_then(|index| rows.get(index).cloned())
                 })
             })
-            .flatten()
         };
 
         open_listing(cx);

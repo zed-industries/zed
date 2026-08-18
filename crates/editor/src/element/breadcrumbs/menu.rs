@@ -20,8 +20,8 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use ui::utils::WithRemSize;
 
-/// Ordered so a batch of updates can be folded with `max`: one dead ancestor outranks any
-/// number of ordinary changes.
+/// Ordered so a batch of updates folds with `max`: one dead ancestor outranks any number of
+/// ordinary changes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum ListingPathImpact {
     Ignore,
@@ -29,9 +29,9 @@ pub(super) enum ListingPathImpact {
     Dead,
 }
 
-/// A worktree update names the path that changed and never the path it moved to, so renaming or
-/// deleting an ancestor arrives as an update at that ancestor. Reloading in that case paints
-/// "Empty directory" over a path that no longer exists, so the listing has to be given up.
+/// A worktree update names the path that changed and never the path it moved to, so renaming
+/// or deleting an ancestor arrives as an update at that ancestor - and reloading there would
+/// paint "Empty directory" over a path that no longer exists.
 pub(super) fn listing_path_impact(updated: &RelPath, listing: &RelPath) -> ListingPathImpact {
     if updated == listing || updated.parent() == Some(listing) {
         ListingPathImpact::Reload
@@ -122,10 +122,9 @@ pub struct BreadcrumbNavigationMenu {
     /// The row that was arrowed to when a filesystem event forced a reload, restored by path
     /// once the rank that reload triggered lands. Ranked positions do not survive the rebuild.
     pending_restore_path: Option<Arc<RelPath>>,
-    /// Held for as long as a rank is in flight. The picker's pending-update contract decides
-    /// whether Enter confirms now or waits, and it can only wait on something it can await.
-    /// Shared with the delegate rather than read back off the menu: `Picker::new` finalizes its
-    /// first update while `BreadcrumbNavigationMenu::new` still holds the menu's own lease.
+    /// Held while a rank is in flight, so the picker's pending-update contract has something
+    /// to await. Shared rather than read back off the menu: `Picker::new` finalizes its first
+    /// update while `BreadcrumbNavigationMenu::new` still holds the menu's lease.
     filter_settled: FilterSettled,
     filter_match_truncated: bool,
     filter_candidates: Arc<Vec<StringMatchCandidate>>,
@@ -393,8 +392,8 @@ impl BreadcrumbNavigationMenu {
         self.visible_row_labels()
     }
 
-    /// What the picker is actually rendering, as opposed to what the menu would render. The two
-    /// diverge whenever a mutation forgets to publish, and only this side is visible to the user.
+    /// What the picker is rendering, which is what the user can act on. It diverges from the
+    /// menu's own state whenever a mutation forgets to publish.
     #[cfg(test)]
     pub fn published_row_labels(&self, cx: &App) -> Vec<SharedString> {
         let Some(picker) = self.picker.as_ref() else {
@@ -412,9 +411,8 @@ impl BreadcrumbNavigationMenu {
             .collect()
     }
 
-    /// What the delegate's `update_matches` calls. Unlike `clear_filter_for_test` this keeps
-    /// the ranked matches until `rerank_filter` consumes them, which is the path a user takes
-    /// when they backspace a query away.
+    /// Unlike `clear_filter_for_test`, keeps the ranked matches until `rerank_filter` consumes
+    /// them - the path a user takes when they backspace a query away.
     #[cfg(test)]
     pub fn set_filter_query_for_test(&mut self, query: &str, cx: &mut Context<Self>) {
         self.set_filter_query(query.to_string(), cx);
@@ -590,9 +588,8 @@ impl BreadcrumbNavigationMenu {
         }
     }
 
-    /// By index, not by the menu's own selection: the picker sets the selection and confirms
-    /// in one call, while the menu's copy lands a cycle later, so a click would otherwise act
-    /// on the previously selected row.
+    /// By index: the picker selects and confirms in one call, while the menu's copy of the
+    /// selection lands a cycle later.
     pub(super) fn confirm_row(
         &mut self,
         index: usize,
@@ -633,7 +630,6 @@ impl BreadcrumbNavigationMenu {
         self.listing != listing_before || self.load_epoch != epoch_before
     }
 
-    /// The picker renders from its delegate alone, so every state change has to land here.
     /// Deferred and coalesced: delegate callbacks hold the picker's lease, so publishing
     /// inline would try to update it mid-update.
     pub(super) fn publish_rows(&mut self, cx: &mut Context<Self>) {
@@ -1061,7 +1057,6 @@ impl BreadcrumbNavigationMenu {
         }));
     }
 
-    /// Applies a freshly fetched outline; both symbol load paths end here.
     fn apply_loaded_outline(
         &mut self,
         buffer_id: BufferId,
@@ -1618,7 +1613,6 @@ impl BreadcrumbNavigationMenu {
         }
     }
 
-    /// The one navigation path that swaps one symbol listing for another.
     fn transition_to_symbol_listing(
         &mut self,
         buffer_id: BufferId,
@@ -1725,7 +1719,7 @@ impl BreadcrumbNavigationMenu {
                 worktree_id: project_path.worktree_id,
                 path: parent_path,
             },
-            Some(project_path.path.clone()),
+            Some(project_path.path),
             false,
             window,
             cx,
@@ -1733,9 +1727,8 @@ impl BreadcrumbNavigationMenu {
         self.emit_bar_changed(cx);
     }
 
-    /// Resolved from the row the picker rendered, not re-derived from the selection. The row
-    /// already holds its entry, so an acting-on-the-wrong-item bug would have to be a mismatch
-    /// the user could see, rather than a silent disagreement between two index spaces.
+    /// Resolved from the row the picker rendered rather than re-derived from the selection,
+    /// so the two index spaces can never disagree silently.
     fn selected_row(&self) -> Option<&BreadcrumbMenuRow> {
         self.rows.get(self.selected_index?)
     }
