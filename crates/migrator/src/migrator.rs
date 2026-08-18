@@ -1140,7 +1140,6 @@ mod tests {
             "settings": {}
         },
         "extension_server": {
-            "source": "extension",
             "settings": {
                 "foo": "bar"
             }
@@ -1173,7 +1172,6 @@ mod tests {
             "settings": {}
         },
         "extension_server2": {
-            "source": "extension",
             "foo": "bar",
             "settings": {
                 "foo": "bar"
@@ -5549,10 +5547,8 @@ mod tests {
 
     #[test]
     fn test_url_only_context_server_reports_no_migration() {
-        // These entries need no migration, but one migration adds a `source` key to
-        // them and a later one removes it again. The pair only cancels out in
-        // meaning: the entries come back reindented, which must not be reported as
-        // something to migrate.
+        // A URL-only entry has nothing to migrate. Its layout used to decide whether
+        // one was reported anyway, so cover the shapes that used to differ.
         assert_migrate_settings(
             r#"{
     "context_servers": { "grep": { "url": "https://mcp.grep.app" } }
@@ -5569,10 +5565,23 @@ mod tests {
             None,
         );
 
-        // Tab-indented documents round trip through space indentation, so the
-        // leftover difference here is a change of whitespace rather than of layout.
         assert_migrate_settings(
             "{\n\t\"context_servers\": {\n\t\t\"grep\": {\n\t\t\t\"url\": \"https://mcp.grep.app\"\n\t\t}\n\t}\n}",
+            None,
+        );
+    }
+
+    #[test]
+    fn test_inline_context_server_command_reports_no_migration() {
+        // Entries carrying a `command` still take a `source` key that a later
+        // migration removes, and the round trip leaves them reindented. Only the
+        // whitespace comparison keeps that from being reported as a migration.
+        assert_migrate_settings(
+            r#"{
+    "context_servers": {
+        "local": { "command": "npx", "args": ["-y", "some-mcp-server"] }
+    }
+}"#,
             None,
         );
     }
@@ -5597,8 +5606,7 @@ mod tests {
             Some(
                 r#"{
     "context_servers": {
-        "grep": {
-                  "url": "https://mcp.grep.app" },
+        "grep": { "url": "https://mcp.grep.app" },
         "local": {
             "command": "npx",
             "args": ["-y", "some-mcp-server"]
@@ -5617,8 +5625,7 @@ mod tests {
             Some(
                 r#"{
     "show_edit_predictions": true,
-    "context_servers": { "grep": {
-                                   "url": "https://mcp.grep.app" } }
+    "context_servers": { "grep": { "url": "https://mcp.grep.app" } }
 }"#,
             ),
         );

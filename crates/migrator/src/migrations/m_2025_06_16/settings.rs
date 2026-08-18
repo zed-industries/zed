@@ -81,6 +81,14 @@ fn migrate_context_server_settings(
         ));
     }
 
+    // Nothing downstream reads an `"extension"` source, and a later migration strips
+    // `source` from every entry, so inserting it here only reflows the entry onto
+    // extra lines that the removal does not undo. Entries carrying a `command` still
+    // need `"source": "custom"`, which a later migration matches on.
+    if !has_command {
+        return None;
+    }
+
     Some((
         start..start,
         format!(
