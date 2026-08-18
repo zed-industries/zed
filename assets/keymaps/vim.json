@@ -418,7 +418,7 @@
     },
   },
   {
-    "context": "VimControl && vim_mode == helix_normal && !menu && !BufferSearchBar && !diffs_expanded && !active_diagnostics",
+    "context": "VimControl && vim_mode == helix_normal && !menu && !BufferSearchBar",
     "bindings": {
       "j": ["vim::Down", { "display_lines": true }],
       "down": ["vim::Down", { "display_lines": true }],
@@ -428,11 +428,16 @@
       "g down": "vim::Down",
       "g k": "vim::Up",
       "g up": "vim::Up",
-      "escape": "vim::SwitchToHelixNormalMode",
       "i": "vim::HelixInsert",
       "a": "vim::HelixAppend",
       "shift-a": "vim::HelixInsertEndOfLine",
       "ctrl-[": "editor::Cancel",
+    },
+  },
+  {
+    "context": "VimControl && vim_mode == helix_normal && !menu && !BufferSearchBar && !diffs_expanded && !active_diagnostics",
+    "bindings": {
+      "escape": "vim::SwitchToHelixNormalMode",
     },
   },
   // Vim/Helix consume Escape before menu::Cancel can dismiss notifications. macOS (Ctrl-C) and Linux
