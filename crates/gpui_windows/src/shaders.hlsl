@@ -997,18 +997,13 @@ StructuredBuffer<TileCurve> tile_curves: register(t2);
 StructuredBuffer<PathCurve> path_curves: register(t3);
 StructuredBuffer<PathPaint> path_paints: register(t4);
 
-// Everything the fragment needs that is constant across the tile travels as
-// flat interpolants. Both `PathTile` and `PathPaint` are already in registers
-// here in the vertex shader; re-reading them per pixel cost 136 of the 274
-// bytes a path fragment used to load.
+// A tile is one wave's worth of pixels, so every interpolant is paid once per
+// wave with nothing to amortize it against. Passing the tile and its paint
+// down measured -32% wave occupancy on Adreno and was slower despite issuing
+// 71% fewer buffer loads, so both stay in memory and the fragment reads them.
 struct PathTileFragmentInput {
     float4 position: SV_Position;
-    // The tile's corner — the winding route's origin, which is the unclipped
-    // corner even when the drawn quad is trimmed — and the winding there.
-    nointerpolation float3 corner_and_backdrop: TEXCOORD0;
-    // `curve_start`, `curve_count`, and whether the fill rule is even-odd.
-    nointerpolation uint3 curves_and_fill_rule: TEXCOORD3;
-    PreparedBackground background;
+    nointerpolation uint tile_id: TEXCOORD0;
 };
 
 PathTileFragmentInput path_tile_vertex(uint vertex_id: SV_VertexID, uint tile_id: SV_InstanceID) {
@@ -1017,10 +1012,6 @@ PathTileFragmentInput path_tile_vertex(uint vertex_id: SV_VertexID, uint tile_id
     PathTile tile = path_tiles[tile_index];
     PathPaint paint = path_paints[tile.paint];
 
-    // Trimming the quad to the mask is safe because the winding route starts
-    // from `tile.corner`, which is passed separately and never clipped. Tiles
-    // partition the plane, so a visible pixel is still covered by exactly one
-    // of them.
     Bounds quad;
     quad.origin = tile.corner;
     quad.size = float2(PATH_TILE_SIZE * float(tile.run), PATH_TILE_SIZE);
@@ -1028,9 +1019,7 @@ PathTileFragmentInput path_tile_vertex(uint vertex_id: SV_VertexID, uint tile_id
 
     PathTileFragmentInput output;
     output.position = to_device_position_impl(vertex.position);
-    output.corner_and_backdrop = float3(tile.corner, float(tile.backdrop));
-    output.curves_and_fill_rule = uint3(tile.curve_start, tile.curve_count, paint.even_odd);
-    output.background = prepare_background(paint.color, paint.bounds);
+    output.tile_id = tile_index;
     return output;
 }
 
@@ -1223,9 +1212,7 @@ float curve_winding(PathCurve curve, float2 corner, float2 pixel,
 }
 
 float4 path_tile_fragment(PathTileFragmentInput input): SV_Target {
-    float2 corner = input.corner_and_backdrop.xy;
-    uint curve_start = input.curves_and_fill_rule.x;
-    uint curve_count = input.curves_and_fill_rule.y;
+    PathTile tile = path_tiles[input.tile_id];
     float2 pixel = floor(input.position.xy);
 
     // The tile's curve list is sorted by each curve's leftmost x, so the
@@ -1235,19 +1222,19 @@ float4 path_tile_fragment(PathTileFragmentInput input): SV_Target {
     // requires straddling the tile's left edge, which lies left of every
     // pixel's right edge. The break costs divergence only where neighbors
     // within a wave straddle a curve's leftmost x.
-    float winding = input.corner_and_backdrop.z;
+    float winding = float(tile.backdrop);
     [loop]
-    for (uint i = 0u; i < curve_count; i++) {
-        TileCurve entry = tile_curves[curve_start + i];
+    for (uint i = 0u; i < tile.curve_count; i++) {
+        TileCurve entry = tile_curves[tile.curve_start + i];
         PathCurve curve = path_curves[entry.curve & 0x7fffffffu];
         if (min(curve.p0.x, curve.p1.x) >= pixel.x + 1.0) {
             break;
         }
-        winding += curve_winding(curve, corner, pixel,
+        winding += curve_winding(curve, tile.corner, pixel,
             (entry.curve & 0x80000000u) != 0u, entry.leg_y);
     }
 
-    float coverage = input.curves_and_fill_rule.z != 0u
+    float coverage = path_paints[tile.paint].even_odd != 0u
         // Distance to the nearest even integer (FreeType's fold).
         ? abs(winding - 2.0 * round(winding * 0.5))
         // Distance from zero, clamped.
@@ -1261,7 +1248,11 @@ float4 path_tile_fragment(PathTileFragmentInput input): SV_Target {
         return float4(0.0, 0.0, 0.0, 0.0);
     }
 
-    float4 color = background_color(input.background, input.position.xy);
+    // Only reached by pixels with ink, so the paint — the cold half of
+    // `PathPaint` — is read behind this branch rather than up front.
+    PathPaint paint = path_paints[tile.paint];
+    float4 color = background_color(prepare_background(paint.color, paint.bounds),
+        input.position.xy);
     return float4(color.rgb, color.a * coverage);
 }
 
