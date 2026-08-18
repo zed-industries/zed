@@ -6,7 +6,7 @@ mod path;
 use super::*;
 use layout::{
     BreadcrumbStrip, PreparedBreadcrumbSegment, align_symbol_segments,
-    breadcrumb_path_is_navigable, classify_breadcrumb_segment_kinds, hard_cap_middle_segments,
+    breadcrumb_path_is_navigable, classify_breadcrumb_segment_kinds, hard_cap_segment_runs,
 };
 pub(crate) use menu::{BreadcrumbListing, BreadcrumbNavigationMenu};
 use path::{breadcrumb_file_icon, breadcrumb_path_segments};
@@ -215,7 +215,7 @@ pub fn render_breadcrumb_text(
             .iter()
             .position(|target| target_matches_listing(target.as_ref(), listing))
     });
-    let (segments, symbol_segments, kinds, file_segment_index) = hard_cap_middle_segments(
+    let (segments, symbol_segments, kinds, file_segment_index) = hard_cap_segment_runs(
         segments,
         symbol_segments,
         kinds,
@@ -317,7 +317,7 @@ pub(super) fn breadcrumb_file_git_status_color(
 mod tests {
     use super::layout::{
         BreadcrumbSegmentKind, align_symbol_segments, breadcrumb_path_is_navigable,
-        classify_breadcrumb_segment_kinds, hard_cap_middle_segments, plan_breadcrumb_layout,
+        classify_breadcrumb_segment_kinds, hard_cap_segment_runs, plan_breadcrumb_layout,
     };
     use super::menu::{BreadcrumbListing, BreadcrumbNavigationMenu};
     use super::outline::{
@@ -1728,7 +1728,7 @@ mod tests {
         let kinds = classify_breadcrumb_segment_kinds(segments.len(), Some(99), true);
 
         let (segments, symbol_segments, kinds, file_segment_index) =
-            hard_cap_middle_segments(segments, symbol_segments, kinds, 99, None);
+            hard_cap_segment_runs(segments, symbol_segments, kinds, 99, None);
 
         assert_eq!(segments.len(), 67);
         {
@@ -1741,7 +1741,7 @@ mod tests {
             let symbol_segments = vec![None; segments.len()];
             let kinds = classify_breadcrumb_segment_kinds(segments.len(), Some(99), true);
             let (capped, _, _, _) =
-                hard_cap_middle_segments(segments, symbol_segments, kinds, 99, Some(50));
+                hard_cap_segment_runs(segments, symbol_segments, kinds, 99, Some(50));
             let labels: Vec<&str> = capped.iter().map(|segment| segment.text.as_ref()).collect();
             assert_eq!(
                 labels.iter().find(|&&label| label == "segment-50").copied(),
@@ -1756,6 +1756,97 @@ mod tests {
     }
 
     #[test]
+    fn test_hard_cap_applies_to_a_symbol_trail_with_no_middle_run() {
+        use super::layout::MAX_BREADCRUMB_SEGMENTS_HARD_CAP;
+
+        // A file at the worktree root is File + N symbols: no directory run at all. Capping
+        // only the directory run left this shape uncapped, so `measure` shaped every symbol
+        // and the planner re-summed the widths once per drop.
+        let segments: Vec<HighlightedText> = (0..201)
+            .map(|index| HighlightedText {
+                text: format!("symbol-{index}").into(),
+                highlights: vec![],
+            })
+            .collect();
+        let symbol_segments = vec![None; segments.len()];
+        let kinds = classify_breadcrumb_segment_kinds(segments.len(), Some(0), false);
+        assert!(
+            !kinds.contains(&BreadcrumbSegmentKind::Middle),
+            "the fixture has to have no middle run for this to exercise the symbol cap"
+        );
+
+        let (capped, _, kinds, file_segment_index) =
+            hard_cap_segment_runs(segments, symbol_segments, kinds, 0, None);
+
+        assert_eq!(capped.len(), 2 + MAX_BREADCRUMB_SEGMENTS_HARD_CAP);
+        assert_eq!(file_segment_index, 0);
+        assert_eq!(kinds[file_segment_index], BreadcrumbSegmentKind::File);
+        assert!(
+            kinds[1..]
+                .iter()
+                .all(|kind| *kind == BreadcrumbSegmentKind::Symbol),
+            "the spliced glyph stands in for symbols, so it has to be classified as one"
+        );
+    }
+
+    #[test]
+    fn test_hard_cap_keeps_the_anchored_symbol() {
+        let segments: Vec<HighlightedText> = (0..201)
+            .map(|index| HighlightedText {
+                text: format!("symbol-{index}").into(),
+                highlights: vec![],
+            })
+            .collect();
+        let symbol_segments = vec![None; segments.len()];
+        let kinds = classify_breadcrumb_segment_kinds(segments.len(), Some(0), false);
+
+        let (capped, _, _, _) = hard_cap_segment_runs(segments, symbol_segments, kinds, 0, Some(100));
+
+        let labels: Vec<&str> = capped.iter().map(|segment| segment.text.as_ref()).collect();
+        assert!(
+            labels.contains(&"symbol-100"),
+            "dropping the anchored segment leaves prepaint without menu_anchor_bounds, which \
+             dismisses the open menu"
+        );
+    }
+
+    #[test]
+    fn test_hard_cap_glyph_keeps_the_deepest_target_it_hides() {
+        let worktree_id = WorktreeId::from_usize(0);
+        let segments: Vec<HighlightedText> = (0..100)
+            .map(|index| HighlightedText {
+                text: format!("dir-{index}").into(),
+                highlights: vec![],
+            })
+            .collect();
+        let symbol_segments: Vec<Option<BreadcrumbSegmentTarget>> = (0..100)
+            .map(|index| {
+                Some(BreadcrumbSegmentTarget::Directory {
+                    worktree_id,
+                    path: RelPath::new_test(&format!("dir-{index}")).into_arc(),
+                })
+            })
+            .collect();
+        let kinds = classify_breadcrumb_segment_kinds(segments.len(), Some(99), true);
+
+        let (capped, targets, _, _) =
+            hard_cap_segment_runs(segments, symbol_segments, kinds, 99, None);
+
+        let glyph = capped
+            .iter()
+            .position(|segment| segment.text.as_ref() == super::layout::ELLIPSIS_GLYPH)
+            .expect("the middle run is over the cap, so it collapses to a glyph");
+        let Some(BreadcrumbSegmentTarget::Directory { path, .. }) = &targets[glyph] else {
+            panic!("a collapsed run with no target is a dead control");
+        };
+        assert_eq!(
+            path.as_unix_str(),
+            "dir-66",
+            "the glyph browses the deepest directory it hides"
+        );
+    }
+
+    #[test]
     fn test_hard_cap_breadcrumb_middle_segments_leaves_ordinary_input_untouched() {
         let segments: Vec<HighlightedText> = (0..6)
             .map(|i| HighlightedText {
@@ -1767,7 +1858,7 @@ mod tests {
         let kinds = classify_breadcrumb_segment_kinds(segments.len(), Some(3), true);
 
         let (segments, symbol_segments, kinds, file_segment_index) =
-            hard_cap_middle_segments(segments, symbol_segments, kinds, 3, None);
+            hard_cap_segment_runs(segments, symbol_segments, kinds, 3, None);
 
         assert_eq!(segments.len(), 6);
         assert_eq!(symbol_segments.len(), 6);
@@ -1945,7 +2036,7 @@ mod tests {
         let kinds =
             classify_breadcrumb_segment_kinds(segment_count, Some(file_segment_index), true);
 
-        let (capped, _, kinds, new_file_index) = hard_cap_middle_segments(
+        let (capped, _, kinds, new_file_index) = hard_cap_segment_runs(
             segments,
             symbol_segments,
             kinds,

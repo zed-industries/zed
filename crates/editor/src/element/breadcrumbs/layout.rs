@@ -58,93 +58,133 @@ fn hard_cap_ellipsis() -> HighlightedText {
     }
 }
 
-fn splice_middle_run(
+fn remap_index_after_splice(index: &mut usize, range: &Range<usize>, removed: usize) {
+    if *index >= range.end {
+        *index -= removed - 1;
+    } else if *index > range.start {
+        *index = range.start;
+    }
+}
+
+fn splice_segment_run(
     segments: &mut Vec<HighlightedText>,
     symbol_segments: &mut Vec<Option<BreadcrumbSegmentTarget>>,
     kinds: &mut Vec<BreadcrumbSegmentKind>,
     file_segment_index: &mut usize,
-    range: std::ops::Range<usize>,
+    protected_index: &mut Option<usize>,
+    range: Range<usize>,
+    kind: BreadcrumbSegmentKind,
 ) {
     if range.end <= range.start {
         return;
     }
     let removed = range.end - range.start;
+    // The glyph inherits the deepest target it hides, so a capped run is still a way into the
+    // range rather than a dead control.
+    let hidden_target = symbol_segments[range.clone()]
+        .iter()
+        .rev()
+        .find_map(|target| target.clone());
     segments.splice(range.clone(), Some(hard_cap_ellipsis()));
-    symbol_segments.splice(range.clone(), Some(None));
-    kinds.splice(range.clone(), Some(BreadcrumbSegmentKind::Middle));
-    if *file_segment_index >= range.end {
-        *file_segment_index -= removed - 1;
-    } else if *file_segment_index > range.start {
-        *file_segment_index = range.start;
+    symbol_segments.splice(range.clone(), Some(hidden_target));
+    kinds.splice(range.clone(), Some(kind));
+    remap_index_after_splice(file_segment_index, &range, removed);
+    if let Some(protected) = protected_index.as_mut() {
+        remap_index_after_splice(protected, &range, removed);
     }
 }
 
-pub(super) fn hard_cap_middle_segments(
+fn segment_run_bounds(
+    kinds: &[BreadcrumbSegmentKind],
+    kind: BreadcrumbSegmentKind,
+) -> Option<Range<usize>> {
+    let start = kinds.iter().position(|candidate| *candidate == kind)?;
+    let end = kinds.iter().rposition(|candidate| *candidate == kind)? + 1;
+    Some(start..end)
+}
+
+fn hard_cap_kind_run(
+    kind: BreadcrumbSegmentKind,
+    segments: &mut Vec<HighlightedText>,
+    symbol_segments: &mut Vec<Option<BreadcrumbSegmentTarget>>,
+    kinds: &mut Vec<BreadcrumbSegmentKind>,
+    file_segment_index: &mut usize,
+    protected_index: &mut Option<usize>,
+) {
+    let Some(run) = segment_run_bounds(kinds, kind) else {
+        return;
+    };
+    if run.len() <= MAX_BREADCRUMB_SEGMENTS_HARD_CAP {
+        return;
+    }
+
+    if let Some(protected) = protected_index.filter(|index| run.contains(index)) {
+        let keep = MAX_BREADCRUMB_SEGMENTS_HARD_CAP;
+        let mut window_start = protected.saturating_sub(keep / 2).max(run.start);
+        let mut window_end = window_start + keep;
+        if window_end > run.end {
+            window_end = run.end;
+            window_start = window_end.saturating_sub(keep).max(run.start);
+        }
+        // Right side first so left indices stay valid.
+        splice_segment_run(
+            segments,
+            symbol_segments,
+            kinds,
+            file_segment_index,
+            protected_index,
+            window_end..run.end,
+            kind,
+        );
+        splice_segment_run(
+            segments,
+            symbol_segments,
+            kinds,
+            file_segment_index,
+            protected_index,
+            run.start..window_start,
+            kind,
+        );
+        return;
+    }
+
+    let half = MAX_BREADCRUMB_SEGMENTS_HARD_CAP / 2;
+    splice_segment_run(
+        segments,
+        symbol_segments,
+        kinds,
+        file_segment_index,
+        protected_index,
+        run.start + half..run.end - half,
+        kind,
+    );
+}
+
+/// Bounds what `measure` shapes and what `plan_breadcrumb_layout` re-sums per drop. A file at
+/// the worktree root has no directory run at all, so capping only that run leaves the symbol
+/// trail - and the quadratic case - uncapped.
+pub(super) fn hard_cap_segment_runs(
     mut segments: Vec<HighlightedText>,
     mut symbol_segments: Vec<Option<BreadcrumbSegmentTarget>>,
     mut kinds: Vec<BreadcrumbSegmentKind>,
     mut file_segment_index: usize,
-    protected_index: Option<usize>,
+    mut protected_index: Option<usize>,
 ) -> (
     Vec<HighlightedText>,
     Vec<Option<BreadcrumbSegmentTarget>>,
     Vec<BreadcrumbSegmentKind>,
     usize,
 ) {
-    let middle_start = kinds
-        .iter()
-        .position(|kind| *kind == BreadcrumbSegmentKind::Middle);
-    let middle_end = kinds
-        .iter()
-        .rposition(|kind| *kind == BreadcrumbSegmentKind::Middle)
-        .map(|index| index + 1);
-    let (Some(middle_start), Some(middle_end)) = (middle_start, middle_end) else {
-        return (segments, symbol_segments, kinds, file_segment_index);
-    };
-    let middle_len = middle_end - middle_start;
-    if middle_len <= MAX_BREADCRUMB_SEGMENTS_HARD_CAP {
-        return (segments, symbol_segments, kinds, file_segment_index);
-    }
-
-    if let Some(protected) =
-        protected_index.filter(|index| (middle_start..middle_end).contains(index))
-    {
-        let keep = MAX_BREADCRUMB_SEGMENTS_HARD_CAP;
-        let mut window_start = protected.saturating_sub(keep / 2).max(middle_start);
-        let mut window_end = window_start + keep;
-        if window_end > middle_end {
-            window_end = middle_end;
-            window_start = window_end.saturating_sub(keep).max(middle_start);
-        }
-        // Right side first so left indices stay valid.
-        splice_middle_run(
+    for kind in [BreadcrumbSegmentKind::Middle, BreadcrumbSegmentKind::Symbol] {
+        hard_cap_kind_run(
+            kind,
             &mut segments,
             &mut symbol_segments,
             &mut kinds,
             &mut file_segment_index,
-            window_end..middle_end,
+            &mut protected_index,
         );
-        splice_middle_run(
-            &mut segments,
-            &mut symbol_segments,
-            &mut kinds,
-            &mut file_segment_index,
-            middle_start..window_start,
-        );
-        return (segments, symbol_segments, kinds, file_segment_index);
     }
-
-    let half = MAX_BREADCRUMB_SEGMENTS_HARD_CAP / 2;
-    let splice_start = middle_start + half;
-    let splice_end = middle_end - half;
-    splice_middle_run(
-        &mut segments,
-        &mut symbol_segments,
-        &mut kinds,
-        &mut file_segment_index,
-        splice_start..splice_end,
-    );
-
     (segments, symbol_segments, kinds, file_segment_index)
 }
 
@@ -271,6 +311,9 @@ pub(super) struct PreparedBreadcrumbSegment {
 
 pub(super) struct BreadcrumbSegmentMetrics {
     widths: Vec<Pixels>,
+    /// Icon, gaps and the separator `with_separator` lays out even on the last segment.
+    /// Prepaint subtracts it to turn room left in the strip into a `max_w` for the label.
+    chrome_widths: Vec<Pixels>,
     ellipsis_width: Pixels,
     protected_index: Option<usize>,
     /// Carried rather than rebuilt: request_layout and prepaint both plan the layout, and the
@@ -361,7 +404,7 @@ impl BreadcrumbStrip {
             .width();
         let ellipsis_width = ellipsis_label_width + arrow_width + gap * 2.;
 
-        let widths = self
+        let (widths, chrome_widths) = self
             .segments
             .iter()
             .map(|segment| {
@@ -386,12 +429,14 @@ impl BreadcrumbStrip {
                 } else {
                     Pixels::ZERO
                 };
-                label_width + icon_width + arrow_width + gap * 2.
+                let chrome_width = icon_width + arrow_width + gap * 2.;
+                (label_width + chrome_width, chrome_width)
             })
-            .collect();
+            .unzip();
 
         BreadcrumbSegmentMetrics {
             widths,
+            chrome_widths,
             ellipsis_width,
             protected_index: None,
             kinds: self.segments.iter().map(|segment| segment.kind).collect(),
@@ -783,8 +828,9 @@ impl gpui::Element for BreadcrumbStrip {
             sequence.last(),
             Some(FinalItem::Segment(index)) if protected_index == Some(*index)
         );
-        // Drop a tail that has less than an ellipsis of room: it would otherwise paint as
-        // a separator pointing at nothing.
+        // A tail with less than an ellipsis of room paints as a separator pointing at nothing,
+        // but removing it claims the trail ends where it does not. Collapsing it into an
+        // ellipsis keeps `render_ellipsis` resolving to the target it hides.
         if sequence.len() > 1 && !tail_is_protected {
             let tail_start = sequence
                 .iter()
@@ -794,8 +840,20 @@ impl gpui::Element for BreadcrumbStrip {
                     FinalItem::Segment(index) => x + metrics.widths[*index] + gap,
                     FinalItem::Ellipsis(_) => x + metrics.ellipsis_width + gap,
                 });
-            if bounds.origin.x + bounds.size.width - tail_start < metrics.ellipsis_width {
+            let tail_index = match sequence.last() {
+                Some(FinalItem::Segment(index)) => Some(*index),
+                _ => None,
+            };
+            if bounds.origin.x + bounds.size.width - tail_start < metrics.ellipsis_width
+                && let Some(tail_index) = tail_index
+            {
                 sequence.pop();
+                match sequence.last_mut() {
+                    Some(FinalItem::Ellipsis(range)) if range.end == tail_index => {
+                        range.end = tail_index + 1;
+                    }
+                    _ => sequence.push(FinalItem::Ellipsis(tail_index..tail_index + 1)),
+                }
             }
         }
 
@@ -808,21 +866,23 @@ impl gpui::Element for BreadcrumbStrip {
                 FinalItem::Segment(index) => Some(*index),
                 FinalItem::Ellipsis(_) => None,
             };
-            // The plan never drops the last segment, so it is the one that can overrun the
-            // strip. Cap its label to the room left rather than let the toolbar clip it
-            // mid-word.
             let remaining_width = (bounds.origin.x + bounds.size.width - x).max(Pixels::ZERO);
             let is_last = position == last_position;
-            let label_budget = (remaining_width - metrics.ellipsis_width).max(Pixels::ZERO);
             let mut element = match item {
-                FinalItem::Segment(index) => self.render_segment(
-                    index,
-                    position,
-                    last_position,
-                    is_last.then_some(label_budget),
-                    window,
-                    cx,
-                ),
+                FinalItem::Segment(index) => {
+                    // The planner drops neither the last segment nor the protected one, so
+                    // those two are what can overrun the strip. A protected segment reserves an
+                    // ellipsis behind it, or shrinking it just moves the overrun onto the tail.
+                    let reserved = metrics.chrome_widths[index]
+                        + if is_last {
+                            Pixels::ZERO
+                        } else {
+                            metrics.ellipsis_width
+                        };
+                    let label_budget = (is_last || protected_index == Some(index))
+                        .then(|| (remaining_width - reserved).max(Pixels::ZERO));
+                    self.render_segment(index, position, last_position, label_budget, window, cx)
+                }
                 FinalItem::Ellipsis(hidden) => {
                     self.render_ellipsis(hidden, position, last_position, window, cx)
                 }
