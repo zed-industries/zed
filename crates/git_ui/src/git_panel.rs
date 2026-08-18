@@ -100,6 +100,7 @@ use workspace::SERIALIZATION_THROTTLE_TIME;
 use workspace::{
     Item, ModalView, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
+    item::PreviewTabsSettings,
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
 };
 use zed_actions::{
@@ -2099,6 +2100,10 @@ impl GitPanel {
     }
 
     fn open_diff(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_diff_impl(false, window, cx);
+    }
+
+    fn open_diff_impl(&mut self, allow_preview: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self.active_tab == GitPanelTab::History {
             self.open_selected_history_commit(window, cx);
             return;
@@ -2128,6 +2133,13 @@ impl GitPanel {
                         .project_path_to_repo_path(&project_path, cx)
                         .as_ref()
             {
+                if !allow_preview
+                    && let Some(pane) = workspace.read(cx).pane_for(&project_diff)
+                {
+                    pane.update(cx, |pane, _| {
+                        pane.unpreview_item_if_preview(project_diff.entity_id());
+                    });
+                }
                 project_diff.focus_handle(cx).focus(window, cx);
                 project_diff.update(cx, |project_diff, cx| project_diff.autoscroll(cx));
                 return None;
@@ -2136,13 +2148,31 @@ impl GitPanel {
             self.workspace
                 .update(cx, |workspace, cx| match target {
                     DiffTarget::Uncommitted => {
-                        ProjectDiff::deploy_at(workspace, Some(entry.clone()), window, cx);
+                        ProjectDiff::deploy_at(
+                            workspace,
+                            Some(entry.clone()),
+                            allow_preview,
+                            window,
+                            cx,
+                        );
                     }
                     DiffTarget::Staged => {
-                        StagedDiff::deploy_at(workspace, Some(entry.clone()), window, cx);
+                        StagedDiff::deploy_at(
+                            workspace,
+                            Some(entry.clone()),
+                            allow_preview,
+                            window,
+                            cx,
+                        );
                     }
                     DiffTarget::Unstaged => {
-                        UnstagedDiff::deploy_at(workspace, Some(entry.clone()), window, cx);
+                        UnstagedDiff::deploy_at(
+                            workspace,
+                            Some(entry.clone()),
+                            allow_preview,
+                            window,
+                            cx,
+                        );
                     }
                 })
                 .ok();
@@ -2158,6 +2188,15 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_solo_diff_impl(false, window, cx);
+    }
+
+    fn open_solo_diff_impl(
+        &mut self,
+        allow_preview: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         maybe!({
             let entry = self
                 .entries
@@ -2166,7 +2205,14 @@ impl GitPanel {
                 .clone();
             let repository = self.active_repository.clone()?;
 
-            SoloDiffView::open_or_focus(entry, repository, self.workspace.clone(), window, cx)
+            SoloDiffView::open_or_focus(
+                entry,
+                repository,
+                self.workspace.clone(),
+                allow_preview,
+                window,
+                cx,
+            )
                 .detach_and_notify_err(self.workspace.clone(), window, cx);
 
             Some(())
@@ -2174,6 +2220,10 @@ impl GitPanel {
     }
 
     fn view_file(&mut self, _: &ViewFile, window: &mut Window, cx: &mut Context<Self>) {
+        self.view_file_impl(false, window, cx);
+    }
+
+    fn view_file_impl(&mut self, allow_preview: bool, window: &mut Window, cx: &mut Context<Self>) {
         maybe!({
             let entry = self.entries.get(self.selected_entry?)?.status_entry()?;
             let project_path = self
@@ -2185,7 +2235,15 @@ impl GitPanel {
             self.workspace
                 .update(cx, |workspace, cx| {
                     workspace
-                        .open_path_preview(project_path, None, false, false, true, window, cx)
+                        .open_path_preview(
+                            project_path,
+                            None,
+                            false,
+                            allow_preview,
+                            true,
+                            window,
+                            cx,
+                        )
                         .detach_and_log_err(cx);
                 })
                 .ok()?;
@@ -2223,6 +2281,7 @@ impl GitPanel {
     fn open_selected_entry_on_click(
         &mut self,
         secondary: bool,
+        allow_preview: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2238,14 +2297,14 @@ impl GitPanel {
         };
         match action {
             GitPanelClickBehavior::ProjectDiff => {
-                self.open_diff(&Default::default(), window, cx);
+                self.open_diff_impl(allow_preview, window, cx);
                 self.focus_handle.focus(window, cx);
             }
             GitPanelClickBehavior::FileDiff => {
-                self.open_solo_diff(&Default::default(), window, cx);
+                self.open_solo_diff_impl(allow_preview, window, cx);
             }
             GitPanelClickBehavior::ViewFile => {
-                self.view_file(&Default::default(), window, cx);
+                self.view_file_impl(allow_preview, window, cx);
             }
         }
     }
@@ -4534,7 +4593,7 @@ impl GitPanel {
             .cloned();
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
-                StagedDiff::deploy_at(workspace, entry, window, cx);
+                StagedDiff::deploy_at(workspace, entry, false, window, cx);
             });
         }
     }
@@ -4551,7 +4610,7 @@ impl GitPanel {
             .cloned();
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
-                UnstagedDiff::deploy_at(workspace, entry, window, cx);
+                UnstagedDiff::deploy_at(workspace, entry, false, window, cx);
             });
         }
     }
@@ -7998,7 +8057,15 @@ impl GitPanel {
                 cx.listener(move |this, event: &ClickEvent, window, cx| {
                     this.selected_entry = Some(ix);
                     cx.notify();
-                    this.open_selected_entry_on_click(event.modifiers().secondary(), window, cx);
+                    let allow_preview = PreviewTabsSettings::get_global(cx)
+                        .enable_preview_from_git_panel
+                        && event.click_count() == 1;
+                    this.open_selected_entry_on_click(
+                        event.modifiers().secondary(),
+                        allow_preview,
+                        window,
+                        cx,
+                    );
                 })
             })
             .on_mouse_down(

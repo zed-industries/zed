@@ -204,6 +204,7 @@ impl UnstagedDiff {
     pub fn deploy_at(
         workspace: &mut Workspace,
         entry: Option<GitStatusEntry>,
+        allow_preview: bool,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
@@ -217,22 +218,17 @@ impl UnstagedDiff {
         );
         let intended_repo = workspace.project().read(cx).active_repository(cx);
         let existing = workspace.items_of_type::<Self>(cx).next();
-        let unstaged_diff = if let Some(existing) = existing {
-            workspace.activate_item(&existing, true, true, window, cx);
-            existing
-        } else {
-            let workspace_handle = cx.entity();
-            let unstaged_diff =
-                cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx));
-            workspace.add_item_to_active_pane(
-                Box::new(unstaged_diff.clone()),
-                None,
-                true,
-                window,
-                cx,
-            );
-            unstaged_diff
-        };
+        let unstaged_diff = crate::activate_or_add_with_preview(
+            workspace,
+            existing,
+            allow_preview,
+            window,
+            cx,
+            |workspace, window, cx| {
+                let workspace_handle = cx.entity();
+                cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx))
+            },
+        );
 
         if let Some(intended) = &intended_repo {
             let needs_switch = unstaged_diff
