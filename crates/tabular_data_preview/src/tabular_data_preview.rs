@@ -15,7 +15,7 @@ use ui::{
 };
 use workspace::{Item, Pane, Workspace};
 
-use crate::{parser::EditorState, settings::CsvPreviewSettings, types::TableLikeContent};
+use crate::{parser::EditorState, settings::TabularDataPreviewSettings, types::TableLikeContent};
 
 mod parser;
 mod renderer;
@@ -45,7 +45,7 @@ pub struct TabularDataPreviewPane {
     /// Background task computing the display-to-data mapping after a filter/sort change.
     /// Stored here so that a new change cancels the previous in-flight computation.
     pub(crate) filter_sort_task: Option<Task<()>>,
-    pub(crate) settings: CsvPreviewSettings,
+    pub(crate) settings: TabularDataPreviewSettings,
     /// Performance metrics for debugging and monitoring CSV operations.
     pub(crate) performance_metrics: PerformanceMetrics,
     pub(crate) list_state: gpui::ListState,
@@ -201,7 +201,7 @@ impl TabularDataPreviewPane {
                 list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.))
                     .with_uniform_item_height(row_height),
                 row_height,
-                settings: CsvPreviewSettings::default(),
+                settings: TabularDataPreviewSettings::default(),
                 last_parse_end_time: None,
                 engine: TableDataEngine::default(),
             };
