@@ -270,7 +270,7 @@ impl PickerDelegate for ColumnFilterDelegate {
     type ListItem = AnyElement;
 
     fn name() -> &'static str {
-        "csv column filter"
+        "table column filter"
     }
 
     fn match_count(&self) -> usize {
@@ -432,7 +432,7 @@ impl PickerDelegate for ColumnFilterDelegate {
                 };
 
                 Some(
-                    ListItem::new(("csv-filter-value", ix))
+                    ListItem::new(("table-filter-value", ix))
                         .disabled(is_hidden && !row.is_applied)
                         .inset(true)
                         .spacing(ListItemSpacing::Sparse)
@@ -496,7 +496,7 @@ impl PickerDelegate for ColumnFilterDelegate {
                 )
                 .child(
                     div()
-                        .id("csv-filter-clear-all")
+                        .id("table-filter-clear-all")
                         .cursor_pointer()
                         .child(
                             Label::new("Clear all")
@@ -532,7 +532,7 @@ impl TabularDataPreviewPane {
             .applied_sorting
             .is_some_and(|o| o.col_idx == col_idx);
         let always_show_buttons = has_active_filter || has_active_sort;
-        let group_name = SharedString::from(format!("csv-col-header-{}", col_idx.get()));
+        let group_name = SharedString::from(format!("table-col-header-{}", col_idx.get()));
 
         let colors = cx.theme().colors();
         let base_bg = colors.editor_background;
@@ -553,7 +553,7 @@ impl TabularDataPreviewPane {
             .child({
                 let header_text_cell = div()
                     .id(ElementId::NamedInteger(
-                        "csv-col-header-text".into(),
+                        "table-col-header-text".into(),
                         col_idx.get() as u64,
                     ))
                     .flex_1()

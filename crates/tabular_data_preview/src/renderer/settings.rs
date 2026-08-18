@@ -175,7 +175,7 @@ fn create_dev_only_popover_menu(
         .trigger_with_tooltip(
             IconButton::new("debug-options-trigger", IconName::Settings).icon_size(IconSize::Small),
             Tooltip::text(
-                "Dev-only section used for debugging purposes.\nWill be removed on public release of CSV feature"
+                "Dev-only section used for debugging purposes.\nWill be removed on public release of the tabular data preview feature"
             ),
         )
         .menu({

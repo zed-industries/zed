@@ -77,7 +77,7 @@ impl TabularDataPreviewPane {
                         })
                     }
                     RowRenderMechanism::UniformList => {
-                        table.uniform_list("csv-table", row_count, {
+                        table.uniform_list("tabular-data-table", row_count, {
                             cx.processor(move |this, range: Range<usize>, _window, cx| {
                                 // Record all display indices in the range for performance metrics
                                 this.performance_metrics

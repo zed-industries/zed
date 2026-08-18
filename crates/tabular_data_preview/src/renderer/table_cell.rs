@@ -53,7 +53,7 @@ fn create_table_cell(
 ) -> gpui::Stateful<Div> {
     let cell = div()
         .id(ElementId::NamedInteger(
-            format!("csv-display-cell-{}", *display_cell_id.row).into(),
+            format!("table-display-cell-{}", *display_cell_id.row).into(),
             *display_cell_id.col as u64,
         ))
         .flex()

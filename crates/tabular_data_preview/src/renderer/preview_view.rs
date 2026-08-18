@@ -41,7 +41,7 @@ impl Render for TabularDataPreviewPane {
                                     .child("Loading…"),
                             )
                         })
-                        .when(!is_parsing, |div| div.child("No CSV content to display"))
+                        .when(!is_parsing, |div| div.child("No data to display"))
                         .into_any_element()
                 } else {
                     self.create_table(&self.column_widths.widths, cx)
