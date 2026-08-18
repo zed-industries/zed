@@ -43,8 +43,8 @@ use git::{
 };
 use git::{
     ExpandCommitEditor, GitHostingProviderRegistry, GitRemote, RestoreTrackedFiles, StageAll,
-    StashAll, StashApply, StashPop, ToggleFillCommitEditor, TrashUntrackedFiles, UnstageAll,
-    ViewFile, parse_git_remote_url,
+    StashAll, StashApply, StashPop, StashStaged, StashTracked, ToggleFillCommitEditor,
+    TrashUntrackedFiles, UnstageAll, ViewFile, parse_git_remote_url,
 };
 use gpui::{
     AbsoluteLength, Action, Anchor, AnyElement, AsyncApp, AsyncWindowContext, ClickEvent,
@@ -201,21 +201,56 @@ struct GitPanelViewOptionsMenuState {
     tree_view: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StashKind {
+    All,
+    Tracked,
+    Staged,
+}
+
+impl StashKind {
+    fn title(self) -> &'static str {
+        match self {
+            StashKind::All => "Stash All",
+            StashKind::Tracked => "Stash Tracked",
+            StashKind::Staged => "Stash Staged",
+        }
+    }
+
+    fn error_action(self) -> &'static str {
+        match self {
+            StashKind::All => "stash",
+            StashKind::Tracked => "stash tracked",
+            StashKind::Staged => "stash staged",
+        }
+    }
+}
+
 /// Prompts for an optional stash name. Confirming with an empty editor stashes
 /// without `--message`, letting git generate its usual "WIP on ..." description.
 struct StashMessageModal {
     editor: Entity<Editor>,
     panel: WeakEntity<GitPanel>,
+    kind: StashKind,
 }
 
 impl StashMessageModal {
-    fn new(panel: WeakEntity<GitPanel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(
+        panel: WeakEntity<GitPanel>,
+        kind: StashKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text("Optionally provide a stash message", window, cx);
             editor
         });
-        Self { editor, panel }
+        Self {
+            editor,
+            panel,
+            kind,
+        }
     }
 
     fn cancel(&mut self, _: &menu::Cancel, _window: &mut Window, cx: &mut Context<Self>) {
@@ -225,8 +260,9 @@ impl StashMessageModal {
     fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
         let message = self.editor.read(cx).text(cx).trim().to_owned();
         let message = (!message.is_empty()).then_some(message);
+        let kind = self.kind;
         self.panel
-            .update(cx, |panel, cx| panel.perform_stash(message, cx))
+            .update(cx, |panel, cx| panel.perform_stash(kind, message, cx))
             .ok();
         cx.emit(DismissEvent);
     }
@@ -256,7 +292,7 @@ impl Render for StashMessageModal {
                     .w_full()
                     .gap_1p5()
                     .child(Icon::new(IconName::GitBranch).size(IconSize::XSmall))
-                    .child(Headline::new("Stash All").size(HeadlineSize::XSmall)),
+                    .child(Headline::new(self.kind.title()).size(HeadlineSize::XSmall)),
             )
             .child(div().px_3().pb_3().w_full().child(self.editor.clone()))
     }
@@ -268,6 +304,7 @@ fn git_panel_context_menu(
     has_unstaged_changes: bool,
     has_new_changes: bool,
     has_stash_items: bool,
+    group_by: GitPanelGroupBy,
     include_copy_paths: bool,
     focus_handle: FocusHandle,
     window: &mut Window,
@@ -289,6 +326,22 @@ fn git_panel_context_menu(
                 "Stash All",
                 StashAll.boxed_clone(),
             )
+            // Offer the stash variant that matches how the list is currently grouped,
+            // so the menu mirrors the sections the user can actually see.
+            .when(group_by == GitPanelGroupBy::Status, |context_menu| {
+                context_menu.action_disabled_when(
+                    !has_tracked_changes,
+                    "Stash Tracked",
+                    StashTracked.boxed_clone(),
+                )
+            })
+            .when(group_by == GitPanelGroupBy::Staging, |context_menu| {
+                context_menu.action_disabled_when(
+                    !has_staged_changes,
+                    "Stash Staged",
+                    StashStaged.boxed_clone(),
+                )
+            })
             .action_disabled_when(!has_stash_items, "Stash Pop", StashPop.boxed_clone())
             .action("View Stash", zed_actions::git::ViewStash.boxed_clone())
             .when(include_copy_paths, |context_menu| {
@@ -2800,24 +2853,41 @@ impl GitPanel {
     }
 
     pub fn stash_all(&mut self, _: &StashAll, window: &mut Window, cx: &mut Context<Self>) {
+        self.prompt_for_stash_message(StashKind::All, window, cx);
+    }
+
+    pub fn stash_tracked(&mut self, _: &StashTracked, window: &mut Window, cx: &mut Context<Self>) {
+        self.prompt_for_stash_message(StashKind::Tracked, window, cx);
+    }
+
+    pub fn stash_staged(&mut self, _: &StashStaged, window: &mut Window, cx: &mut Context<Self>) {
+        self.prompt_for_stash_message(StashKind::Staged, window, cx);
+    }
+
+    fn prompt_for_stash_message(
+        &mut self,
+        kind: StashKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.active_repository.is_none() {
             return;
         }
         // `git::StashAll` is also registered on the workspace, which dispatches it while
         // `Workspace` is leased, so opening the modal inline would re-enter that update.
-        cx.defer_in(window, |this, window, cx| {
+        cx.defer_in(window, move |this, window, cx| {
             let panel = cx.entity().downgrade();
             this.workspace
                 .update(cx, |workspace, cx| {
                     workspace.toggle_modal(window, cx, |window, cx| {
-                        StashMessageModal::new(panel, window, cx)
+                        StashMessageModal::new(panel, kind, window, cx)
                     });
                 })
                 .ok();
         });
     }
 
-    fn perform_stash(&mut self, message: Option<String>, cx: &mut Context<Self>) {
+    fn perform_stash(&mut self, kind: StashKind, message: Option<String>, cx: &mut Context<Self>) {
         let Some(active_repository) = self.active_repository.clone() else {
             return;
         };
@@ -2825,12 +2895,16 @@ impl GitPanel {
         cx.spawn({
             async move |this, cx| {
                 let stash_task = active_repository
-                    .update(cx, |repo, cx| repo.stash_all(message, cx))
+                    .update(cx, |repo, cx| match kind {
+                        StashKind::All => repo.stash_all(message, cx),
+                        StashKind::Tracked => repo.stash_tracked(message, cx),
+                        StashKind::Staged => repo.stash_staged(message, cx),
+                    })
                     .await;
                 this.update(cx, |this, cx| {
                     stash_task
                         .map_err(|e| {
-                            this.show_error_toast("stash", e, cx);
+                            this.show_error_toast(kind.error_action(), e, cx);
                         })
                         .ok();
                     cx.notify();
@@ -2905,6 +2979,44 @@ impl GitPanel {
         if status_entry.staging != StageStatus::Unstaged {
             self.change_file_stage(false, vec![status_entry.clone()], cx);
         }
+    }
+
+    fn stage_section(
+        &mut self,
+        _: &git::StageSection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.change_selected_section_stage(StageIntent::Stage, window, cx);
+    }
+
+    fn unstage_section(
+        &mut self,
+        _: &git::UnstageSection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.change_selected_section_stage(StageIntent::Unstage, window, cx);
+    }
+
+    fn change_selected_section_stage(
+        &mut self,
+        intent: StageIntent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(selected_index) = self.selected_entry else {
+            return;
+        };
+        let Some(section) = self.section_for_entry_index(selected_index) else {
+            return;
+        };
+        self.toggle_staged_for_entry(
+            &GitListEntry::Header(GitHeaderEntry { header: section }),
+            intent,
+            window,
+            cx,
+        );
     }
 
     fn on_commit(&mut self, _: &Commit, window: &mut Window, cx: &mut Context<Self>) {
@@ -4098,17 +4210,27 @@ impl GitPanel {
         let workspace = self.workspace.clone();
         let operation = operation.into();
         let window = window.window_handle();
-        AskPassDelegate::new(&mut cx.to_async(), move |prompt, tx, cx| {
-            window
-                .update(cx, |_, window, cx| {
-                    workspace.update(cx, |workspace, cx| {
-                        workspace.toggle_modal(window, cx, |window, cx| {
-                            AskPassModal::new(operation.clone(), prompt.into(), tx, window, cx)
-                        });
+        AskPassDelegate::new_with_cancellation(
+            &mut cx.to_async(),
+            move |prompt, tx, cancellation, cx| {
+                window
+                    .update(cx, |_, window, cx| {
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.toggle_modal(window, cx, |window, cx| {
+                                AskPassModal::new(
+                                    operation.clone(),
+                                    prompt.into(),
+                                    tx,
+                                    cancellation,
+                                    window,
+                                    cx,
+                                )
+                            });
+                        })
                     })
-                })
-                .ok();
-        })
+                    .ok();
+            },
+        )
     }
 
     fn can_push_and_pull(&self, cx: &App) -> bool {
@@ -5706,13 +5828,14 @@ impl GitPanel {
     fn render_git_changes_actions_menu(
         &self,
         id: impl Into<ElementId>,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let has_tracked_changes = self.has_tracked_changes();
         let has_staged_changes = self.has_staged_changes();
         let has_unstaged_changes = self.has_unstaged_changes();
         let has_new_changes = self.new_count > 0;
         let has_stash_items = self.stash_entries.entries.len() > 0;
+        let group_by = GitPanelSettings::get_global(cx).group_by;
 
         let focus_handle = self.focus_handle.clone();
         let menu_open = self.changes_actions_menu_handle.is_deployed();
@@ -5730,6 +5853,7 @@ impl GitPanel {
                     has_unstaged_changes,
                     has_new_changes,
                     has_stash_items,
+                    group_by,
                     false,
                     focus_handle.clone(),
                     window,
@@ -7498,6 +7622,7 @@ impl GitPanel {
             has_unstaged_changes,
             has_new_changes,
             has_stash_items,
+            GitPanelSettings::get_global(cx).group_by,
             include_copy_paths,
             self.focus_handle.clone(),
             window,
@@ -8287,6 +8412,8 @@ impl Render for GitPanel {
                     .on_action(cx.listener(Self::unstage_all))
                     .on_action(cx.listener(Self::stage_selected))
                     .on_action(cx.listener(Self::unstage_selected))
+                    .on_action(cx.listener(Self::stage_section))
+                    .on_action(cx.listener(Self::unstage_section))
                     .on_action(cx.listener(Self::restore_tracked_files))
                     .on_action(cx.listener(Self::revert_selected))
                     .on_action(cx.listener(Self::add_to_gitignore))
@@ -8294,6 +8421,8 @@ impl Render for GitPanel {
                     .on_action(cx.listener(Self::clean_all))
                     .on_action(cx.listener(Self::generate_commit_message_action))
                     .on_action(cx.listener(Self::stash_all))
+                    .on_action(cx.listener(Self::stash_tracked))
+                    .on_action(cx.listener(Self::stash_staged))
                     .on_action(cx.listener(Self::stash_pop))
             })
             .on_action(cx.listener(Self::collapse_selected_entry))
@@ -13016,6 +13145,248 @@ mod tests {
         assert!(
             !detail.contains("unstaged.rs"),
             "prompt should NOT list unstaged.rs, got: {detail}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_stage_section_scopes_to_selected_section(cx: &mut TestAppContext) {
+        use GitListEntry::*;
+
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "src": {
+                        "main.rs": "fn main() {}",
+                        "lib.rs": "pub fn hello() {}",
+                    },
+                    "new_file.txt": "new content",
+                    "another_new.rs": "// new file",
+                }
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            Path::new(path!("/root/project/.git")),
+            &[
+                ("src/main.rs", StatusCode::Modified.worktree()),
+                ("src/lib.rs", StatusCode::Modified.worktree()),
+                ("new_file.txt", FileStatus::Untracked),
+                ("another_new.rs", FileStatus::Untracked),
+            ],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
+        #[rustfmt::skip]
+        pretty_assertions::assert_matches!(
+            entries.as_slice(),
+            &[
+                Header(GitHeaderEntry { header: Section::Tracked }),
+                Status(GitStatusEntry { staging: StageStatus::Unstaged, .. }),
+                Status(GitStatusEntry { staging: StageStatus::Unstaged, .. }),
+                Header(GitHeaderEntry { header: Section::New }),
+                Status(GitStatusEntry { staging: StageStatus::Unstaged, .. }),
+                Status(GitStatusEntry { staging: StageStatus::Unstaged, .. }),
+            ],
+        );
+
+        // Staging from an untracked row must leave the tracked section alone.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.selected_entry = Some(4);
+            panel.stage_section(&git::StageSection, window, cx);
+        });
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
+        #[rustfmt::skip]
+        pretty_assertions::assert_matches!(
+            entries.as_slice(),
+            &[
+                Header(GitHeaderEntry { header: Section::Tracked }),
+                Status(GitStatusEntry { staging: StageStatus::Unstaged, .. }),
+                Status(GitStatusEntry { staging: StageStatus::Unstaged, .. }),
+                Header(GitHeaderEntry { header: Section::New }),
+                Status(GitStatusEntry { staging: StageStatus::Staged, .. }),
+                Status(GitStatusEntry { staging: StageStatus::Staged, .. }),
+            ],
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.selected_entry = Some(1);
+            panel.stage_section(&git::StageSection, window, cx);
+        });
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
+        #[rustfmt::skip]
+        pretty_assertions::assert_matches!(
+            entries.as_slice(),
+            &[
+                Header(GitHeaderEntry { header: Section::Tracked }),
+                Status(GitStatusEntry { staging: StageStatus::Staged, .. }),
+                Status(GitStatusEntry { staging: StageStatus::Staged, .. }),
+                Header(GitHeaderEntry { header: Section::New }),
+                Status(GitStatusEntry { staging: StageStatus::Staged, .. }),
+                Status(GitStatusEntry { staging: StageStatus::Staged, .. }),
+            ],
+        );
+
+        // Unstaging is likewise section-scoped, and unlike the header checkbox it
+        // has a fixed direction rather than toggling.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.selected_entry = Some(4);
+            panel.unstage_section(&git::UnstageSection, window, cx);
+        });
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
+        #[rustfmt::skip]
+        pretty_assertions::assert_matches!(
+            entries.as_slice(),
+            &[
+                Header(GitHeaderEntry { header: Section::Tracked }),
+                Status(GitStatusEntry { staging: StageStatus::Staged, .. }),
+                Status(GitStatusEntry { staging: StageStatus::Staged, .. }),
+                Header(GitHeaderEntry { header: Section::New }),
+                Status(GitStatusEntry { staging: StageStatus::Unstaged, .. }),
+                Status(GitStatusEntry { staging: StageStatus::Unstaged, .. }),
+            ],
+        );
+
+        // Re-issuing the same direction is idempotent, where a toggle would flip back.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.selected_entry = Some(4);
+            panel.unstage_section(&git::UnstageSection, window, cx);
+        });
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
+        #[rustfmt::skip]
+        pretty_assertions::assert_matches!(
+            entries.as_slice(),
+            &[
+                Header(GitHeaderEntry { header: Section::Tracked }),
+                Status(GitStatusEntry { staging: StageStatus::Staged, .. }),
+                Status(GitStatusEntry { staging: StageStatus::Staged, .. }),
+                Header(GitHeaderEntry { header: Section::New }),
+                Status(GitStatusEntry { staging: StageStatus::Unstaged, .. }),
+                Status(GitStatusEntry { staging: StageStatus::Unstaged, .. }),
+            ],
         );
     }
 }

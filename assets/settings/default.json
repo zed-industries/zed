@@ -550,6 +550,14 @@
   },
   // Whether to allow windows to tab together based on the user’s tabbing preference (macOS only).
   "use_system_window_tabs": false,
+  // Which fullscreen mode the `zed::ToggleFullScreen` action enters (macOS only).
+  //
+  // 1. Use macOS's native fullscreen, which moves the window into its own Mission Control space.
+  //     "native"
+  // 2. Resize the window to cover the entire screen, including the menu bar and,
+  //    on notched displays, the area around the notch.
+  //     "simple"
+  "fullscreen_mode": "native",
   // Titlebar related settings
   "title_bar": {
     // Whether to show git status indicators on the branch icon in the titlebar.
@@ -695,9 +703,9 @@
     "folds": true,
     // Minimum number of characters to reserve space for in the gutter.
     "min_line_number_digits": 4,
-    // The width, in pixels, of the git diff hunk indicators in the gutter.
-    // When set to null, the width scales with the buffer font size.
-    "git_gutter_width": null,
+    // The width of the git diff hunk indicators in the gutter.
+    // Use "default" to scale with font size, or {"custom": <pixels>} for a fixed width.
+    "git_gutter_width": "default",
   },
   "indent_guides": {
     // Whether to show indent guides in the editor.

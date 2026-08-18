@@ -4574,23 +4574,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "csv_preview"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "editor",
- "feature_flags",
- "fuzzy",
- "gpui",
- "log",
- "picker",
- "proptest",
- "text",
- "ui",
- "workspace",
-]
-
-[[package]]
 name = "ctor"
 version = "1.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15355,6 +15338,7 @@ dependencies = [
  "anyhow",
  "askpass",
  "auto_update",
+ "editor",
  "futures 0.3.32",
  "gpui",
  "log",
@@ -15364,6 +15348,7 @@ dependencies = [
  "remote",
  "semver",
  "settings",
+ "theme",
  "theme_settings",
  "ui",
  "ui_input",
@@ -18449,6 +18434,23 @@ dependencies = [
  "util",
  "workspace",
  "zlog",
+]
+
+[[package]]
+name = "tabular_data_preview"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "editor",
+ "feature_flags",
+ "fuzzy",
+ "gpui",
+ "log",
+ "picker",
+ "proptest",
+ "text",
+ "ui",
+ "workspace",
 ]
 
 [[package]]
@@ -23321,7 +23323,6 @@ dependencies = [
  "copilot_chat",
  "copilot_ui",
  "crashes",
- "csv_preview",
  "dap_adapters",
  "db",
  "debug_adapter_extension",
@@ -23421,6 +23422,7 @@ dependencies = [
  "sysinfo 0.37.2",
  "system_specs",
  "tab_switcher",
+ "tabular_data_preview",
  "task",
  "tasks_ui",
  "telemetry",

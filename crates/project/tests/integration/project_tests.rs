@@ -67,7 +67,7 @@ use project::{
 };
 use rand::{Rng as _, rngs::StdRng};
 use serde_json::json;
-use settings::{GlobalLspSettingsContent, SettingsStore};
+use settings::{GlobalLspSettingsContent, SettingsStore, SplicingVec};
 #[cfg(target_os = "linux")]
 use settings::{LocalSettingsKind, LocalSettingsPath};
 #[cfg(not(windows))]
@@ -9416,6 +9416,7 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
         "TailwindServer",
         "ESLintServer",
         "NoHoverCapabilitiesServer",
+        "DuplicateTypeScriptServer",
     ];
     let mut language_servers = [
         language_registry.register_fake_lsp(
@@ -9457,6 +9458,17 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
                 name: language_server_names[3],
                 capabilities: lsp::ServerCapabilities {
                     hover_provider: None,
+                    ..lsp::ServerCapabilities::default()
+                },
+                ..FakeLspAdapter::default()
+            },
+        ),
+        language_registry.register_fake_lsp(
+            "tsx",
+            FakeLspAdapter {
+                name: language_server_names[4],
+                capabilities: lsp::ServerCapabilities {
+                    hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
                     ..lsp::ServerCapabilities::default()
                 },
                 ..FakeLspAdapter::default()
@@ -9504,6 +9516,21 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
                     ),
                 );
             }
+            "DuplicateTypeScriptServer" => {
+                servers_with_hover_requests.insert(
+                    new_server_name,
+                    new_server.set_request_handler::<lsp::request::HoverRequest, _, _>(
+                        |_, _| async move {
+                            Ok(Some(lsp::Hover {
+                                contents: lsp::HoverContents::Scalar(lsp::MarkedString::String(
+                                    "TypeScriptServer hover".to_string(),
+                                )),
+                                range: None,
+                            }))
+                        },
+                    ),
+                );
+            }
             "ESLintServer" => {
                 servers_with_hover_requests.insert(
                     new_server_name,
@@ -9545,7 +9572,7 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
             .map(|hover| hover.contents.iter().map(|block| &block.text).join("|"))
             .sorted()
             .collect::<Vec<_>>(),
-        "Should receive hover responses from all related servers with hover capabilities"
+        "Should receive unique hover responses from all related servers with hover capabilities"
     );
 }
 
@@ -13393,7 +13420,8 @@ async fn test_git_events_after_project_excludes_dot_git(cx: &mut gpui::TestAppCo
     cx.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_exclusions = Some(vec!["foo".to_string()]);
+                settings.project.worktree.file_scan_exclusions =
+                    Some(SplicingVec::from(vec!["foo".to_string()]));
             });
         });
     });
@@ -15241,7 +15269,8 @@ async fn test_rescan_with_gitignore(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_exclusions = Some(Vec::new());
+                settings.project.worktree.file_scan_exclusions =
+                    Some(SplicingVec::from(Vec::new()));
             });
         });
     });
