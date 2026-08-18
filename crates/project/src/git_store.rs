@@ -8481,13 +8481,19 @@ impl Repository {
         self.auto_fetch.task = Some(cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(interval).await;
-                let Ok(fetch_rx) = this.update(cx, |this, cx| this.auto_fetch(cx)) else {
+                // Re-checked every tick rather than once up front, because a
+                // repository can be trusted (or restricted) at any point in the
+                // session.
+                let Ok(fetch) = this.update(cx, |this, cx| {
+                    this.is_trusted().then(|| this.auto_fetch(cx))
+                }) else {
                     break;
                 };
-                if let Ok(result) = fetch_rx.await {
-                    if let Err(error) = result {
-                        log::debug!("auto-fetch failed: {error:#}");
-                    }
+                let Some(fetch_rx) = fetch else {
+                    continue;
+                };
+                if let Ok(Err(error)) = fetch_rx.await {
+                    log::debug!("auto-fetch failed: {error:#}");
                 }
             }
         }));
@@ -8497,45 +8503,25 @@ impl Repository {
         &mut self,
         _cx: &mut Context<Self>,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
-        let askpass_delegates = self.askpass_delegates.clone();
-        let askpass_id = util::post_inc(&mut self.latest_askpass_id);
-        let id = self.id;
-
         self.send_keyed_job(
             "auto fetch",
             Some(GitJobKey::AutoFetch),
             Some("git fetch".into()),
             move |git_repo, mut cx| async move {
+                // Callers gate on `Repository::is_trusted`, which only ever
+                // reports true for local repositories.
+                let RepositoryState::Local(LocalRepositoryState {
+                    backend,
+                    environment,
+                    ..
+                }) = git_repo
+                else {
+                    anyhow::bail!("auto-fetch is only supported for local repositories");
+                };
                 let askpass = AskPassDelegate::no_op(&mut cx);
-                match git_repo {
-                    RepositoryState::Local(LocalRepositoryState {
-                        backend,
-                        environment,
-                        ..
-                    }) => {
-                        backend
-                            .fetch(FetchOptions::All, askpass, environment, cx)
-                            .await
-                    }
-                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
-                        let _askpass_operation =
-                            RemoteAskPassOperation::new(askpass_id, askpass, askpass_delegates);
-
-                        let response = client
-                            .request(proto::Fetch {
-                                project_id: project_id.0,
-                                repository_id: id.to_proto(),
-                                askpass_id,
-                                remote: FetchOptions::All.to_proto(),
-                            })
-                            .await?;
-
-                        Ok(RemoteCommandOutput {
-                            stdout: response.stdout,
-                            stderr: response.stderr,
-                        })
-                    }
-                }
+                backend
+                    .fetch(FetchOptions::All, askpass, environment, cx)
+                    .await
             },
         )
     }

@@ -12663,8 +12663,10 @@ mod tests {
     }
 
     #[gpui::test]
-    #[gpui::test]
     async fn test_auto_fetch(cx: &mut TestAppContext) {
+        use collections::HashSet;
+        use project::trusted_worktrees::{DbTrustedPaths, PathTrust, TrustedWorktrees};
+
         init_test(cx);
 
         let fs = FakeFs::new(cx.background_executor.clone());
@@ -12693,14 +12695,20 @@ mod tests {
                     )
                     .unwrap();
             });
+            project::trusted_worktrees::init(DbTrustedPaths::default(), cx);
         });
 
-        let project = Project::test(fs.clone(), [path!("/root/repo").as_ref()], cx).await;
+        let project =
+            Project::test_with_worktree_trust(fs.clone(), [path!("/root/repo").as_ref()], cx).await;
 
         cx.run_until_parked();
 
-        let repo = project.update(cx, |project, cx| project.active_repository(cx));
-        assert!(repo.is_some(), "should have an active repository");
+        let repo = project
+            .update(cx, |project, cx| project.active_repository(cx))
+            .expect("should have an active repository");
+        repo.read_with(cx, |repo, _| {
+            assert!(!repo.is_trusted(), "repository should start untrusted");
+        });
 
         let fetch_count = |fs: &FakeFs| {
             fs.with_git_state(Path::new(path!("/root/repo/.git")), false, |state| {
@@ -12710,6 +12718,36 @@ mod tests {
         };
 
         assert_eq!(fetch_count(&fs), 0, "no fetch before timer fires");
+
+        cx.background_executor
+            .advance_clock(std::time::Duration::from_secs(40));
+        cx.run_until_parked();
+        assert_eq!(
+            fetch_count(&fs),
+            0,
+            "untrusted repository should never be auto-fetched"
+        );
+
+        let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+        let worktree_id = worktree_store.read_with(cx, |store, cx| {
+            store.worktrees().next().unwrap().read(cx).id()
+        });
+        let trusted_worktrees = cx
+            .update(|cx| TrustedWorktrees::try_get_global(cx).expect("trust global should be set"));
+        trusted_worktrees.update(cx, |store, cx| {
+            store.trust(
+                &worktree_store,
+                HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        repo.read_with(cx, |repo, _| {
+            assert!(
+                repo.is_trusted(),
+                "repository should be trusted after trusting its worktree"
+            );
+        });
 
         // Change an unrelated setting mid-wait — should not reset the timer
         cx.background_executor
