@@ -597,6 +597,22 @@ pub fn theme_colors_refinement(
             .editor_indent_guide_active
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
+        editor_indent_guide_cycle: this
+            .editor_indent_guide_cycle
+            .as_ref()
+            .map(|colors| colors.iter().filter_map(|c| c.as_ref().and_then(|s| try_parse_color(s).ok())).collect()),
+        editor_indent_guide_cycle_active: this
+            .editor_indent_guide_cycle_active
+            .as_ref()
+            .map(|colors| colors.iter().filter_map(|c| c.as_ref().and_then(|s| try_parse_color(s).ok())).collect()),
+        editor_indent_guide_background_cycle: this
+            .editor_indent_guide_background_cycle
+            .as_ref()
+            .map(|colors| colors.iter().filter_map(|c| c.as_ref().and_then(|s| try_parse_color(s).ok())).collect()),
+        editor_indent_guide_background_cycle_active: this
+            .editor_indent_guide_background_cycle_active
+            .as_ref()
+            .map(|colors| colors.iter().filter_map(|c| c.as_ref().and_then(|s| try_parse_color(s).ok())).collect()),
         editor_document_highlight_read_background,
         editor_document_highlight_write_background: this
             .editor_document_highlight_write_background
