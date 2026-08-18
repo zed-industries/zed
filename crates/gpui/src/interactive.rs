@@ -691,6 +691,31 @@ impl ExternalPaths {
     }
 }
 
+/// Data offered to the platform when an internal drag leaves the window and is
+/// promoted to a native drag session.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum ExternalDragPayload {
+    /// Real on-disk paths, handed to the platform as an outbound file drag.
+    Files(FileDragPaths),
+}
+
+/// Paths handed to the platform for a native file drag. Directory metadata is
+/// provided by the caller to avoid querying it when the platform drag starts.
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+pub struct FileDragPaths(SmallVec<[(PathBuf, bool); 2]>);
+
+impl FileDragPaths {
+    /// Creates a native file-drag payload from paths paired with whether each path is a directory.
+    pub fn new(entries: impl IntoIterator<Item = (PathBuf, bool)>) -> Self {
+        Self(entries.into_iter().collect())
+    }
+
+    /// The dragged paths, each paired with whether it is a directory.
+    pub fn entries(&self) -> &[(PathBuf, bool)] {
+        &self.0
+    }
+}
+
 impl Render for ExternalPaths {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         // the platform will render icons for the dragged files
@@ -720,6 +745,8 @@ pub enum FileDropEvent {
     },
     /// The user has stopped dragging the files over the window.
     Exited,
+    /// The platform-owned drag session has ended.
+    Ended,
 }
 
 impl Sealed for FileDropEvent {}
@@ -808,7 +835,7 @@ mod test {
 
     use crate::{
         self as gpui, AppContext as _, Context, FocusHandle, InteractiveElement, IntoElement,
-        KeyBinding, Keystroke, ParentElement, Render, TestAppContext, Window, div,
+        KeyBinding, Keystroke, Modifiers, ParentElement, Render, TestAppContext, Window, div,
     };
 
     struct TestView {
@@ -874,5 +901,33 @@ mod test {
                 assert!(test_view.saw_action);
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    fn test_multi_modifier_gesture_does_not_dispatch_standalone_modifier_binding(
+        cx: &mut TestAppContext,
+    ) {
+        let (test_view, cx) = cx.add_window_view(|_, cx| TestView {
+            saw_key_down: false,
+            saw_action: false,
+            focus_handle: cx.focus_handle(),
+        });
+
+        cx.update(|_, cx| {
+            cx.bind_keys(vec![KeyBinding::new("shift", TestAction, None)]);
+        });
+        test_view.update_in(cx, |test_view, window, cx| {
+            window.focus(&test_view.focus_handle, cx);
+        });
+
+        cx.simulate_modifiers_change(Modifiers::alt());
+        cx.simulate_modifiers_change(Modifiers::alt() | Modifiers::shift());
+        cx.simulate_modifiers_change(Modifiers::shift());
+        cx.simulate_modifiers_change(Modifiers::none());
+        assert!(!test_view.read_with(cx, |test_view, _| test_view.saw_action));
+
+        cx.simulate_modifiers_change(Modifiers::shift());
+        cx.simulate_modifiers_change(Modifiers::none());
+        assert!(test_view.read_with(cx, |test_view, _| test_view.saw_action));
     }
 }

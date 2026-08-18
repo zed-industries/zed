@@ -8,7 +8,7 @@ pub const BASE_REM_SIZE_IN_PX: f32 = 16.;
 /// This can be used to compute rem values relative to pixel sizes, without
 /// needing to hard-code the rem value.
 ///
-/// For instance, instead of writing `rems(0.875)` you can write `rems_from_px(14.)`
+/// For instance, instead of writing `rems(0.875)` you can write `rems_from_px(14_f32)`
 #[inline(always)]
 pub fn rems_from_px(px: impl Into<f32>) -> Rems {
     rems(px.into() / BASE_REM_SIZE_IN_PX)
