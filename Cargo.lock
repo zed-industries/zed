@@ -14181,6 +14181,7 @@ dependencies = [
  "anyhow",
  "askpass",
  "async-channel 2.5.0",
+ "async-lock",
  "async-trait",
  "base64 0.22.1",
  "buffer_diff",

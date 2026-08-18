@@ -3912,11 +3912,15 @@ impl GitBinary {
             command.args(["-c", "protocol.ext.allow=never"]);
             command.args(["-c", "diff.external="]);
         }
-        // Deliberately narrower than clearing `credential.helper`: helpers that
-        // answer from a keychain without prompting are exactly what makes an
-        // unattended fetch useful, so only interactive helpers are forbidden.
         if !self.interactive {
+            // Narrower than clearing `credential.helper`, which would also disable
+            // helpers that answer from a keychain without prompting — exactly what
+            // makes an unattended fetch useful. Only prompting is forbidden.
             command.args(["-c", "credential.interactive=false"]);
+            // Auto-maintenance can repack the entire repository, far outweighing
+            // the fetch that triggered it. A background caller should not start
+            // that work on the user's behalf.
+            command.args(["-c", "gc.auto=0"]);
         }
         command.args(args);
 
@@ -3953,6 +3957,13 @@ async fn run_git_command(
         // Set here rather than in `build_command` so it lands after the project
         // environment has been applied and cannot be overridden by it.
         command.env("GIT_TERMINAL_PROMPT", "0");
+        // A caller with no user attached can be dropped at any time (a settings
+        // change restarting the auto-fetch timer, repository teardown). Dropping
+        // the task cancels the future, but not the child, so without this the git
+        // process outlives it and keeps holding ref locks untracked. Deliberately
+        // not applied to interactive commands: killing `commit` or `pull` partway
+        // can leave a stale `index.lock` behind, so those are better off finishing.
+        command.kill_on_drop(true);
     }
 
     if env.contains_key("GIT_ASKPASS") {
