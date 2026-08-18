@@ -34,6 +34,12 @@ pub struct DiagnosticEntry<T> {
     pub diagnostic: Diagnostic,
 }
 
+impl<T> DiagnosticEntry<T> {
+    pub fn new(range: Range<T>, diagnostic: Diagnostic) -> Self {
+        Self { range, diagnostic }
+    }
+}
+
 /// A single diagnostic in a set. Generic over its range type, because
 /// the diagnostics are stored internally as [`Anchor`]s, but can be
 /// resolved to different coordinates types like [`usize`] byte offsets or
@@ -60,10 +66,7 @@ impl<T: PartialEq> PartialEq<DiagnosticEntryRef<'_, T>> for DiagnosticEntry<T> {
 
 impl<T: Clone> DiagnosticEntryRef<'_, T> {
     pub fn to_owned(&self) -> DiagnosticEntry<T> {
-        DiagnosticEntry {
-            range: self.range.clone(),
-            diagnostic: self.diagnostic.clone(),
-        }
+        DiagnosticEntry::new(self.range.clone(), self.diagnostic.clone())
     }
 }
 
@@ -169,10 +172,12 @@ impl DiagnosticSet {
         entries.sort_unstable_by_key(|entry| (entry.range.start, Reverse(entry.range.end)));
         Self {
             diagnostics: SumTree::from_iter(
-                entries.into_iter().map(|entry| DiagnosticEntry {
-                    range: buffer.anchor_before(entry.range.start)
-                        ..buffer.anchor_before(entry.range.end),
-                    diagnostic: entry.diagnostic,
+                entries.into_iter().map(|entry| {
+                    DiagnosticEntry::new(
+                        buffer.anchor_before(entry.range.start)
+                            ..buffer.anchor_before(entry.range.end),
+                        entry.diagnostic,
+                    )
                 }),
                 buffer,
             ),

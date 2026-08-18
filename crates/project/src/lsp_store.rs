@@ -9174,10 +9174,7 @@ impl LspStore {
                     .map(|v| {
                         let start = Unclipped(v.range.start.to_point_utf16(&snapshot));
                         let end = Unclipped(v.range.end.to_point_utf16(&snapshot));
-                        DiagnosticEntry {
-                            range: start..end,
-                            diagnostic: v.diagnostic.clone(),
-                        }
+                        DiagnosticEntry::new(start..end, v.diagnostic.clone())
                     })
                     .collect::<Vec<_>>();
 
