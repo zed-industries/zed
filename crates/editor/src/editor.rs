@@ -11056,13 +11056,16 @@ impl Editor {
         let active_file_path = self.active_project_path(cx).map(|path| path.path);
         let workspace = self.workspace().map(|workspace| workspace.downgrade());
         let Some(workspace) = workspace else {
+            // An open menu holds a workspace handle it can no longer resolve, so opening a
+            // file from it would silently do nothing. Close it rather than leave it there.
+            self.dismiss_breadcrumb_navigation(window, cx);
             return;
         };
 
         if let Some(menu) = self.breadcrumb_navigation_menu.clone() {
             // set_listing runs under this editor.update; it must not re-enter the editor.
             menu.update(cx, |menu, cx| {
-                menu.set_listing(listing, false, window, cx);
+                menu.set_listing(listing, active_file_path, false, window, cx);
             });
             cx.emit(EditorEvent::BreadcrumbsChanged);
             cx.notify();
@@ -11149,6 +11152,11 @@ impl Editor {
         _cx: &mut Context<Self>,
     ) {
         self.workspace = Some((workspace, None));
+    }
+
+    #[cfg(test)]
+    pub fn clear_workspace_for_test(&mut self) {
+        self.workspace = None;
     }
 
     #[cfg(test)]

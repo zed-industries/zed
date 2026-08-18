@@ -20,6 +20,28 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use ui::utils::WithRemSize;
 
+/// Ordered so a batch of updates can be folded with `max`: one dead ancestor outranks any
+/// number of ordinary changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum ListingPathImpact {
+    Ignore,
+    Reload,
+    Dead,
+}
+
+/// A worktree update names the path that changed and never the path it moved to, so renaming or
+/// deleting an ancestor arrives as an update at that ancestor. Reloading in that case paints
+/// "Empty directory" over a path that no longer exists, so the listing has to be given up.
+pub(super) fn listing_path_impact(updated: &RelPath, listing: &RelPath) -> ListingPathImpact {
+    if updated == listing || updated.parent() == Some(listing) {
+        ListingPathImpact::Reload
+    } else if listing.is_descendant_of(updated) {
+        ListingPathImpact::Dead
+    } else {
+        ListingPathImpact::Ignore
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum BreadcrumbListing {
     Directory {
@@ -97,6 +119,9 @@ pub struct BreadcrumbNavigationMenu {
     filter_cancel: Option<Arc<AtomicBool>>,
     filter_epoch: u64,
     ranked_epoch: u64,
+    /// The row that was arrowed to when a filesystem event forced a reload, restored by path
+    /// once the rank that reload triggered lands. Ranked positions do not survive the rebuild.
+    pending_restore_path: Option<Arc<RelPath>>,
     /// Held for as long as a rank is in flight. The picker's pending-update contract decides
     /// whether Enter confirms now or waits, and it can only wait on something it can await.
     /// Shared with the delegate rather than read back off the menu: `Picker::new` finalizes its
@@ -156,6 +181,7 @@ impl BreadcrumbNavigationMenu {
                 filter_cancel: None,
                 filter_epoch: 0,
                 ranked_epoch: 0,
+                pending_restore_path: None,
                 filter_settled: FilterSettled::default(),
                 filter_match_truncated: false,
                 filter_candidates: Arc::new(Vec::new()),
@@ -200,29 +226,47 @@ impl BreadcrumbNavigationMenu {
                         else {
                             return;
                         };
-                        let listing_path = listing_path.clone();
-                        let should_reload = match event {
-                            project::Event::WorktreeUpdatedEntries(worktree_id, updates) => {
-                                worktree_id == listing_worktree
-                                    && updates.iter().any(|(path, _, _)| {
-                                        path.parent()
-                                            .is_some_and(|parent| parent == listing_path.as_ref())
-                                            || path.as_ref() == listing_path.as_ref()
-                                    })
+                        let (listing_worktree, listing_path) =
+                            (*listing_worktree, listing_path.clone());
+                        let impact = match event {
+                            project::Event::WorktreeUpdatedEntries(worktree_id, updates)
+                                if *worktree_id == listing_worktree =>
+                            {
+                                updates.iter().fold(
+                                    ListingPathImpact::Ignore,
+                                    |impact, (path, _, _)| {
+                                        impact.max(listing_path_impact(path, &listing_path))
+                                    },
+                                )
                             }
-                            project::Event::WorktreeUpdatedRootRepoCommonDir(worktree_id) => {
-                                worktree_id == listing_worktree
+                            project::Event::WorktreeUpdatedRootRepoCommonDir(worktree_id)
+                                if *worktree_id == listing_worktree =>
+                            {
+                                ListingPathImpact::Reload
                             }
-                            project::Event::WorktreeRemoved(worktree_id) => {
-                                if worktree_id == listing_worktree {
-                                    cx.emit(DismissEvent);
-                                }
-                                false
+                            project::Event::WorktreeRemoved(worktree_id)
+                                if *worktree_id == listing_worktree =>
+                            {
+                                ListingPathImpact::Dead
                             }
-                            _ => false,
+                            _ => ListingPathImpact::Ignore,
                         };
-                        if should_reload {
-                            this.reload_directory_rows(cx);
+                        match impact {
+                            ListingPathImpact::Ignore => {}
+                            ListingPathImpact::Reload => this.reload_directory_rows(cx),
+                            ListingPathImpact::Dead => {
+                                // Metadata on an ancestor lands here too, so only an ancestor
+                                // that is actually gone takes the listing with it.
+                                let listing_survives =
+                                    this.worktree(listing_worktree, cx).is_some_and(|worktree| {
+                                        worktree.read(cx).entry_for_path(&listing_path).is_some()
+                                    });
+                                if listing_survives {
+                                    this.reload_directory_rows(cx);
+                                } else {
+                                    this.dismiss_dead_listing(cx);
+                                }
+                            }
                         }
                     }));
             }
@@ -260,13 +304,18 @@ impl BreadcrumbNavigationMenu {
         &self.symbol_trail
     }
 
+    /// `active_file_path` is what the initial selection is resolved against, so it has to be
+    /// refreshed on reuse: the editor can have been saved elsewhere since the menu was built.
     pub fn set_listing(
         &mut self,
         listing: BreadcrumbListing,
+        active_file_path: Option<Arc<RelPath>>,
         navigated: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.active_file_path = active_file_path;
+        self.pending_restore_path = None;
         if navigated {
             if let BreadcrumbListing::Directory { worktree_id, path } = &listing {
                 self.navigated_path = Some((*worktree_id, path.clone()));
@@ -429,6 +478,7 @@ impl BreadcrumbNavigationMenu {
             filter_cancel: None,
             filter_epoch: 0,
             ranked_epoch: 0,
+            pending_restore_path: None,
             filter_settled: FilterSettled::default(),
             filter_match_truncated: false,
             filter_candidates: Arc::new(Vec::new()),
@@ -505,6 +555,7 @@ impl BreadcrumbNavigationMenu {
             return;
         }
         self.query = query;
+        self.pending_restore_path = None;
         if !self.filter_is_empty() {
             self.pending_initial_selection = false;
         }
@@ -783,6 +834,15 @@ impl BreadcrumbNavigationMenu {
         }
     }
 
+    /// Takes the in-flight loads with it: a listing switch that resolves after the dismiss
+    /// would otherwise set a listing whose path is gone.
+    fn dismiss_dead_listing(&mut self, cx: &mut Context<Self>) {
+        self.load_epoch = self.load_epoch.wrapping_add(1);
+        self.load_task = None;
+        self.row_refresh_task = None;
+        cx.emit(DismissEvent);
+    }
+
     fn reload_directory_rows(&mut self, cx: &mut Context<Self>) {
         let BreadcrumbListing::Directory { worktree_id, path } = &self.listing else {
             return;
@@ -848,6 +908,7 @@ impl BreadcrumbNavigationMenu {
         if !self.filter_is_empty() {
             self.ranked_matches.clear();
             self.selected_index = None;
+            self.pending_restore_path = selected_path;
             self.rerank_filter(cx);
         } else if let Some(selected_path) = selected_path {
             let display_count = self.directory_entries.len().min(MAX_BREADCRUMB_MENU_ROWS);
@@ -1293,13 +1354,23 @@ impl BreadcrumbNavigationMenu {
                         .then(a.candidate_id.cmp(&b.candidate_id))
                 });
                 this.ranked_matches = matches.into_iter().take(MAX_BREADCRUMB_MENU_ROWS).collect();
-                // Kept if it still addresses a row: the user can arrow through results while
-                // the rank is in flight, and a new query clears it so that case still lands
-                // on the best match.
-                this.selected_index = match this.selected_index {
+                // Restored by path, never by rank position: a reload rebuilds
+                // `directory_entries`, so the candidate ids the old positions addressed now
+                // mean different files.
+                let restored = this.pending_restore_path.take().and_then(|path| {
+                    this.ranked_matches.iter().position(|match_| {
+                        this.directory_entries
+                            .get(match_.candidate_id)
+                            .is_some_and(|entry| entry.path.as_ref() == path.as_ref())
+                    })
+                });
+                // Otherwise kept if it still addresses a row: the user can arrow through
+                // results while the rank is in flight, and a new query clears it so that case
+                // still lands on the best match.
+                this.selected_index = restored.or(match this.selected_index {
                     Some(index) if index < this.ranked_matches.len() => Some(index),
                     _ => (!this.ranked_matches.is_empty()).then_some(0),
-                };
+                });
                 this.scroll_to_selection_pending = true;
                 // Published inline rather than deferred: the picker treats this task's
                 // completion as "rows are final", and a deferred publish would land a cycle
@@ -1516,6 +1587,7 @@ impl BreadcrumbNavigationMenu {
                             buffer_id,
                             parent: None,
                         },
+                        self.active_file_path.clone(),
                         false,
                         window,
                         cx,
@@ -1585,6 +1657,7 @@ impl BreadcrumbNavigationMenu {
                         worktree_id,
                         path: parent,
                     },
+                    self.active_file_path.clone(),
                     true,
                     window,
                     cx,
@@ -1647,12 +1720,12 @@ impl BreadcrumbNavigationMenu {
             .parent()
             .map(|parent| parent.into_arc())
             .unwrap_or_else(|| RelPath::empty().into_arc());
-        self.active_file_path = Some(project_path.path.clone());
         self.set_listing(
             BreadcrumbListing::Directory {
                 worktree_id: project_path.worktree_id,
                 path: parent_path,
             },
+            Some(project_path.path.clone()),
             false,
             window,
             cx,
@@ -1757,8 +1830,10 @@ impl BreadcrumbNavigationMenu {
                 if this.load_epoch != generation {
                     return;
                 }
+                let active_file_path = this.active_file_path.clone();
                 this.set_listing(
                     BreadcrumbListing::Directory { worktree_id, path },
+                    active_file_path,
                     true,
                     window,
                     cx,

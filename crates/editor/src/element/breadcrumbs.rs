@@ -4212,6 +4212,449 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_reopening_breadcrumb_navigation_refreshes_the_active_file(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor_with_project;
+        use project::{FakeFs, Fs, Project};
+        use serde_json::json;
+        use std::path::Path;
+        use util::path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+
+        // Sorted, the renamed file does not land at index 0, so a stale active path and a
+        // refreshed one pick different rows.
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({ "a_zeta.rs": "fn z() {}", "b_alpha.rs": "fn a() {}" }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        cx.run_until_parked();
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/root/b_alpha.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        let editor_window = cx.add_window(|window, cx| {
+            let mut editor = build_editor_with_project(project.clone(), multi_buffer, window, cx);
+            editor.set_workspace_for_test(workspace.downgrade(), cx);
+            editor
+        });
+        let editor = editor_window.root(cx).unwrap();
+        let cx = &mut VisualTestContext::from_window(*editor_window, cx);
+        cx.run_until_parked();
+
+        let open_listing = |cx: &mut VisualTestContext| {
+            editor.update_in(cx, |editor, window, cx| {
+                editor.open_breadcrumb_navigation(
+                    BreadcrumbListing::Directory {
+                        worktree_id,
+                        path: RelPath::empty().into_arc(),
+                    },
+                    window,
+                    cx,
+                );
+            });
+        };
+        let selected_label = |cx: &mut VisualTestContext| {
+            let menu = editor.read_with(cx, |editor, _| editor.breadcrumb_navigation_menu().cloned());
+            menu.map(|menu| {
+                menu.update(cx, |menu, cx| {
+                    menu.apply_initial_selection_for_test(cx);
+                    let rows = menu.published_row_labels(cx);
+                    menu.selected_index()
+                        .and_then(|index| rows.get(index).cloned())
+                })
+            })
+            .flatten()
+        };
+
+        open_listing(cx);
+        cx.run_until_parked();
+        assert_eq!(
+            selected_label(cx).as_deref(),
+            Some("b_alpha.rs"),
+            "the first open preselects the file the editor is showing"
+        );
+
+        // Save-as, in the shape the editor actually sees it: the buffer keeps its identity and
+        // its project path changes underneath the open menu.
+        fs.rename(
+            Path::new(path!("/root/b_alpha.rs")),
+            Path::new(path!("/root/c_gamma.rs")),
+            fs::RenameOptions {
+                overwrite: false,
+                ignore_if_exists: false,
+                create_parents: false,
+            },
+        )
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        open_listing(cx);
+        cx.run_until_parked();
+        assert_eq!(
+            selected_label(cx).as_deref(),
+            Some("c_gamma.rs"),
+            "reopening onto an existing menu must refresh the path the selection resolves against"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumb_navigation_closes_when_the_workspace_is_gone(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor_with_project;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use util::path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "alpha.rs": "fn a() {}" }))
+            .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        cx.run_until_parked();
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/root/alpha.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        let editor_window = cx.add_window(|window, cx| {
+            let mut editor = build_editor_with_project(project.clone(), multi_buffer, window, cx);
+            editor.set_workspace_for_test(workspace.downgrade(), cx);
+            editor
+        });
+        let editor = editor_window.root(cx).unwrap();
+        let cx = &mut VisualTestContext::from_window(*editor_window, cx);
+        cx.run_until_parked();
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.open_breadcrumb_navigation(
+                BreadcrumbListing::Directory {
+                    worktree_id,
+                    path: RelPath::empty().into_arc(),
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        editor.read_with(cx, |editor, _| {
+            assert!(editor.breadcrumb_navigation_menu().is_some());
+        });
+
+        // Without a workspace the menu cannot open anything it lists, so leaving it up would
+        // leave the user clicking rows that do nothing.
+        editor.update(cx, |editor, _| editor.clear_workspace_for_test());
+        editor.update_in(cx, |editor, window, cx| {
+            editor.open_breadcrumb_navigation(
+                BreadcrumbListing::Directory {
+                    worktree_id,
+                    path: RelPath::empty().into_arc(),
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        editor.read_with(cx, |editor, _| {
+            assert!(
+                editor.breadcrumb_navigation_menu().is_none(),
+                "an editor with no workspace must not leave a dead menu open"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumb_menu_gives_up_a_listing_whose_ancestor_is_gone(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use project::{FakeFs, Fs, Project};
+        use serde_json::json;
+        use std::path::Path;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use util::path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({ "a": { "b": { "c": { "x.txt": "", "y.txt": "" } } } }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        cx.run_until_parked();
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                self.menu.clone()
+            }
+        }
+
+        let menu_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(buffer, window, cx));
+            let menu = BreadcrumbNavigationMenu::new(
+                editor.downgrade(),
+                workspace.downgrade(),
+                BreadcrumbListing::Directory {
+                    worktree_id,
+                    path: RelPath::new_test("a/b/c").into_arc(),
+                },
+                None,
+                false,
+                window,
+                cx,
+            );
+            MenuHost { menu }
+        });
+        let menu = menu_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.menu.clone());
+        let cx = &mut VisualTestContext::from_window(*menu_window, cx);
+        cx.run_until_parked();
+
+        let dismissed = Rc::new(AtomicBool::new(false));
+        let _subscription = menu.update(cx, |_, cx| {
+            let dismissed = dismissed.clone();
+            cx.subscribe(&menu, move |_, _, _: &DismissEvent, _| {
+                dismissed.store(true, Ordering::SeqCst);
+            })
+        });
+
+        // Control: a change inside the listing is an ordinary reload, not a reason to close.
+        fs.insert_file(path!("/root/a/b/c/z.txt"), Vec::new()).await;
+        cx.run_until_parked();
+        assert!(
+            !dismissed.load(Ordering::SeqCst),
+            "a new sibling must not close the menu"
+        );
+        menu.read_with(cx, |menu, _| {
+            assert!(
+                menu.entry_names().iter().any(|name| name == "z.txt"),
+                "the listing must pick the new entry up, got {:?}",
+                menu.entry_names()
+            );
+        });
+
+        // The update names `a`, never the path the listing moved to, so `a/b/c` is now dead.
+        fs.remove_dir(
+            Path::new(path!("/root/a")),
+            fs::RemoveOptions {
+                recursive: true,
+                ignore_if_not_exists: false,
+            },
+        )
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        assert!(
+            dismissed.load(Ordering::SeqCst),
+            "a listing whose ancestor is gone would otherwise sit there showing Empty directory"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumb_menu_filtered_selection_survives_a_reload(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use util::path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+        cx.update(|cx| {
+            cx.bind_keys([KeyBinding::new(
+                "down",
+                SelectNext,
+                Some("BreadcrumbNavigationMenu > Editor"),
+            )]);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({ "aa.txt": "", "ab.txt": "", "ac.txt": "" }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        cx.run_until_parked();
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                div().size_full().child(self.menu.clone())
+            }
+        }
+
+        let menu_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(buffer, window, cx));
+            let menu = BreadcrumbNavigationMenu::new(
+                editor.downgrade(),
+                workspace.downgrade(),
+                BreadcrumbListing::Directory {
+                    worktree_id,
+                    path: RelPath::empty().into_arc(),
+                },
+                None,
+                false,
+                window,
+                cx,
+            );
+            MenuHost { menu }
+        });
+        let menu = menu_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.menu.clone());
+        let cx = &mut VisualTestContext::from_window(*menu_window, cx);
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+
+        cx.simulate_input("a");
+        cx.run_until_parked();
+        cx.simulate_keystrokes("down");
+        cx.run_until_parked();
+
+        let arrowed = menu.read_with(cx, |menu, cx| {
+            let rows = menu.published_row_labels(cx);
+            menu.selected_index().and_then(|index| rows.get(index).cloned())
+        });
+        assert_eq!(
+            arrowed.as_deref(),
+            Some("ab.txt"),
+            "fixture must leave the arrow off the best match"
+        );
+
+        // A filesystem event rebuilds `directory_entries`, which invalidates every ranked
+        // position the selection was expressed in.
+        fs.insert_file(path!("/root/aa2.txt"), Vec::new()).await;
+        cx.run_until_parked();
+
+        let after_reload = menu.read_with(cx, |menu, cx| {
+            let rows = menu.published_row_labels(cx);
+            menu.selected_index().and_then(|index| rows.get(index).cloned())
+        });
+        assert_eq!(
+            after_reload.as_deref(),
+            Some("ab.txt"),
+            "a reload must not move the highlight off the row the user arrowed to"
+        );
+    }
+
+    #[test]
+    fn test_listing_path_impact() {
+        use super::menu::{ListingPathImpact, listing_path_impact};
+
+        let listing = RelPath::new_test("a/b/c");
+        assert_eq!(
+            listing_path_impact(&RelPath::new_test("a/b/c"), &listing),
+            ListingPathImpact::Reload,
+            "the listed directory itself"
+        );
+        assert_eq!(
+            listing_path_impact(&RelPath::new_test("a/b/c/x.txt"), &listing),
+            ListingPathImpact::Reload,
+            "a direct child"
+        );
+        assert_eq!(
+            listing_path_impact(&RelPath::new_test("a"), &listing),
+            ListingPathImpact::Dead,
+            "an ancestor: the update names the old path, never the one it moved to"
+        );
+        assert_eq!(
+            listing_path_impact(&RelPath::new_test("a/b"), &listing),
+            ListingPathImpact::Dead,
+            "the immediate parent is still an ancestor"
+        );
+        assert_eq!(
+            listing_path_impact(&RelPath::new_test("a/b/c/x/y.txt"), &listing),
+            ListingPathImpact::Ignore,
+            "a grandchild does not change what this level lists"
+        );
+        assert_eq!(
+            listing_path_impact(&RelPath::new_test("z"), &listing),
+            ListingPathImpact::Ignore,
+            "an unrelated path"
+        );
+        assert_eq!(
+            listing_path_impact(RelPath::empty(), RelPath::empty()),
+            ListingPathImpact::Reload,
+            "the worktree root is never a dead ancestor of itself"
+        );
+    }
+
+    #[gpui::test]
     async fn test_breadcrumb_menu_enter_waits_for_the_query_it_typed(cx: &mut TestAppContext) {
         use crate::editor_tests::init_test;
         use crate::test::build_editor_with_project;
@@ -5944,6 +6387,7 @@ mod tests {
                             worktree_id,
                             path: RelPath::empty().into_arc(),
                         },
+                        None,
                         false,
                         window,
                         cx,
