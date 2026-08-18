@@ -125,8 +125,15 @@ pub(crate) enum SourceLocationResolution {
         kind: SourceLocationResolutionKind,
     },
     /// Symbol-dependent resolution must wait for parser-backed syntax.
+    ///
+    /// Deferral does not block navigation: consumers should use
+    /// `provisional_row` immediately and re-resolve when syntax becomes
+    /// ready. A buffer that never gets a parser keeps producing content-based
+    /// provisional rows, so consumers need no terminal signal.
     Deferred {
-        /// A clamped row that can be used until resolution is retried.
+        /// The best row available without symbols: a content-marker match
+        /// when one exists, otherwise the stored fallback row clamped to the
+        /// buffer.
         provisional_row: u32,
     },
     /// The location was valid but neither its durable metadata nor fallback row
@@ -257,28 +264,42 @@ impl SourceLocationResolver {
     /// Resolves a serialized source location against the captured snapshot.
     ///
     /// Symbol-bearing locations return [`SourceLocationResolution::Deferred`]
-    /// while syntax is unavailable or parsing. Symbol-less content markers can
-    /// resolve without parser-backed syntax. Invalid serialized data is
-    /// returned as an error.
+    /// while syntax is unavailable or parsing, with a provisional row that is
+    /// still resolved from the content marker whenever it matches. Symbol-less
+    /// content markers can resolve without parser-backed syntax. Invalid
+    /// serialized data is returned as an error.
     pub fn resolve(&self, location: &DurableSourceLocation) -> Result<SourceLocationResolution> {
         if let Some(syntactic_location) = &location.syntactic_location {
             syntactic_location.validate()?;
         }
 
-        let should_defer = location
+        let deferred_location = location
             .syntactic_location
             .as_ref()
-            .is_some_and(|syntactic_location| {
+            .filter(|syntactic_location| {
                 syntactic_location.symbol.is_some()
                     && matches!(
                         self.syntax_state,
                         SourceLocationSyntaxState::Parsing | SourceLocationSyntaxState::Unavailable
                     )
             });
-        if should_defer {
-            return Ok(SourceLocationResolution::Deferred {
-                provisional_row: location.fallback_row.min(self.snapshot.max_point().row),
-            });
+        if let Some(syntactic_location) = deferred_location {
+            // Content markers don't depend on syntax, so a deferred location
+            // can usually still land on the exact line; only symbol-based
+            // recovery has to wait for the parser. This also keeps locations
+            // useful in buffers that never get one.
+            let content_marker = ContentMarker {
+                line_text: syntactic_location.content_marker.line_text.clone().into(),
+                context_hash: syntactic_location.content_marker.context_hash,
+            };
+            let provisional_row = resolve_content_only(
+                &self.snapshot,
+                &self.index,
+                &content_marker,
+                location.fallback_row,
+            )
+            .unwrap_or_else(|| location.fallback_row.min(self.snapshot.max_point().row));
+            return Ok(SourceLocationResolution::Deferred { provisional_row });
         }
 
         let resolved = match location.syntactic_location.as_ref() {
@@ -1034,6 +1055,32 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_source_location_resolver_uses_content_for_deferred_provisional_row(
+        cx: &mut TestAppContext,
+    ) {
+        let original =
+            syntactic_location_at_row("fn bookmarked() {\n    target();\n}\n", 1, true, cx);
+        let location = DurableSourceLocation {
+            fallback_row: original.fallback_row,
+            syntactic_location: Some((&original).into()),
+        };
+        let buffer =
+            cx.new(|cx| Buffer::local("inserted\nfn bookmarked() {\n    target();\n}\n", cx));
+
+        cx.update(|cx| {
+            let resolver = SourceLocationResolver::for_buffer(buffer.read(cx));
+            assert_eq!(
+                resolver.syntax_state(),
+                SourceLocationSyntaxState::Unavailable
+            );
+            assert_eq!(
+                resolver.resolve(&location).expect("valid location"),
+                SourceLocationResolution::Deferred { provisional_row: 2 }
+            );
+        });
+    }
+
+    #[gpui::test]
     fn test_source_location_resolver_defers_symbol_while_parsing(cx: &mut TestAppContext) {
         let location = serialized_location(
             1,
@@ -1275,7 +1322,10 @@ mod tests {
             compute_syntactic_location(&snapshot, anchor)
         });
 
-        let symbol = location.symbol.as_ref().expect("expected an enclosing symbol");
+        let symbol = location
+            .symbol
+            .as_ref()
+            .expect("expected an enclosing symbol");
         assert_eq!(
             symbol.symbol_path,
             vec![SharedString::from("function bookmarked")]
