@@ -129,12 +129,6 @@ impl PlatformDispatcher for TestDispatcher {
         self.scheduler.schedule_local(self.session_id, runnable);
     }
 
-    // Deterministic: the test scheduler's single-threaded loop satisfies the
-    // named-worker guarantees trivially, so no real thread is spawned.
-    fn dispatch_on_worker(&self, _name: &'static str, runnable: RunnableVariant) {
-        self.scheduler.schedule_background(runnable);
-    }
-
     fn dispatch_after(&self, _duration: Duration, _runnable: RunnableVariant) {
         panic!(
             "dispatch_after should not be called in tests. \

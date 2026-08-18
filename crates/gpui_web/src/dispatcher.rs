@@ -148,12 +148,6 @@ pub struct WebDispatcher {
     background_sender: PriorityQueueSender<RunnableVariant>,
     main_thread_mailbox: Arc<MainThreadMailbox>,
     supports_threads: bool,
-    /// Dedicated single-thread lanes for `dispatch_on_worker`, created on
-    /// first use and kept for the page's lifetime.
-    #[cfg(feature = "multithreaded")]
-    worker_lanes: parking_lot::Mutex<
-        std::collections::HashMap<&'static str, PriorityQueueSender<RunnableVariant>>,
-    >,
     #[cfg(feature = "multithreaded")]
     _background_threads: Vec<wasm_thread::JoinHandle<()>>,
 }
@@ -221,8 +215,6 @@ impl WebDispatcher {
             main_thread_mailbox,
             supports_threads,
             #[cfg(feature = "multithreaded")]
-            worker_lanes: parking_lot::Mutex::default(),
-            #[cfg(feature = "multithreaded")]
             _background_threads: background_threads,
         }
     }
@@ -273,50 +265,6 @@ impl PlatformDispatcher for WebDispatcher {
         } else {
             self.main_thread_mailbox
                 .post(priority, MainThreadItem::Runnable(runnable));
-        }
-    }
-
-    fn dispatch_on_worker(&self, name: &'static str, runnable: RunnableVariant) {
-        // Without shared-memory threads everything runs on the main thread,
-        // which satisfies the named-worker guarantees trivially.
-        if !self.supports_threads {
-            self.dispatch_on_main_thread(runnable, Priority::default());
-            return;
-        }
-
-        #[cfg(feature = "multithreaded")]
-        {
-            let sender = {
-                let mut lanes = self.worker_lanes.lock();
-                lanes
-                    .entry(name)
-                    .or_insert_with(|| {
-                        let (sender, mut receiver) =
-                            PriorityQueueReceiver::<RunnableVariant>::new();
-                        wasm_thread::Builder::new()
-                            .name(format!("worker-{name}"))
-                            .spawn(move || {
-                                while let Ok(runnable) = receiver.pop() {
-                                    runnable.run();
-                                }
-                            })
-                            .expect("failed to spawn named worker thread");
-                        sender
-                    })
-                    .clone()
-            };
-            let result = if self.on_main_thread() {
-                sender.spin_send(Priority::default(), runnable)
-            } else {
-                sender.send(Priority::default(), runnable)
-            };
-            if let Err(error) = result {
-                log::error!("dispatch_on_worker: failed to send to worker {name:?}: {error:?}");
-            }
-        }
-        #[cfg(not(feature = "multithreaded"))]
-        {
-            self.dispatch_on_main_thread(runnable, Priority::default());
         }
     }
 

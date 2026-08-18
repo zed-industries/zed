@@ -153,17 +153,6 @@ impl<T> PriorityQueueSender<T> {
     }
 }
 
-impl<T> Clone for PriorityQueueSender<T> {
-    fn clone(&self) -> Self {
-        self.state
-            .sender_count
-            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-        Self {
-            state: Arc::clone(&self.state),
-        }
-    }
-}
-
 impl<T> Drop for PriorityQueueSender<T> {
     fn drop(&mut self) {
         self.state

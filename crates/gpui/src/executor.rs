@@ -6,7 +6,9 @@ use scheduler::Instant;
 use scheduler::Scheduler;
 use std::{future::Future, marker::PhantomData, mem, pin::Pin, rc::Rc, sync::Arc, time::Duration};
 
-pub use scheduler::{FallibleTask, LocalExecutor as SchedulerLocalExecutor, Priority, Task};
+pub use scheduler::{
+    DedicatedExecutor, FallibleTask, LocalExecutor as SchedulerLocalExecutor, Priority, Task,
+};
 
 /// A pointer to the executor that is currently running,
 /// for spawning background tasks.
@@ -112,24 +114,6 @@ impl BackgroundExecutor {
         R: Send + 'static,
     {
         self.spawn_with_priority(Priority::default(), future.boxed())
-    }
-
-    /// Enqueues the given future to run to completion on the dedicated worker
-    /// thread named `name`, creating that thread on first use.
-    ///
-    /// All futures spawned under one name run on the same thread, one at a
-    /// time in FIFO order, and never on the [`Self::spawn`] pool — so state
-    /// they keep in thread-locals is coherent across tasks sharing a name.
-    #[track_caller]
-    pub fn worker_spawn<R>(
-        &self,
-        name: &'static str,
-        future: impl Future<Output = R> + Send + 'static,
-    ) -> Task<R>
-    where
-        R: Send + 'static,
-    {
-        self.inner.worker_spawn(name, future.boxed())
     }
 
     /// Enqueues the given future to be run to completion on a background thread with the given priority.

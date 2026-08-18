@@ -117,10 +117,6 @@ impl Scheduler for PlatformScheduler {
         self.dispatcher.dispatch(runnable, priority);
     }
 
-    fn schedule_worker(&self, name: &'static str, runnable: Runnable<RunnableMeta>) {
-        self.dispatcher.dispatch_on_worker(name, runnable);
-    }
-
     fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>) {
         self.dispatcher.spawn_realtime(f);
     }
@@ -219,25 +215,22 @@ mod tests {
     }
 
     #[test]
-    fn worker_spawn_shares_one_thread_per_name() {
+    fn dedicated_executor_tasks_share_one_thread() {
         let background =
             BackgroundExecutor::new(Arc::new(PlatformScheduler::new(Arc::new(SmokeDispatcher))));
+        let dedicated = scheduler::DedicatedExecutor::new(&background);
 
-        let first = background.worker_spawn("worker-test-a", async { std::thread::current().id() });
-        let second =
-            background.worker_spawn("worker-test-a", async { std::thread::current().id() });
-        let other = background.worker_spawn("worker-test-b", async { std::thread::current().id() });
+        let first = dedicated.spawn(async { std::thread::current().id() });
+        let second = dedicated.spawn(async { std::thread::current().id() });
 
         let first = futures::executor::block_on(first);
         let second = futures::executor::block_on(second);
-        let other = futures::executor::block_on(other);
 
-        assert_eq!(first, second, "same-name tasks must share one thread");
-        assert_ne!(first, other, "each name owns its own thread");
+        assert_eq!(first, second, "tasks must share the dedicated thread");
         assert_ne!(
             first,
             std::thread::current().id(),
-            "worker tasks must not run on the spawning thread"
+            "dedicated tasks must not run on the spawning thread"
         );
     }
 

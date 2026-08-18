@@ -8100,6 +8100,7 @@ dependencies = [
  "log",
  "parking_lot",
  "raw-window-handle",
+ "scheduler",
  "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -16256,6 +16257,7 @@ dependencies = [
  "futures 0.3.32",
  "parking_lot",
  "rand 0.9.4",
+ "wasm_thread",
  "web-time",
 ]
 
