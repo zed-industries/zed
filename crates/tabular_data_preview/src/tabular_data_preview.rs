@@ -15,7 +15,7 @@ use ui::{
 };
 use workspace::{Item, Pane, Workspace};
 
-use crate::{parser::EditorState, settings::CsvPreviewSettings, types::TableLikeContent};
+use crate::{parser::EditorState, settings::TabularDataPreviewSettings, types::TableLikeContent};
 
 mod parser;
 mod renderer;
@@ -33,7 +33,7 @@ impl FeatureFlag for TabularDataPreviewFeatureFlag {
 }
 register_feature_flag!(TabularDataPreviewFeatureFlag);
 
-pub struct CsvPreviewView {
+pub struct TabularDataPreviewPane {
     pub(crate) engine: TableDataEngine,
 
     pub(crate) focus_handle: FocusHandle,
@@ -45,8 +45,8 @@ pub struct CsvPreviewView {
     /// Background task computing the display-to-data mapping after a filter/sort change.
     /// Stored here so that a new change cancels the previous in-flight computation.
     pub(crate) filter_sort_task: Option<Task<()>>,
-    pub(crate) settings: CsvPreviewSettings,
-    /// Performance metrics for debugging and monitoring CSV operations.
+    pub(crate) settings: TabularDataPreviewSettings,
+    /// Performance metrics for debugging and monitoring tabular data operations.
     pub(crate) performance_metrics: PerformanceMetrics,
     pub(crate) list_state: gpui::ListState,
     /// Cached row height, refreshed from the actual text line height on every render.
@@ -59,12 +59,12 @@ pub struct CsvPreviewView {
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
-        CsvPreviewView::register(workspace);
+        TabularDataPreviewPane::register(workspace);
     })
     .detach()
 }
 
-impl CsvPreviewView {
+impl TabularDataPreviewPane {
     pub(crate) fn sync_column_widths(&self, cx: &mut Context<Self>) {
         // plus 1 for the row identifier column
         let cols = self.engine.contents.headers.cols() + 1;
@@ -93,14 +93,17 @@ impl CsvPreviewView {
         workspace.register_action_renderer(|div, _, _, cx| {
             div.when(cx.has_flag::<TabularDataPreviewFeatureFlag>(), |div| {
                 div.on_action(cx.listener(|workspace, _: &OpenPreview, window, cx| {
-                    if let Some(editor) = Self::resolve_active_item_as_csv_editor(workspace, cx) {
+                    if let Some(editor) =
+                        Self::resolve_active_item_as_tabular_data_editor(workspace, cx)
+                    {
                         let pane = workspace.active_pane().clone();
                         Self::open_preview_in_pane(editor, pane, window, cx);
                     }
                 }))
                 .on_action(cx.listener(
                     |workspace, _: &OpenPreviewToTheSide, window, cx| {
-                        if let Some(editor) = Self::resolve_active_item_as_csv_editor(workspace, cx)
+                        if let Some(editor) =
+                            Self::resolve_active_item_as_tabular_data_editor(workspace, cx)
                         {
                             let pane = workspace.active_pane().clone();
                             Self::open_preview_to_the_side_of_pane(
@@ -146,9 +149,9 @@ impl CsvPreviewView {
                 pane.activate_item(existing_view_idx, focus, focus, window, cx);
             });
         } else {
-            let csv_preview = Self::new(&editor, window, cx);
+            let preview_pane = Self::new(&editor, window, cx);
             pane.update(cx, |pane, cx| {
-                pane.add_item(Box::new(csv_preview), focus, focus, None, window, cx);
+                pane.add_item(Box::new(preview_pane), focus, focus, None, window, cx);
             });
         }
         cx.notify();
@@ -159,7 +162,7 @@ impl CsvPreviewView {
         editor: &Entity<Editor>,
         cx: &App,
     ) -> Option<usize> {
-        pane.items_of_type::<CsvPreviewView>()
+        pane.items_of_type::<TabularDataPreviewPane>()
             .find(|view| &view.read(cx).active_editor_state.editor == editor)
             .and_then(|view| pane.index_for_item(&view))
     }
@@ -175,10 +178,10 @@ impl CsvPreviewView {
         cx.new(|cx| {
             let subscription = cx.subscribe(
                 editor,
-                |this: &mut CsvPreviewView, _editor, event: &EditorEvent, cx| {
+                |this: &mut TabularDataPreviewPane, _editor, event: &EditorEvent, cx| {
                     match event {
                         EditorEvent::Edited { .. } | EditorEvent::DirtyChanged => {
-                            this.parse_csv_from_active_editor(true, cx);
+                            this.parse_from_active_editor(true, cx);
                         }
                         _ => {}
                     };
@@ -186,7 +189,7 @@ impl CsvPreviewView {
             );
 
             let row_height = window.pixel_snap(window.line_height());
-            let mut view = CsvPreviewView {
+            let mut view = TabularDataPreviewPane {
                 focus_handle: cx.focus_handle(),
                 active_editor_state: EditorState {
                     editor: editor.clone(),
@@ -201,12 +204,12 @@ impl CsvPreviewView {
                 list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.))
                     .with_uniform_item_height(row_height),
                 row_height,
-                settings: CsvPreviewSettings::default(),
+                settings: TabularDataPreviewSettings::default(),
                 last_parse_end_time: None,
                 engine: TableDataEngine::default(),
             };
 
-            view.parse_csv_from_active_editor(false, cx);
+            view.parse_from_active_editor(false, cx);
             view
         })
     }
@@ -263,17 +266,17 @@ impl CsvPreviewView {
         }));
     }
 
-    pub fn resolve_active_item_as_csv_editor(
+    pub fn resolve_active_item_as_tabular_data_editor(
         workspace: &Workspace,
         cx: &mut Context<Workspace>,
     ) -> Option<Entity<Editor>> {
         let editor = workspace
             .active_item(cx)
             .and_then(|item| item.act_as::<Editor>(cx))?;
-        Self::is_csv_file(&editor, cx).then_some(editor)
+        Self::is_tabular_data_file(&editor, cx).then_some(editor)
     }
 
-    pub fn is_csv_file(editor: &Entity<Editor>, cx: &App) -> bool {
+    pub fn is_tabular_data_file(editor: &Entity<Editor>, cx: &App) -> bool {
         editor
             .read(cx)
             .buffer()
@@ -286,15 +289,15 @@ impl CsvPreviewView {
     }
 }
 
-impl Focusable for CsvPreviewView {
+impl Focusable for TabularDataPreviewPane {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl EventEmitter<()> for CsvPreviewView {}
+impl EventEmitter<()> for TabularDataPreviewPane {}
 
-impl Item for CsvPreviewView {
+impl Item for TabularDataPreviewPane {
     type Event = ();
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
@@ -316,7 +319,7 @@ impl Item for CsvPreviewView {
                     .file_name()
                     .map(|name| format!("Preview {}", name.to_string_lossy()).into())
             })
-            .unwrap_or_else(|| SharedString::from("CSV Preview"))
+            .unwrap_or_else(|| SharedString::from("Tabular Data Preview"))
     }
 }
 
@@ -360,13 +363,13 @@ impl PerformanceMetrics {
     }
 }
 
-/// Holds state of column widths for a table component in CSV preview.
+/// Holds state of column widths for a table component in the tabular data preview.
 pub(crate) struct ColumnWidths {
     pub widths: Entity<ResizableColumnsState>,
 }
 
 impl ColumnWidths {
-    pub(crate) fn new(cx: &mut Context<CsvPreviewView>, cols: usize) -> Self {
+    pub(crate) fn new(cx: &mut Context<TabularDataPreviewPane>, cols: usize) -> Self {
         Self {
             widths: cx.new(|_cx| {
                 ResizableColumnsState::new(

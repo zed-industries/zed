@@ -1064,6 +1064,13 @@ impl VsCodeSettings {
             use_system_path_prompts: self.read_bool("files.simpleDialog.enable").map(|b| !b),
             use_system_prompts: None,
             use_system_window_tabs: self.read_bool("window.nativeTabs"),
+            fullscreen_mode: self.read_bool("window.nativeFullScreen").map(|b| {
+                if b {
+                    FullscreenMode::Native
+                } else {
+                    FullscreenMode::Simple
+                }
+            }),
             when_closing_with_no_tabs: self.read_bool("window.closeWhenEmpty").map(|b| {
                 if b {
                     CloseWindowWhenNoItems::CloseWindow
@@ -1101,7 +1108,8 @@ impl VsCodeSettings {
                         .filter_map(|n| n.as_str().map(str::to_owned))
                         .collect::<Vec<_>>()
                 })
-                .filter(|r| !r.is_empty()),
+                .filter(|r| !r.is_empty())
+                .map(SplicingVec::from),
             file_scan_inclusions: self
                 .read_value("files.watcherInclude")
                 .and_then(|v| v.as_array())

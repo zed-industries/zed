@@ -11,7 +11,7 @@ use crate::tasks::workflows::{
 
 pub fn autofix_pr() -> Workflow {
     let pr_number = WorkflowInput::string("pr_number", None);
-    let run_clippy = WorkflowInput::bool("run_clippy", Some(true));
+    let run_clippy = WorkflowInput::bool("run_clippy", Some(false));
     let run_autofix = run_autofix(&pr_number, &run_clippy);
     let commit_changes = commit_changes(&pr_number, &run_autofix);
     named::workflow()
@@ -46,6 +46,15 @@ fn download_patch_artifact() -> DownloadArtifactStep {
 }
 
 fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJob {
+    // Dispatches via the REST API/CLI can deliver boolean inputs as strings, and the
+    // non-empty string 'false' is truthy in expressions, so compare against both forms.
+    fn clippy_enabled(run_clippy: &WorkflowInput) -> Expression {
+        Expression::new(format!(
+            "{expr} == true || {expr} == 'true'",
+            expr = run_clippy.expr()
+        ))
+    }
+
     fn checkout_pr(pr_number: &WorkflowInput) -> Step<Run> {
         named::bash(r#"gh pr checkout "$PR_NUMBER""#)
             .add_env(("PR_NUMBER", pr_number.to_string()))
@@ -107,10 +116,10 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
             .add_step(steps::cache_rust_dependencies_namespace())
             .map(steps::install_linux_dependencies)
             .add_step(steps::setup_pnpm())
-            .add_step(install_cargo_machete().if_condition(Expression::new(run_clippy.to_string())))
-            .add_step(run_cargo_fix().if_condition(Expression::new(run_clippy.to_string())))
-            .add_step(run_cargo_machete_fix().if_condition(Expression::new(run_clippy.to_string())))
-            .add_step(run_clippy_fix().if_condition(Expression::new(run_clippy.to_string())))
+            .add_step(install_cargo_machete().if_condition(clippy_enabled(run_clippy)))
+            .add_step(run_cargo_fix().if_condition(clippy_enabled(run_clippy)))
+            .add_step(run_cargo_machete_fix().if_condition(clippy_enabled(run_clippy)))
+            .add_step(run_clippy_fix().if_condition(clippy_enabled(run_clippy)))
             .add_step(run_prettier_fix())
             .add_step(run_cargo_fmt())
             .add_step(create_patch())
