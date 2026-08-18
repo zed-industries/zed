@@ -257,12 +257,12 @@ mod tests {
         prop::sample::select(&["a", "b", "c"])
     }
 
-    /// Generates a small rectangular CSV table (header + data rows) built
+    /// Generates a small rectangular table (header + data rows) built
     /// from a tiny value alphabet, so duplicate values across rows/columns
     /// are frequent enough to exercise cross-column blocking. Returns the
-    /// column count alongside the CSV text since callers need it to bound
+    /// column count alongside the table text since callers need it to bound
     /// generated column indices.
-    fn csv_table() -> impl Strategy<Value = (usize, String)> {
+    fn table_text_strategy() -> impl Strategy<Value = (usize, String)> {
         (2usize..=6, 2usize..=3).prop_flat_map(|(rows, cols)| {
             prop::collection::vec(prop::collection::vec(small_value(), cols), rows).prop_map(
                 move |grid| {
@@ -278,9 +278,9 @@ mod tests {
         })
     }
 
-    fn build_engine(csv_text: &str) -> TableDataEngine {
+    fn build_engine(table_text: &str) -> TableDataEngine {
         let mut engine = TableDataEngine::default();
-        engine.contents = Arc::new(TableLikeContent::from_str(csv_text.to_string()));
+        engine.contents = Arc::new(TableLikeContent::from_str(table_text.to_string()));
         engine.calculate_available_filters();
         engine
     }
@@ -353,17 +353,17 @@ mod tests {
     proptest! {
         #[test]
         fn filter_states_are_order_independent(
-            (cols, csv_text) in csv_table(),
+            (cols, table_text) in table_text_strategy(),
             raw_toggles in prop::collection::vec((0usize..3, 0usize..3), 0..8),
         ) {
-            let toggles = resolve_toggles(&build_engine(&csv_text), cols, &raw_toggles);
+            let toggles = resolve_toggles(&build_engine(&table_text), cols, &raw_toggles);
 
-            let mut forward_engine = build_engine(&csv_text);
+            let mut forward_engine = build_engine(&table_text);
             let forward = apply_and_snapshot(&mut forward_engine, cols, &toggles);
 
             let mut reversed = toggles.clone();
             reversed.reverse();
-            let mut backward_engine = build_engine(&csv_text);
+            let mut backward_engine = build_engine(&table_text);
             let backward = apply_and_snapshot(&mut backward_engine, cols, &reversed);
 
             prop_assert_eq!(forward, backward);
