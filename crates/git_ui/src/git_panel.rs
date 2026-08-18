@@ -1041,8 +1041,32 @@ struct GitPanelContextMenu {
     _subscription: Subscription,
 }
 
+/// The label for `repository`, disambiguated against every other repository in
+/// the project.
+fn repository_display_name(
+    repository: Option<&Entity<Repository>>,
+    project: &Entity<Project>,
+    cx: &App,
+) -> SharedString {
+    let Some(repository) = repository else {
+        return SharedString::default();
+    };
+    let id = repository.read(cx).id;
+    project
+        .read(cx)
+        .git_store()
+        .read(cx)
+        .display_names(cx)
+        .remove(&id)
+        .unwrap_or_else(|| repository.read(cx).display_name())
+}
+
 pub struct GitPanel {
     pub(crate) active_repository: Option<Entity<Repository>>,
+    /// Kept in sync by `schedule_update`, which runs whenever a repository is
+    /// added, removed or activated. Computing it depends on every repository in
+    /// the project, so it is not recomputed per frame.
+    active_repository_display_name: SharedString,
     pub(crate) commit_editor: Entity<Editor>,
     /// Whether the commit editor should fill the vertical height of the panel.
     commit_editor_expanded: bool,
@@ -1346,6 +1370,11 @@ impl GitPanel {
             .detach();
 
             let mut this = Self {
+                active_repository_display_name: repository_display_name(
+                    active_repository.as_ref(),
+                    &project,
+                    cx,
+                ),
                 active_repository,
                 commit_editor,
                 commit_editor_expanded: false,
@@ -4723,6 +4752,8 @@ impl GitPanel {
             }
         }
         self.active_repository = new_active_repository;
+        self.active_repository_display_name =
+            repository_display_name(self.active_repository.as_ref(), &self.project, cx);
         self.reopen_commit_buffer(window, cx);
         self.preload_commit_history(cx);
         if self.active_tab == GitPanelTab::History {
@@ -6104,12 +6135,7 @@ impl GitPanel {
         let head_commit = active_repository.read(cx).head_commit.clone();
 
         let git_panel = cx.entity();
-        let display_name = SharedString::from(Arc::from(
-            active_repository
-                .read(cx)
-                .display_name()
-                .trim_end_matches("/"),
-        ));
+        let display_name = self.active_repository_display_name.clone();
         let editor_is_long = self.commit_editor.update(cx, |editor, cx| {
             editor.max_point(cx).row().0 >= MAX_PANEL_EDITOR_LINES as u32
         });
