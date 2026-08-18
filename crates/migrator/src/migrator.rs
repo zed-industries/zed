@@ -114,72 +114,7 @@ fn run_migrations(text: &str, migrations: &[MigrationType]) -> Result<Option<Str
             result = Some(migrated_text);
         }
     }
-    Ok(result.filter(|new_text| !is_whitespace_only_change(text, new_text)))
-}
-
-/// Reports whether `new_text` differs from `original_text` only in whitespace that
-/// JSON does not consider significant.
-///
-/// Migrations are applied as text edits, so one that inserts a key and a later one
-/// that removes it again can leave the document reindented even though nothing
-/// about its meaning changed. Reporting that as a migration would prompt users to
-/// migrate settings that have nothing left to migrate.
-fn is_whitespace_only_change(original_text: &str, new_text: &str) -> bool {
-    strip_insignificant_whitespace(original_text) == strip_insignificant_whitespace(new_text)
-}
-
-/// Removes whitespace that sits outside of string literals and comments, so that
-/// two documents can be compared for anything a reader would notice.
-fn strip_insignificant_whitespace(text: &str) -> String {
-    let mut result = String::with_capacity(text.len());
-    let mut characters = text.chars().peekable();
-    while let Some(character) = characters.next() {
-        match character {
-            '"' => {
-                result.push(character);
-                while let Some(character) = characters.next() {
-                    result.push(character);
-                    match character {
-                        '\\' => {
-                            if let Some(escaped) = characters.next() {
-                                result.push(escaped);
-                            }
-                        }
-                        '"' => break,
-                        _ => {}
-                    }
-                }
-            }
-            '/' if characters.peek() == Some(&'/') => {
-                result.push(character);
-                for character in characters.by_ref() {
-                    if character == '\n' {
-                        break;
-                    }
-                    result.push(character);
-                }
-                // Terminate the comment so that whatever follows it on the next line
-                // cannot compare equal to text that is part of the comment itself.
-                result.push('\n');
-            }
-            '/' if characters.peek() == Some(&'*') => {
-                result.push(character);
-                result.push('*');
-                characters.next();
-                let mut previous = None;
-                for character in characters.by_ref() {
-                    result.push(character);
-                    if previous == Some('*') && character == '/' {
-                        break;
-                    }
-                    previous = Some(character);
-                }
-            }
-            _ if character.is_whitespace() => {}
-            _ => result.push(character),
-        }
-    }
-    result
+    Ok(result.filter(|new_text| text != new_text))
 }
 
 pub fn migrate_keymap(text: &str) -> Result<Option<String>> {
@@ -258,10 +193,6 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
         MigrationType::TreeSitter(
             migrations::m_2025_05_08::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_05_08,
-        ),
-        MigrationType::TreeSitter(
-            migrations::m_2025_06_16::SETTINGS_PATTERNS,
-            &SETTINGS_QUERY_2025_06_16,
         ),
         MigrationType::TreeSitter(
             migrations::m_2025_06_25::SETTINGS_PATTERNS,
@@ -416,10 +347,6 @@ define_query!(
 define_query!(
     SETTINGS_QUERY_2025_05_08,
     migrations::m_2025_05_08::SETTINGS_PATTERNS
-);
-define_query!(
-    SETTINGS_QUERY_2025_06_16,
-    migrations::m_2025_06_16::SETTINGS_PATTERNS
 );
 define_query!(
     SETTINGS_QUERY_2025_06_25,
@@ -1062,205 +989,6 @@ mod tests {
     }
 
     #[test]
-    fn test_mcp_settings_migration() {
-        assert_migrate_with_migrations(
-            &[MigrationType::TreeSitter(
-                migrations::m_2025_06_16::SETTINGS_PATTERNS,
-                &SETTINGS_QUERY_2025_06_16,
-            )],
-            r#"{
-    "context_servers": {
-        "empty_server": {},
-        "extension_server": {
-            "settings": {
-                "foo": "bar"
-            }
-        },
-        "custom_server": {
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            }
-        },
-        "invalid_server": {
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            },
-            "settings": {
-                "foo": "bar"
-            }
-        },
-        "empty_server2": {},
-        "extension_server2": {
-            "foo": "bar",
-            "settings": {
-                "foo": "bar"
-            },
-            "bar": "foo"
-        },
-        "custom_server2": {
-            "foo": "bar",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            },
-            "bar": "foo"
-        },
-        "invalid_server2": {
-            "foo": "bar",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            },
-            "bar": "foo",
-            "settings": {
-                "foo": "bar"
-            }
-        }
-    }
-}"#,
-            Some(
-                r#"{
-    "context_servers": {
-        "empty_server": {
-            "source": "extension",
-            "settings": {}
-        },
-        "extension_server": {
-            "settings": {
-                "foo": "bar"
-            }
-        },
-        "custom_server": {
-            "source": "custom",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            }
-        },
-        "invalid_server": {
-            "source": "custom",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            },
-            "settings": {
-                "foo": "bar"
-            }
-        },
-        "empty_server2": {
-            "source": "extension",
-            "settings": {}
-        },
-        "extension_server2": {
-            "foo": "bar",
-            "settings": {
-                "foo": "bar"
-            },
-            "bar": "foo"
-        },
-        "custom_server2": {
-            "source": "custom",
-            "foo": "bar",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            },
-            "bar": "foo"
-        },
-        "invalid_server2": {
-            "source": "custom",
-            "foo": "bar",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            },
-            "bar": "foo",
-            "settings": {
-                "foo": "bar"
-            }
-        }
-    }
-}"#,
-            ),
-        );
-    }
-
-    #[test]
-    fn test_mcp_settings_migration_doesnt_change_valid_settings() {
-        let settings = r#"{
-    "context_servers": {
-        "empty_server": {
-            "source": "extension",
-            "settings": {}
-        },
-        "extension_server": {
-            "source": "extension",
-            "settings": {
-                "foo": "bar"
-            }
-        },
-        "custom_server": {
-            "source": "custom",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            }
-        },
-        "invalid_server": {
-            "source": "custom",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            },
-            "settings": {
-                "foo": "bar"
-            }
-        }
-    }
-}"#;
-        assert_migrate_with_migrations(
-            &[MigrationType::TreeSitter(
-                migrations::m_2025_06_16::SETTINGS_PATTERNS,
-                &SETTINGS_QUERY_2025_06_16,
-            )],
-            settings,
-            None,
-        );
-    }
-
-    #[test]
     fn test_custom_agent_server_settings_migration() {
         assert_migrate_with_migrations(
             &[MigrationType::TreeSitter(
@@ -1383,6 +1111,45 @@ mod tests {
     }
 }"#,
             None,
+        );
+    }
+
+    #[test]
+    fn test_flatten_context_server_command_alongside_source() {
+        // Files written while `source` was still a supported key need the command
+        // flattened and the key dropped in the same run. Flattening no longer looks
+        // at `source`, so it reaches `extension` entries that it used to skip.
+        assert_migrate_settings(
+            r#"{
+    "context_servers": {
+        "custom_server": {
+            "source": "custom",
+            "command": {
+                "path": "npx",
+                "args": ["-y", "some-mcp-server"]
+            }
+        },
+        "extension_server": {
+            "source": "extension",
+            "command": {
+                "path": "other-server"
+            }
+        }
+    }
+}"#,
+            Some(
+                r#"{
+    "context_servers": {
+        "custom_server": {
+            "command": "npx",
+            "args": ["-y", "some-mcp-server"]
+        },
+        "extension_server": {
+            "command": "other-server"
+        }
+    }
+}"#,
+            ),
         );
     }
 
@@ -5158,52 +4925,6 @@ mod tests {
     }
 
     #[test]
-    fn test_mcp_settings_migration_adds_settings_to_extension_servers() {
-        assert_migrate_settings(
-            r#"{
-    "context_servers": {
-        "extension_server": {},
-        "stdio_server": {
-            "command": "npx",
-            "args": ["-y", "some-server"]
-        },
-        "http_server": {
-            "url": "https://example.com/mcp"
-        },
-        "http_server_with_headers": {
-            "url": "https://example.com/mcp",
-            "headers": {
-                "Authorization": "Bearer token"
-            }
-        }
-    }
-}"#,
-            Some(
-                r#"{
-    "context_servers": {
-        "extension_server": {
-            "settings": {}
-        },
-        "stdio_server": {
-            "command": "npx",
-            "args": ["-y", "some-server"]
-        },
-        "http_server": {
-            "url": "https://example.com/mcp"
-        },
-        "http_server_with_headers": {
-            "url": "https://example.com/mcp",
-            "headers": {
-                "Authorization": "Bearer token"
-            }
-        }
-    }
-}"#,
-            ),
-        );
-    }
-
-    #[test]
     fn test_promote_show_branch_icon_true_to_show_branch_status_icon_at_root() {
         assert_migrate_settings(
             &r#"
@@ -5573,9 +5294,9 @@ mod tests {
 
     #[test]
     fn test_inline_context_server_command_reports_no_migration() {
-        // Entries carrying a `command` still take a `source` key that a later
-        // migration removes, and the round trip leaves them reindented. Only the
-        // whitespace comparison keeps that from being reported as a migration.
+        // An entry already in the flat `command` shape has nothing left to migrate.
+        // Flattening keys off the shape of `command` alone, so an entry it should
+        // ignore must be left alone however it is laid out.
         assert_migrate_settings(
             r#"{
     "context_servers": {
@@ -5629,50 +5350,5 @@ mod tests {
 }"#,
             ),
         );
-    }
-
-    #[test]
-    fn test_is_whitespace_only_change() {
-        assert!(is_whitespace_only_change("{}", "{}"));
-        assert!(is_whitespace_only_change(
-            "{ \"a\": 1 }",
-            "{\n    \"a\": 1\n}"
-        ));
-        assert!(is_whitespace_only_change(
-            "{\n\t\"a\": 1\n}",
-            "{\n \"a\": 1\n}"
-        ));
-
-        // Whitespace inside a string literal is part of the value.
-        assert!(!is_whitespace_only_change(
-            "{ \"a b\": 1 }",
-            "{ \"a  b\": 1 }"
-        ));
-        assert!(!is_whitespace_only_change(
-            "{ \"a\": \"x y\" }",
-            "{ \"a\": \"xy\" }"
-        ));
-
-        // Escaped quotes must not end the string early.
-        assert!(is_whitespace_only_change(
-            "{ \"a\": \"x \\\" y\" }",
-            "{\n\"a\": \"x \\\" y\"\n}"
-        ));
-
-        // Commenting a key out leaves the parsed value untouched, so comparing
-        // values instead of text here would hide a change the user can see.
-        assert!(!is_whitespace_only_change(
-            "{ \"a\": 1 }",
-            "{ /* \"a\": 1 */ }"
-        ));
-        assert!(!is_whitespace_only_change(
-            "{ \"a\": 1 }",
-            "{\n// \"a\": 1\n}"
-        ));
-
-        // A comment must not swallow the code that follows it on the next line.
-        assert!(!is_whitespace_only_change("// a\n\"b\"", "// a\"b\""));
-
-        assert!(!is_whitespace_only_change("{ \"a\": 1 }", "{ \"a\": 2 }"));
     }
 }

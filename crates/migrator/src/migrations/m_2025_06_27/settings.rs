@@ -17,10 +17,6 @@ const SETTINGS_CONTEXT_SERVER_PATTERN: &str = r#"(document
                     key: (string (string_content) @server-name)
                     value: (object
                         (pair
-                            key: (string (string_content) @source-key)
-                            value: (string (string_content) @source-value)
-                        )
-                        (pair
                             key: (string (string_content) @command-key)
                             value: (object) @command-object
                         ) @command-pair
@@ -30,8 +26,6 @@ const SETTINGS_CONTEXT_SERVER_PATTERN: &str = r#"(document
         )
     )
     (#eq? @context-servers "context_servers")
-    (#eq? @source-key "source")
-    (#eq? @source-value "custom")
     (#eq? @command-key "command")
 )"#;
 
