@@ -2,10 +2,11 @@ use gpui::SharedString;
 use lsp::{DiagnosticRelatedInformation, DiagnosticSeverity, NumberOrString};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
+use text::Anchor;
 
 /// A diagnostic associated with a certain range of a buffer.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Diagnostic {
     /// The name of the service that produced this diagnostic.
     pub source: Option<String>,
@@ -50,6 +51,12 @@ pub struct Diagnostic {
     ///
     /// Kept as sent, since flattening it into non-primary entries is lossy.
     pub related_information: Option<Arc<[DiagnosticRelatedInformation]>>,
+    /// Anchored ranges for related information that points into this buffer.
+    ///
+    /// This is intentionally not serialized. The anchors are local to the buffer that owns the
+    /// diagnostic, while the original LSP locations are retained above for protocol round trips.
+    #[serde(skip)]
+    pub related_information_anchors: Option<Arc<[Option<Range<Anchor>>]>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,6 +84,29 @@ impl Default for Diagnostic {
             data: None,
             registration_id: None,
             related_information: None,
+            related_information_anchors: None,
         }
     }
 }
+
+impl PartialEq for Diagnostic {
+    fn eq(&self, other: &Self) -> bool {
+        self.source == other.source
+            && self.registration_id == other.registration_id
+            && self.code == other.code
+            && self.code_description == other.code_description
+            && self.severity == other.severity
+            && self.message == other.message
+            && self.markdown == other.markdown
+            && self.group_id == other.group_id
+            && self.is_primary == other.is_primary
+            && self.is_disk_based == other.is_disk_based
+            && self.is_unnecessary == other.is_unnecessary
+            && self.source_kind == other.source_kind
+            && self.data == other.data
+            && self.underline == other.underline
+            && self.related_information == other.related_information
+    }
+}
+
+impl Eq for Diagnostic {}

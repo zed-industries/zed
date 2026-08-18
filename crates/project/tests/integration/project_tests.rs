@@ -9836,6 +9836,86 @@ async fn test_code_actions_include_related_information(cx: &mut gpui::TestAppCon
 }
 
 #[gpui::test]
+async fn test_code_actions_update_related_information_after_buffer_edit(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (project, buffer, _handle, fake_servers) =
+        code_action_project(&["test-language-server"], cx).await;
+    let fake_server = &fake_servers[0];
+
+    let uri = Uri::from_file_path(path!("/dir/a.ts")).unwrap();
+    let related_information = vec![
+        lsp::DiagnosticRelatedInformation {
+            location: lsp::Location {
+                uri: uri.clone(),
+                range: lsp::Range::new(lsp::Position::new(0, 2), lsp::Position::new(0, 3)),
+            },
+            message: String::new(),
+        },
+        lsp::DiagnosticRelatedInformation {
+            location: lsp::Location {
+                uri: Uri::from_file_path(path!("/dir/b.ts")).unwrap(),
+                range: lsp::Range::new(lsp::Position::new(4, 0), lsp::Position::new(4, 1)),
+            },
+            message: String::new(),
+        },
+    ];
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+        uri,
+        version: None,
+        diagnostics: vec![lsp::Diagnostic {
+            range: lsp::Range::new(lsp::Position::new(0, 2), lsp::Position::new(0, 3)),
+            severity: Some(DiagnosticSeverity::ERROR),
+            source: Some("test-language-server".to_string()),
+            message: "primary diagnostic".to_string(),
+            related_information: Some(related_information),
+            ..Default::default()
+        }],
+    });
+    cx.executor().run_until_parked();
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "inserted\n")], None, cx)
+    });
+
+    let mut request_handled = fake_server
+        .set_request_handler::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
+            let diagnostic = params
+                .context
+                .diagnostics
+                .iter()
+                .find(|diagnostic| diagnostic.message == "primary diagnostic")
+                .expect("the primary diagnostic should be sent");
+            assert_eq!(
+                diagnostic.range,
+                lsp::Range::new(lsp::Position::new(1, 2), lsp::Position::new(1, 3))
+            );
+            let related_information = diagnostic
+                .related_information
+                .as_ref()
+                .expect("related information should be preserved");
+            assert_eq!(
+                related_information[0].location.range,
+                lsp::Range::new(lsp::Position::new(1, 2), lsp::Position::new(1, 3))
+            );
+            assert_eq!(
+                related_information[1].location.range,
+                lsp::Range::new(lsp::Position::new(4, 0), lsp::Position::new(4, 1))
+            );
+            Ok(Some(Vec::new()))
+        });
+
+    let code_actions_task = project.update(cx, |project, cx| {
+        project.code_actions(&buffer, 0..buffer.read(cx).len(), None, cx)
+    });
+    request_handled
+        .next()
+        .await
+        .expect("The code action request should have been triggered");
+    assert!(code_actions_task.await.unwrap().unwrap().is_empty());
+}
+
+#[gpui::test]
 async fn test_code_actions_without_related_information(cx: &mut gpui::TestAppContext) {
     let (project, buffer, _handle, fake_servers) =
         code_action_project(&["test-language-server"], cx).await;

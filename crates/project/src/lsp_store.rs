@@ -2790,6 +2790,12 @@ impl LocalLspStore {
 
         let snapshot = self.buffer_snapshot_for_lsp_version(buffer, server_id, version, cx)?;
 
+        let document_uri = {
+            let buffer = buffer.read(cx);
+            File::from_dyn(buffer.file())
+                .and_then(|file| Uri::from_file_path(file.abs_path(cx)).ok())
+        };
+
         let edits_since_save = std::cell::LazyCell::new(|| {
             let saved_version = buffer.read(cx).saved_version();
             Patch::new(snapshot.edits_since::<PointUtf16>(saved_version).collect())
@@ -2798,9 +2804,43 @@ impl LocalLspStore {
         let mut sanitized_diagnostics = Vec::with_capacity(diagnostics.len());
 
         for (new_diagnostic, entry) in diagnostics {
+            let mut diagnostic = entry.diagnostic;
+            if new_diagnostic {
+                diagnostic.related_information_anchors = diagnostic
+                    .related_information
+                    .as_ref()
+                    .map(|related_information| {
+                        Arc::from(
+                            related_information
+                                .iter()
+                                .map(|information| {
+                                    let Some(document_uri) = document_uri.as_ref() else {
+                                        return None;
+                                    };
+                                    if information.location.uri != *document_uri {
+                                        return None;
+                                    }
+
+                                    let range = range_from_lsp(information.location.range);
+                                    let range = if diagnostic.is_disk_based {
+                                        Unclipped((*edits_since_save).old_to_new(range.start.0))
+                                            ..Unclipped((*edits_since_save).old_to_new(range.end.0))
+                                    } else {
+                                        range
+                                    };
+                                    Some(
+                                        snapshot.anchor_before(range.start)
+                                            ..snapshot.anchor_after(range.end),
+                                    )
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                    });
+            }
+
             let start;
             let end;
-            if new_diagnostic && entry.diagnostic.is_disk_based {
+            if new_diagnostic && diagnostic.is_disk_based {
                 // Some diagnostics are based on files on disk instead of buffers'
                 // current contents. Adjust these diagnostics' ranges to reflect
                 // any unsaved edits.
@@ -2827,10 +2867,7 @@ impl LocalLspStore {
                 }
             }
 
-            sanitized_diagnostics.push(DiagnosticEntry {
-                range,
-                diagnostic: entry.diagnostic,
-            });
+            sanitized_diagnostics.push(DiagnosticEntry { range, diagnostic });
         }
         drop(edits_since_save);
 
@@ -12232,6 +12269,7 @@ impl LspStore {
                             .related_information
                             .as_ref()
                             .map(|infos| Arc::from(infos.as_slice())),
+                        related_information_anchors: None,
                     },
                 });
                 if let Some(infos) = &diagnostic.related_information {
@@ -12261,6 +12299,7 @@ impl LspStore {
                                     data: diagnostic.data.clone(),
                                     registration_id: registration_id.clone(),
                                     related_information: None,
+                                    related_information_anchors: None,
                                 },
                             });
                         }

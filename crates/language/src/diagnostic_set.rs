@@ -9,7 +9,7 @@ use std::{
     ops::Range,
 };
 use sum_tree::{self, Bias, SumTree};
-use text::{Anchor, FromAnchor, PointUtf16, ToOffset};
+use text::{Anchor, FromAnchor, OffsetRangeExt, PointUtf16, ToOffset};
 
 /// A set of diagnostics associated with a given buffer, provided
 /// by a single language server.
@@ -143,6 +143,50 @@ impl DiagnosticEntryRef<'_, PointUtf16> {
                 .related_information
                 .as_ref()
                 .map(|related_information| related_information.to_vec()),
+            ..Default::default()
+        })
+    }
+
+    /// Returns a raw LSP diagnostic, resolving any same-buffer related information against the
+    /// current snapshot so edits made after the diagnostic was published are reflected.
+    pub fn to_lsp_diagnostic_stub_with_snapshot(
+        &self,
+        buffer: &text::BufferSnapshot,
+    ) -> Result<lsp::Diagnostic> {
+        let range = range_to_lsp(self.range.clone())?;
+        let related_information = self
+            .diagnostic
+            .related_information
+            .as_ref()
+            .map(|related_information| {
+                related_information
+                    .iter()
+                    .enumerate()
+                    .map(|(index, information)| {
+                        let mut information = information.clone();
+                        if let Some(Some(range)) = self
+                            .diagnostic
+                            .related_information_anchors
+                            .as_ref()
+                            .and_then(|anchors| anchors.get(index))
+                        {
+                            information.location.range =
+                                range_to_lsp(range.to_point_utf16(buffer))?;
+                        }
+                        Ok(information)
+                    })
+                    .collect::<Result<Vec<_>>>()
+            })
+            .transpose()?;
+
+        Ok(lsp::Diagnostic {
+            range,
+            code: self.diagnostic.code.clone(),
+            severity: Some(self.diagnostic.severity),
+            source: self.diagnostic.source.clone(),
+            message: self.diagnostic.message.clone(),
+            data: self.diagnostic.data.clone(),
+            related_information,
             ..Default::default()
         })
     }

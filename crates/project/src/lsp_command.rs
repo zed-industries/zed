@@ -2950,11 +2950,11 @@ impl LspCommand for GetCodeActions {
         _: &App,
     ) -> Result<lsp::CodeActionParams> {
         let mut relevant_diagnostics = Vec::new();
-        for entry in buffer
-            .snapshot()
-            .diagnostics_in_range::<_, language::PointUtf16>(self.range.clone(), false)
+        let snapshot = buffer.snapshot();
+        for entry in
+            snapshot.diagnostics_in_range::<_, language::PointUtf16>(self.range.clone(), false)
         {
-            relevant_diagnostics.push(entry.to_lsp_diagnostic_stub()?);
+            relevant_diagnostics.push(entry.to_lsp_diagnostic_stub_with_snapshot(&snapshot)?);
         }
 
         let only = if let Some(requested) = &self.kinds {
