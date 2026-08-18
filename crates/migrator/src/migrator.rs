@@ -114,7 +114,72 @@ fn run_migrations(text: &str, migrations: &[MigrationType]) -> Result<Option<Str
             result = Some(migrated_text);
         }
     }
-    Ok(result.filter(|new_text| text != new_text))
+    Ok(result.filter(|new_text| !is_whitespace_only_change(text, new_text)))
+}
+
+/// Reports whether `new_text` differs from `original_text` only in whitespace that
+/// JSON does not consider significant.
+///
+/// Migrations are applied as text edits, so one that inserts a key and a later one
+/// that removes it again can leave the document reindented even though nothing
+/// about its meaning changed. Reporting that as a migration would prompt users to
+/// migrate settings that have nothing left to migrate.
+fn is_whitespace_only_change(original_text: &str, new_text: &str) -> bool {
+    strip_insignificant_whitespace(original_text) == strip_insignificant_whitespace(new_text)
+}
+
+/// Removes whitespace that sits outside of string literals and comments, so that
+/// two documents can be compared for anything a reader would notice.
+fn strip_insignificant_whitespace(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut characters = text.chars().peekable();
+    while let Some(character) = characters.next() {
+        match character {
+            '"' => {
+                result.push(character);
+                while let Some(character) = characters.next() {
+                    result.push(character);
+                    match character {
+                        '\\' => {
+                            if let Some(escaped) = characters.next() {
+                                result.push(escaped);
+                            }
+                        }
+                        '"' => break,
+                        _ => {}
+                    }
+                }
+            }
+            '/' if characters.peek() == Some(&'/') => {
+                result.push(character);
+                for character in characters.by_ref() {
+                    if character == '\n' {
+                        break;
+                    }
+                    result.push(character);
+                }
+                // Terminate the comment so that whatever follows it on the next line
+                // cannot compare equal to text that is part of the comment itself.
+                result.push('\n');
+            }
+            '/' if characters.peek() == Some(&'*') => {
+                result.push(character);
+                result.push('*');
+                characters.next();
+                let mut previous = None;
+                for character in characters.by_ref() {
+                    result.push(character);
+                    if previous == Some('*') && character == '/' {
+                        break;
+                    }
+                    previous = Some(character);
+                }
+            }
+            _ if character.is_whitespace() => {}
+            _ => result.push(character),
+        }
+    }
+    result
 }
 
 pub fn migrate_keymap(text: &str) -> Result<Option<String>> {
@@ -5480,5 +5545,127 @@ mod tests {
 
         // no gutter key — no change
         assert_migrate_settings(&r#"{ "theme": "One Dark" }"#.unindent(), None);
+    }
+
+    #[test]
+    fn test_url_only_context_server_reports_no_migration() {
+        // These entries need no migration, but one migration adds a `source` key to
+        // them and a later one removes it again. The pair only cancels out in
+        // meaning: the entries come back reindented, which must not be reported as
+        // something to migrate.
+        assert_migrate_settings(
+            r#"{
+    "context_servers": { "grep": { "url": "https://mcp.grep.app" } }
+}"#,
+            None,
+        );
+
+        assert_migrate_settings(
+            r#"{
+    "context_servers": {
+        "grep": { "url": "https://mcp.grep.app" }
+    }
+}"#,
+            None,
+        );
+
+        // Tab-indented documents round trip through space indentation, so the
+        // leftover difference here is a change of whitespace rather than of layout.
+        assert_migrate_settings(
+            "{\n\t\"context_servers\": {\n\t\t\"grep\": {\n\t\t\t\"url\": \"https://mcp.grep.app\"\n\t\t}\n\t}\n}",
+            None,
+        );
+    }
+
+    #[test]
+    fn test_url_only_context_server_still_migrates_deprecated_neighbors() {
+        // The same inline entry that produces no diff on its own must not mask a
+        // migration that a sibling entry genuinely needs.
+        assert_migrate_settings(
+            r#"{
+    "context_servers": {
+        "grep": { "url": "https://mcp.grep.app" },
+        "local": {
+            "source": "custom",
+            "command": {
+                "path": "npx",
+                "args": ["-y", "some-mcp-server"]
+            }
+        }
+    }
+}"#,
+            Some(
+                r#"{
+    "context_servers": {
+        "grep": {
+                  "url": "https://mcp.grep.app" },
+        "local": {
+            "command": "npx",
+            "args": ["-y", "some-mcp-server"]
+        }
+    }
+}"#,
+            ),
+        );
+
+        // A deprecated key elsewhere in the document must still be reported.
+        assert_migrate_settings(
+            r#"{
+    "show_inline_completions": true,
+    "context_servers": { "grep": { "url": "https://mcp.grep.app" } }
+}"#,
+            Some(
+                r#"{
+    "show_edit_predictions": true,
+    "context_servers": { "grep": {
+                                   "url": "https://mcp.grep.app" } }
+}"#,
+            ),
+        );
+    }
+
+    #[test]
+    fn test_is_whitespace_only_change() {
+        assert!(is_whitespace_only_change("{}", "{}"));
+        assert!(is_whitespace_only_change(
+            "{ \"a\": 1 }",
+            "{\n    \"a\": 1\n}"
+        ));
+        assert!(is_whitespace_only_change(
+            "{\n\t\"a\": 1\n}",
+            "{\n \"a\": 1\n}"
+        ));
+
+        // Whitespace inside a string literal is part of the value.
+        assert!(!is_whitespace_only_change(
+            "{ \"a b\": 1 }",
+            "{ \"a  b\": 1 }"
+        ));
+        assert!(!is_whitespace_only_change(
+            "{ \"a\": \"x y\" }",
+            "{ \"a\": \"xy\" }"
+        ));
+
+        // Escaped quotes must not end the string early.
+        assert!(is_whitespace_only_change(
+            "{ \"a\": \"x \\\" y\" }",
+            "{\n\"a\": \"x \\\" y\"\n}"
+        ));
+
+        // Commenting a key out leaves the parsed value untouched, so comparing
+        // values instead of text here would hide a change the user can see.
+        assert!(!is_whitespace_only_change(
+            "{ \"a\": 1 }",
+            "{ /* \"a\": 1 */ }"
+        ));
+        assert!(!is_whitespace_only_change(
+            "{ \"a\": 1 }",
+            "{\n// \"a\": 1\n}"
+        ));
+
+        // A comment must not swallow the code that follows it on the next line.
+        assert!(!is_whitespace_only_change("// a\n\"b\"", "// a\"b\""));
+
+        assert!(!is_whitespace_only_change("{ \"a\": 1 }", "{ \"a\": 2 }"));
     }
 }
