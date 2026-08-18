@@ -13,8 +13,11 @@ use super::path::{
 use crate::EditorEvent;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::Task;
+use postage::stream::Stream as _;
+use std::cell::RefCell;
 use settings::SettingsStore;
 use std::sync::atomic::AtomicBool;
+use std::time::Duration;
 use ui::utils::WithRemSize;
 
 #[derive(Clone, Debug)]
@@ -94,6 +97,11 @@ pub struct BreadcrumbNavigationMenu {
     filter_cancel: Option<Arc<AtomicBool>>,
     filter_epoch: u64,
     ranked_epoch: u64,
+    /// Held for as long as a rank is in flight. The picker's pending-update contract decides
+    /// whether Enter confirms now or waits, and it can only wait on something it can await.
+    /// Shared with the delegate rather than read back off the menu: `Picker::new` finalizes its
+    /// first update while `BreadcrumbNavigationMenu::new` still holds the menu's own lease.
+    filter_settled: FilterSettled,
     filter_match_truncated: bool,
     filter_candidates: Arc<Vec<StringMatchCandidate>>,
     last_listing_settings: BreadcrumbListingSettings,
@@ -148,6 +156,7 @@ impl BreadcrumbNavigationMenu {
                 filter_cancel: None,
                 filter_epoch: 0,
                 ranked_epoch: 0,
+                filter_settled: FilterSettled::default(),
                 filter_match_truncated: false,
                 filter_candidates: Arc::new(Vec::new()),
                 last_listing_settings: *BreadcrumbListingSettings::get_global(cx),
@@ -160,6 +169,7 @@ impl BreadcrumbNavigationMenu {
         menu.update(cx, |this, cx| {
             let delegate = BreadcrumbPickerDelegate::new(
                 cx.weak_entity(),
+                this.filter_settled.clone(),
                 Self::placeholder_for(&this.listing),
             );
             let picker = cx.new(|cx| {
@@ -299,9 +309,14 @@ impl BreadcrumbNavigationMenu {
         self.filter_query().to_string()
     }
 
-    #[cfg(test)]
     pub fn rank_pending(&self) -> bool {
         self.ranked_epoch != self.filter_epoch
+    }
+
+    /// `None` once the rank has landed and its rows are published, so a caller that gets
+    /// nothing back is free to act on what the picker is showing.
+    pub(super) fn filter_settled(&self) -> Option<postage::barrier::Receiver> {
+        self.filter_settled.receiver()
     }
 
     #[cfg(test)]
@@ -414,6 +429,7 @@ impl BreadcrumbNavigationMenu {
             filter_cancel: None,
             filter_epoch: 0,
             ranked_epoch: 0,
+            filter_settled: FilterSettled::default(),
             filter_match_truncated: false,
             filter_candidates: Arc::new(Vec::new()),
             last_listing_settings: *BreadcrumbListingSettings::get_global(cx),
@@ -425,6 +441,7 @@ impl BreadcrumbNavigationMenu {
         menu.update(cx, |this, cx| {
             let delegate = BreadcrumbPickerDelegate::new(
                 cx.weak_entity(),
+                this.filter_settled.clone(),
                 Self::placeholder_for(&this.listing),
             );
             let picker = cx.new(|cx| {
@@ -542,6 +559,11 @@ impl BreadcrumbNavigationMenu {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        // Until the rank lands the rows still describe the previous query, and unlike Enter
+        // this path has no pending-update contract to wait on.
+        if self.rank_pending() {
+            return false;
+        }
         self.selected_index = Some(index);
         let (listing_before, epoch_before) = (self.listing.clone(), self.load_epoch);
         self.select_child(&menu::SelectChild, window, cx);
@@ -1210,12 +1232,8 @@ impl BreadcrumbNavigationMenu {
                     .position(|listed| *listed == outline_index),
                 (_, candidate) => candidate,
             };
-            // A match from another level has no row here. The old value addresses the ranked
-            // matches that are about to be dropped, so keeping it would silently highlight
-            // whichever sibling happens to sit at that index.
-            // A match from another level has no row here. The old value addresses the ranked
-            // matches that are about to be dropped, so keeping it would silently highlight
-            // whichever sibling happens to sit at that index.
+            // The old value addresses the ranked matches that are about to be dropped, so
+            // keeping it would silently highlight whichever sibling sits at that index.
             if selected_candidate.is_some() && unranked_selection.is_none() {
                 self.selected_index = None;
                 self.pending_initial_selection = true;
@@ -1223,6 +1241,7 @@ impl BreadcrumbNavigationMenu {
             self.ranked_matches.clear();
             self.filter_match_truncated = false;
             self.filter_task = None;
+            self.filter_settled.settle();
             self.ranked_epoch = epoch;
             self.publish_rows(cx);
             if let Some(position) = unranked_selection {
@@ -1246,6 +1265,7 @@ impl BreadcrumbNavigationMenu {
         let executor = cx.background_executor().clone();
         let cancel_flag = Arc::new(AtomicBool::new(false));
         self.filter_cancel = Some(cancel_flag.clone());
+        self.filter_settled.arm();
         self.filter_task = Some(cx.spawn(async move |this, cx| {
             let matches = fuzzy::match_strings(
                 candidates.as_slice(),
@@ -1281,7 +1301,11 @@ impl BreadcrumbNavigationMenu {
                     _ => (!this.ranked_matches.is_empty()).then_some(0),
                 };
                 this.scroll_to_selection_pending = true;
-                this.publish_rows(cx);
+                // Published inline rather than deferred: the picker treats this task's
+                // completion as "rows are final", and a deferred publish would land a cycle
+                // after that promise.
+                this.publish_rows_now(cx);
+                this.filter_settled.settle();
                 cx.notify();
             })
             .ok();
@@ -1908,8 +1932,33 @@ pub(super) enum BreadcrumbMenuRow {
     },
 }
 
+/// A rank in flight, shared by the menu that runs it and the delegate that has to tell the
+/// picker whether the rows it is about to confirm are the ones the query asked for.
+#[derive(Clone, Default)]
+pub(super) struct FilterSettled(
+    Rc<RefCell<Option<(postage::barrier::Sender, postage::barrier::Receiver)>>>,
+);
+
+impl FilterSettled {
+    fn arm(&self) {
+        *self.0.borrow_mut() = Some(postage::barrier::channel());
+    }
+
+    fn settle(&self) {
+        self.0.borrow_mut().take();
+    }
+
+    fn receiver(&self) -> Option<postage::barrier::Receiver> {
+        self.0
+            .borrow()
+            .as_ref()
+            .map(|(_, receiver)| receiver.clone())
+    }
+}
+
 pub struct BreadcrumbPickerDelegate {
     menu: WeakEntity<BreadcrumbNavigationMenu>,
+    filter_settled: FilterSettled,
     rows: Rc<Vec<BreadcrumbMenuRow>>,
     selected_index: usize,
     empty_message: SharedString,
@@ -1922,9 +1971,14 @@ pub struct BreadcrumbPickerDelegate {
 }
 
 impl BreadcrumbPickerDelegate {
-    fn new(menu: WeakEntity<BreadcrumbNavigationMenu>, placeholder: Arc<str>) -> Self {
+    fn new(
+        menu: WeakEntity<BreadcrumbNavigationMenu>,
+        filter_settled: FilterSettled,
+        placeholder: Arc<str>,
+    ) -> Self {
         Self {
             menu,
+            filter_settled,
             rows: Rc::new(Vec::new()),
             selected_index: 0,
             empty_message: "Loading…".into(),
@@ -2041,9 +2095,40 @@ impl picker::PickerDelegate for BreadcrumbPickerDelegate {
     ) -> Task<()> {
         let menu = self.menu.clone();
         cx.spawn(async move |_, cx| {
-            menu.update(cx, |menu, cx| menu.set_filter_query(query, cx))
-                .ok();
+            // Handing the query over only starts the rank. The picker treats this task as the
+            // whole update, so it has to span the rank and the publish that follows it -
+            // otherwise Enter lands while the rows still describe the previous query.
+            let settled = menu
+                .update(cx, |menu, cx| {
+                    menu.set_filter_query(query, cx);
+                    menu.filter_settled()
+                })
+                .ok()
+                .flatten();
+            if let Some(mut settled) = settled {
+                settled.recv().await;
+            }
         })
+    }
+
+    fn finalize_update_matches(
+        &mut self,
+        _query: String,
+        duration: Duration,
+        _window: &mut Window,
+        cx: &mut Context<picker::Picker<Self>>,
+    ) -> bool {
+        let Some(mut settled) = self.filter_settled.receiver() else {
+            // Either nothing is in flight or the query has not reached the menu yet, and the
+            // two are indistinguishable from here. Report not-final and let the picker confirm
+            // once the update lands.
+            return false;
+        };
+        cx.foreground_executor()
+            .block_with_timeout(duration, async move {
+                settled.recv().await;
+            })
+            .is_ok()
     }
 
     fn confirm(
