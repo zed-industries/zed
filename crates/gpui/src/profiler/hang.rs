@@ -1,12 +1,10 @@
 //! Post-hoc detection of foreground hangs from the journal's event stream.
 //!
 //! A hang is any single piece of foreground work — a task poll, an action
-//! handler, an input dispatch, or a window draw — that blocked the foreground
-//! thread for at least a threshold duration. [`HangDetector`] drains the
-//! journal, seals it into [`FrameSnapshot`]s, and reports each snapshot that
-//! contains hangs as a [`HangIncident`], so a consumer sees every hang
-//! together with everything else the foreground did in the same
-//! between-frames interval.
+//! handler, an input dispatch, a window draw, or platform presentation — that
+//! blocked the foreground thread for at least a threshold duration.
+//! [`HangDetector`] drains the journal and reports each completed activity
+//! interval containing hangs as a [`HangIncident`].
 
 use std::time::Duration;
 
@@ -14,19 +12,22 @@ use scheduler::Instant;
 use serde::Serialize;
 
 use super::SerializedLocation;
-use super::journal::{ForegroundEvent, ForegroundEventCollector, FrameSnapshot, IntervalSealer};
+use super::journal::{
+    ForegroundEvent, ForegroundJournalCollector, ForegroundJournalEntry, FrameSnapshot,
+    IntervalBoundary, IntervalSealer,
+};
 
 /// Detects foreground hangs by polling the journal.
 ///
-/// Detection is post-hoc: a hang is reported once the interval containing it
-/// seals, which happens at the next draw or after the journal's seal timeout
-/// of further foreground activity. Work that never yields back to the
-/// foreground is not observed until it does.
+/// Detection is post-hoc: a hang is reported once an explicit presentation,
+/// foreground-quiescence, or pending-frame deadline boundary completes its
+/// interval. Work that never yields back to the foreground is not observed
+/// until it does.
 pub struct HangDetector {
-    collector: ForegroundEventCollector,
+    collector: ForegroundJournalCollector,
     sealer: IntervalSealer,
     threshold: Duration,
-    first_frame_at: Option<Instant>,
+    first_present_at: Option<Instant>,
 }
 
 /// One sealed interval that contained at least one hang.
@@ -45,35 +46,47 @@ impl HangDetector {
     /// Only events recorded from this point on are observed.
     pub fn new(threshold: Duration) -> Self {
         Self {
-            collector: ForegroundEventCollector::new(),
+            collector: ForegroundJournalCollector::new(),
             sealer: IntervalSealer::new(Instant::now()),
             threshold,
-            first_frame_at: None,
+            first_present_at: None,
         }
     }
 
-    /// When the first window draw observed by this detector finished, marking
-    /// the end of the pre-first-frame startup phase. `None` until a draw has
-    /// been observed.
-    pub fn first_frame_at(&self) -> Option<Instant> {
-        self.first_frame_at
+    /// When the first newly drawn frame observed by this detector finished
+    /// platform submission. `None` until a presentation boundary is observed.
+    pub fn first_present_at(&self) -> Option<Instant> {
+        self.first_present_at
     }
 
     /// Drains newly recorded events and returns the incidents sealed since
     /// the previous poll.
     pub fn poll(&mut self) -> Vec<HangIncident> {
+        let now = Instant::now();
         let drained = self.collector.collect_unseen();
-        if self.first_frame_at.is_none() {
-            self.first_frame_at = drained.events.iter().find_map(|event| match event {
-                ForegroundEvent::Draw(timing) => Some(timing.draw_end),
+        if self.first_present_at.is_none() {
+            self.first_present_at = drained.entries.iter().find_map(|entry| match entry {
+                ForegroundJournalEntry::Boundary(IntervalBoundary::Presented(presented)) => {
+                    Some(presented.presentation.present_end)
+                }
                 _ => None,
             });
         }
         self.sealer.note_lost(drained.lost);
-        self.sealer
-            .push_events(drained.events)
+        let snapshots = self.sealer.push_entries(drained.entries);
+        let mut incidents = Self::detect_incidents(snapshots, self.threshold);
+        incidents.extend(self.advance_at(now));
+        incidents
+    }
+
+    fn advance_at(&mut self, now: Instant) -> Vec<HangIncident> {
+        Self::detect_incidents(self.sealer.advance(now), self.threshold)
+    }
+
+    fn detect_incidents(snapshots: Vec<FrameSnapshot>, threshold: Duration) -> Vec<HangIncident> {
+        snapshots
             .into_iter()
-            .filter_map(|snapshot| HangIncident::detect(snapshot, self.threshold))
+            .filter_map(|snapshot| HangIncident::detect(snapshot, threshold))
             .collect()
     }
 }
@@ -84,9 +97,8 @@ impl HangDetector {
 #[derive(Debug, Clone, Serialize)]
 pub struct SerializedHangIncident {
     /// `"startup"` when the active window began before the first observed
-    /// window frame finished drawing (see [`HangDetector::first_frame_at`]),
-    /// otherwise `"steady"`. Separates pre-first-paint hangs from hangs of a
-    /// visible app without suppressing either.
+    /// newly drawn frame finished platform submission (see
+    /// [`HangDetector::first_present_at`]), otherwise `"steady"`.
     pub phase: &'static str,
     /// When the incident's active window started, in milliseconds since app
     /// startup: the sealing frame's first invalidation, or the earliest
@@ -100,16 +112,15 @@ pub struct SerializedHangIncident {
     /// best estimate of the freeze a user perceived. Always the duration of
     /// the first contributor.
     pub stall_ms: f64,
-    /// For draw-sealed incidents, how long the frame that closed the
-    /// incident had been dirty before reaching the screen, in milliseconds:
-    /// how long a needed repaint kept the user waiting.
-    pub dirty_to_draw_ms: Option<f64>,
-    /// What closed the incident: `"draw"` (a frame was produced) or
-    /// `"timeout"` (nothing drew for the seal timeout). This labels the
-    /// boundary, not the hang's cause — the cause is the first contributor.
+    /// For presentation-sealed incidents, how long the submitted frame had
+    /// been dirty, in milliseconds.
+    pub dirty_to_present_ms: Option<f64>,
+    /// What closed the incident: `"present"`, `"frame_deadline"`, or
+    /// `"quiescent"`. This labels the boundary, not the hang's cause — the
+    /// cause is the first contributor.
     pub sealed_by: &'static str,
     /// Fraction of the active window the foreground spent working,
-    /// `0.0..=1.0`. Low values with a high `dirty_to_draw_ms` indicate
+    /// `0.0..=1.0`. Low values with a high `dirty_to_present_ms` indicate
     /// throttling or scheduling delay rather than application work.
     pub busy_fraction: f64,
     /// Total events recorded in the interval (before the contributor cap).
@@ -171,13 +182,14 @@ pub enum SerializedHangContributor {
         /// Invalidations coalesced into the frame.
         invalidations: u64,
     },
-    /// A frame presentation (zero duration; present only when a present
-    /// itself is somehow a contributor).
+    /// Work spent submitting a frame to the platform.
     Present {
-        /// The window whose frame was presented.
+        /// The window whose frame was submitted.
         window_id: u64,
-        /// When the frame was presented, in milliseconds since app startup.
+        /// When submission began, in milliseconds since app startup.
         start_ms: f64,
+        /// How long platform submission took, in milliseconds.
+        duration_ms: f64,
     },
 }
 
@@ -189,15 +201,14 @@ fn as_millis(duration: Duration) -> f64 {
 
 impl SerializedHangIncident {
     /// Converts an incident, keeping at most `max_contributors` contributors.
-    /// `first_frame_at` is the end of the first observed window draw
-    /// (typically [`HangDetector::first_frame_at`]); incidents whose active
-    /// window begins before it (or before any frame exists) are tagged with
-    /// the `"startup"` phase.
+    /// `first_present_at` is the end of the first observed newly drawn frame's
+    /// platform submission (typically [`HangDetector::first_present_at`]);
+    /// incidents whose active window begins before it are tagged `"startup"`.
     pub fn convert(
         startup: Instant,
         incident: &HangIncident,
         max_contributors: usize,
-        first_frame_at: Option<Instant>,
+        first_present_at: Option<Instant>,
     ) -> Self {
         let since_startup =
             |instant: Instant| as_millis(instant.saturating_duration_since(startup));
@@ -213,8 +224,8 @@ impl SerializedHangIncident {
                 .min(1.0)
         };
         Self {
-            phase: match first_frame_at {
-                Some(first_frame_at) if active_start >= first_frame_at => "steady",
+            phase: match first_present_at {
+                Some(first_present_at) if active_start >= first_present_at => "steady",
                 _ => "startup",
             },
             start_ms: since_startup(active_start),
@@ -224,15 +235,16 @@ impl SerializedHangIncident {
                 .first()
                 .map(|event| as_millis(event.duration()))
                 .unwrap_or(0.0),
-            dirty_to_draw_ms: match snapshot.events.last() {
-                Some(ForegroundEvent::Draw(timing)) => {
-                    timing.dirty_to_draw_duration().map(as_millis)
+            dirty_to_present_ms: match snapshot.boundary {
+                IntervalBoundary::Presented(presented) => {
+                    presented.dirty_to_present_duration().map(as_millis)
                 }
-                _ => None,
+                IntervalBoundary::FrameDeadline(_) | IntervalBoundary::Quiescent { .. } => None,
             },
-            sealed_by: match snapshot.reason {
-                super::journal::SealReason::Draw => "draw",
-                super::journal::SealReason::Timeout => "timeout",
+            sealed_by: match snapshot.boundary {
+                IntervalBoundary::Presented(_) => "present",
+                IntervalBoundary::FrameDeadline(_) => "frame_deadline",
+                IntervalBoundary::Quiescent { .. } => "quiescent",
             },
             busy_fraction: (busy_fraction * 1000.0).round() / 1000.0,
             event_count: snapshot.events.len(),
@@ -280,7 +292,8 @@ impl SerializedHangContributor {
             },
             ForegroundEvent::Present(timing) => Self::Present {
                 window_id: timing.window_id.as_u64(),
-                start_ms: since_startup(timing.presented_at),
+                start_ms: since_startup(timing.present_start),
+                duration_ms,
             },
             ForegroundEvent::SmallPolls(flush) => {
                 // The sealer folds these out of snapshot events; a contributor
@@ -309,10 +322,7 @@ impl HangIncident {
     /// already running at the previous seal.
     pub fn active_window(&self) -> (Instant, Instant) {
         let snapshot = &self.snapshot;
-        let dirty_at = match snapshot.events.last() {
-            Some(ForegroundEvent::Draw(timing)) => timing.dirty_at,
-            _ => None,
-        };
+        let dirty_at = snapshot.boundary.dirty_at();
         let earliest_contributor = self
             .contributors
             .iter()
@@ -323,7 +333,7 @@ impl HangIncident {
             .flatten()
             .min()
             .unwrap_or(snapshot.interval_start);
-        (start, snapshot.interval_end)
+        (start, snapshot.interval_end())
     }
 
     /// Returns an incident when the snapshot contains at least one event
@@ -358,10 +368,14 @@ mod tests {
 
     use crate::{
         self as gpui, Context, FocusHandle, InteractiveElement, IntoElement, Modifiers,
-        MouseButton, Render, Styled, TestAppContext, VisualTestContext, Window, div, point, px,
+        MouseButton, Render, Styled, TestAppContext, VisualTestContext, Window, WindowId, div,
+        point, px,
     };
 
-    use super::super::journal::ForegroundEvent;
+    use super::super::journal::{
+        FRAME_DEADLINE, ForegroundEvent, ForegroundJournalEntry, FrameDeadline, FrameStateChange,
+        InputTiming, IntervalBoundary,
+    };
     use super::HangDetector;
 
     actions!(hang_test, [HangyAction]);
@@ -369,6 +383,37 @@ mod tests {
     // Well above legitimate per-event work in a test app (layout of one div,
     // empty polls), well below the injected hangs.
     const HANG_THRESHOLD: Duration = Duration::from_millis(10);
+
+    #[test]
+    fn silent_poll_advances_a_pending_frame_deadline() {
+        let start = scheduler::Instant::now();
+        let window_id = WindowId::from(0x51E17);
+        let mut detector = HangDetector::new(HANG_THRESHOLD);
+        let snapshots = detector.sealer.push_entries([
+            ForegroundJournalEntry::FrameState(FrameStateChange::Pending {
+                window_id,
+                dirty_at: start,
+            }),
+            ForegroundJournalEntry::Event(ForegroundEvent::Input(InputTiming {
+                start,
+                end: start + Duration::from_millis(20),
+                caused_invalidation: true,
+            })),
+        ]);
+        assert!(snapshots.is_empty());
+
+        let incidents = detector.advance_at(start + FRAME_DEADLINE);
+        assert!(incidents.iter().any(|incident| {
+            matches!(
+                incident.snapshot.boundary,
+                IntervalBoundary::FrameDeadline(FrameDeadline {
+                    window_id: deadline_window,
+                    ended_at,
+                    ..
+                }) if deadline_window == window_id && ended_at == start + FRAME_DEADLINE
+            )
+        }));
+    }
 
     #[derive(Clone, Default)]
     struct HangControls {
@@ -473,7 +518,7 @@ mod tests {
             }
         }
 
-        // A final draw seals whatever interval is still open.
+        // A final presentation seals whatever interval is still open.
         draw_window(cx);
 
         let incidents = detector.poll();
@@ -538,7 +583,11 @@ mod tests {
     }
 
     fn draw_window(cx: &mut VisualTestContext) {
-        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.update(|window, cx| {
+            let arena_clear = window.draw(cx);
+            window.present_if_needed();
+            arena_clear.clear(cx);
+        });
     }
 
     /// The deterministic test scheduler does not bracket runnables with the
