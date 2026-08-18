@@ -509,7 +509,7 @@ impl DebugAdapter for JsDebugAdapter {
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         if self.checked.set(()).is_ok() {
-            delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
+            delegate.output_to_console(format!("Checking latest version of {}…", self.name()));
             if let Some(version) = self.fetch_latest_adapter_version(delegate).await.log_err() {
                 adapters::download_adapter_from_github(
                     self.name(),

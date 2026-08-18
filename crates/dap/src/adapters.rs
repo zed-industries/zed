@@ -296,7 +296,7 @@ pub async fn download_adapter_from_github(
         adapter_name,
         github_version.url,
     );
-    delegate.output_to_console(format!("Downloading from {}...", github_version.url));
+    delegate.output_to_console(format!("Downloading from {}…", github_version.url));
 
     let mut response = delegate
         .http_client()

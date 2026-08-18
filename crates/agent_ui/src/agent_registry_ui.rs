@@ -94,7 +94,7 @@ impl AgentRegistryPage {
             let registry_store = AgentRegistryStore::global(cx);
             let query_editor = cx.new(|cx| {
                 let mut input = Editor::single_line(window, cx);
-                input.set_placeholder_text("Search agents...", window, cx);
+                input.set_placeholder_text("Search agents…", window, cx);
                 input
             });
             cx.subscribe(&query_editor, Self::on_query_change).detach();
@@ -292,7 +292,7 @@ impl AgentRegistryPage {
         let fetch_error = registry_store.fetch_error();
 
         let message = if is_fetching {
-            "Loading registry..."
+            "Loading registry…"
         } else if fetch_error.is_some() {
             "Failed to load the agent registry. Please check your connection and try again."
         } else {
