@@ -1055,6 +1055,11 @@
     //
     // Default: true
     "diff_stats": true,
+    // Whether to show the cumulative addition/deletion change count next to
+    // directories in the git panel tree view.
+    //
+    // Default: false
+    "directory_diff_stats": false,
     // Maximum length of the commit message title before a warning is shown.
     // Set to 0 to disable.
     //

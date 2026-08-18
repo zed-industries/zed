@@ -47,6 +47,8 @@ By default, the Git Panel docks on the left. Go to **Panels > Git Panel** and ch
 
 The Git Panel shows a flat list of changed files by default. To see files organized by folder hierarchy instead, toggle **Tree View** in the panel's context menu, or enable it in **Panels > Git Panel**.
 
+In tree view, enabling **Directory Diff Stats** (`git_panel.directory_diff_stats`) in the panel's view options menu or in **Panels > Git Panel** shows the cumulative added/deleted line counts next to each directory.
+
 #### Inline Blame
 
 Zed shows Git blame information on the current line. To turn this off or add a delay before it appears, go to **Version Control > Inline Git Blame**.
