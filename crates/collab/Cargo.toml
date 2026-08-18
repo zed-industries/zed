@@ -5,7 +5,7 @@ edition.workspace = true
 name = "collab"
 version = "0.44.0"
 publish.workspace = true
-license = "AGPL-3.0-or-later"
+license = "GPL-3.0-or-later"
 
 [lints]
 workspace = true
@@ -76,6 +76,7 @@ uuid.workspace = true
 [dev-dependencies]
 agent = { workspace = true, features = ["test-support"] }
 async-trait.workspace = true
+async-channel.workspace = true
 
 buffer_diff.workspace = true
 call = { workspace = true, features = ["test-support"] }
@@ -127,6 +128,7 @@ sqlx = { version = "0.8", features = ["sqlite"] }
 task.workspace = true
 theme_settings = { workspace = true, features = ["test-support"] }
 theme.workspace = true
+title_bar = { workspace = true, features = ["test-support"] }
 
 unindent.workspace = true
 util.workspace = true

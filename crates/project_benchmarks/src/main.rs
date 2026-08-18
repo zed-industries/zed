@@ -6,6 +6,7 @@ use clap::Parser;
 use client::{Client, UserStore};
 use futures::channel::oneshot;
 use gpui::AppContext as _;
+use gpui::TaskExt;
 use http_client::FakeHttpClient;
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
@@ -140,7 +141,7 @@ fn main() -> Result<(), anyhow::Error> {
 
             cx.spawn(async move |cx| {
                 let project = if let Some(ssh_target) = args.ssh {
-                    println!("Setting up SSH connection for {}", &ssh_target);
+                    println!("Setting up SSH connection for {ssh_target}");
                     let ssh_connection_options = SshConnectionOptions::parse_command_line(&ssh_target)?;
 
                     let connection_options = remote::RemoteConnectionOptions::from(ssh_connection_options);
@@ -210,11 +211,13 @@ fn main() -> Result<(), anyhow::Error> {
                         first_match = Some(time);
                         println!("First match found after {time:?}");
                     }
-                    if let SearchResult::Buffer { ranges, .. } = match_result {
-                        matched_files += 1;
-                        matched_chunks += ranges.len();
-                    } else {
-                        break;
+                    match match_result {
+                        SearchResult::Buffer { ranges, .. } => {
+                            matched_files += 1;
+                            matched_chunks += ranges.len();
+                        }
+                        SearchResult::LimitReached => break,
+                        SearchResult::WaitingForScan | SearchResult::Searching => continue,
                     }
                 }
                 let elapsed = timer.elapsed();

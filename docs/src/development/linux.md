@@ -21,33 +21,6 @@ Clone the [Zed repository](https://github.com/zed-industries/zed).
 
   If you prefer to install the system libraries manually, you can find the list of required packages in the `script/linux` file.
 
-### Linkers {#linker}
-
-On Linux, Rust's default linker is [LLVM's `lld`](https://blog.rust-lang.org/2025/09/18/Rust-1.90.0/). Alternative linkers, especially [Wild](https://github.com/davidlattimore/wild) and [Mold](https://github.com/rui314/mold), can improve clean and incremental build times.
-
-Zed currently uses Mold in CI because it is more mature. For local development, Wild is recommended because it is typically 5-20% faster than Mold.
-
-These linkers can be installed with `script/install-mold` and `script/install-wild`.
-
-To use Wild as your default, add these lines to your `~/.cargo/config.toml`:
-
-```toml
-[target.x86_64-unknown-linux-gnu]
-linker = "clang"
-rustflags = ["-C", "link-arg=--ld-path=wild"]
-
-[target.aarch64-unknown-linux-gnu]
-linker = "clang"
-rustflags = ["-C", "link-arg=--ld-path=wild"]
-```
-
-To use Mold as your default:
-
-```toml
-[target.'cfg(target_os = "linux")']
-rustflags = ["-C", "link-arg=-fuse-ld=mold"]
-```
-
 ## Building from source
 
 Once the dependencies are installed, you can build Zed using [Cargo](https://doc.rust-lang.org/cargo/).
@@ -79,31 +52,6 @@ You can install a local build on your machine with:
 ```
 
 This builds `zed` and the `cli` in release mode, installs the binary at `~/.local/bin/zed`, and installs `.desktop` files to `~/.local/share`.
-
-> **_Note_**: If you encounter linker errors similar to the following:
->
-> ```bash
-> error: linking with `cc` failed: exit status: 1 ...
-> = note: /usr/bin/ld: /tmp/rustcISMaod/libaws_lc_sys-79f08eb6d32e546e.rlib(f8e4fd781484bd36-bcm.o): in function `aws_lc_0_25_0_handle_cpu_env':
->           /aws-lc/crypto/fipsmodule/cpucap/cpu_intel.c:(.text.aws_lc_0_25_0_handle_cpu_env+0x63): undefined reference to `__isoc23_sscanf'
->           /usr/bin/ld: /tmp/rustcISMaod/libaws_lc_sys-79f08eb6d32e546e.rlib(f8e4fd781484bd36-bcm.o): in function `pkey_rsa_ctrl_str':
->           /aws-lc/crypto/fipsmodule/evp/p_rsa.c:741:(.text.pkey_rsa_ctrl_str+0x20d): undefined reference to `__isoc23_strtol'
->           /usr/bin/ld: /aws-lc/crypto/fipsmodule/evp/p_rsa.c:752:(.text.pkey_rsa_ctrl_str+0x258): undefined reference to `__isoc23_strtol'
->           collect2: error: ld returned 1 exit status
->   = note: some `extern` functions couldn't be found; some native libraries may need to be installed or have their path specified
->   = note: use the `-l` flag to specify native libraries to link
->   = note: use the `cargo:rustc-link-lib` directive to specify the native libraries to link with Cargo (see https://doc.rust-lang.org/cargo/reference/build-scripts.html#rustc-link-lib)
-> error: could not compile `remote_server` (bin "remote_server") due to 1 previous error
-> ```
->
-> **Cause**:
-> This is caused by known bugs in aws-lc-rs (no GCC >= 14 support): [FIPS fails to build with GCC >= 14](https://github.com/aws/aws-lc-rs/issues/569)
-> & [GCC-14 - build failure for FIPS module](https://github.com/aws/aws-lc/issues/2010)
->
-> You can refer to [linux: Linker error for remote_server when using script/install-linux](https://github.com/zed-industries/zed/issues/24880) for more information.
->
-> **Workaround**:
-> Set the remote server target to `x86_64-unknown-linux-gnu` like so `export REMOTE_SERVER_TARGET=x86_64-unknown-linux-gnu; script/install-linux`
 
 ## Wayland & X11
 
@@ -186,7 +134,7 @@ Use this when Zed is using a lot of CPU. It is not useful for hangs.
   run `sudo chown $USER:$USER perf.data`
 
 - Get build info:
-  Run zed again and type `zed: about` in the command pallet to get the exact commit.
+  Run zed again and type {#action zed::About} in the command pallet to get the exact commit.
 
 The `perf.data` file can be sent to Zed together with the exact commit.
 

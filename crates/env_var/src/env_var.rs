@@ -1,4 +1,4 @@
-use gpui::SharedString;
+use gpui_shared_string::SharedString;
 
 #[derive(Clone)]
 pub struct EnvVar {

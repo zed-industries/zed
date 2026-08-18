@@ -1,23 +1,29 @@
-use std::rc::Rc;
-
-use gpui::{
-    AbsoluteLength, AppContext as _, Bounds, DefiniteLength, DragMoveEvent, Empty, Entity, Length,
-    WeakEntity,
+use super::data_table::{
+    ResizableColumnsState,
+    table_row::{IntoTableRow as _, TableRow},
 };
-use itertools::intersperse_with;
-
-use super::data_table::table_row::{IntoTableRow as _, TableRow};
 use crate::{
     ActiveTheme as _, AnyElement, App, Context, Div, FluentBuilder as _, InteractiveElement,
     IntoElement, ParentElement, Pixels, StatefulInteractiveElement, Styled, Window, div, h_flex,
     px,
 };
+use gpui::{
+    AbsoluteLength, AppContext as _, Bounds, DefiniteLength, DragMoveEvent, Empty, Entity,
+    EntityId, Length, Stateful, WeakEntity,
+};
+use std::rc::Rc;
 
-const RESIZE_COLUMN_WIDTH: f32 = 8.0;
-const RESIZE_DIVIDER_WIDTH: f32 = 1.0;
+pub(crate) const RESIZE_COLUMN_WIDTH: f32 = 8.0;
+pub(crate) const RESIZE_DIVIDER_WIDTH: f32 = 1.0;
 
+/// Drag payload for column resize handles.
+/// Includes the `EntityId` of the owning column state so that
+/// `on_drag_move` handlers on unrelated tables ignore the event.
 #[derive(Debug)]
-struct DraggedColumn(usize);
+pub(crate) struct DraggedColumn {
+    pub(crate) col_idx: usize,
+    pub(crate) state_id: EntityId,
+}
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum TableResizeBehavior {
@@ -41,17 +47,53 @@ impl TableResizeBehavior {
 }
 
 #[derive(Clone)]
+pub(crate) enum ColumnsStateRef {
+    Redistributable(WeakEntity<RedistributableColumnsState>),
+    Resizable(WeakEntity<ResizableColumnsState>),
+}
+
+#[derive(Clone)]
 pub struct HeaderResizeInfo {
-    pub columns_state: WeakEntity<RedistributableColumnsState>,
+    pub(crate) columns_state: ColumnsStateRef,
     pub resize_behavior: TableRow<TableResizeBehavior>,
 }
 
 impl HeaderResizeInfo {
-    pub fn from_state(columns_state: &Entity<RedistributableColumnsState>, cx: &App) -> Self {
+    pub fn from_redistributable(
+        columns_state: &Entity<RedistributableColumnsState>,
+        cx: &App,
+    ) -> Self {
         let resize_behavior = columns_state.read(cx).resize_behavior().clone();
         Self {
-            columns_state: columns_state.downgrade(),
+            columns_state: ColumnsStateRef::Redistributable(columns_state.downgrade()),
             resize_behavior,
+        }
+    }
+
+    pub fn from_resizable(columns_state: &Entity<ResizableColumnsState>, cx: &App) -> Self {
+        let resize_behavior = columns_state.read(cx).resize_behavior().clone();
+        Self {
+            columns_state: ColumnsStateRef::Resizable(columns_state.downgrade()),
+            resize_behavior,
+        }
+    }
+
+    pub fn reset_column(&self, col_idx: usize, window: &mut Window, cx: &mut App) {
+        match &self.columns_state {
+            ColumnsStateRef::Redistributable(weak) => {
+                weak.update(cx, |state, cx| {
+                    state.reset_column_to_initial_width(col_idx, window);
+                    cx.notify();
+                })
+                .ok();
+            }
+            ColumnsStateRef::Resizable(weak) => {
+                weak.update(cx, |state, cx| {
+                    state.reset_column_to_initial_width(col_idx);
+                    cx.notify();
+                })
+                .ok();
+            }
         }
     }
 }
@@ -225,6 +267,7 @@ impl RedistributableColumnsState {
     fn on_drag_move(
         &mut self,
         drag_event: &DragMoveEvent<DraggedColumn>,
+        hidden: Option<&TableRow<bool>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -235,9 +278,8 @@ impl RedistributableColumnsState {
             return;
         }
 
-        let mut col_position = 0.0;
         let rem_size = window.rem_size();
-        let col_idx = drag_event.drag(cx).0;
+        let col_idx = drag_event.drag(cx).col_idx;
 
         let divider_width = Self::get_fraction(
             &DefiniteLength::Absolute(AbsoluteLength::Pixels(px(RESIZE_DIVIDER_WIDTH))),
@@ -245,28 +287,107 @@ impl RedistributableColumnsState {
             rem_size,
         );
 
-        let mut widths = self
+        let widths = self
             .committed_widths
             .map_ref(|length| Self::get_fraction(length, bounds_width, rem_size));
 
-        for length in widths[0..=col_idx].iter() {
+        let drag_fraction = (drag_position.x - bounds.left()) / bounds_width;
+
+        let widths = Self::compute_drag_preview(
+            widths,
+            &self.resize_behavior,
+            hidden,
+            col_idx,
+            drag_fraction,
+            divider_width,
+        );
+
+        self.preview_widths = widths.map(DefiniteLength::Fraction);
+    }
+
+    /// Computes the preview column fractions produced by dragging the divider after `col_idx`
+    /// to `drag_fraction` (the cursor's x position expressed as a fraction of the container
+    /// width). `divider_width` is the resize-divider width as a fraction of the container.
+    ///
+    /// The on-screen layout only contains the visible columns, with the hidden columns' width
+    /// budget redistributed across them (see [`redistribute_hidden_widths`]), so the geometry
+    /// here is done in that visible/redistributed space: the raw `widths` are compacted to the
+    /// visible columns and scaled to match the rendered layout, the drag is applied there (which
+    /// also makes neighbor propagation skip hidden columns), and the result is mapped back to
+    /// the raw widths, leaving hidden columns untouched.
+    ///
+    /// Extracted as a pure function so the drag math can be unit tested, mirroring the
+    /// `drag_column_handle` / `propagate_resize_diff` helpers.
+    pub(crate) fn compute_drag_preview(
+        mut widths: TableRow<f32>,
+        resize_behavior: &TableRow<TableResizeBehavior>,
+        hidden: Option<&TableRow<bool>>,
+        col_idx: usize,
+        drag_fraction: f32,
+        divider_width: f32,
+    ) -> TableRow<f32> {
+        let visible_cols: Vec<usize> = (0..widths.cols())
+            .filter(|idx| !is_column_hidden(hidden, *idx))
+            .collect();
+
+        // Dividers are only rendered after visible columns, so a hidden `col_idx` should be
+        // impossible; bail out rather than resizing the wrong column.
+        let Some(divider_position) = visible_cols.iter().position(|&idx| idx == col_idx) else {
+            return widths;
+        };
+
+        let total_sum: f32 = widths.as_slice().iter().sum();
+        let visible_sum: f32 = visible_cols.iter().map(|&idx| widths[idx]).sum();
+        // The drag only moves width between visible columns, so `visible_sum` (and therefore
+        // this scale) is the same before and after the drag, making the mapping back exact.
+        let scale = if visible_sum > 0.0 {
+            total_sum / visible_sum
+        } else {
+            1.0
+        };
+
+        let mut rendered_widths = TableRow::from_vec(
+            visible_cols
+                .iter()
+                .map(|&idx| widths[idx] * scale)
+                .collect(),
+            visible_cols.len(),
+        );
+        let rendered_behavior = TableRow::from_vec(
+            visible_cols
+                .iter()
+                .map(|&idx| resize_behavior[idx])
+                .collect(),
+            visible_cols.len(),
+        );
+
+        let mut col_position = 0.0;
+        for length in rendered_widths[0..=divider_position].iter() {
             col_position += length + divider_width;
         }
 
         let mut total_length_ratio = col_position;
-        for length in widths[col_idx + 1..].iter() {
+        for length in rendered_widths[divider_position + 1..].iter() {
             total_length_ratio += length;
         }
-        let cols = self.resize_behavior.cols();
-        total_length_ratio += (cols - 1 - col_idx) as f32 * divider_width;
+        let cols = rendered_behavior.cols();
+        total_length_ratio += (cols - 1 - divider_position) as f32 * divider_width;
 
-        let drag_fraction = (drag_position.x - bounds.left()) / bounds_width;
         let drag_fraction = drag_fraction * total_length_ratio;
         let diff = drag_fraction - col_position - divider_width / 2.0;
 
-        Self::drag_column_handle(diff, col_idx, &mut widths, &self.resize_behavior);
+        Self::drag_column_handle(
+            diff,
+            divider_position,
+            &mut rendered_widths,
+            &rendered_behavior,
+        );
 
-        self.preview_widths = widths.map(DefiniteLength::Fraction);
+        for (visible_position, &idx) in visible_cols.iter().enumerate() {
+            widths[idx] = rendered_widths[visible_position] / scale;
+        }
+
+        widths
     }
 
     pub(crate) fn drag_column_handle(
@@ -340,16 +461,109 @@ impl RedistributableColumnsState {
     }
 }
 
+/// Returns `true` when the column at `idx` is hidden by `hidden`.
+pub fn is_column_hidden(hidden: Option<&TableRow<bool>>, idx: usize) -> bool {
+    hidden
+        .and_then(|mask| mask.get(idx).copied())
+        .unwrap_or(false)
+}
+
+/// Redistributes the fractional width budget of hidden columns across the visible columns so the
+/// visible columns fill the container instead of leaving a gap. Hidden columns keep their stored
+/// width (they are never rendered, so the value is not shown) and `Absolute` widths are left
+/// untouched. Returns the widths unchanged when no column is hidden.
+pub fn redistribute_hidden_widths(
+    widths: &TableRow<Length>,
+    hidden: Option<&TableRow<bool>>,
+) -> TableRow<Length> {
+    if !(0..widths.cols()).any(|idx| is_column_hidden(hidden, idx)) {
+        return widths.clone();
+    }
+
+    let mut total_fraction_sum = 0.0;
+    let mut visible_fraction_sum = 0.0;
+    for (idx, width) in widths.as_slice().iter().enumerate() {
+        if let Length::Definite(DefiniteLength::Fraction(fraction)) = width {
+            total_fraction_sum += *fraction;
+            if !is_column_hidden(hidden, idx) {
+                visible_fraction_sum += *fraction;
+            }
+        }
+    }
+    let scale = if visible_fraction_sum > 0.0 {
+        total_fraction_sum / visible_fraction_sum
+    } else {
+        1.0
+    };
+
+    let scaled: Vec<Length> = widths
+        .as_slice()
+        .iter()
+        .enumerate()
+        .map(|(idx, width)| match width {
+            Length::Definite(DefiniteLength::Fraction(fraction))
+                if !is_column_hidden(hidden, idx) =>
+            {
+                Length::Definite(DefiniteLength::Fraction(fraction * scale))
+            }
+            other => *other,
+        })
+        .collect();
+    TableRow::from_vec(scaled, widths.cols())
+}
+
+/// Fraction-valued counterpart of [`redistribute_hidden_widths`].
+pub fn redistribute_hidden_fractions(
+    fractions: &TableRow<f32>,
+    hidden: Option<&TableRow<bool>>,
+) -> TableRow<f32> {
+    if !(0..fractions.cols()).any(|idx| is_column_hidden(hidden, idx)) {
+        return fractions.clone();
+    }
+
+    let total_sum: f32 = fractions.as_slice().iter().sum();
+    let visible_sum: f32 = fractions
+        .as_slice()
+        .iter()
+        .enumerate()
+        .filter(|(idx, _)| !is_column_hidden(hidden, *idx))
+        .map(|(_, fraction)| *fraction)
+        .sum();
+    let scale = if visible_sum > 0.0 {
+        total_sum / visible_sum
+    } else {
+        1.0
+    };
+
+    let scaled: Vec<f32> = fractions
+        .as_slice()
+        .iter()
+        .enumerate()
+        .map(|(idx, fraction)| {
+            if is_column_hidden(hidden, idx) {
+                *fraction
+            } else {
+                fraction * scale
+            }
+        })
+        .collect();
+    TableRow::from_vec(scaled, fractions.cols())
+}
+
 pub fn bind_redistributable_columns(
     container: Div,
     columns_state: Entity<RedistributableColumnsState>,
+    hidden: Option<TableRow<bool>>,
 ) -> Div {
     container
         .on_drag_move::<DraggedColumn>({
             let columns_state = columns_state.clone();
             move |event, window, cx| {
+                if event.drag(cx).state_id != columns_state.entity_id() {
+                    return;
+                }
                 columns_state.update(cx, |columns, cx| {
-                    columns.on_drag_move(event, window, cx);
+                    columns.on_drag_move(event, hidden.as_ref(), window, cx);
                 });
             }
         })
@@ -372,99 +586,148 @@ pub fn bind_redistributable_columns(
 
 pub fn render_redistributable_columns_resize_handles(
     columns_state: &Entity<RedistributableColumnsState>,
+    hidden: Option<&TableRow<bool>>,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     let (column_widths, resize_behavior) = {
         let state = columns_state.read(cx);
-        (state.widths_to_render(), state.resize_behavior().clone())
+        (
+            redistribute_hidden_widths(&state.widths_to_render(), hidden),
+            state.resize_behavior().clone(),
+        )
     };
 
-    let mut column_ix = 0;
-    let resize_behavior = Rc::new(resize_behavior);
-    let dividers = intersperse_with(
-        column_widths
-            .as_slice()
-            .iter()
-            .copied()
-            .map(|width| resize_spacer(width).into_any_element()),
-        || {
-            let current_column_ix = column_ix;
-            let resize_behavior = Rc::clone(&resize_behavior);
+    // Only the visible columns participate in the layout; filtered columns are skipped entirely
+    // (no spacer, no divider) so we don't draw a stray resize line where a hidden column was.
+    let visible_cols: Vec<usize> = (0..column_widths.cols())
+        .filter(|idx| !is_column_hidden(hidden, *idx))
+        .collect();
+
+    let mut children: Vec<AnyElement> = Vec::with_capacity(visible_cols.len() * 2);
+    for (position, &col_idx) in visible_cols.iter().enumerate() {
+        children.push(resize_spacer(column_widths[col_idx]).into_any_element());
+
+        // A divider is rendered after every visible column except the last, mirroring the
+        // original `intersperse` behavior but in terms of visible columns.
+        let is_last_visible = position + 1 == visible_cols.len();
+        if is_last_visible {
+            continue;
+        }
+
+        let columns_state = columns_state.clone();
+        let divider = div().id(col_idx).relative().top_0();
+        let entity_id = columns_state.entity_id();
+        let on_reset: Rc<dyn Fn(&mut Window, &mut App)> = {
             let columns_state = columns_state.clone();
-            column_ix += 1;
-
-            window.with_id(current_column_ix, |window| {
-                let mut resize_divider = div()
-                    .id(current_column_ix)
-                    .relative()
-                    .top_0()
-                    .w(px(RESIZE_DIVIDER_WIDTH))
-                    .h_full()
-                    .bg(cx.theme().colors().border.opacity(0.8));
-
-                let mut resize_handle = div()
-                    .id("column-resize-handle")
-                    .absolute()
-                    .left_neg_0p5()
-                    .w(px(RESIZE_COLUMN_WIDTH))
-                    .h_full();
-
-                if resize_behavior[current_column_ix].is_resizable() {
-                    let is_highlighted = window.use_state(cx, |_window, _cx| false);
-
-                    resize_divider = resize_divider.when(*is_highlighted.read(cx), |div| {
-                        div.bg(cx.theme().colors().border_focused)
-                    });
-
-                    resize_handle = resize_handle
-                        .on_hover({
-                            let is_highlighted = is_highlighted.clone();
-                            move |&was_hovered, _, cx| is_highlighted.write(cx, was_hovered)
-                        })
-                        .cursor_col_resize()
-                        .on_click({
-                            let columns_state = columns_state.clone();
-                            move |event, window, cx| {
-                                if event.click_count() >= 2 {
-                                    columns_state.update(cx, |columns, _| {
-                                        columns.reset_column_to_initial_width(
-                                            current_column_ix,
-                                            window,
-                                        );
-                                    });
-                                }
-
-                                cx.stop_propagation();
-                            }
-                        })
-                        .on_drag(DraggedColumn(current_column_ix), {
-                            let is_highlighted = is_highlighted.clone();
-                            move |_, _offset, _window, cx| {
-                                is_highlighted.write(cx, true);
-                                cx.new(|_cx| Empty)
-                            }
-                        })
-                        .on_drop::<DraggedColumn>(move |_, _, cx| {
-                            is_highlighted.write(cx, false);
-                            columns_state.update(cx, |state, _| {
-                                state.commit_preview();
-                            });
-                        });
-                }
-
-                resize_divider.child(resize_handle).into_any_element()
+            Rc::new(move |window, cx| {
+                columns_state.update(cx, |columns, cx| {
+                    columns.reset_column_to_initial_width(col_idx, window);
+                    cx.notify();
+                });
             })
-        },
-    );
+        };
+        let on_drag_end: Option<Rc<dyn Fn(&mut App)>> = {
+            Some(Rc::new(move |cx| {
+                columns_state.update(cx, |state, _| state.commit_preview());
+            }))
+        };
+        children.push(render_column_resize_divider(
+            divider,
+            col_idx,
+            resize_behavior[col_idx].is_resizable(),
+            entity_id,
+            on_reset,
+            on_drag_end,
+            window,
+            cx,
+        ));
+    }
 
     h_flex()
         .id("resize-handles")
         .absolute()
         .inset_0()
         .w_full()
-        .children(dividers)
+        .children(children)
         .into_any_element()
+}
+
+/// Builds a single column resize divider with an interactive drag handle.
+///
+/// The caller provides:
+/// - `divider`: a pre-positioned divider element (with absolute or relative positioning)
+/// - `col_idx`: which column this divider is for
+/// - `is_resizable`: whether the column supports resizing
+/// - `entity_id`: the `EntityId` of the owning column state (for the drag payload)
+/// - `on_reset`: called on double-click to reset the column to its initial width
+/// - `on_drag_end`: called when the drag ends (e.g. to commit preview widths)
+pub(crate) fn render_column_resize_divider(
+    divider: Stateful<Div>,
+    col_idx: usize,
+    is_resizable: bool,
+    entity_id: EntityId,
+    on_reset: Rc<dyn Fn(&mut Window, &mut App)>,
+    on_drag_end: Option<Rc<dyn Fn(&mut App)>>,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    window.with_id(col_idx, |window| {
+        let mut resize_divider = divider.w(px(RESIZE_DIVIDER_WIDTH)).h_full().bg(cx
+            .theme()
+            .colors()
+            .border
+            .opacity(0.8));
+
+        let mut resize_handle = div()
+            .id("column-resize-handle")
+            .absolute()
+            .left_neg_0p5()
+            .w(px(RESIZE_COLUMN_WIDTH))
+            .h_full();
+
+        if is_resizable {
+            let is_highlighted = window.use_state(cx, |_window, _cx| false);
+
+            resize_divider = resize_divider.when(*is_highlighted.read(cx), |div| {
+                div.bg(cx.theme().colors().border_focused)
+            });
+
+            resize_handle = resize_handle
+                .on_hover({
+                    let is_highlighted = is_highlighted.clone();
+                    move |&was_hovered, _, cx| is_highlighted.write(cx, was_hovered)
+                })
+                .cursor_col_resize()
+                .on_click(move |event, window, cx| {
+                    if event.click_count() >= 2 {
+                        on_reset(window, cx);
+                    }
+                    cx.stop_propagation();
+                })
+                .on_drag(
+                    DraggedColumn {
+                        col_idx,
+                        state_id: entity_id,
+                    },
+                    {
+                        let is_highlighted = is_highlighted.clone();
+                        move |_, _offset, _window, cx| {
+                            is_highlighted.write(cx, true);
+                            cx.new(|_cx| Empty)
+                        }
+                    },
+                )
+                .on_drop::<DraggedColumn>(move |_, _, cx| {
+                    is_highlighted.write(cx, false);
+                    if let Some(on_drag_end) = &on_drag_end {
+                        on_drag_end(cx);
+                    }
+                });
+        }
+
+        resize_divider.child(resize_handle).into_any_element()
+    })
 }
 
 fn resize_spacer(width: Length) -> Div {

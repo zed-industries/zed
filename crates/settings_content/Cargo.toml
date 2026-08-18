@@ -19,6 +19,7 @@ anyhow.workspace = true
 collections.workspace = true
 derive_more.workspace = true
 gpui.workspace = true
+language_model_core.workspace = true
 log.workspace = true
 schemars.workspace = true
 serde.workspace = true

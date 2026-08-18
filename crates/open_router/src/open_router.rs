@@ -1,6 +1,9 @@
 use anyhow::{Result, anyhow};
-use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
+use futures::{AsyncReadExt, StreamExt, stream::BoxStream};
+use http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt, http,
+};
+use open_ai::ChatCompletionStreamEvent;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 pub use settings::DataCollection;
@@ -12,6 +15,7 @@ use strum::EnumString;
 use thiserror::Error;
 
 pub const OPEN_ROUTER_API_URL: &str = "https://openrouter.ai/api/v1";
+const OPEN_ROUTER_APP_TITLE: &str = "Zed";
 
 fn extract_retry_after(headers: &http::HeaderMap) -> Option<std::time::Duration> {
     if let Some(reset) = headers.get("X-RateLimit-Reset") {
@@ -145,6 +149,8 @@ pub struct Request {
     pub messages: Vec<RequestMessage>,
     pub stream: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stop: Vec<String>,
@@ -212,7 +218,7 @@ pub enum RequestMessage {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<ToolCall>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        reasoning_details: Option<serde_json::Value>,
+        reasoning_details: Option<std::sync::Arc<serde_json::Value>>,
     },
     User {
         content: MessageContent,
@@ -246,6 +252,7 @@ impl MessageContent {
             Self::Plain(text) => {
                 let text_part = MessagePart::Text {
                     text: std::mem::take(text),
+                    cache_control: None,
                 };
                 *self = Self::Multipart(vec![text_part, part]);
             }
@@ -257,7 +264,11 @@ impl MessageContent {
 impl From<Vec<MessagePart>> for MessageContent {
     fn from(parts: Vec<MessagePart>) -> Self {
         if parts.len() == 1
-            && let MessagePart::Text { text } = &parts[0]
+            && let MessagePart::Text {
+                text,
+                cache_control,
+            } = &parts[0]
+            && cache_control.is_none()
         {
             return Self::Plain(text.clone());
         }
@@ -282,7 +293,7 @@ impl MessageContent {
         match self {
             Self::Plain(text) => Some(text),
             Self::Multipart(parts) if parts.len() == 1 => {
-                if let MessagePart::Text { text } = &parts[0] {
+                if let MessagePart::Text { text, .. } = &parts[0] {
                     Some(text)
                 } else {
                     None
@@ -298,16 +309,43 @@ impl MessageContent {
             Self::Multipart(parts) => parts
                 .iter()
                 .filter_map(|part| {
-                    if let MessagePart::Text { text } = part {
+                    if let MessagePart::Text { text, .. } = part {
                         Some(text.as_str())
                     } else {
                         None
                     }
                 })
                 .collect::<Vec<_>>()
-                .join(""),
+                .concat(),
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize, Copy, Clone, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum CacheControlType {
+    Ephemeral,
+}
+
+#[derive(Debug, Serialize, Deserialize, Copy, Clone, Eq, PartialEq)]
+pub enum CacheTtl {
+    /// Anthropic's default ephemeral TTL (currently 5 minutes). Refreshes for
+    /// free on every cache hit.
+    #[serde(rename = "5m")]
+    FiveMinutes,
+    /// Anthropic's extended ephemeral TTL (currently 1 hour). Costs 2x base
+    /// input tokens to write, but persists across longer idle gaps.
+    #[serde(rename = "1h")]
+    OneHour,
+}
+
+#[derive(Debug, Serialize, Deserialize, Copy, Clone, Eq, PartialEq)]
+pub struct CacheControl {
+    #[serde(rename = "type")]
+    pub cache_type: CacheControlType,
+    /// Omitting this field uses the API's default 5-minute TTL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttl: Option<CacheTtl>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -315,11 +353,11 @@ impl MessageContent {
 pub enum MessagePart {
     Text {
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
     },
     #[serde(rename = "image_url")]
-    Image {
-        image_url: String,
-    },
+    Image { image_url: String },
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -369,11 +407,21 @@ pub struct FunctionChunk {
     pub thought_signature: Option<String>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct PromptTokensDetails {
+    #[serde(default)]
+    pub cached_tokens: u64,
+    #[serde(default)]
+    pub cache_write_tokens: u64,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Usage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub total_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens_details: Option<PromptTokensDetails>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -391,6 +439,13 @@ pub struct ResponseStreamEvent {
     pub model: String,
     pub choices: Vec<ChoiceDelta>,
     pub usage: Option<Usage>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ResponseStreamResult {
+    Response(ResponseStreamEvent),
+    Error(OpenRouterErrorResponse),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -440,110 +495,69 @@ pub async fn stream_completion(
     api_url: &str,
     api_key: &str,
     request: Request,
+    extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent, OpenRouterError>>, OpenRouterError> {
-    let uri = format!("{api_url}/chat/completions");
-    let request_builder = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("HTTP-Referer", "https://zed.dev")
-        .header("X-Title", "Zed Editor");
-
-    let request = request_builder
-        .body(AsyncBody::from(
-            serde_json::to_string(&request).map_err(OpenRouterError::SerializeRequest)?,
-        ))
-        .map_err(OpenRouterError::BuildRequestBody)?;
-    let mut response = client
-        .send(request)
-        .await
-        .map_err(OpenRouterError::HttpSend)?;
-
-    if response.status().is_success() {
-        let reader = BufReader::new(response.into_body());
-        Ok(reader
-            .lines()
-            .filter_map(|line| async move {
-                match line {
-                    Ok(line) => {
-                        if line.starts_with(':') {
-                            return None;
-                        }
-
-                        let line = line.strip_prefix("data: ")?;
-                        if line == "[DONE]" {
-                            None
-                        } else {
-                            match serde_json::from_str::<ResponseStreamEvent>(line) {
-                                Ok(response) => Some(Ok(response)),
-                                Err(error) => {
-                                    if line.trim().is_empty() {
-                                        None
-                                    } else {
-                                        Some(Err(OpenRouterError::DeserializeResponse(error)))
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Err(error) => Some(Err(OpenRouterError::ReadResponse(error))),
-                }
-            })
-            .boxed())
-    } else {
-        let code = ApiErrorCode::from_status(response.status().as_u16());
-
-        let mut body = String::new();
-        response
-            .body_mut()
-            .read_to_string(&mut body)
+    let headers = completion_headers(extra_headers);
+    let events =
+        open_ai::stream_chat_completion(client, "OpenRouter", api_url, api_key, &headers, &request)
             .await
-            .map_err(OpenRouterError::ReadResponse)?;
-
-        let error_response = match serde_json::from_str::<OpenRouterErrorResponse>(&body) {
-            Ok(OpenRouterErrorResponse { error }) => error,
-            Err(_) => OpenRouterErrorBody {
-                code: response.status().as_u16(),
-                message: body,
-                metadata: None,
-            },
-        };
-
-        match code {
-            ApiErrorCode::RateLimitError => {
-                let retry_after = extract_retry_after(response.headers());
-                Err(OpenRouterError::RateLimit {
-                    retry_after: retry_after.unwrap_or_else(|| std::time::Duration::from_secs(60)),
-                })
+            .map_err(OpenRouterError::from_chat_completion_request_error)?;
+    Ok(events
+        .filter_map(|event| async move {
+            let value = match event {
+                Ok(ChatCompletionStreamEvent::Data(value)) => value,
+                Ok(ChatCompletionStreamEvent::Done) => return None,
+                Err(error) => {
+                    return Some(Err(OpenRouterError::ChatCompletion(error)));
+                }
+            };
+            match serde_json::from_value(value) {
+                Ok(ResponseStreamResult::Response(response)) => Some(Ok(response)),
+                Ok(ResponseStreamResult::Error(OpenRouterErrorResponse { error })) => {
+                    Some(Err(OpenRouterError::ApiError(ApiError {
+                        code: ApiErrorCode::from_status(error.code),
+                        message: error.message,
+                    })))
+                }
+                Err(error) => Some(Err(OpenRouterError::DeserializeResponse(error))),
             }
-            ApiErrorCode::OverloadedError => {
-                let retry_after = extract_retry_after(response.headers());
-                Err(OpenRouterError::ServerOverloaded { retry_after })
-            }
-            _ => Err(OpenRouterError::ApiError(ApiError {
-                code: code,
-                message: error_response.message,
-            })),
-        }
-    }
+        })
+        .boxed())
+}
+
+fn completion_headers(extra_headers: &CustomHeaders) -> CustomHeaders {
+    let mut headers = Vec::with_capacity(extra_headers.iter().len() + 2);
+    headers.push((
+        http::HeaderName::from_static("http-referer"),
+        http::HeaderValue::from_static("https://zed.dev"),
+    ));
+    headers.push((
+        http::HeaderName::from_static("x-title"),
+        http::HeaderValue::from_static(OPEN_ROUTER_APP_TITLE),
+    ));
+    headers.extend(
+        extra_headers
+            .iter()
+            .map(|(name, value)| (name.clone(), value.clone())),
+    );
+    CustomHeaders::new(headers)
 }
 
 pub async fn list_models(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
+    extra_headers: &CustomHeaders,
 ) -> Result<Vec<Model>, OpenRouterError> {
     let uri = format!("{api_url}/models/user");
-    let request_builder = HttpRequest::builder()
+    let request = HttpRequest::builder()
         .method(Method::GET)
         .uri(uri)
         .header("Accept", "application/json")
         .header("Authorization", format!("Bearer {}", api_key))
         .header("HTTP-Referer", "https://zed.dev")
-        .header("X-Title", "Zed Editor");
-
-    let request = request_builder
+        .header("X-Title", OPEN_ROUTER_APP_TITLE)
+        .extra_headers(extra_headers)
         .body(AsyncBody::default())
         .map_err(OpenRouterError::BuildRequestBody)?;
     let mut response = client
@@ -608,13 +622,6 @@ pub async fn list_models(
     } else {
         let code = ApiErrorCode::from_status(response.status().as_u16());
 
-        let mut body = String::new();
-        response
-            .body_mut()
-            .read_to_string(&mut body)
-            .await
-            .map_err(OpenRouterError::ReadResponse)?;
-
         let error_response = match serde_json::from_str::<OpenRouterErrorResponse>(&body) {
             Ok(OpenRouterErrorResponse { error }) => error,
             Err(_) => OpenRouterErrorBody {
@@ -645,9 +652,6 @@ pub async fn list_models(
 
 #[derive(Debug)]
 pub enum OpenRouterError {
-    /// Failed to serialize the HTTP request body to JSON
-    SerializeRequest(serde_json::Error),
-
     /// Failed to construct the HTTP request body
     BuildRequestBody(http::Error),
 
@@ -668,6 +672,46 @@ pub enum OpenRouterError {
 
     /// API returned an error response
     ApiError(ApiError),
+
+    /// The shared Chat Completions transport failed.
+    ChatCompletion(open_ai::RequestError),
+}
+
+impl OpenRouterError {
+    fn from_chat_completion_request_error(error: open_ai::RequestError) -> Self {
+        let open_ai::RequestError::HttpResponseError {
+            status_code,
+            body,
+            headers,
+            ..
+        } = error
+        else {
+            return Self::ChatCompletion(error);
+        };
+        let code = ApiErrorCode::from_status(status_code.as_u16());
+        let error_response = match serde_json::from_str::<OpenRouterErrorResponse>(&body) {
+            Ok(OpenRouterErrorResponse { error }) => error,
+            Err(_) => OpenRouterErrorBody {
+                code: status_code.as_u16(),
+                message: body,
+                metadata: None,
+            },
+        };
+
+        match code {
+            ApiErrorCode::RateLimitError => Self::RateLimit {
+                retry_after: extract_retry_after(&headers)
+                    .unwrap_or_else(|| std::time::Duration::from_secs(60)),
+            },
+            ApiErrorCode::OverloadedError => Self::ServerOverloaded {
+                retry_after: extract_retry_after(&headers),
+            },
+            _ => Self::ApiError(ApiError {
+                code,
+                message: error_response.message,
+            }),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -742,5 +786,166 @@ impl ApiErrorCode {
             503 => ApiErrorCode::OverloadedError,
             _ => ApiErrorCode::ApiError,
         }
+    }
+}
+
+// -- Conversions to `language_model_core` types --
+
+impl From<OpenRouterError> for language_model_core::LanguageModelCompletionError {
+    fn from(error: OpenRouterError) -> Self {
+        let provider = language_model_core::LanguageModelProviderName::new("OpenRouter");
+        match error {
+            OpenRouterError::BuildRequestBody(error) => Self::BuildRequestBody { provider, error },
+            OpenRouterError::HttpSend(error) => Self::HttpSend { provider, error },
+            OpenRouterError::DeserializeResponse(error) => {
+                Self::DeserializeResponse { provider, error }
+            }
+            OpenRouterError::ReadResponse(error) => Self::ApiReadResponseError { provider, error },
+            OpenRouterError::RateLimit { retry_after } => Self::RateLimitExceeded {
+                provider,
+                retry_after: Some(retry_after),
+            },
+            OpenRouterError::ServerOverloaded { retry_after } => Self::ServerOverloaded {
+                provider,
+                retry_after,
+            },
+            OpenRouterError::ApiError(api_error) => api_error.into(),
+            OpenRouterError::ChatCompletion(error) => error.into(),
+        }
+    }
+}
+
+impl From<ApiError> for language_model_core::LanguageModelCompletionError {
+    fn from(error: ApiError) -> Self {
+        use ApiErrorCode::*;
+        let provider = language_model_core::LanguageModelProviderName::new("OpenRouter");
+        match error.code {
+            InvalidRequestError => Self::BadRequestFormat {
+                provider,
+                message: error.message,
+            },
+            AuthenticationError => Self::AuthenticationError {
+                provider,
+                message: error.message,
+            },
+            PaymentRequiredError => Self::AuthenticationError {
+                provider,
+                message: format!("Payment required: {}", error.message),
+            },
+            PermissionError => Self::PermissionError {
+                provider,
+                message: error.message,
+            },
+            RequestTimedOut => Self::HttpResponseError {
+                provider,
+                status_code: http_client::StatusCode::REQUEST_TIMEOUT,
+                message: error.message,
+            },
+            RateLimitError => Self::RateLimitExceeded {
+                provider,
+                retry_after: None,
+            },
+            ApiError => Self::ApiInternalServerError {
+                provider,
+                message: error.message,
+            },
+            OverloadedError => Self::ServerOverloaded {
+                provider,
+                retry_after: None,
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::executor::block_on;
+    use http_client::{
+        FakeHttpClient, Response,
+        http::{HeaderName, HeaderValue},
+    };
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn completion_uses_shared_transport_with_open_router_headers() {
+        let captured_headers = Arc::new(Mutex::new(None));
+        let captured_headers_for_handler = captured_headers.clone();
+        let client = FakeHttpClient::create(move |request| {
+            let captured_headers = captured_headers_for_handler.clone();
+            async move {
+                captured_headers
+                    .lock()
+                    .expect("captured headers lock")
+                    .replace(request.headers().clone());
+                Ok(Response::builder()
+                    .status(200)
+                    .body(AsyncBody::from(concat!(
+                        "data: {\"id\":\"response-1\",\"created\":1,\"model\":\"vendor/model\",\"choices\":[],\"usage\":null}\n\n",
+                        "data: [DONE]\n\n"
+                    )))?)
+            }
+        });
+        let extra_headers = CustomHeaders::new(vec![(
+            HeaderName::from_static("x-custom-header"),
+            HeaderValue::from_static("custom-value"),
+        )]);
+        let request = Request {
+            model: "vendor/model".to_string(),
+            messages: vec![RequestMessage::User {
+                content: MessageContent::Plain("Hello".to_string()),
+            }],
+            stream: true,
+            session_id: None,
+            max_tokens: None,
+            stop: Vec::new(),
+            temperature: 0.4,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            tools: Vec::new(),
+            reasoning: None,
+            usage: RequestUsage { include: true },
+            provider: None,
+        };
+
+        let responses = block_on(async {
+            stream_completion(
+                client.as_ref(),
+                OPEN_ROUTER_API_URL,
+                "secret",
+                request,
+                &extra_headers,
+            )
+            .await
+            .expect("streaming request")
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .expect("stream responses")
+        });
+
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0].model, "vendor/model");
+        let headers = captured_headers.lock().expect("captured headers lock");
+        let headers = headers.as_ref().expect("captured headers");
+        assert_eq!(headers["http-referer"], "https://zed.dev");
+        assert_eq!(headers["x-title"], OPEN_ROUTER_APP_TITLE);
+        assert_eq!(headers["x-custom-header"], "custom-value");
+    }
+
+    #[test]
+    fn shared_transport_errors_retain_language_model_classification() {
+        let error = OpenRouterError::ChatCompletion(open_ai::RequestError::HttpSend {
+            provider: "OpenRouter".to_string(),
+            error: anyhow!("network unavailable"),
+        });
+        let error = language_model_core::LanguageModelCompletionError::from(error);
+
+        assert!(matches!(
+            error,
+            language_model_core::LanguageModelCompletionError::HttpSend { provider, .. }
+                if provider.0 == "OpenRouter"
+        ));
     }
 }

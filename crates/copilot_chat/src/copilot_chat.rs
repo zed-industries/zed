@@ -1,24 +1,27 @@
+pub mod copilot_oauth;
+mod model;
 pub mod responses;
 
-use std::path::PathBuf;
+pub use model::{PROVIDER_ID, PROVIDER_NAME, create_language_model};
+
 use std::sync::Arc;
-use std::sync::OnceLock;
 
 use anyhow::Context as _;
 use anyhow::{Result, anyhow};
-use collections::HashSet;
-use fs::Fs;
+use credentials_provider::CredentialsProvider;
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use gpui::WeakEntity;
-use gpui::{App, AsyncApp, Global, prelude::*};
+use gpui::{App, AsyncApp, Entity, Global, Task, prelude::*};
 use http_client::HttpRequestExt;
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
-use paths::home_dir;
 use serde::{Deserialize, Serialize};
 
-use settings::watch_config_dir;
+pub use copilot_oauth::DeviceFlow;
 
+// The Copilot language server unofficially supports both token env vars:
+// https://github.com/github/copilot-language-server-release/issues/3#issuecomment-2699433055
 pub const COPILOT_OAUTH_ENV_VAR: &str = "GH_COPILOT_TOKEN";
+pub const GITHUB_COPILOT_OAUTH_ENV_VAR: &str = "GITHUB_COPILOT_TOKEN";
 const DEFAULT_COPILOT_API_ENDPOINT: &str = "https://api.githubcopilot.com";
 
 #[derive(Default, Clone, Debug, PartialEq)]
@@ -58,6 +61,14 @@ impl CopilotChatConfiguration {
 
     pub fn models_url(&self, api_endpoint: &str) -> String {
         format!("{}/models", api_endpoint)
+    }
+
+    pub fn device_code_url(&self) -> String {
+        format!("https://{}/login/device/code", self.oauth_domain())
+    }
+
+    pub fn access_token_url(&self) -> String {
+        format!("https://{}/login/oauth/access_token", self.oauth_domain())
     }
 
     fn parse_domain(enterprise_uri: &str) -> String {
@@ -289,13 +300,8 @@ impl Model {
     }
 
     pub fn supports_response(&self) -> bool {
-        self.supported_endpoints.len() > 0
-            && !self
-                .supported_endpoints
-                .contains(&ModelSupportedEndpoint::ChatCompletions)
-            && self
-                .supported_endpoints
-                .contains(&ModelSupportedEndpoint::Responses)
+        self.supported_endpoints
+            .contains(&ModelSupportedEndpoint::Responses)
     }
 
     pub fn supports_messages(&self) -> bool {
@@ -315,6 +321,7 @@ impl Model {
         self.supports_thinking()
             || self.supports_adaptive_thinking()
             || self.max_thinking_budget().is_some()
+            || !self.reasoning_effort_levels().is_empty()
     }
 
     pub fn max_thinking_budget(&self) -> Option<u32> {
@@ -498,43 +505,62 @@ struct GlobalCopilotChat(gpui::Entity<CopilotChat>);
 
 impl Global for GlobalCopilotChat {}
 
+/// The keychain URL under which the Copilot agent's OAuth token is stored. This
+/// is intentionally distinct from the edit-prediction token so the two Copilot
+/// providers are authenticated entirely separately.
+const COPILOT_AGENT_CREDENTIALS_URL: &str = "https://github.com/copilot-agent";
+
+/// Authentication state for the Copilot agent (chat) provider.
+#[derive(Clone, Debug)]
+pub enum CopilotChatStatus {
+    /// Still loading a previously-stored token from the keychain.
+    Starting,
+    SignedOut,
+    SigningIn {
+        device_flow: DeviceFlow,
+    },
+    Authorized,
+    Error(Arc<str>),
+}
+
 pub struct CopilotChat {
+    status: CopilotChatStatus,
     oauth_token: Option<String>,
     api_endpoint: Option<String>,
     configuration: CopilotChatConfiguration,
     models: Option<Vec<Model>>,
     client: Arc<dyn HttpClient>,
+    credentials_provider: Arc<dyn CredentialsProvider>,
+    sign_in_task: Option<Task<()>>,
 }
 
 pub fn init(
-    fs: Arc<dyn Fs>,
     client: Arc<dyn HttpClient>,
+    credentials_provider: Arc<dyn CredentialsProvider>,
     configuration: CopilotChatConfiguration,
     cx: &mut App,
 ) {
-    let copilot_chat = cx.new(|cx| CopilotChat::new(fs, client, configuration, cx));
+    let copilot_chat =
+        cx.new(|cx| CopilotChat::new(client, credentials_provider, configuration, cx));
     cx.set_global(GlobalCopilotChat(copilot_chat));
 }
 
-pub fn copilot_chat_config_dir() -> &'static PathBuf {
-    static COPILOT_CHAT_CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
-
-    COPILOT_CHAT_CONFIG_DIR.get_or_init(|| {
-        let config_dir = if cfg!(target_os = "windows") {
-            dirs::data_local_dir().expect("failed to determine LocalAppData directory")
-        } else {
-            std::env::var("XDG_CONFIG_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| home_dir().join(".config"))
-        };
-
-        config_dir.join("github-copilot")
-    })
+fn oauth_token_from_env() -> Option<String> {
+    std::env::var(COPILOT_OAUTH_ENV_VAR)
+        .ok()
+        .or_else(|| std::env::var(GITHUB_COPILOT_OAUTH_ENV_VAR).ok())
 }
 
-fn copilot_chat_config_paths() -> [PathBuf; 2] {
-    let base_dir = copilot_chat_config_dir();
-    [base_dir.join("hosts.json"), base_dir.join("apps.json")]
+async fn load_stored_token(
+    credentials_provider: &Arc<dyn CredentialsProvider>,
+    cx: &AsyncApp,
+) -> Option<String> {
+    let (_, token) = credentials_provider
+        .read_credentials(COPILOT_AGENT_CREDENTIALS_URL, cx)
+        .await
+        .ok()
+        .flatten()?;
+    String::from_utf8(token).ok()
 }
 
 impl CopilotChat {
@@ -543,54 +569,145 @@ impl CopilotChat {
             .map(|model| model.0.clone())
     }
 
-    fn new(
-        fs: Arc<dyn Fs>,
+    pub fn new(
         client: Arc<dyn HttpClient>,
+        credentials_provider: Arc<dyn CredentialsProvider>,
         configuration: CopilotChatConfiguration,
         cx: &mut Context<Self>,
     ) -> Self {
-        let config_paths: HashSet<PathBuf> = copilot_chat_config_paths().into_iter().collect();
-        let dir_path = copilot_chat_config_dir();
+        let env_token = oauth_token_from_env();
 
+        // Load a previously-stored token (or the one from the environment) and
+        // fetch models if we end up authenticated.
         cx.spawn(async move |this, cx| {
-            let mut parent_watch_rx = watch_config_dir(
-                cx.background_executor(),
-                fs.clone(),
-                dir_path.clone(),
-                config_paths,
-            );
-            while let Some(contents) = parent_watch_rx.next().await {
-                let oauth_domain =
-                    this.read_with(cx, |this, _| this.configuration.oauth_domain())?;
-                let oauth_token = extract_oauth_token(contents, &oauth_domain);
+            let (env_token, credentials_provider) = this.read_with(cx, |this, _| {
+                (this.oauth_token.clone(), this.credentials_provider.clone())
+            })?;
 
-                this.update(cx, |this, cx| {
-                    this.oauth_token = oauth_token.clone();
-                    cx.notify();
-                })?;
+            let token = match env_token {
+                Some(token) => Some(token),
+                None => load_stored_token(&credentials_provider, cx).await,
+            };
 
-                if oauth_token.is_some() {
-                    Self::update_models(&this, cx).await?;
-                }
+            this.update(cx, |this, cx| {
+                this.oauth_token = token.clone();
+                this.status = if token.is_some() {
+                    CopilotChatStatus::Authorized
+                } else {
+                    CopilotChatStatus::SignedOut
+                };
+                cx.notify();
+            })?;
+
+            if token.is_some() {
+                Self::update_models(&this, cx).await?;
             }
             anyhow::Ok(())
         })
-        .detach_and_log_err(cx);
+        .detach();
 
-        let this = Self {
-            oauth_token: std::env::var(COPILOT_OAUTH_ENV_VAR).ok(),
+        Self {
+            status: CopilotChatStatus::Starting,
+            oauth_token: env_token,
             api_endpoint: None,
             models: None,
             configuration,
             client,
-        };
+            credentials_provider,
+            sign_in_task: None,
+        }
+    }
 
-        if this.oauth_token.is_some() {
-            cx.spawn(async move |this, cx| Self::update_models(&this, cx).await)
-                .detach_and_log_err(cx);
+    pub fn status(&self) -> CopilotChatStatus {
+        self.status.clone()
+    }
+
+    /// Begins the GitHub OAuth device-code flow. Progress is reported through
+    /// [`Self::status`]; observe this entity to react to state changes.
+    pub fn sign_in(&mut self, cx: &mut Context<Self>) {
+        if matches!(
+            self.status,
+            CopilotChatStatus::SigningIn { .. } | CopilotChatStatus::Authorized
+        ) {
+            return;
         }
 
-        this
+        let client = self.client.clone();
+        let configuration = self.configuration.clone();
+        let credentials_provider = self.credentials_provider.clone();
+        let executor = cx.background_executor().clone();
+
+        let task = cx.spawn(async move |this, cx| {
+            let result = async {
+                let device_flow =
+                    copilot_oauth::request_device_code(&client, &configuration).await?;
+                this.update(cx, |this, cx| {
+                    this.status = CopilotChatStatus::SigningIn {
+                        device_flow: device_flow.clone(),
+                    };
+                    cx.notify();
+                })?;
+
+                let token = copilot_oauth::poll_for_access_token(
+                    &client,
+                    &configuration,
+                    &device_flow,
+                    &executor,
+                )
+                .await?;
+
+                credentials_provider
+                    .write_credentials(
+                        COPILOT_AGENT_CREDENTIALS_URL,
+                        "Bearer",
+                        token.as_bytes(),
+                        cx,
+                    )
+                    .await
+                    .context("writing Copilot agent credentials to the keychain")?;
+
+                this.update(cx, |this, cx| {
+                    this.oauth_token = Some(token);
+                    this.api_endpoint = None;
+                    this.status = CopilotChatStatus::Authorized;
+                    cx.notify();
+                })?;
+
+                Self::update_models(&this, cx).await?;
+                anyhow::Ok(())
+            }
+            .await;
+
+            if let Err(error) = result {
+                log::error!("Copilot agent sign-in failed: {error:#}");
+                this.update(cx, |this, cx| {
+                    this.status = CopilotChatStatus::Error(error.to_string().into());
+                    cx.notify();
+                })
+                .ok();
+            }
+        });
+
+        self.sign_in_task = Some(task);
+        cx.notify();
+    }
+
+    pub fn sign_out(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let credentials_provider = self.credentials_provider.clone();
+        self.oauth_token = None;
+        self.api_endpoint = None;
+        self.models = None;
+        self.sign_in_task = None;
+        self.status = CopilotChatStatus::SignedOut;
+        cx.notify();
+
+        cx.spawn(async move |_, cx| {
+            credentials_provider
+                .delete_credentials(COPILOT_AGENT_CREDENTIALS_URL, cx)
+                .await
+                .context("deleting Copilot agent credentials from the keychain")?;
+            anyhow::Ok(())
+        })
     }
 
     async fn update_models(this: &WeakEntity<Self>, cx: &mut AsyncApp) -> Result<()> {
@@ -627,13 +744,14 @@ impl CopilotChat {
     }
 
     pub async fn stream_completion(
+        copilot_chat: Entity<Self>,
         request: Request,
         location: ChatLocation,
         is_user_initiated: bool,
         mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
         let (client, oauth_token, api_endpoint, configuration) =
-            Self::get_auth_details(&mut cx).await?;
+            Self::get_auth_details(&copilot_chat, &mut cx).await?;
 
         let api_url = configuration.chat_completions_url(&api_endpoint);
         stream_completion(
@@ -648,13 +766,14 @@ impl CopilotChat {
     }
 
     pub async fn stream_response(
+        copilot_chat: Entity<Self>,
         request: responses::Request,
         location: ChatLocation,
         is_user_initiated: bool,
         mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<responses::StreamEvent>>> {
         let (client, oauth_token, api_endpoint, configuration) =
-            Self::get_auth_details(&mut cx).await?;
+            Self::get_auth_details(&copilot_chat, &mut cx).await?;
 
         let api_url = configuration.responses_url(&api_endpoint);
         responses::stream_response(
@@ -669,6 +788,7 @@ impl CopilotChat {
     }
 
     pub async fn stream_messages(
+        copilot_chat: Entity<Self>,
         body: String,
         location: ChatLocation,
         is_user_initiated: bool,
@@ -676,7 +796,7 @@ impl CopilotChat {
         mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<anthropic::Event, anthropic::AnthropicError>>> {
         let (client, oauth_token, api_endpoint, configuration) =
-            Self::get_auth_details(&mut cx).await?;
+            Self::get_auth_details(&copilot_chat, &mut cx).await?;
 
         let api_url = configuration.messages_url(&api_endpoint);
         stream_messages(
@@ -692,6 +812,7 @@ impl CopilotChat {
     }
 
     async fn get_auth_details(
+        copilot_chat: &Entity<Self>,
         cx: &mut AsyncApp,
     ) -> Result<(
         Arc<dyn HttpClient>,
@@ -699,25 +820,22 @@ impl CopilotChat {
         String,
         CopilotChatConfiguration,
     )> {
-        let this = cx
-            .update(|cx| Self::global(cx))
-            .context("Copilot chat is not enabled")?;
-
-        let (oauth_token, api_endpoint, client, configuration) = this.read_with(cx, |this, _| {
-            (
-                this.oauth_token.clone(),
-                this.api_endpoint.clone(),
-                this.client.clone(),
-                this.configuration.clone(),
-            )
-        });
+        let (oauth_token, api_endpoint, client, configuration) =
+            copilot_chat.read_with(cx, |copilot_chat, _| {
+                (
+                    copilot_chat.oauth_token.clone(),
+                    copilot_chat.api_endpoint.clone(),
+                    copilot_chat.client.clone(),
+                    copilot_chat.configuration.clone(),
+                )
+            });
 
         let oauth_token = oauth_token.context("No OAuth token available")?;
 
         let api_endpoint = match api_endpoint {
             Some(endpoint) => endpoint,
             None => {
-                let weak = this.downgrade();
+                let weak = copilot_chat.downgrade();
                 Self::resolve_api_endpoint(&weak, &oauth_token, &configuration, &client, cx).await?
             }
         };
@@ -918,23 +1036,6 @@ async fn request_models(
     let models = serde_json::from_str::<ModelSchema>(body_str)?.data;
 
     Ok(models)
-}
-
-fn extract_oauth_token(contents: String, domain: &str) -> Option<String> {
-    serde_json::from_str::<serde_json::Value>(&contents)
-        .map(|v| {
-            v.as_object().and_then(|obj| {
-                obj.iter().find_map(|(key, value)| {
-                    if key.starts_with(domain) {
-                        value["oauth_token"].as_str().map(|v| v.to_string())
-                    } else {
-                        None
-                    }
-                })
-            })
-        })
-        .ok()
-        .flatten()
 }
 
 async fn stream_completion(
@@ -1731,7 +1832,7 @@ mod tests {
         assert!(!model_with_chat_completions.supports_response());
 
         // Both endpoints (has /chat/completions) -> supports_response = false
-        assert!(!model_with_both.supports_response());
+        assert!(model_with_both.supports_response());
 
         // Only /v1/messages endpoint -> supports_response = false (doesn't have /responses)
         assert!(!model_with_messages.supports_response());

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{
     CsvPreviewView,
     types::TableLikeContent,
@@ -16,6 +18,40 @@ pub(crate) struct EditorState {
     pub _subscription: Subscription,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum TabularFormat {
+    Csv,
+    Tsv,
+    Psv,
+    Ssv,
+}
+
+const TABULAR_FORMATS: &[(&str, TabularFormat)] = &[
+    ("csv", TabularFormat::Csv),
+    ("tsv", TabularFormat::Tsv),
+    ("psv", TabularFormat::Psv),
+    ("ssv", TabularFormat::Ssv),
+];
+
+impl TabularFormat {
+    pub(crate) fn from_extension(ext: &str) -> Option<Self> {
+        let lower = ext.to_lowercase();
+        TABULAR_FORMATS
+            .iter()
+            .find(|(name, _)| *name == lower)
+            .map(|(_, format)| *format)
+    }
+
+    fn delimiter(self) -> char {
+        match self {
+            TabularFormat::Csv => ',',
+            TabularFormat::Tsv => '\t',
+            TabularFormat::Psv => '|',
+            TabularFormat::Ssv => ';',
+        }
+    }
+}
+
 impl CsvPreviewView {
     pub(crate) fn parse_csv_from_active_editor(
         &mut self,
@@ -23,6 +59,7 @@ impl CsvPreviewView {
         cx: &mut Context<Self>,
     ) {
         let editor = self.active_editor_state.editor.clone();
+        self.is_parsing = true;
         self.parsing_task = Some(self.parse_csv_in_background(wait_for_debounce, editor, cx));
     }
 
@@ -54,13 +91,35 @@ impl CsvPreviewView {
                 }
             }
 
-            let buffer_snapshot = view.update(cx, |_, cx| {
-                editor
+            let (buffer_snapshot, delimiter) = view.update(cx, |_, cx| {
+                let buffer_ref = editor
                     .read(cx)
                     .buffer()
                     .read(cx)
                     .as_singleton()
-                    .map(|b| b.read(cx).text_snapshot())
+                    .map(|b| b.read(cx).text_snapshot());
+
+                let extension = editor
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .and_then(|buffer| buffer.read(cx).file())
+                    .and_then(|file| file.path().extension().map(ToOwned::to_owned));
+
+                let delimiter = extension
+                    .as_deref()
+                    .and_then(TabularFormat::from_extension)
+                    .map(TabularFormat::delimiter)
+                    .unwrap_or_else(|| {
+                        log::warn!(
+                            "unrecognized tabular data extension {:?}, defaulting to comma delimiter",
+                            extension
+                        );
+                        ','
+                    });
+
+                (buffer_ref, delimiter)
             })?;
 
             let Some(buffer_snapshot) = buffer_snapshot else {
@@ -69,7 +128,7 @@ impl CsvPreviewView {
 
             let instant = Instant::now();
             let parsed_csv = cx
-                .background_spawn(async move { from_buffer(&buffer_snapshot) })
+                .background_spawn(async move { from_buffer_with_delimiter(&buffer_snapshot, delimiter) })
                 .await;
             let parse_duration = instant.elapsed();
             let parse_end_time: Instant = Instant::now();
@@ -80,25 +139,30 @@ impl CsvPreviewView {
                     .insert("Parsing", (parse_duration, Instant::now()));
 
                 log::debug!("Parsed {} rows", parsed_csv.rows.len());
-                view.engine.contents = parsed_csv;
+                view.engine.contents = Arc::new(parsed_csv);
+                view.engine.calculate_available_filters();
                 view.sync_column_widths(cx);
                 view.last_parse_end_time = Some(parse_end_time);
 
-                view.apply_filter_sort();
+                view.is_parsing = false;
+                view.apply_filter_sort(cx);
                 cx.notify();
             })
         })
     }
 }
 
-pub fn from_buffer(buffer_snapshot: &BufferSnapshot) -> TableLikeContent {
+pub fn from_buffer_with_delimiter(
+    buffer_snapshot: &BufferSnapshot,
+    delimiter: char,
+) -> TableLikeContent {
     let text = buffer_snapshot.text();
 
     if text.trim().is_empty() {
         return TableLikeContent::default();
     }
 
-    let (parsed_cells_with_positions, line_numbers) = parse_csv_with_positions(&text);
+    let (parsed_cells_with_positions, line_numbers) = parse_csv_with_positions(&text, delimiter);
     if parsed_cells_with_positions.is_empty() {
         return TableLikeContent::default();
     }
@@ -131,6 +195,7 @@ pub fn from_buffer(buffer_snapshot: &BufferSnapshot) -> TableLikeContent {
 /// Parse CSV and track byte positions for each cell
 fn parse_csv_with_positions(
     text: &str,
+    delimiter: char,
 ) -> (
     Vec<Vec<(SharedString, std::ops::Range<usize>)>>,
     Vec<LineNumber>,
@@ -170,7 +235,7 @@ fn parse_csv_with_positions(
                     }
                 }
             }
-            ',' if !in_quotes => {
+            c if c == delimiter && !in_quotes => {
                 // Field separator
                 let field_end_offset = current_offset;
                 if current_field.is_empty() && !in_quotes {
@@ -419,9 +484,51 @@ Jane,"Simple name""#;
     }
 
     #[test]
+    fn test_tsv_parsing() {
+        let tsv_data = "Name\tAge\tCity\nJohn\t30\tNew York\nJane\t25\tLos Angeles";
+        let (parsed_cells, _) = parse_csv_with_positions(tsv_data, '\t');
+
+        assert_eq!(parsed_cells.len(), 3);
+        assert_eq!(parsed_cells[0].len(), 3);
+        assert_eq!(parsed_cells[0][0].0.as_ref(), "Name");
+        assert_eq!(parsed_cells[0][1].0.as_ref(), "Age");
+        assert_eq!(parsed_cells[0][2].0.as_ref(), "City");
+        assert_eq!(parsed_cells[1][0].0.as_ref(), "John");
+        assert_eq!(parsed_cells[1][1].0.as_ref(), "30");
+    }
+
+    #[test]
+    fn test_psv_parsing() {
+        let psv_data = "Name|Age|City\nJohn|30|New York\nJane|25|Los Angeles";
+        let (parsed_cells, _) = parse_csv_with_positions(psv_data, '|');
+
+        assert_eq!(parsed_cells.len(), 3);
+        assert_eq!(parsed_cells[0].len(), 3);
+        assert_eq!(parsed_cells[0][0].0.as_ref(), "Name");
+        assert_eq!(parsed_cells[0][1].0.as_ref(), "Age");
+        assert_eq!(parsed_cells[0][2].0.as_ref(), "City");
+        assert_eq!(parsed_cells[1][0].0.as_ref(), "John");
+        assert_eq!(parsed_cells[1][1].0.as_ref(), "30");
+    }
+
+    #[test]
+    fn test_ssv_parsing() {
+        let ssv_data = "Name;Age;City\nJohn;30;New York\nJane;25;Los Angeles";
+        let (parsed_cells, _) = parse_csv_with_positions(ssv_data, ';');
+
+        assert_eq!(parsed_cells.len(), 3);
+        assert_eq!(parsed_cells[0].len(), 3);
+        assert_eq!(parsed_cells[0][0].0.as_ref(), "Name");
+        assert_eq!(parsed_cells[0][1].0.as_ref(), "Age");
+        assert_eq!(parsed_cells[0][2].0.as_ref(), "City");
+        assert_eq!(parsed_cells[1][0].0.as_ref(), "John");
+        assert_eq!(parsed_cells[1][1].0.as_ref(), "30");
+    }
+
+    #[test]
     fn test_csv_parsing_quote_offset_handling() {
         let csv_data = r#"first,"se,cond",third"#;
-        let (parsed_cells, _) = parse_csv_with_positions(csv_data);
+        let (parsed_cells, _) = parse_csv_with_positions(csv_data, ',');
 
         assert_eq!(parsed_cells.len(), 1); // One row
         assert_eq!(parsed_cells[0].len(), 3); // Three cells
@@ -447,7 +554,7 @@ Jane,"Simple name""#;
         let csv_data = r#"id,"name with spaces","description, with commas",status
 1,"John Doe","A person with ""quotes"" and, commas",active
 2,"Jane Smith","Simple description",inactive"#;
-        let (parsed_cells, _) = parse_csv_with_positions(csv_data);
+        let (parsed_cells, _) = parse_csv_with_positions(csv_data, ',');
 
         assert_eq!(parsed_cells.len(), 3); // header + 2 rows
 
@@ -505,6 +612,6 @@ impl TableLikeContent {
         let buffer_id = BufferId::new(1).unwrap();
         let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, text);
         let snapshot = buffer.snapshot();
-        from_buffer(snapshot)
+        from_buffer_with_delimiter(&snapshot, ',')
     }
 }

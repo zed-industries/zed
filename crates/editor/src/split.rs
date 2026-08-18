@@ -3,27 +3,27 @@ use std::{
     sync::Arc,
 };
 
-use buffer_diff::{BufferDiff, BufferDiffSnapshot};
+use buffer_diff::{BufferDiff, BufferDiffSnapshot, DiffHunkStatus};
 use collections::HashMap;
 
+use fs::Fs;
 use gpui::{
-    Action, AppContext as _, Entity, EventEmitter, Focusable, Font, Pixels, Subscription,
-    WeakEntity, canvas,
+    Action, AnyElement, Entity, EventEmitter, Focusable, Font, Pixels, Subscription, WeakEntity,
+    canvas, prelude::*,
 };
-use itertools::Itertools;
+
 use language::{Buffer, Capability, HighlightedText};
 use multi_buffer::{
     Anchor, AnchorRangeExt as _, BufferOffset, ExcerptRange, ExpandExcerptDirection, MultiBuffer,
-    MultiBufferDiffHunk, MultiBufferPoint, MultiBufferSnapshot, PathKey,
+    MultiBufferPoint, MultiBufferSnapshot, PathKey,
 };
 use project::Project;
 use rope::Point;
-use settings::{DiffViewStyle, Settings};
+use settings::{DiffViewStyle, SeedQuerySetting, Settings, SettingsStore, update_settings_file};
 use text::{Bias, BufferId, OffsetRangeExt as _, Patch, ToPoint as _};
-use ui::{
-    App, Context, InteractiveElement as _, IntoElement as _, ParentElement as _, Render,
-    Styled as _, Window, div,
-};
+
+use ui::{Toggleable as _, Tooltip, prelude::*, render_modifiers};
+use util::ResultExt as _;
 
 use crate::{
     display_map::CompanionExcerptPatch,
@@ -37,13 +37,14 @@ use workspace::{
 };
 
 use crate::{
-    Autoscroll, Editor, EditorEvent, EditorSettings, RenderDiffHunkControlsFn, ToggleSoftWrap,
+    Autoscroll, DiffHunkDelegate, Editor, EditorEvent, EditorSettings, ResolvedDiffHunks,
+    ToggleSoftWrap, UncommittedDiffHunkDelegate,
     actions::{DisableBreakpoint, EditLogBreakpoint, EnableBreakpoint, ToggleBreakpoint},
     display_map::Companion,
 };
-use zed_actions::assistant::InlineAssist;
+use zed_actions::{OpenSettingsAt, assistant::InlineAssist};
 
-pub(crate) fn convert_lhs_rows_to_rhs(
+pub(crate) fn patches_for_lhs_range(
     rhs_snapshot: &MultiBufferSnapshot,
     lhs_snapshot: &MultiBufferSnapshot,
     lhs_bounds: Range<MultiBufferPoint>,
@@ -56,7 +57,7 @@ pub(crate) fn convert_lhs_rows_to_rhs(
     )
 }
 
-pub(crate) fn convert_rhs_rows_to_lhs(
+pub(crate) fn patches_for_rhs_range(
     lhs_snapshot: &MultiBufferSnapshot,
     rhs_snapshot: &MultiBufferSnapshot,
     rhs_bounds: Range<MultiBufferPoint>,
@@ -69,7 +70,7 @@ pub(crate) fn convert_rhs_rows_to_lhs(
     )
 }
 
-fn rhs_range_to_base_text_range(
+fn buffer_range_to_base_text_range(
     rhs_range: &Range<Point>,
     diff_snapshot: &BufferDiffSnapshot,
     rhs_buffer_snapshot: &text::BufferSnapshot,
@@ -89,19 +90,19 @@ fn translate_lhs_selections_to_rhs(
     splittable: &SplittableEditor,
     cx: &App,
 ) -> HashMap<Entity<Buffer>, (Vec<Range<BufferOffset>>, Option<u32>)> {
-    let rhs_display_map = splittable.rhs_editor.read(cx).display_map.read(cx);
-    let Some(companion) = rhs_display_map.companion() else {
+    let Some(lhs) = &splittable.lhs else {
         return HashMap::default();
     };
-    let companion = companion.read(cx);
+    let lhs_snapshot = lhs.multibuffer.read(cx).snapshot(cx);
 
     let mut translated: HashMap<Entity<Buffer>, (Vec<Range<BufferOffset>>, Option<u32>)> =
         HashMap::default();
 
     for (lhs_buffer_id, (ranges, scroll_offset)) in selections_by_buffer {
-        let Some(rhs_buffer_id) = companion.lhs_to_rhs_buffer(*lhs_buffer_id) else {
+        let Some(diff) = lhs_snapshot.diff_for_buffer_id(*lhs_buffer_id) else {
             continue;
         };
+        let rhs_buffer_id = diff.buffer_id();
 
         let Some(rhs_buffer) = splittable
             .rhs_editor
@@ -150,32 +151,97 @@ fn translate_lhs_selections_to_rhs(
     translated
 }
 
-fn translate_lhs_hunks_to_rhs(
-    lhs_hunks: &[MultiBufferDiffHunk],
-    splittable: &SplittableEditor,
-    cx: &App,
-) -> Vec<MultiBufferDiffHunk> {
-    let rhs_display_map = splittable.rhs_editor.read(cx).display_map.read(cx);
-    let Some(companion) = rhs_display_map.companion() else {
-        return vec![];
-    };
-    let companion = companion.read(cx);
-    let rhs_snapshot = splittable.rhs_multibuffer.read(cx).snapshot(cx);
-    let rhs_hunks: Vec<MultiBufferDiffHunk> = rhs_snapshot.diff_hunks().collect();
+struct SplitLhsDiffHunkDelegate {
+    splittable: WeakEntity<SplittableEditor>,
+}
 
-    let mut translated = Vec::new();
-    for lhs_hunk in lhs_hunks {
-        let Some(rhs_buffer_id) = companion.lhs_to_rhs_buffer(lhs_hunk.buffer_id) else {
-            continue;
-        };
-        if let Some(rhs_hunk) = rhs_hunks.iter().find(|rhs_hunk| {
-            rhs_hunk.buffer_id == rhs_buffer_id
-                && rhs_hunk.diff_base_byte_range == lhs_hunk.diff_base_byte_range
-        }) {
-            translated.push(rhs_hunk.clone());
-        }
+impl DiffHunkDelegate for SplitLhsDiffHunkDelegate {
+    fn toggle(
+        &self,
+        hunks: Vec<ResolvedDiffHunks>,
+        _editor: &mut Editor,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        self.splittable
+            .update(cx, |splittable, cx| {
+                splittable.rhs_editor.update(cx, |editor, cx| {
+                    let delegate = editor.diff_hunk_delegate();
+                    delegate.toggle(hunks, editor, window, cx);
+                });
+            })
+            .log_err();
     }
-    translated
+
+    fn stage_or_unstage(
+        &self,
+        stage: bool,
+        hunks: Vec<ResolvedDiffHunks>,
+        _editor: &mut Editor,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        self.splittable
+            .update(cx, |splittable, cx| {
+                splittable.rhs_editor.update(cx, |editor, cx| {
+                    let delegate = editor.diff_hunk_delegate();
+                    delegate.stage_or_unstage(stage, hunks, editor, window, cx);
+                });
+            })
+            .log_err();
+    }
+
+    fn restore(
+        &self,
+        hunks: Vec<ResolvedDiffHunks>,
+        _editor: &mut Editor,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        self.splittable
+            .update(cx, |splittable, cx| {
+                splittable.rhs_editor.update(cx, |editor, cx| {
+                    let delegate = editor.diff_hunk_delegate();
+                    delegate.restore(hunks, editor, window, cx);
+                });
+            })
+            .log_err();
+    }
+
+    fn render_hunk_controls(
+        &self,
+        row: u32,
+        status: &DiffHunkStatus,
+        hunk_range: Range<Anchor>,
+        is_created_file: bool,
+        line_height: Pixels,
+        editor: &Entity<Editor>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        let Some(splittable) = self.splittable.upgrade() else {
+            return gpui::Empty.into_any_element();
+        };
+        let delegate = splittable.read(cx).rhs_editor.read(cx).diff_hunk_delegate();
+        delegate.render_hunk_controls(
+            row,
+            status,
+            hunk_range,
+            is_created_file,
+            line_height,
+            editor,
+            window,
+            cx,
+        )
+    }
+
+    fn render_hunk_as_staged(&self, status: &DiffHunkStatus, cx: &App) -> bool {
+        let Some(splittable) = self.splittable.upgrade() else {
+            return false;
+        };
+        let delegate = splittable.read(cx).rhs_editor.read(cx).diff_hunk_delegate();
+        delegate.render_hunk_as_staged(status, cx)
+    }
 }
 
 fn patches_for_range<F>(
@@ -187,15 +253,15 @@ fn patches_for_range<F>(
 where
     F: Fn(&BufferDiffSnapshot, RangeInclusive<Point>, &text::BufferSnapshot) -> Patch<Point>,
 {
-    struct PendingExcerpt {
-        source_buffer_snapshot: language::BufferSnapshot,
+    struct PendingExcerpt<'a> {
+        source_buffer_snapshot: &'a language::BufferSnapshot,
         source_excerpt_range: ExcerptRange<text::Anchor>,
         buffer_point_range: Range<Point>,
     }
 
     let mut result = Vec::new();
     let mut current_buffer_id: Option<BufferId> = None;
-    let mut pending_excerpts: Vec<PendingExcerpt> = Vec::new();
+    let mut pending_excerpts: Vec<PendingExcerpt<'_>> = Vec::new();
     let mut union_context_start: Option<Point> = None;
     let mut union_context_end: Option<Point> = None;
 
@@ -207,19 +273,21 @@ where
             return;
         };
 
-        let diff = source_snapshot
-            .diff_for_buffer_id(first.source_buffer_snapshot.remote_id())
-            .expect("buffer with no diff when creating patches");
-        let source_is_lhs =
-            first.source_buffer_snapshot.remote_id() == diff.base_text().remote_id();
+        let source_buffer_id = first.source_buffer_snapshot.remote_id();
+        let Some(diff) = source_snapshot.diff_for_buffer_id(source_buffer_id) else {
+            pending.clear();
+            return;
+        };
+        let source_is_lhs = source_buffer_id == diff.base_text().remote_id();
         let target_buffer_id = if source_is_lhs {
             diff.buffer_id()
         } else {
             diff.base_text().remote_id()
         };
-        let target_buffer = target_snapshot
-            .buffer_for_id(target_buffer_id)
-            .expect("missing corresponding buffer");
+        let Some(target_buffer) = target_snapshot.buffer_for_id(target_buffer_id) else {
+            pending.clear();
+            return;
+        };
         let rhs_buffer = if source_is_lhs {
             target_buffer
         } else {
@@ -228,28 +296,34 @@ where
 
         let patch = translate_fn(diff, union_start..=union_end, rhs_buffer);
 
-        for excerpt in pending.drain(..) {
-            let target_position = patch.old_to_new(excerpt.buffer_point_range.start);
-            let target_position = target_buffer.anchor_before(target_position);
-            let Some(target_position) = target_snapshot.anchor_in_excerpt(target_position) else {
-                continue;
-            };
-            let Some((target_buffer_snapshot, target_excerpt_range)) =
-                target_snapshot.excerpt_containing(target_position..target_position)
-            else {
-                continue;
-            };
+        let mut source_excerpts = source_snapshot
+            .excerpts_for_buffer(source_buffer_id)
+            .peekable();
+        let mut target_excerpts = target_snapshot
+            .excerpts_for_buffer(target_buffer_id)
+            .peekable();
 
-            result.push(patch_for_excerpt(
-                source_snapshot,
-                target_snapshot,
-                &excerpt.source_buffer_snapshot,
-                target_buffer_snapshot,
-                excerpt.source_excerpt_range,
-                target_excerpt_range,
-                &patch,
-                excerpt.buffer_point_range,
-            ));
+        for excerpt in pending.drain(..) {
+            while let Some(source_excerpt_range) = source_excerpts.peek()
+                && source_excerpt_range != &excerpt.source_excerpt_range
+            {
+                source_excerpts.next();
+                target_excerpts.next();
+            }
+            if let Some(source_excerpt_range) = source_excerpts.peek()
+                && let Some(target_excerpt_range) = target_excerpts.peek()
+            {
+                result.push(patch_for_excerpt(
+                    source_snapshot,
+                    target_snapshot,
+                    &excerpt.source_buffer_snapshot,
+                    target_buffer,
+                    source_excerpt_range.clone(),
+                    target_excerpt_range.clone(),
+                    &patch,
+                    excerpt.buffer_point_range,
+                ));
+            }
         }
     };
 
@@ -393,6 +467,124 @@ fn patch_for_excerpt(
 #[action(namespace = editor)]
 pub struct ToggleSplitDiff;
 
+/// Unified/split diff view toggle buttons, shared by the toolbars of every
+/// diff view (project diff, branch diff, solo diff) so they can't drift apart.
+#[derive(gpui::IntoElement)]
+pub struct DiffStyleControls {
+    splittable_editor: Entity<SplittableEditor>,
+}
+
+impl DiffStyleControls {
+    pub fn new(splittable_editor: Entity<SplittableEditor>) -> Self {
+        Self { splittable_editor }
+    }
+
+    fn set_diff_view_style(
+        splittable_editor: &Entity<SplittableEditor>,
+        diff_view_style: DiffViewStyle,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        update_settings_file(<dyn Fs>::global(cx), cx, move |settings, _| {
+            settings.editor.diff_view_style = Some(diff_view_style);
+        });
+
+        splittable_editor.update(cx, |editor, cx| {
+            if editor.diff_view_style() != diff_view_style {
+                editor.toggle_split(&ToggleSplitDiff, window, cx);
+            }
+        });
+    }
+}
+
+impl RenderOnce for DiffStyleControls {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl gpui::IntoElement {
+        let editor = self.splittable_editor.read(cx);
+        let diff_view_style = editor.diff_view_style();
+        let is_split_set = diff_view_style == DiffViewStyle::Split;
+        let is_split_pending = is_split_set && !editor.is_split();
+        let min_columns = EditorSettings::get_global(cx).minimum_split_diff_width as u32;
+
+        let split_icon = if is_split_pending {
+            IconName::DiffSplitAuto
+        } else {
+            IconName::DiffSplit
+        };
+
+        h_flex()
+            .gap_1()
+            .child(
+                IconButton::new("diff-style-unified", IconName::DiffUnified)
+                    .icon_size(IconSize::Small)
+                    .toggle_state(diff_view_style == DiffViewStyle::Unified)
+                    .tooltip(Tooltip::text("Unified"))
+                    .on_click({
+                        let splittable_editor = self.splittable_editor.clone();
+                        move |_, window, cx| {
+                            Self::set_diff_view_style(
+                                &splittable_editor,
+                                DiffViewStyle::Unified,
+                                window,
+                                cx,
+                            );
+                        }
+                    }),
+            )
+            .child(
+                IconButton::new("diff-style-split", split_icon)
+                    .icon_size(IconSize::Small)
+                    .toggle_state(is_split_set)
+                    .tooltip(Tooltip::element(move |_, cx| {
+                        let message = if is_split_pending {
+                            format!("Split when wider than {} columns", min_columns).into()
+                        } else {
+                            SharedString::from("Split")
+                        };
+
+                        v_flex()
+                            .child(message)
+                            .child(
+                                h_flex()
+                                    .gap_0p5()
+                                    .text_ui_sm(cx)
+                                    .text_color(Color::Muted.color(cx))
+                                    .children(render_modifiers(
+                                        &gpui::Modifiers::secondary_key(),
+                                        PlatformStyle::platform(),
+                                        None,
+                                        Some(TextSize::Small.rems(cx).into()),
+                                        false,
+                                    ))
+                                    .child("click to change min width"),
+                            )
+                            .into_any_element()
+                    }))
+                    .on_click({
+                        let splittable_editor = self.splittable_editor.clone();
+                        move |_, window, cx| {
+                            if window.modifiers().secondary() {
+                                window.dispatch_action(
+                                    OpenSettingsAt {
+                                        path: "minimum_split_diff_width".to_string(),
+                                        target: None,
+                                    }
+                                    .boxed_clone(),
+                                    cx,
+                                );
+                            } else {
+                                Self::set_diff_view_style(
+                                    &splittable_editor,
+                                    DiffViewStyle::Split,
+                                    window,
+                                    cx,
+                                );
+                            }
+                        }
+                    }),
+            )
+    }
+}
+
 pub struct SplittableEditor {
     rhs_multibuffer: Entity<MultiBuffer>,
     rhs_editor: Entity<Editor>,
@@ -412,7 +604,6 @@ pub struct SplittableEditor {
 struct LhsEditor {
     multibuffer: Entity<MultiBuffer>,
     editor: Entity<Editor>,
-    companion: Entity<Companion>,
     was_last_focused: bool,
     _subscriptions: Vec<Subscription>,
 }
@@ -426,6 +617,17 @@ impl SplittableEditor {
         self.lhs.as_ref().map(|s| &s.editor)
     }
 
+    pub fn update_editors(
+        &self,
+        cx: &mut Context<Self>,
+        f: impl Fn(&mut Editor, &mut Context<Editor>),
+    ) {
+        if let Some(lhs) = &self.lhs {
+            lhs.editor.update(cx, &f);
+        }
+        self.rhs_editor.update(cx, &f);
+    }
+
     pub fn diff_view_style(&self) -> DiffViewStyle {
         self.diff_view_style
     }
@@ -434,20 +636,14 @@ impl SplittableEditor {
         self.lhs.is_some()
     }
 
-    pub fn set_render_diff_hunk_controls(
+    pub fn set_diff_hunk_delegate(
         &self,
-        render_diff_hunk_controls: RenderDiffHunkControlsFn,
+        delegate: Option<Arc<dyn DiffHunkDelegate>>,
         cx: &mut Context<Self>,
     ) {
         self.rhs_editor.update(cx, |editor, cx| {
-            editor.set_render_diff_hunk_controls(render_diff_hunk_controls.clone(), cx);
+            editor.set_diff_hunk_delegate(delegate, cx);
         });
-
-        if let Some(lhs) = &self.lhs {
-            lhs.editor.update(cx, |editor, cx| {
-                editor.set_render_diff_hunk_controls(render_diff_hunk_controls.clone(), cx);
-            });
-        }
     }
 
     fn focused_side(&self) -> SplitSide {
@@ -483,8 +679,11 @@ impl SplittableEditor {
                 Editor::for_multibuffer(rhs_multibuffer.clone(), Some(project.clone()), window, cx);
             editor.set_expand_all_diff_hunks(cx);
             editor.disable_runnables();
-            editor.disable_diagnostics(cx);
+            editor.disable_code_lens(cx);
+            editor.disable_inline_diagnostics();
+            editor.disable_mouse_wheel_zoom();
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
+            editor.set_diff_hunk_delegate(Some(Arc::new(UncommittedDiffHunkDelegate)), cx);
             editor
         });
         // TODO(split-diff) we might want to tag editor events with whether they came from rhs/lhs
@@ -510,6 +709,13 @@ impl SplittableEditor {
             cx.subscribe(&rhs_editor, |this, _, event: &SearchEvent, cx| {
                 if this.searched_side.is_none() || this.searched_side == Some(SplitSide::Right) {
                     cx.emit(event.clone());
+                }
+            }),
+            cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
+                let diff_view_style = EditorSettings::get_global(cx).diff_view_style;
+                if this.diff_view_style() != diff_view_style {
+                    this.toggle_split(&ToggleSplitDiff, window, cx);
+                    cx.notify();
                 }
             }),
         ];
@@ -559,31 +765,40 @@ impl SplittableEditor {
             return;
         };
         let project = workspace.read(cx).project().clone();
+        let all_paths = self.diff_paths(cx);
+        if all_paths.is_empty() && !self.rhs_multibuffer.read(cx).is_empty() {
+            return;
+        }
 
+        let rhs_has_headers = self.rhs_multibuffer.read(cx).snapshot(cx).show_headers();
         let lhs_multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(Capability::ReadOnly);
+            let mut multibuffer = if !rhs_has_headers {
+                MultiBuffer::without_headers(Capability::ReadOnly)
+            } else {
+                MultiBuffer::new(Capability::ReadOnly)
+            };
             multibuffer.set_all_diff_hunks_expanded(cx);
             multibuffer
         });
 
-        let render_diff_hunk_controls = self.rhs_editor.read(cx).render_diff_hunk_controls.clone();
+        let splittable = cx.weak_entity();
         let lhs_editor = cx.new(|cx| {
             let mut editor =
                 Editor::for_multibuffer(lhs_multibuffer.clone(), Some(project.clone()), window, cx);
             editor.set_number_deleted_lines(true, cx);
             editor.set_delegate_expand_excerpts(true);
-            editor.set_delegate_stage_and_restore(true);
+            editor.set_diff_hunk_delegate(
+                Some(Arc::new(SplitLhsDiffHunkDelegate { splittable })),
+                cx,
+            );
             editor.set_delegate_open_excerpts(true);
             editor.set_show_vertical_scrollbar(false, cx);
             editor.disable_lsp_data();
             editor.disable_runnables();
             editor.disable_diagnostics(cx);
+            editor.disable_mouse_wheel_zoom();
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
             editor
-        });
-
-        lhs_editor.update(cx, |editor, cx| {
-            editor.set_render_diff_hunk_controls(render_diff_hunk_controls, cx);
         });
 
         let mut subscriptions = vec![cx.subscribe_in(
@@ -603,12 +818,10 @@ impl SplittableEditor {
                             .filter_map(|anchor| {
                                 let (anchor, lhs_buffer) =
                                     lhs_snapshot.anchor_to_buffer_anchor(*anchor)?;
-                                let rhs_buffer_id =
-                                    lhs.companion.read(cx).lhs_to_rhs_buffer(anchor.buffer_id)?;
+                                let diff = lhs_snapshot.diff_for_buffer_id(anchor.buffer_id)?;
+                                let rhs_buffer_id = diff.buffer_id();
                                 let rhs_buffer = rhs_snapshot.buffer_for_id(rhs_buffer_id)?;
-                                let diff = this.rhs_multibuffer.read(cx).diff_for(rhs_buffer_id)?;
-                                let diff_snapshot = diff.read(cx).snapshot(cx);
-                                let rhs_point = diff_snapshot.base_text_point_to_buffer_point(
+                                let rhs_point = diff.base_text_point_to_buffer_point(
                                     anchor.to_point(&lhs_buffer),
                                     &rhs_buffer,
                                 );
@@ -618,30 +831,7 @@ impl SplittableEditor {
                         this.expand_excerpts(rhs_anchors.into_iter(), *lines, *direction, cx);
                     }
                 }
-                EditorEvent::StageOrUnstageRequested { stage, hunks } => {
-                    if this.lhs.is_some() {
-                        let translated = translate_lhs_hunks_to_rhs(hunks, this, cx);
-                        if !translated.is_empty() {
-                            let stage = *stage;
-                            this.rhs_editor.update(cx, |editor, cx| {
-                                let chunk_by = translated.into_iter().chunk_by(|h| h.buffer_id);
-                                for (buffer_id, hunks) in &chunk_by {
-                                    editor.do_stage_or_unstage(stage, buffer_id, hunks, cx);
-                                }
-                            });
-                        }
-                    }
-                }
-                EditorEvent::RestoreRequested { hunks } => {
-                    if this.lhs.is_some() {
-                        let translated = translate_lhs_hunks_to_rhs(hunks, this, cx);
-                        if !translated.is_empty() {
-                            this.rhs_editor.update(cx, |editor, cx| {
-                                editor.restore_diff_hunks(translated, cx);
-                            });
-                        }
-                    }
-                }
+
                 EditorEvent::OpenExcerptsRequested {
                     selections_by_buffer,
                     split,
@@ -697,18 +887,11 @@ impl SplittableEditor {
         let rhs_display_map = self.rhs_editor.read(cx).display_map.clone();
         let lhs_display_map = lhs_editor.read(cx).display_map.clone();
         let rhs_display_map_id = rhs_display_map.entity_id();
-        let companion = cx.new(|_| {
-            Companion::new(
-                rhs_display_map_id,
-                convert_rhs_rows_to_lhs,
-                convert_lhs_rows_to_rhs,
-            )
-        });
+        let companion = cx.new(|_| Companion::new(rhs_display_map_id));
         let lhs = LhsEditor {
             editor: lhs_editor,
             multibuffer: lhs_multibuffer,
             was_last_focused: false,
-            companion: companion.clone(),
             _subscriptions: subscriptions,
         };
 
@@ -720,21 +903,9 @@ impl SplittableEditor {
             })
         });
 
-        let all_paths: Vec<_> = {
-            let rhs_multibuffer = self.rhs_multibuffer.read(cx);
-            let rhs_multibuffer_snapshot = rhs_multibuffer.snapshot(cx);
-            rhs_multibuffer_snapshot
-                .buffers_with_paths()
-                .filter_map(|(buffer, path)| {
-                    let diff = rhs_multibuffer.diff_for(buffer.remote_id())?;
-                    Some((path.clone(), diff))
-                })
-                .collect()
-        };
-
         self.lhs = Some(lhs);
 
-        self.sync_lhs_for_paths(all_paths, &companion, cx);
+        self.sync_lhs_for_paths(all_paths, cx);
 
         rhs_display_map.update(cx, |dm, cx| {
             dm.set_companion(Some((lhs_display_map, companion.clone())), cx);
@@ -791,6 +962,18 @@ impl SplittableEditor {
         });
 
         cx.notify();
+    }
+
+    fn diff_paths(&self, cx: &App) -> Vec<(PathKey, Entity<BufferDiff>)> {
+        let rhs_multibuffer = self.rhs_multibuffer.read(cx);
+        let rhs_multibuffer_snapshot = rhs_multibuffer.snapshot(cx);
+        rhs_multibuffer_snapshot
+            .buffers_with_paths()
+            .filter_map(|(buffer, path)| {
+                let diff = rhs_multibuffer.diff_for(buffer.remote_id())?;
+                Some((path.clone(), diff))
+            })
+            .collect()
     }
 
     fn activate_pane_left(
@@ -975,7 +1158,7 @@ impl SplittableEditor {
         }
     }
 
-    fn toggle_soft_wrap(
+    pub fn toggle_soft_wrap(
         &mut self,
         _: &ToggleSoftWrap,
         window: &mut Window,
@@ -1011,6 +1194,17 @@ impl SplittableEditor {
         let Some(lhs) = self.lhs.take() else {
             return;
         };
+
+        // Detach the stale lhs editor from the shared scroll anchor while the split companion still exists,
+        // so its anchor can be converted to lhs native before rhs tears down split specific state.
+        lhs.editor.update(cx, |editor, cx| {
+            let lhs_snapshot = editor.display_map.update(cx, |dm, cx| dm.snapshot(cx));
+            editor
+                .scroll_manager
+                .unshare_scroll_anchor(&lhs_snapshot, cx);
+            editor.set_on_local_selections_changed(None);
+        });
+
         self.rhs_editor.update(cx, |rhs, cx| {
             let rhs_snapshot = rhs.display_map.update(cx, |dm, cx| dm.snapshot(cx));
             let native_anchor = rhs.scroll_manager.native_anchor(&rhs_snapshot, cx);
@@ -1032,9 +1226,6 @@ impl SplittableEditor {
                 dm.set_companion(None, cx);
             });
         });
-        lhs.editor.update(cx, |editor, _cx| {
-            editor.set_on_local_selections_changed(None);
-        });
         cx.notify();
     }
 
@@ -1048,7 +1239,7 @@ impl SplittableEditor {
         cx: &mut Context<Self>,
     ) -> bool {
         let has_ranges = ranges.clone().into_iter().next().is_some();
-        let Some(companion) = self.companion(cx) else {
+        if self.lhs.is_none() {
             return self.rhs_multibuffer.update(cx, |rhs_multibuffer, cx| {
                 let added_a_new_excerpt = rhs_multibuffer.update_excerpts_for_path(
                     path,
@@ -1066,7 +1257,7 @@ impl SplittableEditor {
                 }
                 added_a_new_excerpt
             });
-        };
+        }
 
         let result = self.rhs_multibuffer.update(cx, |rhs_multibuffer, cx| {
             let added_a_new_excerpt = rhs_multibuffer.update_excerpts_for_path(
@@ -1086,7 +1277,7 @@ impl SplittableEditor {
             added_a_new_excerpt
         });
 
-        self.sync_lhs_for_paths(vec![(path, diff)], &companion, cx);
+        self.sync_lhs_for_paths(vec![(path, diff)], cx);
         result
     }
 
@@ -1097,12 +1288,12 @@ impl SplittableEditor {
         direction: ExpandExcerptDirection,
         cx: &mut Context<Self>,
     ) {
-        let Some(companion) = self.companion(cx) else {
+        if self.lhs.is_none() {
             self.rhs_multibuffer.update(cx, |rhs_multibuffer, cx| {
                 rhs_multibuffer.expand_excerpts(excerpt_anchors, lines, direction, cx);
             });
             return;
-        };
+        }
 
         let paths: Vec<_> = self.rhs_multibuffer.update(cx, |rhs_multibuffer, cx| {
             let snapshot = rhs_multibuffer.snapshot(cx);
@@ -1121,7 +1312,7 @@ impl SplittableEditor {
             paths
         });
 
-        self.sync_lhs_for_paths(paths, &companion, cx);
+        self.sync_lhs_for_paths(paths, cx);
     }
 
     pub fn remove_excerpts_for_path(&mut self, path: PathKey, cx: &mut Context<Self>) {
@@ -1147,18 +1338,9 @@ impl SplittableEditor {
         Some(&self.rhs_editor)
     }
 
-    fn companion(&self, cx: &App) -> Option<Entity<Companion>> {
-        if self.lhs.is_none() {
-            return None;
-        }
-        let rhs_display_map = self.rhs_editor.read(cx).display_map.clone();
-        rhs_display_map.read(cx).companion().cloned()
-    }
-
     fn sync_lhs_for_paths(
         &self,
         paths: Vec<(PathKey, Entity<BufferDiff>)>,
-        companion: &Entity<Companion>,
         cx: &mut Context<Self>,
     ) {
         let Some(lhs) = &self.lhs else { return };
@@ -1186,7 +1368,7 @@ impl SplittableEditor {
                 for info in rhs_multibuffer_snapshot.excerpts_for_buffer(main_buffer_id) {
                     have_excerpt = true;
                     let rhs_context = info.context.to_point(&main_buffer_snapshot);
-                    let lhs_context = rhs_range_to_base_text_range(
+                    let lhs_context = buffer_range_to_base_text_range(
                         &rhs_context,
                         &diff_snapshot,
                         &main_buffer_snapshot,
@@ -1242,12 +1424,6 @@ impl SplittableEditor {
                         cx,
                     );
                 }
-
-                let lhs_buffer_id = diff.read(cx).base_text(cx).remote_id();
-                let rhs_buffer_id = diff.read(cx).buffer_id;
-                companion.update(cx, |c, _| {
-                    c.add_buffer_mapping(lhs_buffer_id, rhs_buffer_id);
-                });
             }
         });
     }
@@ -1280,6 +1456,18 @@ impl SplittableEditor {
             }
         }
     }
+
+    pub fn remove_excerpts_for_buffer(
+        &mut self,
+        buffer_id: BufferId,
+        cx: &mut Context<'_, SplittableEditor>,
+    ) {
+        let snapshot = self.rhs_multibuffer.read(cx).snapshot(cx);
+        let Some(path) = snapshot.path_for_buffer(buffer_id) else {
+            return;
+        };
+        self.remove_excerpts_for_path(path.clone(), cx);
+    }
 }
 
 #[cfg(test)]
@@ -1290,19 +1478,108 @@ impl SplittableEditor {
         use crate::display_map::Block;
         use crate::display_map::DisplayRow;
 
+        let rhs_snapshot = self
+            .rhs_editor
+            .update(cx, |editor, cx| editor.display_snapshot(cx));
+
+        let Some(lhs) = self.lhs.as_ref() else {
+            assert!(
+                rhs_snapshot.companion_snapshot().is_none(),
+                "rhs display snapshot should not have a companion when unsplit"
+            );
+
+            let shared_scroll_anchor = self
+                .rhs_editor
+                .read(cx)
+                .scroll_manager
+                .shared_scroll_anchor(cx);
+            if let Some(display_map_id) = shared_scroll_anchor.display_map_id {
+                assert_eq!(
+                    display_map_id, rhs_snapshot.display_map_id,
+                    "unsplit editor should not retain a scroll anchor native to a torn-down split companion"
+                );
+            }
+
+            let _ = self
+                .rhs_editor
+                .read(cx)
+                .scroll_manager
+                .native_anchor(&rhs_snapshot, cx);
+            return;
+        };
+
         self.debug_print(cx);
         self.check_excerpt_invariants(quiesced, cx);
 
-        let lhs = self.lhs.as_ref().unwrap();
+        let lhs_snapshot = lhs
+            .editor
+            .update(cx, |editor, cx| editor.display_snapshot(cx));
+
+        let lhs_companion = lhs_snapshot
+            .companion_snapshot()
+            .expect("lhs display snapshot should have rhs companion while split");
+        assert_eq!(
+            lhs_companion.display_map_id, rhs_snapshot.display_map_id,
+            "lhs display snapshot companion should point to rhs display map"
+        );
+        assert!(
+            lhs_companion.companion_snapshot().is_none(),
+            "embedded companion snapshot should not recursively contain another companion"
+        );
+
+        let rhs_companion = rhs_snapshot
+            .companion_snapshot()
+            .expect("rhs display snapshot should have lhs companion while split");
+        assert_eq!(
+            rhs_companion.display_map_id, lhs_snapshot.display_map_id,
+            "rhs display snapshot companion should point to lhs display map"
+        );
+        assert!(
+            rhs_companion.companion_snapshot().is_none(),
+            "embedded companion snapshot should not recursively contain another companion"
+        );
+
+        let lhs_scroll_anchor_entity_id = lhs
+            .editor
+            .read(cx)
+            .scroll_manager
+            .scroll_anchor_entity()
+            .entity_id();
+        let rhs_scroll_anchor_entity_id = self
+            .rhs_editor
+            .read(cx)
+            .scroll_manager
+            .scroll_anchor_entity()
+            .entity_id();
+        assert_eq!(
+            lhs_scroll_anchor_entity_id, rhs_scroll_anchor_entity_id,
+            "split editors should share a scroll anchor entity"
+        );
+
+        let shared_scroll_anchor = self
+            .rhs_editor
+            .read(cx)
+            .scroll_manager
+            .shared_scroll_anchor(cx);
+        if let Some(display_map_id) = shared_scroll_anchor.display_map_id {
+            assert!(
+                display_map_id == lhs_snapshot.display_map_id
+                    || display_map_id == rhs_snapshot.display_map_id,
+                "shared scroll anchor should be native to one side of the split"
+            );
+        }
+        let _ = lhs
+            .editor
+            .read(cx)
+            .scroll_manager
+            .native_anchor(&lhs_snapshot, cx);
+        let _ = self
+            .rhs_editor
+            .read(cx)
+            .scroll_manager
+            .native_anchor(&rhs_snapshot, cx);
 
         if quiesced {
-            let lhs_snapshot = lhs
-                .editor
-                .update(cx, |editor, cx| editor.display_snapshot(cx));
-            let rhs_snapshot = self
-                .rhs_editor
-                .update(cx, |editor, cx| editor.display_snapshot(cx));
-
             let lhs_max_row = lhs_snapshot.max_point().row();
             let rhs_max_row = rhs_snapshot.max_point().row();
             assert_eq!(lhs_max_row, rhs_max_row, "mismatch in display row count");
@@ -1689,8 +1966,11 @@ impl SplittableEditor {
                     .unwrap();
                 let lhs_range = lhs_excerpt.context.to_point(&lhs_buffer_snapshot);
                 let rhs_range = rhs_excerpt.context.to_point(&rhs_buffer_snapshot);
-                let expected_lhs_range =
-                    rhs_range_to_base_text_range(&rhs_range, &diff_snapshot, &rhs_buffer_snapshot);
+                let expected_lhs_range = buffer_range_to_base_text_range(
+                    &rhs_range,
+                    &diff_snapshot,
+                    &rhs_buffer_snapshot,
+                );
                 assert_eq!(
                     lhs_range, expected_lhs_range,
                     "corresponding lhs excerpt should have a matching range"
@@ -1733,6 +2013,10 @@ impl Item for SplittableEditor {
 
     fn buffer_kind(&self, cx: &App) -> ItemBufferKind {
         self.rhs_editor.read(cx).buffer_kind(cx)
+    }
+
+    fn active_project_path(&self, cx: &App) -> Option<project::ProjectPath> {
+        self.rhs_editor.read(cx).active_project_path(cx)
     }
 
     fn is_dirty(&self, cx: &App) -> bool {
@@ -1918,9 +2202,15 @@ impl SearchableItem for SplittableEditor {
         }
     }
 
-    fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String {
-        self.focused_editor()
-            .update(cx, |editor, cx| editor.query_suggestion(window, cx))
+    fn query_suggestion(
+        &mut self,
+        seed_query_override: Option<SeedQuerySetting>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> String {
+        self.focused_editor().update(cx, |editor, cx| {
+            editor.query_suggestion(seed_query_override, window, cx)
+        })
     }
 
     fn activate_match(
@@ -2082,8 +2372,8 @@ mod tests {
     use buffer_diff::BufferDiff;
     use collections::{HashMap, HashSet};
     use fs::FakeFs;
-    use gpui::Element as _;
     use gpui::{AppContext as _, Entity, Pixels, VisualTestContext};
+    use gpui::{BorrowAppContext as _, Element as _};
     use language::language_settings::SoftWrap;
     use language::{Buffer, Capability};
     use multi_buffer::{MultiBuffer, PathKey};
@@ -2111,10 +2401,16 @@ mod tests {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.diff_view_style = Some(style);
+                });
+            });
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             crate::init(cx);
         });
-        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs as Arc<dyn fs::Fs>, [], cx).await;
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
@@ -2132,14 +2428,9 @@ mod tests {
                 window,
                 cx,
             );
-            editor.rhs_editor.update(cx, |editor, cx| {
+            editor.update_editors(cx, |editor, cx| {
                 editor.set_soft_wrap_mode(soft_wrap, cx);
             });
-            if let Some(lhs) = &editor.lhs {
-                lhs.editor.update(cx, |editor, cx| {
-                    editor.set_soft_wrap_mode(soft_wrap, cx);
-                });
-            }
             editor
         });
         (editor, cx)
@@ -2363,11 +2654,29 @@ mod tests {
                     }
                 }
                 75..=79 => {
-                    log::info!("unsplit and resplit");
+                    log::info!("unsplit, scroll stale lhs, and resplit");
+                    let Some(lhs_editor) = editor.update(cx, |editor, _cx| {
+                        editor.lhs.as_ref().map(|lhs| lhs.editor.clone())
+                    }) else {
+                        continue;
+                    };
+                    let lhs_max_row = lhs_editor.update(cx, |editor, cx| {
+                        editor.display_snapshot(cx).max_point().row().0
+                    });
                     editor.update_in(cx, |editor, window, cx| {
                         editor.unsplit(window, cx);
                     });
                     cx.run_until_parked();
+
+                    if lhs_max_row > 0 {
+                        lhs_editor.update_in(cx, |editor, window, cx| {
+                            editor.set_scroll_position(gpui::Point::new(0., 1.), window, cx);
+                        });
+                        editor.update(cx, |editor, cx| {
+                            editor.check_invariants(false, cx);
+                        });
+                    }
+
                     editor.update_in(cx, |editor, window, cx| {
                         editor.split(window, cx);
                     });
@@ -2454,7 +2763,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(path, buffer.clone(), ranges, 0, diff.clone(), cx);
         });
         cx.run_until_parked();
@@ -2511,7 +2820,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -2640,7 +2949,7 @@ mod tests {
         let (buffer2, diff2) = buffer_with_diff(&base_text2, &base_text2, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path1 = PathKey::for_buffer(&buffer1, cx);
+            let path1 = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path1,
                 buffer1.clone(),
@@ -2649,7 +2958,7 @@ mod tests {
                 diff1.clone(),
                 cx,
             );
-            let path2 = PathKey::for_buffer(&buffer2, cx);
+            let path2 = PathKey::sorted(1);
             editor.update_excerpts_for_path(
                 path2,
                 buffer2.clone(),
@@ -2798,7 +3107,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -2925,7 +3234,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -3044,7 +3353,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -3174,7 +3483,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -3271,7 +3580,7 @@ mod tests {
 
         editor.update(cx, |editor, cx| {
             let end = Point::new(0, text.len() as u32);
-            let path1 = PathKey::for_buffer(&buffer1, cx);
+            let path1 = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path1,
                 buffer1.clone(),
@@ -3280,7 +3589,7 @@ mod tests {
                 diff1.clone(),
                 cx,
             );
-            let path2 = PathKey::for_buffer(&buffer2, cx);
+            let path2 = PathKey::sorted(1);
             editor.update_excerpts_for_path(
                 path2,
                 buffer2.clone(),
@@ -3348,7 +3657,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -3411,7 +3720,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -3472,7 +3781,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&text, &text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -3585,10 +3894,18 @@ mod tests {
         .unindent();
 
         let buffer2 = cx.new(|cx| Buffer::local(current_text.to_string(), cx));
-        let diff2 = cx.new(|cx| BufferDiff::new(&buffer2.read(cx).text_snapshot(), cx));
+        let diff2 = cx.new(|cx| {
+            BufferDiff::new(
+                &buffer2.read(cx).text_snapshot(),
+                None,
+                None,
+                buffer_diff::DiffBaseKind::Custom,
+                cx,
+            )
+        });
 
         editor.update(cx, |editor, cx| {
-            let path1 = PathKey::for_buffer(&buffer1, cx);
+            let path1 = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path1,
                 buffer1.clone(),
@@ -3598,7 +3915,7 @@ mod tests {
                 cx,
             );
 
-            let path2 = PathKey::for_buffer(&buffer2, cx);
+            let path2 = PathKey::sorted(1);
             editor.update_excerpts_for_path(
                 path2,
                 buffer2.clone(),
@@ -3696,7 +4013,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -3772,7 +4089,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -3859,7 +4176,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -3973,7 +4290,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -4057,7 +4374,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -4141,7 +4458,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&content, &content, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -4233,7 +4550,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -4361,7 +4678,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -4508,7 +4825,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -4730,7 +5047,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -5069,18 +5386,16 @@ mod tests {
         let buffer2_id = buffer2.read_with(cx, |buffer, _| buffer.remote_id());
 
         editor.update(cx, |editor, cx| {
-            let path1 = PathKey::for_buffer(&buffer1, cx);
             editor.update_excerpts_for_path(
-                path1,
+                PathKey::sorted(0),
                 buffer1.clone(),
                 vec![Point::new(0, 0)..buffer1.read(cx).max_point()],
                 0,
                 diff1.clone(),
                 cx,
             );
-            let path2 = PathKey::for_buffer(&buffer2, cx);
             editor.update_excerpts_for_path(
-                path2,
+                PathKey::sorted(1),
                 buffer2.clone(),
                 vec![Point::new(0, 0)..buffer2.read(cx).max_point()],
                 1,
@@ -5234,7 +5549,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -5395,7 +5710,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -5554,7 +5869,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -5685,7 +6000,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -5746,7 +6061,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -5829,7 +6144,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -5938,8 +6253,8 @@ mod tests {
         let (buffer_a, diff_a) = buffer_with_diff(&base_text_a, &current_text_a, &mut cx);
         let (buffer_b, diff_b) = buffer_with_diff(&base_text_b, &current_text_b, &mut cx);
 
-        let path_a = cx.read(|cx| PathKey::for_buffer(&buffer_a, cx));
-        let path_b = cx.read(|cx| PathKey::for_buffer(&buffer_b, cx));
+        let path_a = PathKey::sorted(0);
+        let path_b = PathKey::sorted(1);
 
         editor.update(cx, |editor, cx| {
             editor.update_excerpts_for_path(
@@ -6056,6 +6371,121 @@ mod tests {
         });
 
         cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_spacer_blocks_revert_after_temporary_edit(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+        use unindent::Unindent as _;
+
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::Split).await;
+
+        let base_text = "
+            aaa
+            bbb
+        "
+        .unindent();
+        let current_text = "
+            aaa
+            bbb
+            ccc
+        "
+        .unindent();
+
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
+
+        editor.update(cx, |editor, cx| {
+            let path = PathKey::sorted(0);
+            editor.update_excerpts_for_path(
+                path,
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc"
+            .unindent(),
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            § spacer"
+                .unindent(),
+            &mut cx,
+        );
+
+        let buffer_snapshot = buffer.update(cx, |buffer, cx| {
+            buffer.edit([(Point::new(0, 3)..Point::new(0, 3), "\n")], None, cx);
+            buffer.text_snapshot()
+        });
+        diff.update(cx, |diff, cx| {
+            diff.recalculate_diff_sync(&buffer_snapshot, cx);
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            aaa
+
+            bbb
+            ccc"
+            .unindent(),
+            "
+            § <no file>
+            § -----
+            aaa
+            § spacer
+            bbb
+            § spacer"
+                .unindent(),
+            &mut cx,
+        );
+
+        let buffer_snapshot = buffer.update(cx, |buffer, cx| {
+            buffer.edit([(Point::new(0, 3)..Point::new(1, 0), "")], None, cx);
+            buffer.text_snapshot()
+        });
+        diff.update(cx, |diff, cx| {
+            diff.recalculate_diff_sync(&buffer_snapshot, cx);
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc"
+            .unindent(),
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            § spacer"
+                .unindent(),
+            &mut cx,
+        );
     }
 
     #[gpui::test]

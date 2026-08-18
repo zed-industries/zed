@@ -6,8 +6,8 @@
 
 use std::{path::Path, sync::Arc};
 
-use gpui::SharedString;
-use util::rel_path::RelPath;
+use gpui_shared_string::SharedString;
+use path::rel_path::RelPath;
 
 use crate::{LanguageName, ManifestName};
 

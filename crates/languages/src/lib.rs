@@ -41,11 +41,12 @@ pub static LANGUAGE_GIT_COMMIT: std::sync::LazyLock<Arc<Language>> =
             LanguageConfig {
                 name: "Git Commit".into(),
                 soft_wrap: Some(language::SoftWrap::EditorWidth),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["COMMIT_EDITMSG".to_owned()],
                     first_line_pattern: None,
                     ..LanguageMatcher::default()
-                },
+                })
+                .into(),
                 line_comments: vec![Arc::from("#")],
                 ..LanguageConfig::default()
             },
@@ -57,6 +58,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
     #[cfg(feature = "load-grammars")]
     languages.register_native_grammars(grammars::native_grammars());
 
+    let bash_lsp_adapter = Arc::new(bash::BashLspAdapter::new(node.clone()));
     let c_lsp_adapter = Arc::new(c::CLspAdapter);
     let css_lsp_adapter = Arc::new(css::CssLspAdapter::new(node.clone()));
     let eslint_adapter = Arc::new(eslint::EsLintLspAdapter::new(node.clone(), fs.clone()));
@@ -88,6 +90,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
         LanguageInfo {
             name: "bash",
             context: Some(Arc::new(bash::bash_task_context())),
+            adapters: vec![bash_lsp_adapter],
             ..Default::default()
         },
         LanguageInfo {

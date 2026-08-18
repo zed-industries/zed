@@ -16,7 +16,7 @@ use rpc::{
     proto::{self},
 };
 use std::{hash::Hash, ops::Range, path::Path, sync::Arc, u32};
-use text::{Point, PointUtf16};
+use text::{Bias, Point, PointUtf16, Unclipped};
 use util::maybe;
 
 use crate::{ProjectPath, buffer_store::BufferStore, worktree_store::WorktreeStore};
@@ -415,7 +415,28 @@ impl BreakpointStore {
         let breakpoint_set = self
             .breakpoints
             .entry(abs_path.clone())
-            .or_insert_with(|| BreakpointsInFile::new(buffer, cx));
+            .or_insert_with(|| BreakpointsInFile::new(buffer.clone(), cx));
+
+        // Buffers changed for the file, migrate breakpoints to the new buffer
+        if breakpoint_set.buffer != buffer {
+            let old_snapshot = breakpoint_set.buffer.read(cx).snapshot();
+            let new_snapshot = buffer.read(cx).snapshot();
+            let breakpoints = breakpoint_set
+                .breakpoints
+                .drain(..)
+                .map(|mut breakpoint| {
+                    let old_position =
+                        old_snapshot.summary_for_anchor::<PointUtf16>(breakpoint.position());
+                    let new_position = PointUtf16::new(old_position.row, 0);
+                    let new_position =
+                        new_snapshot.clip_point_utf16(Unclipped(new_position), Bias::Left);
+                    breakpoint.bp.position = new_snapshot.anchor_after(new_position);
+                    breakpoint
+                })
+                .collect();
+            *breakpoint_set = BreakpointsInFile::new(buffer, cx);
+            breakpoint_set.breakpoints = breakpoints;
+        }
 
         match edit_action {
             BreakpointEditAction::Toggle => {

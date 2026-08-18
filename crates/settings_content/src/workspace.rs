@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
 
 use crate::{
-    CenteredPaddingSettings, DelayMs, DockPosition, DockSide, InactiveOpacity, ShowIndentGuides,
-    ShowScrollbar, serialize_optional_f32_with_two_decimal_places,
+    CenteredPaddingSettings, CommandAliasTarget, DelayMs, DockPosition, DockSide, InactiveOpacity,
+    ShowIndentGuides, ShowScrollbar, serialize_optional_f32_with_two_decimal_places,
 };
 
 #[with_fallible_options]
@@ -49,6 +49,15 @@ pub struct WorkspaceSettingsContent {
     /// Values: empty_tab, last_workspace, last_session, launchpad
     /// Default: last_session
     pub restore_on_startup: Option<RestoreOnStartupBehavior>,
+    /// The default behavior when opening paths from the CLI without
+    /// an explicit `-e` or `-n` flag.
+    ///
+    /// Default: existing_window
+    pub cli_default_open_behavior: Option<CliDefaultOpenBehavior>,
+    /// The default behavior when opening projects from the UI.
+    ///
+    /// Default: existing_window
+    pub default_open_behavior: Option<DefaultOpenBehavior>,
     /// Whether to attempt to restore previous file's state when opening it again.
     /// The state is stored per pane.
     /// When disabled, defaults are applied instead of the state restoration.
@@ -68,6 +77,11 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: auto ("on" on macOS, "off" otherwise)
     pub when_closing_with_no_tabs: Option<CloseWindowWhenNoItems>,
+    /// Whether to optimize Zed's interface for assistive technology such as
+    /// screen readers.
+    ///
+    /// Default: false
+    pub accessible_mode: Option<bool>,
     /// Whether to use the system provided dialogs for Open and Save As.
     /// When set to false, Zed will use the built-in keyboard-first pickers.
     ///
@@ -83,9 +97,9 @@ pub struct WorkspaceSettingsContent {
     /// Aliases for the command palette. When you type a key in this map,
     /// it will be assumed to equal the value.
     ///
-    /// Default: true
+    /// Default: {}
     #[serde(default)]
-    pub command_aliases: HashMap<String, String>,
+    pub command_aliases: HashMap<String, CommandAliasTarget>,
     /// Maximum open tabs in a pane. Will not close an unsaved
     /// tab. Set to `None` for unlimited tabs.
     ///
@@ -119,7 +133,8 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: false
     pub close_panel_on_toggle: Option<bool>,
-    /// What draws window decorations/titlebar, the client application (Zed) or display server
+    /// Controls whether Zed or the window manager or compositor draws window decorations on Linux.
+    ///
     /// Default: client
     pub window_decorations: Option<WindowDecorations>,
     /// Whether the focused panel follows the mouse location
@@ -323,6 +338,8 @@ pub enum BottomDockLayout {
     RightAligned,
 }
 
+/// Configures what draws Zed's window decorations on Linux.
+/// This setting has no effect on other platforms.
 #[derive(
     Copy,
     Clone,
@@ -338,10 +355,11 @@ pub enum BottomDockLayout {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum WindowDecorations {
-    /// Zed draws its own window decorations/titlebar (client-side decoration)
+    /// Zed draws its own window decorations/titlebar (client-side decoration).
     #[default]
     Client,
-    /// Show system's window titlebar (server-side decoration; not supported by GNOME Wayland)
+    /// The window manager or compositor draws the server-side window
+    /// decorations (not supported by GNOME Wayland).
     Server,
 }
 
@@ -377,6 +395,56 @@ impl CloseWindowWhenNoItems {
             CloseWindowWhenNoItems::KeepWindowOpen => false,
         }
     }
+}
+
+#[derive(
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    Debug,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CliDefaultOpenBehavior {
+    /// Open directories as a new workspace in the current Zed window's sidebar.
+    #[default]
+    #[strum(serialize = "Add to Existing Window")]
+    ExistingWindow,
+    /// Open paths in a new window unless they are subpaths of an existing project.
+    #[strum(serialize = "Open a New Window")]
+    NewWindow,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    Debug,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum DefaultOpenBehavior {
+    /// Open projects in the current Zed window.
+    #[default]
+    #[strum(serialize = "Add to Existing Window")]
+    ExistingWindow,
+    /// Open projects in a new window.
+    #[strum(serialize = "Open a New Window")]
+    NewWindow,
 }
 
 #[derive(
@@ -674,7 +742,7 @@ pub struct ProjectPanelSettingsContent {
     pub default_width: Option<f32>,
     /// The position of project panel
     ///
-    /// Default: left
+    /// Default: right (Agentic layout), left (Classic layout)
     pub dock: Option<DockSide>,
     /// Spacing between worktree entries in the project panel.
     ///
@@ -746,6 +814,12 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: directories_first
     pub sort_mode: Option<ProjectPanelSortMode>,
+    /// Whether to sort file and folder names case-sensitively in the project panel.
+    /// This works in combination with `sort_mode`. `sort_mode` controls how files and
+    /// directories are grouped, while this setting controls how names are compared.
+    ///
+    /// Default: default
+    pub sort_order: Option<ProjectPanelSortOrder>,
     /// Whether to show error and warning count badges next to file names in the project panel.
     ///
     /// Default: false
@@ -802,6 +876,58 @@ pub enum ProjectPanelSortMode {
     Mixed,
     /// Show files first, then directories
     FilesFirst,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectPanelSortOrder {
+    /// Case-insensitive natural sort with lowercase preferred in ties.
+    /// Numbers in file names are compared by value (e.g., `file2` before `file10`).
+    #[default]
+    Default,
+    /// Uppercase names are grouped before lowercase names, with case-insensitive
+    /// natural sort within each group. Dot-prefixed names sort before both groups.
+    Upper,
+    /// Lowercase names are grouped before uppercase names, with case-insensitive
+    /// natural sort within each group. Dot-prefixed names sort before both groups.
+    Lower,
+    /// Pure Unicode codepoint comparison. No case folding, no natural number sorting.
+    /// Uppercase ASCII sorts before lowercase. Accented characters sort after ASCII.
+    Unicode,
+}
+
+impl From<ProjectPanelSortMode> for util::paths::SortMode {
+    fn from(mode: ProjectPanelSortMode) -> Self {
+        match mode {
+            ProjectPanelSortMode::DirectoriesFirst => Self::DirectoriesFirst,
+            ProjectPanelSortMode::Mixed => Self::Mixed,
+            ProjectPanelSortMode::FilesFirst => Self::FilesFirst,
+        }
+    }
+}
+
+impl From<ProjectPanelSortOrder> for util::paths::SortOrder {
+    fn from(order: ProjectPanelSortOrder) -> Self {
+        match order {
+            ProjectPanelSortOrder::Default => Self::Default,
+            ProjectPanelSortOrder::Upper => Self::Upper,
+            ProjectPanelSortOrder::Lower => Self::Lower,
+            ProjectPanelSortOrder::Unicode => Self::Unicode,
+        }
+    }
 }
 
 #[with_fallible_options]

@@ -1,7 +1,7 @@
 use crate::{
-    CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible,
-    SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
-    WorkspaceItemBuilder, ZoomIn, ZoomOut,
+    CloseWindow, NewCenterTerminal, NewFile, NewTerminal, OpenInTerminal, OpenOptions,
+    OpenTerminal, OpenVisible, SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom,
+    Workspace, WorkspaceItemBuilder, ZoomIn, ZoomOut,
     focus_follows_mouse::FocusFollowsMouse as _,
     invalid_item_view::InvalidItemView,
     item::{
@@ -10,10 +10,7 @@ use crate::{
         TabContentParams, TabTooltipContent, WeakItemHandle,
     },
     move_item,
-    notifications::{
-        NotificationId, NotifyResultExt, show_app_notification,
-        simple_message_notification::MessageNotification,
-    },
+    notifications::NotifyResultExt,
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, FocusFollowsMouse, TabBarSettings, WorkspaceSettings},
 };
@@ -21,11 +18,11 @@ use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{StreamExt, stream::FuturesUnordered};
 use gpui::{
-    Action, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, Corner, Div,
+    Action, Anchor, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, Div,
     DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent,
     Focusable, KeyContext, MouseButton, NavigationDirection, Pixels, Point, PromptLevel, Render,
-    ScrollHandle, Subscription, Task, WeakEntity, WeakFocusHandle, Window, actions, anchored,
-    deferred, prelude::*,
+    ScrollHandle, Subscription, Task, TaskExt, WeakEntity, WeakFocusHandle, Window, actions,
+    anchored, deferred, prelude::*,
 };
 use itertools::Itertools;
 use language::{Capability, DiagnosticSeverity};
@@ -53,7 +50,8 @@ use ui::{
     Tooltip, prelude::*, right_click_menu,
 };
 use util::{
-    ResultExt, debug_panic, maybe, paths::PathStyle, serde::default_true, truncate_and_remove_front,
+    ResultExt, debug_panic, markdown::MarkdownInlineCode, maybe, paths::PathStyle,
+    serde::default_true, truncate_and_remove_front,
 };
 
 /// A selected entry in e.g. project panel.
@@ -86,6 +84,8 @@ pub enum SaveIntent {
     /// write all files (even if unchanged)
     /// prompt before overwriting on-disk changes
     Save,
+    /// same as Save, but always formats regardless of the format_on_save setting
+    FormatAndSave,
     /// same as Save, but without auto formatting
     SaveWithoutFormat,
     /// write any files that have local changes
@@ -198,6 +198,16 @@ pub struct DeploySearch {
     pub included_files: Option<String>,
     #[serde(default)]
     pub excluded_files: Option<String>,
+    #[serde(default)]
+    pub query: Option<String>,
+    #[serde(default)]
+    pub regex: Option<bool>,
+    #[serde(default)]
+    pub case_sensitive: Option<bool>,
+    #[serde(default)]
+    pub whole_word: Option<bool>,
+    #[serde(default)]
+    pub include_ignored: Option<bool>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, Deserialize, JsonSchema, Default)]
@@ -308,16 +318,6 @@ actions!(
         UnpinAllTabs,
     ]
 );
-
-impl DeploySearch {
-    pub fn find() -> Self {
-        Self {
-            replace_enabled: false,
-            included_files: None,
-            excluded_files: None,
-        }
-    }
-}
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
@@ -1102,6 +1102,8 @@ impl Pane {
             }
         }
 
+        let preview_was_active = self.preview_item_idx() == Some(self.active_item_index);
+
         let set_up_existing_item =
             |index: usize, pane: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
                 if !allow_preview && let Some(item) = pane.items.get(index) {
@@ -1116,8 +1118,10 @@ impl Pane {
                                pane: &mut Self,
                                window: &mut Window,
                                cx: &mut Context<Self>| {
-            if allow_preview {
-                pane.replace_preview_item_id(new_item.item_id(), window, cx);
+            let new_item_id = new_item.item_id();
+
+            if allow_preview && preview_was_active {
+                pane.set_preview_item_id(Some(new_item_id), cx);
             }
 
             if let Some(text) = new_item.telemetry_event_text(cx) {
@@ -1133,6 +1137,10 @@ impl Pane {
                 window,
                 cx,
             );
+
+            if allow_preview && !preview_was_active {
+                pane.set_preview_item_id(Some(new_item_id), cx);
+            }
         };
 
         if let Some((index, existing_item)) = existing_item {
@@ -1203,6 +1211,9 @@ impl Pane {
         let prev_active_item_index = self.active_item_index;
         self.remove_item(id, false, false, window, cx);
         self.active_item_index = prev_active_item_index;
+        if item_idx < prev_active_item_index {
+            self.active_item_index -= 1;
+        }
         self.nav_history.0.lock().preview_item_id = None;
 
         if item_idx < self.items.len() {
@@ -1617,20 +1628,22 @@ impl Pane {
 
             // Activate any non-pinned tab in different pane
             let current_pane = cx.entity();
-            self.workspace
-                .update(cx, |workspace, cx| {
-                    let panes = workspace.center.panes();
-                    let pane_with_unpinned_tab = panes.iter().find(|pane| {
-                        if **pane == &current_pane {
-                            return false;
+            cx.defer_in(window, move |this, window, cx| {
+                this.workspace
+                    .update(cx, |workspace, cx| {
+                        let panes = workspace.center.panes();
+                        let pane_with_unpinned_tab = panes.iter().find(|pane| {
+                            if **pane == &current_pane {
+                                return false;
+                            }
+                            pane.read(cx).has_unpinned_tabs()
+                        });
+                        if let Some(pane) = pane_with_unpinned_tab {
+                            pane.update(cx, |pane, cx| pane.activate_unpinned_tab(window, cx));
                         }
-                        pane.read(cx).has_unpinned_tabs()
-                    });
-                    if let Some(pane) = pane_with_unpinned_tab {
-                        pane.update(cx, |pane, cx| pane.activate_unpinned_tab(window, cx));
-                    }
-                })
-                .ok();
+                    })
+                    .ok();
+            });
 
             return Task::ready(Ok(()));
         };
@@ -2010,8 +2023,17 @@ impl Pane {
                 }
 
                 if should_save {
-                    match Self::save_item(project.clone(), &pane, &*item_to_close, save_intent, cx)
-                        .await
+                    let Some(pane_handle) = pane.upgrade() else {
+                        return Ok(());
+                    };
+                    match Self::save_item(
+                        project.clone(),
+                        pane_handle,
+                        &*item_to_close,
+                        save_intent,
+                        cx,
+                    )
+                    .await
                     {
                         Ok(success) => {
                             if !success {
@@ -2026,7 +2048,7 @@ impl Pane {
                                 );
                                 window.prompt(
                                     PromptLevel::Warning,
-                                    &format!("Unable to save file: {}", &err),
+                                    &format!("Unable to save file: {err}"),
                                     Some(&detail),
                                     &["Close Without Saving", "Cancel"],
                                     cx,
@@ -2222,7 +2244,7 @@ impl Pane {
 
     pub async fn save_item(
         project: Entity<Project>,
-        pane: &WeakEntity<Pane>,
+        pane: Entity<Pane>,
         item: &dyn ItemHandle,
         save_intent: SaveIntent,
         cx: &mut AsyncWindowContext,
@@ -2243,11 +2265,7 @@ impl Pane {
             }
             return Ok(true);
         };
-        let Some(item_ix) = pane
-            .read_with(cx, |pane, _| pane.index_for_item(item))
-            .ok()
-            .flatten()
-        else {
+        let Some(item_ix) = pane.read_with(cx, |pane, _| pane.index_for_item(item)) else {
             return Ok(true);
         };
 
@@ -2270,7 +2288,10 @@ impl Pane {
         })?;
 
         // when saving a single buffer, we ignore whether or not it's dirty.
-        if save_intent == SaveIntent::Save || save_intent == SaveIntent::SaveWithoutFormat {
+        if save_intent == SaveIntent::Save
+            || save_intent == SaveIntent::FormatAndSave
+            || save_intent == SaveIntent::SaveWithoutFormat
+        {
             is_dirty = true;
         }
 
@@ -2285,6 +2306,7 @@ impl Pane {
         }
 
         let should_format = save_intent != SaveIntent::SaveWithoutFormat;
+        let force_format = save_intent == SaveIntent::FormatAndSave;
 
         if has_conflict && can_save {
             if has_deleted_file && is_singleton {
@@ -2304,6 +2326,7 @@ impl Pane {
                             item.save(
                                 SaveOptions {
                                     format: should_format,
+                                    force_format,
                                     autosave: false,
                                 },
                                 project,
@@ -2328,7 +2351,7 @@ impl Pane {
                         PromptLevel::Warning,
                         CONFLICT_MESSAGE,
                         None,
-                        &["Overwrite", "Discard", "Cancel"],
+                        &["Overwrite", "Discard Edits", "Cancel"],
                         cx,
                     )
                 })?;
@@ -2338,6 +2361,7 @@ impl Pane {
                             item.save(
                                 SaveOptions {
                                     format: should_format,
+                                    force_format,
                                     autosave: false,
                                 },
                                 project,
@@ -2385,7 +2409,7 @@ impl Pane {
                                     "save modal was not present in spawned modals after awaiting for its answer"
                                 )
                             }
-                        })?;
+                        });
                         match answer {
                             Ok(0) => {}
                             Ok(1) => {
@@ -2419,6 +2443,7 @@ impl Pane {
                     item.save(
                         SaveOptions {
                             format: should_format,
+                            force_format,
                             autosave: false,
                         },
                         project,
@@ -2449,16 +2474,13 @@ impl Pane {
                     return Ok(false);
                 };
 
-                let project_path = pane
-                    .update(cx, |pane, cx| {
-                        pane.project
-                            .update(cx, |project, cx| {
-                                project.find_or_create_worktree(new_path, true, cx)
-                            })
-                            .ok()
-                    })
-                    .ok()
-                    .flatten();
+                let project_path = pane.update(cx, |pane, cx| {
+                    pane.project
+                        .update(cx, |project, cx| {
+                            project.find_or_create_worktree(new_path, true, cx)
+                        })
+                        .ok()
+                });
                 let save_task = if let Some(project_path) = project_path {
                     let (worktree, path) = project_path.await?;
                     let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
@@ -2469,24 +2491,40 @@ impl Pane {
                             pane.remove_item(item.item_id(), false, false, window, cx);
                         }
 
-                        item.save_as(project, new_path, window, cx)
+                        item.save_as(project.clone(), new_path, window, cx)
                     })?
                 } else {
                     return Ok(false);
                 };
 
                 save_task.await?;
+                if should_format {
+                    pane.update_in(cx, |pane, window, cx| {
+                        pane.unpreview_item_if_preview(item.item_id());
+                        item.save(
+                            SaveOptions {
+                                format: true,
+                                autosave: false,
+                                force_format,
+                            },
+                            project,
+                            window,
+                            cx,
+                        )
+                    })?
+                    .await?;
+                }
                 return Ok(true);
             }
         }
 
-        pane.update(cx, |_, cx| {
+        Ok(pane.update(cx, |_, cx| {
             cx.emit(Event::UserSavedItem {
                 item: item.downgrade_item(),
                 save_intent,
             });
             true
-        })
+        }))
     }
 
     pub fn autosave_item(
@@ -2503,6 +2541,7 @@ impl Pane {
             item.save(
                 SaveOptions {
                     format,
+                    force_format: false,
                     autosave: true,
                 },
                 project,
@@ -2739,6 +2778,54 @@ impl Pane {
         self.activate_item(index, true, true, window, cx);
     }
 
+    fn tab_icon_element(
+        &self,
+        item: &dyn ItemHandle,
+        is_active: bool,
+        window: &Window,
+        cx: &App,
+    ) -> Option<AnyElement> {
+        let icon = item
+            .tab_icon(window, cx)?
+            .size(IconSize::Small)
+            .color(Color::Muted);
+
+        let item_diagnostic = item
+            .project_path(cx)
+            .and_then(|project_path| self.diagnostics.get(&project_path));
+
+        let Some(diagnostic) = item_diagnostic else {
+            return Some(icon.into_any_element());
+        };
+
+        let knockout_item_color = if is_active {
+            cx.theme().colors().tab_active_background
+        } else {
+            cx.theme().colors().tab_bar_background
+        };
+
+        let (icon_decoration, icon_color) = if matches!(diagnostic, &DiagnosticSeverity::ERROR) {
+            (IconDecorationKind::X, Color::Error)
+        } else {
+            (IconDecorationKind::Triangle, Color::Warning)
+        };
+
+        Some(
+            DecoratedIcon::new(
+                icon,
+                Some(
+                    IconDecoration::new(icon_decoration, knockout_item_color, cx)
+                        .color(icon_color.color(cx))
+                        .position(Point {
+                            x: px(-2.),
+                            y: px(-2.),
+                        }),
+                ),
+            )
+            .into_any_element(),
+        )
+    }
+
     fn render_tab(
         &self,
         ix: usize,
@@ -2760,59 +2847,14 @@ impl Pane {
                 selected: is_active,
                 preview: is_preview,
                 deemphasized: !self.has_focus(window, cx),
+                max_title_len: None,
+                truncate_title_middle: false,
             },
             window,
             cx,
         );
 
-        let item_diagnostic = item
-            .project_path(cx)
-            .map_or(None, |project_path| self.diagnostics.get(&project_path));
-
-        let decorated_icon = item_diagnostic.map_or(None, |diagnostic| {
-            let icon = match item.tab_icon(window, cx) {
-                Some(icon) => icon,
-                None => return None,
-            };
-
-            let knockout_item_color = if is_active {
-                cx.theme().colors().tab_active_background
-            } else {
-                cx.theme().colors().tab_bar_background
-            };
-
-            let (icon_decoration, icon_color) = if matches!(diagnostic, &DiagnosticSeverity::ERROR)
-            {
-                (IconDecorationKind::X, Color::Error)
-            } else {
-                (IconDecorationKind::Triangle, Color::Warning)
-            };
-
-            Some(DecoratedIcon::new(
-                icon.size(IconSize::Small).color(Color::Muted),
-                Some(
-                    IconDecoration::new(icon_decoration, knockout_item_color, cx)
-                        .color(icon_color.color(cx))
-                        .position(Point {
-                            x: px(-2.),
-                            y: px(-2.),
-                        }),
-                ),
-            ))
-        });
-
-        let icon = if decorated_icon.is_none() {
-            match item_diagnostic {
-                Some(&DiagnosticSeverity::ERROR) => None,
-                Some(&DiagnosticSeverity::WARNING) => None,
-                _ => item
-                    .tab_icon(window, cx)
-                    .map(|icon| icon.color(Color::Muted)),
-            }
-            .map(|icon| icon.size(IconSize::Small))
-        } else {
-            None
-        };
+        let icon = self.tab_icon_element(item, is_active, window, cx);
 
         let settings = ItemSettings::get_global(cx);
         let close_side = &settings.close_position;
@@ -2835,13 +2877,13 @@ impl Pane {
                 .tooltip(move |_, cx| {
                     if toggleable {
                         Tooltip::with_meta(
-                            "Unlock File",
+                            "Unlock Tab",
                             None,
-                            "This will make this file editable",
+                            "This will make this tab editable",
                             cx,
                         )
                     } else {
-                        Tooltip::with_meta("Locked File", None, "This file is read-only", cx)
+                        Tooltip::with_meta("Locked Tab", None, "This tab is read-only", cx)
                     }
                 })
                 .on_click(cx.listener(move |pane, _, window, cx| {
@@ -2851,7 +2893,7 @@ impl Pane {
                 }))
         };
 
-        let has_file_icon = icon.is_some() | decorated_icon.is_some();
+        let has_file_icon = icon.is_some();
 
         let capability = item.capability(cx);
         let tab = Tab::new(ix)
@@ -3003,10 +3045,8 @@ impl Pane {
                 h_flex()
                     .id(("pane-tab-content", ix))
                     .gap_1()
-                    .children(if let Some(decorated_icon) = decorated_icon {
-                        Some(decorated_icon.into_any_element())
-                    } else if let Some(icon) = icon {
-                        Some(icon.into_any_element())
+                    .children(if let Some(icon) = icon {
+                        Some(icon)
                     } else if !capability.editable() {
                         Some(read_only_toggle(capability == Capability::Read).into_any_element())
                     } else {
@@ -3020,7 +3060,7 @@ impl Pane {
                             } else {
                                 this.tooltip(move |_, cx| {
                                     let text = text.clone();
-                                    Tooltip::with_meta(text, None, "Read-Only File", cx)
+                                    Tooltip::with_meta(text, None, "Read-Only Tab", cx)
                                 })
                             }
                         }
@@ -3202,9 +3242,9 @@ impl Pane {
 
                         if capability != Capability::ReadOnly {
                             let read_only_label = if capability.editable() {
-                                "Make File Read-Only"
+                                "Make Tab Read-Only"
                             } else {
-                                "Make File Editable"
+                                "Make Tab Editable"
                             };
                             menu = menu.separator().entry(
                                 read_only_label,
@@ -3596,7 +3636,7 @@ impl Pane {
             .id("tab_bar_drop_target")
             .min_w_6()
             .h(Tab::container_height(cx))
-            .flex_grow()
+            .flex_grow_1()
             // HACK: This empty child is currently necessary to force the drop target to appear
             // despite us setting a min width above.
             .child("")
@@ -3640,7 +3680,7 @@ impl Pane {
             .debug_selector(|| "pinned_tabs_border".into())
             .min_w_6()
             .h(Tab::container_height(cx))
-            .flex_grow()
+            .flex_grow_1()
             .border_l_1()
             .border_color(cx.theme().colors().border)
             // HACK: This empty child is currently necessary to force the drop target to appear
@@ -3682,7 +3722,7 @@ impl Pane {
 
     pub fn render_menu_overlay(menu: &Entity<ContextMenu>) -> Div {
         div().absolute().bottom_0().right_0().size_0().child(
-            deferred(anchored().anchor(Corner::TopRight).child(menu.clone())).with_priority(1),
+            deferred(anchored().anchor(Anchor::TopRight).child(menu.clone())).with_priority(1),
         )
     }
 
@@ -4018,28 +4058,38 @@ impl Pane {
         let mut to_pane = cx.entity();
         let mut split_direction = self.drag_split_direction;
         let paths = paths.paths().to_vec();
-        let is_remote = self
+        let (should_block, needs_wsl_translation) = self
             .workspace
             .update(cx, |workspace, cx| {
-                if workspace.project().read(cx).is_via_collab() {
-                    workspace.show_error(
-                        &anyhow::anyhow!("Cannot drop files on a remote project"),
-                        cx,
-                    );
-                    true
-                } else {
-                    false
+                let project = workspace.project().read(cx);
+
+                if project.is_via_collab() {
+                    workspace.show_error("Cannot drop files on a remote project", cx);
+                    return (true, false);
                 }
+                if project.is_via_remote_server() {
+                    if !project.is_via_wsl(cx) {
+                        workspace.show_error(
+                            "Cannot drop local files on a remote SSH/Docker project",
+                            cx,
+                        );
+                        return (true, false);
+                    }
+                    return (false, true);
+                }
+                (false, false)
             })
-            .unwrap_or(true);
-        if is_remote {
+            .unwrap_or((true, false));
+        if should_block {
             return;
         }
 
         self.workspace
             .update(cx, |workspace, cx| {
                 let fs = Arc::clone(workspace.project().read(cx).fs());
+                let project = workspace.project().clone();
                 cx.spawn_in(window, async move |workspace, cx| {
+                    // `fs` is the host's file system even for remote projects, so probe the paths as they were dropped, before translating them to the remote's path style.
                     let mut is_file_checks = FuturesUnordered::new();
                     for path in &paths {
                         is_file_checks.push(fs.is_file(path))
@@ -4055,6 +4105,40 @@ impl Pane {
                     if !has_files_to_open {
                         split_direction = None;
                     }
+
+                    let paths = if needs_wsl_translation {
+                        let mut translated = Vec::with_capacity(paths.len());
+                        for path in &paths {
+                            log::debug!("dropped Windows path {}", path.display());
+                            let fut = project.read_with(cx, |project, cx| {
+                                project.try_windows_path_to_wsl(path, cx)
+                            });
+                            match fut.await {
+                                Ok(wsl_path) => {
+                                    log::debug!("translated to WSL path {}", wsl_path.display());
+                                    translated.push(wsl_path);
+                                }
+                                Err(e) => log::warn!(
+                                    "wslpath failed for {}: {e:#}, dropping this path",
+                                    path.display()
+                                ),
+                            }
+                        }
+                        if translated.is_empty() && !paths.is_empty() {
+                            workspace
+                                .update_in(cx, |workspace, _, cx| {
+                                    workspace.show_error(
+                                        "Could not translate the dropped paths into WSL paths",
+                                        cx,
+                                    );
+                                })
+                                .ok();
+                            return;
+                        }
+                        translated
+                    } else {
+                        paths
+                    };
 
                     if let Ok((open_task, to_pane)) =
                         workspace.update_in(cx, |workspace, window, cx| {
@@ -4081,7 +4165,7 @@ impl Pane {
                         _ = workspace.update_in(cx, |workspace, window, cx| {
                             for item in opened_items.into_iter().flatten() {
                                 if let Err(e) = item {
-                                    workspace.show_error(&e, cx);
+                                    workspace.show_error(format!("Error: {e}"), cx);
                                 }
                             }
                             if to_pane.read(cx).items_len() == 0 {
@@ -4179,27 +4263,23 @@ fn default_render_tab_bar_buttons(
             PopoverMenu::new("pane-tab-bar-popover-menu")
                 .trigger_with_tooltip(
                     IconButton::new("plus", IconName::Plus).icon_size(IconSize::Small),
-                    Tooltip::text("New..."),
+                    Tooltip::text("New…"),
                 )
-                .anchor(Corner::TopRight)
+                .anchor(Anchor::TopRight)
                 .with_handle(pane.new_item_context_menu_handle.clone())
                 .menu(move |window, cx| {
                     Some(ContextMenu::build(window, cx, |menu, _, _| {
                         menu.action("New File", NewFile.boxed_clone())
                             .action("Open File", ToggleFileFinder::default().boxed_clone())
                             .separator()
-                            .action(
-                                "Search Project",
-                                DeploySearch {
-                                    replace_enabled: false,
-                                    included_files: None,
-                                    excluded_files: None,
-                                }
-                                .boxed_clone(),
-                            )
+                            .action("Search Project", DeploySearch::default().boxed_clone())
                             .action("Search Symbols", ToggleProjectSymbols.boxed_clone())
                             .separator()
                             .action("New Terminal", NewTerminal::default().boxed_clone())
+                            .action(
+                                "New Center Terminal",
+                                NewCenterTerminal::default().boxed_clone(),
+                            )
                     }))
                 }),
         )
@@ -4211,7 +4291,7 @@ fn default_render_tab_bar_buttons(
                         .disabled(!can_clone && !can_split_move),
                     Tooltip::text("Split Pane"),
                 )
-                .anchor(Corner::TopRight)
+                .anchor(Anchor::TopRight)
                 .with_handle(pane.split_item_context_menu_handle.clone())
                 .menu(move |window, cx| {
                     ContextMenu::build(window, cx, |menu, _, _| {
@@ -4276,7 +4356,11 @@ impl Render for Pane {
         let Some(project) = self.project.upgrade() else {
             return div().track_focus(&self.focus_handle(cx));
         };
-        let is_local = project.read(cx).is_local();
+        // WSL remotes accept dropped host files too, since their paths can be translated with `wslpath`; see `Pane::handle_external_paths_drop`.
+        let accepts_external_paths = {
+            let project = project.read(cx);
+            project.is_local() || project.is_via_wsl(cx)
+        };
 
         v_flex()
             .key_context(key_context)
@@ -4401,68 +4485,37 @@ impl Render for Pane {
                         .detach_and_log_err(cx)
                 },
             ))
-            .on_action(
-                cx.listener(|pane: &mut Self, action: &RevealInProjectPanel, _, cx| {
-                    let Some(active_item) = pane.active_item() else {
-                        return;
-                    };
-
-                    let entry_id = action
-                        .entry_id
-                        .map(ProjectEntryId::from_proto)
-                        .or_else(|| active_item.project_entry_ids(cx).first().copied());
-
-                    let show_reveal_error_toast = |display_name: &str, cx: &mut App| {
-                        let notification_id = NotificationId::unique::<RevealInProjectPanel>();
-                        let message = SharedString::from(format!(
-                            "\"{display_name}\" is not part of any open projects."
-                        ));
-
-                        show_app_notification(notification_id, cx, move |cx| {
-                            let message = message.clone();
-                            cx.new(|cx| MessageNotification::new(message, cx))
-                        });
-                    };
-
-                    let Some(entry_id) = entry_id else {
-                        // When working with an unsaved buffer, display a toast
-                        // informing the user that the buffer is not present in
-                        // any of the open projects and stop execution, as we
-                        // don't want to open the project panel.
-                        let display_name = active_item
-                            .tab_tooltip_text(cx)
-                            .unwrap_or_else(|| active_item.tab_content_text(0, cx));
-
-                        return show_reveal_error_toast(&display_name, cx);
-                    };
-
-                    // We'll now check whether the entry belongs to a visible
-                    // worktree and, if that's not the case, it means the user
-                    // is interacting with a file that does not belong to any of
-                    // the open projects, so we'll show a toast informing them
-                    // of this and stop execution.
-                    let display_name = pane
-                        .project
-                        .read_with(cx, |project, cx| {
-                            project
-                                .worktree_for_entry(entry_id, cx)
-                                .filter(|worktree| !worktree.read(cx).is_visible())
-                                .map(|worktree| worktree.read(cx).root_name_str().to_string())
-                        })
-                        .ok()
-                        .flatten();
-
-                    if let Some(display_name) = display_name {
-                        return show_reveal_error_toast(&display_name, cx);
-                    }
+            .on_action(cx.listener(
+                |pane: &mut Self, action: &RevealInProjectPanel, _window, cx| {
+                    let active_item = pane.active_item();
+                    let entry_id = active_item.as_ref().and_then(|item| {
+                        action
+                            .entry_id
+                            .map(ProjectEntryId::from_proto)
+                            .or_else(|| item.project_entry_ids(cx).first().copied())
+                    });
 
                     pane.project
-                        .update(cx, |_, cx| {
-                            cx.emit(project::Event::RevealInProjectPanel(entry_id))
+                        .update(cx, |project, cx| {
+                            if let Some(entry_id) = entry_id
+                                && project
+                                    .worktree_for_entry(entry_id, cx)
+                                    .is_some_and(|worktree| worktree.read(cx).is_visible())
+                            {
+                                return cx.emit(project::Event::RevealInProjectPanel(entry_id));
+                            }
+
+                            // When no entry is found, which is the case when
+                            // working with an unsaved buffer, or the worktree
+                            // is not visible, for example, a file that doesn't
+                            // belong to an open project, we can't reveal the
+                            // entry but we still want to activate the project
+                            // panel.
+                            cx.emit(project::Event::ActivateProjectPanel);
                         })
                         .log_err();
-                }),
-            )
+                },
+            ))
             .on_action(cx.listener(|_, _: &menu::Cancel, window, cx| {
                 if cx.stop_active_drag(window) {
                 } else {
@@ -4482,7 +4535,7 @@ impl Render for Pane {
                     .overflow_hidden()
                     .on_drag_move::<DraggedTab>(cx.listener(Self::handle_drag_move))
                     .on_drag_move::<DraggedSelection>(cx.listener(Self::handle_drag_move))
-                    .when(is_local, |div| {
+                    .when(accepts_external_paths, |div| {
                         div.on_drag_move::<ExternalPaths>(cx.listener(Self::handle_drag_move))
                     })
                     .map(|div| {
@@ -4533,7 +4586,7 @@ impl Render for Pane {
                             .bg(cx.theme().colors().drop_target_background)
                             .group_drag_over::<DraggedTab>("", |style| style.visible())
                             .group_drag_over::<DraggedSelection>("", |style| style.visible())
-                            .when(is_local, |div| {
+                            .when(accepts_external_paths, |div| {
                                 div.group_drag_over::<ExternalPaths>("", |style| style.visible())
                             })
                             .when_some(self.can_drop_predicate.clone(), |this, p| {
@@ -4893,48 +4946,26 @@ impl NavHistoryState {
 }
 
 fn dirty_message_for(buffer_path: Option<ProjectPath>, path_style: PathStyle) -> String {
-    let path = buffer_path
-        .as_ref()
-        .and_then(|p| {
-            let path = p.path.display(path_style);
-            if path.is_empty() { None } else { Some(path) }
-        })
-        .unwrap_or("This buffer".into());
-    let path = truncate_and_remove_front(&path, 80);
-    format!("{path} contains unsaved edits. Do you want to save it?")
+    let path = buffer_path.as_ref().and_then(|p| {
+        let path = p.path.display(path_style);
+        if path.is_empty() { None } else { Some(path) }
+    });
+    match path {
+        Some(path) => {
+            let path = truncate_and_remove_front(&path, 80);
+            format!(
+                "{} contains unsaved edits. Do you want to save it?",
+                MarkdownInlineCode(path.as_str())
+            )
+        }
+        None => "This buffer contains unsaved edits. Do you want to save it?".to_string(),
+    }
 }
 
 pub fn tab_details(items: &[Box<dyn ItemHandle>], _window: &Window, cx: &App) -> Vec<usize> {
-    let mut tab_details = items.iter().map(|_| 0).collect::<Vec<_>>();
-    let mut tab_descriptions = HashMap::default();
-    let mut done = false;
-    while !done {
-        done = true;
-
-        // Store item indices by their tab description.
-        for (ix, (item, detail)) in items.iter().zip(&tab_details).enumerate() {
-            let description = item.tab_content_text(*detail, cx);
-            if *detail == 0 || description != item.tab_content_text(detail - 1, cx) {
-                tab_descriptions
-                    .entry(description)
-                    .or_insert(Vec::new())
-                    .push(ix);
-            }
-        }
-
-        // If two or more items have the same tab description, increase their level
-        // of detail and try again.
-        for (_, item_ixs) in tab_descriptions.drain() {
-            if item_ixs.len() > 1 {
-                done = false;
-                for ix in item_ixs {
-                    tab_details[ix] += 1;
-                }
-            }
-        }
-    }
-
-    tab_details
+    util::disambiguate::compute_disambiguation_details(items, |item, detail| {
+        item.tab_content_text(detail, cx)
+    })
 }
 
 pub fn render_item_indicator(item: Box<dyn ItemHandle>, cx: &App) -> Option<Indicator> {
@@ -4958,12 +4989,19 @@ impl Render for DraggedTab {
                 selected: false,
                 preview: false,
                 deemphasized: false,
+                max_title_len: None,
+                truncate_title_middle: false,
             },
             window,
             cx,
         );
+        let icon =
+            self.pane
+                .read(cx)
+                .tab_icon_element(self.item.as_ref(), self.is_active, window, cx);
         Tab::new("")
             .toggle_state(self.is_active)
+            .children(icon)
             .child(label)
             .render(window, cx)
             .font(ui_font)
@@ -8070,6 +8108,74 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_format_runs_on_first_save_of_new_file(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item = add_labeled_item(&pane, "untitled", true, cx);
+        item.update(cx, |item, cx| {
+            item.project_items.push(TestProjectItem::new_untitled(cx));
+        });
+        assert_item_labels(&pane, ["untitled*^"], cx);
+
+        let close_task = pane.update_in(cx, |pane, window, cx| {
+            pane.close_item_by_id(item.item_id(), SaveIntent::Save, window, cx)
+        });
+
+        cx.executor().run_until_parked();
+        cx.simulate_new_path_selection(|_| Some(Default::default()));
+        close_task.await.unwrap();
+
+        item.read_with(cx, |item, _| {
+            assert_eq!(item.save_as_count, 1);
+            assert_eq!(
+                item.save_count, 1,
+                "formatter should run after the file is given a path on first save"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_format_does_not_run_on_first_save_when_save_without_format(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item = add_labeled_item(&pane, "untitled", true, cx);
+        item.update(cx, |item, cx| {
+            item.project_items.push(TestProjectItem::new_untitled(cx));
+        });
+        assert_item_labels(&pane, ["untitled*^"], cx);
+
+        let close_task = pane.update_in(cx, |pane, window, cx| {
+            pane.close_item_by_id(item.item_id(), SaveIntent::SaveWithoutFormat, window, cx)
+        });
+
+        cx.executor().run_until_parked();
+        cx.simulate_new_path_selection(|_| Some(Default::default()));
+        close_task.await.unwrap();
+
+        item.read_with(cx, |item, _| {
+            assert_eq!(item.save_as_count, 1);
+            assert_eq!(
+                item.save_count, 0,
+                "formatter should not run when SaveWithoutFormat is used"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_discard_does_not_reload_multibuffer(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
@@ -8343,9 +8449,10 @@ mod tests {
         let new_tab_button_bounds = cx.debug_bounds("ICON-Plus").unwrap();
         let scroll_bounds = tab_bar_scroll_handle.bounds();
         let scroll_offset = tab_bar_scroll_handle.offset();
+        assert!(scroll_offset.x < px(0.));
+        assert!(scroll_offset.x >= -tab_bar_scroll_handle.max_offset().x);
+        assert!(tab_bounds.left() >= scroll_bounds.left());
         assert!(tab_bounds.right() <= scroll_bounds.right());
-        // -39.5 is the magic number for this setup
-        assert_eq!(scroll_offset.x, px(-39.5));
         assert!(
             !tab_bounds.intersects(&new_tab_button_bounds),
             "Tab should not overlap with the new tab button, if this is failing check if there's been a redesign!"
@@ -8513,6 +8620,52 @@ mod tests {
             .unwrap();
         });
         //  Non-pinned tab of other pane should be active
+        assert_item_labels(&pane2, ["B*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_close_pinned_tab_while_workspace_is_leased(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        // No non-pinned tabs in same pane, non-pinned tabs in another pane
+        let pane1 = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let pane2 = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.split_pane(pane1.clone(), SplitDirection::Right, window, cx)
+        });
+        add_labeled_item(&pane1, "A", false, cx);
+        pane1.update_in(cx, |pane, window, cx| {
+            pane.pin_tab_at(0, window, cx);
+        });
+        set_labeled_items(&pane1, ["A*"], cx);
+        add_labeled_item(&pane2, "B", false, cx);
+        set_labeled_items(&pane2, ["B"], cx);
+
+        // Close the active item while the workspace entity is already being
+        // updated. This used to double-lease the workspace and panic, because
+        // `close_active_item` synchronously reached back into the workspace to
+        // find an unpinned tab in another pane.
+        workspace.update_in(cx, |_workspace, window, cx| {
+            pane1.update(cx, |pane, cx| {
+                pane.close_active_item(
+                    &CloseActiveItem {
+                        save_intent: None,
+                        close_pinned: false,
+                    },
+                    window,
+                    cx,
+                )
+                .detach();
+            });
+        });
+        cx.run_until_parked();
+
+        // The pinned tab must not be closed, and the non-pinned tab of the
+        // other pane should have been activated.
+        assert_item_labels(&pane1, ["A*!"], cx);
         assert_item_labels(&pane2, ["B*"], cx);
     }
 
@@ -9047,6 +9200,356 @@ mod tests {
             }
             SplitMode::MovePane => {
                 assert_pane_ids_on_axis(&workspace, expected_ids, expected_axis, cx);
+            }
+        }
+    }
+
+    #[test]
+    fn test_dirty_message_for_escapes_markdown_in_path() {
+        let project_path = ProjectPath {
+            worktree_id: WorktreeId::from_usize(0),
+            path: util::rel_path::rel_path("dir/__init__.py").into(),
+        };
+        assert_eq!(
+            dirty_message_for(Some(project_path), PathStyle::Unix),
+            "`dir/__init__.py` contains unsaved edits. Do you want to save it?"
+        );
+        assert_eq!(
+            dirty_message_for(None, PathStyle::Unix),
+            "This buffer contains unsaved edits. Do you want to save it?"
+        );
+    }
+
+    mod property_test {
+        use super::*;
+        use proptest::prelude::*;
+        use serde_json::json;
+        use std::{collections::HashSet, sync::Arc};
+        use util::{
+            path,
+            rel_path::{RelPath, rel_path},
+        };
+
+        struct TestFileItem {
+            project_path: ProjectPath,
+        }
+
+        impl project::ProjectItem for TestFileItem {
+            fn try_open(
+                _project: &Entity<Project>,
+                path: &ProjectPath,
+                cx: &mut App,
+            ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
+                let project_path = path.clone();
+                Some(cx.spawn(async move |cx| Ok(cx.new(|_| Self { project_path }))))
+            }
+
+            fn entry_id(&self, _: &App) -> Option<ProjectEntryId> {
+                None
+            }
+
+            fn project_path(&self, _: &App) -> Option<ProjectPath> {
+                Some(self.project_path.clone())
+            }
+
+            fn is_dirty(&self) -> bool {
+                false
+            }
+        }
+
+        struct TestItemView {
+            focus_handle: FocusHandle,
+            project_item: Entity<TestFileItem>,
+            nav_history: Option<ItemNavHistory>,
+        }
+
+        impl EventEmitter<()> for TestItemView {}
+
+        impl Focusable for TestItemView {
+            fn focus_handle(&self, _cx: &App) -> FocusHandle {
+                self.focus_handle.clone()
+            }
+        }
+
+        impl Render for TestItemView {
+            fn render(
+                &mut self,
+                _window: &mut Window,
+                _cx: &mut Context<Self>,
+            ) -> impl IntoElement {
+                gpui::Empty
+            }
+        }
+
+        impl Item for TestItemView {
+            type Event = ();
+
+            fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+                "".into()
+            }
+
+            fn for_each_project_item(
+                &self,
+                cx: &App,
+                f: &mut dyn FnMut(EntityId, &dyn project::ProjectItem),
+            ) {
+                f(self.project_item.entity_id(), self.project_item.read(cx))
+            }
+
+            fn buffer_kind(&self, _: &App) -> ItemBufferKind {
+                ItemBufferKind::Singleton
+            }
+
+            fn set_nav_history(
+                &mut self,
+                history: ItemNavHistory,
+                _window: &mut Window,
+                _: &mut Context<Self>,
+            ) {
+                self.nav_history = Some(history);
+            }
+
+            fn deactivated(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+                if let Some(nav_history) = self.nav_history.as_mut() {
+                    nav_history.push::<()>(None, None, cx);
+                }
+            }
+        }
+
+        impl crate::ProjectItem for TestItemView {
+            type Item = TestFileItem;
+
+            fn for_project_item(
+                _project: Entity<Project>,
+                _pane: Option<&Pane>,
+                item: Entity<Self::Item>,
+                _: &mut Window,
+                cx: &mut Context<Self>,
+            ) -> Self
+            where
+                Self: Sized,
+            {
+                Self {
+                    focus_handle: cx.focus_handle(),
+                    project_item: item,
+                    nav_history: None,
+                }
+            }
+        }
+
+        fn arbitrary_path() -> impl Strategy<Value = Arc<RelPath>> {
+            prop_oneof![
+                Just(rel_path("1.txt").into()),
+                Just(rel_path("2.js").into()),
+                Just(rel_path("3.rs").into()),
+            ]
+        }
+
+        #[derive(Debug, Clone, proptest_derive::Arbitrary)]
+        enum Operation {
+            Open {
+                #[proptest(strategy = "arbitrary_path()")]
+                path: Arc<RelPath>,
+                allow_preview: bool,
+            },
+            GoBack,
+            GoForward,
+        }
+
+        struct Oracle {
+            /// The active item's path, if known.
+            current: Option<Arc<RelPath>>,
+            /// The path that the back button would navigate to, if known.
+            previous: Option<Arc<RelPath>>,
+            /// The path that the forward button would navigate to, if known.
+            next: Option<Arc<RelPath>>,
+        }
+
+        impl Oracle {
+            fn new() -> Self {
+                Self {
+                    current: None,
+                    previous: None,
+                    next: None,
+                }
+            }
+
+            fn apply(&mut self, operation: Operation) {
+                match operation {
+                    Operation::Open { path, .. } => {
+                        if self.current.as_ref() != Some(&path) {
+                            self.previous = self.current.replace(path);
+                            self.next = None;
+                        }
+                    }
+                    Operation::GoBack => {
+                        if let Some(previous) = self.previous.take() {
+                            self.next = self.current.replace(previous);
+                        } else {
+                            // `previous` isn't set, so backward navigation may not have been
+                            // possible, hence we don't know which item a following forward
+                            // navigation will lead to
+                            self.next = None;
+                            self.current = None;
+                        }
+                    }
+                    Operation::GoForward => {
+                        if let Some(next) = self.next.take() {
+                            self.previous = self.current.replace(next);
+                        } else {
+                            self.previous = None;
+                            self.current = None;
+                        }
+                    }
+                }
+            }
+        }
+
+        struct PaneHarness {
+            cx: VisualTestContext,
+            workspace: Entity<Workspace>,
+            pane: Entity<Pane>,
+            worktree_id: WorktreeId,
+        }
+
+        impl PaneHarness {
+            async fn new(cx: &mut TestAppContext) -> Self {
+                init_test(cx);
+                cx.update(|cx| crate::register_project_item::<TestItemView>(cx));
+
+                let fs = FakeFs::new(cx.executor());
+                fs.insert_tree(
+                    path!("/root"),
+                    json!({
+                        "1.txt": "one",
+                        "2.js": "two",
+                        "3.rs": "three",
+                    }),
+                )
+                .await;
+                let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+                let worktree_id = project.update(cx, |project, cx| {
+                    project.worktrees(cx).next().unwrap().read(cx).id()
+                });
+                let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+                let workspace = window.root(cx).unwrap();
+                let cx = VisualTestContext::from_window(*window, cx);
+                let pane = workspace.read_with(&cx, |workspace, _| workspace.active_pane().clone());
+
+                Self {
+                    cx,
+                    workspace,
+                    pane,
+                    worktree_id,
+                }
+            }
+
+            async fn apply(&mut self, operation: Operation) {
+                match operation {
+                    Operation::Open {
+                        path,
+                        allow_preview,
+                    } => {
+                        self.workspace
+                            .update_in(&mut self.cx, |workspace, window, cx| {
+                                workspace.open_path_preview(
+                                    ProjectPath {
+                                        worktree_id: self.worktree_id,
+                                        path,
+                                    },
+                                    None,
+                                    true,
+                                    allow_preview,
+                                    true,
+                                    window,
+                                    cx,
+                                )
+                            })
+                            .await
+                            .unwrap();
+                    }
+                    Operation::GoBack => {
+                        self.workspace
+                            .update_in(&mut self.cx, |workspace, window, cx| {
+                                workspace.go_back(self.pane.downgrade(), window, cx)
+                            })
+                            .await
+                            .unwrap();
+                    }
+                    Operation::GoForward => {
+                        self.workspace
+                            .update_in(&mut self.cx, |workspace, window, cx| {
+                                workspace.go_forward(self.pane.downgrade(), window, cx)
+                            })
+                            .await
+                            .unwrap();
+                    }
+                }
+            }
+
+            fn check_invariants(&self, expected_path: &Option<Arc<RelPath>>) {
+                self.pane.read_with(&self.cx, |pane, cx| {
+                    let open_paths = pane
+                        .items()
+                        .map(|item| item.project_path(cx).unwrap())
+                        .collect::<Vec<_>>();
+                    let active_path = pane
+                        .active_item()
+                        .map(|item| item.project_path(cx).unwrap());
+                    let preview_path = pane
+                        .preview_item()
+                        .map(|item| item.project_path(cx).unwrap());
+
+                    let unique_paths = open_paths.iter().collect::<HashSet<_>>();
+                    assert_eq!(
+                        unique_paths.len(),
+                        open_paths.len(),
+                        "pane should not contain duplicate open paths"
+                    );
+
+                    assert_eq!(
+                        active_path.is_none(),
+                        open_paths.is_empty(),
+                        "pane should have an active item iff it has open paths"
+                    );
+                    assert!(
+                        active_path
+                            .as_ref()
+                            .is_none_or(|path| open_paths.contains(path)),
+                        "active path should be open"
+                    );
+                    assert!(
+                        preview_path
+                            .as_ref()
+                            .is_none_or(|path| open_paths.contains(path)),
+                        "preview path should be open"
+                    );
+
+                    if let Some(expected_active_path) = expected_path {
+                        assert_eq!(
+                            &active_path.as_ref().unwrap().path,
+                            expected_active_path,
+                            "active path should match the oracle"
+                        );
+                    }
+                });
+            }
+        }
+
+        #[gpui::property_test]
+        async fn single_pane_navigation(
+            #[strategy = proptest::collection::vec(any::<Operation>(), 1..32)] operations: Vec<
+                Operation,
+            >,
+            cx: &mut TestAppContext,
+        ) {
+            let mut harness = PaneHarness::new(cx).await;
+            let mut oracle = Oracle::new();
+
+            for operation in operations {
+                oracle.apply(operation.clone());
+                harness.apply(operation).await;
+                harness.check_invariants(&oracle.current);
             }
         }
     }

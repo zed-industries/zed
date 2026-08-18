@@ -13,7 +13,7 @@ use editor::{
 use gpui::{
     AnyElement, App, AppContext, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Subscription,
-    Task, WeakEntity, Window, actions, div,
+    Task, TaskExt, WeakEntity, Window, actions, div,
 };
 use language::{Buffer, Capability, DiagnosticEntry, DiagnosticEntryRef, Point};
 use project::{
@@ -220,7 +220,7 @@ impl BufferDiagnosticsEditor {
         // If there's no active editor with a project path, avoiding deploying
         // the buffer diagnostics view.
         if let Some(editor) = workspace.active_item_as::<Editor>(cx)
-            && let Some(project_path) = editor.project_path(cx)
+            && let Some(project_path) = editor.read(cx).active_project_path(cx)
         {
             // Check if there's already a `BufferDiagnosticsEditor` tab for this
             // same path, and if so, focus on that one instead of creating a new
@@ -542,23 +542,22 @@ impl BufferDiagnosticsEditor {
                 // display map for the new diagnostics. Update the `blocks`
                 // property before finishing, to ensure the blocks are removed
                 // on the next execution.
-                let editor_blocks =
-                    anchor_ranges
-                        .into_iter()
-                        .zip(blocks.into_iter())
-                        .map(|(anchor, block)| {
-                            let editor = buffer_diagnostics_editor.editor.downgrade();
+                let editor_blocks = anchor_ranges
+                    .into_iter()
+                    .zip(blocks)
+                    .map(|(anchor, block)| {
+                        let editor = buffer_diagnostics_editor.editor.downgrade();
 
-                            BlockProperties {
-                                placement: BlockPlacement::Near(anchor.start),
-                                height: Some(1),
-                                style: BlockStyle::Flex,
-                                render: Arc::new(move |block_context| {
-                                    block.render_block(editor.clone(), block_context)
-                                }),
-                                priority: 1,
-                            }
-                        });
+                        BlockProperties {
+                            placement: BlockPlacement::Near(anchor.start),
+                            height: Some(1),
+                            style: BlockStyle::Flex,
+                            render: Arc::new(move |block_context| {
+                                block.render_block(editor.clone(), block_context)
+                            }),
+                            priority: 1,
+                        }
+                    });
 
                 let block_ids = buffer_diagnostics_editor.editor.update(cx, |editor, cx| {
                     editor.display_map.update(cx, |display_map, cx| {
@@ -748,6 +747,10 @@ impl Item for BufferDiagnosticsEditor {
 
     fn for_each_project_item(&self, cx: &App, f: &mut dyn FnMut(EntityId, &dyn ProjectItem)) {
         self.editor.for_each_project_item(cx, f);
+    }
+
+    fn active_project_path(&self, _cx: &App) -> Option<ProjectPath> {
+        Some(self.project_path.clone())
     }
 
     fn has_conflict(&self, cx: &App) -> bool {

@@ -1,7 +1,6 @@
 pub mod platforms;
 mod system_window_tabs;
 
-use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use gpui::{
     Action, AnyElement, App, Context, Decorations, Entity, Hsla, InteractiveElement, IntoElement,
     MouseButton, ParentElement, StatefulInteractiveElement, Styled, WeakEntity, Window,
@@ -111,7 +110,7 @@ impl PlatformTitleBar {
     }
 
     pub fn is_multi_workspace_enabled(cx: &App) -> bool {
-        cx.has_flag::<AgentV2FeatureFlag>() && !DisableAiSettings::get_global(cx).disable_ai
+        !DisableAiSettings::get_global(cx).disable_ai
     }
 }
 
@@ -230,13 +229,18 @@ impl Render for PlatformTitleBar {
                             }
                         })
                     })
-                    .when(self.platform_style == PlatformStyle::Linux, |this| {
-                        this.on_click(|event, window, _| {
-                            if event.click_count() == 2 {
-                                window.zoom_window();
-                            }
-                        })
-                    })
+                    .when(
+                        self.platform_style == PlatformStyle::Linux
+                            && supported_controls.maximize
+                            && window.is_resizable(),
+                        |this| {
+                            this.on_click(|event, window, _| {
+                                if event.click_count() == 2 {
+                                    window.zoom_window();
+                                }
+                            })
+                        },
+                    )
             })
             .map(|this| {
                 let show_left_controls = !(sidebar.open && sidebar.side == SidebarSide::Left);
