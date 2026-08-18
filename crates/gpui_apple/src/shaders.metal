@@ -80,9 +80,10 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
                                     [[buffer(QuadInputIndex_ViewportSize)]]) {
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   Quad quad = quads[quad_id];
-  float4 device_position = to_device_position_impl(
-      clip_to_mask(unit_vertex, quad.bounds, quad.content_mask.bounds).position,
-      viewport_size);
+  ClippedVertex vertex =
+      clip_to_mask(unit_vertex, quad.bounds, quad.content_mask.bounds);
+  float4 device_position =
+      to_device_position_impl(vertex.position, viewport_size);
   float4 border_color = hsla_to_rgba(quad.border_color);
 
   GradientColor gradient = prepare_fill_color(
@@ -485,9 +486,10 @@ vertex ShadowVertexOutput shadow_vertex(
     bounds.size.height += 2. * margin;
   }
 
-  float4 device_position = to_device_position_impl(
-      clip_to_mask(unit_vertex, bounds, shadow.content_mask.bounds).position,
-      viewport_size);
+  ClippedVertex vertex =
+      clip_to_mask(unit_vertex, bounds, shadow.content_mask.bounds);
+  float4 device_position =
+      to_device_position_impl(vertex.position, viewport_size);
   float4 color = hsla_to_rgba(shadow.color);
 
   return ShadowVertexOutput{
@@ -576,10 +578,10 @@ vertex UnderlineVertexOutput underline_vertex(
     [[buffer(ShadowInputIndex_ViewportSize)]]) {
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   Underline underline = underlines[underline_id];
-  float4 device_position = to_device_position_impl(
-      clip_to_mask(unit_vertex, underline.bounds, underline.content_mask.bounds)
-          .position,
-      viewport_size);
+  ClippedVertex vertex =
+      clip_to_mask(unit_vertex, underline.bounds, underline.content_mask.bounds);
+  float4 device_position =
+      to_device_position_impl(vertex.position, viewport_size);
   float4 color = hsla_to_rgba(underline.color);
   return UnderlineVertexOutput{
       device_position,
@@ -642,11 +644,11 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
     [[buffer(SpriteInputIndex_AtlasTextureSize)]]) {
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   MonochromeSprite sprite = sprites[sprite_id];
-  float4 device_position = to_device_position_transformed(
-      unit_vertex, sprite.bounds, sprite.transformation, viewport_size);
+  float4 device_position =
+      to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation, viewport_size);
+  float4 clip_distance = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds,
+                                                 sprite.content_mask.bounds, sprite.transformation);
   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
-  float4 clip_distance = distance_from_clip_rect_transformed(
-      unit_vertex, sprite.bounds, sprite.content_mask.bounds, sprite.transformation);
   float4 color = hsla_to_rgba(sprite.color);
   return MonochromeSpriteVertexOutput{
       device_position,
@@ -659,8 +661,6 @@ fragment float4 monochrome_sprite_fragment(
     MonochromeSpriteFragmentInput input [[stage_in]],
     constant MonochromeSprite *sprites [[buffer(SpriteInputIndex_Sprites)]],
     texture2d<float> atlas_texture [[texture(SpriteInputIndex_AtlasTexture)]]) {
-  // Only rotated sprites need per-fragment clipping; axis-aligned sprites are
-  // clipped geometrically in the vertex shader.
   if (any(input.clip_distance < float4(0.0))) {
     return float4(0.0);
   }
@@ -1129,12 +1129,9 @@ ClippedVertex clip_to_mask(float2 unit_vertex, Bounds_ScaledPixels bounds,
 
   ClippedVertex result;
   result.position = origin + unit_vertex * size;
-  result.unit_vertex = (result.position - bounds_origin) / max(bounds_size, float2(1e-30));
+  result.unit_vertex = (result.position - bounds_origin) / bounds_size;
   return result;
 }
-
-
-
 
 float4 distance_from_clip_rect_transformed(float2 unit_vertex, Bounds_ScaledPixels bounds,
                                Bounds_ScaledPixels clip_bounds, TransformationMatrix transformation) {
