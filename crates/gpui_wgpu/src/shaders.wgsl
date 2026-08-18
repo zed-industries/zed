@@ -177,11 +177,15 @@ fn to_device_position(unit_vertex: vec2<f32>, bounds: Bounds) -> vec4<f32> {
     return to_device_position_impl(position);
 }
 
-fn to_device_position_transformed(unit_vertex: vec2<f32>, bounds: Bounds, transform: TransformationMatrix) -> vec4<f32> {
-    let position = unit_vertex * vec2<f32>(bounds.size) + bounds.origin;
+fn to_device_position_transformed_impl(position: vec2<f32>, transform: TransformationMatrix) -> vec4<f32> {
     //Note: Rust side stores it as row-major, so transposing here
     let transformed = transpose(transform.rotation_scale) * position + transform.translation;
     return to_device_position_impl(transformed);
+}
+
+fn to_device_position_transformed(unit_vertex: vec2<f32>, bounds: Bounds, transform: TransformationMatrix) -> vec4<f32> {
+    let position = unit_vertex * vec2<f32>(bounds.size) + bounds.origin;
+    return to_device_position_transformed_impl(position, transform);
 }
 
 fn to_tile_position(unit_vertex: vec2<f32>, tile: AtlasTile) -> vec2<f32> {
@@ -201,15 +205,22 @@ fn distance_from_clip_rect_transformed(unit_vertex: vec2<f32>, bounds: Bounds, c
     return distance_from_clip_rect_impl(transformed, clip_bounds);
 }
 
-// Intersects `bounds` with `mask` so the emitted geometry never covers pixels
-// outside the content mask, making per-fragment clipping unnecessary. An empty
-// intersection collapses to zero size, which rasterizes to nothing. Fragment
-// shaders reload the original bounds by instance id, so their math is
-// unaffected by the shrunken geometry.
-fn clip_to_mask(bounds: Bounds, mask: Bounds) -> Bounds {
+struct ClippedVertex {
+    position: vec2<f32>,
+    // The corner as a fraction of the original bounds.
+    unit_vertex: vec2<f32>,
+}
+
+// An empty intersection collapses to zero size, which rasterizes to nothing.
+fn clip_to_mask(unit_vertex: vec2<f32>, bounds: Bounds, mask: Bounds) -> ClippedVertex {
     let origin = max(bounds.origin, mask.origin);
-    let extent = min(bounds.origin + bounds.size, mask.origin + mask.size);
-    return Bounds(origin, max(extent - origin, vec2<f32>(0.0)));
+    let corner = min(bounds.origin + bounds.size, mask.origin + mask.size);
+    let size = max(corner - origin, vec2<f32>(0.0));
+
+    let position = origin + unit_vertex * size;
+    // The clipped rect is a subset of `bounds`, so a zero-extent axis has a
+    // zero numerator too; the guard only keeps 0/0 out of the result.
+    return ClippedVertex(position, (position - bounds.origin) / max(bounds.size, vec2<f32>(1e-30)));
 }
 
 // Whether the transformation only scales and translates, keeping rectangles
@@ -567,7 +578,7 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     let quad = load_quad(instance_id);
 
     var out = QuadVarying();
-    out.position = to_device_position(unit_vertex, clip_to_mask(quad.bounds, quad.content_mask));
+    out.position = to_device_position_impl(clip_to_mask(unit_vertex, quad.bounds, quad.content_mask).position);
 
     let gradient = prepare_gradient_color(
         quad.background.tag,
@@ -1004,7 +1015,7 @@ fn vs_shadow(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) ins
     }
 
     var out = ShadowVarying();
-    out.position = to_device_position(unit_vertex, clip_to_mask(geometry, shadow.content_mask));
+    out.position = to_device_position_impl(clip_to_mask(unit_vertex, geometry, shadow.content_mask).position);
     out.color = hsla_to_rgba(shadow.color);
     out.shadow_id = instance_id;
     return out;
@@ -1178,7 +1189,7 @@ fn vs_underline(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) 
     let underline = load_underline(instance_id);
 
     var out = UnderlineVarying();
-    out.position = to_device_position(unit_vertex, clip_to_mask(underline.bounds, underline.content_mask));
+    out.position = to_device_position_impl(clip_to_mask(unit_vertex, underline.bounds, underline.content_mask).position);
     out.color = hsla_to_rgba(underline.color);
     out.underline_id = instance_id;
     return out;
@@ -1239,10 +1250,9 @@ fn vs_mono_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
     var out = MonoSpriteVarying();
     if (transform_is_axis_aligned(sprite.transformation)) {
         let mask = mask_in_transform_space(sprite.content_mask, sprite.transformation);
-        let clipped = clip_to_mask(sprite.bounds, mask);
-        out.position = to_device_position_transformed(unit_vertex, clipped, sprite.transformation);
-        let local_position = unit_vertex * clipped.size + clipped.origin;
-        out.tile_position = to_tile_position((local_position - sprite.bounds.origin) / sprite.bounds.size, sprite.tile);
+        let vertex = clip_to_mask(unit_vertex, sprite.bounds, mask);
+        out.position = to_device_position_transformed_impl(vertex.position, sprite.transformation);
+        out.tile_position = to_tile_position(vertex.unit_vertex, sprite.tile);
         out.clip_distances = vec4<f32>(1.0);
     } else {
         // A rotated sprite intersected with the axis-aligned mask isn't
@@ -1294,12 +1304,11 @@ struct PolySpriteVarying {
 fn vs_poly_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> PolySpriteVarying {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
     let sprite = load_poly_sprite(instance_id);
-    let clipped = clip_to_mask(sprite.bounds, sprite.content_mask);
+    let vertex = clip_to_mask(unit_vertex, sprite.bounds, sprite.content_mask);
 
     var out = PolySpriteVarying();
-    out.position = to_device_position(unit_vertex, clipped);
-    let position = unit_vertex * clipped.size + clipped.origin;
-    out.tile_position = to_tile_position((position - sprite.bounds.origin) / sprite.bounds.size, sprite.tile);
+    out.position = to_device_position_impl(vertex.position);
+    out.tile_position = to_tile_position(vertex.unit_vertex, sprite.tile);
     out.sprite_id = instance_id;
     return out;
 }
@@ -1345,12 +1354,11 @@ struct SurfaceVarying {
 @vertex
 fn vs_surface(@builtin(vertex_index) vertex_id: u32) -> SurfaceVarying {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
-    let clipped = clip_to_mask(surface_locals.bounds, surface_locals.content_mask);
+    let vertex = clip_to_mask(unit_vertex, surface_locals.bounds, surface_locals.content_mask);
 
     var out = SurfaceVarying();
-    out.position = to_device_position(unit_vertex, clipped);
-    let position = unit_vertex * clipped.size + clipped.origin;
-    out.texture_position = (position - surface_locals.bounds.origin) / surface_locals.bounds.size;
+    out.position = to_device_position_impl(vertex.position);
+    out.texture_position = vertex.unit_vertex;
     return out;
 }
 

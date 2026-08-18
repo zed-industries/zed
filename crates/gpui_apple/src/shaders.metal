@@ -8,8 +8,13 @@ float3 srgb_to_linear(float3 color);
 float3 linear_to_srgb(float3 color);
 float4 srgb_to_oklab(float4 color);
 float4 oklab_to_srgb(float4 color);
+float4 to_device_position_impl(float2 position,
+                          constant Size_DevicePixels *viewport_size);
 float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,
                           constant Size_DevicePixels *viewport_size);
+float4 to_device_position_transformed_impl(float2 position,
+                          TransformationMatrix transformation,
+                          constant Size_DevicePixels *input_viewport_size);
 float4 to_device_position_transformed(float2 unit_vertex, Bounds_ScaledPixels bounds,
                           TransformationMatrix transformation,
                           constant Size_DevicePixels *input_viewport_size);
@@ -18,8 +23,14 @@ float2 to_tile_position(float2 unit_vertex, AtlasTile tile,
                         constant Size_DevicePixels *atlas_size);
 float4 distance_from_clip_rect_transformed(float2 unit_vertex, Bounds_ScaledPixels bounds,
                                Bounds_ScaledPixels clip_bounds, TransformationMatrix transformation);
-Bounds_ScaledPixels clip_to_mask(Bounds_ScaledPixels bounds,
-                                 Bounds_ScaledPixels mask);
+struct ClippedVertex {
+  float2 position;
+  // The corner as a fraction of the original bounds.
+  float2 unit_vertex;
+};
+
+ClippedVertex clip_to_mask(float2 unit_vertex, Bounds_ScaledPixels bounds,
+                             Bounds_ScaledPixels mask);
 bool transform_is_axis_aligned(TransformationMatrix transformation);
 Bounds_ScaledPixels mask_in_transform_space(Bounds_ScaledPixels mask,
                                             TransformationMatrix transformation);
@@ -75,8 +86,8 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
                                     [[buffer(QuadInputIndex_ViewportSize)]]) {
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   Quad quad = quads[quad_id];
-  float4 device_position = to_device_position(
-      unit_vertex, clip_to_mask(quad.bounds, quad.content_mask.bounds),
+  float4 device_position = to_device_position_impl(
+      clip_to_mask(unit_vertex, quad.bounds, quad.content_mask.bounds).position,
       viewport_size);
   float4 border_color = hsla_to_rgba(quad.border_color);
 
@@ -480,8 +491,8 @@ vertex ShadowVertexOutput shadow_vertex(
     bounds.size.height += 2. * margin;
   }
 
-  float4 device_position = to_device_position(
-      unit_vertex, clip_to_mask(bounds, shadow.content_mask.bounds),
+  float4 device_position = to_device_position_impl(
+      clip_to_mask(unit_vertex, bounds, shadow.content_mask.bounds).position,
       viewport_size);
   float4 color = hsla_to_rgba(shadow.color);
 
@@ -571,8 +582,9 @@ vertex UnderlineVertexOutput underline_vertex(
     [[buffer(ShadowInputIndex_ViewportSize)]]) {
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   Underline underline = underlines[underline_id];
-  float4 device_position = to_device_position(
-      unit_vertex, clip_to_mask(underline.bounds, underline.content_mask.bounds),
+  float4 device_position = to_device_position_impl(
+      clip_to_mask(unit_vertex, underline.bounds, underline.content_mask.bounds)
+          .position,
       viewport_size);
   float4 color = hsla_to_rgba(underline.color);
   return UnderlineVertexOutput{
@@ -642,16 +654,10 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
   if (transform_is_axis_aligned(sprite.transformation)) {
     Bounds_ScaledPixels mask =
         mask_in_transform_space(sprite.content_mask.bounds, sprite.transformation);
-    Bounds_ScaledPixels clipped = clip_to_mask(sprite.bounds, mask);
-    device_position = to_device_position_transformed(
-        unit_vertex, clipped, sprite.transformation, viewport_size);
-    float2 local_position =
-        unit_vertex * float2(clipped.size.width, clipped.size.height) +
-        float2(clipped.origin.x, clipped.origin.y);
-    float2 fraction =
-        (local_position - float2(sprite.bounds.origin.x, sprite.bounds.origin.y)) /
-        float2(sprite.bounds.size.width, sprite.bounds.size.height);
-    tile_position = to_tile_position(fraction, sprite.tile, atlas_size);
+    ClippedVertex vertex = clip_to_mask(unit_vertex, sprite.bounds, mask);
+    device_position = to_device_position_transformed_impl(
+        vertex.position, sprite.transformation, viewport_size);
+    tile_position = to_tile_position(vertex.unit_vertex, sprite.tile, atlas_size);
     clip_distance = float4(1.0);
   } else {
     // A rotated sprite intersected with the axis-aligned mask isn't
@@ -712,17 +718,12 @@ vertex PolychromeSpriteVertexOutput polychrome_sprite_vertex(
 
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   PolychromeSprite sprite = sprites[sprite_id];
-  Bounds_ScaledPixels clipped =
-      clip_to_mask(sprite.bounds, sprite.content_mask.bounds);
+  ClippedVertex vertex =
+      clip_to_mask(unit_vertex, sprite.bounds, sprite.content_mask.bounds);
   float4 device_position =
-      to_device_position(unit_vertex, clipped, viewport_size);
-  float2 position =
-      unit_vertex * float2(clipped.size.width, clipped.size.height) +
-      float2(clipped.origin.x, clipped.origin.y);
-  float2 fraction =
-      (position - float2(sprite.bounds.origin.x, sprite.bounds.origin.y)) /
-      float2(sprite.bounds.size.width, sprite.bounds.size.height);
-  float2 tile_position = to_tile_position(fraction, sprite.tile, atlas_size);
+      to_device_position_impl(vertex.position, viewport_size);
+  float2 tile_position =
+      to_tile_position(vertex.unit_vertex, sprite.tile, atlas_size);
   return PolychromeSpriteVertexOutput{
       device_position,
       tile_position,
@@ -888,18 +889,13 @@ vertex SurfaceVertexOutput surface_vertex(
     [[buffer(SurfaceInputIndex_TextureSize)]]) {
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   SurfaceBounds surface = surfaces[surface_id];
-  Bounds_ScaledPixels clipped =
-      clip_to_mask(surface.bounds, surface.content_mask.bounds);
+  ClippedVertex vertex =
+      clip_to_mask(unit_vertex, surface.bounds, surface.content_mask.bounds);
   float4 device_position =
-      to_device_position(unit_vertex, clipped, viewport_size);
+      to_device_position_impl(vertex.position, viewport_size);
   // We are going to copy the whole texture, so the texture position
   // corresponds to the vertex's fraction within the surface bounds.
-  float2 position =
-      unit_vertex * float2(clipped.size.width, clipped.size.height) +
-      float2(clipped.origin.x, clipped.origin.y);
-  float2 texture_position =
-      (position - float2(surface.bounds.origin.x, surface.bounds.origin.y)) /
-      float2(surface.bounds.size.width, surface.bounds.size.height);
+  float2 texture_position = vertex.unit_vertex;
   return SurfaceVertexOutput{
       device_position,
       texture_position};
@@ -1021,11 +1017,8 @@ float4 oklab_to_srgb(float4 color) {
   return float4(linear_to_srgb(linear_rgb), color.a);
 }
 
-float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,
-                          constant Size_DevicePixels *input_viewport_size) {
-  float2 position =
-      unit_vertex * float2(bounds.size.width, bounds.size.height) +
-      float2(bounds.origin.x, bounds.origin.y);
+float4 to_device_position_impl(float2 position,
+                               constant Size_DevicePixels *input_viewport_size) {
   float2 viewport_size = float2((float)input_viewport_size->width,
                                 (float)input_viewport_size->height);
   float2 device_position =
@@ -1033,13 +1026,17 @@ float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,
   return float4(device_position, 0., 1.);
 }
 
-float4 to_device_position_transformed(float2 unit_vertex, Bounds_ScaledPixels bounds,
-                          TransformationMatrix transformation,
+float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,
                           constant Size_DevicePixels *input_viewport_size) {
   float2 position =
       unit_vertex * float2(bounds.size.width, bounds.size.height) +
       float2(bounds.origin.x, bounds.origin.y);
+  return to_device_position_impl(position, input_viewport_size);
+}
 
+float4 to_device_position_transformed_impl(float2 position,
+                          TransformationMatrix transformation,
+                          constant Size_DevicePixels *input_viewport_size) {
   // Apply the transformation matrix to the position via matrix multiplication.
   float2 transformed_position = float2(0, 0);
   transformed_position[0] = position[0] * transformation.rotation_scale[0][0] + position[1] * transformation.rotation_scale[0][1];
@@ -1054,6 +1051,16 @@ float4 to_device_position_transformed(float2 unit_vertex, Bounds_ScaledPixels bo
   float2 device_position =
       transformed_position / viewport_size * float2(2., -2.) + float2(-1., 1.);
   return float4(device_position, 0., 1.);
+}
+
+float4 to_device_position_transformed(float2 unit_vertex, Bounds_ScaledPixels bounds,
+                          TransformationMatrix transformation,
+                          constant Size_DevicePixels *input_viewport_size) {
+  float2 position =
+      unit_vertex * float2(bounds.size.width, bounds.size.height) +
+      float2(bounds.origin.x, bounds.origin.y);
+  return to_device_position_transformed_impl(position, transformation,
+                                             input_viewport_size);
 }
 
 
@@ -1137,26 +1144,23 @@ float blur_along_x(float x, float y, float sigma, float corner,
   return integral.y - integral.x;
 }
 
-// Intersects `bounds` with `mask` so the emitted geometry never covers pixels
-// outside the content mask, making per-fragment clipping unnecessary. An empty
-// intersection collapses to zero size, which rasterizes to nothing. Fragment
-// shaders reload the original bounds by instance id, so their math is
-// unaffected by the shrunken geometry.
-Bounds_ScaledPixels clip_to_mask(Bounds_ScaledPixels bounds,
-                                 Bounds_ScaledPixels mask) {
-  float2 origin = max(float2(bounds.origin.x, bounds.origin.y),
-                      float2(mask.origin.x, mask.origin.y));
-  float2 extent =
-      min(float2(bounds.origin.x + bounds.size.width,
-                 bounds.origin.y + bounds.size.height),
-          float2(mask.origin.x + mask.size.width,
-                 mask.origin.y + mask.size.height));
-  float2 size = max(extent - origin, float2(0.));
-  Bounds_ScaledPixels result = bounds;
-  result.origin.x = origin.x;
-  result.origin.y = origin.y;
-  result.size.width = size.x;
-  result.size.height = size.y;
+// An empty intersection collapses to zero size, which rasterizes to nothing.
+ClippedVertex clip_to_mask(float2 unit_vertex, Bounds_ScaledPixels bounds,
+                             Bounds_ScaledPixels mask) {
+  float2 bounds_origin = float2(bounds.origin.x, bounds.origin.y);
+  float2 bounds_size = float2(bounds.size.width, bounds.size.height);
+  float2 origin = max(bounds_origin, float2(mask.origin.x, mask.origin.y));
+  float2 corner = min(bounds_origin + bounds_size,
+                      float2(mask.origin.x + mask.size.width,
+                             mask.origin.y + mask.size.height));
+  float2 size = max(corner - origin, float2(0.));
+
+  ClippedVertex result;
+  result.position = origin + unit_vertex * size;
+  // The clipped rect is a subset of `bounds`, so a zero-extent axis has a
+  // zero numerator too; the guard only keeps 0/0 out of the result.
+  result.unit_vertex =
+      (result.position - bounds_origin) / max(bounds_size, float2(1e-30));
   return result;
 }
 
