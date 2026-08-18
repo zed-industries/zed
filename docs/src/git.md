@@ -155,6 +155,8 @@ From the panel, you can simply type a commit message and hit the commit button, 
 
 Entries can be staged using each individual entry's checkbox. All changes can be staged using the button at the top of the panel, or {#action git::StageAll}.
 
+Entries are grouped into sections (**Tracked** and **Untracked** by default), and each section can be staged on its own without touching the others. Click the checkbox on a section header, or use {#action git::StageSection} / {#action git::UnstageSection}, which act on the section containing the selected entry. These are also available by right-clicking an entry. Neither is bound by default; bind them in your keymap under the `GitPanel` context if you use them often.
+
 To open a changed file in the editor without a diff view, right-click on the file in the Git Panel and select **View File**. Use **Open Diff** ({#kb menu::Confirm}) or **Open Diff (File)** to review changes in a diff view instead.
 
 <!-- Add media -->
@@ -255,9 +257,13 @@ Git stash allows you to temporarily save your uncommitted changes and revert you
 
 ### Creating Stashes
 
-To stash all your current changes, use the {#action git::StashAll} action. This will save both staged and unstaged changes to a new stash entry and clean your working directory.
+To stash all your current changes, use the {#action git::StashAll} action. This will save both staged and unstaged changes, including untracked files, to a new stash entry and clean your working directory.
 
-The action first prompts for an optional stash name. Confirming with an empty prompt lets git generate its usual `WIP on ...` description.
+To stash only tracked changes and leave untracked files in place, use the {#action git::StashTracked} action. To stash only staged changes and leave unstaged changes in place, use the {#action git::StashStaged} action; this requires git 2.35 or newer.
+
+The Git Panel's overflow menu offers whichever of these matches the current **Group By** mode: **Stash Tracked** when grouping by Tracked & Untracked, and **Stash Staged** when grouping by Staged & Unstaged. **Stash All** is always available.
+
+Each of these actions first prompts for an optional stash name. Confirming with an empty prompt lets git generate its usual `WIP on ...` description.
 
 ### Managing Stashes
 
@@ -385,6 +391,8 @@ When viewing files with changes, Zed displays diff hunks that can be expanded or
 | {#action git::Add}                        | {#kb git::Add}                        |
 | {#action git::StageAll}                   | {#kb git::StageAll}                   |
 | {#action git::UnstageAll}                 | {#kb git::UnstageAll}                 |
+| {#action git::StageSection}               | {#kb git::StageSection}               |
+| {#action git::UnstageSection}             | {#kb git::UnstageSection}             |
 | {#action git::ToggleStaged}               | {#kb git::ToggleStaged}               |
 | {#action git::StageAndNext}               | {#kb git::StageAndNext}               |
 | {#action git::UnstageAndNext}             | {#kb git::UnstageAndNext}             |
@@ -404,6 +412,8 @@ When viewing files with changes, Zed displays diff hunks that can be expanded or
 | {#action git::Worktree}                   | {#kb git::Worktree}                   |
 | {#action git::Blame}                      | {#kb git::Blame}                      |
 | {#action git::StashAll}                   | {#kb git::StashAll}                   |
+| {#action git::StashTracked}               | {#kb git::StashTracked}               |
+| {#action git::StashStaged}                | {#kb git::StashStaged}                |
 | {#action git::StashPop}                   | {#kb git::StashPop}                   |
 | {#action git::StashApply}                 | {#kb git::StashApply}                 |
 | {#action git::ViewStash}                  | {#kb git::ViewStash}                  |

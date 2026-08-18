@@ -120,7 +120,8 @@ impl State {
                 api_key.as_ref(),
                 &extra_headers,
             )
-            .await?;
+            .await
+            .map_err(LanguageModelCompletionError::from)?;
 
             this.update(cx, |this, cx| {
                 this.fetched_models = models;

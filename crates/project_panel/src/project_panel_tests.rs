@@ -11,7 +11,7 @@ use menu::Cancel;
 use pretty_assertions::assert_eq;
 use project::{FakeFs, ProjectPath};
 use serde_json::json;
-use settings::{ProjectPanelAutoOpenSettings, SettingsStore};
+use settings::{ProjectPanelAutoOpenSettings, SettingsStore, SplicingVec};
 use smallvec::smallvec;
 use std::path::{Path, PathBuf};
 use util::{path, paths::PathStyle, rel_path::rel_path};
@@ -426,8 +426,10 @@ async fn test_exclusions_in_visible_list(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_exclusions =
-                    Some(vec!["**/.git".to_string(), "**/4/**".to_string()]);
+                settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![
+                    "**/.git".to_string(),
+                    "**/4/**".to_string(),
+                ]));
             });
         });
     });
@@ -5562,7 +5564,8 @@ async fn test_autoreveal_and_gitignored_files(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_exclusions = Some(Vec::new());
+                settings.project.worktree.file_scan_exclusions =
+                    Some(SplicingVec::from(Vec::new()));
                 settings
                     .project_panel
                     .get_or_insert_default()
@@ -5864,7 +5867,8 @@ async fn test_gitignored_and_always_included(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_exclusions = Some(Vec::new());
+                settings.project.worktree.file_scan_exclusions =
+                    Some(SplicingVec::from(Vec::new()));
                 settings.project.worktree.file_scan_inclusions =
                     Some(vec!["always_included_but_ignored_dir/*".to_string()]);
                 settings
@@ -5988,7 +5992,8 @@ async fn test_explicit_reveal(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_exclusions = Some(Vec::new());
+                settings.project.worktree.file_scan_exclusions =
+                    Some(SplicingVec::from(Vec::new()));
                 settings
                     .project_panel
                     .get_or_insert_default()
@@ -6585,8 +6590,10 @@ async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_exclusions =
-                    Some(vec!["excluded_dir".to_string(), "**/.git".to_string()]);
+                settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![
+                    "excluded_dir".to_string(),
+                    "**/.git".to_string(),
+                ]));
             });
         });
     });
@@ -11325,7 +11332,8 @@ pub(crate) fn init_test(cx: &mut TestAppContext) {
                     .project_panel
                     .get_or_insert_default()
                     .auto_fold_dirs = Some(false);
-                settings.project.worktree.file_scan_exclusions = Some(Vec::new());
+                settings.project.worktree.file_scan_exclusions =
+                    Some(SplicingVec::from(Vec::new()));
                 settings.project.worktree.file_scan_depth = Some(0);
             });
         });
@@ -11346,7 +11354,8 @@ fn init_test_with_editor(cx: &mut TestAppContext) {
                     .project_panel
                     .get_or_insert_default()
                     .auto_fold_dirs = Some(false);
-                settings.project.worktree.file_scan_exclusions = Some(Vec::new());
+                settings.project.worktree.file_scan_exclusions =
+                    Some(SplicingVec::from(Vec::new()));
                 settings.project.worktree.file_scan_depth = Some(0);
             });
         });
@@ -11368,7 +11377,8 @@ fn init_test_with_git_ui(cx: &mut TestAppContext) {
                     .project_panel
                     .get_or_insert_default()
                     .auto_fold_dirs = Some(false);
-                settings.project.worktree.file_scan_exclusions = Some(Vec::new());
+                settings.project.worktree.file_scan_exclusions =
+                    Some(SplicingVec::from(Vec::new()));
                 settings.project.worktree.file_scan_depth = Some(0);
             });
         });
