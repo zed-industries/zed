@@ -53,17 +53,17 @@ impl TabularFormat {
 }
 
 impl TabularDataPreviewPane {
-    pub(crate) fn parse_csv_from_active_editor(
+    pub(crate) fn parse_from_active_editor(
         &mut self,
         wait_for_debounce: bool,
         cx: &mut Context<Self>,
     ) {
         let editor = self.active_editor_state.editor.clone();
         self.is_parsing = true;
-        self.parsing_task = Some(self.parse_csv_in_background(wait_for_debounce, editor, cx));
+        self.parsing_task = Some(self.parse_in_background(wait_for_debounce, editor, cx));
     }
 
-    fn parse_csv_in_background(
+    fn parse_in_background(
         &mut self,
         wait_for_debounce: bool,
         editor: Entity<Editor>,
@@ -127,7 +127,7 @@ impl TabularDataPreviewPane {
             };
 
             let instant = Instant::now();
-            let parsed_csv = cx
+            let parsed_contents = cx
                 .background_spawn(async move { from_buffer_with_delimiter(&buffer_snapshot, delimiter) })
                 .await;
             let parse_duration = instant.elapsed();
@@ -138,8 +138,8 @@ impl TabularDataPreviewPane {
                     .timings
                     .insert("Parsing", (parse_duration, Instant::now()));
 
-                log::debug!("Parsed {} rows", parsed_csv.rows.len());
-                view.engine.contents = Arc::new(parsed_csv);
+                log::debug!("Parsed {} rows", parsed_contents.rows.len());
+                view.engine.contents = Arc::new(parsed_contents);
                 view.engine.calculate_available_filters();
                 view.sync_column_widths(cx);
                 view.last_parse_end_time = Some(parse_end_time);
@@ -162,7 +162,7 @@ pub fn from_buffer_with_delimiter(
         return TableLikeContent::default();
     }
 
-    let (parsed_cells_with_positions, line_numbers) = parse_csv_with_positions(&text, delimiter);
+    let (parsed_cells_with_positions, line_numbers) = parse_delimited_text_with_positions(&text, delimiter);
     if parsed_cells_with_positions.is_empty() {
         return TableLikeContent::default();
     }
@@ -193,7 +193,7 @@ pub fn from_buffer_with_delimiter(
 }
 
 /// Parse CSV and track byte positions for each cell
-fn parse_csv_with_positions(
+fn parse_delimited_text_with_positions(
     text: &str,
     delimiter: char,
 ) -> (
@@ -486,7 +486,7 @@ Jane,"Simple name""#;
     #[test]
     fn test_tsv_parsing() {
         let tsv_data = "Name\tAge\tCity\nJohn\t30\tNew York\nJane\t25\tLos Angeles";
-        let (parsed_cells, _) = parse_csv_with_positions(tsv_data, '\t');
+        let (parsed_cells, _) = parse_delimited_text_with_positions(tsv_data, '\t');
 
         assert_eq!(parsed_cells.len(), 3);
         assert_eq!(parsed_cells[0].len(), 3);
@@ -500,7 +500,7 @@ Jane,"Simple name""#;
     #[test]
     fn test_psv_parsing() {
         let psv_data = "Name|Age|City\nJohn|30|New York\nJane|25|Los Angeles";
-        let (parsed_cells, _) = parse_csv_with_positions(psv_data, '|');
+        let (parsed_cells, _) = parse_delimited_text_with_positions(psv_data, '|');
 
         assert_eq!(parsed_cells.len(), 3);
         assert_eq!(parsed_cells[0].len(), 3);
@@ -514,7 +514,7 @@ Jane,"Simple name""#;
     #[test]
     fn test_ssv_parsing() {
         let ssv_data = "Name;Age;City\nJohn;30;New York\nJane;25;Los Angeles";
-        let (parsed_cells, _) = parse_csv_with_positions(ssv_data, ';');
+        let (parsed_cells, _) = parse_delimited_text_with_positions(ssv_data, ';');
 
         assert_eq!(parsed_cells.len(), 3);
         assert_eq!(parsed_cells[0].len(), 3);
@@ -528,7 +528,7 @@ Jane,"Simple name""#;
     #[test]
     fn test_csv_parsing_quote_offset_handling() {
         let csv_data = r#"first,"se,cond",third"#;
-        let (parsed_cells, _) = parse_csv_with_positions(csv_data, ',');
+        let (parsed_cells, _) = parse_delimited_text_with_positions(csv_data, ',');
 
         assert_eq!(parsed_cells.len(), 1); // One row
         assert_eq!(parsed_cells[0].len(), 3); // Three cells
@@ -554,7 +554,7 @@ Jane,"Simple name""#;
         let csv_data = r#"id,"name with spaces","description, with commas",status
 1,"John Doe","A person with ""quotes"" and, commas",active
 2,"Jane Smith","Simple description",inactive"#;
-        let (parsed_cells, _) = parse_csv_with_positions(csv_data, ',');
+        let (parsed_cells, _) = parse_delimited_text_with_positions(csv_data, ',');
 
         assert_eq!(parsed_cells.len(), 3); // header + 2 rows
 

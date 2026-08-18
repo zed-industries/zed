@@ -93,14 +93,14 @@ impl TabularDataPreviewPane {
         workspace.register_action_renderer(|div, _, _, cx| {
             div.when(cx.has_flag::<TabularDataPreviewFeatureFlag>(), |div| {
                 div.on_action(cx.listener(|workspace, _: &OpenPreview, window, cx| {
-                    if let Some(editor) = Self::resolve_active_item_as_csv_editor(workspace, cx) {
+                    if let Some(editor) = Self::resolve_active_item_as_tabular_data_editor(workspace, cx) {
                         let pane = workspace.active_pane().clone();
                         Self::open_preview_in_pane(editor, pane, window, cx);
                     }
                 }))
                 .on_action(cx.listener(
                     |workspace, _: &OpenPreviewToTheSide, window, cx| {
-                        if let Some(editor) = Self::resolve_active_item_as_csv_editor(workspace, cx)
+                        if let Some(editor) = Self::resolve_active_item_as_tabular_data_editor(workspace, cx)
                         {
                             let pane = workspace.active_pane().clone();
                             Self::open_preview_to_the_side_of_pane(
@@ -146,9 +146,9 @@ impl TabularDataPreviewPane {
                 pane.activate_item(existing_view_idx, focus, focus, window, cx);
             });
         } else {
-            let csv_preview = Self::new(&editor, window, cx);
+            let preview_pane = Self::new(&editor, window, cx);
             pane.update(cx, |pane, cx| {
-                pane.add_item(Box::new(csv_preview), focus, focus, None, window, cx);
+                pane.add_item(Box::new(preview_pane), focus, focus, None, window, cx);
             });
         }
         cx.notify();
@@ -178,7 +178,7 @@ impl TabularDataPreviewPane {
                 |this: &mut TabularDataPreviewPane, _editor, event: &EditorEvent, cx| {
                     match event {
                         EditorEvent::Edited { .. } | EditorEvent::DirtyChanged => {
-                            this.parse_csv_from_active_editor(true, cx);
+                            this.parse_from_active_editor(true, cx);
                         }
                         _ => {}
                     };
@@ -206,7 +206,7 @@ impl TabularDataPreviewPane {
                 engine: TableDataEngine::default(),
             };
 
-            view.parse_csv_from_active_editor(false, cx);
+            view.parse_from_active_editor(false, cx);
             view
         })
     }
@@ -263,17 +263,17 @@ impl TabularDataPreviewPane {
         }));
     }
 
-    pub fn resolve_active_item_as_csv_editor(
+    pub fn resolve_active_item_as_tabular_data_editor(
         workspace: &Workspace,
         cx: &mut Context<Workspace>,
     ) -> Option<Entity<Editor>> {
         let editor = workspace
             .active_item(cx)
             .and_then(|item| item.act_as::<Editor>(cx))?;
-        Self::is_csv_file(&editor, cx).then_some(editor)
+        Self::is_tabular_data_file(&editor, cx).then_some(editor)
     }
 
-    pub fn is_csv_file(editor: &Entity<Editor>, cx: &App) -> bool {
+    pub fn is_tabular_data_file(editor: &Entity<Editor>, cx: &App) -> bool {
         editor
             .read(cx)
             .buffer()

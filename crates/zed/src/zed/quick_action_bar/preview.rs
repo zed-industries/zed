@@ -32,7 +32,7 @@ impl QuickActionBar {
             PreviewTarget::Svg(buffer)
         } else if let Some(editor) = editor
             && cx.has_flag::<TabularDataPreviewFeatureFlag>()
-            && TabularDataPreviewPane::is_csv_file(&editor, cx)
+            && TabularDataPreviewPane::is_tabular_data_file(&editor, cx)
         {
             PreviewTarget::TabularData(editor)
         } else {
