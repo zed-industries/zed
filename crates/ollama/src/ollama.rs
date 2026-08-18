@@ -1,15 +1,89 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 
+use base64::Engine as _;
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, HttpRequestExt, Method, Request as HttpRequest,
-    RequestBuilderExt,
+    RequestBuilderExt, Url,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 pub use settings::KeepAlive;
 
 pub const OLLAMA_API_URL: &str = "http://localhost:11434";
+
+/// Resolved Ollama base URL and optional `Authorization` header value.
+///
+/// Supports HTTP Basic Auth embedded in the API URL (`https://user:pass@host`)
+/// and Bearer tokens via the API key field / `OLLAMA_API_KEY`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedOllamaEndpoint {
+    /// API base URL with credentials stripped (no trailing slash).
+    pub base_url: String,
+    /// Full `Authorization` header value, e.g. `Basic …` or `Bearer …`.
+    pub authorization: Option<String>,
+}
+
+/// Parse `api_url` and resolve authentication for Ollama HTTP requests.
+///
+/// - If the URL contains userinfo (`username` or `username:password`), those
+///   credentials are converted to an HTTP Basic `Authorization` header and
+///   stripped from the request URL so credentials are not left in the URI.
+/// - Otherwise, when `api_key` is present, a Bearer token is used (legacy
+///   `OLLAMA_API_KEY` / settings API key behavior).
+/// - When both are present, URL Basic credentials take precedence. Without
+///   this, setting an API key attaches `Authorization: Bearer …`, which
+///   overwrites any Basic auth derived from the URL and breaks reverse
+///   proxies that only accept Basic (e.g. `user:pass@host` + API key set).
+pub fn resolve_ollama_endpoint(
+    api_url: &str,
+    api_key: Option<&str>,
+) -> Result<ResolvedOllamaEndpoint> {
+    let trimmed = api_url.trim().trim_end_matches('/');
+    let mut url =
+        Url::parse(trimmed).with_context(|| format!("invalid Ollama API URL: {trimmed}"))?;
+
+    if url.host_str().is_none() {
+        return Err(anyhow!("Ollama API URL is missing a host: {trimmed}"));
+    }
+
+    let username = url.username();
+    let has_userinfo = !username.is_empty() || url.password().is_some();
+
+    let authorization = if has_userinfo {
+        // `Url` returns percent-encoded userinfo components; decode before Basic.
+        let user = percent_decode_component(username);
+        let password = url
+            .password()
+            .map(percent_decode_component)
+            .unwrap_or_default();
+        let credentials = format!("{user}:{password}");
+        let encoded = base64::engine::general_purpose::STANDARD.encode(credentials.as_bytes());
+        url.set_username("")
+            .map_err(|_| anyhow!("failed to clear username from Ollama API URL: {trimmed}"))?;
+        url.set_password(None)
+            .map_err(|_| anyhow!("failed to clear password from Ollama API URL: {trimmed}"))?;
+        Some(format!("Basic {encoded}"))
+    } else {
+        api_key
+            .map(str::trim)
+            .filter(|key| !key.is_empty())
+            .map(|key| format!("Bearer {key}"))
+    };
+
+    let base_url = url.as_str().trim_end_matches('/').to_string();
+
+    Ok(ResolvedOllamaEndpoint {
+        base_url,
+        authorization,
+    })
+}
+
+fn percent_decode_component(value: &str) -> String {
+    percent_encoding::percent_decode_str(value)
+        .decode_utf8_lossy()
+        .into_owned()
+}
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -291,6 +365,24 @@ impl ModelShow {
     }
 }
 
+fn ollama_request_builder(
+    method: Method,
+    api_url: &str,
+    api_key: Option<&str>,
+    path: &str,
+    extra_headers: &CustomHeaders,
+) -> Result<http_client::http::request::Builder> {
+    let endpoint = resolve_ollama_endpoint(api_url, api_key)?;
+    let uri = format!("{}{path}", endpoint.base_url);
+    Ok(HttpRequest::builder()
+        .method(method)
+        .uri(uri)
+        .when_some(endpoint.authorization, |builder, authorization| {
+            builder.header("Authorization", authorization)
+        })
+        .extra_headers(extra_headers))
+}
+
 pub async fn stream_chat_completion(
     client: &dyn HttpClient,
     api_url: &str,
@@ -298,16 +390,15 @@ pub async fn stream_chat_completion(
     request: ChatRequest,
     extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<ChatResponseDelta>>> {
-    let uri = format!("{api_url}/api/chat");
-    let request = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Content-Type", "application/json")
-        .when_some(api_key, |builder, api_key| {
-            builder.header("Authorization", format!("Bearer {api_key}"))
-        })
-        .extra_headers(extra_headers)
-        .body(AsyncBody::from(serde_json::to_string(&request)?))?;
+    let request = ollama_request_builder(
+        Method::POST,
+        api_url,
+        api_key,
+        "/api/chat",
+        extra_headers,
+    )?
+    .header("Content-Type", "application/json")
+    .body(AsyncBody::from(serde_json::to_string(&request)?))?;
 
     let mut response = client.send(request).await?;
     if response.status().is_success() {
@@ -337,16 +428,15 @@ pub async fn get_models(
     api_key: Option<&str>,
     extra_headers: &CustomHeaders,
 ) -> Result<Vec<LocalModelListing>> {
-    let uri = format!("{api_url}/api/tags");
-    let request = HttpRequest::builder()
-        .method(Method::GET)
-        .uri(uri)
-        .header("Accept", "application/json")
-        .when_some(api_key, |builder, api_key| {
-            builder.header("Authorization", format!("Bearer {api_key}"))
-        })
-        .extra_headers(extra_headers)
-        .body(AsyncBody::default())?;
+    let request = ollama_request_builder(
+        Method::GET,
+        api_url,
+        api_key,
+        "/api/tags",
+        extra_headers,
+    )?
+    .header("Accept", "application/json")
+    .body(AsyncBody::default())?;
 
     let mut response = client.send(request).await?;
 
@@ -372,18 +462,17 @@ pub async fn show_model(
     model: &str,
     extra_headers: &CustomHeaders,
 ) -> Result<ModelShow> {
-    let uri = format!("{api_url}/api/show");
-    let request = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Content-Type", "application/json")
-        .when_some(api_key, |builder, api_key| {
-            builder.header("Authorization", format!("Bearer {api_key}"))
-        })
-        .extra_headers(extra_headers)
-        .body(AsyncBody::from(
-            serde_json::json!({ "model": model }).to_string(),
-        ))?;
+    let request = ollama_request_builder(
+        Method::POST,
+        api_url,
+        api_key,
+        "/api/show",
+        extra_headers,
+    )?
+    .header("Content-Type", "application/json")
+    .body(AsyncBody::from(
+        serde_json::json!({ "model": model }).to_string(),
+    ))?;
 
     let mut response = client.send(request).await?;
     let mut body = String::new();
@@ -402,6 +491,72 @@ pub async fn show_model(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolve_endpoint_basic_auth_from_url_userinfo() {
+        // URL userinfo + api_key: Basic must win (not Bearer).
+        let resolved = resolve_ollama_endpoint(
+            "https://alice:s3cret@ollama.example.com:11434",
+            Some("ignored-when-userinfo-present"),
+        )
+        .unwrap();
+
+        assert_eq!(resolved.base_url, "https://ollama.example.com:11434");
+        let expected = format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD.encode("alice:s3cret")
+        );
+        assert_eq!(resolved.authorization.as_deref(), Some(expected.as_str()));
+        assert!(
+            !resolved
+                .authorization
+                .as_deref()
+                .unwrap_or_default()
+                .starts_with("Bearer "),
+            "api_key must not produce Bearer when URL has userinfo"
+        );
+    }
+
+    #[test]
+    fn resolve_endpoint_basic_auth_username_only() {
+        let resolved = resolve_ollama_endpoint("https://bob@ollama.example.com", None).unwrap();
+        assert_eq!(resolved.base_url, "https://ollama.example.com");
+        let expected = format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD.encode("bob:")
+        );
+        assert_eq!(resolved.authorization.as_deref(), Some(expected.as_str()));
+    }
+
+    #[test]
+    fn resolve_endpoint_bearer_from_api_key() {
+        let resolved =
+            resolve_ollama_endpoint("http://localhost:11434", Some("my-api-key")).unwrap();
+        assert_eq!(resolved.base_url, "http://localhost:11434");
+        assert_eq!(
+            resolved.authorization.as_deref(),
+            Some("Bearer my-api-key")
+        );
+    }
+
+    #[test]
+    fn resolve_endpoint_no_auth() {
+        let resolved = resolve_ollama_endpoint("http://localhost:11434/", None).unwrap();
+        assert_eq!(resolved.base_url, "http://localhost:11434");
+        assert_eq!(resolved.authorization, None);
+    }
+
+    #[test]
+    fn resolve_endpoint_percent_encoded_password() {
+        let resolved =
+            resolve_ollama_endpoint("https://user:p%40ss@ollama.example.com", None).unwrap();
+        assert_eq!(resolved.base_url, "https://ollama.example.com");
+        let expected = format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD.encode("user:p@ss")
+        );
+        assert_eq!(resolved.authorization.as_deref(), Some(expected.as_str()));
+    }
 
     #[test]
     fn parse_completion() {
