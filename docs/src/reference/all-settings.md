@@ -2152,6 +2152,8 @@ The result is still `)))` and not `))))))`, which is what it would be by default
     "**/.svn",
     "**/.hg",
     "**/.jj",
+    "**/.sl",
+    "**/.repo",
     "**/CVS",
     "**/.DS_Store",
     "**/Thumbs.db",
@@ -2161,7 +2163,23 @@ The result is still `)))` and not `))))))`, which is what it would be by default
 }
 ```
 
-Note, specifying `file_scan_exclusions` in settings.json will override the defaults (shown above). If you are looking to exclude additional items you will need to include all the default values in your settings.
+Note that specifying `file_scan_exclusions` in `settings.json` will override the defaults (listed above). Use `"..."` to keep them:
+
+```json [settings]
+{
+  "file_scan_exclusions": ["**/node_modules", "..."]
+}
+```
+
+The `"..."` entry expands to the list you are overriding, so the example above excludes `node_modules` in addition to every default. Entries you list by name keep their position, and `"..."` fills in the inherited ones at that point in the list. If you want full control over what is excluded, omit `"..."` — only the entries you list by name will be used.
+
+| Configuration                | Result                               |
+| ---------------------------- | ------------------------------------ |
+| `["..."]`                    | The defaults, unchanged              |
+| `["**/node_modules", "..."]` | `**/node_modules`, then the defaults |
+| `["**/node_modules"]`        | `**/node_modules` only               |
+
+> Note: `"..."` resolves one settings layer at a time. In a project’s `.zed/settings.json` it expands to whatever your user settings resolved to, rather than to Zed’s defaults.
 
 ## File Scan Inclusions
 

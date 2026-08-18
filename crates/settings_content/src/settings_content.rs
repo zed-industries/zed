@@ -1399,6 +1399,46 @@ impl<T: Clone> merge_from::MergeFrom for ExtendingVec<T> {
     }
 }
 
+pub const REST_OF_FILE_SCAN_EXCLUSIONS: &str = "...";
+
+// A SplicingVec in the settings replaces the value it merges over, except that
+// a `...` entry expands to that previous value.
+//
+// This lets a settings file add to a list without restating what it inherits,
+// while omitting `...` still replaces the list outright. Unlike ExtendingVec,
+// entries can be dropped by leaving `...` out and listing what to keep.
+//
+// Entries collapse to their first occurrence, so naming a value that `...`
+// already covers keeps it at the position it was written in rather than
+// repeating it.
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SplicingVec(pub Vec<String>);
+
+impl From<Vec<String>> for SplicingVec {
+    fn from(vec: Vec<String>) -> Self {
+        SplicingVec(vec)
+    }
+}
+
+impl merge_from::MergeFrom for SplicingVec {
+    fn merge_from(&mut self, other: &Self) {
+        let inherited = std::mem::take(&mut self.0);
+        self.0 = other
+            .0
+            .iter()
+            .flat_map(|entry| {
+                if entry == REST_OF_FILE_SCAN_EXCLUSIONS {
+                    inherited.clone()
+                } else {
+                    vec![entry.clone()]
+                }
+            })
+            .collect::<IndexSet<_>>()
+            .into_iter()
+            .collect();
+    }
+}
+
 // An ExtendingSet in the settings can only accumulate new values, and ignores
 // values that are already present, so merging the same source more than once
 // (e.g. re-importing VS Code settings) is idempotent.
