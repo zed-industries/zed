@@ -12,9 +12,6 @@ float4 to_device_position_impl(float2 position,
                           constant Size_DevicePixels *viewport_size);
 float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,
                           constant Size_DevicePixels *viewport_size);
-float4 to_device_position_transformed_impl(float2 position,
-                          TransformationMatrix transformation,
-                          constant Size_DevicePixels *input_viewport_size);
 float4 to_device_position_transformed(float2 unit_vertex, Bounds_ScaledPixels bounds,
                           TransformationMatrix transformation,
                           constant Size_DevicePixels *input_viewport_size);
@@ -31,9 +28,6 @@ struct ClippedVertex {
 
 ClippedVertex clip_to_mask(float2 unit_vertex, Bounds_ScaledPixels bounds,
                              Bounds_ScaledPixels mask);
-bool transform_is_axis_aligned(TransformationMatrix transformation);
-Bounds_ScaledPixels mask_in_transform_space(Bounds_ScaledPixels mask,
-                                            TransformationMatrix transformation);
 float corner_dash_velocity(float dv1, float dv2);
 float dash_alpha(float t, float period, float length, float dash_velocity,
                  float antialias_threshold);
@@ -648,26 +642,11 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
     [[buffer(SpriteInputIndex_AtlasTextureSize)]]) {
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   MonochromeSprite sprite = sprites[sprite_id];
-  float4 device_position;
-  float2 tile_position;
-  float4 clip_distance;
-  if (transform_is_axis_aligned(sprite.transformation)) {
-    Bounds_ScaledPixels mask =
-        mask_in_transform_space(sprite.content_mask.bounds, sprite.transformation);
-    ClippedVertex vertex = clip_to_mask(unit_vertex, sprite.bounds, mask);
-    device_position = to_device_position_transformed_impl(
-        vertex.position, sprite.transformation, viewport_size);
-    tile_position = to_tile_position(vertex.unit_vertex, sprite.tile, atlas_size);
-    clip_distance = float4(1.0);
-  } else {
-    // A rotated sprite intersected with the axis-aligned mask isn't
-    // representable as a quad, so fall back to per-fragment clipping.
-    device_position = to_device_position_transformed(
-        unit_vertex, sprite.bounds, sprite.transformation, viewport_size);
-    tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
-    clip_distance = distance_from_clip_rect_transformed(
-        unit_vertex, sprite.bounds, sprite.content_mask.bounds, sprite.transformation);
-  }
+  float4 device_position = to_device_position_transformed(
+      unit_vertex, sprite.bounds, sprite.transformation, viewport_size);
+  float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
+  float4 clip_distance = distance_from_clip_rect_transformed(
+      unit_vertex, sprite.bounds, sprite.content_mask.bounds, sprite.transformation);
   float4 color = hsla_to_rgba(sprite.color);
   return MonochromeSpriteVertexOutput{
       device_position,
@@ -1034,9 +1013,13 @@ float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,
   return to_device_position_impl(position, input_viewport_size);
 }
 
-float4 to_device_position_transformed_impl(float2 position,
+float4 to_device_position_transformed(float2 unit_vertex, Bounds_ScaledPixels bounds,
                           TransformationMatrix transformation,
                           constant Size_DevicePixels *input_viewport_size) {
+  float2 position =
+      unit_vertex * float2(bounds.size.width, bounds.size.height) +
+      float2(bounds.origin.x, bounds.origin.y);
+
   // Apply the transformation matrix to the position via matrix multiplication.
   float2 transformed_position = float2(0, 0);
   transformed_position[0] = position[0] * transformation.rotation_scale[0][0] + position[1] * transformation.rotation_scale[0][1];
@@ -1051,16 +1034,6 @@ float4 to_device_position_transformed_impl(float2 position,
   float2 device_position =
       transformed_position / viewport_size * float2(2., -2.) + float2(-1., 1.);
   return float4(device_position, 0., 1.);
-}
-
-float4 to_device_position_transformed(float2 unit_vertex, Bounds_ScaledPixels bounds,
-                          TransformationMatrix transformation,
-                          constant Size_DevicePixels *input_viewport_size) {
-  float2 position =
-      unit_vertex * float2(bounds.size.width, bounds.size.height) +
-      float2(bounds.origin.x, bounds.origin.y);
-  return to_device_position_transformed_impl(position, transformation,
-                                             input_viewport_size);
 }
 
 
@@ -1144,7 +1117,6 @@ float blur_along_x(float x, float y, float sigma, float corner,
   return integral.y - integral.x;
 }
 
-// An empty intersection collapses to zero size, which rasterizes to nothing.
 ClippedVertex clip_to_mask(float2 unit_vertex, Bounds_ScaledPixels bounds,
                              Bounds_ScaledPixels mask) {
   float2 bounds_origin = float2(bounds.origin.x, bounds.origin.y);
@@ -1157,46 +1129,12 @@ ClippedVertex clip_to_mask(float2 unit_vertex, Bounds_ScaledPixels bounds,
 
   ClippedVertex result;
   result.position = origin + unit_vertex * size;
-  // The clipped rect is a subset of `bounds`, so a zero-extent axis has a
-  // zero numerator too; the guard only keeps 0/0 out of the result.
-  result.unit_vertex =
-      (result.position - bounds_origin) / max(bounds_size, float2(1e-30));
+  result.unit_vertex = (result.position - bounds_origin) / max(bounds_size, float2(1e-30));
   return result;
 }
 
-// Whether the transformation only scales and translates, keeping rectangles
-// axis-aligned in screen space. Zero scale is excluded so callers can safely
-// invert the transformation.
-bool transform_is_axis_aligned(TransformationMatrix transformation) {
-  return transformation.rotation_scale[0][1] == 0. &&
-         transformation.rotation_scale[1][0] == 0. &&
-         transformation.rotation_scale[0][0] != 0. &&
-         transformation.rotation_scale[1][1] != 0.;
-}
 
-// Maps the screen-space mask into pre-transform space. Only valid for
-// axis-aligned transformations; min/max normalization handles negative scale
-// (e.g. rotation by 180 degrees).
-Bounds_ScaledPixels mask_in_transform_space(Bounds_ScaledPixels mask,
-                                            TransformationMatrix transformation) {
-  float2 scale = float2(transformation.rotation_scale[0][0],
-                        transformation.rotation_scale[1][1]);
-  float2 translation = float2(transformation.translation[0],
-                              transformation.translation[1]);
-  float2 p0 = (float2(mask.origin.x, mask.origin.y) - translation) / scale;
-  float2 p1 = (float2(mask.origin.x + mask.size.width,
-                      mask.origin.y + mask.size.height) -
-               translation) /
-              scale;
-  float2 origin = min(p0, p1);
-  float2 size = max(p0, p1) - origin;
-  Bounds_ScaledPixels result = mask;
-  result.origin.x = origin.x;
-  result.origin.y = origin.y;
-  result.size.width = size.x;
-  result.size.height = size.y;
-  return result;
-}
+
 
 float4 distance_from_clip_rect_transformed(float2 unit_vertex, Bounds_ScaledPixels bounds,
                                Bounds_ScaledPixels clip_bounds, TransformationMatrix transformation) {
