@@ -19,7 +19,7 @@ pub enum VerticalAlignment {
 
 #[derive(Default, Clone, Copy)]
 pub enum RowIdentifiers {
-    /// Show original line numbers from CSV file
+    /// Show original line numbers from the source file
     #[default]
     SrcLines,
     /// Show sequential row numbers starting from 1

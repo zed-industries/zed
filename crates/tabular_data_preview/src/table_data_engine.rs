@@ -1,4 +1,4 @@
-//! This module defines core operations and config of tabular data view (CSV table)
+//! This module defines core operations and config of the tabular data view
 //! It operates in 2 coordinate systems:
 //! - `DataCellId` - indices of src data cells
 //! - `DisplayCellId` - indices of data after applied transformations like sorting/filtering, which is used to render cell on the screen

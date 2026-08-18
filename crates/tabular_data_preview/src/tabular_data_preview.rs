@@ -46,7 +46,7 @@ pub struct TabularDataPreviewPane {
     /// Stored here so that a new change cancels the previous in-flight computation.
     pub(crate) filter_sort_task: Option<Task<()>>,
     pub(crate) settings: TabularDataPreviewSettings,
-    /// Performance metrics for debugging and monitoring CSV operations.
+    /// Performance metrics for debugging and monitoring tabular data operations.
     pub(crate) performance_metrics: PerformanceMetrics,
     pub(crate) list_state: gpui::ListState,
     /// Cached row height, refreshed from the actual text line height on every render.
@@ -360,7 +360,7 @@ impl PerformanceMetrics {
     }
 }
 
-/// Holds state of column widths for a table component in CSV preview.
+/// Holds state of column widths for a table component in the tabular data preview.
 pub(crate) struct ColumnWidths {
     pub widths: Entity<ResizableColumnsState>,
 }

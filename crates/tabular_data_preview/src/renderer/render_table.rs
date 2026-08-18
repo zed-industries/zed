@@ -32,7 +32,7 @@ impl TabularDataPreviewPane {
 
         headers.push(self.create_row_identifier_header(cx));
 
-        // Add the actual CSV headers with sort buttons
+        // Add the actual data headers with sort buttons
         for i in 0..(cols - 1) {
             let header_text = self
                 .engine
@@ -123,7 +123,7 @@ impl TabularDataPreviewPane {
         let mut elements = Vec::with_capacity(cols);
         elements.push(this.create_row_identifier_cell(display_row, data_row, cx)?);
 
-        // Remaining columns: actual CSV data
+        // Remaining columns: actual table data
         for col in (0..this.engine.contents.number_of_cols).map(AnyColumn) {
             let table_cell = row.expect_get(col);
 

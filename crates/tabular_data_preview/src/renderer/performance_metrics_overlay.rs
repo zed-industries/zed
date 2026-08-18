@@ -1,7 +1,7 @@
-//! Performance metrics overlay for CSV preview debugging.
+//! Performance metrics overlay for tabular data preview debugging.
 //!
 //! Provides a semi-transparent overlay in the bottom-right corner showing
-//! CSV parsing performance metrics for developer experience.
+//! Parsing performance metrics for developer experience.
 
 use ui::{ActiveTheme, Context, IntoElement, ParentElement, Styled, StyledTypography, div};
 
@@ -10,7 +10,7 @@ use crate::{TabularDataPreviewPane, PerformanceMetrics};
 impl TabularDataPreviewPane {
     /// Renders a semi-transparent performance metrics overlay in the bottom-right corner.
     ///
-    /// Shows CSV parsing duration for debugging and performance monitoring.
+    /// Shows parsing duration for debugging and performance monitoring.
     /// The overlay is positioned absolutely and styled with reduced opacity.
     pub(crate) fn render_performance_metrics_overlay(
         &mut self,

@@ -132,7 +132,7 @@ impl TabularDataPreviewPane {
                 .await;
             let parse_duration = instant.elapsed();
             let parse_end_time: Instant = Instant::now();
-            log::debug!("Parsed CSV in {}ms", parse_duration.as_millis());
+            log::debug!("Parsed data in {}ms", parse_duration.as_millis());
             view.update(cx, move |view, cx| {
                 view.performance_metrics
                     .timings
@@ -168,7 +168,7 @@ pub fn from_buffer_with_delimiter(
     }
     let raw_headers = parsed_cells_with_positions[0].clone();
 
-    // Calculating the longest row, as CSV might have less headers than max row width
+    // Calculating the longest row, as the data might have fewer headers than max row width
     let Some(max_number_of_cols) = parsed_cells_with_positions.iter().map(|r| r.len()).max() else {
         return TableLikeContent::default();
     };
@@ -192,7 +192,7 @@ pub fn from_buffer_with_delimiter(
     }
 }
 
-/// Parse CSV and track byte positions for each cell
+/// Parse delimited text and track byte positions for each cell
 fn parse_delimited_text_with_positions(
     text: &str,
     delimiter: char,

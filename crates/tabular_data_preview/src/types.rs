@@ -7,7 +7,7 @@ mod table_cell;
 pub use table_like_content::*;
 mod table_like_content;
 
-/// Line number information for CSV rows
+/// Line number information for table rows
 #[derive(Debug, Clone, Copy)]
 pub enum LineNumber {
     /// Single line row
