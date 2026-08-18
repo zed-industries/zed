@@ -21,7 +21,6 @@ impl Render for TabularDataPreviewPane {
             .size_full()
             .bg(theme.colors().editor_background)
             .track_focus(&self.focus_handle)
-            .child(self.render_settings_panel(window, cx))
             .child({
                 let is_parsing = self.is_parsing;
                 if is_parsing || self.engine.contents.number_of_cols == 0 {
