@@ -21,14 +21,9 @@ fn migrate_one(obj: &mut serde_json::Map<String, Value>) -> Result<()> {
 
     *git_gutter_width = match git_gutter_width {
         Value::Number(n) => {
-            let width = n
-                .as_f64()
-                .ok_or_else(|| anyhow::anyhow!("Expected git_gutter_width to be a number"))?;
-            Value::Object(
-                [("custom".to_string(), Value::from(width))]
-                    .into_iter()
-                    .collect(),
-            )
+            serde_json::json!({
+                "custom": n
+            })
         }
         _ => return Ok(()),
     };
