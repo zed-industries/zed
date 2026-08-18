@@ -58,7 +58,7 @@ struct Background {
     // 1u is LinearGradient
     // 2u is PatternSlash
     uint tag;
-    // 0u is sRGB linear color
+    // 0u is sRGB color
     // 1u is Oklab color
     uint color_space;
     Hsla solid;
@@ -153,7 +153,7 @@ float3 srgb_to_linear(float3 color) {
     return pow(color, float3(2.2, 2.2, 2.2));
 }
 
-/// Hsla to linear RGBA conversion.
+/// Hsla to sRGB conversion.
 float4 hsla_to_rgba(Hsla hsla) {
     float h = hsla.h * 6.0; // Now, it's an angle but scaled in [0, 6) range
     float s = hsla.s;
