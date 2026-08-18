@@ -144,11 +144,13 @@ pub(crate) enum SourceLocationResolution {
 /// The result of serializing a live anchor.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SourceLocationSerialization {
-    /// The serialized location has the highest fidelity available for the
-    /// buffer's settled syntax state.
+    /// Parser-backed syntax was ready, so the serialized location carries the
+    /// highest available fidelity, including symbol information when an
+    /// enclosing symbol exists.
     Complete(DurableSourceLocation),
-    /// Parsing is in progress, so the serialized location contains a current
-    /// row and content marker but deliberately omits symbol information.
+    /// Parser-backed syntax was not ready (parsing, or no language assigned),
+    /// so the serialized location contains a current row and content marker
+    /// but deliberately omits symbol information.
     ///
     /// Consumers with previously complete metadata should preserve that
     /// metadata and update its fallback row instead of replacing it with this
@@ -336,15 +338,16 @@ impl SourceLocationResolver {
 
     /// Serializes an anchor resolvable in the captured snapshot.
     ///
-    /// While parsing, this returns
+    /// Unless parser-backed syntax is ready, this returns
     /// [`SourceLocationSerialization::Provisional`] with symbol information
-    /// omitted. Once parsing settles, it returns
-    /// [`SourceLocationSerialization::Complete`]. Syntax-unavailable buffers
-    /// produce complete content-only locations because no parser-backed symbol
-    /// information is expected for that snapshot.
+    /// omitted: symbols may be incomplete while parsing, and a
+    /// syntax-unavailable snapshot may simply predate language assignment, so
+    /// its content-only serialization must not overwrite previously complete
+    /// symbol metadata. Once parser-backed syntax is ready, it returns
+    /// [`SourceLocationSerialization::Complete`].
     pub fn serialize_anchor(&self, anchor: text::Anchor) -> Option<SourceLocationSerialization> {
         let row = self.row_for_anchor(anchor)?;
-        let serialization = if self.syntax_state == SourceLocationSyntaxState::Parsing {
+        let serialization = if self.syntax_state != SourceLocationSyntaxState::Ready {
             let content_marker = compute_content_marker(&self.snapshot, row);
             SourceLocationSerialization::Provisional(DurableSourceLocation {
                 fallback_row: row,
@@ -995,6 +998,40 @@ mod tests {
                 .expect("provisional content marker");
             assert_eq!(syntactic_location.symbol, None);
             assert_eq!(syntactic_location.content_marker.line_text, "target();");
+        });
+    }
+
+    #[gpui::test]
+    fn test_source_location_resolver_marks_serialization_provisional_without_syntax(
+        cx: &mut TestAppContext,
+    ) {
+        let buffer = cx.new(|cx| Buffer::local("heading\nbookmarked text\n", cx));
+
+        cx.update(|cx| {
+            let buffer = buffer.read(cx);
+            let snapshot = buffer.snapshot();
+            let anchor = snapshot.anchor_after(Point::new(1, 0));
+            let resolver = SourceLocationResolver::for_buffer(buffer);
+            assert_eq!(
+                resolver.syntax_state(),
+                SourceLocationSyntaxState::Unavailable
+            );
+            let serialized = resolver
+                .serialize_anchor(anchor)
+                .expect("resolvable anchor");
+            let SourceLocationSerialization::Provisional(serialized) = serialized else {
+                panic!("unavailable syntax should produce a provisional source location");
+            };
+
+            assert_eq!(serialized.fallback_row, 1);
+            let syntactic_location = serialized
+                .syntactic_location
+                .expect("provisional content marker");
+            assert_eq!(syntactic_location.symbol, None);
+            assert_eq!(
+                syntactic_location.content_marker.line_text,
+                "bookmarked text"
+            );
         });
     }
 
