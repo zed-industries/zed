@@ -844,7 +844,27 @@ impl GlobalWatcher {
             drop(state);
             match self.watch(path.as_path(), mode) {
                 Ok(()) => {}
-                Err(error) if mode == WatcherMode::Native && is_max_files_watch_error(&error) => {
+                Err(error)
+                    if mode == WatcherMode::Native && is_native_watch_saturation_error(&error) =>
+                {
+                    // On macOS all native paths share one FSEventStream, and a watch
+                    // registration tears the stream down before rebuilding it with the
+                    // new path appended. When that rebuild fails (fd budget exhausted:
+                    // each watched path costs ~11 descriptors), every previously
+                    // working watch is left dead and the failed path stays in notify's
+                    // path set, so any later registration would retry the same
+                    // oversized set and fail too. Unwatching the failed path rebuilds
+                    // the previous, known-good set, and the rescan tells the restored
+                    // registrations to resync whatever changed while the stream was
+                    // down (streams start at "now"; there is no event replay).
+                    #[cfg(target_os = "macos")]
+                    {
+                        self.unwatch(path.as_path(), mode).log_err();
+                        self.enqueue(
+                            mode,
+                            Ok(Event::new(EventKind::Other).set_flag(notify::event::Flag::Rescan)),
+                        );
+                    }
                     self.start_native_watch_limit_cooldown(path.as_path());
                     return Ok(None);
                 }
@@ -1081,10 +1101,28 @@ impl GlobalWatcher {
     }
 }
 
-fn is_max_files_watch_error(error: &anyhow::Error) -> bool {
+/// Whether a native watch registration failed because the OS won't accept any
+/// more watches from this process right now.
+///
+/// On Linux this is inotify's `MaxFilesWatch` (`ENOSPC`/`EMFILE` on
+/// `inotify_add_watch`). On macOS there is no distinct error kind: all native
+/// paths share one `FSEventStream` costing ~11 file descriptors per watched
+/// path, and when a rebuild of that stream exceeds the process fd budget,
+/// `FSEventStreamStart` returns false and notify's FSEvents backend surfaces
+/// it as a generic "unable to start FSEvent stream" error. Both mean the same
+/// thing — the process has saturated the OS watcher capacity — so the caller
+/// should roll back and back off via the cooldown rather than treat the path
+/// as permanently unwatchable (which would silently stop delivering file
+/// events, leaving buffers, the project panel, and git status stale).
+fn is_native_watch_saturation_error(error: &anyhow::Error) -> bool {
     error
         .downcast_ref::<notify::Error>()
-        .is_some_and(|error| matches!(&error.kind, notify::ErrorKind::MaxFilesWatch))
+        .is_some_and(|error| match &error.kind {
+            notify::ErrorKind::MaxFilesWatch => true,
+            #[cfg(target_os = "macos")]
+            notify::ErrorKind::Generic(message) => message.contains("FSEvent"),
+            _ => false,
+        })
 }
 
 static POLL_INTERVAL: LazyLock<Duration> = LazyLock::new(|| {
@@ -1162,6 +1200,7 @@ mod tests {
         watch_calls: Vec<PathBuf>,
         unwatch_calls: Vec<PathBuf>,
         fail_with_watch_limit: bool,
+        fail_with_fsevent_start: bool,
     }
 
     struct SharedFakeWatchBackend(Arc<Mutex<FakeWatchBackend>>);
@@ -1173,6 +1212,11 @@ mod tests {
             backend.watch_calls.push(path.clone());
             if backend.fail_with_watch_limit {
                 return Err(notify::Error::new(notify::ErrorKind::MaxFilesWatch));
+            }
+            if backend.fail_with_fsevent_start {
+                // Mirrors notify's macOS FSEvents backend when `FSEventStreamStart`
+                // returns false because the process has too many live streams.
+                return Err(notify::Error::generic("unable to start FSEvent stream"));
             }
             backend.watched_paths.insert(path);
             Ok(())
@@ -1329,6 +1373,66 @@ mod tests {
 
         let native_backend = native_backend.lock();
         assert_eq!(native_backend.watch_calls, &[first_path.to_path_buf()]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn fsevent_stream_start_failure_rolls_back_rescans_and_cools_down() {
+        // macOS has no distinct "too many watches" error kind: once the process
+        // exhausts its fd budget (~11 descriptors per path in the shared
+        // FSEventStream), the stream rebuild fails with a generic "unable to
+        // start FSEvent stream" — and because the rebuild tore down the previous
+        // stream first, every existing watch is dead at that point. The failed
+        // path must be rolled back (restoring the previous set), all native
+        // registrations told to rescan, and further registrations skipped for
+        // the cooldown instead of retrying the oversized set forever.
+        let native_backend = Arc::new(Mutex::new(FakeWatchBackend {
+            fail_with_fsevent_start: true,
+            ..Default::default()
+        }));
+        let (event_tx, event_rx) = async_channel::unbounded();
+        let watcher = GlobalWatcher {
+            state: Mutex::new(WatcherState {
+                watchers: Default::default(),
+                native_path_registrations: Default::default(),
+                poll_path_registrations: Default::default(),
+                cooldown_until: None,
+                last_registration: Default::default(),
+            }),
+            native_watcher: Mutex::new(Some(Box::new(SharedFakeWatchBackend(
+                native_backend.clone(),
+            )))),
+            poll_watcher: Mutex::new(None),
+            event_tx,
+        };
+        let first_path = Arc::<Path>::from(Path::new("/repo/first"));
+        let second_path = Arc::<Path>::from(Path::new("/repo/second"));
+
+        let first_registration = watcher
+            .add(first_path.clone(), WatcherMode::Native, false, |_| {})
+            .expect("fsevent start failure is handled as saturation, not an error");
+        let second_registration = watcher
+            .add(second_path, WatcherMode::Native, false, |_| {})
+            .expect("subsequent registration is skipped during cooldown");
+
+        assert!(first_registration.is_none());
+        assert!(second_registration.is_none());
+
+        // The cooldown means only the first path ever reaches the OS backend; the
+        // second is skipped without a watch call. The failed path is unwatched to
+        // restore the previous stream.
+        {
+            let native_backend = native_backend.lock();
+            assert_eq!(native_backend.watch_calls, &[first_path.to_path_buf()]);
+            assert_eq!(native_backend.unwatch_calls, &[first_path.to_path_buf()]);
+        }
+
+        // All native registrations are told to rescan the window in which the
+        // stream was down.
+        let (mode, event) = event_rx.try_recv().expect("rescan event enqueued");
+        assert_eq!(mode, WatcherMode::Native);
+        assert!(event.expect("rescan event is not an error").need_rescan());
+        assert!(event_rx.is_empty(), "only one rescan per saturation");
     }
 
     fn modify_event(path: &str) -> notify::Event {
