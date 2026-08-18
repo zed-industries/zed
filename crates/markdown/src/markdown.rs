@@ -2327,15 +2327,9 @@ impl Element for MarkdownElement {
                                 task_list_marker_for_item(&parsed_markdown.events, index)
                             {
                                 let source = &parsed_markdown.source()[range.clone()];
-                                let toggle_state = if checked {
-                                    ToggleState::Selected
-                                } else {
-                                    ToggleState::Unselected
-                                };
-
                                 let checkbox = Checkbox::new(
                                     ElementId::Name(source.to_string().into()),
-                                    toggle_state,
+                                    ToggleState::from(checked),
                                 )
                                 .fill();
 
@@ -3088,22 +3082,21 @@ fn alignment_to_text_align(alignment: Alignment) -> Option<TextAlign> {
     }
 }
 
+// The contents of loose list items are wrapped in a paragraph, so their task
+// marker follows `Start(Paragraph)` rather than `Start(Item)`.
 fn task_list_marker_for_item(
     events: &[(Range<usize>, MarkdownEvent)],
     item_index: usize,
 ) -> Option<(Range<usize>, bool)> {
     let next_index = item_index.checked_add(1)?;
-    match events.get(next_index)? {
+    let marker_index = match &events.get(next_index)?.1 {
+        MarkdownEvent::Start(MarkdownTag::Paragraph) => next_index.checked_add(1)?,
+        MarkdownEvent::TaskListMarker(_) => next_index,
+        _ => return None,
+    };
+
+    match events.get(marker_index)? {
         (range, MarkdownEvent::TaskListMarker(checked)) => Some((range.clone(), *checked)),
-        (_, MarkdownEvent::Start(MarkdownTag::Paragraph)) => {
-            let marker_index = next_index.checked_add(1)?;
-            let (range, event) = events.get(marker_index)?;
-            if let MarkdownEvent::TaskListMarker(checked) = event {
-                Some((range.clone(), *checked))
-            } else {
-                None
-            }
-        }
         _ => None,
     }
 }
@@ -4716,42 +4709,48 @@ mod tests {
     }
 
     #[test]
-    fn test_task_marker_lookup_handles_loose_and_nested_lists() {
-        let markdown = "- [ ] top task\n\n- [x] done task\n\n  - [x] nested done\n";
-        let events =
-            crate::parser::parse_markdown_with_options(markdown, false, false, false).events;
-        let item_indices = events
-            .iter()
-            .enumerate()
-            .filter_map(|(index, (_, event))| {
-                matches!(event, MarkdownEvent::Start(MarkdownTag::Item)).then_some(index)
-            })
-            .collect::<Vec<_>>();
+    fn test_task_list_marker_for_item() {
+        // Small helper that takes the Markdown contents and returns a vector of
+        // all task list marker strings as well as whether they are checked or
+        // not.
+        let task_marker_states = |markdown: &str| -> Vec<(String, bool)> {
+            let events = parse_markdown_with_options(markdown, false, false, false).events;
 
-        assert_eq!(item_indices.len(), 3);
-        let marker_ranges = item_indices
-            .into_iter()
-            .map(|item_index| {
-                let (range, checked) =
-                    task_list_marker_for_item(&events, item_index).expect("task marker");
-                (markdown[range.clone()].to_string(), checked)
-            })
-            .collect::<Vec<_>>();
+            events
+                .iter()
+                .enumerate()
+                .filter_map(|(index, (_, event))| {
+                    matches!(event, MarkdownEvent::Start(MarkdownTag::Item))
+                        .then(|| task_list_marker_for_item(&events, index))
+                        .flatten()
+                })
+                .map(|(range, checked)| (markdown[range.clone()].to_string(), checked))
+                .collect::<Vec<_>>()
+        };
 
         assert_eq!(
-            marker_ranges,
+            task_marker_states("- [ ] task"),
+            vec![("[ ]".to_string(), false)]
+        );
+        assert_eq!(
+            task_marker_states("- [x] first\n\n- [ ] second"),
+            vec![("[x]".to_string(), true), ("[ ]".to_string(), false)]
+        );
+        assert_eq!(
+            task_marker_states("- [ ] top task\n\n- [x] done task\n\n  - [x] nested done\n"),
             vec![
                 ("[ ]".to_string(), false),
                 ("[x]".to_string(), true),
-                ("[x]".to_string(), true),
+                ("[x]".to_string(), true)
             ]
         );
+        assert_eq!(task_marker_states("- ordinary item"), vec![]);
     }
 
     #[test]
     fn test_table_checkbox_detection() {
         let md = "| Done |\n|------|\n| [x] |\n| [ ] |";
-        let events = crate::parser::parse_markdown_with_options(md, false, false, false).events;
+        let events = parse_markdown_with_options(md, false, false, false).events;
 
         let mut in_table = false;
         let mut cell_texts: Vec<String> = Vec::new();
@@ -4793,7 +4792,7 @@ mod tests {
     #[test]
     fn test_table_checkbox_marker_source_range() {
         let md = "| Done |\n|------|\n|  [x]  |\n| [ ] |";
-        let events = crate::parser::parse_markdown_with_options(md, false, false, false).events;
+        let events = parse_markdown_with_options(md, false, false, false).events;
 
         let mut in_cell = false;
         let mut pending_text = String::new();
