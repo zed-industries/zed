@@ -7556,30 +7556,12 @@ impl GitPanel {
         } else {
             "Discard Changes"
         };
-        let section = self
-            .section_for_entry_index(ix)
-            .map(|section| (section, GitHeaderEntry { header: section }.title()));
         let context_menu = ContextMenu::build(window, cx, |context_menu, _, _| {
             let is_created = entry.status.is_created();
             context_menu
                 .context(self.focus_handle.clone())
                 .action(stage_title, ToggleStaged.boxed_clone())
                 .action(restore_title, git::RestoreFile::default().boxed_clone())
-                .when_some(section, |context_menu, (section, title)| {
-                    let section_intent = StageIntent::for_section(section);
-                    context_menu
-                        .separator()
-                        .when(section_intent != StageIntent::Unstage, |context_menu| {
-                            context_menu
-                                .action(format!("Stage {title}"), git::StageSection.boxed_clone())
-                        })
-                        .when(section_intent != StageIntent::Stage, |context_menu| {
-                            context_menu.action(
-                                format!("Unstage {title}"),
-                                git::UnstageSection.boxed_clone(),
-                            )
-                        })
-                })
                 .separator()
                 .action("Unstaged Changes", ViewUnstagedChanges.boxed_clone())
                 .action("Staged Changes", ViewStagedChanges.boxed_clone())
