@@ -540,7 +540,7 @@ async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "8
 async-process = "2.5.0"
 async-recursion = "1.0.0"
 async-std = { version = "1.12", features = ["unstable"] }
-async-tar = "0.6"
+async-tar = { git = "https://github.com/zed-industries/async-tar", rev = "bd3ad6f89df9a9da7a8535958756d6bf465936a0" }
 async-task = "4.7"
 async-trait = "0.1"
 async-tungstenite = "0.31.0"
