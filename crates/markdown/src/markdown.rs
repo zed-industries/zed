@@ -54,6 +54,12 @@ use util::ResultExt;
 
 use crate::parser::CodeBlockKind;
 
+const MERMAID_MAX_ZOOM: f32 = 2.0;
+/// Zoom levels within this distance of 1.0 snap back to exactly 1.0 so users
+/// can easily return to the default size.
+const MERMAID_ZOOM_SNAP_TOLERANCE: f32 = 0.05;
+const MERMAID_ZOOM_DEBOUNCE: Duration = Duration::from_millis(300);
+
 /// A callback function that can be used to customize the style of links based on the destination URL.
 /// If the callback returns `None`, the default link style will be used.
 type LinkStyleCallback = Rc<dyn Fn(&str, &App) -> Option<TextStyleRefinement>>;
@@ -61,6 +67,9 @@ pub type CodeSpanLinkCallback = Arc<dyn Fn(&str, &App) -> Option<SharedString> +
 type UrlHoverCallback = Rc<dyn Fn(Option<SharedString>, &mut Window, &mut App)>;
 type SourceClickCallback = Box<dyn Fn(usize, usize, &mut Window, &mut App) -> bool>;
 type CheckboxToggleCallback = Rc<dyn Fn(Range<usize>, bool, &mut Window, &mut App)>;
+/// Invoked when a mermaid diagram's zoom level changes (via scroll gesture or
+/// the reset button), so a scroll container can keep the diagram anchored.
+pub type MermaidZoomCallback = Rc<dyn Fn(&mut Window, &mut App)>;
 
 #[derive(Clone, Copy, Default)]
 pub struct BlockQuoteKindColors {
@@ -389,6 +398,53 @@ impl MarkdownStyle {
     }
 }
 
+/// Per-diagram view state, keyed by source offset in [`Markdown::mermaid_views`].
+struct MermaidViewState {
+    /// Whether the source code is shown instead of the rendered diagram.
+    showing_code: bool,
+    /// The display scale relative to the diagram's natural size; 1.0 is 1:1.
+    zoom: f32,
+    /// Whether the user zoomed out to the fit-to-width floor. While set, the
+    /// zoom tracks the container width so the diagram stays fully visible
+    /// when the container is resized, instead of keeping a stale absolute
+    /// zoom computed against the old width.
+    zoomed_to_fit: bool,
+    /// Horizontal scroll position, used when the diagram overflows.
+    scroll_handle: ScrollHandle,
+    /// The pending debounced re-raster scheduled by the last zoom change.
+    debounce_task: Option<Task<()>>,
+    /// Overrides the scroll container width, which tests can't obtain from
+    /// the scroll handle since its bounds are only set during layout.
+    #[cfg(test)]
+    container_width_for_test: Option<Pixels>,
+}
+
+impl MermaidViewState {
+    /// The width of the diagram's scroll container as of the last layout,
+    /// if it has been laid out.
+    fn container_width(&self) -> Option<Pixels> {
+        #[cfg(test)]
+        if let Some(width) = self.container_width_for_test {
+            return Some(width);
+        }
+        Some(self.scroll_handle.bounds().size.width).filter(|width| *width > px(0.))
+    }
+}
+
+impl Default for MermaidViewState {
+    fn default() -> Self {
+        Self {
+            showing_code: false,
+            zoom: 1.0,
+            zoomed_to_fit: false,
+            scroll_handle: ScrollHandle::new(),
+            debounce_task: None,
+            #[cfg(test)]
+            container_width_for_test: None,
+        }
+    }
+}
+
 pub struct Markdown {
     source: SharedString,
     selection: Selection,
@@ -408,14 +464,19 @@ pub struct Markdown {
     options: MarkdownOptions,
     mermaid_state: MermaidState,
     _mermaid_theme_subscription: Option<Subscription>,
-    mermaid_showing_code: HashSet<usize>,
+    /// Per-diagram view state (current tab, zoom, scroll position, and pending
+    /// debounced re-raster) keyed by source offset. Distinct from
+    /// [`MermaidState`], which caches the rendered diagrams themselves keyed by
+    /// contents. All entries are retained against the parsed diagrams on each
+    /// reparse, so a single map keeps that bookkeeping in one place.
+    mermaid_views: HashMap<usize, MermaidViewState>,
     copied_code_blocks: HashSet<ElementId>,
     wrapped_code_blocks: HashSet<usize>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
     context_menu_link: Option<SharedString>,
     context_menu_selected_text: Option<SharedString>,
     context_menu_selected_markdown: Option<SharedString>,
-    search_highlights: Vec<Range<usize>>,
+    search_highlights: Rc<[Range<usize>]>,
     active_search_highlight: Option<usize>,
 }
 
@@ -603,14 +664,14 @@ impl Markdown {
             options,
             mermaid_state: MermaidState::default(),
             _mermaid_theme_subscription: theme_subscription,
-            mermaid_showing_code: HashSet::default(),
+            mermaid_views: HashMap::default(),
             copied_code_blocks: HashSet::default(),
             wrapped_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
             context_menu_link: None,
             context_menu_selected_text: None,
             context_menu_selected_markdown: None,
-            search_highlights: Vec::new(),
+            search_highlights: Rc::default(),
             active_search_highlight: None,
         };
         this.parse(cx);
@@ -660,19 +721,159 @@ impl Markdown {
             return;
         }
 
-        self.mermaid_state.clear();
-        self.mermaid_state.update(&self.parsed_markdown, cx);
+        self.mermaid_state.clear(cx);
+        let mermaid_views = &self.mermaid_views;
+        self.mermaid_state.update(
+            &self.parsed_markdown,
+            |source_offset| {
+                mermaid_views
+                    .get(&source_offset)
+                    .map_or(1.0, |view| view.zoom)
+            },
+            cx,
+        );
         cx.notify();
     }
 
     pub(crate) fn is_mermaid_showing_code(&self, source_offset: usize) -> bool {
-        self.mermaid_showing_code.contains(&source_offset)
+        self.mermaid_views
+            .get(&source_offset)
+            .is_some_and(|view| view.showing_code)
     }
 
     pub(crate) fn toggle_mermaid_tab(&mut self, source_offset: usize) {
-        if !self.mermaid_showing_code.remove(&source_offset) {
-            self.mermaid_showing_code.insert(source_offset);
+        let view = self.mermaid_views.entry(source_offset).or_default();
+        view.showing_code = !view.showing_code;
+    }
+
+    pub(crate) fn mermaid_zoom_level(&self, source_offset: usize) -> f32 {
+        self.mermaid_views
+            .get(&source_offset)
+            .map_or(1.0, |view| view.zoom)
+    }
+
+    /// The smallest zoom level for a diagram: the scale that makes it span
+    /// the content width, capped at 1.0 so diagrams that already fit are
+    /// never zoomed out below their natural size. Falls back to 1.0 when the
+    /// diagram has no raster yet or the container hasn't been laid out.
+    fn mermaid_min_zoom_level(&self, source_offset: usize) -> f32 {
+        let Some(diagram) = self.parsed_markdown.mermaid_diagrams.get(&source_offset) else {
+            return 1.0;
+        };
+        let Some(natural_size) = self.mermaid_state.natural_size(&diagram.contents) else {
+            return 1.0;
+        };
+        let Some(container_width) = self
+            .mermaid_views
+            .get(&source_offset)
+            .and_then(|view| view.container_width())
+        else {
+            return 1.0;
+        };
+        if natural_size.width <= container_width {
+            return 1.0;
         }
+        container_width / natural_size.width
+    }
+
+    pub(crate) fn set_mermaid_zoom_level(
+        &mut self,
+        source_offset: usize,
+        zoom: f32,
+        cx: &mut Context<Self>,
+    ) {
+        let min_zoom = self.mermaid_min_zoom_level(source_offset);
+        let requested_zoom = zoom;
+        let mut zoom = zoom.clamp(min_zoom, MERMAID_MAX_ZOOM);
+        if (zoom - 1.0).abs() <= MERMAID_ZOOM_SNAP_TOLERANCE {
+            zoom = 1.0;
+        }
+        // The user zoomed out to (or past) the fit-to-width floor. From here
+        // on the zoom tracks the container width (see
+        // `effective_mermaid_zoom_level`), until the user zooms back in. A
+        // zoom landing exactly at 1.0 only sticks when it was clamped, so
+        // resetting to the natural size never turns tracking on.
+        let zoomed_to_fit = requested_zoom < min_zoom || (zoom <= min_zoom && zoom < 1.0);
+
+        let debounce_task = self.schedule_mermaid_rerasterize(source_offset, cx);
+        let view = self.mermaid_views.entry(source_offset).or_default();
+        view.zoom = zoom;
+        view.zoomed_to_fit = zoomed_to_fit;
+        view.debounce_task = Some(debounce_task);
+        cx.notify();
+    }
+
+    /// The zoom level to display a diagram at, syncing a fit-to-width zoom
+    /// with the current container width. Called at render time so that a
+    /// fully zoomed-out diagram stays stuck to the container width when the
+    /// container is resized, rather than keeping a stale absolute zoom.
+    pub(crate) fn effective_mermaid_zoom_level(
+        &mut self,
+        source_offset: usize,
+        cx: &mut Context<Self>,
+    ) -> f32 {
+        let zoom = self.mermaid_zoom_level(source_offset);
+        let zoomed_to_fit = self
+            .mermaid_views
+            .get(&source_offset)
+            .is_some_and(|view| view.zoomed_to_fit);
+        if !zoomed_to_fit {
+            return zoom;
+        }
+        let min_zoom = self.mermaid_min_zoom_level(source_offset);
+        if (min_zoom - zoom).abs() < 0.001 {
+            return zoom;
+        }
+        let debounce_task = self.schedule_mermaid_rerasterize(source_offset, cx);
+        if let Some(view) = self.mermaid_views.get_mut(&source_offset) {
+            view.zoom = min_zoom;
+            view.debounce_task = Some(debounce_task);
+        }
+        min_zoom
+    }
+
+    /// Schedules a debounced re-raster of a diagram at its current zoom.
+    /// Storing the returned task in `MermaidViewState::debounce_task`
+    /// replaces (and thereby cancels) the previous timer, debouncing the
+    /// expensive re-raster until zoom changes settle. Until then, the
+    /// existing raster is displayed scaled to the new zoom.
+    fn schedule_mermaid_rerasterize(
+        &self,
+        source_offset: usize,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(MERMAID_ZOOM_DEBOUNCE).await;
+            this.update(cx, |this, cx| {
+                if let Some(view) = this.mermaid_views.get_mut(&source_offset) {
+                    view.debounce_task = None;
+                }
+                this.rerasterize_mermaid_diagram(source_offset, cx);
+            })
+            .ok();
+        })
+    }
+
+    pub(crate) fn mermaid_scroll_handle(&mut self, source_offset: usize) -> ScrollHandle {
+        self.mermaid_views
+            .entry(source_offset)
+            .or_default()
+            .scroll_handle
+            .clone()
+    }
+
+    /// Re-rasterizes a single mermaid diagram at exactly the scale it is
+    /// displayed at, reusing the cached parsed SVG so that neither mermaid
+    /// layout nor SVG parsing is re-run. While the new raster is pending, the
+    /// previous image keeps being displayed.
+    fn rerasterize_mermaid_diagram(&mut self, source_offset: usize, cx: &mut Context<Self>) {
+        let Some(diagram) = self.parsed_markdown.mermaid_diagrams.get(&source_offset) else {
+            return;
+        };
+        let contents = diagram.contents.clone();
+        let zoom = self.mermaid_zoom_level(source_offset);
+        self.mermaid_state.rerasterize_diagram(&contents, zoom, cx);
+        cx.notify();
     }
 
     fn clear_code_block_scroll_handles(&mut self) {
@@ -820,7 +1021,7 @@ impl Markdown {
         self.pending_autoscroll = None;
         self.pending_parse = None;
         self.should_reparse = false;
-        self.search_highlights.clear();
+        self.search_highlights = Rc::default();
         self.active_search_highlight = None;
         // Don't clear parsed_markdown here - keep existing content visible until new parse completes
         self.parse(cx);
@@ -871,7 +1072,7 @@ impl Markdown {
                 .windows(2)
                 .all(|ranges| (ranges[0].start, ranges[0].end) <= (ranges[1].start, ranges[1].end))
         );
-        self.search_highlights = highlights;
+        self.search_highlights = highlights.into();
         self.active_search_highlight =
             active.filter(|active| *active < self.search_highlights.len());
         cx.notify();
@@ -879,7 +1080,7 @@ impl Markdown {
 
     pub fn clear_search_highlights(&mut self, cx: &mut Context<Self>) {
         if !self.search_highlights.is_empty() || self.active_search_highlight.is_some() {
-            self.search_highlights.clear();
+            self.search_highlights = Rc::default();
             self.active_search_highlight = None;
             cx.notify();
         }
@@ -977,7 +1178,7 @@ impl Markdown {
             };
             self.active_root_block = None;
             self.images_by_source_offset.clear();
-            self.mermaid_state.clear();
+            self.mermaid_state.clear(cx);
             cx.notify();
             cx.refresh_windows();
             return;
@@ -1121,12 +1322,21 @@ impl Markdown {
                 }
                 if this.options.render_mermaid_diagrams {
                     let parsed_markdown = this.parsed_markdown.clone();
-                    this.mermaid_state.update(&parsed_markdown, cx);
-                    this.mermaid_showing_code
-                        .retain(|offset| parsed_markdown.mermaid_diagrams.contains_key(offset));
+                    this.mermaid_views
+                        .retain(|offset, _| parsed_markdown.mermaid_diagrams.contains_key(offset));
+                    let mermaid_views = &this.mermaid_views;
+                    this.mermaid_state.update(
+                        &parsed_markdown,
+                        |source_offset| {
+                            mermaid_views
+                                .get(&source_offset)
+                                .map_or(1.0, |view| view.zoom)
+                        },
+                        cx,
+                    );
                 } else {
-                    this.mermaid_state.clear();
-                    this.mermaid_showing_code.clear();
+                    this.mermaid_state.clear(cx);
+                    this.mermaid_views.clear();
                 }
                 this.pending_parse.take();
                 if this.should_reparse {
@@ -1300,9 +1510,15 @@ pub struct MarkdownElement {
     code_span_link: Option<CodeSpanLinkCallback>,
     on_source_click: Option<SourceClickCallback>,
     on_checkbox_toggle: Option<CheckboxToggleCallback>,
-    image_resolver: Option<Box<dyn Fn(&str) -> Option<ImageSource>>>,
+    on_mermaid_zoom: Option<MermaidZoomCallback>,
+    image_resolver: Option<Box<dyn Fn(&str, &App) -> Option<ImageSource>>>,
     show_root_block_markers: bool,
     autoscroll: AutoscrollBehavior,
+    /// Test-only hook to observe the laid-out text when this element is
+    /// rendered beneath a view, where the layout state isn't otherwise
+    /// reachable.
+    #[cfg(test)]
+    on_render: Option<Box<dyn Fn(RenderedText)>>,
 }
 
 impl MarkdownElement {
@@ -1320,9 +1536,12 @@ impl MarkdownElement {
             code_span_link: None,
             on_source_click: None,
             on_checkbox_toggle: None,
+            on_mermaid_zoom: None,
             image_resolver: None,
             show_root_block_markers: false,
             autoscroll: AutoscrollBehavior::Propagate,
+            #[cfg(test)]
+            on_render: None,
         }
     }
 
@@ -1349,6 +1568,14 @@ impl MarkdownElement {
 
     pub fn code_block_renderer(mut self, variant: CodeBlockRenderer) -> Self {
         self.code_block_renderer = variant;
+        self
+    }
+
+    /// Registers a test-only callback invoked with the laid-out text each
+    /// time this element runs layout.
+    #[cfg(test)]
+    pub(crate) fn on_render(mut self, callback: impl Fn(RenderedText) + 'static) -> Self {
+        self.on_render = Some(Box::new(callback));
         self
     }
 
@@ -1392,9 +1619,17 @@ impl MarkdownElement {
         self
     }
 
+    /// Registers a callback invoked when a mermaid diagram's zoom level changes.
+    /// Consumers that scroll the markdown can use this to keep the diagram's
+    /// position anchored while it grows or shrinks.
+    pub fn on_mermaid_zoom(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        self.on_mermaid_zoom = Some(Rc::new(handler));
+        self
+    }
+
     pub fn image_resolver(
         mut self,
-        resolver: impl Fn(&str) -> Option<ImageSource> + 'static,
+        resolver: impl Fn(&str, &App) -> Option<ImageSource> + 'static,
     ) -> Self {
         self.image_resolver = Some(Box::new(resolver));
         self
@@ -1787,70 +2022,6 @@ impl MarkdownElement {
         builder.pop_div();
     }
 
-    fn paint_highlight_range(
-        start: usize,
-        end: usize,
-        color: Hsla,
-        rendered_text: &RenderedText,
-        window: &mut Window,
-    ) {
-        for bounds in rendered_text.bounds_for_source_range(start..end) {
-            window.paint_quad(quad(
-                bounds,
-                Pixels::ZERO,
-                color,
-                Edges::default(),
-                Hsla::transparent_black(),
-                BorderStyle::default(),
-            ));
-        }
-    }
-
-    fn paint_selection(&self, rendered_text: &RenderedText, window: &mut Window, cx: &mut App) {
-        let selection = self.markdown.read(cx).selection.clone();
-        Self::paint_highlight_range(
-            selection.start,
-            selection.end,
-            self.style.selection_background_color,
-            rendered_text,
-            window,
-        );
-    }
-
-    fn paint_search_highlights(
-        &self,
-        rendered_text: &RenderedText,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        let markdown = self.markdown.read(cx);
-        let active_index = markdown.active_search_highlight;
-        let colors = cx.theme().colors();
-
-        let highlight_bounds = rendered_text.bounds_for_sorted_source_ranges(
-            markdown
-                .search_highlights
-                .iter()
-                .enumerate()
-                .map(|(ix, range)| (ix, range.clone())),
-        );
-        for (highlight_ix, bounds) in highlight_bounds {
-            let color = if Some(highlight_ix) == active_index {
-                colors.search_active_match_background
-            } else {
-                colors.search_match_background
-            };
-            window.paint_quad(quad(
-                bounds,
-                Pixels::ZERO,
-                color,
-                Edges::default(),
-                Hsla::transparent_black(),
-                BorderStyle::default(),
-            ));
-        }
-    }
-
     fn paint_mouse_listeners(
         &mut self,
         hitbox: &Hitbox,
@@ -2172,10 +2343,29 @@ impl Element for MarkdownElement {
         window: &mut Window,
         cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+        let highlights = {
+            let markdown = self.markdown.read(cx);
+            let colors = cx.theme().colors();
+            let selection = &markdown.selection;
+            MarkdownHighlights {
+                search_highlights: markdown.search_highlights.clone(),
+                active_search_highlight: markdown.active_search_highlight,
+                search_match_color: colors.search_match_background,
+                active_search_match_color: colors.search_active_match_background,
+                selection: (selection.start < selection.end).then(|| {
+                    (
+                        selection.start..selection.end,
+                        self.style.selection_background_color,
+                    )
+                }),
+                next_search_highlight_ix: 0,
+            }
+        };
         let mut builder = MarkdownElementBuilder::new(
             &self.style.container_style,
             self.style.base_text_style.clone(),
             self.style.syntax.clone(),
+            highlights,
         );
         let (parsed_markdown, images, active_root_block, render_mermaid_diagrams, mermaid_state) = {
             let markdown = self.markdown.read(cx);
@@ -2264,7 +2454,7 @@ impl Element for MarkdownElement {
                             } else if let Some(source) = self
                                 .image_resolver
                                 .as_ref()
-                                .and_then(|resolve| resolve(dest_url.as_ref()))
+                                .and_then(|resolve| resolve(dest_url.as_ref(), cx))
                             {
                                 current_img_block_range = Some(range.clone());
                                 self.push_markdown_image(
@@ -2316,8 +2506,13 @@ impl Element for MarkdownElement {
                                 && let Some(mermaid_diagram) =
                                     parsed_markdown.mermaid_diagrams.get(&range.start)
                             {
-                                let showing_code =
-                                    self.markdown.read(cx).is_mermaid_showing_code(range.start);
+                                let (showing_code, zoom) =
+                                    self.markdown.update(cx, |markdown, cx| {
+                                        (
+                                            markdown.is_mermaid_showing_code(range.start),
+                                            markdown.effective_mermaid_zoom_level(range.start, cx),
+                                        )
+                                    });
                                 let copy_button_visibility = match &self.code_block_renderer {
                                     CodeBlockRenderer::Default {
                                         copy_button_visibility,
@@ -2334,7 +2529,11 @@ impl Element for MarkdownElement {
                                         self.markdown.clone(),
                                         range.start,
                                         showing_code,
+                                        zoom,
                                         copy_button_visibility,
+                                        self.on_mermaid_zoom.clone(),
+                                        window,
+                                        cx,
                                     ),
                                 );
                                 rendered_mermaid_block = true;
@@ -2556,23 +2755,31 @@ impl Element for MarkdownElement {
                             builder.table.start(alignments.clone());
 
                             let column_count = alignments.len();
+                            builder.push_div(div().flex(), range, markdown_end);
                             builder.push_div(
                                 div()
                                     .id(("table", range.start))
+                                    .debug_selector(|| "markdown_table".into())
+                                    .min_w_0()
                                     .grid()
-                                    .grid_cols(column_count as u16)
                                     .when(self.style.table_columns_min_size, |this| {
-                                        this.grid_cols_min_content(column_count as u16)
+                                        this.w_full().grid_cols_min_content(column_count as u16)
                                     })
                                     .when(!self.style.table_columns_min_size, |this| {
-                                        this.grid_cols(column_count as u16)
+                                        this.grid_cols_max_content(column_count as u16)
                                     })
-                                    .w_full()
                                     .mb_2()
                                     .border(px(1.5))
                                     .border_color(cx.theme().colors().border)
                                     .rounded_sm()
-                                    .overflow_x_scroll(),
+                                    .restrict_scroll_to_axis()
+                                    .custom_scrollbars(
+                                        Scrollbars::new(ScrollAxes::Horizontal)
+                                            .id(("markdown-table-scrollbar", range.start))
+                                            .notify_content(),
+                                        window,
+                                        cx,
+                                    ),
                                 range,
                                 markdown_end,
                             );
@@ -2750,6 +2957,7 @@ impl Element for MarkdownElement {
                     }
                     MarkdownTagEnd::Table => {
                         builder.pop_div();
+                        builder.pop_div();
                         builder.table.end();
                     }
                     MarkdownTagEnd::TableHead => {
@@ -2867,6 +3075,10 @@ impl Element for MarkdownElement {
                 .update(cx, |markdown, _| markdown.clear_code_block_scroll_handles());
         }
         let mut rendered_markdown = builder.build();
+        #[cfg(test)]
+        if let Some(on_render) = self.on_render.as_ref() {
+            on_render(rendered_markdown.text.clone());
+        }
         let child_layout_id = rendered_markdown.element.request_layout(window, cx);
         let layout_id = window.request_layout(gpui::Style::default(), [child_layout_id], cx);
         (layout_id, rendered_markdown)
@@ -2925,8 +3137,6 @@ impl Element for MarkdownElement {
 
         self.paint_mouse_listeners(hitbox, &rendered_markdown.text, window, cx);
         rendered_markdown.element.paint(window, cx);
-        self.paint_search_highlights(&rendered_markdown.text, window, cx);
-        self.paint_selection(&rendered_markdown.text, window, cx);
     }
 }
 
@@ -3211,7 +3421,7 @@ struct MetadataCellStyle {
 
 struct MarkdownElementBuilder {
     div_stack: Vec<DivStackEntry>,
-    rendered_lines: Vec<RenderedLine>,
+    rendered_lines: Vec<Rc<RenderedLine>>,
     pending_line: PendingLine,
     rendered_links: Vec<RenderedLink>,
     rendered_image_links: Vec<RenderedImageLink>,
@@ -3226,6 +3436,61 @@ struct MarkdownElementBuilder {
     list_stack: Vec<ListStackEntry>,
     table: TableState,
     syntax_theme: Arc<SyntaxTheme>,
+    highlights: MarkdownHighlights,
+}
+
+struct MarkdownHighlights {
+    /// Search highlights, sorted by range start.
+    search_highlights: Rc<[Range<usize>]>,
+    active_search_highlight: Option<usize>,
+    search_match_color: Hsla,
+    active_search_match_color: Hsla,
+    selection: Option<(Range<usize>, Hsla)>,
+    /// Index of the first search highlight that may intersect the next line.
+    next_search_highlight_ix: usize,
+}
+
+impl MarkdownHighlights {
+    /// Returns the highlighted ranges intersecting the given source range,
+    /// clamped to it, in paint order.
+    fn highlights_for_line(
+        &mut self,
+        source_range: Range<usize>,
+    ) -> SmallVec<[(Range<usize>, Hsla); 1]> {
+        let mut highlights = SmallVec::new();
+
+        self.next_search_highlight_ix += self.search_highlights[self.next_search_highlight_ix..]
+            .iter()
+            .take_while(|range| range.end <= source_range.start)
+            .count();
+
+        for (ix, range) in self
+            .search_highlights
+            .iter()
+            .enumerate()
+            .skip(self.next_search_highlight_ix)
+        {
+            if range.start >= source_range.end {
+                break;
+            }
+            let clamped = range.start.max(source_range.start)..range.end.min(source_range.end);
+            if clamped.start < clamped.end {
+                let color = if Some(ix) == self.active_search_highlight {
+                    self.active_search_match_color
+                } else {
+                    self.search_match_color
+                };
+                highlights.push((clamped, color));
+            }
+        }
+        if let Some((range, color)) = &self.selection {
+            let clamped = range.start.max(source_range.start)..range.end.min(source_range.end);
+            if clamped.start < clamped.end {
+                highlights.push((clamped, *color));
+            }
+        }
+        highlights
+    }
 }
 
 struct DivStackEntry {
@@ -3264,6 +3529,7 @@ impl MarkdownElementBuilder {
         container_style: &StyleRefinement,
         base_text_style: TextStyle,
         syntax_theme: Arc<SyntaxTheme>,
+        highlights: MarkdownHighlights,
     ) -> Self {
         Self {
             div_stack: vec![{
@@ -3286,6 +3552,7 @@ impl MarkdownElementBuilder {
             list_stack: Vec::new(),
             table: TableState::default(),
             syntax_theme,
+            highlights,
         }
     }
 
@@ -3596,7 +3863,7 @@ impl MarkdownElementBuilder {
         text_style.color = Hsla::transparent_black();
         let text = "\u{200B}";
         let styled_text = StyledText::new(text).with_runs(vec![text_style.to_run(text.len())]);
-        self.rendered_lines.push(RenderedLine {
+        self.rendered_lines.push(Rc::new(RenderedLine {
             layout: styled_text.layout().clone(),
             source_mappings: vec![SourceMapping {
                 rendered_index: 0,
@@ -3605,7 +3872,8 @@ impl MarkdownElementBuilder {
             source_end: source_range.end,
             language: None,
             text_align: TextAlign::Left,
-        });
+            highlights: SmallVec::new(),
+        }));
         div()
             .absolute()
             .top_0()
@@ -3622,15 +3890,36 @@ impl MarkdownElementBuilder {
             return;
         }
 
+        let highlights = line
+            .source_mappings
+            .first()
+            .map(|first_mapping| {
+                self.highlights
+                    .highlights_for_line(first_mapping.source_index..self.current_source_index)
+            })
+            .unwrap_or_default();
         let text = StyledText::new(line.text).with_runs(line.runs);
-        self.rendered_lines.push(RenderedLine {
+        let rendered_line = Rc::new(RenderedLine {
             layout: text.layout().clone(),
             source_mappings: line.source_mappings,
             source_end: self.current_source_index,
             language: self.code_block_stack.last().cloned().flatten(),
             text_align,
+            highlights,
         });
-        self.append_child(text.into_any());
+        if rendered_line.highlights.is_empty() {
+            self.rendered_lines.push(rendered_line);
+            self.append_child(text.into_any());
+        } else {
+            self.rendered_lines.push(rendered_line.clone());
+            self.append_child(
+                HighlightedLine {
+                    text: text.into_any(),
+                    line: rendered_line,
+                }
+                .into_any_element(),
+            );
+        }
     }
 
     fn build(mut self) -> RenderedMarkdown {
@@ -3648,15 +3937,206 @@ impl MarkdownElementBuilder {
     }
 }
 
+/// Wraps a rendered line's text and paints the line's highlight quads during the
+/// line's own paint, so the ancestor content masks clip them like they clip the
+/// glyphs themselves.
+struct HighlightedLine {
+    text: AnyElement,
+    line: Rc<RenderedLine>,
+}
+
+impl Element for HighlightedLine {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+        (self.text.request_layout(window, cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self::PrepaintState {
+        self.text.prepaint(window, cx);
+    }
+
+    fn paint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        _prepaint: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.text.paint(window, cx);
+        self.line.paint_highlights(window);
+    }
+}
+
+impl IntoElement for HighlightedLine {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
 struct RenderedLine {
     layout: TextLayout,
     source_mappings: Vec<SourceMapping>,
     source_end: usize,
     language: Option<Arc<Language>>,
     text_align: TextAlign,
+    /// Highlighted source ranges intersecting this line, in paint order.
+    highlights: SmallVec<[(Range<usize>, Hsla); 1]>,
 }
 
 impl RenderedLine {
+    fn paint_highlights(&self, window: &mut Window) {
+        if self.highlights.is_empty() {
+            return;
+        }
+        let wrapped_line_segments = self.wrapped_line_segments();
+        if wrapped_line_segments.is_empty() {
+            return;
+        }
+
+        for (source_range, color) in &self.highlights {
+            self.for_each_bounds_in_source_range(
+                &wrapped_line_segments,
+                source_range.clone(),
+                |bounds| {
+                    window.paint_quad(quad(
+                        bounds,
+                        Pixels::ZERO,
+                        *color,
+                        Edges::default(),
+                        Hsla::transparent_black(),
+                        BorderStyle::default(),
+                    ));
+                },
+            );
+        }
+    }
+
+    fn wrapped_line_segments(&self) -> SmallVec<[WrappedLineSegment; 1]> {
+        let layout = &self.layout;
+        let line_layouts = layout.line_layouts();
+        let line_height = layout.line_height();
+        let mut row_top = layout.bounds().top();
+        let mut wrapped_line_start = 0;
+        let mut segments = SmallVec::with_capacity(line_layouts.len());
+
+        for wrapped_line in line_layouts {
+            let wrapped_line_end = wrapped_line_start + wrapped_line.len();
+            let wrapped_line_height = wrapped_line.size(line_height).height;
+            segments.push(WrappedLineSegment {
+                start: wrapped_line_start,
+                end: wrapped_line_end,
+                row_top,
+                layout: wrapped_line,
+            });
+            row_top += wrapped_line_height;
+            wrapped_line_start = wrapped_line_end + 1;
+        }
+
+        segments
+    }
+
+    fn for_each_bounds_in_source_range(
+        &self,
+        wrapped_line_segments: &[WrappedLineSegment],
+        range: Range<usize>,
+        mut f: impl FnMut(Bounds<Pixels>),
+    ) {
+        if range.start >= range.end {
+            return;
+        }
+
+        let layout = &self.layout;
+        let line_bounds = layout.bounds();
+        let line_height = layout.line_height();
+
+        let rendered_start = self.rendered_index_for_source_index(range.start);
+        let rendered_end = self.rendered_index_for_source_index(range.end);
+
+        for wrapped_line_segment in wrapped_line_segments {
+            if wrapped_line_segment.start >= rendered_end {
+                break;
+            }
+            if wrapped_line_segment.end <= rendered_start {
+                continue;
+            }
+
+            let wrapped_line = &wrapped_line_segment.layout;
+            let unwrapped_layout = &wrapped_line.unwrapped_layout;
+            let wrapped_line_start = wrapped_line_segment.start;
+            let wrapped_line_end = wrapped_line_segment.end;
+            let mut row_top = wrapped_line_segment.row_top;
+
+            let row_ends = wrapped_line
+                .wrap_boundaries()
+                .iter()
+                .map(|wrap_boundary| {
+                    let glyph =
+                        &unwrapped_layout.runs[wrap_boundary.run_ix].glyphs[wrap_boundary.glyph_ix];
+                    (wrapped_line_start + glyph.index, glyph.position.x)
+                })
+                .chain([(wrapped_line_end, unwrapped_layout.width)]);
+
+            let mut row_start = wrapped_line_start;
+            let mut row_start_x = Pixels::ZERO;
+
+            for (row_end, row_end_x) in row_ends {
+                let selection_start = rendered_start.max(row_start);
+                let selection_end = rendered_end.min(row_end);
+
+                if selection_start < selection_end {
+                    let alignment_offset = self.alignment_offset_for_segment(
+                        line_bounds.size.width,
+                        row_start_x,
+                        row_end_x,
+                    );
+                    let x_for_index = |index| {
+                        line_bounds.left()
+                            + alignment_offset
+                            + unwrapped_layout.x_for_index(index - wrapped_line_start)
+                            - row_start_x
+                    };
+                    f(Bounds::from_corners(
+                        point(x_for_index(selection_start), row_top),
+                        point(x_for_index(selection_end), row_top + line_height),
+                    ));
+                }
+
+                row_start = row_end;
+                row_start_x = row_end_x;
+                row_top += line_height;
+            }
+        }
+    }
+
     fn rendered_index_for_source_index(&self, source_index: usize) -> usize {
         if source_index >= self.source_end {
             return self.layout.len();
@@ -3839,7 +4319,7 @@ pub struct RenderedMarkdown {
 
 #[derive(Clone)]
 struct RenderedText {
-    lines: Rc<[RenderedLine]>,
+    lines: Rc<[Rc<RenderedLine>]>,
     links: Rc<[RenderedLink]>,
     image_links: Rc<[RenderedImageLink]>,
     footnote_refs: Rc<[RenderedFootnoteRef]>,
@@ -3873,164 +4353,33 @@ struct RenderedFootnoteRef {
 }
 
 impl RenderedText {
+    #[cfg(test)]
     fn bounds_for_source_range(&self, range: Range<usize>) -> Vec<Bounds<Pixels>> {
-        self.bounds_for_sorted_source_ranges([(0, range)])
-            .into_iter()
-            .map(|(_, bounds)| bounds)
-            .collect()
-    }
-
-    fn bounds_for_sorted_source_ranges(
-        &self,
-        ranges: impl IntoIterator<Item = (usize, Range<usize>)>,
-    ) -> Vec<(usize, Bounds<Pixels>)> {
-        let ranges = ranges.into_iter().collect::<Vec<_>>();
         let mut all_bounds = Vec::new();
-        let mut first_possible_range_ix = 0;
-
         for line in self.lines.iter() {
-            let line_source_start = line.source_mappings.first().unwrap().source_index;
-            while ranges
-                .get(first_possible_range_ix)
-                .is_some_and(|(_, range)| range.end <= line_source_start)
-            {
-                first_possible_range_ix += 1;
-            }
-
-            let Some((_, first_possible_range)) = ranges.get(first_possible_range_ix) else {
-                break;
+            let Some(first_mapping) = line.source_mappings.first() else {
+                continue;
             };
-            if first_possible_range.start >= line.source_end {
-                continue;
-            }
-
-            let wrapped_line_segments = Self::wrapped_line_segments(line);
-            if wrapped_line_segments.is_empty() {
-                continue;
-            }
-
-            let mut range_ix = first_possible_range_ix;
-            while let Some((highlight_ix, range)) = ranges.get(range_ix) {
-                if range.start >= line.source_end {
-                    break;
-                }
-                Self::push_bounds_for_line_source_range(
-                    &mut all_bounds,
-                    *highlight_ix,
-                    line,
-                    &wrapped_line_segments,
-                    range.start.max(line_source_start)..range.end.min(line.source_end),
-                );
-                range_ix += 1;
-            }
-        }
-
-        all_bounds
-    }
-
-    fn wrapped_line_segments(line: &RenderedLine) -> SmallVec<[WrappedLineSegment; 1]> {
-        let layout = &line.layout;
-        let line_height = layout.line_height();
-        let mut row_top = layout.bounds().top();
-        let mut wrapped_line_start = 0;
-        let mut segments = SmallVec::new();
-
-        for wrapped_line in layout.line_layouts() {
-            let wrapped_line_end = wrapped_line_start + wrapped_line.len();
-            let wrapped_line_height = wrapped_line.size(line_height).height;
-            segments.push(WrappedLineSegment {
-                start: wrapped_line_start,
-                end: wrapped_line_end,
-                row_top,
-                layout: wrapped_line,
-            });
-            row_top += wrapped_line_height;
-            wrapped_line_start = wrapped_line_end + 1;
-        }
-
-        segments
-    }
-
-    fn push_bounds_for_line_source_range(
-        all_bounds: &mut Vec<(usize, Bounds<Pixels>)>,
-        highlight_ix: usize,
-        line: &RenderedLine,
-        wrapped_line_segments: &[WrappedLineSegment],
-        range: Range<usize>,
-    ) {
-        if range.start >= range.end {
-            return;
-        }
-
-        let layout = &line.layout;
-        let line_bounds = layout.bounds();
-        let line_height = layout.line_height();
-
-        let rendered_start = line.rendered_index_for_source_index(range.start);
-        let rendered_end = line.rendered_index_for_source_index(range.end);
-
-        for wrapped_line_segment in wrapped_line_segments {
-            if wrapped_line_segment.start >= rendered_end {
+            let line_source_start = first_mapping.source_index;
+            if range.end <= line_source_start {
                 break;
             }
-            if wrapped_line_segment.end <= rendered_start {
+            if range.start >= line.source_end {
                 continue;
             }
-
-            let wrapped_line = &wrapped_line_segment.layout;
-            let unwrapped_layout = &wrapped_line.unwrapped_layout;
-            let wrapped_line_start = wrapped_line_segment.start;
-            let wrapped_line_end = wrapped_line_segment.end;
-            let mut row_top = wrapped_line_segment.row_top;
-
-            let row_ends = wrapped_line
-                .wrap_boundaries()
-                .iter()
-                .map(|wrap_boundary| {
-                    let glyph =
-                        &unwrapped_layout.runs[wrap_boundary.run_ix].glyphs[wrap_boundary.glyph_ix];
-                    (wrapped_line_start + glyph.index, glyph.position.x)
-                })
-                .chain([(wrapped_line_end, unwrapped_layout.width)]);
-
-            let mut row_start = wrapped_line_start;
-            let mut row_start_x = Pixels::ZERO;
-
-            for (row_end, row_end_x) in row_ends {
-                let selection_start = rendered_start.max(row_start);
-                let selection_end = rendered_end.min(row_end);
-
-                if selection_start < selection_end {
-                    let alignment_offset = line.alignment_offset_for_segment(
-                        line_bounds.size.width,
-                        row_start_x,
-                        row_end_x,
-                    );
-                    let x_for_index = |index| {
-                        line_bounds.left()
-                            + alignment_offset
-                            + unwrapped_layout.x_for_index(index - wrapped_line_start)
-                            - row_start_x
-                    };
-                    all_bounds.push((
-                        highlight_ix,
-                        Bounds::from_corners(
-                            point(x_for_index(selection_start), row_top),
-                            point(x_for_index(selection_end), row_top + line_height),
-                        ),
-                    ));
-                }
-
-                row_start = row_end;
-                row_start_x = row_end_x;
-                row_top += line_height;
-            }
+            let wrapped_line_segments = line.wrapped_line_segments();
+            line.for_each_bounds_in_source_range(
+                &wrapped_line_segments,
+                range.start.max(line_source_start)..range.end.min(line.source_end),
+                |bounds| all_bounds.push(bounds),
+            );
         }
+        all_bounds
     }
 
     fn source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
         let mut lines = self.lines.iter().peekable();
-        let mut fallback_line: Option<&RenderedLine> = None;
+        let mut fallback_line: Option<&Rc<RenderedLine>> = None;
 
         while let Some(line) = lines.next() {
             let line_bounds = line.layout.bounds();
@@ -4196,7 +4545,10 @@ impl RenderedText {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{RenderImage, TestAppContext, UpdateGlobal, size};
+    use gpui::{
+        Modifiers, RenderImage, ScrollDelta, ScrollWheelEvent, TestAppContext, TouchPhase,
+        UpdateGlobal, VisualTestContext, size,
+    };
     use language::{Language, LanguageConfig, LanguageMatcher};
     use std::cell::RefCell;
     use std::sync::{
@@ -4327,6 +4679,7 @@ mod tests {
         markdown: Entity<Markdown>,
         style: MarkdownStyle,
         code_span_link: Option<CodeSpanLinkCallback>,
+        width: Option<Pixels>,
         cx: &mut TestAppContext,
     ) -> RenderedText {
         let rendered_text = Rc::new(RefCell::new(None));
@@ -4339,6 +4692,9 @@ mod tests {
                 rendered_text,
             }
         });
+        if let Some(width) = width {
+            cx.simulate_resize(size(width, px(600.)));
+        }
         cx.run_until_parked();
 
         rendered_text
@@ -4530,7 +4886,7 @@ mod tests {
 
         let markdown = cx.new(|cx| Markdown::new(markdown.to_string().into(), None, None, cx));
         cx.run_until_parked();
-        render_markdown_entity_in_view(markdown, style, Some(Arc::new(callback)), cx)
+        render_markdown_entity_in_view(markdown, style, Some(Arc::new(callback)), None, cx)
     }
 
     fn render_markdown_with_language_registry(
@@ -4539,6 +4895,18 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> RenderedText {
         render_markdown_with_options(markdown, language_registry, MarkdownOptions::default(), cx)
+    }
+
+    fn render_markdown_at_width(
+        markdown: &str,
+        width: Pixels,
+        cx: &mut TestAppContext,
+    ) -> RenderedText {
+        ensure_theme_initialized(cx);
+
+        let markdown = cx.new(|cx| Markdown::new(markdown.to_string().into(), None, None, cx));
+        cx.run_until_parked();
+        render_markdown_entity_in_view(markdown, MarkdownStyle::default(), None, Some(width), cx)
     }
 
     fn render_markdown_with_options(
@@ -4559,13 +4927,13 @@ mod tests {
             )
         });
         cx.run_until_parked();
-        render_markdown_entity_in_view(markdown, MarkdownStyle::default(), None, cx)
+        render_markdown_entity_in_view(markdown, MarkdownStyle::default(), None, None, cx)
     }
 
     fn render_markdown_with_image_resolver(
         markdown: &str,
         options: MarkdownOptions,
-        resolver: impl Fn(&str) -> Option<ImageSource> + 'static,
+        resolver: impl Fn(&str, &App) -> Option<ImageSource> + 'static,
         cx: &mut TestAppContext,
     ) -> RenderedText {
         ensure_theme_initialized(cx);
@@ -4608,7 +4976,7 @@ mod tests {
         let rendered = render_markdown_with_image_resolver(
             "Here is an image ![alt](https://example.com/a.png) and more text\nthat continues",
             MarkdownOptions::default(),
-            move |_| Some(ImageSource::Render(image.clone())),
+            move |_, _| Some(ImageSource::Render(image.clone())),
             cx,
         );
         let text: String = rendered
@@ -4632,7 +5000,7 @@ mod tests {
         let rendered = render_markdown_with_image_resolver(
             "![alt](https://example.com/a.png)\ncaption",
             MarkdownOptions::default(),
-            move |_| Some(ImageSource::Render(image.clone())),
+            move |_, _| Some(ImageSource::Render(image.clone())),
             cx,
         );
         let text: String = rendered
@@ -4655,7 +5023,7 @@ mod tests {
                 parse_html: true,
                 ..Default::default()
             },
-            move |_| Some(ImageSource::Render(image.clone())),
+            move |_, _| Some(ImageSource::Render(image.clone())),
             cx,
         );
         let stray_whitespace_line = rendered.lines.iter().find_map(|line| {
@@ -4678,7 +5046,7 @@ mod tests {
                 parse_html: true,
                 ..Default::default()
             },
-            move |_| Some(ImageSource::Render(image.clone())),
+            move |_, _| Some(ImageSource::Render(image.clone())),
             cx,
         );
         let text: String = rendered
@@ -4721,7 +5089,7 @@ mod tests {
                 size(px(600.0), px(600.0)),
                 |_window, _cx| {
                     MarkdownElement::new(markdown.clone(), style)
-                        .image_resolver(move |_| Some(ImageSource::Render(image.clone())))
+                        .image_resolver(move |_, _| Some(ImageSource::Render(image.clone())))
                         .code_block_renderer(CodeBlockRenderer::Default {
                             copy_button_visibility: CopyButtonVisibility::Hidden,
                             wrap_button_visibility: WrapButtonVisibility::Hidden,
@@ -4905,6 +5273,114 @@ mod tests {
 
         assert_eq!(first_word, "a");
         assert_eq!(second_word, "b");
+    }
+
+    const REVIEW_TABLE: &str = concat!(
+        "| ID | Sev | File | Line | Summary |\n",
+        "|---|---|---|---|---|\n",
+        "| R1 | High | src/main.rs | 42 | Unwrap on user input can panic |\n",
+        "| R2 | Low | src/lib.rs | 7 | Prefer iterators over index loops |\n",
+    );
+
+    #[gpui::test]
+    fn test_table_columns_are_sized_to_their_content(cx: &mut TestAppContext) {
+        fn cells(row: &str) -> impl Iterator<Item = &str> {
+            row.trim().trim_matches('|').split('|')
+        }
+
+        fn table_cell_widths(rendered: &RenderedText, column_count: usize) -> Vec<Pixels> {
+            rendered.lines[..column_count]
+                .iter()
+                .map(|line| line.layout.bounds().size.width)
+                .collect()
+        }
+
+        let header = REVIEW_TABLE.lines().next().unwrap();
+        let column_count = cells(header).count();
+
+        let expected: Vec<Pixels> = (0..column_count)
+            .map(|column| {
+                let source: String = REVIEW_TABLE
+                    .lines()
+                    .map(|row| format!("|{}|\n", cells(row).nth(column).unwrap()))
+                    .collect();
+                *table_cell_widths(&render_markdown_at_width(&source, px(800.), cx), 1)
+                    .first()
+                    .unwrap()
+            })
+            .collect();
+
+        let widths = table_cell_widths(
+            &render_markdown_at_width(REVIEW_TABLE, px(800.), cx),
+            column_count,
+        );
+        for (index, (width, expected)) in widths.iter().zip(&expected).enumerate() {
+            assert_eq!(
+                width, expected,
+                "column {index} width does not match expected width"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_table_never_renders_past_its_available_width(cx: &mut TestAppContext) {
+        for width in [800., 600., 500., 400., 300., 200.] {
+            let rendered = render_markdown_at_width(REVIEW_TABLE, px(width), cx);
+            for (index, line) in rendered.lines.iter().enumerate() {
+                let bounds = line.layout.bounds();
+                assert!(
+                    bounds.right() <= px(width),
+                    "cell {index} ends at {:?} which is past the available width of {width}px",
+                    bounds.right()
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_table_border_hugs_its_columns(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+
+        struct TableView {
+            markdown: Entity<Markdown>,
+        }
+
+        impl Render for TableView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().size_full().child(MarkdownElement::new(
+                    self.markdown.clone(),
+                    MarkdownStyle::default(),
+                ))
+            }
+        }
+
+        let table_width = |width: f32, cx: &mut TestAppContext| {
+            let window = cx.open_window(size(px(width), px(600.)), |_, cx| {
+                let markdown = cx.new(|cx| Markdown::new(REVIEW_TABLE.into(), None, None, cx));
+                TableView { markdown }
+            });
+            cx.run_until_parked();
+            gpui::VisualTestContext::from_window(window.into(), cx)
+                .debug_bounds("markdown_table")
+                .expect("table should have been rendered")
+                .size
+                .width
+        };
+
+        assert!(
+            table_width(800., cx) < px(800.),
+            "the table should hug its columns instead of filling the window"
+        );
+        assert_eq!(
+            table_width(800., cx),
+            table_width(1200., cx),
+            "the table should keep its width when there is more room available"
+        );
+        assert_eq!(
+            table_width(400., cx),
+            px(400.),
+            "the table should shrink to the available width"
+        );
     }
 
     #[test]
@@ -5560,7 +6036,7 @@ mod tests {
                 let hovered_urls = self.hovered_urls.clone();
                 div().size_full().child(
                     MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
-                        .image_resolver(|_| Some(loaded_image_source()))
+                        .image_resolver(|_, _| Some(loaded_image_source()))
                         .on_url_hover(move |url, _, _| {
                             hovered_urls.borrow_mut().push(url);
                         }),
@@ -5703,7 +6179,7 @@ mod tests {
                 let image_source = self.image_source.clone();
                 div().size_full().child(
                     MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
-                        .image_resolver(move |_| Some(image_source.clone())),
+                        .image_resolver(move |_, _| Some(image_source.clone())),
                 )
             }
         }
@@ -5935,5 +6411,168 @@ mod tests {
                 px(24.0)
             );
         });
+    }
+
+    #[gpui::test]
+    fn test_wide_table_scrolls_horizontally(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let source = indoc::indoc! {r#"
+            | left | right |
+            | --- | --- |
+            | value | far_right_cell_content_that_is_much_wider_than_the_viewport |
+        "#};
+        let left_cell_start = source.find("left").expect("left cell should be present");
+        let left_cell_range = left_cell_start..left_cell_start + "left".len();
+        let right_cell = "far_right_cell_content_that_is_much_wider_than_the_viewport";
+        let right_cell_start = source
+            .find(right_cell)
+            .expect("right cell should be present");
+        let right_cell_range = right_cell_start..right_cell_start + right_cell.len();
+
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        let rendered_text = Rc::new(RefCell::new(None));
+        let (_, cx) = cx.add_window_view({
+            let rendered_text = rendered_text.clone();
+            move |_, _| MarkdownTestView {
+                markdown,
+                style: MarkdownStyle {
+                    table_columns_min_size: true,
+                    ..MarkdownStyle::default()
+                },
+                code_span_link: None,
+                rendered_text,
+            }
+        });
+        cx.simulate_resize(size(px(300.), px(200.)));
+        cx.run_until_parked();
+
+        let (event_position, right_cell_before_scroll) = {
+            let rendered_text = rendered_text.borrow();
+            let rendered_text = rendered_text
+                .as_ref()
+                .expect("markdown should be rendered before scrolling");
+            let event_position = rendered_text
+                .bounds_for_source_range(left_cell_range)
+                .into_iter()
+                .next()
+                .expect("left cell should have bounds")
+                .center();
+            let right_cell_bounds = rendered_text
+                .bounds_for_source_range(right_cell_range.clone())
+                .into_iter()
+                .next()
+                .expect("right cell should have bounds");
+            (event_position, right_cell_bounds)
+        };
+
+        cx.simulate_event(ScrollWheelEvent {
+            position: event_position,
+            delta: ScrollDelta::Pixels(point(px(-100.), px(0.))),
+            modifiers: Modifiers::default(),
+            touch_phase: TouchPhase::Moved,
+        });
+        cx.run_until_parked();
+
+        let right_cell_after_scroll = rendered_text
+            .borrow()
+            .as_ref()
+            .expect("markdown should be rendered after scrolling")
+            .bounds_for_source_range(right_cell_range)
+            .into_iter()
+            .next()
+            .expect("right cell should have bounds after scrolling");
+
+        assert!(right_cell_after_scroll.left() < right_cell_before_scroll.left());
+        assert_eq!(
+            right_cell_after_scroll.top(),
+            right_cell_before_scroll.top()
+        );
+    }
+
+    #[gpui::test]
+    fn test_highlights_are_clipped_to_scrollable_code_block(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let source = indoc::indoc! {r#"
+            ```txt
+            one_extremely_long_code_line_that_overflows_the_viewport_and_keeps_going_and_going
+            ```
+        "#};
+        let code_line =
+            "one_extremely_long_code_line_that_overflows_the_viewport_and_keeps_going_and_going";
+        let code_start = source.find(code_line).expect("code line should be present");
+        let code_range = code_start..code_start + code_line.len();
+
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        markdown.update(cx, |markdown, cx| {
+            markdown.set_search_highlights(vec![code_range.clone()], None, cx);
+        });
+        let (_, cx) = cx.add_window_view(move |_, _| MarkdownTestView {
+            markdown,
+            style: MarkdownStyle {
+                code_block_overflow_x_scroll: true,
+                ..MarkdownStyle::default()
+            },
+            code_span_link: None,
+            rendered_text: Rc::new(RefCell::new(None)),
+        });
+        let window_width = px(300.);
+        cx.simulate_resize(size(window_width, px(200.)));
+        cx.run_until_parked();
+
+        let highlight_color = cx.update(|_, cx| cx.theme().colors().search_match_background);
+
+        /// Returns the unclipped bounds and the content mask of the sole
+        /// highlight quad in the last painted frame, in logical pixels.
+        fn painted_highlight(
+            cx: &mut VisualTestContext,
+            highlight_color: Hsla,
+        ) -> (Bounds<Pixels>, Bounds<Pixels>) {
+            cx.update(|window, _| {
+                let scale_factor = window.scale_factor();
+                let unscale = |bounds: Bounds<gpui::ScaledPixels>| {
+                    Bounds::new(
+                        point(
+                            px(bounds.origin.x.as_f32() / scale_factor),
+                            px(bounds.origin.y.as_f32() / scale_factor),
+                        ),
+                        size(
+                            px(bounds.size.width.as_f32() / scale_factor),
+                            px(bounds.size.height.as_f32() / scale_factor),
+                        ),
+                    )
+                };
+                let quads = window
+                    .painted_quads()
+                    .into_iter()
+                    .filter(|quad| quad.background == highlight_color.into())
+                    .collect::<Vec<_>>();
+                assert_eq!(quads.len(), 1, "expected exactly one highlight quad");
+                (
+                    unscale(quads[0].bounds),
+                    unscale(quads[0].content_mask.bounds),
+                )
+            })
+        }
+
+        let (quad_bounds, content_mask) = painted_highlight(cx, highlight_color);
+        let visible_bounds = quad_bounds.intersect(&content_mask);
+        assert!(quad_bounds.right() > window_width);
+        assert!(visible_bounds.right() <= window_width);
+        assert_eq!(visible_bounds.left(), quad_bounds.left());
+        let event_position = visible_bounds.center();
+
+        cx.simulate_event(ScrollWheelEvent {
+            position: event_position,
+            delta: ScrollDelta::Pixels(point(px(-100.), px(0.))),
+            modifiers: Modifiers::default(),
+            touch_phase: TouchPhase::Moved,
+        });
+        cx.run_until_parked();
+
+        let (quad_bounds, content_mask) = painted_highlight(cx, highlight_color);
+        let visible_bounds = quad_bounds.intersect(&content_mask);
+        assert!(quad_bounds.left() < px(0.));
+        assert!(visible_bounds.left() >= px(0.));
+        assert!(visible_bounds.right() <= window_width);
     }
 }
