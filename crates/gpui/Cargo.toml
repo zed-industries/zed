@@ -26,7 +26,7 @@ test-support = [
     "x11",
     "proptest",
 ]
-bench = ["test-support", "dep:criterion", "dep:hdrhistogram"]
+bench = ["test-support", "profiler", "dep:criterion"]
 inspector = ["gpui_macros/inspector"]
 leak-detection = ["backtrace"]
 wayland = []
@@ -37,8 +37,7 @@ screen-capture = [
     "scap",
 ]
 windows-manifest = ["dep:embed-resource"]
-input-latency-histogram = ["dep:hdrhistogram"]
-profiler = []
+profiler = ["dep:hdrhistogram"]
 
 [lib]
 path = "src/gpui.rs"
@@ -91,8 +90,9 @@ async-channel.workspace = true
 stacksafe.workspace = true
 strum.workspace = true
 sum_tree.workspace = true
-taffy = "=0.12.2"
+taffy = "=0.13.0"
 thiserror.workspace = true
+tracing.workspace = true
 gpui_util.workspace = true
 hdrhistogram = { workspace = true, optional = true }
 waker-fn = "1.2.0"
@@ -104,6 +104,7 @@ url.workspace = true
 uuid.workspace = true
 web-time.workspace = true
 heapless.workspace = true
+ztracing.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 getrandom = { version = "0.3.4", features = ["wasm_js"] }
@@ -170,10 +171,8 @@ embed-resource = { version = "3.0", optional = true }
 bindgen = "0.71"
 cbindgen.workspace = true
 
-
-
-
-
+[package.metadata.cargo-machete]
+ignored = ["tracing"]
 
 [[example]]
 name = "hello_world"

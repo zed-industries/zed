@@ -707,7 +707,7 @@ impl ConversationView {
 
         connected.navigate_to_thread(session_id);
         if let Some(view) = self.active_thread() {
-            view.focus_handle(cx).focus(window, cx);
+            view.read(cx).activation_focus_handle(cx).focus(window, cx);
         }
         cx.emit(AcpServerViewEvent::ActiveThreadChanged);
         cx.notify();
@@ -3333,6 +3333,14 @@ impl Focusable for ConversationView {
     }
 }
 
+impl ConversationView {
+    pub(crate) fn activation_focus_handle(&self, cx: &App) -> FocusHandle {
+        self.active_thread()
+            .map(|thread| thread.read(cx).activation_focus_handle(cx))
+            .unwrap_or_else(|| self.focus_handle.clone())
+    }
+}
+
 #[cfg(any(test, feature = "test-support"))]
 impl ConversationView {
     /// Expands a tool call so its content is visible.
@@ -3457,7 +3465,7 @@ fn render_agent_markdown(
             wrap_button_visibility: markdown::WrapButtonVisibility::VisibleOnHover,
             border: false,
         })
-        .image_resolver(move |dest_url| resolve_agent_image(dest_url, &worktree_roots))
+        .image_resolver(move |dest_url, _cx| resolve_agent_image(dest_url, &worktree_roots))
         .on_url_click(move |text, window, cx| {
             thread_view::open_link(text, &workspace, window, cx);
         })

@@ -10,7 +10,7 @@ use fuzzy::{CharBag, StringMatch, StringMatchCandidate};
 use gpui::{HighlightStyle, StyledText, Task};
 use picker::{Picker, PickerDelegate};
 use project::{DirectoryItem, DirectoryLister};
-use project_panel::project_panel_settings::ProjectPanelSettings;
+use settings::SettingsStore;
 use settings::{ProjectPanelSortMode, Settings};
 use std::{
     path::{self, Path, PathBuf},
@@ -54,8 +54,9 @@ impl OpenPathDelegate {
         cx: &App,
     ) -> Self {
         let path_style = lister.path_style(cx);
-        let sort_mode = ProjectPanelSettings::try_get(cx)
-            .map(|s| s.sort_mode)
+        let sort_mode = cx
+            .try_global::<SettingsStore>()
+            .and_then(|store| store.merged_settings().project_panel.as_ref()?.sort_mode)
             .unwrap_or_default();
         Self {
             tx: Some(tx),
