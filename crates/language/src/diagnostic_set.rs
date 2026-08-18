@@ -118,17 +118,11 @@ impl DiagnosticEntry<PointUtf16> {
     /// Returns a raw LSP diagnostic used to provide diagnostic context to LSP
     /// codeAction request
     pub fn to_lsp_diagnostic_stub(&self) -> Result<lsp::Diagnostic> {
-        let range = range_to_lsp(self.range.clone())?;
-
-        Ok(lsp::Diagnostic {
-            range,
-            code: self.diagnostic.code.clone(),
-            severity: Some(self.diagnostic.severity),
-            source: self.diagnostic.source.clone(),
-            message: self.diagnostic.message.clone(),
-            data: self.diagnostic.data.clone(),
-            ..Default::default()
-        })
+        DiagnosticEntryRef {
+            range: self.range.clone(),
+            diagnostic: &self.diagnostic,
+        }
+        .to_lsp_diagnostic_stub()
     }
 }
 impl DiagnosticEntryRef<'_, PointUtf16> {
@@ -144,6 +138,11 @@ impl DiagnosticEntryRef<'_, PointUtf16> {
             source: self.diagnostic.source.clone(),
             message: self.diagnostic.message.clone(),
             data: self.diagnostic.data.clone(),
+            related_information: self
+                .diagnostic
+                .related_information
+                .as_ref()
+                .map(|related_information| related_information.to_vec()),
             ..Default::default()
         })
     }

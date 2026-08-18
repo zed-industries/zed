@@ -121,6 +121,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: false
     pub use_system_window_tabs: Option<bool>,
+    /// Which fullscreen mode the `zed::ToggleFullScreen` action enters (macOS only).
+    ///
+    /// Default: native
+    pub fullscreen_mode: Option<FullscreenMode>,
     /// Whether to show padding for zoomed panels.
     /// When enabled, zoomed bottom panels will have some top padding,
     /// while zoomed left/right panels will have padding to the right/left (respectively).
@@ -336,6 +340,30 @@ pub enum BottomDockLayout {
     LeftAligned,
     /// Extends under the right dock while snapping to the left dock
     RightAligned,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum FullscreenMode {
+    /// Use macOS's native fullscreen, which moves the window into its own
+    /// Mission Control space.
+    #[default]
+    Native,
+    /// Resize the window to cover the entire screen, including the menu bar and,
+    /// on notched displays, the area around the notch.
+    Simple,
 }
 
 /// Configures what draws Zed's window decorations on Linux.
