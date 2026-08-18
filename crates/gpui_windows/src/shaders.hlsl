@@ -126,7 +126,6 @@ struct ClippedVertex {
     float2 unit_vertex;
 };
 
-// An empty intersection collapses to zero size, which rasterizes to nothing.
 ClippedVertex clip_to_mask(float2 unit_vertex, Bounds bounds, Bounds mask) {
     float2 origin = max(bounds.origin, mask.origin);
     float2 corner = min(bounds.origin + bounds.size, mask.origin + mask.size);
@@ -134,10 +133,7 @@ ClippedVertex clip_to_mask(float2 unit_vertex, Bounds bounds, Bounds mask) {
 
     ClippedVertex result;
     result.position = origin + unit_vertex * size;
-    // The clipped rect is a subset of `bounds`, so a zero-extent axis has a
-    // zero numerator too; the guard only keeps 0/0 out of the result.
-    result.unit_vertex =
-        (result.position - bounds.origin) / max(bounds.size, float2(1e-30, 1e-30));
+    result.unit_vertex = (result.position - bounds.origin) / bounds.size;
     return result;
 }
 
@@ -549,8 +545,8 @@ QuadVertexOutput quad_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_I
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     uint quad_id = batch_start_index + instance_id;
     Quad quad = quads[quad_id];
-    float4 device_position =
-        to_device_position_impl(clip_to_mask(unit_vertex, quad.bounds, quad.content_mask).position);
+    ClippedVertex vertex = clip_to_mask(unit_vertex, quad.bounds, quad.content_mask);
+    float4 device_position = to_device_position_impl(vertex.position);
 
     GradientColor gradient = prepare_gradient_color(
         quad.background.tag,
@@ -910,8 +906,8 @@ ShadowVertexOutput shadow_vertex(uint vertex_id: SV_VertexID, uint instance_id: 
         bounds.size += 2.0 * margin;
     }
 
-    float4 device_position =
-        to_device_position_impl(clip_to_mask(unit_vertex, bounds, shadow.content_mask).position);
+    ClippedVertex vertex = clip_to_mask(unit_vertex, bounds, shadow.content_mask);
+    float4 device_position = to_device_position_impl(vertex.position);
     float4 color = hsla_to_rgba(shadow.color);
 
     ShadowVertexOutput output;
@@ -1102,8 +1098,8 @@ UnderlineVertexOutput underline_vertex(uint vertex_id: SV_VertexID, uint instanc
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     uint underline_id = batch_start_index + instance_id;
     Underline underline = underlines[underline_id];
-    float4 device_position = to_device_position_impl(
-        clip_to_mask(unit_vertex, underline.bounds, underline.content_mask).position);
+    ClippedVertex vertex = clip_to_mask(unit_vertex, underline.bounds, underline.content_mask);
+    float4 device_position = to_device_position_impl(vertex.position);
     float4 color = hsla_to_rgba(underline.color);
 
     UnderlineVertexOutput output;
@@ -1178,9 +1174,8 @@ MonochromeSpriteVertexOutput monochrome_sprite_vertex(uint vertex_id: SV_VertexI
     MonochromeSprite sprite = mono_sprites[sprite_id];
     float4 device_position =
         to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation);
+    float4 clip_distance = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds, sprite.content_mask, sprite.transformation);
     float2 tile_position = to_tile_position(unit_vertex, sprite.tile);
-    float4 clip_distance = distance_from_clip_rect_transformed(
-        unit_vertex, sprite.bounds, sprite.content_mask, sprite.transformation);
     float4 color = hsla_to_rgba(sprite.color);
 
     MonochromeSpriteVertexOutput output;

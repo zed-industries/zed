@@ -211,29 +211,22 @@ struct ClippedVertex {
     unit_vertex: vec2<f32>,
 }
 
-// An empty intersection collapses to zero size, which rasterizes to nothing.
 fn clip_to_mask(unit_vertex: vec2<f32>, bounds: Bounds, mask: Bounds) -> ClippedVertex {
     let origin = max(bounds.origin, mask.origin);
     let corner = min(bounds.origin + bounds.size, mask.origin + mask.size);
     let size = max(corner - origin, vec2<f32>(0.0));
 
     let position = origin + unit_vertex * size;
-    // The clipped rect is a subset of `bounds`, so a zero-extent axis has a
-    // zero numerator too; the guard only keeps 0/0 out of the result.
-    return ClippedVertex(position, (position - bounds.origin) / max(bounds.size, vec2<f32>(1e-30)));
+    return ClippedVertex(position, (position - bounds.origin) / bounds.size);
 }
 
-// Whether the transformation only scales and translates, keeping rectangles
-// axis-aligned in screen space. Zero scale is excluded so callers can safely
-// invert the transformation.
 fn transform_is_axis_aligned(transform: TransformationMatrix) -> bool {
     let m = transform.rotation_scale;
     return m[0][1] == 0.0 && m[1][0] == 0.0 && m[0][0] != 0.0 && m[1][1] != 0.0;
 }
 
 // Maps the screen-space mask into pre-transform space. Only valid for
-// axis-aligned transformations; min/max normalization handles negative scale
-// (e.g. rotation by 180 degrees).
+// axis-aligned transformations.
 fn mask_in_transform_space(mask: Bounds, transform: TransformationMatrix) -> Bounds {
     let scale = vec2<f32>(transform.rotation_scale[0][0], transform.rotation_scale[1][1]);
     let p0 = (mask.origin - transform.translation) / scale;
@@ -578,7 +571,8 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     let quad = load_quad(instance_id);
 
     var out = QuadVarying();
-    out.position = to_device_position_impl(clip_to_mask(unit_vertex, quad.bounds, quad.content_mask).position);
+    let vertex = clip_to_mask(unit_vertex, quad.bounds, quad.content_mask);
+    out.position = to_device_position_impl(vertex.position);
 
     let gradient = prepare_gradient_color(
         quad.background.tag,
@@ -1015,7 +1009,8 @@ fn vs_shadow(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) ins
     }
 
     var out = ShadowVarying();
-    out.position = to_device_position_impl(clip_to_mask(unit_vertex, geometry, shadow.content_mask).position);
+    let vertex = clip_to_mask(unit_vertex, geometry, shadow.content_mask);
+    out.position = to_device_position_impl(vertex.position);
     out.color = hsla_to_rgba(shadow.color);
     out.shadow_id = instance_id;
     return out;
@@ -1080,8 +1075,7 @@ struct PathRasterizationVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) st_position: vec2<f32>,
     @location(1) @interpolate(flat) vertex_id: u32,
-    //TODO: use `clip_distance` once Naga supports it
-    @location(3) clip_distances: vec4<f32>,
+    @location(2) clip_distances: vec4<f32>,
 }
 
 @vertex
@@ -1189,7 +1183,8 @@ fn vs_underline(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) 
     let underline = load_underline(instance_id);
 
     var out = UnderlineVarying();
-    out.position = to_device_position_impl(clip_to_mask(unit_vertex, underline.bounds, underline.content_mask).position);
+    let vertex = clip_to_mask(unit_vertex, underline.bounds, underline.content_mask);
+    out.position = to_device_position_impl(vertex.position);
     out.color = hsla_to_rgba(underline.color);
     out.underline_id = instance_id;
     return out;
@@ -1270,9 +1265,6 @@ fn fs_mono_sprite(input: MonoSpriteVarying) -> @location(0) vec4<f32> {
     let sample = textureSample(t_sprite, s_sprite, input.tile_position).r;
     let alpha_corrected = apply_contrast_and_gamma_correction(sample, input.color.rgb, gamma_params.grayscale_enhanced_contrast, gamma_params.gamma_ratios);
 
-    // Only rotated sprites need per-fragment clipping; axis-aligned sprites
-    // are clipped geometrically in the vertex shader. Alpha clip after using
-    // the derivatives.
     if (any(input.clip_distances < vec4<f32>(0.0))) {
         return vec4<f32>(0.0);
     }
