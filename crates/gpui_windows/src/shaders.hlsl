@@ -1085,12 +1085,16 @@ struct UnderlineVertexOutput {
   nointerpolation uint underline_id: TEXCOORD0;
   float4 position: SV_Position;
   nointerpolation float4 color: COLOR;
+  // Straight underlines are the common case and need nothing but the color, so
+  // this rides along to spare them the instance read entirely.
+  nointerpolation uint wavy: TEXCOORD1;
 };
 
 struct UnderlineFragmentInput {
   nointerpolation uint underline_id: TEXCOORD0;
   float4 position: SV_Position;
   nointerpolation float4 color: COLOR;
+  nointerpolation uint wavy: TEXCOORD1;
 };
 
 StructuredBuffer<Underline> underlines: register(t1);
@@ -1107,6 +1111,7 @@ UnderlineVertexOutput underline_vertex(uint vertex_id: SV_VertexID, uint instanc
     output.position = device_position;
     output.color = color;
     output.underline_id = underline_id;
+    output.wavy = underline.wavy;
     return output;
 }
 
@@ -1114,27 +1119,27 @@ float4 underline_fragment(UnderlineFragmentInput input): SV_Target {
     const float WAVE_FREQUENCY = 2.0;
     const float WAVE_HEIGHT_RATIO = 0.8;
 
-    Underline underline = underlines[input.underline_id];
-    if (underline.wavy) {
-        float half_thickness = underline.thickness * 0.5;
-        float2 origin = underline.bounds.origin;
-
-        float2 st = ((input.position.xy - origin) / underline.bounds.size.y) - float2(0., 0.5);
-        float frequency = (M_PI_F * WAVE_FREQUENCY * underline.thickness) / underline.bounds.size.y;
-        float amplitude = (underline.thickness * WAVE_HEIGHT_RATIO) / underline.bounds.size.y;
-
-        float sine = sin(st.x * frequency) * amplitude;
-        float dSine = cos(st.x * frequency) * amplitude * frequency;
-        float distance = (st.y - sine) / sqrt(1. + dSine * dSine);
-        float distance_in_pixels = distance * underline.bounds.size.y;
-        float distance_from_top_border = distance_in_pixels - half_thickness;
-        float distance_from_bottom_border = distance_in_pixels + half_thickness;
-        float alpha = saturate(
-            0.5 - max(-distance_from_bottom_border, distance_from_top_border));
-        return input.color * float4(1., 1., 1., alpha);
-    } else {
+    if (input.wavy == 0u) {
         return input.color;
     }
+
+    Underline underline = underlines[input.underline_id];
+    float half_thickness = underline.thickness * 0.5;
+    float2 origin = underline.bounds.origin;
+
+    float2 st = ((input.position.xy - origin) / underline.bounds.size.y) - float2(0., 0.5);
+    float frequency = (M_PI_F * WAVE_FREQUENCY * underline.thickness) / underline.bounds.size.y;
+    float amplitude = (underline.thickness * WAVE_HEIGHT_RATIO) / underline.bounds.size.y;
+
+    float sine = sin(st.x * frequency) * amplitude;
+    float dSine = cos(st.x * frequency) * amplitude * frequency;
+    float distance = (st.y - sine) / sqrt(1. + dSine * dSine);
+    float distance_in_pixels = distance * underline.bounds.size.y;
+    float distance_from_top_border = distance_in_pixels - half_thickness;
+    float distance_from_bottom_border = distance_in_pixels + half_thickness;
+    float alpha = saturate(
+        0.5 - max(-distance_from_bottom_border, distance_from_top_border));
+    return input.color * float4(1., 1., 1., alpha);
 }
 
 /*
