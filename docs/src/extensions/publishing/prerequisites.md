@@ -14,12 +14,14 @@ Note that maintainers will raise non-compliance during the publishing process. S
 - Test your extension locally at the submodule commit you are submitting it at.
 - Publish functionality that is not already available in the extension marketplace.
   - If you face issues with an existing extension, first try contributing to the existing extension. See [Updating and Maintenance](./updating-and-maintenance.md#maintenance) for more details on this requirement.
+- Do not misuse the extension API to work around its current limitations.
+  - In rare cases, we may accept a reasonable workaround.
+  - Acceptance of a workaround is at the maintainers' discretion.
 - Use an appropriate ID for your extension. The ID must:
   - be unique
   - be camel-cased
   - not include the words `zed` or `extension`
   - be a good indicator for what your extension provides (more on this below)
-- Do not misuse existing APIs to work around limitations of our current API interface.
 - Include only the resources your extension needs to function.
 - License your extension under one of the [allowed licenses](./license-requirements.md).
 - Write all user-facing text in English.
