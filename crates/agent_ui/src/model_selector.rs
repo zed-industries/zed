@@ -172,7 +172,7 @@ impl ModelPickerDelegate {
         let next_model = favorite_models[next_index].clone();
 
         self.selector
-            .select_model(next_model.id.clone(), cx)
+            .select_model(next_model.id.clone(), true, cx)
             .detach_and_log_err(cx);
 
         self.selected_model = Some(next_model);
@@ -271,8 +271,9 @@ impl PickerDelegate for ModelPickerDelegate {
             self.filtered_entries.get(self.selected_index)
             && model_info.disabled.is_none()
         {
+            let save_to_settings = !window.modifiers().shift;
             self.selector
-                .select_model(model_info.id.clone(), cx)
+                .select_model(model_info.id.clone(), save_to_settings, cx)
                 .detach_and_log_err(cx);
             self.selected_model = Some(model_info.clone());
             let current_index = self.selected_index;
@@ -646,7 +647,7 @@ mod tests {
             Task::ready(Ok(AgentModelList::Flat(self.models.clone())))
         }
 
-        fn select_model(&self, model_id: AgentModelId, _cx: &mut App) -> Task<Result<()>> {
+        fn select_model(&self, model_id: AgentModelId, _save_to_settings: bool, _cx: &mut App) -> Task<Result<()>> {
             self.selected_models.borrow_mut().push(model_id.clone());
             if let Some(model) = self.models.iter().find(|model| model.id == model_id) {
                 *self.selected_model.borrow_mut() = model.clone();
