@@ -4161,6 +4161,13 @@ impl Workspace {
         self.dock_at_position(position).read(cx).is_open()
     }
 
+    /// Whether the zoom layer covers the docks. Only a zoomed center pane does; a
+    /// zoomed dock panel stops where the other docks start, so those stay visible,
+    /// clickable and resizable beside it.
+    pub(crate) fn zoom_layer_covers_docks(&self) -> bool {
+        self.zoomed.is_some() && self.zoomed_position.is_none()
+    }
+
     pub fn toggle_dock(
         &mut self,
         dock_side: DockPosition,
@@ -4170,8 +4177,8 @@ impl Workspace {
         let mut focus_center = false;
         let mut reveal_dock = false;
 
-        let other_is_zoomed = self.zoomed.is_some() && self.zoomed_position != Some(dock_side);
-        let was_visible = self.is_dock_at_position_open(dock_side, cx) && !other_is_zoomed;
+        let was_visible =
+            self.is_dock_at_position_open(dock_side, cx) && !self.zoom_layer_covers_docks();
 
         if let Some(panel) = self.dock_at_position(dock_side).read(cx).active_panel() {
             telemetry::event!(
@@ -4509,18 +4516,21 @@ impl Workspace {
             }
         }
 
-        // If another dock is zoomed, hide it.
+        // A zoomed dock panel stops where the other docks start, so revealing one sits
+        // beside it and the panel keeps full screen. Otherwise focus is headed for the
+        // center, which a zoomed panel does cover, so its dock is hidden entirely.
         let mut focus_center = false;
-        for dock in self.all_docks() {
-            dock.update(cx, |dock, cx| {
-                if Some(dock.position()) != dock_to_reveal
-                    && let Some(panel) = dock.active_panel()
-                    && panel.is_zoomed(window, cx)
-                {
-                    focus_center |= panel.panel_focus_handle(cx).contains_focused(window, cx);
-                    dock.set_open(false, window, cx);
-                }
-            });
+        if dock_to_reveal.is_none() {
+            for dock in self.all_docks() {
+                dock.update(cx, |dock, cx| {
+                    if let Some(panel) = dock.active_panel()
+                        && panel.is_zoomed(window, cx)
+                    {
+                        focus_center |= panel.panel_focus_handle(cx).contains_focused(window, cx);
+                        dock.set_open(false, window, cx);
+                    }
+                });
+            }
         }
 
         if focus_center {
@@ -4528,13 +4538,41 @@ impl Workspace {
                 .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx), cx))
         }
 
-        if self.zoomed_position != dock_to_reveal {
+        let keeps_zoom = match self.zoomed_position {
+            Some(_) => dock_to_reveal.is_some(),
+            None => dock_to_reveal.is_none(),
+        };
+        if !keeps_zoom {
             self.zoomed = None;
             self.zoomed_position = None;
             cx.emit(Event::ZoomChanged);
         }
 
         cx.notify();
+    }
+
+    /// Takes every full screen dock panel back to its normal size, leaving its dock
+    /// open. A full screen panel grows over the center, so this is what has to happen
+    /// before anything opened there — a file from the project or git panel, say — is
+    /// actually visible.
+    fn exit_full_screen_docks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mut exited_full_screen = false;
+        for dock in self.all_docks() {
+            dock.update(cx, |dock, cx| {
+                if let Some(panel) = dock.active_panel()
+                    && panel.is_zoomed(window, cx)
+                {
+                    panel.set_zoomed(false, window, cx);
+                    exited_full_screen = true;
+                }
+            });
+        }
+
+        if exited_full_screen && self.zoomed_position.is_some() {
+            self.zoomed = None;
+            self.zoomed_position = None;
+            cx.emit(Event::ZoomChanged);
+        }
     }
 
     fn add_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<Pane> {
@@ -5588,13 +5626,10 @@ impl Workspace {
         }
 
         self.dismiss_zoomed_items_to_reveal(dock_to_preserve, window, cx);
-        if pane.read(cx).is_zoomed() {
-            self.zoomed = Some(pane.downgrade().into());
-        } else {
-            self.zoomed = None;
+        if self.zoomed_position.is_none() {
+            self.zoomed = pane.read(cx).is_zoomed().then(|| pane.downgrade().into());
+            cx.emit(Event::ZoomChanged);
         }
-        self.zoomed_position = None;
-        cx.emit(Event::ZoomChanged);
         self.update_active_view_for_followers(window, cx);
         pane.update(cx, |pane, _| {
             pane.track_alternate_file_items();
@@ -5646,6 +5681,9 @@ impl Workspace {
         match event {
             pane::Event::AddItem { item } => {
                 item.added_to_pane(self, pane.clone(), window, cx);
+                if self.panes.contains(pane) {
+                    self.exit_full_screen_docks(window, cx);
+                }
                 cx.emit(Event::ItemAdded {
                     item: item.boxed_clone(),
                 });
@@ -5684,6 +5722,9 @@ impl Workspace {
                 });
                 if *local {
                     self.unfollow_in_pane(pane, window, cx);
+                    if self.panes.contains(pane) {
+                        self.exit_full_screen_docks(window, cx);
+                    }
                 }
                 serialize_workspace = *focus_changed || pane != self.active_pane();
                 if pane == self.active_pane() {
@@ -8088,7 +8129,7 @@ impl Workspace {
         let dock_is_open = dock.read(cx).is_open();
         let a11y_active = window.is_a11y_active();
 
-        let mut container = div()
+        let container = div()
             .id(dock_element_id)
             .when(dock_is_open, |this| {
                 this.role(gpui::Role::Complementary)
@@ -8106,49 +8147,85 @@ impl Workspace {
         // Apply sizing only when the dock is open. When closed the dock is still
         // included in the element tree so its focus handle remains mounted — without
         // this, toggle_panel_focus cannot focus the panel when the dock is closed.
-        let dock = dock.read(cx);
-        if let Some(panel) = dock.visible_panel() {
-            let size_state = dock.stored_panel_size_state(panel.as_ref());
-            let min_size = panel.min_size(window, cx);
-            if position.axis() == Axis::Horizontal {
-                let use_flexible = panel.has_flexible_size(window, cx);
-                let flex_grow = if use_flexible {
-                    size_state
-                        .and_then(|state| state.flex)
-                        .or_else(|| self.default_dock_flex(position))
-                } else {
-                    None
-                };
-                if let Some(grow) = flex_grow {
-                    let grow = (grow / self.center_full_height_column_count()).max(0.001);
-                    let style = container.style();
-                    style.flex_grow = Some(grow);
-                    style.flex_shrink = Some(1.0);
-                    style.flex_basis = Some(relative(0.).into());
-                } else {
-                    let size = size_state
-                        .and_then(|state| state.size)
-                        .unwrap_or_else(|| panel.default_size(window, cx));
-                    container = container.w(size);
-                    // Allow the fixed-width dock to shrink when there isn't
-                    // enough space (e.g. when the sidebar is open). The
-                    // stored size is preserved so the dock expands back
-                    // when space becomes available.
-                    let style = container.style();
-                    style.flex_shrink = Some(1.0);
-                }
-                if let Some(min) = min_size {
-                    container = container.min_w(min);
-                }
+        let container = self.apply_dock_size(container, position, dock.read(cx), window, cx);
+
+        Some(container)
+    }
+
+    /// Applies the layout size of the dock at `position` to `container`. Shared by
+    /// [`Self::render_dock`] and [`Self::zoomed_dock_spacer`] so a spacer resolves to
+    /// exactly the same width or flex factor as the dock it stands in for.
+    fn apply_dock_size<T: Styled>(
+        &self,
+        mut container: T,
+        position: DockPosition,
+        dock: &Dock,
+        window: &Window,
+        cx: &App,
+    ) -> T {
+        let Some(panel) = dock.visible_panel() else {
+            return container;
+        };
+        let size_state = dock.stored_panel_size_state(panel.as_ref());
+        let min_size = panel.min_size(window, cx);
+        if position.axis() == Axis::Horizontal {
+            let use_flexible = panel.has_flexible_size(window, cx);
+            let flex_grow = if use_flexible {
+                size_state
+                    .and_then(|state| state.flex)
+                    .or_else(|| self.default_dock_flex(position))
+            } else {
+                None
+            };
+            if let Some(grow) = flex_grow {
+                let grow = (grow / self.center_full_height_column_count()).max(0.001);
+                let style = container.style();
+                style.flex_grow = Some(grow);
+                style.flex_shrink = Some(1.0);
+                style.flex_basis = Some(relative(0.).into());
             } else {
                 let size = size_state
                     .and_then(|state| state.size)
                     .unwrap_or_else(|| panel.default_size(window, cx));
-                container = container.h(size);
+                container = container.w(size);
+                let style = container.style();
+                style.flex_shrink = Some(1.0);
             }
+            if let Some(min) = min_size {
+                container = container.min_w(min);
+            }
+        } else {
+            let size = size_state
+                .and_then(|state| state.size)
+                .unwrap_or_else(|| panel.default_size(window, cx));
+            container = container.h(size);
         }
 
-        Some(container)
+        container
+    }
+
+    /// A transparent stand-in for the dock at `position`, laid out beside a zoomed
+    /// panel so the panel expands only into the space the other docks leave free.
+    /// It deliberately does not `occlude`, so the real dock rendered underneath the
+    /// zoom layer stays visible and clickable.
+    ///
+    /// Returns `None` when the dock is closed, or when it is the zoomed dock itself
+    /// — [`Self::render_dock`] omits that dock from the layout, so the zoomed panel
+    /// takes over its space. Mirroring that omission here is what keeps the zoom
+    /// layer aligned with the docks beneath it.
+    fn zoomed_dock_spacer(
+        &self,
+        position: DockPosition,
+        zoomed_position: DockPosition,
+        window: &Window,
+        cx: &App,
+    ) -> Option<Div> {
+        if position == zoomed_position {
+            return None;
+        }
+        let dock = self.dock_at_position(position).read(cx);
+        dock.visible_panel()?;
+        Some(self.apply_dock_size(div().flex_none(), position, dock, window, cx))
     }
 
     /// Returns the currently-visible major window regions ("parts"), in a stable
@@ -9116,7 +9193,7 @@ impl Render for Workspace {
                                 .absolute()
                                 .size_full()
                             })
-                            .when(self.zoomed.is_none(), |this| {
+                            .when(!self.zoom_layer_covers_docks(), |this| {
                                 this.on_drag_move(cx.listener(
                                     move |workspace, e: &DragMoveEvent<DraggedDock>, window, cx| {
                                         if workspace.previous_dock_drag_coordinates
@@ -9395,25 +9472,97 @@ impl Render for Workspace {
                             })
                             .children(self.zoomed.as_ref().and_then(|view| {
                                 let zoomed_view = view.upgrade()?;
-                                let div = div()
+                                let zoomed_padding =
+                                    WorkspaceSettings::get_global(cx).zoomed_padding;
+                                let mut panel = div()
                                     .occlude()
-                                    .absolute()
                                     .overflow_hidden()
                                     .border_color(colors.border)
                                     .bg(colors.background)
                                     .child(zoomed_view)
-                                    .inset_0()
                                     .shadow_lg();
 
-                                if !WorkspaceSettings::get_global(cx).zoomed_padding {
-                                    return Some(div);
+                                // A zoomed center pane covers the whole workspace body,
+                                // docks included.
+                                let Some(zoomed_position) = self.zoomed_position else {
+                                    let panel = panel.absolute().inset_0();
+                                    return Some(if zoomed_padding {
+                                        panel.top_2().bottom_2().left_2().right_2().border_1()
+                                    } else {
+                                        panel
+                                    });
+                                };
+
+                                // A zoomed dock panel instead grows into the space the
+                                // other docks leave free, so they stay visible beside it.
+                                // It sits flush against them, separated only by a border:
+                                // any gap here would expose the center pane's scrollbar
+                                // in the strip between the panel and the next dock.
+                                panel = panel.flex_1();
+                                if zoomed_padding {
+                                    panel = match zoomed_position {
+                                        DockPosition::Left => panel.border_r_1(),
+                                        DockPosition::Right => panel.border_l_1(),
+                                        DockPosition::Bottom => panel.border_t_1(),
+                                    };
                                 }
 
-                                Some(match self.zoomed_position {
-                                    Some(DockPosition::Left) => div.right_2().border_r_1(),
-                                    Some(DockPosition::Right) => div.left_2().border_l_1(),
-                                    Some(DockPosition::Bottom) => div.top_2().border_t_1(),
-                                    None => div.top_2().bottom_2().left_2().right_2().border_1(),
+                                let left = self.zoomed_dock_spacer(
+                                    DockPosition::Left,
+                                    zoomed_position,
+                                    window,
+                                    cx,
+                                );
+                                let right = self.zoomed_dock_spacer(
+                                    DockPosition::Right,
+                                    zoomed_position,
+                                    window,
+                                    cx,
+                                );
+                                let bottom = self
+                                    .zoomed_dock_spacer(
+                                        DockPosition::Bottom,
+                                        zoomed_position,
+                                        window,
+                                        cx,
+                                    )
+                                    .map(|spacer| spacer.w_full());
+                                let row = || div().flex().flex_row().flex_1().overflow_hidden();
+                                let column = || div().flex().flex_col().flex_1();
+
+                                // Mirrors the dock arrangement of the layer below, so each
+                                // spacer lands exactly on the dock it stands in for.
+                                let layer = div().absolute().inset_0().flex();
+                                Some(match bottom_dock_layout {
+                                    BottomDockLayout::Full => layer
+                                        .flex_col()
+                                        .child(row().children(left).child(panel).children(right))
+                                        .children(bottom),
+                                    BottomDockLayout::LeftAligned => layer
+                                        .flex_row()
+                                        .child(
+                                            column()
+                                                .child(row().children(left).child(panel))
+                                                .children(bottom),
+                                        )
+                                        .children(right),
+                                    BottomDockLayout::RightAligned => {
+                                        layer.flex_row().children(left).child(
+                                            column()
+                                                .child(row().child(panel).children(right))
+                                                .children(bottom),
+                                        )
+                                    }
+                                    BottomDockLayout::Contained => layer
+                                        .flex_row()
+                                        .children(left)
+                                        .child(
+                                            column()
+                                                .overflow_hidden()
+                                                .child(panel)
+                                                .children(bottom),
+                                        )
+                                        .children(right),
                                 })
                             }))
                             .children(self.render_notifications(window, cx)),
@@ -13848,6 +13997,221 @@ mod tests {
             let right_dock = workspace.dock_at_position(DockPosition::Right);
             assert!(!left_dock.read(cx).is_open());
             assert!(right_dock.read(cx).is_open());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_full_screen_panel_leaves_other_docks_visible(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let left_panel = workspace.update_in(cx, |workspace, window, cx| {
+            let left_panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
+            workspace.add_panel(left_panel.clone(), window, cx);
+
+            let right_panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 101, cx));
+            workspace.add_panel(right_panel, window, cx);
+
+            workspace.toggle_dock(DockPosition::Left, window, cx);
+            workspace.toggle_dock(DockPosition::Right, window, cx);
+            left_panel
+        });
+
+        // Full-screening the left panel leaves the right dock alone, because the zoom
+        // layer now stops where that dock starts instead of covering it.
+        left_panel.update(cx, |_, cx| cx.emit(PanelEvent::ZoomIn));
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(workspace.zoomed_position, Some(DockPosition::Left));
+            assert!(
+                workspace.right_dock().read(cx).is_open(),
+                "Right dock should stay open while the left panel is full screen"
+            );
+            assert!(
+                workspace.right_dock().read(cx).resizable(cx),
+                "Right dock should keep its resize handle beside a full screen panel"
+            );
+        });
+
+        // And because that dock is genuinely visible, its panel button closes it
+        // instead of taking the reveal path, which would have dropped the zoom.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_dock(DockPosition::Right, window, cx);
+        });
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(
+                !workspace.right_dock().read(cx).is_open(),
+                "Toggling the right dock should close it"
+            );
+            assert_eq!(
+                workspace.zoomed_position,
+                Some(DockPosition::Left),
+                "Left panel should stay full screen"
+            );
+            assert!(workspace.left_dock().read(cx).is_open());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_zoomed_center_pane_disables_dock_resizing(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
+            workspace.add_panel(panel, window, cx);
+            workspace.toggle_dock(DockPosition::Right, window, cx);
+        });
+
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        pane.update_in(cx, |pane, window, cx| {
+            let item = cx.new(TestItem::new);
+            pane.add_item(Box::new(item), true, true, None, window, cx);
+            window.focus(&pane.focus_handle(cx), cx);
+        });
+        cx.run_until_parked();
+
+        // A zoomed center pane covers the docks, so their resize handles have to go —
+        // they would otherwise sit on top of the zoomed pane with nothing under them.
+        pane.update(cx, |_, cx| cx.emit(pane::Event::ZoomIn));
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(workspace.zoomed.is_some());
+            assert_eq!(workspace.zoomed_position, None);
+            assert!(!workspace.right_dock().read(cx).resizable(cx));
+        });
+
+        pane.update(cx, |_, cx| cx.emit(pane::Event::ZoomOut));
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(workspace.zoomed.is_none());
+            assert!(workspace.right_dock().read(cx).resizable(cx));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_revealing_a_dock_keeps_other_docks_full_screen(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let (left_panel, right_panel) = workspace.update_in(cx, |workspace, window, cx| {
+            let left_panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
+            workspace.add_panel(left_panel.clone(), window, cx);
+
+            let right_panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 101, cx));
+            workspace.add_panel(right_panel.clone(), window, cx);
+
+            (left_panel, right_panel)
+        });
+
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        pane.update_in(cx, |pane, window, cx| {
+            let item = cx.new(TestItem::new);
+            pane.add_item(Box::new(item), true, true, None, window, cx);
+        });
+
+        // Full screen the right panel while the left dock is closed.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_dock(DockPosition::Right, window, cx);
+        });
+        right_panel.update(cx, |_, cx| cx.emit(PanelEvent::ZoomIn));
+        cx.run_until_parked();
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.right_dock().read(cx).is_open());
+            assert!(right_panel.is_zoomed(window, cx));
+            assert_eq!(workspace.zoomed_position, Some(DockPosition::Right));
+        });
+
+        // Opening the left dock sits it beside the full screen panel on the right,
+        // which keeps full screen rather than being dropped out of it.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_dock(DockPosition::Left, window, cx);
+        });
+        cx.run_until_parked();
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.left_dock().read(cx).is_open());
+            assert!(
+                left_panel
+                    .read(cx)
+                    .focus_handle(cx)
+                    .contains_focused(window, cx)
+            );
+            assert!(
+                workspace.right_dock().read(cx).is_open(),
+                "Revealing the left dock should not close the right dock"
+            );
+            assert!(
+                right_panel.is_zoomed(window, cx),
+                "Revealing the left dock should not drop the right panel out of full screen"
+            );
+            assert_eq!(workspace.zoomed_position, Some(DockPosition::Right));
+        });
+
+        // Focusing the center pane still hides a full screen dock entirely, since a
+        // zoomed panel covers the center.
+        pane.update_in(cx, |pane, window, cx| {
+            window.focus(&pane.focus_handle(cx), cx);
+        });
+        cx.run_until_parked();
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(!workspace.right_dock().read(cx).is_open());
+            assert!(right_panel.is_zoomed(window, cx));
+            assert_eq!(workspace.zoomed_position, None);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_opening_a_file_exits_full_screen_docks(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.toggle_dock(DockPosition::Right, window, cx);
+            panel
+        });
+
+        panel.update(cx, |_, cx| cx.emit(PanelEvent::ZoomIn));
+        cx.run_until_parked();
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(panel.is_zoomed(window, cx));
+            assert_eq!(workspace.zoomed_position, Some(DockPosition::Right));
+        });
+
+        // Opening a file into the center pane — as clicking an entry in the project or
+        // git panel does — has to uncover the center, even though the click leaves
+        // focus in the panel it came from.
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        pane.update_in(cx, |pane, window, cx| {
+            let item = cx.new(TestItem::new);
+            pane.add_item(Box::new(item), false, false, None, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(
+                !panel.is_zoomed(window, cx),
+                "Opening a file should take the panel out of full screen"
+            );
+            assert!(
+                workspace.right_dock().read(cx).is_open(),
+                "Opening a file should not close the dock"
+            );
+            assert_eq!(workspace.zoomed_position, None);
         });
     }
 
