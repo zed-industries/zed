@@ -2,25 +2,26 @@ use anyhow::{Result, anyhow};
 use collections::HashMap;
 use futures::{Stream, StreamExt};
 use language_model_core::{
-    CompactionContent, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    CompactedContext, CompactionUpdate, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelCustomToolFormat, LanguageModelCustomToolGrammarSyntax, LanguageModelImage,
-    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestToolInput,
-    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse,
-    LanguageModelToolUseId, LanguageModelToolUseInput, MessageContent, Role, StopReason,
-    TokenUsage,
+    LanguageModelProviderId, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModelRequestToolInput, LanguageModelToolChoice, LanguageModelToolResultContent,
+    LanguageModelToolUse, LanguageModelToolUseId, LanguageModelToolUseInput, MessageContent, Role,
+    StopReason, TokenUsage,
     util::{fix_streamed_json, is_context_window_exceeded_message, parse_tool_arguments},
 };
 use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::responses::{
-    ContextManagement, Request as ResponseRequest, ResponseCompactionItem,
-    ResponseCustomToolCallItem, ResponseCustomToolCallOutputItem, ResponseError,
-    ResponseFunctionCallItem, ResponseFunctionCallOutputContent, ResponseFunctionCallOutputItem,
-    ResponseIncludable, ResponseInputContent, ResponseInputItem, ResponseMessageItem,
-    ResponseOutputItem, ResponseOutputMessage, ResponseReasoningInputItem, ResponseReasoningItem,
+    ContextManagement, Request as ResponseRequest, ResponseCustomToolCallItem,
+    ResponseCustomToolCallOutputItem, ResponseError, ResponseFunctionCallItem,
+    ResponseFunctionCallOutputContent, ResponseFunctionCallOutputItem, ResponseIncludable,
+    ResponseInputContent, ResponseInputItem, ResponseMessageItem, ResponseOutputItem,
+    ResponseOutputMessage, ResponseReasoningInputItem, ResponseReasoningItem,
     ResponseReasoningSummaryPart, ResponseSummary as ResponsesSummary,
     ResponseUsage as ResponsesUsage, StreamEvent as ResponsesStreamEvent,
+    provider_compaction_items, provider_compaction_state_from_items,
 };
 use crate::{
     FunctionContent, FunctionDefinition, ImageUrl, MessagePart, ReasoningEffort,
@@ -72,6 +73,9 @@ pub fn into_open_ai(
     let mut messages = Vec::new();
     let mut current_reasoning: Option<String> = None;
     for message in request.messages {
+        let reasoning_details = interleaved_reasoning
+            .then(|| message.reasoning_details.clone())
+            .flatten();
         for content in message.content {
             match content {
                 MessageContent::Thinking { text, .. } if interleaved_reasoning => {
@@ -90,6 +94,7 @@ pub fn into_open_ai(
                             MessagePart::Text { text },
                             message.role,
                             &mut messages,
+                            reasoning_details.clone(),
                         );
                         if let Some(reasoning) = current_reasoning.take() {
                             if let Some(crate::RequestMessage::Assistant {
@@ -113,6 +118,7 @@ pub fn into_open_ai(
                         },
                         message.role,
                         &mut messages,
+                        reasoning_details.clone(),
                     );
                 }
                 MessageContent::ToolUse(tool_use) => {
@@ -128,12 +134,19 @@ pub fn into_open_ai(
                             function: FunctionContent {
                                 name: tool_use.name.to_string(),
                                 arguments: serde_json::to_string(input).unwrap_or_default(),
+                                thought_signature: interleaved_reasoning
+                                    .then(|| tool_use.thought_signature.clone())
+                                    .flatten(),
                             },
                         },
                     };
 
-                    if let Some(crate::RequestMessage::Assistant { tool_calls, .. }) =
-                        messages.last_mut()
+                    if let Some(crate::RequestMessage::Assistant {
+                        tool_calls,
+                        reasoning_details: existing_reasoning_details,
+                        ..
+                    }) = messages.last_mut()
+                        && existing_reasoning_details == &reasoning_details
                     {
                         tool_calls.push(tool_call);
                     } else {
@@ -141,6 +154,7 @@ pub fn into_open_ai(
                             content: None,
                             tool_calls: vec![tool_call],
                             reasoning_content: current_reasoning.take(),
+                            reasoning_details: reasoning_details.clone(),
                         });
                     }
                 }
@@ -227,6 +241,11 @@ pub fn into_open_ai(
     })
 }
 
+/// `compaction_state_owner` identifies the backend this request will be sent
+/// to for the purpose of replaying provider-native compaction state. Multiple
+/// backends share this conversion, but their encrypted compaction items are
+/// not interchangeable, so only state owned by this id is replayed; state
+/// owned by any other backend falls back to replaying the full transcript.
 pub fn into_open_ai_response(
     request: LanguageModelRequest,
     model_id: &str,
@@ -235,7 +254,8 @@ pub fn into_open_ai_response(
     max_output_tokens: Option<u64>,
     default_reasoning_effort: Option<ReasoningEffort>,
     supports_none_reasoning_effort: bool,
-) -> ResponseRequest {
+    compaction_state_owner: &LanguageModelProviderId,
+) -> Result<ResponseRequest> {
     let stream = !model_id.starts_with("o1-");
 
     let LanguageModelRequest {
@@ -255,17 +275,38 @@ pub fn into_open_ai_response(
 
     let service_tier = service_tier_for(speed);
 
+    let mut provider_items = Vec::new();
     let mut input_items = Vec::new();
     let mut replayed_reasoning_item_indexes = HashMap::default();
     let mut tool_use_kinds_by_id = HashMap::default();
+    let mut system_instructions = Vec::new();
     for (index, message) in messages.into_iter().enumerate() {
+        // System messages go to the top-level `instructions` field rather
+        // than the input item list. `instructions` is applied per request
+        // (the Responses API documents it as a system message inserted into
+        // the model's context), so the current system prompt survives when
+        // replaying provider compaction state replaces the accumulated input
+        // items below. This also matches the Codex backend, which rejects
+        // system-role input items outright.
+        if message.role == Role::System {
+            for content in message.content {
+                if let MessageContent::Text(text) = content
+                    && !text.trim().is_empty()
+                {
+                    system_instructions.push(text);
+                }
+            }
+            continue;
+        }
         append_message_to_response_items(
             message,
             index,
+            compaction_state_owner,
             &mut replayed_reasoning_item_indexes,
             &mut tool_use_kinds_by_id,
+            &mut provider_items,
             &mut input_items,
-        );
+        )?;
     }
 
     let tools: Vec<_> = tools
@@ -328,10 +369,14 @@ pub fn into_open_ai_response(
         Vec::new()
     };
 
-    ResponseRequest {
+    Ok(ResponseRequest {
         model: model_id.into(),
-        instructions: None,
-        input: input_items,
+        instructions: if system_instructions.is_empty() {
+            None
+        } else {
+            Some(system_instructions.join("\n\n"))
+        },
+        input: crate::responses::ResponseInput::new(provider_items, input_items),
         store: Some(false),
         include,
         stream,
@@ -358,16 +403,18 @@ pub fn into_open_ai_response(
         service_tier,
         context_management: compact_at_tokens
             .map(|compact_threshold| vec![ContextManagement::Compaction { compact_threshold }]),
-    }
+    })
 }
 
 fn append_message_to_response_items(
     message: LanguageModelRequestMessage,
     index: usize,
+    compaction_state_owner: &LanguageModelProviderId,
     replayed_reasoning_item_indexes: &mut HashMap<String, usize>,
     tool_use_kinds_by_id: &mut HashMap<LanguageModelToolUseId, ReplayToolKind>,
+    provider_items: &mut Vec<serde_json::Value>,
     input_items: &mut Vec<ResponseInputItem>,
-) {
+) -> Result<()> {
     let mut content_parts: Vec<ResponseInputContent> = Vec::new();
 
     let LanguageModelRequestMessage {
@@ -396,27 +443,26 @@ fn append_message_to_response_items(
                 push_response_text_part(&role, text, &mut content_parts);
             }
             MessageContent::Thinking { .. } | MessageContent::RedactedThinking(_) => {}
-            MessageContent::Compaction(CompactionContent::Encrypted {
-                id,
-                encrypted_content,
-            }) => {
-                flush_response_parts(
-                    &role,
-                    index,
-                    phase.as_deref(),
-                    &mut content_parts,
-                    input_items,
-                );
-                input_items.push(ResponseInputItem::Compaction(ResponseCompactionItem {
-                    id,
-                    encrypted_content,
-                }));
+            MessageContent::Compaction(CompactedContext::ProviderState(state)) => {
+                // The canonical replacement window already encodes all
+                // context retained at the compaction point, so everything
+                // accumulated before it -- earlier input items, earlier parts
+                // of this same message, and replay bookkeeping -- is
+                // superseded and must not be resent. When a transcript
+                // contains multiple compactions, each later window supersedes
+                // the previous one, so the last compaction wins. State owned
+                // by another backend yields `None`, in which case we fall
+                // back to replaying the full transcript.
+                if let Some(items) = provider_compaction_items(&state, compaction_state_owner)? {
+                    content_parts.clear();
+                    input_items.clear();
+                    replayed_reasoning_item_indexes.clear();
+                    tool_use_kinds_by_id.clear();
+                    provider_items.clear();
+                    provider_items.extend(items);
+                }
             }
-            // Summary compaction blocks come from other providers, and a
-            // Pending block is a streaming-only UI signal; neither is replayed.
-            MessageContent::Compaction(
-                CompactionContent::Summary { .. } | CompactionContent::Pending,
-            ) => {}
+            MessageContent::Compaction(CompactedContext::Summary { .. }) => {}
             MessageContent::Image(image) => {
                 push_response_image_part(&role, image, &mut content_parts);
             }
@@ -514,6 +560,7 @@ fn append_message_to_response_items(
         &mut content_parts,
         input_items,
     );
+    Ok(())
 }
 
 #[derive(Clone, Copy)]
@@ -645,17 +692,21 @@ fn add_message_content_part(
     new_part: MessagePart,
     role: Role,
     messages: &mut Vec<crate::RequestMessage>,
+    reasoning_details: Option<Arc<serde_json::Value>>,
 ) {
     match (role, messages.last_mut()) {
         (Role::User, Some(crate::RequestMessage::User { content }))
-        | (
+        | (Role::System, Some(crate::RequestMessage::System { content, .. })) => {
+            content.push_part(new_part);
+        }
+        (
             Role::Assistant,
             Some(crate::RequestMessage::Assistant {
                 content: Some(content),
+                reasoning_details: existing_reasoning_details,
                 ..
             }),
-        )
-        | (Role::System, Some(crate::RequestMessage::System { content, .. })) => {
+        ) if existing_reasoning_details == &reasoning_details => {
             content.push_part(new_part);
         }
         _ => {
@@ -667,6 +718,7 @@ fn add_message_content_part(
                     content: Some(crate::MessageContent::from(vec![new_part])),
                     tool_calls: Vec::new(),
                     reasoning_content: None,
+                    reasoning_details,
                 },
                 Role::System => crate::RequestMessage::System {
                     content: crate::MessageContent::from(vec![new_part]),
@@ -676,14 +728,70 @@ fn add_message_content_part(
     }
 }
 
+/// Accumulates structured reasoning metadata from compatible providers.
+///
+/// Array entries are matched by `index` and then `id`. Fragmented `text`,
+/// `summary`, and `data` fields are concatenated while other non-null fields
+/// replace their previous values.
+///
+/// # Examples
+///
+/// ```
+/// use open_ai::completion::ReasoningDetailsAccumulator;
+/// use serde_json::json;
+///
+/// let mut accumulator = ReasoningDetailsAccumulator::default();
+/// accumulator.push(json!([{"index": 0, "text": "first "}]));
+/// let details = accumulator
+///     .push(json!([{"index": 0, "text": "second"}]))
+///     .expect("non-empty reasoning details");
+///
+/// assert_eq!(details[0]["text"], "first second");
+/// ```
+#[derive(Debug, Default)]
+pub struct ReasoningDetailsAccumulator {
+    accumulated: Option<serde_json::Value>,
+}
+
+impl ReasoningDetailsAccumulator {
+    /// Merges `chunk` and returns the updated metadata snapshot.
+    ///
+    /// `null` and empty arrays do not replace previously accumulated metadata
+    /// and return `None`.
+    pub fn push(&mut self, chunk: serde_json::Value) -> Option<serde_json::Value> {
+        match chunk {
+            serde_json::Value::Null => None,
+            serde_json::Value::Array(chunks) if chunks.is_empty() => None,
+            serde_json::Value::Array(chunks) => {
+                let mut details = match self.accumulated.take() {
+                    Some(serde_json::Value::Array(details)) => details,
+                    _ => Vec::new(),
+                };
+                for chunk in chunks {
+                    merge_reasoning_detail(&mut details, chunk);
+                }
+                let accumulated = serde_json::Value::Array(details);
+                self.accumulated = Some(accumulated.clone());
+                Some(accumulated)
+            }
+            chunk => {
+                self.accumulated = Some(chunk.clone());
+                Some(chunk)
+            }
+        }
+    }
+}
+
 pub struct OpenAiEventMapper {
     tool_calls_by_index: HashMap<usize, RawToolCall>,
+    reasoning_details: ReasoningDetailsAccumulator,
 }
 
 impl OpenAiEventMapper {
     pub fn new() -> Self {
         Self {
             tool_calls_by_index: HashMap::default(),
+            reasoning_details: ReasoningDetailsAccumulator::default(),
         }
     }
 
@@ -709,11 +817,21 @@ impl OpenAiEventMapper {
             && let Some(prompt_tokens) = usage.prompt_tokens
             && let Some(completion_tokens) = usage.completion_tokens
         {
+            let cache_creation_input_tokens = usage
+                .prompt_tokens_details
+                .as_ref()
+                .map_or(0, |details| details.cache_write_tokens);
+            let cache_read_input_tokens = usage
+                .prompt_tokens_details
+                .as_ref()
+                .map_or(0, |details| details.cached_tokens);
             events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                input_tokens: prompt_tokens,
+                input_tokens: prompt_tokens
+                    .saturating_sub(cache_creation_input_tokens)
+                    .saturating_sub(cache_read_input_tokens),
                 output_tokens: completion_tokens,
-                cache_creation_input_tokens: 0,
-                cache_read_input_tokens: 0,
+                cache_creation_input_tokens,
+                cache_read_input_tokens,
             })));
         }
 
@@ -722,6 +840,13 @@ impl OpenAiEventMapper {
         };
 
         if let Some(delta) = choice.delta.as_ref() {
+            if let Some(reasoning_details) = delta.reasoning_details.clone()
+                && let Some(reasoning_details) = self.reasoning_details.push(reasoning_details)
+            {
+                events.push(Ok(LanguageModelCompletionEvent::ReasoningDetails(
+                    reasoning_details,
+                )));
+            }
             if let Some(reasoning) = delta.reasoning.clone() {
                 push_thinking_event(reasoning, &mut events);
             }
@@ -754,6 +879,10 @@ impl OpenAiEventMapper {
                         if let Some(arguments) = function.arguments.clone() {
                             entry.arguments.push_str(&arguments);
                         }
+
+                        if let Some(thought_signature) = function.thought_signature.clone() {
+                            entry.thought_signature = Some(thought_signature);
+                        }
                     }
 
                     if !entry.id.is_empty() && !entry.name.is_empty() {
@@ -767,7 +896,7 @@ impl OpenAiEventMapper {
                                     is_input_complete: false,
                                     input: LanguageModelToolUseInput::Json(input),
                                     raw_input: entry.arguments.clone(),
-                                    thought_signature: None,
+                                    thought_signature: entry.thought_signature.clone(),
                                 },
                             )));
                         }
@@ -790,7 +919,7 @@ impl OpenAiEventMapper {
                                 is_input_complete: true,
                                 input: LanguageModelToolUseInput::Json(input),
                                 raw_input: tool_call.arguments.clone(),
-                                thought_signature: None,
+                                thought_signature: tool_call.thought_signature.clone(),
                             },
                         )),
                         Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
@@ -827,19 +956,62 @@ fn push_thinking_event(
     }
 }
 
+fn merge_reasoning_detail(details: &mut Vec<serde_json::Value>, chunk: serde_json::Value) {
+    let index = chunk.get("index").and_then(serde_json::Value::as_u64);
+    let target_index = index
+        .and_then(|index| {
+            details.iter().position(|detail| {
+                detail.get("index").and_then(serde_json::Value::as_u64) == Some(index)
+            })
+        })
+        .or_else(|| {
+            let id = chunk.get("id").and_then(serde_json::Value::as_str)?;
+            details
+                .iter()
+                .position(|detail| detail.get("id").and_then(serde_json::Value::as_str) == Some(id))
+        });
+    let Some(target_index) = target_index else {
+        details.push(chunk);
+        return;
+    };
+    let (Some(target), Some(chunk)) = (details[target_index].as_object_mut(), chunk.as_object())
+    else {
+        return;
+    };
+    for (key, value) in chunk {
+        if matches!(key.as_str(), "text" | "summary" | "data")
+            && let Some(fragment) = value.as_str()
+            && let Some(existing) = target.get(key).and_then(serde_json::Value::as_str)
+        {
+            target.insert(
+                key.clone(),
+                serde_json::Value::String(format!("{existing}{fragment}")),
+            );
+        } else if !value.is_null() {
+            target.insert(key.clone(), value.clone());
+        }
+    }
+}
+
 #[derive(Default)]
 struct RawToolCall {
     id: String,
     name: String,
     arguments: String,
+    thought_signature: Option<String>,
 }
 
 pub struct OpenAiResponseEventMapper {
+    /// The backend whose infrastructure produced this stream; stamped on any
+    /// compaction state it emits so replay is limited to the same backend.
+    compaction_state_owner: LanguageModelProviderId,
     function_calls_by_item: HashMap<String, PendingResponseFunctionCall>,
     custom_tool_calls_by_item: HashMap<String, PendingResponseCustomToolCall>,
     reasoning_items: Vec<ResponseReasoningInputItem>,
+    current_reasoning_summary_part: Option<(String, usize)>,
     current_message_phase: Option<String>,
     pending_stop_reason: Option<StopReason>,
+    pending_compaction_items: usize,
 }
 
 #[derive(Default)]
@@ -856,13 +1028,16 @@ struct PendingResponseCustomToolCall {
 }
 
 impl OpenAiResponseEventMapper {
-    pub fn new() -> Self {
+    pub fn new(compaction_state_owner: LanguageModelProviderId) -> Self {
         Self {
+            compaction_state_owner,
             function_calls_by_item: HashMap::default(),
             custom_tool_calls_by_item: HashMap::default(),
             reasoning_items: Vec::new(),
+            current_reasoning_summary_part: None,
             current_message_phase: None,
             pending_stop_reason: None,
+            pending_compaction_items: 0,
         }
     }
 
@@ -931,16 +1106,33 @@ impl OpenAiResponseEventMapper {
                         }
                     }
                     ResponseOutputItem::Compaction(_) => {
+                        self.pending_compaction_items += 1;
                         events.push(Ok(LanguageModelCompletionEvent::Compaction(
-                            CompactionContent::Pending,
+                            CompactionUpdate::Started,
                         )));
                     }
                     ResponseOutputItem::Reasoning(_) | ResponseOutputItem::Unknown => {}
                 }
                 events
             }
-            ResponsesStreamEvent::ReasoningSummaryTextDelta { delta, .. }
-            | ResponsesStreamEvent::ReasoningDelta { delta, .. } => {
+            ResponsesStreamEvent::ReasoningSummaryTextDelta {
+                item_id,
+                summary_index,
+                delta,
+                ..
+            } => {
+                if delta.is_empty() {
+                    Vec::new()
+                } else {
+                    let mut events = self.begin_reasoning_summary_part(&item_id, summary_index);
+                    events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                        text: delta,
+                        signature: None,
+                    }));
+                    events
+                }
+            }
+            ResponsesStreamEvent::ReasoningDelta { delta, .. } => {
                 if delta.is_empty() {
                     Vec::new()
                 } else {
@@ -1093,16 +1285,11 @@ impl OpenAiResponseEventMapper {
                 let error = error.into_response_error();
                 vec![Err(completion_error_from_response_error(&error))]
             }
-            ResponsesStreamEvent::ReasoningSummaryPartAdded { summary_index, .. } => {
-                if summary_index > 0 {
-                    vec![Ok(LanguageModelCompletionEvent::Thinking {
-                        text: "\n\n".to_string(),
-                        signature: None,
-                    })]
-                } else {
-                    Vec::new()
-                }
-            }
+            ResponsesStreamEvent::ReasoningSummaryPartAdded {
+                item_id,
+                summary_index,
+                ..
+            } => self.begin_reasoning_summary_part(&item_id, summary_index),
             ResponsesStreamEvent::OutputItemDone { item, .. } => match item {
                 ResponseOutputItem::Reasoning(reasoning) => self.capture_reasoning_item(&reasoning),
                 ResponseOutputItem::Message(message) => self.capture_message_phase(&message),
@@ -1114,12 +1301,20 @@ impl OpenAiResponseEventMapper {
                     }
                 }
                 ResponseOutputItem::Compaction(compaction) => {
-                    vec![Ok(LanguageModelCompletionEvent::Compaction(
-                        CompactionContent::Encrypted {
-                            id: compaction.id,
-                            encrypted_content: compaction.encrypted_content,
-                        },
-                    ))]
+                    self.pending_compaction_items = self.pending_compaction_items.saturating_sub(1);
+                    match serde_json::to_value(ResponseInputItem::Compaction(compaction))
+                        .map_err(anyhow::Error::from)
+                        .and_then(|item| {
+                            provider_compaction_state_from_items(
+                                self.compaction_state_owner.clone(),
+                                vec![item],
+                            )
+                        }) {
+                        Ok(state) => vec![Ok(LanguageModelCompletionEvent::Compaction(
+                            CompactionUpdate::Finished(CompactedContext::ProviderState(state)),
+                        ))],
+                        Err(error) => vec![Err(LanguageModelCompletionError::Other(error))],
+                    }
                 }
                 ResponseOutputItem::FunctionCall(_) | ResponseOutputItem::Unknown => Vec::new(),
             },
@@ -1135,11 +1330,42 @@ impl OpenAiResponseEventMapper {
         }
     }
 
+    fn begin_reasoning_summary_part(
+        &mut self,
+        item_id: &str,
+        summary_index: usize,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let part = (item_id.to_string(), summary_index);
+        if self.current_reasoning_summary_part.as_ref() == Some(&part) {
+            return Vec::new();
+        }
+
+        let separator = self.current_reasoning_summary_part.replace(part).is_some();
+        if separator {
+            vec![Ok(LanguageModelCompletionEvent::Thinking {
+                text: "\n\n".to_string(),
+                signature: None,
+            })]
+        } else {
+            Vec::new()
+        }
+    }
+
     fn handle_completion(
         &mut self,
         response: ResponsesSummary,
         default_reason: StopReason,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        // A compaction item that was added but never done means the server
+        // already pruned its context, but we never received the canonical
+        // replacement window. Continuing as if the turn succeeded would
+        // leave the conversation unable to continue coherently.
+        if self.pending_compaction_items > 0 {
+            return vec![Err(LanguageModelCompletionError::Other(anyhow!(
+                "response completed with an unfinished compaction item"
+            )))];
+        }
+
         let mut events = Vec::new();
 
         events.extend(self.capture_reasoning_items_from_output(&response.output));
@@ -1427,7 +1653,7 @@ fn response_content_is_refusal(content: &serde_json::Value) -> bool {
     content_type == Some("refusal") || !refusal.is_empty()
 }
 
-fn token_usage_from_response_usage(usage: &ResponsesUsage) -> TokenUsage {
+pub fn token_usage_from_response_usage(usage: &ResponsesUsage) -> TokenUsage {
     let cache_read_input_tokens = usage.input_tokens_details.cached_tokens;
 
     TokenUsage {
@@ -1479,7 +1705,8 @@ mod tests {
         LanguageModelCustomToolFormat, LanguageModelCustomToolGrammarSyntax, LanguageModelImage,
         LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelRequestToolInput,
         LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUse,
-        LanguageModelToolUseId, LanguageModelToolUseInput, SharedString, Speed,
+        LanguageModelToolUseId, LanguageModelToolUseInput, OPEN_AI_PROVIDER_ID, SharedString,
+        Speed,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -1491,7 +1718,7 @@ mod tests {
 
     fn map_response_events(events: Vec<ResponsesStreamEvent>) -> Vec<LanguageModelCompletionEvent> {
         block_on(async {
-            OpenAiResponseEventMapper::new()
+            OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID)
                 .map_stream(Box::pin(futures::stream::iter(events.into_iter().map(Ok))))
                 .collect::<Vec<_>>()
                 .await
@@ -1828,19 +2055,15 @@ mod tests {
             Some(2048),
             Some(ReasoningEffort::Low),
             false,
-        );
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         let serialized = serde_json::to_value(&response).unwrap();
         let expected = json!({
             "model": "custom-model",
+            "instructions": "System context",
             "input": [
-                {
-                    "type": "message",
-                    "role": "system",
-                    "content": [
-                        { "type": "input_text", "text": "System context" }
-                    ]
-                },
                 {
                     "type": "message",
                     "role": "user",
@@ -2010,8 +2233,17 @@ mod tests {
             compact_at_tokens: None,
         };
 
-        let response =
-            into_open_ai_response(request, "custom-model", false, false, None, None, false);
+        let response = into_open_ai_response(
+            request,
+            "custom-model",
+            false,
+            false,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
         let serialized = serde_json::to_value(response).unwrap();
         assert_eq!(
             serialized,
@@ -2110,7 +2342,9 @@ mod tests {
             None,
             Some(ReasoningEffort::Low),
             false,
-        );
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         let serialized = serde_json::to_value(&response).unwrap();
         assert_eq!(
@@ -2185,8 +2419,17 @@ mod tests {
             compact_at_tokens: None,
         };
 
-        let response =
-            into_open_ai_response(request, "custom-model", false, false, None, None, false);
+        let response = into_open_ai_response(
+            request,
+            "custom-model",
+            false,
+            false,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
         let serialized = serde_json::to_value(&response).unwrap();
 
         assert_eq!(
@@ -2250,7 +2493,9 @@ mod tests {
             None,
             Some(ReasoningEffort::Medium),
             false,
-        );
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         let serialized = serde_json::to_value(&response).unwrap();
         assert_eq!(serialized.get("reasoning"), None);
@@ -2286,7 +2531,17 @@ mod tests {
                 compact_at_tokens: None,
             };
 
-            let response = into_open_ai_response(request, "gpt-5.4", true, true, None, None, true);
+            let response = into_open_ai_response(
+                request,
+                "gpt-5.4",
+                true,
+                true,
+                None,
+                None,
+                true,
+                &OPEN_AI_PROVIDER_ID,
+            )
+            .unwrap();
 
             let serialized = serde_json::to_value(&response)?;
             assert_eq!(
@@ -2420,7 +2675,9 @@ mod tests {
             None,
             Some(ReasoningEffort::Medium),
             true,
-        );
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         let serialized = serde_json::to_value(&response)?;
         assert_eq!(serialized["reasoning"], json!({ "effort": "none" }));
@@ -2459,7 +2716,9 @@ mod tests {
             None,
             Some(ReasoningEffort::Medium),
             true,
-        );
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         let serialized = serde_json::to_value(&response)?;
         assert_eq!(
@@ -2510,7 +2769,9 @@ mod tests {
             None,
             Some(ReasoningEffort::Medium),
             false,
-        );
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         let serialized = serde_json::to_value(&response).unwrap();
         assert_eq!(
@@ -2600,7 +2861,9 @@ mod tests {
             None,
             Some(ReasoningEffort::Medium),
             false,
-        );
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         let serialized = serde_json::to_value(&response).unwrap();
         assert_eq!(
@@ -2680,8 +2943,17 @@ mod tests {
             compact_at_tokens: None,
         };
 
-        let response =
-            into_open_ai_response(request, "custom-model", false, false, None, None, false);
+        let response = into_open_ai_response(
+            request,
+            "custom-model",
+            false,
+            false,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
         let serialized = serde_json::to_value(&response).unwrap();
 
         assert_eq!(
@@ -2804,7 +3076,7 @@ mod tests {
 
     #[test]
     fn responses_stream_failed_uses_response_error_message() {
-        let mut mapper = OpenAiResponseEventMapper::new();
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
         let mapped = mapper.map_event(ResponsesStreamEvent::Failed {
             response: ResponseSummary {
                 status: Some("failed".into()),
@@ -2836,7 +3108,7 @@ mod tests {
         }))
         .expect("documented error event");
 
-        let mut mapper = OpenAiResponseEventMapper::new();
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
         let mapped = mapper.map_event(event);
 
         assert_eq!(mapped.len(), 1);
@@ -2861,7 +3133,7 @@ mod tests {
         }))
         .expect("nested error event");
 
-        let mut mapper = OpenAiResponseEventMapper::new();
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
         let mapped = mapper.map_event(event);
 
         assert_eq!(mapped.len(), 1);
@@ -2886,7 +3158,7 @@ mod tests {
         }))
         .expect("nested error event");
 
-        let mut mapper = OpenAiResponseEventMapper::new();
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
         let mapped = mapper.map_event(event);
 
         assert_eq!(mapped.len(), 1);
@@ -2899,7 +3171,7 @@ mod tests {
 
     #[test]
     fn responses_stream_maps_failed_context_length_exceeded_to_prompt_too_large() {
-        let mut mapper = OpenAiResponseEventMapper::new();
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
         let mapped = mapper.map_event(ResponsesStreamEvent::Failed {
             response: ResponseSummary {
                 status: Some("failed".into()),
@@ -2931,7 +3203,7 @@ mod tests {
         }))
         .expect("response error event");
 
-        let mut mapper = OpenAiResponseEventMapper::new();
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
         let mapped = mapper.map_event(event);
 
         assert_eq!(mapped.len(), 1);
@@ -3337,11 +3609,13 @@ mod tests {
             ResponsesStreamEvent::ReasoningSummaryTextDelta {
                 item_id: "rs_123".into(),
                 output_index: 0,
+                summary_index: 0,
                 delta: "Thinking about".into(),
             },
             ResponsesStreamEvent::ReasoningSummaryTextDelta {
                 item_id: "rs_123".into(),
                 output_index: 0,
+                summary_index: 0,
                 delta: " the answer".into(),
             },
             ResponsesStreamEvent::ReasoningSummaryTextDone {
@@ -3354,14 +3628,10 @@ mod tests {
                 output_index: 0,
                 summary_index: 0,
             },
-            ResponsesStreamEvent::ReasoningSummaryPartAdded {
-                item_id: "rs_123".into(),
-                output_index: 0,
-                summary_index: 1,
-            },
             ResponsesStreamEvent::ReasoningSummaryTextDelta {
                 item_id: "rs_123".into(),
                 output_index: 0,
+                summary_index: 1,
                 delta: "Second part".into(),
             },
             ResponsesStreamEvent::ReasoningSummaryTextDone {
@@ -3436,6 +3706,65 @@ mod tests {
         assert!(mapped.iter().any(
             |e| matches!(e, LanguageModelCompletionEvent::Text(t) if t == "The answer is 42")
         ));
+    }
+
+    #[test]
+    fn responses_stream_separates_reasoning_summary_items() {
+        let events = vec![
+            ResponsesStreamEvent::OutputItemAdded {
+                output_index: 0,
+                sequence_number: None,
+                item: ResponseOutputItem::Reasoning(response_reasoning_item(
+                    "rs_1",
+                    vec![],
+                    None,
+                    None,
+                )),
+            },
+            ResponsesStreamEvent::ReasoningSummaryPartAdded {
+                item_id: "rs_1".into(),
+                output_index: 0,
+                summary_index: 0,
+            },
+            ResponsesStreamEvent::ReasoningSummaryTextDelta {
+                item_id: "rs_1".into(),
+                output_index: 0,
+                summary_index: 0,
+                delta: "**First item**".into(),
+            },
+            ResponsesStreamEvent::OutputItemAdded {
+                output_index: 1,
+                sequence_number: None,
+                item: ResponseOutputItem::Reasoning(response_reasoning_item(
+                    "rs_2",
+                    vec![],
+                    None,
+                    None,
+                )),
+            },
+            ResponsesStreamEvent::ReasoningSummaryPartAdded {
+                item_id: "rs_2".into(),
+                output_index: 1,
+                summary_index: 0,
+            },
+            ResponsesStreamEvent::ReasoningSummaryTextDelta {
+                item_id: "rs_2".into(),
+                output_index: 1,
+                summary_index: 0,
+                delta: "**Second item**".into(),
+            },
+        ];
+
+        let mapped = map_response_events(events);
+        let thinking = mapped
+            .into_iter()
+            .filter_map(|event| match event {
+                LanguageModelCompletionEvent::Thinking { text, signature: _ } => Some(text),
+                _ => None,
+            })
+            .collect::<String>();
+
+        assert_eq!(thinking, "**First item**\n\n**Second item**");
     }
 
     #[test]
@@ -3734,7 +4063,7 @@ mod tests {
             raw_input: tool_arguments.clone(),
             input: LanguageModelToolUseInput::Json(tool_input),
             is_input_complete: true,
-            thought_signature: None,
+            thought_signature: Some("thought-signature".into()),
         };
         let tool_result = LanguageModelToolResult {
             tool_use_id: tool_use_id,
@@ -3765,7 +4094,11 @@ mod tests {
                         MessageContent::ToolUse(tool_use),
                     ],
                     cache: false,
-                    reasoning_details: None,
+                    reasoning_details: Some(Arc::new(json!([{
+                        "id": "reasoning-1",
+                        "type": "reasoning.encrypted",
+                        "data": "encrypted"
+                    }]))),
                 },
                 LanguageModelRequestMessage {
                     role: Role::Assistant,
@@ -3802,8 +4135,13 @@ mod tests {
                 {
                     "role": "assistant",
                     "content": "Searching now.",
-                    "tool_calls": [{"id": "call-1", "type": "function", "function": {"name": "search", "arguments": tool_arguments}}],
-                    "reasoning_content": "I should search"
+                    "tool_calls": [{"id": "call-1", "type": "function", "function": {"name": "search", "arguments": tool_arguments, "thought_signature": "thought-signature"}}],
+                    "reasoning_content": "I should search",
+                    "reasoning_details": [{
+                        "id": "reasoning-1",
+                        "type": "reasoning.encrypted",
+                        "data": "encrypted"
+                    }]
                 },
                 {"role": "tool", "content": "result", "tool_call_id": "call-1"}
             ])
@@ -3848,6 +4186,7 @@ mod tests {
                     reasoning: Some("thinking".into()),
                     tool_calls: None,
                     reasoning_content: None,
+                    reasoning_details: None,
                 }),
                 finish_reason: None,
             }],
@@ -3860,6 +4199,110 @@ mod tests {
                 text: "thinking".into(),
                 signature: None,
             }]
+        );
+    }
+
+    #[test]
+    fn stream_merges_reasoning_details_and_maps_compatible_usage_and_signatures() {
+        let response_events = serde_json::from_value(json!([
+            {
+                "choices": [{
+                    "index": 0,
+                    "delta": {
+                        "reasoning_details": [{
+                            "id": "reasoning-1",
+                            "index": 0,
+                            "type": "reasoning.text",
+                            "text": "first "
+                        }],
+                        "tool_calls": [{
+                            "index": 0,
+                            "id": "call-1",
+                            "function": {
+                                "name": "search",
+                                "arguments": "{",
+                                "thought_signature": "signature"
+                            }
+                        }]
+                    },
+                    "finish_reason": null
+                }],
+                "usage": null
+            },
+            {
+                "choices": [{
+                    "index": 0,
+                    "delta": {
+                        "reasoning_details": [{
+                            "id": "reasoning-1",
+                            "index": 0,
+                            "text": "second"
+                        }],
+                        "tool_calls": [{
+                            "index": 0,
+                            "function": {
+                                "arguments": "}"
+                            }
+                        }]
+                    },
+                    "finish_reason": "tool_calls"
+                }],
+                "usage": null
+            },
+            {
+                "choices": [],
+                "usage": {
+                    "prompt_tokens": 10000,
+                    "completion_tokens": 500,
+                    "total_tokens": 10500,
+                    "prompt_tokens_details": {
+                        "cached_tokens": 6000,
+                        "cache_write_tokens": 1000
+                    }
+                }
+            }
+        ]))
+        .expect("valid compatible Chat Completions events");
+        let events = map_completion_events(response_events);
+
+        assert!(events.iter().any(|event| {
+            matches!(
+                event,
+                LanguageModelCompletionEvent::ReasoningDetails(details)
+                    if details[0]["text"] == "first second"
+            )
+        }));
+        assert!(events.iter().any(|event| {
+            matches!(
+                event,
+                LanguageModelCompletionEvent::ToolUse(tool_use)
+                    if tool_use.is_input_complete
+                        && tool_use.thought_signature.as_deref() == Some("signature")
+            )
+        }));
+        assert!(events.iter().any(|event| {
+            matches!(
+                event,
+                LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                    input_tokens: 3_000,
+                    output_tokens: 500,
+                    cache_creation_input_tokens: 1_000,
+                    cache_read_input_tokens: 6_000,
+                })
+            )
+        }));
+    }
+
+    #[test]
+    fn reasoning_details_accumulator_replaces_an_incompatible_previous_shape() {
+        let mut accumulator = ReasoningDetailsAccumulator::default();
+        assert_eq!(
+            accumulator.push(json!({"summary": "provider-defined"})),
+            Some(json!({"summary": "provider-defined"}))
+        );
+        assert_eq!(
+            accumulator.push(json!([{"index": 0, "text": "reasoning"}])),
+            Some(json!([{"index": 0, "text": "reasoning"}]))
         );
     }
 
@@ -3884,9 +4327,11 @@ mod tests {
                             function: Some(FunctionChunk {
                                 name: Some("list_directory".into()),
                                 arguments: Some("".into()),
+                                thought_signature: None,
                             }),
                         }]),
                         reasoning_content: None,
+                        reasoning_details: None,
                     }),
                     finish_reason: None,
                 }],
@@ -3906,9 +4351,11 @@ mod tests {
                             function: Some(FunctionChunk {
                                 name: Some("".into()),
                                 arguments: Some("{\"path\": \"".into()),
+                                thought_signature: None,
                             }),
                         }]),
                         reasoning_content: None,
+                        reasoning_details: None,
                     }),
                     finish_reason: None,
                 }],
@@ -3927,9 +4374,11 @@ mod tests {
                             function: Some(FunctionChunk {
                                 name: Some("".into()),
                                 arguments: Some("blog-scraper\"}".into()),
+                                thought_signature: None,
                             }),
                         }]),
                         reasoning_content: None,
+                        reasoning_details: None,
                     }),
                     finish_reason: None,
                 }],
@@ -3995,6 +4444,128 @@ mod tests {
     }
 
     #[test]
+    fn into_open_ai_response_prepends_provider_input_unchanged() {
+        let provider_input = json!([
+            {
+                "type": "message",
+                "role": "user",
+                "content": "Retained user context.",
+                "provider_extension": {"preserve": true}
+            },
+            {
+                "type": "compaction",
+                "id": "cmp_manual",
+                "encrypted_content": "opaque-state"
+            }
+        ]);
+        let request = LanguageModelRequest {
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![MessageContent::Compaction(CompactedContext::ProviderState(
+                        provider_compaction_state_from_items(
+                            OPEN_AI_PROVIDER_ID,
+                            provider_input.as_array().unwrap().clone(),
+                        )
+                        .unwrap(),
+                    ))],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Continue.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let response = into_open_ai_response(
+            request,
+            "gpt-5.4",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
+
+        assert_eq!(
+            serde_json::to_value(&response).unwrap()["input"],
+            json!([
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": "Retained user context.",
+                    "provider_extension": {"preserve": true}
+                },
+                {
+                    "type": "compaction",
+                    "id": "cmp_manual",
+                    "encrypted_content": "opaque-state"
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Continue."}]
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn open_ai_response_converts_to_compact_request_with_supported_controls() {
+        let request = LanguageModelRequest {
+            thread_id: Some("thread-123".to_string()),
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Retain this context.".into())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            speed: Some(Speed::Fast),
+            compact_at_tokens: Some(100_000),
+            ..Default::default()
+        };
+
+        let mut response_request = into_open_ai_response(
+            request,
+            "gpt-5.4",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
+        response_request.instructions = Some("Preserve implementation details.".to_string());
+        let compact_request = response_request.into_compact_request();
+
+        assert_eq!(
+            serde_json::to_value(compact_request).unwrap(),
+            json!({
+                "model": "gpt-5.4",
+                "instructions": "Preserve implementation details.",
+                "input": [{
+                    "type": "message",
+                    "role": "user",
+                    "content": [{
+                        "type": "input_text",
+                        "text": "Retain this context."
+                    }]
+                }],
+                "prompt_cache_key": "thread-123",
+                "service_tier": "priority"
+            })
+        );
+    }
+
+    #[test]
     fn into_open_ai_response_maps_compact_at_tokens_to_context_management() {
         let request = LanguageModelRequest {
             messages: vec![LanguageModelRequestMessage {
@@ -4007,7 +4578,17 @@ mod tests {
             ..Default::default()
         };
 
-        let response = into_open_ai_response(request, "gpt-5.1", true, true, None, None, false);
+        let response = into_open_ai_response(
+            request,
+            "gpt-5.1",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         assert_eq!(
             serde_json::to_value(&response).unwrap()["context_management"],
@@ -4027,7 +4608,17 @@ mod tests {
             ..Default::default()
         };
 
-        let response = into_open_ai_response(request, "gpt-5.1", true, true, None, None, false);
+        let response = into_open_ai_response(
+            request,
+            "gpt-5.1",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         assert!(
             serde_json::to_value(&response)
@@ -4038,15 +4629,21 @@ mod tests {
     }
 
     #[test]
-    fn into_open_ai_response_replays_encrypted_compaction_block() {
+    fn into_open_ai_response_replays_provider_compaction_block() {
+        let state = provider_compaction_state_from_items(
+            OPEN_AI_PROVIDER_ID,
+            vec![json!({
+                "type": "compaction",
+                "id": "cmp_1",
+                "encrypted_content": "encrypted-blob"
+            })],
+        )
+        .unwrap();
         let request = LanguageModelRequest {
             messages: vec![LanguageModelRequestMessage {
                 role: Role::Assistant,
                 content: vec![
-                    MessageContent::Compaction(CompactionContent::Encrypted {
-                        id: Some("cmp_1".into()),
-                        encrypted_content: "encrypted-blob".into(),
-                    }),
+                    MessageContent::Compaction(CompactedContext::ProviderState(state)),
                     MessageContent::Text("Done.".into()),
                 ],
                 cache: false,
@@ -4055,7 +4652,17 @@ mod tests {
             ..Default::default()
         };
 
-        let response = into_open_ai_response(request, "gpt-5.1", true, true, None, None, false);
+        let response = into_open_ai_response(
+            request,
+            "gpt-5.1",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         assert_eq!(
             serde_json::to_value(&response).unwrap()["input"],
@@ -4074,6 +4681,329 @@ mod tests {
                 }
             ])
         );
+    }
+
+    #[test]
+    fn into_open_ai_response_hoists_system_messages_into_instructions() {
+        let request = LanguageModelRequest {
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::System,
+                    content: vec![MessageContent::Text("You are a coding assistant.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Hello.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::System,
+                    content: vec![MessageContent::Text("Prefer terse answers.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let response = into_open_ai_response(
+            request,
+            "gpt-5.1",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
+
+        let serialized = serde_json::to_value(&response).unwrap();
+        assert_eq!(
+            serialized["instructions"],
+            json!("You are a coding assistant.\n\nPrefer terse answers.")
+        );
+        assert_eq!(
+            serialized["input"],
+            json!([
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        { "type": "input_text", "text": "Hello." }
+                    ]
+                }
+            ])
+        );
+    }
+
+    /// Replaying provider compaction state discards all input items
+    /// accumulated before it, but the system prompt must not be lost with
+    /// them: it lives in the per-request `instructions` field, outside the
+    /// compacted window, so the model keeps running on the current prompt
+    /// rather than whatever was frozen into the window at compaction time.
+    #[test]
+    fn into_open_ai_response_preserves_system_prompt_across_compaction_replay() {
+        let state = provider_compaction_state_from_items(
+            OPEN_AI_PROVIDER_ID,
+            vec![json!({
+                "type": "compaction",
+                "id": "cmp_1",
+                "encrypted_content": "encrypted-blob"
+            })],
+        )
+        .unwrap();
+        let request = LanguageModelRequest {
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::System,
+                    content: vec![MessageContent::Text("Current system prompt.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Old context.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![MessageContent::Compaction(CompactedContext::ProviderState(
+                        state,
+                    ))],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Continue.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let response = into_open_ai_response(
+            request,
+            "gpt-5.1",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
+
+        let serialized = serde_json::to_value(&response).unwrap();
+        assert_eq!(serialized["instructions"], json!("Current system prompt."));
+        assert_eq!(
+            serialized["input"],
+            json!([
+                {
+                    "type": "compaction",
+                    "id": "cmp_1",
+                    "encrypted_content": "encrypted-blob"
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        { "type": "input_text", "text": "Continue." }
+                    ]
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn into_open_ai_response_rejects_malformed_provider_compaction_state() {
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![MessageContent::Compaction(CompactedContext::ProviderState(
+                    language_model_core::ProviderCompactionState::new(
+                        language_model_core::OPEN_AI_PROVIDER_ID,
+                        crate::responses::COMPACTION_STATE_FORMAT,
+                        "not valid JSON",
+                    ),
+                ))],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let error = into_open_ai_response(
+            request,
+            "gpt-5.1",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("malformed OpenAI compaction state payload")
+        );
+    }
+
+    #[test]
+    fn into_open_ai_response_ignores_compaction_state_owned_by_another_backend() {
+        // Several backends share this request conversion (OpenAI itself,
+        // OpenAI-compatible endpoints, Codex, Mantle), but an encrypted
+        // compaction item is only decryptable by the backend that produced
+        // it. Replaying OpenAI-owned state through a different backend would
+        // discard the entire transcript in exchange for an opaque blob that
+        // backend cannot read, so the state must be ignored and the full
+        // transcript replayed instead.
+        let state = provider_compaction_state_from_items(
+            OPEN_AI_PROVIDER_ID,
+            vec![json!({
+                "type": "compaction",
+                "id": "cmp_1",
+                "encrypted_content": "encrypted-blob"
+            })],
+        )
+        .unwrap();
+        let request = LanguageModelRequest {
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Set up the project.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![
+                        MessageContent::Compaction(CompactedContext::ProviderState(state)),
+                        MessageContent::Text("Done.".into()),
+                    ],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Continue.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let response = into_open_ai_response(
+            request,
+            "compatible-model",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &LanguageModelProviderId::new("my-compatible-endpoint"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            serde_json::to_value(&response).unwrap()["input"],
+            json!([
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{ "type": "input_text", "text": "Set up the project." }]
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        { "type": "output_text", "text": "Done.", "annotations": [] }
+                    ]
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{ "type": "input_text", "text": "Continue." }]
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn responses_stream_stamps_compaction_state_with_owning_backend() {
+        let owner = LanguageModelProviderId::new("my-compatible-endpoint");
+        let mut mapper = OpenAiResponseEventMapper::new(owner.clone());
+        let item: ResponseOutputItem = serde_json::from_value(json!({
+            "type": "compaction",
+            "id": "cmp_1",
+            "encrypted_content": "encrypted-blob"
+        }))
+        .unwrap();
+
+        let mut events = mapper.map_event(ResponsesStreamEvent::OutputItemDone {
+            output_index: 0,
+            sequence_number: None,
+            item,
+        });
+
+        let Some(Ok(LanguageModelCompletionEvent::Compaction(CompactionUpdate::Finished(
+            CompactedContext::ProviderState(state),
+        )))) = events.pop()
+        else {
+            panic!("expected finished provider compaction state");
+        };
+        assert_eq!(state.provider_id(), &owner);
+        assert!(
+            crate::responses::provider_compaction_items(&state, &owner)
+                .unwrap()
+                .is_some()
+        );
+        // OpenAI proper must not attempt to replay a window produced by a
+        // different backend's infrastructure.
+        assert_eq!(
+            crate::responses::provider_compaction_items(&state, &OPEN_AI_PROVIDER_ID).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn responses_stream_rejects_completion_with_unfinished_compaction() {
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
+        let item: ResponseOutputItem = serde_json::from_value(json!({
+            "type": "compaction",
+            "id": "cmp_1",
+            "encrypted_content": "encrypted-blob"
+        }))
+        .unwrap();
+
+        let started = mapper.map_event(ResponsesStreamEvent::OutputItemAdded {
+            output_index: 0,
+            sequence_number: None,
+            item,
+        });
+        assert!(matches!(
+            started.as_slice(),
+            [Ok(LanguageModelCompletionEvent::Compaction(
+                CompactionUpdate::Started
+            ))]
+        ));
+
+        let mut completed = mapper.map_event(ResponsesStreamEvent::Completed {
+            response: ResponseSummary::default(),
+        });
+        let error = completed.pop().unwrap().unwrap_err();
+
+        assert!(error.to_string().contains("unfinished compaction"));
     }
 
     #[test]
@@ -4102,11 +5032,20 @@ mod tests {
         assert_eq!(
             mapped,
             vec![
-                LanguageModelCompletionEvent::Compaction(CompactionContent::Pending),
-                LanguageModelCompletionEvent::Compaction(CompactionContent::Encrypted {
-                    id: Some("cmp_1".into()),
-                    encrypted_content: "encrypted-blob".into(),
-                }),
+                LanguageModelCompletionEvent::Compaction(CompactionUpdate::Started),
+                LanguageModelCompletionEvent::Compaction(CompactionUpdate::Finished(
+                    CompactedContext::ProviderState(
+                        provider_compaction_state_from_items(
+                            OPEN_AI_PROVIDER_ID,
+                            vec![json!({
+                                "type": "compaction",
+                                "id": "cmp_1",
+                                "encrypted_content": "encrypted-blob"
+                            })],
+                        )
+                        .unwrap()
+                    )
+                )),
             ]
         );
     }
