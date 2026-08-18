@@ -1,11 +1,11 @@
 [package]
-name = "csv_preview"
+name = "tabular_data_preview"
 version = "0.1.0"
 publish.workspace = true
 edition.workspace = true
 
 [lib]
-path = "src/csv_preview.rs"
+path = "src/tabular_data_preview.rs"
 
 [dependencies]
 anyhow.workspace = true
