@@ -468,8 +468,7 @@ impl SourceLocationIndex {
             // symbol text: the text is persisted, and extra context is the
             // part of a signature most likely to churn. Duplicate paths are
             // disambiguated by ordinal instead.
-            let items =
-                snapshot.outline_items_as_points_containing(0..snapshot.len(), false, None);
+            let items = snapshot.outline_items_as_points_containing(0..snapshot.len(), false, None);
             let mut path_stack = Vec::new();
             let mut next_ordinal_by_path = HashMap::<Vec<SharedString>, u32>::new();
             let mut symbols = Vec::with_capacity(items.len());
