@@ -78,3 +78,6 @@ harness = false
 
 [package.metadata.cargo-machete]
 ignored = ["tracing"]
+
+[package.metadata.dcargo]
+extra-inputs = ["../extension_api/wit"]

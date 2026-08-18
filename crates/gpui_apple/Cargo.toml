@@ -41,3 +41,6 @@ gpui.workspace = true
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
+
+[package.metadata.dcargo]
+extra-inputs = ["../gpui/src"]

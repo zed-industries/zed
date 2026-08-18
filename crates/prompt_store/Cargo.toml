@@ -39,3 +39,6 @@ uuid.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
+
+[package.metadata.dcargo]
+extra-inputs = ["../git_ui/src/commit_message_prompt.txt"]

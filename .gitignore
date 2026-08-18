@@ -60,3 +60,6 @@ crates/docs_preprocessor/actions.json
 .nixos-test-history
 
 .local*
+
+# dcargo build output
+dtarget/

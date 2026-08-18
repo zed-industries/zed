@@ -11,3 +11,6 @@ workspace = true
 [dependencies]
 gpui.workspace = true
 semver.workspace = true
+
+[package.metadata.dcargo]
+extra-inputs = ["../zed/RELEASE_CHANNEL"]
