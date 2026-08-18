@@ -1879,13 +1879,14 @@ mod test {
     use futures::StreamExt;
     use std::{fmt::Write, time::Duration};
 
-    use editor::{HighlightKey, MultiBufferOffset};
+    use editor::{Anchor, HighlightKey, MultiBufferOffset};
     use gpui::{
         Bounds, DispatchEventResult, ElementInputHandler, KeyBinding, KeyDownEvent, Keystroke,
         PlatformInput, PlatformInputHandler, UpdateGlobal, VisualTestContext,
     };
     use indoc::indoc;
-    use language::{CursorShape, Point};
+    use language::{CursorShape, DiagnosticSourceKind, Point};
+    use lsp::LanguageServerId;
     use project::FakeFs;
     use search::{ProjectSearchView, project_search};
     use serde_json::json;
@@ -4685,6 +4686,133 @@ mod test {
             Mode::HelixNormal,
         );
         assert_eq!(cx.active_operator(), None);
+    }
+
+    #[gpui::test]
+    async fn test_helix_escape_dismisses_diagnostics(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.set_state(
+            indoc! {"
+            fn func(abc dˇef: i32) -> u32 {
+            }"},
+            Mode::HelixNormal,
+        );
+
+        let lsp_store =
+            cx.update_editor(|editor, _, cx| editor.project().unwrap().read(cx).lsp_store());
+        let uri = cx.buffer_lsp_url.clone();
+        let message = "something is wrong";
+        cx.update(|_, cx| {
+            lsp_store.update(cx, |lsp_store, cx| {
+                lsp_store
+                    .update_diagnostics(
+                        LanguageServerId(0),
+                        lsp::PublishDiagnosticsParams {
+                            uri,
+                            version: None,
+                            diagnostics: vec![lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 12),
+                                    lsp::Position::new(0, 15),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                message: message.to_string(),
+                                ..Default::default()
+                            }],
+                        },
+                        None,
+                        DiagnosticSourceKind::Pushed,
+                        &[],
+                        cx,
+                    )
+                    .unwrap()
+            });
+        });
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("] d");
+        cx.update_editor(|editor, _, _| {
+            assert_eq!(
+                editor.active_diagnostic_message(),
+                Some(message),
+                "Helix ] d should activate the diagnostic overlay"
+            );
+        });
+
+        cx.simulate_keystrokes("escape");
+        cx.update_editor(|editor, _, _| {
+            assert_eq!(
+                editor.active_diagnostic_message(),
+                None,
+                "Helix Esc should dismiss the diagnostic overlay"
+            );
+        });
+        assert_eq!(cx.mode(), Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_helix_escape_collapses_expanded_diff_hunks(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.set_state(
+            indoc! {"
+            one
+            ˇtwo
+            three"},
+            Mode::HelixNormal,
+        );
+        cx.set_head_text(indoc! {"
+            one
+            CHANGED
+            three"});
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("g o");
+        cx.update_editor(|editor, _, cx| {
+            assert!(
+                editor
+                    .buffer()
+                    .read(cx)
+                    .has_expanded_diff_hunks_in_ranges(&[Anchor::Min..Anchor::Max], cx),
+                "Helix g o should expand the diff hunk"
+            );
+        });
+
+        cx.simulate_keystrokes("escape");
+        cx.update_editor(|editor, _, cx| {
+            assert!(
+                !editor
+                    .buffer()
+                    .read(cx)
+                    .has_expanded_diff_hunks_in_ranges(&[Anchor::Min..Anchor::Max], cx),
+                "Helix Esc should collapse expanded diff hunks"
+            );
+        });
+        cx.assert_state(
+            indoc! {"
+            one
+            ˇtwo
+            three"},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_escape_without_overlay_keeps_selections(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.set_state("hello «worlˇ»d", Mode::HelixNormal);
+        cx.simulate_keystrokes("escape");
+        cx.assert_state("hello «worlˇ»d", Mode::HelixNormal);
+
+        cx.simulate_keystrokes("v e");
+        cx.assert_state("hello «worldˇ»", Mode::HelixSelect);
+        cx.simulate_keystrokes("escape");
+        cx.assert_state("hello «worldˇ»", Mode::HelixNormal);
     }
 
     #[gpui::test]

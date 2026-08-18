@@ -418,7 +418,7 @@
     },
   },
   {
-    "context": "VimControl && vim_mode == helix_normal && !menu && !BufferSearchBar",
+    "context": "VimControl && vim_mode == helix_normal && !menu && !BufferSearchBar && !diffs_expanded && !active_diagnostics",
     "bindings": {
       "j": ["vim::Down", { "display_lines": true }],
       "down": ["vim::Down", { "display_lines": true }],
@@ -445,15 +445,21 @@
     },
   },
   {
-    "context": "Editor && mode == full && VimControl && vim_mode == helix_normal && !menu && !BufferSearchBar && os == windows",
+    "context": "Editor && mode == full && VimControl && vim_mode == helix_normal && !menu && !BufferSearchBar && !diffs_expanded && !active_diagnostics && os == windows",
     "bindings": {
       "escape": "menu::Cancel",
     },
   },
   {
-    "context": "vim_mode == helix_select && !menu && !BufferSearchBar",
+    "context": "vim_mode == helix_select && !menu && !BufferSearchBar && !diffs_expanded && !active_diagnostics",
     "bindings": {
       "escape": "vim::SwitchToHelixNormalMode",
+    },
+  },
+  {
+    "context": "(vim_mode == helix_normal || vim_mode == helix_select) && !menu && (diffs_expanded || active_diagnostics)",
+    "bindings": {
+      "escape": "editor::Cancel",
     },
   },
   {
