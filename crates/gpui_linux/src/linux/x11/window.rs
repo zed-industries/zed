@@ -1465,7 +1465,19 @@ impl PlatformWindow for X11Window {
     }
 
     fn activate(&self) {
-        let data = [1, xproto::Time::CURRENT_TIME.into(), 0, 0, 0];
+        // Pass the timestamp of the most recent user input event so window
+        // managers (notably Mutter) don't apply focus-stealing prevention.
+        // Using CURRENT_TIME (0) causes Mutter to silently drop the request
+        // and instead mark the window as "demands attention".
+        let time = self
+            .0
+            .state
+            .borrow()
+            .client
+            .get_client()
+            .map(|client| client.0.borrow().last_user_event_time)
+            .unwrap_or(x11rb::CURRENT_TIME);
+        let data = [1, time, 0, 0, 0];
         let message = xproto::ClientMessageEvent::new(
             32,
             self.0.x_window,
@@ -1483,11 +1495,7 @@ impl PlatformWindow for X11Window {
             .log_err();
         self.0
             .xcb
-            .set_input_focus(
-                xproto::InputFocus::POINTER_ROOT,
-                self.0.x_window,
-                xproto::Time::CURRENT_TIME,
-            )
+            .set_input_focus(xproto::InputFocus::POINTER_ROOT, self.0.x_window, time)
             .log_err();
         xcb_flush(&self.0.xcb);
     }
