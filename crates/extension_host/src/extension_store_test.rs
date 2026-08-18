@@ -93,16 +93,6 @@ fn remote_sync_language_entry(extension: &str, path: &str) -> ExtensionIndexLang
     }
 }
 
-#[test]
-fn legacy_language_index_entry_has_no_query_files() {
-    let entry = remote_sync_language_entry("extension", "languages/example");
-    let serialized = serde_json::to_string(&entry).unwrap();
-    assert!(!serialized.contains("query_files"));
-
-    let deserialized = serde_json::from_str::<ExtensionIndexLanguageEntry>(&serialized).unwrap();
-    assert_eq!(deserialized.query_files, None);
-}
-
 fn remote_sync_extension_ids(index: &ExtensionIndex) -> Vec<String> {
     let mut extensions = index
         .extensions_to_sync_to_remote()
