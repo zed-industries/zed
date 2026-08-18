@@ -1123,6 +1123,7 @@ float curve_winding(TileCurve curve, float2 corner, float2 pixel) {
     float sign = 1.0 - 2.0 * float(curve.flags & 1u);
     float sx = float((curve.flags >> 1u) & 3u) - 1.0;
     bool crosses_downward_leg = (curve.flags & 8u) != 0u;
+    bool is_line = (curve.flags & 16u) != 0u;
     float winding = 0.0;
 
     // Rightward leg, from the tile's left edge to the sample. Clamping to
@@ -1133,10 +1134,22 @@ float curve_winding(TileCurve curve, float2 corner, float2 pixel) {
     float yb = min(pixel.y + 1.0, curve.p1.y);
     if (yb > ya) {
         float window = yb - ya;
-        float ta = monotone_quadratic_root(ay, by, curve.p0.y - ya, 1.0);
-        float tb = monotone_quadratic_root(ay, by, curve.p0.y - yb, 1.0);
-        float xa = (ax * ta + bx) * ta + curve.p0.x;
-        float xb = (ax * tb + bx) * tb + curve.p0.x;
+        // A line's x is affine in y, so the window ends are two multiply-adds
+        // against the uploaded slope rather than two root solves. The branch
+        // is per-curve and every lane of a tile is on the same curve at the
+        // same iteration, so it is wave-uniform.
+        float ta = 0.0;
+        float tb = 0.0;
+        float xa, xb;
+        if (is_line) {
+            xa = curve.p0.x + (ya - curve.p0.y) * ax;
+            xb = curve.p0.x + (yb - curve.p0.y) * ax;
+        } else {
+            ta = monotone_quadratic_root(ay, by, curve.p0.y - ya, 1.0);
+            tb = monotone_quadratic_root(ay, by, curve.p0.y - yb, 1.0);
+            xa = (ax * ta + bx) * ta + curve.p0.x;
+            xb = (ax * tb + bx) * tb + curve.p0.x;
+        }
 
         // By monotonicity the curve's x-extent over the window is exactly
         // [min(xa, xb), max(xa, xb)], which classifies most pixels without
@@ -1178,7 +1191,7 @@ float curve_winding(TileCurve curve, float2 corner, float2 pixel) {
             if (live) {
                 if (max(xa, xb) <= pixel.x) {
                     winding += sign * (yb - ya);
-                } else if (ax == 0.0 && ay == 0.0) {
+                } else if (is_line) {
                     // Lines carry exact-zero quadratic coefficients (set,
                     // not derived, in MonotoneCurve::scaled), so this branch
                     // is uniform across every lane processing the same

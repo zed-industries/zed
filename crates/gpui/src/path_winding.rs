@@ -50,6 +50,14 @@ const TILE_CURVE_SIGN_NEGATIVE: u32 = 1;
 /// x-direction as `((flags >> 1) & 3) - 1`.
 const TILE_CURVE_SX_SHIFT: u32 = 1;
 
+/// Bit 4 of [`TileCurve::flags`]: the curve is a line, so `x` is affine in
+/// `y` and [`TileCurve::a`] carries the slope instead of quadratic
+/// coefficients. Both coefficients being zero is exactly a line, so this is
+/// an exact classification rather than a tolerance. It does not replace
+/// `monotone_quadratic_root`'s own near-zero branch, which also catches
+/// genuine curves whose control point is a midpoint in one coordinate only.
+const TILE_CURVE_IS_LINE: u32 = 1 << 4;
+
 /// Bit 3 of [`TileCurve::flags`]: the curve crosses this tile's downward leg
 /// below the sample point. Booked once during binning, from the same
 /// bucketing the backdrop is built on, and uploaded; the shader never
@@ -247,10 +255,11 @@ pub struct TileCurve {
     pub p0: Point<f32>,
     /// Lower endpoint.
     pub p1: Point<f32>,
-    /// Quadratic coefficients `(ax, ay)` of `x(t)` and `y(t)`. Exactly zero
-    /// for line curves — set, not derived, so no rounding can perturb them
-    /// — keeping every solve against a line in
-    /// `monotone_quadratic_root`'s linear branch.
+    /// Quadratic coefficients `(ax, ay)` of `x(t)` and `y(t)` — or, when
+    /// [`TILE_CURVE_IS_LINE`] is set, `(dx/dy, 0)`. A line's quadratic
+    /// coefficients are exactly zero, so the slope rides in that dead space
+    /// and the shader evaluates `x` at a window end with one multiply-add
+    /// instead of a root solve.
     pub a: Point<f32>,
     /// Linear coefficients `(bx, by)`.
     pub b: Point<f32>,
@@ -562,12 +571,24 @@ impl PaintedPath {
 fn add_curve(scratch: &mut BinScratch, grid: &Grid, curve: &PathCurve) {
     let horizontal = curve.p1.y <= curve.p0.y;
     let delta = if curve.sign < 0.0 { -1 } else { 1 };
-    // Constant across every tile this curve lands in, so it is packed once.
+    // Constant across every tile this curve lands in, so these are computed
+    // once. A horizontal line never reaches the shader's window evaluation —
+    // its y-span is empty there — so its slope is left at zero rather than
+    // dividing by zero.
+    let is_line = curve.ax == 0.0 && curve.ay == 0.0;
+    let a = if is_line && curve.by != 0.0 {
+        point(curve.bx / curve.by, 0.0)
+    } else if is_line {
+        point(0.0, 0.0)
+    } else {
+        point(curve.ax, curve.ay)
+    };
     let flags = if curve.sign < 0.0 {
         TILE_CURVE_SIGN_NEGATIVE
     } else {
         0
-    } | (((curve.sx as i32 + 1) as u32) << TILE_CURVE_SX_SHIFT);
+    } | (((curve.sx as i32 + 1) as u32) << TILE_CURVE_SX_SHIFT)
+        | if is_line { TILE_CURVE_IS_LINE } else { 0 };
     let min_x = curve.p0.x.min(curve.p1.x);
     let max_x = curve.p0.x.max(curve.p1.x);
     let first_row = grid.row_of(curve.p0.y);
@@ -667,7 +688,7 @@ fn add_curve(scratch: &mut BinScratch, grid: &Grid, curve: &PathCurve) {
                 entry: TileCurve {
                     p0: curve.p0,
                     p1: curve.p1,
-                    a: point(curve.ax, curve.ay),
+                    a,
                     b: point(curve.bx, curve.by),
                     leg_y,
                     flags: flags | if crosses_leg { TILE_CURVE_DOWNWARD_LEG } else { 0 },
@@ -1410,16 +1431,30 @@ mod tests {
         let sign = curve_sign(curve);
         let sx = curve_sx(curve);
         let crosses_downward_leg = curve.flags & TILE_CURVE_DOWNWARD_LEG != 0;
+        let is_line = curve.flags & TILE_CURVE_IS_LINE != 0;
         let mut winding = 0.0;
 
         let mut ya = pixel.y.max(curve.p0.y);
         let mut yb = (pixel.y + 1.0).min(curve.p1.y);
         if yb > ya {
             let window = yb - ya;
-            let ta = monotone_quadratic_root(ay, by, curve.p0.y - ya, 1.0);
-            let tb = monotone_quadratic_root(ay, by, curve.p0.y - yb, 1.0);
-            let xa = (ax * ta + bx) * ta + curve.p0.x;
-            let xb = (ax * tb + bx) * tb + curve.p0.x;
+            let (ta, tb, xa, xb) = if is_line {
+                (
+                    0.0,
+                    0.0,
+                    curve.p0.x + (ya - curve.p0.y) * ax,
+                    curve.p0.x + (yb - curve.p0.y) * ax,
+                )
+            } else {
+                let ta = monotone_quadratic_root(ay, by, curve.p0.y - ya, 1.0);
+                let tb = monotone_quadratic_root(ay, by, curve.p0.y - yb, 1.0);
+                (
+                    ta,
+                    tb,
+                    (ax * ta + bx) * ta + curve.p0.x,
+                    (ax * tb + bx) * tb + curve.p0.x,
+                )
+            };
 
             if xa.min(xb) < pixel.x + 1.0 {
                 let mut live = true;
@@ -1437,7 +1472,7 @@ mod tests {
                 if live {
                     if xa.max(xb) <= pixel.x {
                         winding += sign * (yb - ya);
-                    } else if ax == 0.0 && ay == 0.0 {
+                    } else if is_line {
                         winding += sign
                             * ((yb - ya)
                                 - emulated_line_column_area(window, xa - pixel.x, xb - pixel.x));
