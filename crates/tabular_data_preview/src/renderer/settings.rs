@@ -51,14 +51,14 @@ pub(crate) fn settings_popover_menu(
                         "Top",
                         matches!(settings.vertical_alignment, VerticalAlignment::Top),
                         &view_entity,
-                        |s| s.vertical_alignment = VerticalAlignment::Top,
+                        |settings| settings.vertical_alignment = VerticalAlignment::Top,
                     );
                     let menu = toggle_entry(
                         menu,
                         "Center",
                         matches!(settings.vertical_alignment, VerticalAlignment::Center),
                         &view_entity,
-                        |s| s.vertical_alignment = VerticalAlignment::Center,
+                        |settings| settings.vertical_alignment = VerticalAlignment::Center,
                     );
 
                     let menu = menu.separator().header("Filter Sort");
@@ -67,14 +67,14 @@ pub(crate) fn settings_popover_menu(
                         "A-Z, then Count",
                         settings.filter_sort_order == FilterSortOrder::AlphaThenCount,
                         &view_entity,
-                        |s| s.filter_sort_order = FilterSortOrder::AlphaThenCount,
+                        |settings| settings.filter_sort_order = FilterSortOrder::AlphaThenCount,
                     );
                     let menu = toggle_entry(
                         menu,
                         "Count, then A-Z",
                         settings.filter_sort_order == FilterSortOrder::CountThenAlpha,
                         &view_entity,
-                        |s| s.filter_sort_order = FilterSortOrder::CountThenAlpha,
+                        |settings| settings.filter_sort_order = FilterSortOrder::CountThenAlpha,
                     );
 
                     let menu = toggle_entry(
@@ -82,7 +82,7 @@ pub(crate) fn settings_popover_menu(
                         "Display multiline rows",
                         settings.multiline_cells_enabled,
                         &view_entity,
-                        |s| s.multiline_cells_enabled = !s.multiline_cells_enabled,
+                        |settings| settings.multiline_cells_enabled = !settings.multiline_cells_enabled,
                     );
 
                     #[cfg(feature = "dev-tools")]
@@ -108,14 +108,14 @@ fn append_dev_only_entries(
         "Variable Height",
         settings.rendering_with == RowRenderMechanism::VariableList,
         view_entity,
-        |s| s.rendering_with = RowRenderMechanism::VariableList,
+        |settings| settings.rendering_with = RowRenderMechanism::VariableList,
     );
     let menu = toggle_entry(
         menu,
         "Uniform Height",
         settings.rendering_with == RowRenderMechanism::UniformList,
         view_entity,
-        |s| s.rendering_with = RowRenderMechanism::UniformList,
+        |settings| settings.rendering_with = RowRenderMechanism::UniformList,
     );
 
     let menu = toggle_entry(
@@ -123,13 +123,13 @@ fn append_dev_only_entries(
         "Show perf metrics",
         settings.show_perf_metrics_overlay,
         view_entity,
-        |s| s.show_perf_metrics_overlay = !s.show_perf_metrics_overlay,
+        |settings| settings.show_perf_metrics_overlay = !settings.show_perf_metrics_overlay,
     );
     toggle_entry(
         menu,
         "Show cell positions",
         settings.show_debug_info,
         view_entity,
-        |s| s.show_debug_info = !s.show_debug_info,
+        |settings| settings.show_debug_info = !settings.show_debug_info,
     )
 }
