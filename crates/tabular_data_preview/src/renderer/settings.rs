@@ -31,7 +31,7 @@ fn toggle_entry(
             });
         });
     let entry = if let Some(description) = description {
-        entry.documentation_aside(DocumentationSide::Left, move |_| {
+        entry.documentation_aside(DocumentationSide::Right, move |_| {
             Label::new(description).into_any_element()
         })
     } else {
