@@ -76,6 +76,20 @@ impl Prettier {
         ".prettierignore",
     ];
 
+    /// Whether prettier has a parser for the given language. When the `auto` formatter is used,
+    /// this decides whether to run prettier or fall back to the language server: prettier silently
+    /// produces no edits for a language it has no parser for, so without this check formatting
+    /// appears to do nothing. Languages prettier supports declare `prettier_parser_name` in their
+    /// config; an explicit `prettier.parser` override counts too. Plugins are handled by the
+    /// caller, since they can add parsers this doesn't know about.
+    pub fn has_parser_for_language(
+        buffer_language: Option<&Language>,
+        prettier_settings: &PrettierSettings,
+    ) -> bool {
+        prettier_settings.parser.is_some()
+            || buffer_language.is_some_and(|language| language.prettier_parser_name().is_some())
+    }
+
     pub async fn locate_prettier_installation(
         fs: &dyn Fs,
         installed_prettiers: &HashSet<PathBuf>,
@@ -1069,6 +1083,49 @@ mod tests {
                 assert!(message.contains("/root/work/full-stack-foundations"), "Error message should mention potential candidates without prettier node_modules contents");
             },
         };
+    }
+
+    // Regression test for https://github.com/zed-industries/zed/issues/61573. The `auto` formatter
+    // must not pick prettier for a language it has no parser for (e.g. XML), otherwise it silently
+    // formats nothing instead of falling back to the language server.
+    #[test]
+    fn test_has_parser_for_language() {
+        use language::{Language, LanguageConfig};
+
+        fn language(prettier_parser_name: Option<&str>) -> Language {
+            Language::new(
+                LanguageConfig {
+                    name: "Test".into(),
+                    prettier_parser_name: prettier_parser_name.map(Into::into),
+                    ..Default::default()
+                },
+                None,
+            )
+        }
+        fn settings(parser: Option<&str>) -> PrettierSettings {
+            PrettierSettings {
+                allowed: true,
+                parser: parser.map(Into::into),
+                plugins: HashSet::default(),
+                options: HashMap::default(),
+            }
+        }
+
+        // A language prettier supports declares a parser -> use prettier.
+        assert!(Prettier::has_parser_for_language(
+            Some(&language(Some("babel"))),
+            &settings(None)
+        ));
+        // A language prettier has no parser for (e.g. XML) -> don't use prettier.
+        assert!(!Prettier::has_parser_for_language(
+            Some(&language(None)),
+            &settings(None)
+        ));
+        // An explicit `prettier.parser` override counts even without a language parser.
+        assert!(Prettier::has_parser_for_language(
+            Some(&language(None)),
+            &settings(Some("xml"))
+        ));
     }
 
     #[gpui::test]
