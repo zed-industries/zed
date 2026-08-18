@@ -525,10 +525,25 @@ struct Quad {
     Edges border_widths;
 };
 
+bool has_rounded_corners(Corners corner_radii) {
+    return corner_radii.top_left != 0.0
+        || corner_radii.top_right != 0.0
+        || corner_radii.bottom_right != 0.0
+        || corner_radii.bottom_left != 0.0;
+}
+
+bool has_border(Edges border_widths) {
+    return border_widths.top != 0.0
+        || border_widths.right != 0.0
+        || border_widths.bottom != 0.0
+        || border_widths.left != 0.0;
+}
+
 struct QuadVertexOutput {
     nointerpolation uint quad_id: TEXCOORD0;
     float4 position: SV_Position;
     nointerpolation float4 border_color: COLOR0;
+    nointerpolation uint is_simple: TEXCOORD3;
     BackgroundVarying background;
 };
 
@@ -536,6 +551,7 @@ struct QuadFragmentInput {
     nointerpolation uint quad_id: TEXCOORD0;
     float4 position: SV_Position;
     nointerpolation float4 border_color: COLOR0;
+    nointerpolation uint is_simple: TEXCOORD3;
     BackgroundVarying background;
 };
 
@@ -550,31 +566,26 @@ QuadVertexOutput quad_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_I
 
     float4 border_color = hsla_to_rgba(quad.border_color);
 
+    bool is_simple = !has_rounded_corners(quad.corner_radii)
+        && !has_border(quad.border_widths);
+
     QuadVertexOutput output;
     output.position = device_position;
     output.border_color = border_color;
     output.quad_id = quad_id;
+    output.is_simple = is_simple ? 1u : 0u;
     output.background = prepare_background(quad.background, quad.bounds);
     return output;
 }
 
 float4 quad_fragment(QuadFragmentInput input): SV_Target {
-    Quad quad = quads[input.quad_id];
     float4 background = background_color(input.background, input.position.xy);
-
-    bool unrounded = quad.corner_radii.top_left == 0.0 &&
-        quad.corner_radii.top_right == 0.0 &&
-        quad.corner_radii.bottom_left == 0.0 &&
-        quad.corner_radii.bottom_right == 0.0;
-
-    // Fast path when the quad is not rounded and doesn't have any border
-    if (quad.border_widths.top == 0.0 &&
-        quad.border_widths.left == 0.0 &&
-        quad.border_widths.right == 0.0 &&
-        quad.border_widths.bottom == 0.0 &&
-        unrounded) {
+    if (input.is_simple != 0u) {
         return background;
     }
+
+    Quad quad = quads[input.quad_id];
+    bool unrounded = !has_rounded_corners(quad.corner_radii);
 
     float2 size = quad.bounds.size;
     float2 half_size = size / 2.;
