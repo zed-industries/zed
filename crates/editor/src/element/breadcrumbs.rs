@@ -4762,6 +4762,115 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_breadcrumb_menu_filters_multibyte_names(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor_with_project;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use util::path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+
+        // The filter runs on chars, not bytes: every name here is longer in bytes than in
+        // characters, so a byte-indexed match would slice one mid-codepoint.
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "日本語ファイル.rs": "fn a() {}",
+                "中文文件.rs": "fn b() {}",
+                "plain.rs": "fn c() {}",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        cx.run_until_parked();
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/root/plain.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+            _editor: Entity<Editor>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                div().size_full().child(self.menu.clone())
+            }
+        }
+
+        let host_window = cx.add_window(|window, cx| {
+            let editor =
+                cx.new(|cx| build_editor_with_project(project.clone(), multi_buffer, window, cx));
+            editor.update(cx, |editor, cx| {
+                editor.set_workspace_for_test(workspace.downgrade(), cx);
+            });
+            let menu = BreadcrumbNavigationMenu::new(
+                editor.downgrade(),
+                workspace.downgrade(),
+                BreadcrumbListing::Directory {
+                    worktree_id,
+                    path: RelPath::empty().into_arc(),
+                },
+                None,
+                false,
+                window,
+                cx,
+            );
+            MenuHost {
+                menu,
+                _editor: editor,
+            }
+        });
+        let menu = host_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.menu.clone());
+        let cx = &mut VisualTestContext::from_window(*host_window, cx);
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+
+        cx.simulate_input("日本");
+        cx.run_until_parked();
+
+        let published = menu.read_with(cx, |menu, cx| menu.published_row_labels(cx));
+        assert_eq!(
+            published
+                .iter()
+                .map(|label| label.as_ref())
+                .collect::<Vec<_>>(),
+            vec!["日本語ファイル.rs"],
+            "a multibyte query must narrow to the multibyte name that contains it"
+        );
+
+        menu.read_with(cx, |menu, _| {
+            assert_eq!(
+                menu.filter(),
+                "日本",
+                "the query itself must survive the round trip through the picker"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_breadcrumb_menu_enter_waits_for_the_query_it_typed(cx: &mut TestAppContext) {
         use crate::editor_tests::init_test;
         use crate::test::build_editor_with_project;
