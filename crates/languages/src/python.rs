@@ -2163,12 +2163,34 @@ impl LspAdapter for BasedPyrightLspAdapter {
                 language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
                     .and_then(|s| s.settings.clone())
                     .unwrap_or_default();
+            if !user_settings.is_object() {
+                user_settings = Value::Object(serde_json::Map::default());
+            }
+            let object = user_settings.as_object_mut().unwrap();
+
+            // Basedpyright by default uses `strict` type checking, we tone it down as to not surpris users
+            maybe!({
+                let analysis = object
+                    .entry("basedpyright.analysis")
+                    .or_insert(Value::Object(serde_json::Map::default()));
+                if let serde_json::map::Entry::Vacant(v) =
+                    analysis.as_object_mut()?.entry("typeCheckingMode")
+                {
+                    v.insert(Value::String("standard".to_owned()));
+                }
+                Some(())
+            });
+            // Disable basedpyright's organizeImports so ruff handles it instead
+            if let serde_json::map::Entry::Vacant(v) =
+                object.entry("basedpyright.disableOrganizeImports")
+            {
+                v.insert(Value::Bool(true));
+            }
 
             // If we have a detected toolchain, configure BasedPyright to use it - unless the user sets it themselves.
             let should_insert_toolchain = || {
-                user_settings
-                    .as_object()
-                    .and_then(|object| object.get("python"))
+                object
+                    .get("python")
                     .and_then(Value::as_object)
                     .is_none_or(|python| {
                         !["pythonPath", "venvPath"]
@@ -2183,11 +2205,6 @@ impl LspAdapter for BasedPyrightLspAdapter {
                 )
                 .is_ok()
             {
-                if !user_settings.is_object() {
-                    user_settings = Value::Object(serde_json::Map::default());
-                }
-                let object = user_settings.as_object_mut().unwrap();
-
                 let interpreter_path = toolchain.path.to_string();
 
                 if let Some(python) = object
@@ -2195,28 +2212,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
                     .or_insert(Value::Object(serde_json::Map::default()))
                     .as_object_mut()
                 {
-                    python.insert(
-                        "pythonPath".to_owned(),
-                        Value::String(interpreter_path.clone()),
-                    );
-                }
-                // Basedpyright by default uses `strict` type checking, we tone it down as to not surpris users
-                maybe!({
-                    let analysis = object
-                        .entry("basedpyright.analysis")
-                        .or_insert(Value::Object(serde_json::Map::default()));
-                    if let serde_json::map::Entry::Vacant(v) =
-                        analysis.as_object_mut()?.entry("typeCheckingMode")
-                    {
-                        v.insert(Value::String("standard".to_owned()));
-                    }
-                    Some(())
-                });
-                // Disable basedpyright's organizeImports so ruff handles it instead
-                if let serde_json::map::Entry::Vacant(v) =
-                    object.entry("basedpyright.disableOrganizeImports")
-                {
-                    v.insert(Value::Bool(true));
+                    python.insert("pythonPath".to_owned(), Value::String(interpreter_path));
                 }
             }
 
