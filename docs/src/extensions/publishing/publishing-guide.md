@@ -71,7 +71,7 @@ version = "0.0.1"
 
 3. Run `pnpm sort-extensions` to ensure `extensions.toml` and `.gitmodules` are sorted
 
-That's it! Once your PR is merged, the extension will be packaged and published to the Zed extension registry.
+That's it! Once your PR is accepted and merged, the extension will be packaged and published to the Zed extension registry.
 
 ## Review process {#review-process}
 
