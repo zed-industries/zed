@@ -395,13 +395,22 @@ impl SerializedPane {
             }
         }
 
-        if let Some(active_item_index) = active_item_index {
+        // `items` keeps a `None` for every item that failed to deserialize, and those
+        // were never added to the pane, so a serialized index no longer lines up with
+        // the pane's own indices. Anything addressing a tab has to be remapped, or it
+        // lands on whichever tab shifted into that slot.
+        let pane_index_of = |serialized_index: usize| {
+            items.get(serialized_index)?.as_ref()?;
+            Some(items[..serialized_index].iter().flatten().count())
+        };
+
+        if let Some(active_item_index) = active_item_index.and_then(pane_index_of) {
             pane.update_in(cx, |pane, window, cx| {
                 pane.activate_item(active_item_index, false, false, window, cx);
             })?;
         }
 
-        if let Some(preview_item_index) = preview_item_index {
+        if let Some(preview_item_index) = preview_item_index.and_then(pane_index_of) {
             pane.update(cx, |pane, cx| {
                 if let Some(item) = pane.item_for_index(preview_item_index) {
                     pane.set_preview_item_id(Some(item.item_id()), cx);
@@ -409,9 +418,7 @@ impl SerializedPane {
             })?;
         }
 
-        // `items` keeps a `None` for every item that failed to deserialize, and those
-        // were never added to the pane. Counting them would leave the pinned count
-        // pointing past the pinned tabs and pin unpinned ones in their place.
+        // Same desync, on the count of the leading tabs that are pinned.
         let pinned_count = items
             .iter()
             .take(self.pinned_count)
