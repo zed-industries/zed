@@ -14,7 +14,7 @@ use util::serde::default_true;
 
 use crate::{
     AllLanguageSettingsContent, DelayMs, ExtendingVec, ParseStatus, ProjectTerminalSettingsContent,
-    RootUserSettings, SaturatingBool, fallible_options,
+    RootUserSettings, SaturatingBool, SplicingVec, fallible_options,
 };
 
 #[with_fallible_options]
@@ -123,6 +123,10 @@ pub struct WorktreeSettingsContent {
     /// Completely ignore files matching globs from `file_scan_exclusions`. Overrides
     /// `file_scan_inclusions`.
     ///
+    /// A `"..."` entry expands to the value being overridden, so
+    /// `["**/node_modules", "..."]` adds to the inherited globs instead of
+    /// replacing them. Leave `"..."` out to replace them.
+    ///
     /// Default: [
     ///   "**/.git",
     ///   "**/.svn",
@@ -134,7 +138,7 @@ pub struct WorktreeSettingsContent {
     ///   "**/.classpath",
     ///   "**/.settings"
     /// ]
-    pub file_scan_exclusions: Option<Vec<String>>,
+    pub file_scan_exclusions: Option<SplicingVec>,
 
     /// Always include files that match these globs when scanning for files, even if they're
     /// ignored by git. This setting is overridden by `file_scan_exclusions`.
@@ -148,6 +152,17 @@ pub struct WorktreeSettingsContent {
     ///
     /// Default: expanded
     pub scan_symlinks: Option<ScanSymlinksSetting>,
+
+    /// Maximum directory depth to eagerly index outside of git repositories;
+    /// contents of directories at this depth or deeper are indexed on demand.
+    /// Repositories rooted shallower than this depth are always indexed fully.
+    /// In projects that are not rooted at a git repository, repositories directly
+    /// inside a root folder activate their git features immediately; deeper ones
+    /// activate on first use.
+    /// `0` means no limit and activates all git repositories immediately.
+    ///
+    /// Default: 5
+    pub file_scan_depth: Option<u32>,
 
     /// Treat the files matching these globs as `.env` files.
     /// Default: ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"]
@@ -551,6 +566,10 @@ pub struct GitSettings {
     ///
     /// Default: staged_hollow
     pub hunk_style: Option<GitHunkStyleSetting>,
+    /// Which base git features (gutter, file colors, git::Diff) diff against.
+    ///
+    /// Default: head
+    pub diff_base: Option<GitDiffBaseSetting>,
     /// How file paths are displayed in the git gutter.
     ///
     /// Default: file_name_first
@@ -730,6 +749,32 @@ pub enum GitHunkStyleSetting {
     UnstagedHollow,
 }
 
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitDiffBaseSetting {
+    /// Diff against HEAD: show working (uncommitted) changes.
+    #[default]
+    Head,
+    /// Diff against the merge base between HEAD and the repository's
+    /// default branch: show all changes on the branch.
+    ///
+    /// Repositories where no default branch can be resolved fall back
+    /// to `head` behavior.
+    DefaultBranch,
+}
+
 #[with_fallible_options]
 #[derive(
     Copy,
@@ -895,6 +940,96 @@ pub enum GitHostingProviderKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{REST_OF_FILE_SCAN_EXCLUSIONS, merge_from::MergeFrom};
+
+    fn exclusions(globs: &[&str]) -> WorktreeSettingsContent {
+        WorktreeSettingsContent {
+            file_scan_exclusions: Some(SplicingVec::from(
+                globs
+                    .iter()
+                    .map(|glob| glob.to_string())
+                    .collect::<Vec<_>>(),
+            )),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_file_scan_exclusions_splice_rest_of_list() {
+        let defaults = exclusions(&["**/.git", "**/.DS_Store"]);
+
+        let mut extended = defaults.clone();
+        extended.merge_from(&exclusions(&[
+            "**/node_modules",
+            REST_OF_FILE_SCAN_EXCLUSIONS,
+        ]));
+        assert_eq!(
+            extended.file_scan_exclusions.unwrap().0,
+            vec!["**/node_modules", "**/.git", "**/.DS_Store"]
+        );
+
+        let mut replaced = defaults;
+        replaced.merge_from(&exclusions(&["**/node_modules"]));
+        assert_eq!(
+            replaced.file_scan_exclusions.unwrap().0,
+            vec!["**/node_modules"]
+        );
+    }
+
+    #[test]
+    fn test_file_scan_exclusions_splice_each_layer() {
+        let mut settings = exclusions(&["**/.git"]);
+        settings.merge_from(&exclusions(&[REST_OF_FILE_SCAN_EXCLUSIONS, "**/target"]));
+        settings.merge_from(&exclusions(&[REST_OF_FILE_SCAN_EXCLUSIONS, "**/dist"]));
+
+        assert_eq!(
+            settings.file_scan_exclusions.unwrap().0,
+            vec!["**/.git", "**/target", "**/dist"]
+        );
+    }
+
+    #[test]
+    fn test_file_scan_exclusions_splice_edge_cases() {
+        let mut repeated = exclusions(&["**/.git"]);
+        repeated.merge_from(&exclusions(&[
+            REST_OF_FILE_SCAN_EXCLUSIONS,
+            REST_OF_FILE_SCAN_EXCLUSIONS,
+        ]));
+        assert_eq!(repeated.file_scan_exclusions.unwrap().0, vec!["**/.git"]);
+
+        let mut relisted = exclusions(&["**/.git", "**/.DS_Store"]);
+        relisted.merge_from(&exclusions(&["**/.git", REST_OF_FILE_SCAN_EXCLUSIONS]));
+        assert_eq!(
+            relisted.file_scan_exclusions.unwrap().0,
+            vec!["**/.git", "**/.DS_Store"]
+        );
+
+        let mut cleared = exclusions(&["**/.git"]);
+        cleared.merge_from(&exclusions(&[]));
+        assert!(cleared.file_scan_exclusions.unwrap().0.is_empty());
+
+        let mut unchanged = exclusions(&["**/.git", "**/.DS_Store"]);
+        unchanged.merge_from(&exclusions(&[REST_OF_FILE_SCAN_EXCLUSIONS]));
+        assert_eq!(
+            unchanged.file_scan_exclusions.unwrap().0,
+            vec!["**/.git", "**/.DS_Store"]
+        );
+    }
+
+    #[test]
+    fn test_file_scan_exclusions_splice_without_a_base_layer() {
+        let mut settings = WorktreeSettingsContent::default();
+        settings.merge_from(&exclusions(&[REST_OF_FILE_SCAN_EXCLUSIONS, "**/target"]));
+
+        // `Option::merge_from` replaces a `None` base outright rather than
+        // splicing, so the sentinel survives here. `assets/settings/default.json`
+        // always populates this field, and `WorktreeSettings::from_settings`
+        // unwraps it, so no glob is ever compiled from this state.
+        assert_eq!(
+            settings.file_scan_exclusions.unwrap().0,
+            vec![REST_OF_FILE_SCAN_EXCLUSIONS, "**/target"]
+        );
+    }
 
     #[test]
     fn test_stdio_context_server_without_args() {

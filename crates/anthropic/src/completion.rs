@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow};
 use collections::HashMap;
+use futures::stream::BoxStream;
 use futures::{Stream, StreamExt};
 use language_model_core::{
     CompactedContext, CompactionUpdate, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -59,6 +60,62 @@ pub fn provider_compaction_encrypted_content(
         ));
     }
     Ok(Some(state.payload().into()))
+}
+
+/// Collects one paused compaction stream into replacement context and usage.
+///
+/// # Errors
+///
+/// Returns an error when the stream fails, ends without finalized replacement
+/// context, or reports that the provider abandoned compaction.
+pub async fn collect_compaction_result(
+    mut stream: BoxStream<
+        'static,
+        Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+    >,
+    provider_name: LanguageModelProviderName,
+) -> Result<(CompactedContext, TokenUsage), LanguageModelCompletionError> {
+    let mut context = None;
+    let mut usage = TokenUsage::default();
+    while let Some(event) = stream.next().await {
+        match event? {
+            LanguageModelCompletionEvent::Compaction(CompactionUpdate::Finished(
+                compacted_context,
+            )) => {
+                context = Some(compacted_context);
+            }
+            LanguageModelCompletionEvent::Compaction(CompactionUpdate::Failed) => {
+                return Err(LanguageModelCompletionError::Other(anyhow!(
+                    "{provider_name} abandoned compaction without producing replacement context"
+                )));
+            }
+            LanguageModelCompletionEvent::UsageUpdate(updated_usage) => {
+                usage = updated_usage;
+            }
+            LanguageModelCompletionEvent::Stop(_) => {
+                return context.map(|context| (context, usage)).ok_or(
+                    LanguageModelCompletionError::StreamEndedUnexpectedly {
+                        provider: provider_name,
+                    },
+                );
+            }
+            LanguageModelCompletionEvent::Queued { .. }
+            | LanguageModelCompletionEvent::Started
+            | LanguageModelCompletionEvent::Text(_)
+            | LanguageModelCompletionEvent::Thinking { .. }
+            | LanguageModelCompletionEvent::RedactedThinking { .. }
+            | LanguageModelCompletionEvent::ToolUse(_)
+            | LanguageModelCompletionEvent::ToolUseJsonParseError { .. }
+            | LanguageModelCompletionEvent::StartMessage { .. }
+            | LanguageModelCompletionEvent::ReasoningDetails(_)
+            | LanguageModelCompletionEvent::Compaction(CompactionUpdate::Started)
+            | LanguageModelCompletionEvent::Compaction(CompactionUpdate::SummaryDelta(_)) => {}
+        }
+    }
+
+    Err(LanguageModelCompletionError::StreamEndedUnexpectedly {
+        provider: provider_name,
+    })
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -414,6 +471,7 @@ pub fn into_anthropic(
         context_management: request.compact_at_tokens.map(|value| ContextManagement {
             edits: vec![ContextManagementEdit::Compact {
                 trigger: Some(CompactionTrigger::InputTokens { value }),
+                pause_after_compaction: None,
             }],
         }),
     })
@@ -656,6 +714,7 @@ impl AnthropicEventMapper {
                         "max_tokens" => StopReason::MaxTokens,
                         "tool_use" => StopReason::ToolUse,
                         "refusal" => StopReason::Refusal,
+                        "compaction" => StopReason::EndTurn,
                         _ => {
                             log::error!("Unexpected anthropic stop_reason: {stop_reason}");
                             StopReason::EndTurn
@@ -717,9 +776,32 @@ fn update_usage(usage: &mut Usage, new: &Usage) {
     if let Some(cache_read_input_tokens) = new.cache_read_input_tokens {
         usage.cache_read_input_tokens = Some(cache_read_input_tokens);
     }
+    if let Some(iterations) = &new.iterations {
+        usage.iterations = Some(iterations.clone());
+    }
 }
 
 fn convert_usage(usage: &Usage) -> TokenUsage {
+    if let Some(iterations) = usage.iterations.as_deref() {
+        return iterations
+            .iter()
+            .fold(TokenUsage::default(), |mut total, iteration| {
+                total.input_tokens = total
+                    .input_tokens
+                    .saturating_add(iteration.input_tokens.unwrap_or(0));
+                total.output_tokens = total
+                    .output_tokens
+                    .saturating_add(iteration.output_tokens.unwrap_or(0));
+                total.cache_creation_input_tokens = total
+                    .cache_creation_input_tokens
+                    .saturating_add(iteration.cache_creation_input_tokens.unwrap_or(0));
+                total.cache_read_input_tokens = total
+                    .cache_read_input_tokens
+                    .saturating_add(iteration.cache_read_input_tokens.unwrap_or(0));
+                total
+            });
+    }
+
     TokenUsage {
         input_tokens: usage.input_tokens.unwrap_or(0),
         output_tokens: usage.output_tokens.unwrap_or(0),
@@ -732,10 +814,56 @@ fn convert_usage(usage: &Usage) -> TokenUsage {
 mod tests {
     use super::*;
     use crate::{AnthropicModelMode, UsageIteration, UsageIterationType};
+    use futures::executor::block_on;
     use language_model_core::{
-        ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, LanguageModelImage,
-        LanguageModelRequestMessage, MessageContent,
+        ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, LanguageModelCompletionEvent,
+        LanguageModelImage, LanguageModelRequestMessage, MessageContent, TokenUsage,
     };
+
+    #[test]
+    fn test_collect_compaction_result_returns_context_and_usage() {
+        let context = CompactedContext::Summary {
+            content: "Summary of the conversation.".into(),
+            provider_state: None,
+        };
+        let usage = TokenUsage {
+            input_tokens: 60_000,
+            output_tokens: 1_000,
+            ..Default::default()
+        };
+        let stream = futures::stream::iter([
+            Ok(LanguageModelCompletionEvent::Compaction(
+                CompactionUpdate::Started,
+            )),
+            Ok(LanguageModelCompletionEvent::Compaction(
+                CompactionUpdate::Finished(context.clone()),
+            )),
+            Ok(LanguageModelCompletionEvent::UsageUpdate(usage)),
+            Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)),
+        ])
+        .boxed();
+
+        let result = block_on(collect_compaction_result(stream, ANTHROPIC_PROVIDER_NAME)).unwrap();
+
+        assert_eq!(result, (context, usage));
+    }
+
+    #[test]
+    fn test_collect_compaction_result_rejects_abandoned_compaction() {
+        let stream = futures::stream::iter([Ok(LanguageModelCompletionEvent::Compaction(
+            CompactionUpdate::Failed,
+        ))])
+        .boxed();
+
+        let error =
+            block_on(collect_compaction_result(stream, ANTHROPIC_PROVIDER_NAME)).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("abandoned compaction without producing replacement context")
+        );
+    }
 
     #[test]
     fn test_caching_uses_top_level_auto_and_long_lived_prefix() {
@@ -1232,6 +1360,61 @@ mod tests {
     }
 
     #[test]
+    fn test_compact_request_pauses_at_minimum_trigger() {
+        let mut request =
+            request_with_assistant_content(vec![MessageContent::Text("Response".to_string())]);
+        request.tools.push(crate::Tool {
+            name: "search".to_string(),
+            description: "Search the project.".to_string(),
+            input_schema: serde_json::json!({"type": "object"}),
+            eager_input_streaming: false,
+            cache_control: None,
+        });
+        request.tool_choice = Some(crate::ToolChoice::Auto);
+        let request = request.into_compact_request();
+
+        assert_eq!(
+            serde_json::to_value(
+                request
+                    .messages
+                    .last()
+                    .expect("compact request should contain a final message")
+            )
+            .expect("compact request message should serialize"),
+            serde_json::json!({
+                "role": "user",
+                "content": [{
+                    "type": "text",
+                    "text": "Compact the conversation so far."
+                }]
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(&request.tools).expect("compact request tools should serialize"),
+            serde_json::json!([{
+                "name": "search",
+                "description": "Search the project.",
+                "input_schema": {"type": "object"}
+            }])
+        );
+        assert_eq!(
+            serde_json::to_value(&request.tool_choice)
+                .expect("compact request tool choice should serialize"),
+            serde_json::json!({"type": "none"})
+        );
+        assert_eq!(
+            serde_json::to_value(&request.context_management).unwrap(),
+            serde_json::json!({
+                "edits": [{
+                    "type": "compact_20260112",
+                    "trigger": { "type": "input_tokens", "value": 50_000 },
+                    "pause_after_compaction": true
+                }]
+            })
+        );
+    }
+
+    #[test]
     fn test_no_context_management_without_compact_at_tokens() {
         let result =
             request_with_assistant_content(vec![MessageContent::Text("Response".to_string())]);
@@ -1533,7 +1716,7 @@ mod tests {
     }
 
     #[test]
-    fn test_usage_iterations_parsed_from_message_delta() {
+    fn test_usage_iterations_aggregated_from_message_delta() {
         let event: Event = serde_json::from_value(serde_json::json!({
             "type": "message_delta",
             "delta": { "stop_reason": "end_turn", "stop_sequence": null },
@@ -1568,5 +1751,13 @@ mod tests {
                 ..
             }
         ));
+        assert_eq!(
+            convert_usage(&usage),
+            TokenUsage {
+                input_tokens: 180_100,
+                output_tokens: 1_239,
+                ..Default::default()
+            }
+        );
     }
 }

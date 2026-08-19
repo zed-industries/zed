@@ -23,7 +23,7 @@ use project::{
     search_history::{SearchHistory, SearchHistoryCursor},
 };
 use settings::Settings;
-use std::{ops::Range, rc::Rc, usize};
+use std::{ops::Range, rc::Rc};
 use theme::Theme;
 use theme_settings::ThemeSettings;
 use ui::{ContextMenu, Divider, PopoverMenu, SplitButton, Tooltip, prelude::*};

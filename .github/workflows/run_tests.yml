@@ -708,6 +708,8 @@ jobs:
       run: cargo machete
     - name: run_tests::check_dependencies::check_cargo_lock
       run: cargo update --locked --workspace
+    - name: run_tests::check_dependencies::check_crate_graph
+      run: 'cargo test --package xtask -- workspace::'
     - name: run_tests::check_dependencies::check_vulnerable_dependencies
       if: github.event_name == 'pull_request'
       uses: actions/dependency-review-action@67d4f4bd7a9b17a0db54d2a7519187c65e339de8

@@ -1,0 +1,10 @@
+version = 1
+
+[tools.foragers.cargo]
+github = "wezel-build/forager_cargo"
+tag = "nightly-2026-07-17-dd1c13f"
+
+[tools.foragers.cargo.assets]
+aarch64-unknown-linux-gnu = "sha256:4162756b5268d29046242a1f29d41649e07ef024c72a690914bff61af82dcee1"
+x86_64-apple-darwin = "sha256:263224ed47256fabd71a02e638fccd768cda4ff7023f34cc35bd520edcee0162"
+x86_64-unknown-linux-gnu = "sha256:18092f74eabef4e0774d14ac3ca967505b6d5ccf6fd2a1f1ddef79d8317b0722"

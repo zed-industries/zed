@@ -138,7 +138,7 @@ impl RenderOnce for TreeViewItem {
         let selected_border = cx.theme().colors().border.opacity(0.4);
         let focused_border = cx.theme().colors().border_focused;
 
-        let item_size = rems_from_px(28.);
+        let item_size = rems_from_px(28_f32);
         let indentation_line = h_flex()
             .h(item_size)
             .w(px(22.))

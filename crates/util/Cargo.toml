@@ -66,5 +66,4 @@ windows.workspace = true
 [dev-dependencies]
 rand.workspace = true
 util_macros.workspace = true
-pretty_assertions.workspace = true
 path = { workspace = true, features = ["test-support"] }

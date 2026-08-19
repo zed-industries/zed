@@ -1305,7 +1305,7 @@ impl DebugPanel {
         thread_status: ThreadStatus,
         running_state: &Entity<RunningState>,
     ) -> impl IntoElement {
-        let chevron_button_size = rems_from_px(20.);
+        let chevron_button_size = rems_from_px(20_f32);
         PopoverMenu::new("debug-back-in-history-menu")
             .trigger(
                 ButtonLike::new_rounded_right("debug-back-in-history-menu-trigger")

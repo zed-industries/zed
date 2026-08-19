@@ -15,6 +15,10 @@ Zed's plans offer hosted versions of major LLMs with higher rate limits than dir
 |                   | Anthropic | Output              | $50.00                       | $55.00                  |
 |                   | Anthropic | Input - Cache Write | $12.50                       | $13.75                  |
 |                   | Anthropic | Input - Cache Read  | $1.00                        | $1.10                   |
+| Claude Opus 5     | Anthropic | Input               | $5.00                        | $5.50                   |
+|                   | Anthropic | Output              | $25.00                       | $27.50                  |
+|                   | Anthropic | Input - Cache Write | $6.25                        | $6.875                  |
+|                   | Anthropic | Input - Cache Read  | $0.50                        | $0.55                   |
 | Claude Opus 4.5   | Anthropic | Input               | $5.00                        | $5.50                   |
 |                   | Anthropic | Output              | $25.00                       | $27.50                  |
 |                   | Anthropic | Input - Cache Write | $6.25                        | $6.875                  |
@@ -123,6 +127,7 @@ A context window is the maximum span of text and code an LLM can consider at onc
 | Model             | Provider  | Zed-Hosted Context Window |
 | ----------------- | --------- | ------------------------- |
 | Claude Fable 5    | Anthropic | 1M                        |
+| Claude Opus 5     | Anthropic | 1M                        |
 | Claude Opus 4.5   | Anthropic | 200k                      |
 | Claude Opus 4.6   | Anthropic | 1M                        |
 | Claude Opus 4.7   | Anthropic | 1M                        |

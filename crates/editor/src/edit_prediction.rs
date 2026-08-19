@@ -2516,7 +2516,7 @@ impl Render for MissingEditPredictionKeybindingTooltip {
             container
                 .flex_shrink_0()
                 .max_w_80()
-                .min_h(rems_from_px(124.))
+                .min_h(rems_from_px(124_f32))
                 .justify_between()
                 .child(
                     v_flex()

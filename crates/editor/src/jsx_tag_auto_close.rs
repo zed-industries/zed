@@ -511,13 +511,13 @@ pub(crate) fn handle_from(
                     let Some(selection_buffer_offset_head) =
                         multi_buffer_snapshot.point_to_buffer_offset(selection.head())
                     else {
-                        base_selections.push(selection.clone());
+                        base_selections.push(*selection);
                         continue;
                     };
                     let Some(selection_buffer_offset_tail) =
                         multi_buffer_snapshot.point_to_buffer_offset(selection.tail())
                     else {
-                        base_selections.push(selection.clone());
+                        base_selections.push(*selection);
                         continue;
                     };
 
@@ -525,7 +525,7 @@ pub(crate) fn handle_from(
                         == buffer_id
                         && selection_buffer_offset_tail.0.remote_id() == buffer_id;
                     if !is_entirely_in_buffer {
-                        base_selections.push(selection.clone());
+                        base_selections.push(*selection);
                         continue;
                     }
 
@@ -533,7 +533,7 @@ pub(crate) fn handle_from(
                     let selection_buffer_offset_tail = selection_buffer_offset_tail.1;
                     buffer_selection_map.insert(
                         (selection_buffer_offset_head, selection_buffer_offset_tail),
-                        (selection.clone(), None),
+                        (*selection, None),
                     );
                 }
             }
@@ -578,8 +578,8 @@ pub(crate) fn handle_from(
 
                 base_selections.extend(buffer_selection_map.values().map(|selection| {
                     match &selection.1 {
-                        Some(left_biased_selection) => left_biased_selection.clone(),
-                        None => selection.0.clone(),
+                        Some(left_biased_selection) => *left_biased_selection,
+                        None => selection.0,
                     }
                 }));
 

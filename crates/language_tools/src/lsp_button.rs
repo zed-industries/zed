@@ -611,7 +611,7 @@ impl LanguageServerState {
                                     .id("metadata-container")
                                     .gap_1()
                                     .when_some(server_message.as_ref(), |this, _| {
-                                        this.w(rems_from_px(240.))
+                                        this.w(rems_from_px(240_f32))
                                     })
                                     .child(
                                         h_flex()

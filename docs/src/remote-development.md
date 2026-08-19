@@ -37,7 +37,7 @@ The remote machine must be able to run Zed's server. The following platforms sho
 
 - macOS Catalina or later (Intel or Apple Silicon)
 - Linux (x86_64 or arm64, we do not yet support 32-bit platforms)
-- Windows is not yet supported as a remote server, but Windows can be used as a local machine to connect to remote servers.
+- Windows (x86_64 or arm64)
 
 ## Configuration
 

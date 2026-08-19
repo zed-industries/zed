@@ -472,7 +472,7 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
   "project_panel": {
     "button": true,                 // Show/hide button in the status bar
     "default_width": 240,           // Default panel width
-    "dock": "left",                 // Position of the dock (left, right)
+    "dock": "right",                // Position of the dock (left, right)
     "entry_spacing": "comfortable", // Vertical spacing (comfortable, standard)
     "file_icons": true,             // Show/hide file icons
     "folder_icons": true,           // Show/hide folder icons

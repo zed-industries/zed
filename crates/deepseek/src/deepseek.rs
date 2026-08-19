@@ -150,6 +150,7 @@ pub enum ThinkingType {
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum ReasoningEffort {
+    Low,
     High,
     Max,
 }

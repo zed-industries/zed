@@ -2764,9 +2764,9 @@ pub fn delete_unloaded_items(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::OpenMode;
     use crate::PathList;
     use crate::ProjectGroupKey;
+    use crate::RemovalIntent;
     use crate::{
         multi_workspace::MultiWorkspace,
         persistence::{
@@ -2843,7 +2843,7 @@ mod tests {
                 .workspaces()
                 .find(|ws| *ws != &active)
                 .expect("should have a non-active workspace");
-            mw.remove([ws.clone()], |_, _, _| unreachable!(), _window, cx)
+            mw.remove([ws.clone()], RemovalIntent::CloseProject, _window, cx)
                 .detach_and_log_err(cx);
         });
 
@@ -4811,7 +4811,7 @@ mod tests {
         // Remove workspace at index 1 (the second workspace).
         multi_workspace.update_in(cx, |mw, window, cx| {
             let ws = mw.workspaces().nth(1).unwrap().clone();
-            mw.remove([ws], |_, _, _| unreachable!(), window, cx)
+            mw.remove([ws], RemovalIntent::CloseProject, window, cx)
                 .detach_and_log_err(cx);
         });
 
@@ -4921,7 +4921,7 @@ mod tests {
         // Remove workspace2 (index 1).
         multi_workspace.update_in(cx, |mw, window, cx| {
             let ws = mw.workspaces().nth(1).unwrap().clone();
-            mw.remove([ws], |_, _, _| unreachable!(), window, cx)
+            mw.remove([ws], RemovalIntent::CloseProject, window, cx)
                 .detach_and_log_err(cx);
         });
 
@@ -5002,7 +5002,7 @@ mod tests {
         // Remove workspace2 — this pushes a task to pending_removal_tasks.
         multi_workspace.update_in(cx, |mw, window, cx| {
             let ws = mw.workspaces().nth(1).unwrap().clone();
-            mw.remove([ws], |_, _, _| unreachable!(), window, cx)
+            mw.remove([ws], RemovalIntent::CloseProject, window, cx)
                 .detach_and_log_err(cx);
         });
 
@@ -5955,27 +5955,12 @@ mod tests {
         });
         cx.run_until_parked();
 
-        // Remove workspace_a. The fallback searches for the same paths.
-        // Without the `excluding` parameter, `workspace_for_paths` would
-        // return workspace_a (first match) and the assert in `remove`
-        // would fire. With the fix, workspace_a is skipped and
-        // workspace_b is found instead.
-        let path_list = PathList::new(std::slice::from_ref(&dir));
-        let excluded = vec![workspace_a.clone()];
+        // Remove workspace_a. Its replacement is looked up by the same paths,
+        // so workspace_a itself has to be skipped or it would be picked again.
         multi_workspace.update_in(cx, |mw, window, cx| {
             mw.remove(
                 vec![workspace_a.clone()],
-                move |this, window, cx| {
-                    this.find_or_create_local_workspace(
-                        path_list,
-                        None,
-                        &excluded,
-                        None,
-                        OpenMode::Activate,
-                        window,
-                        cx,
-                    )
-                },
+                RemovalIntent::CloseProject,
                 window,
                 cx,
             )

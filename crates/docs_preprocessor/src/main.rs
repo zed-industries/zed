@@ -320,7 +320,7 @@ fn template_and_validate_actions(book: &mut Book, errors: &mut HashSet<Preproces
                     }
                     return format!("<code class=\"hljs\">{}</code>", name);
                 };
-                format!("<code class=\"hljs\">{}</code>", &action.human_name)
+                format!("<code class=\"hljs\">{}</code>", action.human_name)
             })
             .into_owned()
     });

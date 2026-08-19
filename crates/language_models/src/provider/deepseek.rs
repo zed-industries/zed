@@ -295,6 +295,11 @@ impl LanguageModel for DeepSeekLanguageModel {
 
         vec![
             LanguageModelEffortLevel {
+                name: "Low".into(),
+                value: "low".into(),
+                is_default: false,
+            },
+            LanguageModelEffortLevel {
                 name: "High".into(),
                 value: "high".into(),
                 is_default: true,
@@ -518,6 +523,7 @@ fn deepseek_thinking(
 
 fn into_deepseek_reasoning_effort(effort: Option<&str>) -> Option<deepseek::ReasoningEffort> {
     match effort {
+        Some("low") => Some(deepseek::ReasoningEffort::Low),
         Some("high") => Some(deepseek::ReasoningEffort::High),
         Some("max") => Some(deepseek::ReasoningEffort::Max),
         _ => None,

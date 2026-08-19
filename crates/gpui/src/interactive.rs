@@ -835,7 +835,7 @@ mod test {
 
     use crate::{
         self as gpui, AppContext as _, Context, FocusHandle, InteractiveElement, IntoElement,
-        KeyBinding, Keystroke, ParentElement, Render, TestAppContext, Window, div,
+        KeyBinding, Keystroke, Modifiers, ParentElement, Render, TestAppContext, Window, div,
     };
 
     struct TestView {
@@ -901,5 +901,33 @@ mod test {
                 assert!(test_view.saw_action);
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    fn test_multi_modifier_gesture_does_not_dispatch_standalone_modifier_binding(
+        cx: &mut TestAppContext,
+    ) {
+        let (test_view, cx) = cx.add_window_view(|_, cx| TestView {
+            saw_key_down: false,
+            saw_action: false,
+            focus_handle: cx.focus_handle(),
+        });
+
+        cx.update(|_, cx| {
+            cx.bind_keys(vec![KeyBinding::new("shift", TestAction, None)]);
+        });
+        test_view.update_in(cx, |test_view, window, cx| {
+            window.focus(&test_view.focus_handle, cx);
+        });
+
+        cx.simulate_modifiers_change(Modifiers::alt());
+        cx.simulate_modifiers_change(Modifiers::alt() | Modifiers::shift());
+        cx.simulate_modifiers_change(Modifiers::shift());
+        cx.simulate_modifiers_change(Modifiers::none());
+        assert!(!test_view.read_with(cx, |test_view, _| test_view.saw_action));
+
+        cx.simulate_modifiers_change(Modifiers::shift());
+        cx.simulate_modifiers_change(Modifiers::none());
+        assert!(test_view.read_with(cx, |test_view, _| test_view.saw_action));
     }
 }

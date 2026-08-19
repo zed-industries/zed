@@ -74,33 +74,36 @@ def github_rest_get(path):
     raise RuntimeError("github_rest_get: retry loop exited without return")
 
 
-def business_day_end(day):
-    # Latest instant of a calendar day in the business-day timezone.
+def day_start(day):
+    # First instant of a calendar day in the business-day timezone.
+    return datetime(day.year, day.month, day.day, 0, 0, 0, tzinfo=BUSINESS_DAY_TZ)
+
+
+def day_end(day):
+    # Last instant of a calendar day in the business-day timezone.
     return datetime(day.year, day.month, day.day, 23, 59, 59, tzinfo=BUSINESS_DAY_TZ)
 
 
 def eligibility_window(today):
-    # Returns the (start, end) instants bounding the window. `start` is exclusive
-    # and `end` inclusive (see eligible_issues); both are day-ends so the whole
-    # from-day is excluded and the whole to-day included. Returning full
-    # timestamps rather than bare dates keeps GitHub search, which reads bare
-    # dates as UTC, from skewing the window by up to a day at the UTC boundary.
+    # Returns the inclusive (start, end) day-edge instants bounding the window.
     weekday = today.isoweekday()  # Monday = 1
-    # Nothing advances over the weekend, so compute as of the preceding Friday.
+    # Nothing advances over the weekend; evaluate as of the preceding Friday.
     if weekday >= 6:
         today -= timedelta(days=weekday - 5)
         weekday = 5
-    one_biz_day_ago = today - timedelta(days=3 if weekday == 1 else 1)
     this_monday = today - timedelta(days=weekday - 1)
-    eligible_from = this_monday - timedelta(days=4)
-    return business_day_end(eligible_from), business_day_end(one_biz_day_ago)
+    # Floored at the prior week's Thursday; the Monday reset drops older issues.
+    window_start = this_monday - timedelta(days=4)
+    # Eligible once a full business day has elapsed since creation: two business
+    # days back from today, so Mon and Tue reach across the weekend.
+    window_end = today - timedelta(days=4 if weekday <= 2 else 2)
+    return day_start(window_start), day_end(window_end)
 
 
 def eligible_issues(window_start, window_end):
-    # created:> excludes window_start; created:<= includes window_end.
     query = (
         f"repo:{REPO_OWNER}/{REPO_NAME} is:issue is:open "
-        f"created:>{window_start.isoformat()} created:<={window_end.isoformat()}"
+        f"created:{window_start.isoformat()}..{window_end.isoformat()}"
     )
     issues = {}
     page = 1
@@ -179,7 +182,7 @@ def remove_from_project(project_id, item_id):
 def sync_project(project_id, dry_run=False):
     today = datetime.now(BUSINESS_DAY_TZ).date()
     window_start, window_end = eligibility_window(today)
-    print(f"window: created >{window_start.isoformat()} <={window_end.isoformat()}")
+    print(f"window: created:{window_start.isoformat()}..{window_end.isoformat()}")
 
     eligible = eligible_issues(window_start, window_end)
     current = list(project_items(project_id))

@@ -630,10 +630,7 @@ pub async fn create_terminal_entity(
         Default::default()
     };
 
-    // Disable pagers so agent/terminal commands don't hang behind interactive UIs
-    env.insert("PAGER".into(), "".into());
-    // Override user core.pager (e.g. delta) which Git prefers over PAGER
-    env.insert("GIT_PAGER".into(), "cat".into());
+    disable_pagers_through_env(&mut env);
     env.extend(env_vars);
 
     // Use remote shell or default system shell, as appropriate
@@ -664,6 +661,13 @@ pub async fn create_terminal_entity(
             )
         })
         .await
+}
+
+// Disable pagers so agent/terminal commands don't hang behind interactive UIs
+pub(crate) fn disable_pagers_through_env(env: &mut collections::HashMap<String, String>) {
+    env.insert("PAGER".into(), "".into());
+    // Override user core.pager (e.g. delta) which Git prefers over PAGER
+    env.insert("GIT_PAGER".into(), "cat".into());
 }
 
 #[cfg(all(test, target_os = "linux"))]

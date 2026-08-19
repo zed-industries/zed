@@ -14,6 +14,7 @@ use command_palette_hooks::CommandPaletteFilter;
 use editor::{Editor, EditorElement, EditorStyle};
 use extension_host::{ExtensionIndexEntry, ExtensionManifest, ExtensionStore};
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
+use git::{GitHostingProviderRegistry, parse_git_remote_url};
 use gpui::{
     Action, App, ClipboardItem, Context, DismissEvent, Entity, EventEmitter, Focusable,
     InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TaskExt, TextStyle,
@@ -440,6 +441,19 @@ impl ExtensionEntry {
         }
     }
 
+    fn repository_url(&self) -> Option<&str> {
+        match self {
+            Self::Installed {
+                metadata: InstalledExtensionMetadata::Available(metadata),
+                ..
+            }
+            | Self::NotInstalled { metadata } => Some(&metadata.manifest.repository),
+            Self::Installed { manifest, .. } | Self::Dev(manifest) => {
+                manifest.repository.as_deref()
+            }
+        }
+    }
+
     fn provides(&self, provides: ExtensionProvides) -> bool {
         match self {
             Self::Installed { manifest, .. } | Self::Dev(manifest) => {
@@ -513,6 +527,7 @@ impl ExtensionEntry {
 
 pub struct ExtensionsPage {
     workspace: WeakEntity<Workspace>,
+    provider_registry: Arc<GitHostingProviderRegistry>,
     list: UniformListScrollHandle,
     fetch_state: ExtensionFetchState,
     fetch_generation: usize,
@@ -571,9 +586,11 @@ impl ExtensionsPage {
             cx.subscribe(&query_editor, Self::on_query_change).detach();
 
             let scroll_handle = UniformListScrollHandle::new();
+            let provider_registry = GitHostingProviderRegistry::default_global(cx);
 
             let mut this = Self {
                 workspace: workspace.weak_handle(),
+                provider_registry,
                 list: scroll_handle,
                 fetch_state: ExtensionFetchState::Fetching,
                 fetch_generation: 0,
@@ -596,6 +613,12 @@ impl ExtensionsPage {
             );
             this
         })
+    }
+
+    fn get_repository_icon(&self, repository_url: &str) -> IconName {
+        parse_git_remote_url(Arc::clone(&self.provider_registry), repository_url)
+            .map(|(provider, _)| ui::git_hosting_provider_icon(provider.name().as_str()))
+            .unwrap_or(IconName::Link)
     }
 
     fn on_extension_installed(
@@ -920,7 +943,10 @@ impl ExtensionsPage {
         extension: &ExtensionEntry,
         cx: &mut Context<Self>,
     ) -> ExtensionCard {
-        let card = extension.card(cx);
+        let mut card = extension.card(cx);
+        if let Some(repository_url) = extension.repository_url() {
+            card = card.repository_icon(self.get_repository_icon(repository_url));
+        }
         if extension.metadata().is_none() {
             return card;
         }
@@ -1021,7 +1047,7 @@ impl ExtensionsPage {
         h_flex()
             .key_context(key_context)
             .h_8()
-            .min_w(rems_from_px(384.))
+            .min_w(rems_from_px(384_f32))
             .flex_1()
             .pl_1p5()
             .pr_2()
@@ -1686,7 +1712,7 @@ impl Render for ExtensionsPage {
                                         ],
                                     )
                                     .style(ToggleButtonGroupStyle::Outlined)
-                                    .size(ToggleButtonGroupSize::Custom(rems_from_px(30.))) // Perfectly matches the input
+                                    .size(ToggleButtonGroupSize::Custom(rems_from_px(30_f32))) // Perfectly matches the input
                                     .label_size(LabelSize::Default)
                                     .auto_width()
                                     .selected_index(match self.filter {

@@ -160,8 +160,9 @@ impl SshRunningKernel {
                             attempt + 1
                         );
                         // giving the tunnel a moment to fully establish forwarding
+                        // waiting same as WSL
                         cx.background_executor()
-                            .timer(std::time::Duration::from_millis(500))
+                            .timer(std::time::Duration::from_secs(2))
                             .await;
                         break;
                     }
@@ -209,13 +210,38 @@ impl SshRunningKernel {
                 serde_json::from_value(local_connection_info)?;
             let session_id = uuid::Uuid::new_v4().to_string();
 
-            let output_socket = runtimelib::create_client_iopub_connection(
-                &connection_info_struct,
-                "",
-                &session_id,
-            )
-            .await
-            .context("Failed to create iopub connection. Is `ipykernel` installed in the remote environment? Try running `pip install ipykernel` on the remote host.")?;
+            let output_socket = {
+                let max_retries = 5;
+                let mut retry = 0;
+                loop {
+                    match runtimelib::create_client_iopub_connection(
+                        &connection_info_struct,
+                        "",
+                        &session_id,
+                    )
+                    .await
+                    {
+                        Ok(socket) => break socket,
+                        Err(err) => {
+                            if retry >= max_retries {
+                                anyhow::bail!(
+                                    "Failed to create iopub connection: {}. Is `ipykernel` installed in the remote environment? Try running `pip install ipykernel` on the remote host.",
+                                    err
+                                );
+                            }
+                            log::debug!(
+                                "Retrying iopub connection (attempt {}/{})",
+                                retry + 1,
+                                max_retries
+                            );
+                            cx.background_executor()
+                                .timer(std::time::Duration::from_millis(200 << retry))
+                                .await;
+                            retry += 1;
+                        }
+                    }
+                }
+            };
 
             let peer_identity = runtimelib::peer_identity_for_session(&session_id)?;
             let shell_socket = runtimelib::create_client_shell_connection_with_identity(

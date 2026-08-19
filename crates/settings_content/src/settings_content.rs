@@ -37,6 +37,36 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
 
+/// A non-negative size in pixels.
+///
+/// Valid range: 0.0 and up
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    PartialOrd,
+    derive_more::FromStr,
+    derive_more::Deref,
+    derive_more::From,
+)]
+#[serde(transparent)]
+pub struct PixelSetting(
+    #[serde(serialize_with = "crate::serialize_f32_with_two_decimal_places")] pub f32,
+);
+
+impl std::fmt::Display for PixelSetting {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let rounded = (self.0 * 100.0).round() / 100.0;
+        write!(f, "{rounded}")
+    }
+}
+
 /// Defines a settings override struct where each field is
 /// `Option<Box<SettingsContent>>`, along with:
 /// - `OVERRIDE_KEYS`: a `&[&str]` of the field names (the JSON keys)
@@ -682,8 +712,7 @@ pub struct GitPanelSettingsContent {
     /// Default width of the panel in pixels.
     ///
     /// Default: 360
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub default_width: Option<f32>,
+    pub default_width: Option<PixelSetting>,
     /// How entry statuses are displayed.
     ///
     /// Default: icon
@@ -868,8 +897,7 @@ pub struct PanelSettingsContent {
     /// Default width of the panel in pixels.
     ///
     /// Default: 240
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub default_width: Option<f32>,
+    pub default_width: Option<PixelSetting>,
 }
 
 #[with_fallible_options]
@@ -1094,8 +1122,7 @@ pub struct OutlinePanelSettingsContent {
     /// Customize default width (in pixels) taken by outline panel
     ///
     /// Default: 240
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub default_width: Option<f32>,
+    pub default_width: Option<PixelSetting>,
     /// The position of outline panel
     ///
     /// Default: right (Agentic layout), left (Classic layout)
@@ -1115,8 +1142,7 @@ pub struct OutlinePanelSettingsContent {
     /// Amount of indentation (in pixels) for nested items.
     ///
     /// Default: 20
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub indent_size: Option<f32>,
+    pub indent_size: Option<PixelSetting>,
     /// Whether to reveal it in the outline panel automatically,
     /// when a corresponding project entry becomes active.
     /// Gitignored entries are never auto revealed.
@@ -1210,7 +1236,7 @@ pub struct MarkdownPreviewSettingsContent {
     /// `limit_content_width` is enabled.
     ///
     /// Default: 800
-    pub max_width: Option<f32>,
+    pub max_width: Option<PixelSetting>,
 }
 
 /// The settings for the image viewer.
@@ -1396,6 +1422,46 @@ impl<T> From<Vec<T>> for ExtendingVec<T> {
 impl<T: Clone> merge_from::MergeFrom for ExtendingVec<T> {
     fn merge_from(&mut self, other: &Self) {
         self.0.extend_from_slice(other.0.as_slice());
+    }
+}
+
+pub const REST_OF_FILE_SCAN_EXCLUSIONS: &str = "...";
+
+// A SplicingVec in the settings replaces the value it merges over, except that
+// a `...` entry expands to that previous value.
+//
+// This lets a settings file add to a list without restating what it inherits,
+// while omitting `...` still replaces the list outright. Unlike ExtendingVec,
+// entries can be dropped by leaving `...` out and listing what to keep.
+//
+// Entries collapse to their first occurrence, so naming a value that `...`
+// already covers keeps it at the position it was written in rather than
+// repeating it.
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SplicingVec(pub Vec<String>);
+
+impl From<Vec<String>> for SplicingVec {
+    fn from(vec: Vec<String>) -> Self {
+        SplicingVec(vec)
+    }
+}
+
+impl merge_from::MergeFrom for SplicingVec {
+    fn merge_from(&mut self, other: &Self) {
+        let inherited = std::mem::take(&mut self.0);
+        self.0 = other
+            .0
+            .iter()
+            .flat_map(|entry| {
+                if entry == REST_OF_FILE_SCAN_EXCLUSIONS {
+                    inherited.clone()
+                } else {
+                    vec![entry.clone()]
+                }
+            })
+            .collect::<IndexSet<_>>()
+            .into_iter()
+            .collect();
     }
 }
 

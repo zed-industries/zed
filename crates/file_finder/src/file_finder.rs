@@ -27,8 +27,8 @@ use picker::{Picker, PickerDelegate};
 use project::{
     PathMatchCandidateSet, Project, ProjectPath, WorktreeId, worktree_store::WorktreeStore,
 };
-use project_panel::project_panel_settings::ProjectPanelSettings;
-use settings::Settings;
+
+use settings::{Settings, SettingsStore};
 use std::{
     borrow::Cow,
     cmp, mem,
@@ -789,7 +789,14 @@ fn should_hide_root_in_entry_path(worktree_store: &Entity<WorktreeStore>, cx: &A
         .filter(|worktree| !worktree.read(cx).is_single_file())
         .nth(1)
         .is_some();
-    ProjectPanelSettings::get_global(cx).hide_root && !multiple_worktrees
+    let hide_root = cx
+        .global::<SettingsStore>()
+        .merged_settings()
+        .project_panel
+        .as_ref()
+        .and_then(|project_panel| project_panel.hide_root)
+        .unwrap_or(false);
+    hide_root && !multiple_worktrees
 }
 
 fn worktree_names_for_history_matching(
@@ -2192,8 +2199,8 @@ impl FileFinderDelegate {
                         .w_full()
                         .min_w_0()
                         .gap_1p5()
-                        .child(file_name_label.truncate_middle())
-                        .child(full_path_label.truncate_start()),
+                        .child(file_name_label.flex_none().truncate_middle())
+                        .child(full_path_label.flex_1().truncate_start()),
                 )
                 .end_slot::<AnyElement>(end_slot),
         )

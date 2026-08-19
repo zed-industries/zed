@@ -105,7 +105,7 @@ impl Render for HelloWorld {
             .items_center()
             .text_xl()
             .text_color(rgb(0xffffff))
-            .child(format!("Hello, {}!", &self.text))
+            .child(format!("Hello, {}!", self.text))
             .child(format!("Rendering in window: {window_id}"))
             .child(format!("Ticks observed by entity: {}", self.tick_count))
             .child(format!("Moves observed by entity: {}", self.move_count))

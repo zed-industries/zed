@@ -19,7 +19,9 @@ use gpui::{
 };
 use language::File as _;
 use persistence::ImageViewerDb;
-use project::{ImageItem, Project, ProjectPath, image_store::ImageItemEvent};
+use project::{
+    ImageItem, Project, ProjectPath, git_store::GitStoreEvent, image_store::ImageItemEvent,
+};
 use settings::Settings;
 use theme_settings::ThemeSettings;
 use ui::{Tooltip, prelude::*};
@@ -148,6 +150,13 @@ impl ImageView {
         let _render_image = pending_image.clone().get_render_image(window, cx);
 
         cx.subscribe(&image_item, Self::on_image_event).detach();
+        let git_store = project.read(cx).git_store().clone();
+        cx.subscribe(&git_store, |_, _, event, cx| {
+            if matches!(event, GitStoreEvent::DiffBaseChanged(_)) {
+                cx.emit(ImageViewEvent::TitleChanged);
+            }
+        })
+        .detach();
         cx.on_release_in(window, |this, window, cx| {
             let image_data = this.image_item.read(cx).image.clone();
             if let Some(image) = image_data.clone().get_render_image(window, cx) {
@@ -561,7 +570,9 @@ impl Item for ImageView {
             let git_status = self
                 .project
                 .read(cx)
-                .project_path_git_status(&project_path, cx)
+                .git_store()
+                .read(cx)
+                .display_status_for_project_path(&project_path, cx)
                 .map(|status| status.summary())
                 .unwrap_or_default();
 

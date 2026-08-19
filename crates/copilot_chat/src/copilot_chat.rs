@@ -1,19 +1,19 @@
 pub mod copilot_oauth;
+mod model;
 pub mod responses;
 
-use std::path::PathBuf;
+pub use model::{PROVIDER_ID, PROVIDER_NAME, create_language_model};
+
 use std::sync::Arc;
-use std::sync::OnceLock;
 
 use anyhow::Context as _;
 use anyhow::{Result, anyhow};
 use credentials_provider::CredentialsProvider;
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use gpui::WeakEntity;
-use gpui::{App, AsyncApp, Global, Task, prelude::*};
+use gpui::{App, AsyncApp, Entity, Global, Task, prelude::*};
 use http_client::HttpRequestExt;
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
-use paths::home_dir;
 use serde::{Deserialize, Serialize};
 
 pub use copilot_oauth::DeviceFlow;
@@ -534,27 +534,15 @@ pub struct CopilotChat {
     sign_in_task: Option<Task<()>>,
 }
 
-pub fn init(client: Arc<dyn HttpClient>, configuration: CopilotChatConfiguration, cx: &mut App) {
-    let credentials_provider = zed_credentials_provider::global(cx);
+pub fn init(
+    client: Arc<dyn HttpClient>,
+    credentials_provider: Arc<dyn CredentialsProvider>,
+    configuration: CopilotChatConfiguration,
+    cx: &mut App,
+) {
     let copilot_chat =
         cx.new(|cx| CopilotChat::new(client, credentials_provider, configuration, cx));
     cx.set_global(GlobalCopilotChat(copilot_chat));
-}
-
-pub fn copilot_chat_config_dir() -> &'static PathBuf {
-    static COPILOT_CHAT_CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
-
-    COPILOT_CHAT_CONFIG_DIR.get_or_init(|| {
-        let config_dir = if cfg!(target_os = "windows") {
-            dirs::data_local_dir().expect("failed to determine LocalAppData directory")
-        } else {
-            std::env::var("XDG_CONFIG_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| home_dir().join(".config"))
-        };
-
-        config_dir.join("github-copilot")
-    })
 }
 
 fn oauth_token_from_env() -> Option<String> {
@@ -581,7 +569,7 @@ impl CopilotChat {
             .map(|model| model.0.clone())
     }
 
-    fn new(
+    pub fn new(
         client: Arc<dyn HttpClient>,
         credentials_provider: Arc<dyn CredentialsProvider>,
         configuration: CopilotChatConfiguration,
@@ -756,13 +744,14 @@ impl CopilotChat {
     }
 
     pub async fn stream_completion(
+        copilot_chat: Entity<Self>,
         request: Request,
         location: ChatLocation,
         is_user_initiated: bool,
         mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
         let (client, oauth_token, api_endpoint, configuration) =
-            Self::get_auth_details(&mut cx).await?;
+            Self::get_auth_details(&copilot_chat, &mut cx).await?;
 
         let api_url = configuration.chat_completions_url(&api_endpoint);
         stream_completion(
@@ -777,13 +766,14 @@ impl CopilotChat {
     }
 
     pub async fn stream_response(
+        copilot_chat: Entity<Self>,
         request: responses::Request,
         location: ChatLocation,
         is_user_initiated: bool,
         mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<responses::StreamEvent>>> {
         let (client, oauth_token, api_endpoint, configuration) =
-            Self::get_auth_details(&mut cx).await?;
+            Self::get_auth_details(&copilot_chat, &mut cx).await?;
 
         let api_url = configuration.responses_url(&api_endpoint);
         responses::stream_response(
@@ -798,6 +788,7 @@ impl CopilotChat {
     }
 
     pub async fn stream_messages(
+        copilot_chat: Entity<Self>,
         body: String,
         location: ChatLocation,
         is_user_initiated: bool,
@@ -805,7 +796,7 @@ impl CopilotChat {
         mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<anthropic::Event, anthropic::AnthropicError>>> {
         let (client, oauth_token, api_endpoint, configuration) =
-            Self::get_auth_details(&mut cx).await?;
+            Self::get_auth_details(&copilot_chat, &mut cx).await?;
 
         let api_url = configuration.messages_url(&api_endpoint);
         stream_messages(
@@ -821,6 +812,7 @@ impl CopilotChat {
     }
 
     async fn get_auth_details(
+        copilot_chat: &Entity<Self>,
         cx: &mut AsyncApp,
     ) -> Result<(
         Arc<dyn HttpClient>,
@@ -828,25 +820,22 @@ impl CopilotChat {
         String,
         CopilotChatConfiguration,
     )> {
-        let this = cx
-            .update(|cx| Self::global(cx))
-            .context("Copilot chat is not enabled")?;
-
-        let (oauth_token, api_endpoint, client, configuration) = this.read_with(cx, |this, _| {
-            (
-                this.oauth_token.clone(),
-                this.api_endpoint.clone(),
-                this.client.clone(),
-                this.configuration.clone(),
-            )
-        });
+        let (oauth_token, api_endpoint, client, configuration) =
+            copilot_chat.read_with(cx, |copilot_chat, _| {
+                (
+                    copilot_chat.oauth_token.clone(),
+                    copilot_chat.api_endpoint.clone(),
+                    copilot_chat.client.clone(),
+                    copilot_chat.configuration.clone(),
+                )
+            });
 
         let oauth_token = oauth_token.context("No OAuth token available")?;
 
         let api_endpoint = match api_endpoint {
             Some(endpoint) => endpoint,
             None => {
-                let weak = this.downgrade();
+                let weak = copilot_chat.downgrade();
                 Self::resolve_api_endpoint(&weak, &oauth_token, &configuration, &client, cx).await?
             }
         };

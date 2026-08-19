@@ -141,6 +141,23 @@ pub fn path_is_on_windows_drive(path: &Path) -> bool {
     }
 }
 
+/// Whether WSL is structurally present (at least one registered distro), via a
+/// cheap registry read with no `wsl.exe` round-trip. Always `false` off
+/// Windows. Suitable only for UI gating (e.g. suppressing DrvFs
+/// sandbox-integrity warnings on machines where no WSL sandbox could ever be
+/// constructed); enforcement paths must keep relying on the real in-WSL probe,
+/// which is authoritative about whether a sandbox can actually be built.
+pub fn wsl_distro_registered() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        windows_wsl::wsl_distro_registered()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        false
+    }
+}
+
 impl SandboxPolicy {
     /// Combine two policy layers. Filesystem/network grants are unioned into the
     /// least-restrictive policy that satisfies both layers, while protected paths

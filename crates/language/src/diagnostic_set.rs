@@ -1,4 +1,4 @@
-use crate::{Diagnostic, range_to_lsp};
+use crate::{Diagnostic, RelatedInformation, RelatedLocation, range_to_lsp};
 use anyhow::Result;
 use collections::HashMap;
 use lsp::LanguageServerId;
@@ -7,6 +7,7 @@ use std::{
     cmp::{Ordering, Reverse},
     iter,
     ops::Range,
+    sync::Arc,
 };
 use sum_tree::{self, Bias, SumTree};
 use text::{Anchor, FromAnchor, PointUtf16, ToOffset};
@@ -32,6 +33,40 @@ pub struct DiagnosticEntry<T> {
     pub range: Range<T>,
     /// The information about the diagnostic.
     pub diagnostic: Diagnostic,
+    /// The related information the language server attached to the diagnostic. Its
+    /// locations are in the same coordinates as `range`, so that they are converted
+    /// and followed the same way.
+    pub related_information: Option<Arc<[RelatedInformation<T>]>>,
+}
+
+impl<T> DiagnosticEntry<T> {
+    pub fn new(range: Range<T>, diagnostic: Diagnostic) -> Self {
+        Self {
+            range,
+            diagnostic,
+            related_information: None,
+        }
+    }
+}
+
+impl<T: Clone> DiagnosticEntry<T> {
+    /// Converts the entry to a different buffer coordinate type, taking the related
+    /// information with it so that its locations stay in the same space as the range.
+    pub fn map_coordinates<O>(
+        self,
+        mut map: impl FnMut(&Range<T>) -> Range<O>,
+    ) -> DiagnosticEntry<O> {
+        DiagnosticEntry {
+            range: map(&self.range),
+            related_information: self.related_information.as_ref().map(|information| {
+                information
+                    .iter()
+                    .map(|information| information.map_location(&mut map))
+                    .collect()
+            }),
+            diagnostic: self.diagnostic,
+        }
+    }
 }
 
 /// A single diagnostic in a set. Generic over its range type, because
@@ -59,11 +94,10 @@ impl<T: PartialEq> PartialEq<DiagnosticEntryRef<'_, T>> for DiagnosticEntry<T> {
 }
 
 impl<T: Clone> DiagnosticEntryRef<'_, T> {
+    /// The related information is not part of a reference, so the entry is returned
+    /// without it.
     pub fn to_owned(&self) -> DiagnosticEntry<T> {
-        DiagnosticEntry {
-            range: self.range.clone(),
-            diagnostic: self.diagnostic.clone(),
-        }
+        DiagnosticEntry::new(self.range.clone(), self.diagnostic.clone())
     }
 }
 
@@ -116,9 +150,28 @@ pub struct Summary {
 
 impl DiagnosticEntry<PointUtf16> {
     /// Returns a raw LSP diagnostic used to provide diagnostic context to LSP
-    /// codeAction request
-    pub fn to_lsp_diagnostic_stub(&self) -> Result<lsp::Diagnostic> {
+    /// codeAction request. `uri` names the file this entry belongs to, which the
+    /// related information of that same file is reported against.
+    pub fn to_lsp_diagnostic_stub(&self, uri: &lsp::Uri) -> Result<lsp::Diagnostic> {
         let range = range_to_lsp(self.range.clone())?;
+
+        let mut related_information = None;
+        if let Some(information) = &self.related_information {
+            let mut locations = Vec::with_capacity(information.len());
+            for information in information.iter() {
+                locations.push(lsp::DiagnosticRelatedInformation {
+                    location: match &information.location {
+                        RelatedLocation::InBuffer(range) => lsp::Location {
+                            uri: uri.clone(),
+                            range: range_to_lsp(range.clone())?,
+                        },
+                        RelatedLocation::InAnotherFile(location) => location.clone(),
+                    },
+                    message: information.message.clone(),
+                });
+            }
+            related_information = Some(locations);
+        }
 
         Ok(lsp::Diagnostic {
             range,
@@ -127,23 +180,7 @@ impl DiagnosticEntry<PointUtf16> {
             source: self.diagnostic.source.clone(),
             message: self.diagnostic.message.clone(),
             data: self.diagnostic.data.clone(),
-            ..Default::default()
-        })
-    }
-}
-impl DiagnosticEntryRef<'_, PointUtf16> {
-    /// Returns a raw LSP diagnostic used to provide diagnostic context to LSP
-    /// codeAction request
-    pub fn to_lsp_diagnostic_stub(&self) -> Result<lsp::Diagnostic> {
-        let range = range_to_lsp(self.range.clone())?;
-
-        Ok(lsp::Diagnostic {
-            range,
-            code: self.diagnostic.code.clone(),
-            severity: Some(self.diagnostic.severity),
-            source: self.diagnostic.source.clone(),
-            message: self.diagnostic.message.clone(),
-            data: self.diagnostic.data.clone(),
+            related_information,
             ..Default::default()
         })
     }
@@ -170,10 +207,10 @@ impl DiagnosticSet {
         entries.sort_unstable_by_key(|entry| (entry.range.start, Reverse(entry.range.end)));
         Self {
             diagnostics: SumTree::from_iter(
-                entries.into_iter().map(|entry| DiagnosticEntry {
-                    range: buffer.anchor_before(entry.range.start)
-                        ..buffer.anchor_before(entry.range.end),
-                    diagnostic: entry.diagnostic,
+                entries.into_iter().map(|entry| {
+                    entry.map_coordinates(|range| {
+                        buffer.anchor_before(range.start)..buffer.anchor_before(range.end)
+                    })
                 }),
                 buffer,
             ),
@@ -207,6 +244,22 @@ impl DiagnosticSet {
         T: 'a + ToOffset,
         O: FromAnchor,
     {
+        self.entries_in_range(range, buffer, inclusive, reversed)
+            .map(|entry| entry.resolve(buffer))
+    }
+
+    /// Returns an iterator over the stored entries that intersect the given range of
+    /// the buffer, with their ranges left in the buffer's own coordinates.
+    pub fn entries_in_range<'a, T>(
+        &'a self,
+        range: Range<T>,
+        buffer: &'a text::BufferSnapshot,
+        inclusive: bool,
+        reversed: bool,
+    ) -> impl 'a + Iterator<Item = &'a DiagnosticEntry<Anchor>>
+    where
+        T: 'a + ToOffset,
+    {
         let end_bias = if inclusive { Bias::Right } else { Bias::Left };
         let range = buffer.anchor_before(range.start)..buffer.anchor_at(range.end, end_bias);
         let mut cursor = self.diagnostics.filter::<_, ()>(buffer, {
@@ -228,16 +281,13 @@ impl DiagnosticSet {
         }
         iter::from_fn({
             move || {
-                if let Some(diagnostic) = cursor.item() {
-                    if reversed {
-                        cursor.prev();
-                    } else {
-                        cursor.next();
-                    }
-                    Some(diagnostic.resolve(buffer))
+                let entry = cursor.item()?;
+                if reversed {
+                    cursor.prev();
                 } else {
-                    None
+                    cursor.next();
                 }
+                Some(entry)
             }
         })
     }

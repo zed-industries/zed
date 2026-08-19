@@ -876,6 +876,10 @@ actions!(
         ToggleGitBlameInline,
         /// Opens the git commit for the blame at cursor.
         OpenGitBlameCommit,
+        /// Opens a blame of the file at the revision of the blame entry at cursor.
+        BlameRevision,
+        /// Opens a blame of the file at the revision preceding the blame entry at cursor.
+        BlamePreviousRevision,
         /// Toggles the diagnostics panel.
         ToggleDiagnostics,
         /// Toggles indent guides display.

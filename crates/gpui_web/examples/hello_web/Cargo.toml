@@ -13,4 +13,5 @@ path = "main.rs"
 [dependencies]
 gpui = { path = "../../../gpui" }
 gpui_platform = { path = "../../../gpui_platform" }
+web-sys = { version = "0.3", features = ["Location", "Window"] }
 web-time = "1"

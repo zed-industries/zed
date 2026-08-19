@@ -665,29 +665,17 @@ async fn test_context_server_respects_disable_ai(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_context_server_refreshed_when_worktree_added(cx: &mut TestAppContext) {
-    const SERVER_1_ID: &str = "mcp-1";
+async fn test_context_server_loaded_when_first_worktree_added(cx: &mut TestAppContext) {
+    const SERVER_ID: &str = "mcp-1";
+    let server_id = ContextServerId(SERVER_ID.into());
 
-    let server_1_id = ContextServerId(SERVER_1_ID.into());
-
-    let (fs, project) = setup_context_server_test(cx, json!({"code.rs": ""}), vec![]).await;
-    fs.insert_tree(path!("/second"), json!({"other.rs": ""}))
-        .await;
-
-    let executor = cx.executor();
-    let store = project.read_with(cx, |project, _| project.context_server_store());
-    store.update(cx, |store, _| {
-        store.set_context_server_factory(Box::new(move |id, _| {
-            Arc::new(ContextServer::new(
-                id.clone(),
-                Arc::new(create_fake_transport(id.0.to_string(), executor.clone())),
-            ))
-        }));
+    cx.update(|cx| {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
     });
-
     set_context_server_configuration(
         vec![(
-            server_1_id.0.clone(),
+            server_id.0.clone(),
             settings::ContextServerSettingsContent::Stdio {
                 enabled: true,
                 remote: false,
@@ -702,51 +690,36 @@ async fn test_context_server_refreshed_when_worktree_added(cx: &mut TestAppConte
         cx,
     );
 
-    {
-        let _server_events = assert_server_events(
-            &store,
-            vec![
-                (server_1_id.clone(), ContextServerStatus::Starting),
-                (server_1_id.clone(), ContextServerStatus::Running),
-            ],
-            cx,
-        );
-        cx.run_until_parked();
-    }
-
-    // Witness that adding a worktree triggers the store to refresh available
-    // servers (via `cx.notify` after `maintain_servers`). Without the
-    // `WorktreeStoreEvent::WorktreeAdded` subscription in `ContextServerStore`,
-    // this counter would remain zero.
-    let notify_count = Rc::new(RefCell::new(0usize));
-    let _notify_subscription = cx.update(|cx| {
-        let count = notify_count.clone();
-        cx.observe(&store, move |_, _| {
-            *count.borrow_mut() += 1;
-        })
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({"code.rs": ""})).await;
+    let project = Project::test(fs, std::iter::empty::<&std::path::Path>(), cx).await;
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+    let executor = cx.executor();
+    store.update(cx, |store, _| {
+        store.set_context_server_factory(Box::new(move |id, _| {
+            Arc::new(ContextServer::new(
+                id.clone(),
+                Arc::new(create_fake_transport(id.0.to_string(), executor.clone())),
+            ))
+        }));
     });
 
-    {
-        let _server_events = assert_server_events(&store, vec![], cx);
-        let _ = project.update(cx, |project, cx| {
-            project.find_or_create_worktree(path!("/second"), true, cx)
-        });
-        cx.run_until_parked();
-    }
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/test"), true, cx)
+        })
+        .await
+        .expect("failed to add worktree");
+    cx.run_until_parked();
 
     cx.update(|cx| {
-        assert!(
-            *notify_count.borrow() > 0,
-            "Adding a worktree should trigger the context server store to refresh"
-        );
-        assert!(
-            store.read(cx).server_ids().contains(&server_1_id),
-            "Configured server list should still include the server after a worktree is added"
-        );
+        let store = store.read(cx);
         assert_eq!(
-            store.read(cx).status_for_server(&server_1_id),
-            Some(ContextServerStatus::Running),
-            "Server should still be running after a worktree is added"
+            (
+                store.server_ids().to_vec(),
+                store.status_for_server(&server_id),
+            ),
+            (vec![server_id], Some(ContextServerStatus::Running))
         );
     });
 }

@@ -2,14 +2,25 @@ use super::{
     Highlights,
     dimensions::RowDelta,
     fold_map::{Chunk, FoldRows},
+    invisibles::{is_invisible, is_standalone_grapheme, replacement},
     tab_map::{self, TabEdit, TabPoint, TabSnapshot},
 };
 
+use collections::HashMap;
 use futures_lite::future::yield_now;
-use gpui::{App, AppContext as _, Context, Entity, Font, LineWrapper, Pixels, Task};
+use gpui::{
+    App, AppContext as _, Context, Entity, Font, FontId, LineWrapper, Pixels, Task, TextSystem,
+};
 use language::{LanguageAwareStyling, Point};
 use multi_buffer::RowInfo;
-use std::{cmp, collections::VecDeque, mem, ops::Range, sync::LazyLock, time::Duration};
+use std::{
+    cmp,
+    collections::VecDeque,
+    mem,
+    ops::Range,
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
 use sum_tree::{Bias, Cursor, Dimensions, SumTree};
 use text::Patch;
 
@@ -74,6 +85,61 @@ impl TransformSummary {
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct WrapPoint(pub Point);
+
+struct LineFragmentBuilder {
+    text_system: Arc<TextSystem>,
+    font_id: FontId,
+    font_size: Pixels,
+    cached_replacement_widths: HashMap<char, Pixels>,
+}
+
+impl LineFragmentBuilder {
+    fn new(text_system: Arc<TextSystem>, font: &Font, font_size: Pixels) -> Self {
+        let font_id = text_system.resolve_font(font);
+        Self {
+            text_system,
+            font_id,
+            font_size,
+            cached_replacement_widths: HashMap::default(),
+        }
+    }
+
+    fn push_fragments<'a>(&mut self, fragments: &mut Vec<gpui::LineFragment<'a>>, text: &'a str) {
+        let mut prefix_start = 0;
+        for (offset, ch) in text.char_indices() {
+            if !is_invisible(ch) {
+                continue;
+            }
+            let ch_end = offset + ch.len_utf8();
+            if !is_standalone_grapheme(text, offset, ch_end) {
+                continue;
+            }
+            let Some(width) = self.replacement_width(ch) else {
+                continue;
+            };
+            if prefix_start < offset {
+                fragments.push(gpui::LineFragment::text(&text[prefix_start..offset]));
+            }
+            fragments.push(gpui::LineFragment::element(width, ch_end - offset));
+            prefix_start = ch_end;
+        }
+        if prefix_start < text.len() || text.is_empty() {
+            fragments.push(gpui::LineFragment::text(&text[prefix_start..]));
+        }
+    }
+
+    fn replacement_width(&mut self, ch: char) -> Option<Pixels> {
+        let replacement_char = replacement(ch)?;
+        let width = *self
+            .cached_replacement_widths
+            .entry(replacement_char)
+            .or_insert_with(|| {
+                self.text_system
+                    .layout_width(self.font_id, self.font_size, replacement_char)
+            });
+        Some(width)
+    }
+}
 
 pub struct WrapChunks<'a> {
     input_chunks: tab_map::TabChunks<'a>,
@@ -202,6 +268,8 @@ impl WrapMap {
 
             let text_system = cx.text_system();
             let (font, font_size) = self.font_with_size.clone();
+            let mut fragment_builder =
+                LineFragmentBuilder::new(text_system.clone(), &font, font_size);
             let mut line_wrapper = text_system.line_wrapper(font, font_size);
             let tab_snapshot = new_snapshot.tab_snapshot.clone();
             let total_rows = tab_snapshot.max_point().row() as usize + 1;
@@ -217,13 +285,20 @@ impl WrapMap {
                     &tab_edits,
                     wrap_width,
                     &mut line_wrapper,
+                    &mut fragment_builder,
                 ));
                 self.snapshot = new_snapshot;
                 self.edits_since_sync = self.edits_since_sync.compose(&edits);
             } else {
                 let task = cx.background_spawn(async move {
                     let edits = new_snapshot
-                        .update(tab_snapshot, &tab_edits, wrap_width, &mut line_wrapper)
+                        .update(
+                            tab_snapshot,
+                            &tab_edits,
+                            wrap_width,
+                            &mut line_wrapper,
+                            &mut fragment_builder,
+                        )
                         .await;
                     (new_snapshot, edits)
                 });
@@ -297,6 +372,8 @@ impl WrapMap {
             let mut snapshot = self.snapshot.clone();
             let text_system = cx.text_system().clone();
             let (font, font_size) = self.font_with_size.clone();
+            let mut fragment_builder =
+                LineFragmentBuilder::new(text_system.clone(), &font, font_size);
             let mut line_wrapper = text_system.line_wrapper(font, font_size);
 
             if pending_edits.len() == 1
@@ -311,6 +388,7 @@ impl WrapMap {
                     &tab_edits,
                     wrap_width,
                     &mut line_wrapper,
+                    &mut fragment_builder,
                 ));
                 self.snapshot = snapshot;
                 self.edits_since_sync = self.edits_since_sync.compose(&wrap_edits);
@@ -319,7 +397,13 @@ impl WrapMap {
                     let mut edits = Patch::default();
                     for (tab_snapshot, tab_edits) in pending_edits {
                         let wrap_edits = snapshot
-                            .update(tab_snapshot, &tab_edits, wrap_width, &mut line_wrapper)
+                            .update(
+                                tab_snapshot,
+                                &tab_edits,
+                                wrap_width,
+                                &mut line_wrapper,
+                                &mut fragment_builder,
+                            )
                             .await;
                         edits = edits.compose(&wrap_edits);
                     }
@@ -465,6 +549,7 @@ impl WrapSnapshot {
         tab_edits: &[TabEdit],
         wrap_width: Pixels,
         line_wrapper: &mut LineWrapper,
+        fragment_builder: &mut LineFragmentBuilder,
     ) -> WrapPatch {
         #[derive(Debug)]
         struct RowEdit {
@@ -532,7 +617,7 @@ impl WrapSnapshot {
                     while let Some(chunk) = remaining.take().or_else(|| chunks.next()) {
                         if let Some(ix) = chunk.text.find('\n') {
                             let (prefix, suffix) = chunk.text.split_at(ix + 1);
-                            line_fragments.push(gpui::LineFragment::text(prefix));
+                            fragment_builder.push_fragments(&mut line_fragments, prefix);
                             line.push_str(prefix);
                             remaining = Some(Chunk {
                                 text: suffix,
@@ -546,7 +631,7 @@ impl WrapSnapshot {
                                 line_fragments
                                     .push(gpui::LineFragment::element(width, chunk.text.len()));
                             } else {
-                                line_fragments.push(gpui::LineFragment::text(chunk.text));
+                                fragment_builder.push_fragments(&mut line_fragments, chunk.text);
                             }
                             line.push_str(chunk.text);
                         }
@@ -1441,6 +1526,115 @@ mod tests {
         assert_eq!(wrap_snapshot.text(), "12\n345\n6\n\n");
         let row = wrap_snapshot.prev_row_boundary(wrap_snapshot.max_point());
         assert_eq!(row.0, 3);
+    }
+
+    #[gpui::test]
+    async fn test_invisibles_become_width_measured_elements(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let text_system = cx.read(|cx| cx.text_system().clone());
+        let font = test_font();
+        let font_size = px(14.0);
+        let mut fragment_builder = LineFragmentBuilder::new(text_system, &font, font_size);
+
+        let mut fragments = Vec::new();
+        fragment_builder.push_fragments(&mut fragments, "ab\u{7f}cd\u{80}\u{81}e");
+        let shapes = fragments
+            .iter()
+            .map(|fragment| match fragment {
+                LineFragment::Text { text } => (false, text.len()),
+                LineFragment::Element { len_utf8, width } => {
+                    assert!(
+                        *width > px(0.),
+                        "invisible characters must carry the measured width of their \
+                         replacement glyph so the wrapper accounts for what the renderer \
+                         actually draws"
+                    );
+                    (true, *len_utf8)
+                }
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            shapes,
+            vec![
+                (false, 2),
+                (true, 1),
+                (false, 2),
+                (true, 2),
+                (true, 2),
+                (false, 1),
+            ],
+            "invisible chars must become single-char elements with exact utf8 lengths, \
+             keeping the wrapper's byte offsets aligned with the source text"
+        );
+
+        let mut plain_fragments = Vec::new();
+        fragment_builder.push_fragments(&mut plain_fragments, "plain text");
+        assert_eq!(
+            plain_fragments.len(),
+            1,
+            "text without invisibles must stay one fragment"
+        );
+        assert_eq!(
+            plain_fragments.first().map(|fragment| match fragment {
+                LineFragment::Text { text } => text.len(),
+                LineFragment::Element { len_utf8, .. } => *len_utf8,
+            }),
+            Some(10),
+        );
+
+        let mut preserved_fragments = Vec::new();
+        fragment_builder.push_fragments(&mut preserved_fragments, "a\u{200d}b");
+        assert_eq!(
+            preserved_fragments.len(),
+            1,
+            "combining-class invisibles like ZWJ have no replacement and must stay \
+             inside their text fragment"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_invisibles_wrap_at_replacement_glyph_width(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let text_system = cx.read(|cx| cx.text_system().clone());
+        let font = test_font();
+        let font_id = text_system.resolve_font(&font);
+        let font_size = px(14.0);
+        let wrap_width = px(140.0);
+
+        let text = "\u{7f}\u{80}\u{81}\u{82}\u{83}\u{84}".repeat(20);
+        let buffer = cx.new(|cx| language::Buffer::local(text, cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+        let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+        let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (mut tab_map, _) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
+        let tabs_snapshot = tab_map.set_max_expansion_column(32);
+        let (_wrap_map, wrap_snapshot) =
+            cx.update(|cx| WrapMap::new(tabs_snapshot, font, font_size, Some(wrap_width), cx));
+
+        let wrapped_text = wrap_snapshot.text();
+        for row in wrapped_text.split('\n') {
+            let rendered_width = row
+                .chars()
+                .map(|ch| {
+                    let rendered_char = if is_invisible(ch) {
+                        replacement(ch).unwrap_or(ch)
+                    } else {
+                        ch
+                    };
+                    text_system.layout_width(font_id, font_size, rendered_char)
+                })
+                .fold(px(0.), |width, char_width| width + char_width);
+            assert!(
+                rendered_width <= wrap_width,
+                "a soft-wrapped row must fit the wrap width when drawn with the \
+                 replacement glyphs the renderer substitutes for invisible characters, \
+                 but this row renders at {rendered_width:?} against a wrap width of \
+                 {wrap_width:?}: {row:?}"
+            );
+        }
     }
 
     #[gpui::test(iterations = 100)]

@@ -123,6 +123,8 @@ be disabled with the `project_panel.drag_and_drop` setting.
 
 When `project_panel.git_status` is enabled (the default), file and directory names are tinted
 to reflect their git status—modified, added, deleted, untracked, or conflicting.
+In projects that are not rooted at a git repository, status is shown only for
+[active repositories](./git.md#repository-activation).
 
 Setting `project_panel.git_status_indicator` to `true` (disabled by default) adds a letter badge next
 to each name: **M** (modified), **A** (added), **D** (deleted), **U**

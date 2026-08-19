@@ -15,7 +15,7 @@ use gpui::{
 use language::Capability;
 use rpc::proto::PeerId;
 use serde_json::json;
-use settings::SettingsStore;
+use settings::{SettingsStore, SplicingVec};
 use text::{Point, ToPoint};
 use util::{path, rel_path::rel_path, test::sample_text};
 use workspace::{
@@ -1762,7 +1762,7 @@ async fn test_following_into_excluded_file(
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings(cx, |settings| {
                     settings.project.worktree.file_scan_exclusions =
-                        Some(vec!["**/.git".to_string()]);
+                        Some(SplicingVec::from(vec!["**/.git".to_string()]));
                 });
             });
         });

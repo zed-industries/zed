@@ -617,7 +617,7 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> Component
                             ],
                         )
                         .selected_index(3)
-                        .width(rems_from_px(100.))
+                        .width(rems_from_px(100_f32))
                         .style(ToggleButtonGroupStyle::Filled)
                         .into_any_element(),
                     ),
@@ -637,7 +637,7 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> Component
                             ],
                         )
                         .selected_index(3)
-                        .width(rems_from_px(100.))
+                        .width(rems_from_px(100_f32))
                         .style(ToggleButtonGroupStyle::Filled)
                         .into_any_element(),
                     ),

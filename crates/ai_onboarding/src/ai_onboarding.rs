@@ -86,8 +86,8 @@ impl ZedAiOnboarding {
         div().absolute().bottom_1().right_1().child(
             Vector::new(
                 VectorName::ProUserStamp,
-                rems_from_px(156.),
-                rems_from_px(60.),
+                rems_from_px(156_f32),
+                rems_from_px(60_f32),
             )
             .color(Color::Custom(cx.theme().colors().text_accent.alpha(0.8))),
         )
@@ -97,8 +97,8 @@ impl ZedAiOnboarding {
         div().absolute().bottom_1().right_1().child(
             Vector::new(
                 VectorName::ProTrialStamp,
-                rems_from_px(156.),
-                rems_from_px(60.),
+                rems_from_px(156_f32),
+                rems_from_px(60_f32),
             )
             .color(Color::Custom(cx.theme().colors().text.alpha(0.8))),
         )
@@ -108,8 +108,8 @@ impl ZedAiOnboarding {
         div().absolute().bottom_1().right_1().child(
             Vector::new(
                 VectorName::BusinessStamp,
-                rems_from_px(156.),
-                rems_from_px(60.),
+                rems_from_px(156_f32),
+                rems_from_px(60_f32),
             )
             .color(Color::Custom(cx.theme().colors().text_accent.alpha(0.8))),
         )
@@ -117,8 +117,12 @@ impl ZedAiOnboarding {
 
     fn vip_stamp(cx: &App) -> impl IntoElement {
         div().absolute().bottom_1().right_1().child(
-            Vector::new(VectorName::VipStamp, rems_from_px(156.), rems_from_px(60.))
-                .color(Color::Custom(cx.theme().colors().text.alpha(0.8))),
+            Vector::new(
+                VectorName::VipStamp,
+                rems_from_px(156_f32),
+                rems_from_px(60_f32),
+            )
+            .color(Color::Custom(cx.theme().colors().text.alpha(0.8))),
         )
     }
 
@@ -126,8 +130,8 @@ impl ZedAiOnboarding {
         div().absolute().bottom_1().right_1().child(
             Vector::new(
                 VectorName::StudentStamp,
-                rems_from_px(156.),
-                rems_from_px(60.),
+                rems_from_px(156_f32),
+                rems_from_px(60_f32),
             )
             .color(Color::Custom(cx.theme().colors().text.alpha(0.8))),
         )

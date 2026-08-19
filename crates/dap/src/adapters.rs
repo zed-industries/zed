@@ -294,7 +294,7 @@ pub async fn download_adapter_from_github(
     log::debug!(
         "Downloading adapter {} from {}",
         adapter_name,
-        &github_version.url,
+        github_version.url,
     );
     delegate.output_to_console(format!("Downloading from {}...", github_version.url));
 

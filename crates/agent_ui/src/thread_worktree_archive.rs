@@ -187,7 +187,7 @@ pub fn build_root_plan(
     // is re-verified against the filesystem in [`remove_root`] before
     // anything is deleted.
     let recorded_created_at =
-        git_ui::created_worktrees::recorded_created_at(&path, remote_connection, cx)?;
+        git_ui_core::created_worktrees::recorded_created_at(&path, remote_connection, cx)?;
 
     let branch_name = linked_snapshot
         .branch
@@ -240,7 +240,7 @@ pub async fn remove_root(root: RootPlan, cx: &mut AsyncApp) -> Result<()> {
     // leftover record would only be saved by the creation time check, so
     // remove it eagerly.
     cx.update(|cx| {
-        git_ui::created_worktrees::forget_created_worktree(
+        git_ui_core::created_worktrees::forget_created_worktree(
             &root.root_path,
             root.remote_connection.as_ref(),
             cx,
@@ -285,7 +285,7 @@ async fn verify_created_by_zed(root: &RootPlan, cx: &mut AsyncApp) -> Result<()>
         Some(created_at) if created_at == root.recorded_created_at => Ok(()),
         Some(_) => {
             cx.update(|cx| {
-                git_ui::created_worktrees::forget_created_worktree(
+                git_ui_core::created_worktrees::forget_created_worktree(
                     &root.root_path,
                     root.remote_connection.as_ref(),
                     cx,
@@ -792,7 +792,7 @@ pub async fn restore_worktree_via_git(
     if created_new_worktree {
         // Re-register the restored worktree as Zed-created so it can be
         // archived again later.
-        git_ui::created_worktrees::record_created_worktree_for_repo(
+        git_ui_core::created_worktrees::record_created_worktree_for_repo(
             &wt_repo,
             worktree_path,
             remote_connection,
@@ -1573,7 +1573,7 @@ mod tests {
         let worktree_path = Path::new("/worktrees/project/feature/project");
         let actual_created_at = fake_worktree_created_at(&fs, worktree_path).await;
         cx.update(|cx| {
-            git_ui::created_worktrees::record_created_worktree(
+            git_ui_core::created_worktrees::record_created_worktree(
                 worktree_path,
                 None,
                 actual_created_at + Duration::from_secs(1),
@@ -1637,7 +1637,8 @@ mod tests {
         // attempts skip the worktree entirely.
         workspace.read_with(cx, |_workspace, cx| {
             assert!(
-                git_ui::created_worktrees::recorded_created_at(worktree_path, None, cx).is_none(),
+                git_ui_core::created_worktrees::recorded_created_at(worktree_path, None, cx)
+                    .is_none(),
                 "stale created-worktree record should be removed"
             );
             let plan = build_root_plan(worktree_path, None, std::slice::from_ref(&workspace), cx);

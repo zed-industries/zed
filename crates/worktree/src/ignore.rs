@@ -86,8 +86,8 @@ impl IgnoreStack {
                 let combined_path;
                 let abs_path = if let Some(repo_root) = self.repo_root.as_ref() {
                     let Ok(relative_path) = abs_path.strip_prefix(repo_root) else {
-                        // The provided absolute path is outside of the repository's folderabs_path is outside repo_root and cannot be ignored
-                        // by this global ignore
+                        // The provided absolute path is outside of the repository's
+                        // folder and cannot be ignored by this global ignore.
                         return false;
                     };
 
@@ -103,6 +103,15 @@ impl IgnoreStack {
                 }
             }
             IgnoreStackEntry::RepoExclude { ignore, parent } => {
+                // Ignore rules from a repository that does not contain this path.
+                if !abs_path.starts_with(ignore.path()) {
+                    return IgnoreStack {
+                        repo_root: self.repo_root.clone(),
+                        top: parent.clone(),
+                    }
+                    .is_abs_path_ignored(abs_path, is_dir);
+                }
+
                 match ignore.matched(abs_path, is_dir) {
                     ignore::Match::None => IgnoreStack {
                         repo_root: self.repo_root.clone(),

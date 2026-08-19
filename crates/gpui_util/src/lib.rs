@@ -320,6 +320,7 @@ where
     );
 }
 
+#[track_caller]
 pub fn log_err<E: std::fmt::Display>(error: &E) {
     log_error_with_caller(*Location::caller(), error, log::Level::Error);
 }
@@ -584,7 +585,7 @@ where
     F: Fn(&T, &T) -> std::cmp::Ordering,
 {
     if limit == 0 {
-        items.truncate(0);
+        items.clear();
     }
     if items.len() <= limit {
         items.sort_by(compare);

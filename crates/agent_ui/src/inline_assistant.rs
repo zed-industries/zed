@@ -378,9 +378,9 @@ impl InlineAssistant {
                 continue;
             }
 
-            let latest_selection = newest_selection.get_or_insert_with(|| selection.clone());
+            let latest_selection = newest_selection.get_or_insert_with(|| selection);
             if selection.id > latest_selection.id {
-                *latest_selection = selection.clone();
+                *latest_selection = selection;
             }
             selections.push(selection);
         }

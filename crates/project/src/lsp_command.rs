@@ -2095,7 +2095,7 @@ impl LspCommand for GetDocumentSymbols {
                 fn convert_symbol_to_proto(symbol: DocumentSymbol) -> proto::DocumentSymbol {
                     proto::DocumentSymbol {
                         name: symbol.name.clone(),
-                        kind: symbol.kind as i32,
+                        kind: symbol.kind.to_proto(),
                         start: Some(proto::PointUtf16 {
                             row: symbol.range.start.0.row,
                             column: symbol.range.start.0.column,
@@ -2949,12 +2949,14 @@ impl LspCommand for GetCodeActions {
         language_server: &Arc<LanguageServer>,
         _: &App,
     ) -> Result<lsp::CodeActionParams> {
+        let text_document = make_text_document_identifier(path)?;
+        let snapshot = buffer.snapshot();
         let mut relevant_diagnostics = Vec::new();
-        for entry in buffer
-            .snapshot()
-            .diagnostics_in_range::<_, language::PointUtf16>(self.range.clone(), false)
-        {
-            relevant_diagnostics.push(entry.to_lsp_diagnostic_stub()?);
+        for entry in snapshot.diagnostic_entries_in_range(self.range.clone(), false) {
+            let entry = entry.clone().map_coordinates(|range| {
+                range.start.to_point_utf16(&snapshot)..range.end.to_point_utf16(&snapshot)
+            });
+            relevant_diagnostics.push(entry.to_lsp_diagnostic_stub(&text_document.uri)?);
         }
 
         let only = if let Some(requested) = &self.kinds {

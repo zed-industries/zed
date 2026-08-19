@@ -279,7 +279,7 @@ impl Render for SecurityModal {
                                     &ToggleWorktreeSecurity,
                                     cx,
                                 )
-                                .map(|kb| kb.size(rems_from_px(12.))),
+                                .map(|kb| kb.size(rems_from_px(12_f32))),
                             )
                             .on_click(cx.listener(move |security_modal, _, _, cx| {
                                 security_modal.trusted = Some(false);
@@ -293,7 +293,7 @@ impl Render for SecurityModal {
                             .layer(ui::ElevationIndex::ModalSurface)
                             .key_binding(
                                 KeyBinding::for_action(&menu::Confirm, cx)
-                                    .map(|kb| kb.size(rems_from_px(12.))),
+                                    .map(|kb| kb.size(rems_from_px(12_f32))),
                             )
                             .on_click(cx.listener(move |security_modal, _, _, cx| {
                                 security_modal.trust_and_dismiss(cx);
