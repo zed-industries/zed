@@ -9811,6 +9811,7 @@ name = "language_core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bitflags 2.13.1",
  "collections",
  "gpui_shared_string",
  "gpui_util",
@@ -9821,6 +9822,7 @@ dependencies = [
  "schemars 1.0.4",
  "serde",
  "serde_json",
+ "strum 0.27.2",
  "toml 0.8.23",
  "tree-sitter",
 ]
