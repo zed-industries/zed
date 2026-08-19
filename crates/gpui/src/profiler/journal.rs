@@ -109,6 +109,9 @@ impl ForegroundEvent {
 /// Timing of one platform input dispatch on a window.
 #[derive(Debug, Copy, Clone)]
 pub struct InputTiming {
+    /// The platform input variant dispatched (see
+    /// [`crate::PlatformInput::kind_name`]).
+    pub kind: &'static str,
     /// When the input dispatch started.
     pub start: Instant,
     /// When the input dispatch finished.
@@ -812,6 +815,7 @@ mod tests {
     fn draw_waits_for_its_presentation_boundary() {
         let start = Instant::now();
         let input = InputTiming {
+            kind: "test",
             start: start + Duration::from_millis(1),
             end: start + Duration::from_millis(2),
             caused_invalidation: true,
@@ -873,6 +877,7 @@ mod tests {
         let mut journal = ForegroundJournal::new(counter);
         let events = [
             ForegroundEvent::Input(InputTiming {
+                kind: "test",
                 start,
                 end: start + Duration::from_millis(1),
                 caused_invalidation: false,
@@ -917,6 +922,7 @@ mod tests {
             end: start + Duration::from_millis(1),
         });
         let input = ForegroundEvent::Input(InputTiming {
+            kind: "test",
             start,
             end: start + Duration::from_millis(2),
             caused_invalidation: false,
@@ -987,6 +993,7 @@ mod tests {
         journal.record_frame_pending(window_id, start);
         journal.begin_turn();
         journal.record_event(ForegroundEvent::Input(InputTiming {
+            kind: "test",
             start,
             end: start + Duration::from_millis(1),
             caused_invalidation: true,
@@ -1052,6 +1059,7 @@ mod tests {
         let blocked_end = start + Duration::from_millis(20);
         journal.begin_turn();
         journal.record_event(ForegroundEvent::Input(InputTiming {
+            kind: "test",
             start,
             end: blocked_end,
             caused_invalidation: true,
@@ -1065,6 +1073,7 @@ mod tests {
         let unblocked_end = start + FRAME_DEADLINE + Duration::from_millis(1);
         journal.begin_turn();
         journal.record_event(ForegroundEvent::Input(InputTiming {
+            kind: "test",
             start: start + FRAME_DEADLINE,
             end: unblocked_end,
             caused_invalidation: false,
@@ -1090,6 +1099,7 @@ mod tests {
         let event_end = start + Duration::from_millis(2);
         journal.begin_turn();
         journal.record_event(ForegroundEvent::Input(InputTiming {
+            kind: "test",
             start: start + Duration::from_millis(1),
             end: event_end,
             caused_invalidation: false,
@@ -1124,6 +1134,7 @@ mod tests {
         let event_end = start + Duration::from_millis(620);
         journal.begin_turn();
         journal.record_event(ForegroundEvent::Input(InputTiming {
+            kind: "test",
             start: start + Duration::from_millis(600),
             end: event_end,
             caused_invalidation: false,
@@ -1153,6 +1164,7 @@ mod tests {
             start + Duration::from_millis(3) + Duration::from_micros(30),
         );
         let input = InputTiming {
+            kind: "test",
             start: start + Duration::from_millis(5),
             end: start + Duration::from_millis(6),
             caused_invalidation: false,
@@ -1418,6 +1430,7 @@ mod tests {
                 let event_end = event_start + Duration::from_micros(u64::from(*duration_micros));
                 entries.push(ForegroundJournalEntry::Event(ForegroundEvent::Input(
                     InputTiming {
+                        kind: "test",
                         start: event_start,
                         end: event_end,
                         caused_invalidation: false,
@@ -1472,6 +1485,7 @@ mod tests {
 
     fn input_entry(start: Instant, end: Instant) -> ForegroundJournalEntry {
         ForegroundJournalEntry::Event(ForegroundEvent::Input(InputTiming {
+            kind: "test",
             start,
             end,
             caused_invalidation: false,

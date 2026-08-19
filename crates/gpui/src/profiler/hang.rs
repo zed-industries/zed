@@ -2,9 +2,13 @@
 //!
 //! A hang is any single piece of foreground work — a task poll, an action
 //! handler, an input dispatch, a window draw, or platform presentation — that
-//! blocked the foreground thread for at least a threshold duration.
-//! [`HangDetector`] drains the journal and reports each completed activity
-//! interval containing hangs as a [`HangIncident`].
+//! blocked the foreground thread for at least a threshold duration. An
+//! interval whose total foreground spend reached the frame budget also
+//! counts, even when no single event crossed the threshold: many small
+//! pieces of work can drop a frame — or starve a headless app — as
+//! thoroughly as one long stall. [`HangDetector`] drains the journal and
+//! reports each completed activity interval containing hangs as a
+//! [`HangIncident`].
 
 use std::time::Duration;
 
@@ -26,6 +30,7 @@ pub struct HangDetector {
     collector: ForegroundJournalCollector,
     sealer: IntervalSealer,
     threshold: Duration,
+    frame_budget: Duration,
     first_present_at: Option<Instant>,
 }
 
@@ -36,18 +41,22 @@ pub struct HangIncident {
     /// work recorded alongside them.
     pub snapshot: FrameSnapshot,
     /// The events that blocked the foreground for at least the detector's
-    /// threshold, longest first.
+    /// threshold, longest first. When the incident was triggered by the
+    /// frame budget alone, no event crossed the threshold and this instead
+    /// holds every event in the interval, longest first.
     pub contributors: Vec<ForegroundEvent>,
 }
 
 impl HangDetector {
-    /// Creates a detector reporting foreground work at or above `threshold`.
+    /// Creates a detector reporting single events at or above `threshold`
+    /// and intervals whose total foreground spend reached `frame_budget`.
     /// Only events recorded from this point on are observed.
-    pub fn new(threshold: Duration) -> Self {
+    pub fn new(threshold: Duration, frame_budget: Duration) -> Self {
         Self {
             collector: ForegroundJournalCollector::new(),
             sealer: IntervalSealer::new(Instant::now()),
             threshold,
+            frame_budget,
             first_present_at: None,
         }
     }
@@ -74,7 +83,9 @@ impl HangDetector {
         self.sealer
             .push_entries(drained.entries)
             .into_iter()
-            .filter_map(|snapshot| HangIncident::detect(snapshot, self.threshold))
+            .filter_map(|snapshot| {
+                HangIncident::detect(snapshot, self.threshold, self.frame_budget)
+            })
             .collect()
     }
 }
@@ -97,8 +108,9 @@ pub struct SerializedHangIncident {
     /// seal. Exceeds `stall_ms` when several stalls piled up on one frame.
     pub active_ms: f64,
     /// The longest single block of foreground work, in milliseconds: the
-    /// best estimate of the freeze a user perceived. Always the duration of
-    /// the first contributor.
+    /// best estimate of the freeze a user perceived. Below the hang
+    /// threshold (possibly zero) when the frame budget alone triggered the
+    /// incident.
     pub stall_ms: f64,
     /// For presentation-sealed incidents, how long the submitted frame had
     /// been dirty, in milliseconds.
@@ -118,13 +130,20 @@ pub struct SerializedHangIncident {
     pub small_poll_total_ms: f64,
     /// Events lost to caps or ring overwrites.
     pub dropped_events: u64,
-    /// Contributors at or above the hang threshold, longest first, capped.
+    /// The incident's contributors (see [`HangIncident::contributors`]) in
+    /// start order. The cap keeps the longest ones; `stall_ms` is always
+    /// among them.
     pub contributors: Vec<SerializedHangContributor>,
     /// Contributors elided by the cap.
     pub contributors_elided: usize,
 }
 
 /// One hang contributor in serialized form.
+///
+/// Foreground work nests: an input dispatch can synchronously draw a window,
+/// a draw can poll a task. `depth` expresses that containment — a depth-1
+/// event's time is already inside some depth-0 event's duration, so summing
+/// sibling durations across depths double-counts.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SerializedHangContributor {
@@ -136,6 +155,8 @@ pub enum SerializedHangContributor {
         start_ms: f64,
         /// How long the poll blocked the foreground, in milliseconds.
         duration_ms: f64,
+        /// How many other events in the interval contain this one.
+        depth: usize,
     },
     /// An action handler.
     Action {
@@ -145,15 +166,22 @@ pub enum SerializedHangContributor {
         start_ms: f64,
         /// How long the handler ran, in milliseconds.
         duration_ms: f64,
+        /// How many other events in the interval contain this one.
+        depth: usize,
     },
     /// A platform input dispatch.
     Input {
+        /// The platform input variant dispatched, e.g. `"key_down"`.
+        /// Named `input_kind` because `kind` is this enum's serde tag.
+        input_kind: &'static str,
         /// When the dispatch started, in milliseconds since app startup.
         start_ms: f64,
         /// How long the dispatch ran, in milliseconds.
         duration_ms: f64,
         /// Whether handling the input invalidated a window.
         caused_invalidation: bool,
+        /// How many other events in the interval contain this one.
+        depth: usize,
     },
     /// A window draw.
     Draw {
@@ -168,6 +196,8 @@ pub enum SerializedHangContributor {
         dirty_to_draw_ms: Option<f64>,
         /// Invalidations coalesced into the frame.
         invalidations: u64,
+        /// How many other events in the interval contain this one.
+        depth: usize,
     },
     /// Work spent submitting a frame to the platform.
     Present {
@@ -177,6 +207,8 @@ pub enum SerializedHangContributor {
         start_ms: f64,
         /// How long platform submission took, in milliseconds.
         duration_ms: f64,
+        /// How many other events in the interval contain this one.
+        depth: usize,
     },
 }
 
@@ -237,19 +269,44 @@ impl SerializedHangIncident {
             small_poll_count: snapshot.small_poll_summary().count,
             small_poll_total_ms: as_millis(snapshot.small_poll_summary().total),
             dropped_events: snapshot.dropped_events,
-            contributors: incident
-                .contributors
-                .iter()
-                .take(max_contributors)
-                .map(|event| SerializedHangContributor::convert(startup, event))
-                .collect(),
+            contributors: {
+                let mut kept: Vec<&ForegroundEvent> = incident
+                    .contributors
+                    .iter()
+                    .take(max_contributors)
+                    .collect();
+                kept.sort_by_key(|event| event.start_time());
+                kept.into_iter()
+                    .map(|event| {
+                        SerializedHangContributor::convert(
+                            startup,
+                            event,
+                            nesting_depth(event, &snapshot.events),
+                        )
+                    })
+                    .collect()
+            },
             contributors_elided: incident.contributors.len().saturating_sub(max_contributors),
         }
     }
 }
 
+/// How many events in `events` strictly contain `event`'s span. Events with
+/// identical spans don't count as containing each other, so `event`'s own
+/// presence in `events` contributes nothing.
+fn nesting_depth(event: &ForegroundEvent, events: &[ForegroundEvent]) -> usize {
+    let (start, end) = (event.start_time(), event.end_time());
+    events
+        .iter()
+        .filter(|other| {
+            let (other_start, other_end) = (other.start_time(), other.end_time());
+            other_start <= start && end <= other_end && (other_start < start || end < other_end)
+        })
+        .count()
+}
+
 impl SerializedHangContributor {
-    fn convert(startup: Instant, event: &ForegroundEvent) -> Self {
+    fn convert(startup: Instant, event: &ForegroundEvent, depth: usize) -> Self {
         let since_startup =
             |instant: Instant| as_millis(instant.saturating_duration_since(startup));
         let duration_ms = as_millis(event.duration());
@@ -258,16 +315,20 @@ impl SerializedHangContributor {
                 location: timing.location.into(),
                 start_ms: since_startup(timing.start),
                 duration_ms,
+                depth,
             },
             ForegroundEvent::Action(timing) => Self::Action {
                 name: timing.name,
                 start_ms: since_startup(timing.start),
                 duration_ms,
+                depth,
             },
             ForegroundEvent::Input(timing) => Self::Input {
+                input_kind: timing.kind,
                 start_ms: since_startup(timing.start),
                 duration_ms,
                 caused_invalidation: timing.caused_invalidation,
+                depth,
             },
             ForegroundEvent::Draw(timing) => Self::Draw {
                 window_id: timing.window_id.as_u64(),
@@ -275,11 +336,13 @@ impl SerializedHangContributor {
                 duration_ms,
                 dirty_to_draw_ms: timing.dirty_to_draw_duration().map(as_millis),
                 invalidations: timing.invalidations,
+                depth,
             },
             ForegroundEvent::Present(timing) => Self::Present {
                 window_id: timing.window_id.as_u64(),
                 start_ms: since_startup(timing.present_start),
                 duration_ms,
+                depth,
             },
             ForegroundEvent::SmallPolls(flush) => {
                 // The sealer folds these out of snapshot events; a contributor
@@ -293,6 +356,7 @@ impl SerializedHangContributor {
                     },
                     start_ms: since_startup(flush.since),
                     duration_ms,
+                    depth,
                 }
             }
         }
@@ -323,8 +387,16 @@ impl HangIncident {
     }
 
     /// Returns an incident when the snapshot contains at least one event
-    /// that blocked the foreground for `threshold` or longer.
-    pub fn detect(snapshot: FrameSnapshot, threshold: Duration) -> Option<Self> {
+    /// that blocked the foreground for `threshold` or longer, or when the
+    /// interval's total foreground spend — event time plus folded
+    /// small-poll time — reached `frame_budget` even though no single event
+    /// did. In the latter case every event in the interval becomes a
+    /// contributor, since no single stall explains the busy interval.
+    pub fn detect(
+        snapshot: FrameSnapshot,
+        threshold: Duration,
+        frame_budget: Duration,
+    ) -> Option<Self> {
         let mut contributors: Vec<ForegroundEvent> = snapshot
             .events
             .iter()
@@ -332,7 +404,11 @@ impl HangIncident {
             .copied()
             .collect();
         if contributors.is_empty() {
-            return None;
+            let spend = snapshot.occupancy_within(snapshot.interval_start, snapshot.interval_end());
+            if spend < frame_budget {
+                return None;
+            }
+            contributors = snapshot.events.clone();
         }
         contributors.sort_by_key(|event| std::cmp::Reverse(event.duration()));
         Some(Self {
@@ -372,6 +448,9 @@ mod tests {
     // Well above legitimate per-event work in a test app (layout of one div,
     // empty polls), well below the injected hangs.
     const HANG_THRESHOLD: Duration = Duration::from_millis(10);
+    // Equal to the threshold, mirroring how production wires the detector
+    // today.
+    const FRAME_BUDGET: Duration = HANG_THRESHOLD;
 
     /// A hang that outlives the frame deadline stays in one incident with
     /// the frame it starved: the deadline only unblocks idle boundaries, so
@@ -383,7 +462,7 @@ mod tests {
         let window_id = WindowId::from(0x51E17);
         let hang_end = start + FRAME_DEADLINE * 5;
         let presented_at = hang_end + Duration::from_millis(16);
-        let mut detector = HangDetector::new(HANG_THRESHOLD);
+        let mut detector = HangDetector::new(HANG_THRESHOLD, FRAME_BUDGET);
 
         let snapshots = detector.sealer.push_entries([
             ForegroundJournalEntry::FrameState(FrameStateChange::Pending {
@@ -410,8 +489,8 @@ mod tests {
         let [snapshot] = snapshots.as_slice() else {
             panic!("expected one presented snapshot, got {snapshots:?}");
         };
-        let incident =
-            HangIncident::detect(snapshot.clone(), HANG_THRESHOLD).expect("the hang qualifies");
+        let incident = HangIncident::detect(snapshot.clone(), HANG_THRESHOLD, FRAME_BUDGET)
+            .expect("the hang qualifies");
         assert!(matches!(
             incident.contributors[0],
             ForegroundEvent::TaskPoll(timing) if timing.end.0 == hang_end
@@ -455,6 +534,7 @@ mod tests {
                     end: at(340),
                 }),
                 ForegroundEvent::Input(InputTiming {
+                    kind: "test",
                     start: at(340),
                     end: at(345),
                     caused_invalidation: false,
@@ -472,7 +552,8 @@ mod tests {
             dropped_events: 0,
         };
 
-        let incident = HangIncident::detect(snapshot, HANG_THRESHOLD).expect("has contributors");
+        let incident =
+            HangIncident::detect(snapshot, HANG_THRESHOLD, FRAME_BUDGET).expect("has contributors");
         let serialized = SerializedHangIncident::convert(startup, &incident, 1, Some(at(50)));
 
         assert_eq!(serialized.phase, "steady");
@@ -516,7 +597,8 @@ mod tests {
             small_polls: Vec::new(),
             dropped_events: 0,
         };
-        let incident = HangIncident::detect(idle, HANG_THRESHOLD).expect("has contributors");
+        let incident =
+            HangIncident::detect(idle, HANG_THRESHOLD, FRAME_BUDGET).expect("has contributors");
         let serialized = SerializedHangIncident::convert(startup, &incident, 8, None);
         assert_eq!(serialized.phase, "startup");
         assert_eq!(serialized.sealed_by, "idle");
@@ -539,7 +621,8 @@ mod tests {
             small_polls: Vec::new(),
             dropped_events: 0,
         };
-        let incident = HangIncident::detect(snapshot, HANG_THRESHOLD).expect("has contributors");
+        let incident =
+            HangIncident::detect(snapshot, HANG_THRESHOLD, FRAME_BUDGET).expect("has contributors");
 
         let phase = |first_present_at| {
             SerializedHangIncident::convert(startup, &incident, 8, first_present_at).phase
@@ -565,7 +648,7 @@ mod tests {
     #[test]
     fn first_present_at_latches_on_the_first_observed_presentation() {
         install_foreground_journal();
-        let mut detector = HangDetector::new(HANG_THRESHOLD);
+        let mut detector = HangDetector::new(HANG_THRESHOLD, FRAME_BUDGET);
         let window_id = WindowId::from(0x1A7C4);
 
         let first_present_end = scheduler::Instant::now();
@@ -615,10 +698,219 @@ mod tests {
             dropped_events: 0,
         };
 
-        let incident = HangIncident::detect(snapshot, HANG_THRESHOLD).expect("has contributors");
+        let incident =
+            HangIncident::detect(snapshot, HANG_THRESHOLD, FRAME_BUDGET).expect("has contributors");
         let serialized = SerializedHangIncident::convert(startup, &incident, 8, None);
 
         assert_eq!(serialized.busy_fraction, 0.5);
+    }
+
+    /// Many sub-threshold pieces of work can drop a frame as thoroughly as
+    /// one long stall: an interval whose total foreground spend reaches the
+    /// budget is an incident even when no single event crosses the hang
+    /// threshold, and every event becomes a contributor so the report shows
+    /// what filled the interval.
+    #[test]
+    fn an_interval_of_small_work_over_budget_is_an_incident() {
+        let startup = scheduler::Instant::now();
+        let at = |ms: u64| startup + Duration::from_millis(ms);
+        let window_id = WindowId::from(0xB0D6E7);
+        let snapshot = FrameSnapshot {
+            interval_start: at(0),
+            boundary: IntervalBoundary::Presented(PresentedFrame {
+                frame: FrameTiming {
+                    window_id,
+                    dirty_at: Some(at(0)),
+                    invalidations: 1,
+                    draw_start: at(140),
+                    draw_end: at(145),
+                },
+                presentation: PresentTiming {
+                    window_id,
+                    present_start: at(145),
+                    present_end: at(150),
+                    animation_interval: None,
+                },
+            }),
+            events: vec![
+                task_poll_event(at(0), at(5)),
+                task_poll_event(at(5), at(13)),
+                task_poll_event(at(13), at(18)),
+            ],
+            small_polls: Vec::new(),
+            dropped_events: 0,
+        };
+
+        let incident = HangIncident::detect(snapshot, HANG_THRESHOLD, FRAME_BUDGET)
+            .expect("foreground spend exceeded the frame budget");
+        assert_eq!(incident.contributors.len(), 3);
+        assert_eq!(
+            incident.contributors[0].duration(),
+            Duration::from_millis(8)
+        );
+        let serialized = SerializedHangIncident::convert(startup, &incident, 8, Some(startup));
+        assert_eq!(serialized.stall_ms, 8.0);
+        assert_eq!(serialized.dirty_to_present_ms, Some(150.0));
+        assert_eq!(serialized.sealed_by, "present");
+    }
+
+    /// A frame that reaches the screen late with almost no foreground work
+    /// behind it — pure scheduling or presentation delay — is not a hang:
+    /// the budget measures foreground spend, not dirty-to-present time.
+    #[test]
+    fn a_slow_frame_with_little_foreground_spend_is_not_an_incident() {
+        let startup = scheduler::Instant::now();
+        let at = |ms: u64| startup + Duration::from_millis(ms);
+        let window_id = WindowId::from(0xFA57);
+        let snapshot = FrameSnapshot {
+            interval_start: at(0),
+            boundary: IntervalBoundary::Presented(PresentedFrame {
+                frame: FrameTiming {
+                    window_id,
+                    dirty_at: Some(at(0)),
+                    invalidations: 1,
+                    draw_start: at(145),
+                    draw_end: at(147),
+                },
+                presentation: PresentTiming {
+                    window_id,
+                    present_start: at(149),
+                    present_end: at(150),
+                    animation_interval: None,
+                },
+            }),
+            events: vec![task_poll_event(at(0), at(5))],
+            small_polls: Vec::new(),
+            dropped_events: 0,
+        };
+
+        assert!(HangIncident::detect(snapshot, HANG_THRESHOLD, FRAME_BUDGET).is_none());
+    }
+
+    /// The budget applies to idle-sealed intervals too: a headless app (or
+    /// a stretch with no repaint pending) can still starve the foreground
+    /// with accumulated sub-threshold work.
+    #[test]
+    fn an_idle_sealed_interval_over_budget_is_an_incident() {
+        let startup = scheduler::Instant::now();
+        let at = |ms: u64| startup + Duration::from_millis(ms);
+        let snapshot = FrameSnapshot {
+            interval_start: at(0),
+            boundary: IntervalBoundary::Idle { ended_at: at(200) },
+            events: (0..10)
+                .map(|i| task_poll_event(at(i * 20), at(i * 20 + 5)))
+                .collect(),
+            small_polls: Vec::new(),
+            dropped_events: 0,
+        };
+
+        let incident = HangIncident::detect(snapshot, HANG_THRESHOLD, FRAME_BUDGET)
+            .expect("foreground spend exceeded the frame budget");
+        assert_eq!(incident.contributors.len(), 10);
+        let serialized = SerializedHangIncident::convert(startup, &incident, 8, Some(startup));
+        assert_eq!(serialized.sealed_by, "idle");
+        assert_eq!(serialized.dirty_to_present_ms, None);
+        assert_eq!(serialized.stall_ms, 5.0);
+        assert_eq!(serialized.contributors_elided, 2);
+    }
+
+    /// Contributors serialize in start order with their nesting depth: an
+    /// input dispatch that synchronously drew a window reads as the input at
+    /// depth 0 followed by the draw at depth 1, rather than two unrelated
+    /// blocks of equal wall time.
+    #[test]
+    fn serialized_contributors_are_chronological_with_nesting_depths() {
+        let startup = scheduler::Instant::now();
+        let at = |ms: u64| startup + Duration::from_millis(ms);
+        let window_id = WindowId::from(0x2E57ED);
+        let snapshot = FrameSnapshot {
+            interval_start: at(0),
+            boundary: IntervalBoundary::Idle { ended_at: at(80) },
+            events: vec![
+                task_poll_event(at(50), at(70)),
+                ForegroundEvent::Input(InputTiming {
+                    kind: "mouse_move",
+                    start: at(0),
+                    end: at(40),
+                    caused_invalidation: true,
+                }),
+                ForegroundEvent::Draw(FrameTiming {
+                    window_id,
+                    dirty_at: Some(at(0)),
+                    invalidations: 1,
+                    draw_start: at(1),
+                    draw_end: at(39),
+                }),
+            ],
+            small_polls: Vec::new(),
+            dropped_events: 0,
+        };
+
+        let incident =
+            HangIncident::detect(snapshot, HANG_THRESHOLD, FRAME_BUDGET).expect("has contributors");
+        let serialized = SerializedHangIncident::convert(startup, &incident, 8, Some(startup));
+
+        assert_eq!(serialized.stall_ms, 40.0);
+        assert!(matches!(
+            serialized.contributors.as_slice(),
+            [
+                SerializedHangContributor::Input {
+                    input_kind: "mouse_move",
+                    depth: 0,
+                    ..
+                },
+                SerializedHangContributor::Draw { depth: 1, .. },
+                SerializedHangContributor::TaskPoll { depth: 0, .. },
+            ]
+        ));
+    }
+
+    /// Folded small polls count toward foreground spend, so an interval can
+    /// reach the budget with no retained events at all. The incident then
+    /// has no contributors and the small-poll summary carries the story.
+    #[test]
+    fn small_poll_spend_alone_can_reach_the_budget() {
+        let startup = scheduler::Instant::now();
+        let at = |ms: u64| startup + Duration::from_millis(ms);
+        let window_id = WindowId::from(0xDE1A7);
+        let snapshot = FrameSnapshot {
+            interval_start: at(0),
+            boundary: IntervalBoundary::Presented(PresentedFrame {
+                frame: FrameTiming {
+                    window_id,
+                    dirty_at: Some(at(0)),
+                    invalidations: 1,
+                    draw_start: at(148),
+                    draw_end: at(149),
+                },
+                presentation: PresentTiming {
+                    window_id,
+                    present_start: at(149),
+                    present_end: at(150),
+                    animation_interval: None,
+                },
+            }),
+            events: Vec::new(),
+            small_polls: vec![SmallPollFlush {
+                summary: PollSummary {
+                    count: 40,
+                    total: Duration::from_millis(12),
+                },
+                since: at(0),
+                until: at(150),
+            }],
+            dropped_events: 0,
+        };
+
+        let incident = HangIncident::detect(snapshot, HANG_THRESHOLD, FRAME_BUDGET)
+            .expect("small-poll spend exceeded the frame budget");
+        assert!(incident.contributors.is_empty());
+        let serialized = SerializedHangIncident::convert(startup, &incident, 8, Some(startup));
+        assert_eq!(serialized.stall_ms, 0.0);
+        assert_eq!(serialized.event_count, 0);
+        assert_eq!(serialized.small_poll_count, 40);
+        assert_eq!(serialized.dirty_to_present_ms, Some(150.0));
+        assert_eq!(serialized.busy_fraction, 0.08);
     }
 
     #[derive(Clone, Default)]
@@ -672,7 +964,7 @@ mod tests {
     fn detects_randomly_placed_foreground_hangs(mut rng: StdRng, cx: &mut TestAppContext) {
         // Created first: the detector only observes events recorded after
         // this point, which isolates concurrently running tests' iterations.
-        let mut detector = HangDetector::new(HANG_THRESHOLD);
+        let mut detector = HangDetector::new(HANG_THRESHOLD, FRAME_BUDGET);
 
         let controls = HangControls::default();
         let (view, cx) = cx.add_window_view(|_, cx| HangyView {

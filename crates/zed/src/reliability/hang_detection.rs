@@ -41,11 +41,22 @@ pub(crate) fn start(client: Arc<Client>, cx: &mut App) {
         Duration::from_millis(100)
     };
 
+    let frame_budget = if cfg!(debug_assertions) {
+        // Unoptimized builds routinely spend more than a release frame
+        // budget on ordinary frames; keep dev builds from reporting
+        // constantly.
+        Duration::from_millis(100)
+    } else {
+        // One 120Hz refresh: an interval that spends this much on the
+        // foreground has plausibly dropped a frame.
+        Duration::from_millis(8)
+    };
+
     if cfg!(debug_assertions) {
         log::warn!("debug build, only reporting hangs longer then {hang_time:?}");
     }
 
-    start_hang_detection(hang_time, client, cx);
+    start_hang_detection(hang_time, frame_budget, client, cx);
 
     cx.on_action(move |_: &HangAction, _| {
         log::warn!(
@@ -80,11 +91,19 @@ pub(crate) fn start(client: Arc<Client>, cx: &mut App) {
     });
 }
 
-fn start_hang_detection(report_longer_then: Duration, client: Arc<Client>, cx: &App) {
+fn start_hang_detection(
+    report_longer_then: Duration,
+    frame_budget: Duration,
+    client: Arc<Client>,
+    cx: &App,
+) {
     let foreground_thread = thread::current().id();
     let monitor_interval = Duration::from_secs(1);
     let telemetry = Arc::new(Mutex::new(telemetry::Reporter::new()));
-    let incident_detector = Arc::new(spin::Mutex::new(HangDetector::new(report_longer_then)));
+    let incident_detector = Arc::new(spin::Mutex::new(HangDetector::new(
+        report_longer_then,
+        frame_budget,
+    )));
     let started = Instant::now();
     let startup = *STARTUP_TIME.get().unwrap_or(&started);
     let mut log = logging::Reporter::new(monitor_interval, report_longer_then, foreground_thread);
@@ -140,7 +159,6 @@ fn start_hang_detection(report_longer_then: Duration, client: Arc<Client>, cx: &
                             MAX_SERIALIZED_CONTRIBUTORS,
                             first_present_at,
                         );
-                        dbg!(&serialized_incident);
                         telemetry.add(serialized_incident);
                     }
                     telemetry.send_periodically();

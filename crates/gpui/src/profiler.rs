@@ -875,8 +875,13 @@ pub struct InputLatencySnapshot {
 
 #[cfg(feature = "profiler")]
 enum WindowActivity {
-    Input { started_at: Instant },
-    Draw { started_at: Instant },
+    Input {
+        started_at: Instant,
+        kind: &'static str,
+    },
+    Draw {
+        started_at: Instant,
+    },
 }
 
 /// Collects profiling information for one window.
@@ -932,23 +937,26 @@ impl WindowProfiler {
         Ok(profiler)
     }
 
-    /// Records the beginning of an input dispatch.
-    pub fn begin_input(&mut self) {
+    /// Records the beginning of an input dispatch. `kind` names the platform
+    /// input variant being dispatched (see [`crate::PlatformInput::kind_name`]).
+    pub fn begin_input(&mut self, kind: &'static str) {
         journal::begin_foreground_turn();
         self.active_activities.push(WindowActivity::Input {
             started_at: Instant::now(),
+            kind,
         });
     }
 
     /// Records the end of an input dispatch.
     pub fn end_input(&mut self, caused_invalidation: bool) {
-        let Some(WindowActivity::Input { started_at }) = self.active_activities.pop() else {
+        let Some(WindowActivity::Input { started_at, kind }) = self.active_activities.pop() else {
             debug_assert!(false, "input activity must be the current window activity");
             journal::end_foreground_turn();
             return;
         };
 
         journal::record_input(journal::InputTiming {
+            kind,
             start: started_at,
             end: Instant::now(),
             caused_invalidation,
@@ -1509,7 +1517,10 @@ mod tests {
     fn begin_input_at(window_profiler: &mut WindowProfiler, started_at: Instant) {
         window_profiler
             .active_activities
-            .push(WindowActivity::Input { started_at });
+            .push(WindowActivity::Input {
+                started_at,
+                kind: "test",
+            });
     }
 
     #[cfg(feature = "profiler")]
