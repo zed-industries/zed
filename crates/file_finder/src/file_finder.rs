@@ -1847,6 +1847,11 @@ impl PickerDelegate for FileFinderDelegate {
         self.selected_index
     }
 
+    fn set_hovered_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.selected_index = ix;
+        cx.notify();
+    }
+
     fn set_selected_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.has_changed_selected_index = true;
         self.selected_index = ix;

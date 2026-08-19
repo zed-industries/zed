@@ -9811,6 +9811,7 @@ name = "language_core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bitflags 2.13.1",
  "collections",
  "gpui_shared_string",
  "gpui_util",
@@ -9821,6 +9822,7 @@ dependencies = [
  "schemars 1.0.4",
  "serde",
  "serde_json",
+ "strum 0.27.2",
  "toml 0.8.23",
  "tree-sitter",
 ]
@@ -23289,7 +23291,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "acp_thread",
  "acp_tools",
@@ -23355,7 +23357,6 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "gpui_tokio",
- "hdrhistogram",
  "http_client",
  "image",
  "image_viewer",
@@ -23421,6 +23422,7 @@ dependencies = [
  "smol",
  "snippet_provider",
  "snippets_ui",
+ "spin 0.10.0",
  "svg_preview",
  "sysinfo 0.37.2",
  "system_specs",

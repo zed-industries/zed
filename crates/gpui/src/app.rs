@@ -2,6 +2,7 @@ use scheduler::Instant;
 use std::{
     any::{TypeId, type_name},
     cell::{BorrowMutError, Cell, Ref, RefCell, RefMut},
+    ffi::OsString,
     marker::PhantomData,
     mem,
     ops::{Deref, DerefMut},
@@ -203,6 +204,12 @@ impl Application {
         context_lock.asset_source = asset_source.clone();
         context_lock.svg_renderer = SvgRenderer::new(asset_source);
         drop(context_lock);
+        self
+    }
+
+    /// Configures arguments to pass when restarting the application.
+    pub fn with_restart_arguments(self, arguments: Vec<OsString>) -> Self {
+        self.0.borrow_mut().restart_arguments = arguments;
         self
     }
 
@@ -682,6 +689,8 @@ pub struct App {
     platform_owned_drag: Option<PlatformOwnedDrag>,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
+    #[cfg(feature = "profiler")]
+    foreground_journal: crate::profiler::journal::ForegroundJournal,
     pub(crate) entities: EntityMap,
     pub(crate) new_entity_observers: SubscriberSet<TypeId, NewEntityListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Box<Window>>>,
@@ -729,6 +738,7 @@ pub struct App {
     pub(crate) pending_notifications: FxHashSet<EntityId>,
     pub(crate) pending_global_notifications: TypeIdHashSet,
     pub(crate) restart_path: Option<PathBuf>,
+    pub(crate) restart_arguments: Vec<OsString>,
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
     pub(crate) prompt_builder: Option<PromptBuilder>,
@@ -777,6 +787,8 @@ impl App {
             background_executor.is_main_thread(),
             "must construct App on main thread"
         );
+        #[cfg(feature = "profiler")]
+        let foreground_journal = crate::profiler::journal::install_foreground_journal();
         let synced_animation_epoch = background_executor.now();
 
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
@@ -801,6 +813,8 @@ impl App {
                 platform_owned_drag: None,
                 background_executor,
                 foreground_executor,
+                #[cfg(feature = "profiler")]
+                foreground_journal,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
                 loading_assets: Default::default(),
                 asset_source,
@@ -834,6 +848,7 @@ impl App {
                 quit_observers: SubscriberSet::new(),
                 restart_observers: SubscriberSet::new(),
                 restart_path: None,
+                restart_arguments: Vec::new(),
                 window_closed_observers: SubscriberSet::new(),
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
@@ -1587,7 +1602,10 @@ impl App {
         self.restart_observers
             .clone()
             .retain(&(), |observer| observer(self));
-        self.platform.restart(self.restart_path.take())
+        self.platform.restart(
+            self.restart_path.take(),
+            std::mem::take(&mut self.restart_arguments),
+        )
     }
 
     /// Sets the path to use when restarting the application.
@@ -1906,6 +1924,13 @@ impl App {
             panic!("Can't spawn on main thread after on_app_quit")
         };
         &self.foreground_executor
+    }
+
+    /// Returns the foreground work journal for this app's foreground thread.
+    /// Apps constructed on the same thread share the stream.
+    #[cfg(feature = "profiler")]
+    pub fn foreground_journal(&self) -> crate::profiler::journal::ForegroundJournal {
+        self.foreground_journal.clone()
     }
 
     /// Spawns the future returned by the given function on the main thread. The closure will be invoked
@@ -3050,7 +3075,10 @@ impl<'a, T> Drop for GpuiBorrow<'a, T> {
 
 #[cfg(test)]
 mod test {
-    use std::{cell::RefCell, rc::Rc};
+    use std::{cell::RefCell, ffi::OsString, path::PathBuf, rc::Rc};
+
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
 
     use crate::{AppContext, TestAppContext};
 
@@ -3083,5 +3111,27 @@ mod test {
         });
 
         assert_eq!(*observation_count.borrow(), 2);
+    }
+
+    #[gpui::test]
+    async fn test_restart_preserves_path_and_arguments(cx: &mut TestAppContext) {
+        #[cfg(unix)]
+        let user_data_dir = OsString::from_vec(b"/tmp/zed data/\xff".to_vec());
+        #[cfg(not(unix))]
+        let user_data_dir = OsString::from("C:\\zed data");
+        let arguments = vec![OsString::from("--user-data-dir"), user_data_dir];
+        let restart_path = PathBuf::from("updated-zed");
+        let _application =
+            super::Application(cx.app.clone()).with_restart_arguments(arguments.clone());
+        let restart = cx.expect_restart();
+
+        cx.update(|cx| {
+            cx.set_restart_path(restart_path.clone());
+            cx.restart();
+        });
+
+        let (path, restart_arguments) = restart.await.expect("restart was not requested");
+        assert_eq!(path, Some(restart_path));
+        assert_eq!(restart_arguments, arguments);
     }
 }
