@@ -1419,6 +1419,12 @@ mod tests {
             "read_file",
             "rename_symbol",
             "thinking",
+            // Always prompts unconditionally via `prompt_for_decision`, bypassing
+            // tool_permissions settings entirely, so it has no rules to configure.
+            "exit_plan_mode",
+            // Updates only the in-UI plan checklist; it never reads or writes
+            // files or runs commands, so it has no permission rules to configure.
+            "update_plan",
             // streaming_edit_file uses "edit_file" for permission lookups,
             // so its rules are configured under the edit_file entry.
             "streaming_edit_file",

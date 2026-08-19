@@ -259,6 +259,7 @@
       "ctrl-alt-l": "agent::ManageSkills",
       "ctrl-i": "agent::ToggleProfileSelector",
       "shift-tab": "agent::CycleModeSelector",
+      "ctrl-shift-l": "agent::TogglePlanMode",
       "ctrl-alt-/": "agent::ToggleModelSelector",
       "alt-tab": "agent::CycleFavoriteModels",
       // `alt-l` is provided as an alternative to `alt-tab` as the latter breaks on Linux under the `AcpThread` context

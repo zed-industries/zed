@@ -12365,6 +12365,11 @@ impl Render for ThreadView {
             .on_action(cx.listener(|this, _: &ClearMessageQueue, _, cx| {
                 this.clear_queue(cx);
             }))
+            .on_action(cx.listener(|this, _: &crate::TogglePlanMode, _window, cx| {
+                if let Some(profile_selector) = this.profile_selector.clone() {
+                    profile_selector.update(cx, |selector, cx| selector.toggle_plan_mode(cx));
+                }
+            }))
             .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
                 if let Some(config_options_view) = this.config_options_view.clone() {
                     let handled = config_options_view.update(cx, |view, cx| {

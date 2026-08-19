@@ -219,6 +219,9 @@ actions!(
         ToggleOptionsMenu,
         /// Toggles the profile or mode selector for switching between agent profiles.
         ToggleProfileSelector,
+        /// Toggles Plan Mode: jumps straight into the `plan` profile, or back to
+        /// the profile that was active before Plan Mode if already in it.
+        TogglePlanMode,
         /// Cycles through available session modes.
         CycleModeSelector,
         /// Cycles through favorited models in the ACP model selector.

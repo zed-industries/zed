@@ -17,8 +17,8 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 use ui::{
-    DocumentationAside, HighlightedLabel, KeyBinding, LabelSize, ListItem, ListItemSpacing,
-    PopoverMenuHandle, TintColor, Tooltip, prelude::*,
+    ButtonStyle, DocumentationAside, HighlightedLabel, KeyBinding, LabelSize, ListItem,
+    ListItemSpacing, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
 use workspace::ToggleWorktreeSecurity;
 
@@ -50,6 +50,18 @@ pub trait ProfileProvider {
     /// profiles aren't honored while restricted).
     fn profile_downgraded(&self, _cx: &App) -> bool {
         false
+    }
+
+    /// Toggles Plan Mode for this provider. Enters the built-in `plan` profile
+    /// when not already in it; otherwise leaves it (the native thread restores
+    /// the previously-active profile). Falls back to `write` for providers that
+    /// don't track the pre-Plan profile.
+    fn toggle_plan_mode(&self, cx: &mut App) {
+        if self.profile_id(cx).as_str() == builtin_profiles::PLAN {
+            self.set_profile(AgentProfileId(builtin_profiles::WRITE.into()), cx);
+        } else {
+            self.set_profile(AgentProfileId(builtin_profiles::PLAN.into()), cx);
+        }
     }
 }
 
@@ -119,6 +131,19 @@ impl ProfileSelector {
             );
             cx.notify();
         }
+    }
+
+    /// Jumps straight into the `plan` profile, or back out of it, emitting
+    /// telemetry about the transition.
+    pub fn toggle_plan_mode(&mut self, cx: &mut Context<Self>) {
+        if !self.provider.profiles_supported(cx) {
+            return;
+        }
+
+        let entering = self.provider.profile_id(cx).as_str() != builtin_profiles::PLAN;
+        self.provider.toggle_plan_mode(cx);
+        telemetry::event!("Plan Mode Toggled", entered = entering);
+        cx.notify();
     }
 
     fn ensure_picker(
@@ -208,6 +233,8 @@ impl Render for ProfileSelector {
         // Warn when the active profile is affected by a restricted workspace:
         // either it was downgraded to `minimal`, or it still enables tools that
         // are forbidden while restricted.
+        let is_plan_mode = profile_id.as_str() == builtin_profiles::PLAN;
+
         let show_warning = self.provider.is_restricted(cx)
             && (self.provider.profile_downgraded(cx)
                 || !ProfilePickerDelegate::restricted_forbidden_tools(&profile_id, cx).is_empty());
@@ -215,6 +242,14 @@ impl Render for ProfileSelector {
         let trigger_button = Button::new("profile-selector", selected_profile)
             .label_size(LabelSize::Small)
             .color(Color::Muted)
+            .when(is_plan_mode, |this| {
+                this.style(ButtonStyle::Tinted(TintColor::Accent))
+                    .start_icon(
+                        Icon::new(IconName::Info)
+                            .size(IconSize::XSmall)
+                            .color(Color::Info),
+                    )
+            })
             .when(show_warning, |this| {
                 this.start_icon(
                     Icon::new(IconName::Warning)
@@ -390,6 +425,7 @@ impl ProfilePickerDelegate {
         match candidate.id.as_str() {
             builtin_profiles::WRITE => Some("Get help to write anything."),
             builtin_profiles::ASK => Some("Chat about your codebase."),
+            builtin_profiles::PLAN => Some("Research and draft a plan before making any changes."),
             builtin_profiles::MINIMAL => Some("Chat about anything with no tools."),
             _ => None,
         }

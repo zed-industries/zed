@@ -12,7 +12,7 @@ use agent_client_protocol::schema::v1 as acp;
 #[cfg(test)]
 use agent_servers::AgentServerDelegate;
 use agent_servers::{AgentServer, GEMINI_TERMINAL_AUTH_METHOD_ID};
-use agent_settings::{AgentProfileId, AgentSettings};
+use agent_settings::{AgentProfileId, AgentSettings, builtin_profiles};
 use anyhow::{Result, anyhow};
 #[cfg(feature = "audio")]
 use audio::{Audio, Sound};
@@ -259,6 +259,17 @@ impl ProfileProvider for Entity<agent::Thread> {
 
     fn profile_downgraded(&self, cx: &App) -> bool {
         self.read(cx).profile_was_downgraded()
+    }
+
+    fn toggle_plan_mode(&self, cx: &mut App) {
+        let entering = self.read(cx).profile().as_str() != builtin_profiles::PLAN;
+        if entering {
+            self.update(cx, |thread, cx| {
+                thread.set_profile(AgentProfileId(builtin_profiles::PLAN.into()), cx)
+            });
+        } else {
+            self.update(cx, |thread, cx| thread.exit_plan_mode(cx));
+        }
     }
 }
 
