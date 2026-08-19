@@ -5137,9 +5137,23 @@ impl ThreadView {
         let selected_effort = thread.thinking_effort().cloned();
         let supports_disabling_thinking =
             model.supports_disabling_thinking_at_effort(selected_effort.as_deref());
-        let supports_disabling_thinking_at_any_effort = effort_levels.iter().any(|effort_level| {
-            model.supports_disabling_thinking_at_effort(Some(effort_level.value.as_ref()))
-        });
+        let supports_disabling_thinking_at_any_effort = supports_disabling_thinking
+            || effort_levels.iter().any(|effort_level| {
+                model.supports_disabling_thinking_at_effort(Some(effort_level.value.as_ref()))
+            });
+
+        // A toggle would be dishonest for models that always think at every
+        // effort level: only offer the effort selector.
+        if !supports_disabling_thinking_at_any_effort {
+            if effort_levels.is_empty() {
+                return None;
+            }
+            return Some(
+                self.render_effort_selector(effort_levels, selected_effort, true, cx)
+                    .into_any_element(),
+            );
+        }
+
         let thinking = thread.thinking_enabled() || !supports_disabling_thinking;
 
         let (tooltip_label, icon, color) = if !supports_disabling_thinking {
@@ -5174,12 +5188,9 @@ impl ThreadView {
                         )
                     })
                 } else {
-                    let tooltip = if supports_disabling_thinking_at_any_effort {
-                        "Thinking can’t be disabled at the current effort level. Select a lower effort level to turn it off."
-                    } else {
-                        "Thinking can’t be disabled for this model."
-                    };
-                    this.tooltip(Tooltip::text(tooltip))
+                    this.tooltip(Tooltip::text(
+                        "Thinking is always on at this effort level. Select a lower effort level to make it optional.",
+                    ))
                 }
             });
         let thinking_toggle = if supports_disabling_thinking {
@@ -5211,7 +5222,7 @@ impl ThreadView {
                 }
             }))
         } else {
-            thinking_toggle
+            thinking_toggle.cursor_style(CursorStyle::Arrow)
         };
 
         if effort_levels.is_empty() {
@@ -5223,7 +5234,7 @@ impl ThreadView {
         }
 
         let left_btn = thinking_toggle;
-        let right_btn = self.render_effort_selector(effort_levels, selected_effort, cx);
+        let right_btn = self.render_effort_selector(effort_levels, selected_effort, false, cx);
 
         Some(
             SplitButton::new(left_btn, right_btn.into_any_element())
@@ -5236,6 +5247,7 @@ impl ThreadView {
         &self,
         supported_effort_levels: Vec<LanguageModelEffortLevel>,
         selected_effort: Option<String>,
+        standalone: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let weak_self = cx.weak_entity();
@@ -5301,9 +5313,23 @@ impl ThreadView {
             }
         });
 
-        let trigger = ButtonLike::new_rounded_right("effort-selector-trigger")
-            .child(Label::new(label).size(LabelSize::Small).color(label_color))
-            .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted));
+        let trigger = if standalone {
+            ButtonLike::new("effort-selector-trigger").child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Icon::new(IconName::ThinkingMode)
+                            .size(IconSize::Small)
+                            .color(Color::Accent),
+                    )
+                    .child(Label::new(label).size(LabelSize::Small).color(label_color))
+                    .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted)),
+            )
+        } else {
+            ButtonLike::new_rounded_right("effort-selector-trigger")
+                .child(Label::new(label).size(LabelSize::Small).color(label_color))
+                .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
+        };
 
         PopoverMenu::new("effort-selector")
             .trigger_with_tooltip(
