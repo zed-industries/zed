@@ -1,7 +1,7 @@
 use crate::{
     Event, ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry,
     ExtensionIndexThemeEntry, ExtensionManifest, ExtensionStore, GrammarManifestEntry,
-    RELOAD_DEBOUNCE_DURATION, SchemaVersion,
+    RELOAD_DEBOUNCE_DURATION, SchemaVersion, load_plugin_queries,
 };
 use async_compression::futures::bufread::GzipEncoder;
 use collections::{BTreeMap, HashSet};
@@ -10,7 +10,7 @@ use fs::{FakeFs, Fs, RealFs};
 use futures::{AsyncReadExt, FutureExt, StreamExt, io::BufReader};
 use gpui::{AppContext as _, BackgroundExecutor, TaskExt, TestAppContext};
 use http_client::{FakeHttpClient, Response};
-use language::{BinaryStatus, LanguageMatcher, LanguageName, LanguageRegistry};
+use language::{BinaryStatus, LanguageMatcher, LanguageName, LanguageRegistry, QueryFiles};
 use language_extension::LspAccess;
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
@@ -32,6 +32,36 @@ use util::{rel_path::rel_path_buf, test::TempTree};
 #[ctor::ctor(unsafe)]
 fn init_logger() {
     zlog::init_test();
+}
+
+#[gpui::test]
+async fn test_load_plugin_queries(executor: BackgroundExecutor) {
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        "/queries",
+        json!({
+            "highlights.scm": "highlight query",
+            "outline.scm": "outline query",
+            "highlights_extra.scm": "ignored query",
+            "locals.scm": "unrelated query",
+        }),
+    )
+    .await;
+
+    let queries = load_plugin_queries(
+        fs.clone(),
+        Path::new("/queries"),
+        Some(QueryFiles::HIGHLIGHTS),
+    )
+    .await;
+    assert_eq!(queries.highlights.as_deref(), Some("highlight query"));
+    assert!(queries.outline.is_none());
+    assert!(queries.brackets.is_none());
+
+    let queries = load_plugin_queries(fs, Path::new("/queries"), None).await;
+    assert_eq!(queries.highlights.as_deref(), Some("highlight query"));
+    assert_eq!(queries.outline.as_deref(), Some("outline query"));
+    assert!(queries.brackets.is_none());
 }
 
 fn remote_sync_entry(id: &str, manifest_body: &str) -> ExtensionIndexEntry {
@@ -59,6 +89,7 @@ fn remote_sync_language_entry(extension: &str, path: &str) -> ExtensionIndexLang
         matcher: LanguageMatcher::default().into(),
         hidden: false,
         grammar: None,
+        query_files: None,
     }
 }
 
@@ -297,6 +328,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                                 path_suffixes = ["rb"]
                             "#,
                             "highlights.scm": "",
+                            "outline.scm": "",
                         },
                         "erb": {
                             "config.toml": r#"
@@ -399,6 +431,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         ..LanguageMatcher::default()
                     })
                     .into(),
+                    query_files: Some(QueryFiles::HIGHLIGHTS),
                 },
             ),
             (
@@ -414,6 +447,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         ..LanguageMatcher::default()
                     })
                     .into(),
+                    query_files: Some(QueryFiles::HIGHLIGHTS | QueryFiles::OUTLINE),
                 },
             ),
         ]

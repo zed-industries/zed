@@ -248,7 +248,13 @@ pub mod dev {
         dev,
         [
             /// Toggles the developer inspector for debugging UI elements.
-            ToggleInspector
+            ToggleInspector,
+            /// Cycles the debug frame-time overlay between hidden, current
+            /// frame-time, and detailed frame-time statistics.
+            ToggleFpsOverlay,
+            /// Resets the debug frame-time overlay's statistics, except for the
+            /// total frame count.
+            ResetFrameOverlayStats
         ]
     );
 }
@@ -854,7 +860,8 @@ pub struct WslConnectionOptions {
     pub user: Option<String>,
 }
 
-#[cfg(target_os = "windows")]
+// `debug_assertions` makes the actions visible for the docs preprocessor
+#[cfg(any(debug_assertions, target_os = "windows"))]
 pub mod wsl_actions {
     use gpui::Action;
     use schemars::JsonSchema;

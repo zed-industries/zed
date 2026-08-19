@@ -1847,6 +1847,11 @@ impl PickerDelegate for FileFinderDelegate {
         self.selected_index
     }
 
+    fn set_hovered_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.selected_index = ix;
+        cx.notify();
+    }
+
     fn set_selected_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.has_changed_selected_index = true;
         self.selected_index = ix;
@@ -2199,8 +2204,8 @@ impl FileFinderDelegate {
                         .w_full()
                         .min_w_0()
                         .gap_1p5()
-                        .child(file_name_label.truncate_middle())
-                        .child(full_path_label.truncate_start()),
+                        .child(file_name_label.flex_none().truncate_middle())
+                        .child(full_path_label.flex_1().truncate_start()),
                 )
                 .end_slot::<AnyElement>(end_slot),
         )
