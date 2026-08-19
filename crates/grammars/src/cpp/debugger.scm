@@ -1,9 +1,11 @@
 ; Parameter declarations
 (parameter_declaration
   declarator: (identifier) @debug-variable)
+
 (parameter_declaration
   declarator: (pointer_declarator
     declarator: (identifier) @debug-variable))
+
 (parameter_declaration
   declarator: (reference_declarator
     (identifier) @debug-variable))
@@ -12,10 +14,12 @@
 (declaration
   declarator: (init_declarator
     declarator: (identifier) @debug-variable))
+
 (declaration
   declarator: (init_declarator
     declarator: (pointer_declarator
       declarator: (identifier) @debug-variable)))
+
 (declaration
   declarator: (init_declarator
     declarator: (reference_declarator
@@ -30,6 +34,7 @@
 ; Range-based for loop
 (for_range_loop
   declarator: (identifier) @debug-variable)
+
 (for_range_loop
   declarator: (reference_declarator
     (identifier) @debug-variable))
@@ -38,6 +43,7 @@
 (binary_expression
   left: (identifier) @debug-variable
   (#not-match? @debug-variable "^[A-Z_][A-Z_0-9]*$"))
+
 (binary_expression
   right: (identifier) @debug-variable
   (#not-match? @debug-variable "^[A-Z_][A-Z_0-9]*$"))
@@ -46,6 +52,7 @@
 (unary_expression
   argument: (identifier) @debug-variable
   (#not-match? @debug-variable "^[A-Z_][A-Z_0-9]*$"))
+
 (update_expression
   argument: (identifier) @debug-variable
   (#not-match? @debug-variable "^[A-Z_][A-Z_0-9]*$"))
@@ -73,6 +80,7 @@
 (subscript_expression
   argument: (identifier) @debug-variable
   (#not-match? @debug-variable "^[A-Z_][A-Z_0-9]*$"))
+
 (subscript_expression
   (subscript_argument_list
     (identifier) @debug-variable
@@ -88,9 +96,11 @@
 (conditional_expression
   condition: (identifier) @debug-variable
   (#not-match? @debug-variable "^[A-Z_][A-Z_0-9]*$"))
+
 (conditional_expression
   consequence: (identifier) @debug-variable
   (#not-match? @debug-variable "^[A-Z_][A-Z_0-9]*$"))
+
 (conditional_expression
   alternative: (identifier) @debug-variable
   (#not-match? @debug-variable "^[A-Z_][A-Z_0-9]*$"))
@@ -104,4 +114,5 @@
 
 ; Scopes
 (compound_statement) @debug-scope
+
 (function_definition) @debug-scope
