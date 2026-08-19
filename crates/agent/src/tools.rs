@@ -10,7 +10,9 @@ mod edit_file_tool;
 mod edit_session;
 #[cfg(all(test, feature = "unit-eval"))]
 mod evals;
+mod exit_plan_mode_tool;
 mod fetch_tool;
+mod update_plan_tool;
 mod find_path_tool;
 mod find_references_tool;
 mod get_code_actions_tool;
@@ -79,7 +81,9 @@ pub use create_thread_tool::*;
 pub use delete_path_tool::*;
 pub use diagnostics_tool::*;
 pub use edit_file_tool::*;
+pub use exit_plan_mode_tool::*;
 pub use fetch_tool::*;
+pub use update_plan_tool::*;
 pub use find_path_tool::*;
 pub use find_references_tool::*;
 pub use get_code_actions_tool::*;
@@ -203,7 +207,9 @@ tools! {
     DeletePathTool,
     DiagnosticsTool,
     EditFileTool,
+    ExitPlanModeTool,
     FetchTool,
+    UpdatePlanTool,
     FindPathTool,
     FindReferencesTool,
     GetCodeActionsTool,

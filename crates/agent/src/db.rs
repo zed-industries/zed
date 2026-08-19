@@ -50,6 +50,11 @@ impl From<&DbThreadMetadata> for acp_thread::AgentSessionInfo {
     }
 }
 
+/// Empty plan used when a persisted thread has no `plan` field (pre-feature rows).
+fn default_plan() -> acp::Plan {
+    acp::Plan::new(Vec::new())
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DbThread {
     pub title: SharedString,
@@ -81,6 +86,11 @@ pub struct DbThread {
     pub ui_scroll_position: Option<SerializedScrollPosition>,
     #[serde(default)]
     pub sandboxed_terminal_temp_dir: Option<PathBuf>,
+    /// The live plan checklist (Pending/In-Progress/Completed steps) last tracked
+    /// by the thread, restored on reload so an in-flight plan survives reopening
+    /// the thread.
+    #[serde(default = "default_plan")]
+    pub plan: acp::Plan,
     /// Sandbox escalations the user approved "for the rest of this thread".
     /// Persisted so reopening a thread keeps its grants. See
     /// [`crate::sandboxing::ThreadSandboxGrants`].
@@ -169,6 +179,7 @@ impl SharedThread {
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
+            plan: acp::Plan::new(Vec::new()),
         }
     }
 
@@ -355,6 +366,7 @@ impl DbThread {
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
+            plan: acp::Plan::new(Vec::new()),
         })
     }
 }
@@ -806,6 +818,7 @@ mod tests {
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
+            plan: acp::Plan::new(Vec::new()),
         }
     }
 
@@ -980,6 +993,42 @@ mod tests {
             .unwrap()
             .expect("thread should exist");
         assert_eq!(loaded.sandbox_grants, grants);
+    }
+
+    #[gpui::test]
+    async fn test_plan_roundtrips_through_save_load(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+        let thread_id = session_id("plan-thread");
+        let mut thread = make_thread(
+            "Plan Thread",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+        thread.plan = acp::Plan::new(vec![
+            acp::PlanEntry::new(
+                "Find call sites",
+                acp::PlanEntryPriority::Medium,
+                acp::PlanEntryStatus::Completed,
+            ),
+            acp::PlanEntry::new(
+                "Wire it up",
+                acp::PlanEntryPriority::High,
+                acp::PlanEntryStatus::Pending,
+            ),
+        ]);
+
+        database
+            .save_thread(thread_id.clone(), thread, PathList::default())
+            .await
+            .unwrap();
+
+        let loaded = database
+            .load_thread(thread_id)
+            .await
+            .unwrap()
+            .expect("thread should exist");
+        assert_eq!(loaded.plan.entries.len(), 2);
+        assert_eq!(loaded.plan.entries[0].status, acp::PlanEntryStatus::Completed);
+        assert_eq!(loaded.plan.entries[1].priority, acp::PlanEntryPriority::High);
     }
 
     #[gpui::test]

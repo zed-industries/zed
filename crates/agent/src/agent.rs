@@ -767,6 +767,7 @@ impl NativeAgent {
         let draft_prompt = thread.draft_prompt().map(Vec::from);
         let scroll_position = thread.ui_scroll_position();
         let token_usage = thread.latest_token_usage();
+        let existing_plan = thread.plan().clone();
         let project = thread.project.clone();
         let action_log = thread.action_log.clone();
         let prompt_capabilities_rx = thread.prompt_capabilities_rx.clone();
@@ -785,6 +786,15 @@ impl NativeAgent {
             acp_thread.set_draft_prompt(draft_prompt, cx);
             acp_thread.set_ui_scroll_position(scroll_position);
             acp_thread.update_token_usage(token_usage, cx);
+            // Re-sync the live plan checklist from the native Thread into the
+            // freshly created AcpThread. The plan is the source of truth on the
+            // native Thread (and persists across reloads), but the activity bar
+            // renders the AcpThread's copy — so if the connection was recreated
+            // (e.g. after a model switch or a thread reconnect) the checklist
+            // would otherwise vanish until the next `update_plan` call.
+            if !existing_plan.entries.is_empty() {
+                acp_thread.update_plan(existing_plan, cx);
+            }
             acp_thread
         });
 
@@ -2291,6 +2301,11 @@ impl NativeAgentConnection {
                             ThreadEvent::SubagentSpawned(session_id) => {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.subagent_spawned(session_id, cx);
+                                })?;
+                            }
+                            ThreadEvent::PlanUpdated(plan) => {
+                                acp_thread.update(cx, |thread, cx| {
+                                    thread.update_plan(plan, cx);
                                 })?;
                             }
                             ThreadEvent::Retry(status) => {
@@ -5095,6 +5110,53 @@ mod internal_tests {
             assert_eq!(subagent_skills.len(), 1);
             assert_eq!(subagent_skills[0].name, "shared-skill");
         });
+    }
+
+    #[gpui::test]
+    async fn test_register_session_resyncs_existing_plan(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
+        let project_id = agent.update(cx, |agent, cx| agent.get_or_create_project_state(&project, cx));
+
+        // Build a fresh thread the way production does on a (re)connection, seed a
+        // plan on it as if the `update_plan` tool had run during an earlier turn,
+        // then register it. The plan lives on the source-of-truth Thread, not the
+        // AcpThread connection.
+        let context_server_registry = cx.new(|cx| {
+            crate::ContextServerRegistry::new(project.read(cx).context_server_store(), cx)
+        });
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| prompt_store::ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                None,
+                cx,
+            )
+        });
+        let plan = acp::Plan::new(vec![acp::PlanEntry::new(
+            "Wire up the new flag",
+            acp::PlanEntryPriority::Medium,
+            acp::PlanEntryStatus::Pending,
+        )]);
+        thread.update(cx, |thread, cx| thread.update_plan(plan.clone(), cx));
+
+        // Registering the thread creates the AcpThread; it must inherit the
+        // existing plan so the activity-bar checklist survives the reconnection.
+        let acp_thread = agent.update(cx, |agent, cx| {
+            agent.register_session(thread.clone(), project_id, 1, cx)
+        });
+
+        assert_eq!(
+            acp_thread.read_with(cx, |acp_thread, _| acp_thread.plan().entries.len()),
+            1,
+            "registered AcpThread should inherit the native thread's existing plan"
+        );
     }
 
     #[gpui::test]

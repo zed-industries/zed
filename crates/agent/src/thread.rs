@@ -1,10 +1,10 @@
 use crate::{
-    ApplyCodeActionTool, AskUserTool, CodeActionStore, ContextServerRegistry, CopyPathTool,
-    CreateDirectoryTool, CreateThreadTool, DbLanguageModel, DbThread, DeletePathTool,
-    DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, FindReferencesTool, GetCodeActionsTool,
+use crate::{
+    ApplyCodeActionTool, AskUserTool, CodeActionStore, ContextServerRegistry, CopyPathTool, CreateDirectoryTool,
+    CreateThreadTool, DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool, EditFileTool, ExitPlanModeTool, FetchTool, FindPathTool, FindReferencesTool, GetCodeActionsTool,
     GoToDefinitionTool, GrepTool, ListAgentsAndModelsTool, ListDirectoryTool, MovePathTool,
     ProjectSnapshot, ReadFileTool, RenameTool, SandboxedTerminalTool, SpawnAgentTool,
-    SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision, WebSearchTool,
+    SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision, UpdatePlanTool, WebSearchTool,
     WriteFileTool, decide_permission_from_settings,
 };
 use acp_thread::{ClientUserMessageId, MentionUri};
@@ -882,6 +882,8 @@ pub enum ThreadEvent {
     },
     Elicitation(ElicitationRequest),
     SubagentSpawned(acp::SessionId),
+    /// The live plan checklist was updated by the native `update_plan` tool.
+    PlanUpdated(acp::Plan),
     Retry(acp_thread::RetryStatus),
     ContextCompaction(acp_thread::ContextCompaction),
     ContextCompactionUpdate(acp_thread::ContextCompactionUpdate),
@@ -1272,6 +1274,16 @@ pub struct Thread {
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     pub(crate) context_server_registry: Entity<ContextServerRegistry>,
     profile_id: AgentProfileId,
+    /// The profile that was active immediately before switching into the
+    /// built-in `plan` profile, if any. Lets `exit_plan_mode` restore the
+    /// user's actual previous profile (which may be a custom one) instead of
+    /// always assuming `write`. Cleared whenever the thread leaves `plan` by
+    /// any other means (e.g. an explicit profile selection).
+    pre_plan_profile_id: Option<AgentProfileId>,
+    /// The live plan checklist (Pending/In-Progress/Completed steps) currently
+    /// shown in the activity bar. Driven by the native `update_plan` tool as
+    /// the agent works through a plan; empty when there's nothing to track.
+    plan: acp::Plan,
     /// Whether `profile_id` was downgraded to `minimal` at thread start because
     /// the workspace is restricted. Used purely to surface a warning in the UI.
     profile_downgraded_for_restricted_workspace: bool,
@@ -1417,6 +1429,8 @@ impl Thread {
             },
             context_server_registry,
             profile_id,
+            pre_plan_profile_id: None,
+            plan: acp::Plan::new(Vec::new()),
             profile_downgraded_for_restricted_workspace,
             project_context,
             templates,
@@ -1450,6 +1464,8 @@ impl Thread {
         self.thinking_effort = parent.thinking_effort.clone();
         self.summarization_model = parent.summarization_model.clone();
         self.profile_id = parent.profile_id.clone();
+        self.pre_plan_profile_id = parent.pre_plan_profile_id.clone();
+        self.plan = parent.plan.clone();
         self.profile_downgraded_for_restricted_workspace =
             parent.profile_downgraded_for_restricted_workspace;
     }
@@ -1560,6 +1576,12 @@ impl Thread {
                     }
                 }
             }
+        }
+        if !self.plan.entries.is_empty() {
+            stream
+                .0
+                .unbounded_send(Ok(ThreadEvent::PlanUpdated(self.plan.clone())))
+                .ok();
         }
         rx
     }
@@ -1795,6 +1817,8 @@ impl Thread {
             initial_project_snapshot: Task::ready(db_thread.initial_project_snapshot).shared(),
             context_server_registry,
             profile_id,
+            pre_plan_profile_id: None,
+            plan: db_thread.plan.clone(),
             profile_downgraded_for_restricted_workspace: false,
             project_context,
             templates,
@@ -1917,6 +1941,7 @@ impl Thread {
             }),
             sandboxed_terminal_temp_dir: self.sandboxed_terminal_temp_dir.clone(),
             sandbox_grants: self.sandbox_grants.borrow().to_db(),
+            plan: self.plan.clone(),
         };
 
         cx.background_spawn(async move {
@@ -2146,6 +2171,11 @@ impl Thread {
             self.action_log.clone(),
             language_registry,
         ));
+        self.add_tool(ExitPlanModeTool::new(
+            self.project.clone(),
+            cx.weak_entity(),
+        ));
+        self.add_tool(UpdatePlanTool::new(cx.weak_entity()));
         self.add_tool(FetchTool::new(self.project.read(cx).client().http_client()));
         self.add_tool(FindPathTool::new(self.project.clone()));
         self.add_tool(GrepTool::new(self.project.clone()));
@@ -2220,10 +2250,10 @@ impl Thread {
     }
 
     /// Computes the profile a thread should start with, given the user's chosen
-    /// profile. In a restricted workspace, the built-in `write`/`ask` profiles
-    /// are downgraded to `minimal` — but only when both the chosen profile and
-    /// `minimal` are unmodified, shipped defaults, so we never override a user's
-    /// custom or customized profiles.
+    /// profile. In a restricted workspace, the built-in `write`/`ask`/`plan`
+    /// profiles are downgraded to `minimal` — but only when both the chosen
+    /// profile and `minimal` are unmodified, shipped defaults, so we never
+    /// override a user's custom or customized profiles.
     ///
     /// Returns the (possibly downgraded) profile and whether a downgrade
     /// happened.
@@ -2232,10 +2262,11 @@ impl Thread {
         project: &Entity<Project>,
         cx: &App,
     ) -> (AgentProfileId, bool) {
-        let is_write_or_ask = profile_id.as_str() == builtin_profiles::WRITE
-            || profile_id.as_str() == builtin_profiles::ASK;
+        let is_downgradable = profile_id.as_str() == builtin_profiles::WRITE
+            || profile_id.as_str() == builtin_profiles::ASK
+            || profile_id.as_str() == builtin_profiles::PLAN;
         let minimal = AgentProfileId(builtin_profiles::MINIMAL.into());
-        if is_write_or_ask
+        if is_downgradable
             && TrustedWorktrees::has_restricted_worktrees(&project.read(cx).worktree_store(), cx)
             && AgentProfileSettings::is_unmodified_default(&profile_id, cx)
             && AgentProfileSettings::is_unmodified_default(&minimal, cx)
@@ -2255,6 +2286,18 @@ impl Thread {
             return;
         }
 
+        // Remember the profile we're leaving if we're entering `plan`, so
+        // `exit_plan_mode` can restore it later instead of assuming `write`.
+        // Leaving `plan` by any other route (e.g. an explicit profile pick)
+        // invalidates that memory.
+        if profile_id.as_str() == builtin_profiles::PLAN {
+            if self.profile_id.as_str() != builtin_profiles::PLAN {
+                self.pre_plan_profile_id = Some(self.profile_id.clone());
+            }
+        } else {
+            self.pre_plan_profile_id = None;
+        }
+
         self.profile_id = profile_id.clone();
 
         // Swap to the profile's preferred model when available.
@@ -2267,6 +2310,38 @@ impl Thread {
                 .update(cx, |thread, cx| thread.set_profile(profile_id.clone(), cx))
                 .ok();
         }
+    }
+
+    /// Leaves the built-in `plan` profile, restoring whichever profile was
+    /// active before the thread entered it (falling back to `write` if that
+    /// wasn't tracked, e.g. `plan` was set as the thread's starting profile).
+    pub fn exit_plan_mode(&mut self, cx: &mut Context<Self>) {
+        let target = self
+            .pre_plan_profile_id
+            .take()
+            .unwrap_or_else(|| AgentProfileId(builtin_profiles::WRITE.into()));
+        self.set_profile(target, cx);
+    }
+
+    /// Replaces the live plan checklist shown in the activity bar. Called by the
+    /// native `update_plan` tool as the agent works through a plan. Emits a
+    /// `ThreadEvent::PlanUpdated` so the `AcpThread` view (and therefore the UI)
+    /// stays in sync.
+    pub fn update_plan(&mut self, plan: acp::Plan, cx: &mut Context<Self>) {
+        self.plan = plan.clone();
+        if let Some(running_turn) = &self.running_turn {
+            running_turn
+                .event_stream
+                .0
+                .unbounded_send(Ok(ThreadEvent::PlanUpdated(plan)))
+                .ok();
+        }
+        cx.notify();
+    }
+
+    /// The live plan checklist currently tracked for this thread, if any.
+    pub fn plan(&self) -> &acp::Plan {
+        &self.plan
     }
 
     pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<()> {
@@ -4321,6 +4396,7 @@ impl Thread {
             ),
             is_linux: cfg!(target_os = "linux"),
             is_windows: cfg!(target_os = "windows"),
+            plan_mode: self.profile_id.as_str() == builtin_profiles::PLAN,
         }
         .render(&self.templates)
         .context("failed to build system prompt")
