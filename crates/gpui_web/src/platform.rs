@@ -46,6 +46,7 @@ pub struct WebPlatform {
     wgpu_context: Rc<RefCell<Option<WgpuContext>>>,
     prepared_window: Rc<RefCell<Option<PreparedWebWindow>>>,
     window_lifecycle: Rc<Cell<WebWindowLifecycle>>,
+    pasting_clipboard_item: Rc<RefCell<Option<ClipboardItem>>>,
     cursor_visible: Rc<Cell<bool>>,
     last_cursor_css: Rc<Cell<&'static str>>,
     _cursor_restore_listeners: Vec<EventListenerHandle>,
@@ -166,6 +167,7 @@ impl WebPlatform {
             wgpu_context: Rc::new(RefCell::new(None)),
             prepared_window: Rc::new(RefCell::new(None)),
             window_lifecycle: Rc::new(Cell::new(WebWindowLifecycle::Available)),
+            pasting_clipboard_item: Rc::new(RefCell::new(None)),
             cursor_visible,
             last_cursor_css,
             _cursor_restore_listeners: cursor_restore_listeners,
@@ -379,6 +381,7 @@ impl Platform for WebPlatform {
             self.browser_window.clone(),
             self.window_lifecycle.clone(),
             self.active_window.clone(),
+            self.pasting_clipboard_item.clone(),
         );
         match window {
             Ok(window) => {
@@ -552,7 +555,7 @@ impl Platform for WebPlatform {
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        None
+        self.pasting_clipboard_item.borrow().clone()
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
