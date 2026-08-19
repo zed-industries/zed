@@ -3075,7 +3075,7 @@ fn test_language_scope_at_with_javascript(cx: &mut App) {
         )
         .with_override_query(
             r#"
-                (jsx_element) @element
+                (jsx_element) @element.inclusive_start
                 (string) @string
                 (comment) @comment.inclusive
                 [
@@ -3157,6 +3157,36 @@ fn test_language_scope_at_with_javascript(cx: &mut App) {
         assert_eq!(
             element_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
             &[true, true]
+        );
+
+        // On the outermost element's opening `<`: use the `element` override.
+        // The offset equals the `jsx_element` node's start, which a strict
+        // containment check skips, falling back to line comments.
+        let outer_element_config = snapshot
+            .language_scope_at(text.find("<C").unwrap())
+            .unwrap();
+        assert_eq!(
+            outer_element_config.line_comment_prefixes(),
+            &[] as &[Arc<str>]
+        );
+        assert_eq!(
+            outer_element_config.block_comment(),
+            Some(&BlockCommentConfig {
+                start: "{/*".into(),
+                prefix: "".into(),
+                end: "*/}".into(),
+                tab_size: 0,
+            })
+        );
+
+        // Just past the element's closing `>` (the `;`): keep the default
+        // config, not the `element` override.
+        let after_element_config = snapshot
+            .language_scope_at(text.find("</C>;").unwrap() + "</C>".len())
+            .unwrap();
+        assert_eq!(
+            after_element_config.line_comment_prefixes(),
+            &[Arc::from("// ")]
         );
 
         // Within a JSX tag: use the default config.

@@ -1898,6 +1898,10 @@ impl<'a> SyntaxLayer<'a> {
                     if offset < range.start || offset > range.end {
                         continue;
                     }
+                } else if override_entry.range_start_is_inclusive {
+                    if offset < range.start || offset >= range.end {
+                        continue;
+                    }
                 } else if offset <= range.start || offset >= range.end {
                     continue;
                 }
