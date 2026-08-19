@@ -180,10 +180,10 @@ fn get_zed_exe_path() -> Option<String> {
 #[inline]
 fn retrieve_command_description() -> Result<HSTRING> {
     const REG_PATH: &str = cfg_select! {
-        feature = "stable" => { "Software\\Classes\\ZedContextMenu" },
-        feature = "preview" => { "Software\\Classes\\ZedPreviewContextMenu" },
-        feature = "nightly" => { "Software\\Classes\\ZedNightlyContextMenu" },
-        _ => { "Software\\Classes\\ZedDevContextMenu" },
+        feature = "stable" => { r#"Software\Classes\ZedContextMenu"# },
+        feature = "preview" => { r#"Software\Classes\ZedPreviewContextMenu"# },
+        feature = "nightly" => { r#"Software\Classes\ZedNightlyContextMenu"# },
+        _ => { r#"Software\Classes\ZedDevContextMenu"# },
     };
 
     let key = windows_registry::CURRENT_USER.open(REG_PATH)?;
