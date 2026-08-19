@@ -1386,8 +1386,8 @@ fn check_interpolation(
             check_node_edits(
                 depth,
                 range,
-                old_node.child(i as u32).unwrap(),
-                new_node.child(i as u32).unwrap(),
+                old_node.child(i).unwrap(),
+                new_node.child(i).unwrap(),
                 old_buffer,
                 new_buffer,
                 edits,
