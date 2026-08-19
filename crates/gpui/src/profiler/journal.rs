@@ -362,7 +362,7 @@ struct ForegroundJournal {
     foreground_runnables: ForegroundRunnableCounter,
     turn_depth: usize,
     pending_frames: HashMap<WindowId, Instant>,
-    work_since_boundary: bool,
+    retained_since_boundary: bool,
     small_polls: Option<SmallPollFlush>,
 }
 
@@ -372,7 +372,7 @@ impl ForegroundJournal {
             foreground_runnables,
             turn_depth: 0,
             pending_frames: HashMap::new(),
-            work_since_boundary: false,
+            retained_since_boundary: false,
             small_polls: None,
         }
     }
@@ -381,6 +381,14 @@ impl ForegroundJournal {
         self.turn_depth += 1;
     }
 
+    // Quiescent boundaries require a retained event since the last boundary,
+    // not merely folded sub-floor polls. Sporadic wake-ups (timers, file
+    // watchers) reach quiescence after every tiny poll; a boundary for each
+    // would re-admit to the ring the very polls the fold keeps out of it,
+    // wrapping the ring within seconds. A sub-floor-only stretch can never be
+    // an incident on its own — frame misses always seal through the
+    // pending-frame boundaries — so its folds simply ride, span-tagged, into
+    // the next interval with retained content.
     fn end_turn(&mut self, ended_at: Instant) {
         let Some(turn_depth) = self.turn_depth.checked_sub(1) else {
             debug_assert!(false, "foreground turn must be begun before it ends");
@@ -390,7 +398,7 @@ impl ForegroundJournal {
         if self.turn_depth > 0
             || self.foreground_runnables.has_runnables()
             || self.has_unexpired_pending_frame(ended_at)
-            || !self.work_since_boundary
+            || !self.retained_since_boundary
         {
             return;
         }
@@ -407,7 +415,6 @@ impl ForegroundJournal {
     }
 
     fn fold_small_poll(&mut self, timing: TaskTiming) {
-        self.work_since_boundary = true;
         let flush = self.small_polls.get_or_insert(SmallPollFlush {
             summary: PollSummary::default(),
             since: timing.start,
@@ -424,7 +431,7 @@ impl ForegroundJournal {
     }
 
     fn record_event(&mut self, event: ForegroundEvent) {
-        self.work_since_boundary = true;
+        self.retained_since_boundary = true;
         self.record_entry(ForegroundJournalEntry::Event(event));
     }
 
@@ -435,7 +442,7 @@ impl ForegroundJournal {
             .map(ForegroundJournalEntry::Event);
         push_to_ring([small_polls, Some(entry)].into_iter().flatten());
         if matches!(entry, ForegroundJournalEntry::Boundary(_)) {
-            self.work_since_boundary = false;
+            self.retained_since_boundary = false;
         }
     }
 
@@ -1271,6 +1278,56 @@ mod tests {
             Some(ForegroundJournalEntry::Event(ForegroundEvent::SmallPolls(flush)))
                 if flush.since == poll.start && flush.until == poll.end.0
         ));
+    }
+
+    /// Sporadic wake-ups (a tiny folded poll followed by quiescence,
+    /// repeatedly) must write nothing to the ring: no boundary, no flush.
+    /// The folds accumulate and ride with the next boundary that has
+    /// retained content.
+    #[test]
+    fn quiescence_without_retained_work_writes_nothing() {
+        let start = Instant::now();
+        let mut collector = ForegroundJournalCollector::new();
+        let mut journal = ForegroundJournal::new(ForegroundRunnableCounter::new());
+        let mut tiny_wake = |ended_at: Instant| {
+            journal.begin_turn();
+            journal.fold_small_poll(task_timing(ended_at - Duration::from_micros(50), ended_at));
+            journal.end_turn(ended_at);
+        };
+
+        let first_wake = start + Duration::from_millis(1);
+        let second_wake = start + Duration::from_millis(5);
+        tiny_wake(first_wake);
+        tiny_wake(second_wake);
+        let quiet = collector.collect_unseen().entries;
+        assert!(!has_boundary_at(&quiet, first_wake));
+        assert!(!has_boundary_at(&quiet, second_wake));
+        assert!(!quiet.iter().any(|entry| matches!(
+            entry,
+            ForegroundJournalEntry::Event(ForegroundEvent::SmallPolls(flush))
+                if flush.until == first_wake || flush.until == second_wake
+        )));
+
+        // A turn with a retained event seals immediately and carries the
+        // accumulated folds, span-tagged, in its flush.
+        let retained = ForegroundEvent::TaskPoll(task_timing(
+            start + Duration::from_millis(6),
+            start + Duration::from_millis(7),
+        ));
+        journal.begin_turn();
+        journal.record_event(retained);
+        journal.end_turn(retained.end_time());
+        let entries = collector.collect_unseen().entries;
+        assert!(has_boundary_at(&entries, retained.end_time()));
+        assert!(entries.iter().any(|entry| {
+            matches!(
+                entry,
+                ForegroundJournalEntry::Event(ForegroundEvent::SmallPolls(flush))
+                    if flush.summary.count == 2
+                        && flush.since == first_wake - Duration::from_micros(50)
+                        && flush.until == second_wake
+            )
+        }));
     }
 
     #[test]
