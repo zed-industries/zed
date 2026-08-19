@@ -1062,6 +1062,7 @@ async fn test_neighboring_activatable_entry_stays_within_project(cx: &mut TestAp
         key: ProjectGroupKey::new(None, PathList::new(&[std::path::PathBuf::from(path)])),
         label: path.into(),
         highlight_positions: Vec::new(),
+        remote_location: None,
         has_running_threads: false,
         waiting_thread_count: 0,
         has_notifications: false,
