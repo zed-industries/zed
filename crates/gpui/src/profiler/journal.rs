@@ -1,7 +1,7 @@
 //! A journal of foreground work and the semantic boundaries between activity intervals.
 //!
 //! The foreground thread records task polls, action handlers, input dispatches,
-//! draws, and presentations as [`ForegroundEvent`]s in a bounded global ring.
+//! draws, and presentations as [`ForegroundEvent`]s in a bounded journal ring.
 //! Task polls shorter than [`TASK_POLL_FLOOR`] are folded into summaries, which
 //! bound the stream by the number of slow polls while preserving their exact
 //! count and total duration.
@@ -12,11 +12,12 @@
 //! preceding each boundary into a [`FrameSnapshot`]. The sealer does not infer
 //! boundaries from elapsed time or from incidental event kinds such as draws.
 
-use std::cell::RefCell;
+use std::cell::{RefCell, UnsafeCell};
 use std::collections::{HashMap, VecDeque};
+use std::mem::MaybeUninit;
 use std::sync::{
     Arc,
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicU64, AtomicUsize, Ordering},
 };
 use std::time::Duration;
 
@@ -43,11 +44,16 @@ pub const FRAME_DEADLINE: Duration = Duration::from_secs(1);
 // so this bound is only reachable when something is already deeply wrong.
 const MAX_INTERVAL_EVENTS: usize = 16 * 1024;
 
-// Allow 4MiB of journal entries. The poll floor and frame cadence bound the
-// event rate to roughly 10k per second in the worst case, so this holds
-// several seconds of worst-case traffic between consumer drains.
-const MAX_JOURNAL_ENTRIES: usize =
-    (4 * 1024 * 1024) / core::mem::size_of::<ForegroundJournalEntry>();
+// Allow 4MiB for the fixed ring allocation, including each slot's atomic
+// metadata. The poll floor and frame cadence bound the event rate to roughly
+// 10k per second in the worst case, so this holds several seconds of
+// worst-case traffic between consumer drains.
+const MAX_JOURNAL_ENTRIES: usize = (4 * 1024 * 1024) / core::mem::size_of::<JournalSlot>();
+
+// Absorbs brief collisions with a collector reading the exact slot being
+// wrapped. The foreground never waits for a reader; queued entries are retried
+// in order on the next publication.
+const MAX_PENDING_JOURNAL_ENTRIES: usize = 64;
 
 /// One entry in the foreground stream.
 ///
@@ -225,6 +231,12 @@ pub enum ForegroundJournalEntry {
     Boundary(IntervalBoundary),
     /// A change to pending-frame state. This is metadata, not foreground work.
     FrameState(FrameStateChange),
+    /// One or more logical entries were unavailable at this point in the
+    /// stream. Consumers must not infer interval boundaries across this gap.
+    Discontinuity {
+        /// Number of unavailable logical entries.
+        lost: u64,
+    },
 }
 
 /// An immutable view of one sealed foreground interval, produced by
@@ -247,6 +259,8 @@ pub struct FrameSnapshot {
     /// Events lost to the interval's event cap, plus ring losses reported
     /// via [`IntervalSealer::note_lost`].
     pub dropped_events: u64,
+    /// Whether the journal had an unobserved gap during this interval.
+    pub journal_discontinuous: bool,
 }
 
 impl FrameSnapshot {
@@ -365,18 +379,20 @@ impl ForegroundRunnableCounter {
     }
 }
 
-struct ForegroundJournal {
+struct ForegroundJournalWriter {
     foreground_runnables: ForegroundRunnableCounter,
+    publisher: JournalPublisher,
     turn_depth: usize,
     pending_frames: HashMap<WindowId, Instant>,
     retained_since_boundary: bool,
     small_polls: Option<SmallPollFlush>,
 }
 
-impl ForegroundJournal {
-    fn new(foreground_runnables: ForegroundRunnableCounter) -> Self {
+impl ForegroundJournalWriter {
+    fn new(foreground_runnables: ForegroundRunnableCounter, publisher: JournalPublisher) -> Self {
         Self {
             foreground_runnables,
+            publisher,
             turn_depth: 0,
             pending_frames: HashMap::new(),
             retained_since_boundary: false,
@@ -392,10 +408,9 @@ impl ForegroundJournal {
     // merely folded sub-floor polls. Sporadic wake-ups (timers, file
     // watchers) leave the foreground idle after every tiny poll; a boundary
     // for each would re-admit to the ring the very polls the fold keeps out
-    // of it, wrapping the ring within seconds. A sub-floor-only stretch can
-    // never be an incident on its own — frame misses always seal through the
-    // pending-frame boundaries — so its folds simply ride, span-tagged, into
-    // the next interval with retained content.
+    // of it, wrapping the ring within seconds. Folded-only work is discarded
+    // at true idle so unrelated wake-ups cannot accumulate toward a later
+    // frame budget. Polls remain folded while a frame or runnable is pending.
     fn end_turn(&mut self, ended_at: Instant) {
         let Some(turn_depth) = self.turn_depth.checked_sub(1) else {
             debug_assert!(false, "foreground turn must be begun before it ends");
@@ -405,8 +420,11 @@ impl ForegroundJournal {
         if self.turn_depth > 0
             || self.foreground_runnables.has_runnables()
             || self.has_unexpired_pending_frame(ended_at)
-            || !self.retained_since_boundary
         {
+            return;
+        }
+        if !self.retained_since_boundary {
+            self.small_polls = None;
             return;
         }
 
@@ -416,6 +434,9 @@ impl ForegroundJournal {
     }
 
     fn has_unexpired_pending_frame(&mut self, now: Instant) -> bool {
+        if self.pending_frames.is_empty() {
+            return false;
+        }
         self.pending_frames
             .retain(|_, dirty_at| now.saturating_duration_since(*dirty_at) < FRAME_DEADLINE);
         !self.pending_frames.is_empty()
@@ -447,7 +468,8 @@ impl ForegroundJournal {
             .take_small_polls()
             .map(ForegroundEvent::SmallPolls)
             .map(ForegroundJournalEntry::Event);
-        push_to_ring([small_polls, Some(entry)].into_iter().flatten());
+        self.publisher
+            .publish([small_polls, Some(entry)].into_iter().flatten());
         if matches!(entry, ForegroundJournalEntry::Boundary(_)) {
             self.retained_since_boundary = false;
         }
@@ -491,14 +513,17 @@ impl ForegroundJournal {
                     }),
                 ));
             }
-            None => self.record_event(ForegroundEvent::Present(timing)),
+            None => {
+                self.pending_frames.remove(&timing.window_id);
+                self.record_event(ForegroundEvent::Present(timing));
+            }
         }
     }
 }
 
 thread_local! {
     static FOREGROUND_RUNNABLES: ForegroundRunnableCounter = ForegroundRunnableCounter::new();
-    static FOREGROUND_JOURNAL: RefCell<Option<ForegroundJournal>> = const { RefCell::new(None) };
+    static FOREGROUND_JOURNAL: RefCell<Option<ForegroundJournalWriter>> = const { RefCell::new(None) };
 }
 
 pub(crate) fn foreground_runnable_counter() -> ForegroundRunnableCounter {
@@ -508,17 +533,64 @@ pub(crate) fn foreground_runnable_counter() -> ForegroundRunnableCounter {
 /// Starts journaling on the calling thread. Called once by `App` construction
 /// on the main thread; every other thread's recording calls are no-ops.
 /// Idempotent so that multiple `App`s on one thread (tests) share one journal.
-pub(crate) fn install_foreground_journal() {
+pub(crate) fn install_foreground_journal() -> ForegroundJournal {
     let foreground_runnables = foreground_runnable_counter();
     FOREGROUND_JOURNAL.with(|journal| {
         let mut journal = journal.borrow_mut();
-        if journal.is_none() {
-            *journal = Some(ForegroundJournal::new(foreground_runnables));
+        if let Some(journal) = journal.as_ref() {
+            return ForegroundJournal {
+                ring: Arc::clone(&journal.publisher.ring),
+            };
         }
-    });
+
+        let (handle, publisher) =
+            ForegroundJournal::new(MAX_JOURNAL_ENTRIES, MAX_PENDING_JOURNAL_ENTRIES);
+        *journal = Some(ForegroundJournalWriter::new(
+            foreground_runnables,
+            publisher,
+        ));
+        handle
+    })
 }
 
-fn with_journal(f: impl FnOnce(&mut ForegroundJournal)) {
+#[cfg(test)]
+pub(super) struct TestForegroundJournalGuard {
+    previous: Option<ForegroundJournalWriter>,
+    _not_send: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+#[cfg(test)]
+impl Drop for TestForegroundJournalGuard {
+    fn drop(&mut self) {
+        FOREGROUND_JOURNAL.with(|journal| {
+            *journal.borrow_mut() = self.previous.take();
+        });
+    }
+}
+
+#[cfg(test)]
+pub(super) fn install_test_foreground_journal(
+    capacity: usize,
+    pending_capacity: usize,
+) -> (ForegroundJournal, TestForegroundJournalGuard) {
+    let foreground_runnables = foreground_runnable_counter();
+    let (handle, publisher) = ForegroundJournal::new(capacity, pending_capacity);
+    let previous = FOREGROUND_JOURNAL.with(|journal| {
+        journal.borrow_mut().replace(ForegroundJournalWriter::new(
+            foreground_runnables,
+            publisher,
+        ))
+    });
+    (
+        handle,
+        TestForegroundJournalGuard {
+            previous,
+            _not_send: std::marker::PhantomData,
+        },
+    )
+}
+
+fn with_journal(f: impl FnOnce(&mut ForegroundJournalWriter)) {
     FOREGROUND_JOURNAL.with(|journal| {
         if let Some(journal) = journal.borrow_mut().as_mut() {
             f(journal);
@@ -547,7 +619,7 @@ pub(crate) fn foreground_turn() -> ForegroundTurnGuard {
 }
 
 pub(crate) fn begin_foreground_turn() {
-    with_journal(ForegroundJournal::begin_turn);
+    with_journal(ForegroundJournalWriter::begin_turn);
 }
 
 pub(crate) fn end_foreground_turn() {
@@ -591,98 +663,300 @@ pub(crate) fn record_window_closed(window_id: WindowId) {
     with_journal(|journal| journal.record_window_closed(window_id, at));
 }
 
-struct JournalRing {
-    entries: VecDeque<ForegroundJournalEntry>,
-    total_pushed: u64,
+const SLOT_WRITER: usize = 1 << (usize::BITS - 1);
+const SLOT_READER_MASK: usize = !SLOT_WRITER;
+const EMPTY_SEQUENCE: u64 = u64::MAX;
+
+struct JournalSlot {
+    users: AtomicUsize,
+    sequence: AtomicU64,
+    entry: UnsafeCell<MaybeUninit<ForegroundJournalEntry>>,
 }
 
-// The poll floor and frame cadence bound the push rate, drains happen about
-// once per second, and the lock is never held across blocking work, so a
-// spinlock is appropriate here as elsewhere in the profiler.
-static FOREGROUND_ENTRIES: spin::Mutex<JournalRing> = spin::Mutex::new(JournalRing {
-    entries: VecDeque::new(),
-    total_pushed: 0,
-});
+// `users` ensures the entry is only read while no writer owns the slot and is
+// only written while no readers own it.
+unsafe impl Sync for JournalSlot {}
 
-fn push_to_ring(entries: impl IntoIterator<Item = ForegroundJournalEntry>) {
-    let mut ring = FOREGROUND_ENTRIES.lock();
-    for entry in entries {
-        if ring.entries.len() >= MAX_JOURNAL_ENTRIES {
-            ring.entries.pop_front();
+impl JournalSlot {
+    fn new() -> Self {
+        Self {
+            users: AtomicUsize::new(0),
+            sequence: AtomicU64::new(EMPTY_SEQUENCE),
+            entry: UnsafeCell::new(MaybeUninit::uninit()),
         }
-        ring.entries.push_back(entry);
-        ring.total_pushed += 1;
+    }
+
+    fn try_publish(&self, sequence: u64, entry: ForegroundJournalEntry) -> bool {
+        if self
+            .users
+            .compare_exchange(0, SLOT_WRITER, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            return false;
+        }
+
+        // SAFETY: setting SLOT_WRITER from zero gives this writer exclusive
+        // access to the slot until the Release store below.
+        unsafe {
+            (*self.entry.get()).write(entry);
+        }
+        self.sequence.store(sequence, Ordering::Relaxed);
+        self.users.store(0, Ordering::Release);
+        true
+    }
+
+    fn try_read(&self, expected_sequence: u64) -> Option<ForegroundJournalEntry> {
+        let _guard = JournalSlotReadGuard::try_new(self)?;
+        if self.sequence.load(Ordering::Relaxed) != expected_sequence {
+            return None;
+        }
+
+        // SAFETY: a matching sequence means the slot was initialized for this
+        // logical entry, and `guard` prevents the writer from overwriting it
+        // until after the Copy.
+        Some(unsafe { *(*self.entry.get()).assume_init_ref() })
+    }
+
+    fn try_add_reader(&self) -> bool {
+        let mut users = self.users.load(Ordering::Relaxed);
+        loop {
+            if users & SLOT_WRITER != 0 || users == SLOT_READER_MASK {
+                return false;
+            }
+            match self.users.compare_exchange_weak(
+                users,
+                users + 1,
+                Ordering::Acquire,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return true,
+                Err(updated_users) => users = updated_users,
+            }
+        }
+    }
+
+    fn remove_reader(&self) {
+        let previous = self.users.fetch_sub(1, Ordering::Release);
+        debug_assert!(
+            previous > 0 && previous & SLOT_WRITER == 0,
+            "invalid slot reader state: {previous:#x}"
+        );
+    }
+}
+
+struct JournalSlotReadGuard<'a> {
+    slot: &'a JournalSlot,
+}
+
+impl<'a> JournalSlotReadGuard<'a> {
+    fn try_new(slot: &'a JournalSlot) -> Option<Self> {
+        if slot.try_add_reader() {
+            Some(Self { slot })
+        } else {
+            None
+        }
+    }
+}
+
+impl Drop for JournalSlotReadGuard<'_> {
+    fn drop(&mut self) {
+        self.slot.remove_reader();
+    }
+}
+
+struct JournalRing {
+    slots: Box<[JournalSlot]>,
+    finalized: AtomicU64,
+    offered: AtomicU64,
+}
+
+impl JournalRing {
+    fn new(capacity: usize) -> Self {
+        let capacity = capacity.max(1);
+        Self {
+            slots: (0..capacity).map(|_| JournalSlot::new()).collect(),
+            finalized: AtomicU64::new(0),
+            offered: AtomicU64::new(0),
+        }
+    }
+
+    fn capacity(&self) -> usize {
+        self.slots.len()
+    }
+
+    fn try_publish(&self, sequence: u64, entry: ForegroundJournalEntry) -> bool {
+        let index = (sequence % self.slots.len() as u64) as usize;
+        self.slots[index].try_publish(sequence, entry)
+    }
+
+    fn read(&self, sequence: u64) -> Option<ForegroundJournalEntry> {
+        let index = (sequence % self.slots.len() as u64) as usize;
+        self.slots[index].try_read(sequence)
+    }
+}
+
+struct PendingJournalEntry {
+    sequence: u64,
+    entry: ForegroundJournalEntry,
+}
+
+struct JournalPublisher {
+    ring: Arc<JournalRing>,
+    next_sequence: u64,
+    pending: VecDeque<PendingJournalEntry>,
+    dropped_after_pending: u64,
+    pending_capacity: usize,
+}
+
+impl JournalPublisher {
+    fn new(ring: Arc<JournalRing>, pending_capacity: usize) -> Self {
+        Self {
+            ring,
+            next_sequence: 0,
+            pending: VecDeque::with_capacity(pending_capacity),
+            dropped_after_pending: 0,
+            pending_capacity,
+        }
+    }
+
+    fn publish(&mut self, entries: impl IntoIterator<Item = ForegroundJournalEntry>) {
+        for entry in entries {
+            self.flush_pending();
+            self.publish_one(entry);
+        }
+        self.flush_pending();
+    }
+
+    fn publish_one(&mut self, entry: ForegroundJournalEntry) {
+        let sequence = self.next_sequence;
+        self.next_sequence += 1;
+        self.ring
+            .offered
+            .store(self.next_sequence, Ordering::Release);
+
+        if !self.pending.is_empty() || self.dropped_after_pending > 0 {
+            if self.dropped_after_pending == 0 && self.pending.len() < self.pending_capacity {
+                self.pending
+                    .push_back(PendingJournalEntry { sequence, entry });
+            } else {
+                self.dropped_after_pending += 1;
+            }
+            return;
+        }
+
+        if self.ring.try_publish(sequence, entry) {
+            self.ring.finalized.store(sequence + 1, Ordering::Release);
+        } else if self.pending_capacity > 0 {
+            self.pending
+                .push_back(PendingJournalEntry { sequence, entry });
+        } else {
+            self.dropped_after_pending = 1;
+        }
+    }
+
+    fn flush_pending(&mut self) {
+        while let Some(pending) = self.pending.front() {
+            if !self.ring.try_publish(pending.sequence, pending.entry) {
+                return;
+            }
+            let sequence = pending.sequence;
+            self.pending.pop_front();
+            self.ring.finalized.store(sequence + 1, Ordering::Release);
+        }
+
+        if self.dropped_after_pending > 0 {
+            self.ring
+                .finalized
+                .store(self.next_sequence, Ordering::Release);
+            self.dropped_after_pending = 0;
+        }
+    }
+}
+
+/// A cloneable handle to one foreground journal stream.
+///
+/// Each collector has an independent cursor. Collectors briefly pin one slot
+/// at a time and never block recording; entries they could not observe are
+/// reported as discontinuities. Apps on the same foreground thread share the
+/// stream.
+#[derive(Clone)]
+pub struct ForegroundJournal {
+    ring: Arc<JournalRing>,
+}
+
+impl ForegroundJournal {
+    fn new(capacity: usize, pending_capacity: usize) -> (Self, JournalPublisher) {
+        let ring = Arc::new(JournalRing::new(capacity));
+        (
+            Self {
+                ring: Arc::clone(&ring),
+            },
+            JournalPublisher::new(ring, pending_capacity),
+        )
+    }
+
+    /// Creates an independent collector that observes entries offered after
+    /// this call.
+    pub fn collector(&self) -> ForegroundJournalCollector {
+        ForegroundJournalCollector {
+            cursor: self.ring.offered.load(Ordering::Acquire),
+            ring: Arc::clone(&self.ring),
+        }
     }
 }
 
 /// Entries returned by one [`ForegroundJournalCollector::collect_unseen`] call.
 #[derive(Debug, Default)]
 pub struct DrainedEntries {
-    /// Journal entries recorded since the previous drain, in recording order.
+    /// Journal entries recorded since the previous drain, in recording order,
+    /// including synthetic [`ForegroundJournalEntry::Discontinuity`] markers at
+    /// unavailable logical positions.
     pub entries: Vec<ForegroundJournalEntry>,
-    /// Entries overwritten in the ring before this drain observed them.
+    /// Entries unavailable to this collector because they were overwritten or
+    /// could not be published after the fixed pending queue filled. This is the
+    /// aggregate of the discontinuity markers in `entries`.
     pub lost: u64,
 }
-
-/// Bounds how many entries one lock acquisition copies during
-/// [`ForegroundJournalCollector::collect_unseen`]. The foreground writer
-/// spins on the same lock, and a collector preempted mid-copy would otherwise
-/// stall it for the whole backlog (hundreds of microseconds for a full ring,
-/// unbounded under preemption). Chunking bounds each hold to a few
-/// microseconds; the cursor tolerates entries pushed between chunks. Small in
-/// tests so chunk-boundary behavior is exercised without flooding the shared
-/// ring.
-const COLLECT_CHUNK: usize = if cfg!(test) { 8 } else { 1024 };
 
 /// Reads the foreground stream, tracking a cursor so each call to
 /// [`Self::collect_unseen`] returns only entries recorded since the previous
 /// call. Independent collectors do not affect each other.
 pub struct ForegroundJournalCollector {
     cursor: u64,
-}
-
-impl Default for ForegroundJournalCollector {
-    fn default() -> Self {
-        Self::new()
-    }
+    ring: Arc<JournalRing>,
 }
 
 impl ForegroundJournalCollector {
-    /// Creates a collector that only sees entries recorded from this point on.
-    pub fn new() -> Self {
-        Self {
-            cursor: FOREGROUND_ENTRIES.lock().total_pushed,
-        }
-    }
-
     /// Returns entries recorded since the previous call (or since the
-    /// collector was created), reporting how many were overwritten in the
-    /// ring before this drain observed them.
-    ///
-    /// The backlog is copied in [`COLLECT_CHUNK`]-sized chunks, releasing the
-    /// ring lock between chunks and allocating only while unlocked, so the
-    /// foreground writer is never blocked for more than one chunk's copy.
+    /// collector was created), reporting how many were unavailable before this
+    /// drain observed them.
     pub fn collect_unseen(&mut self) -> DrainedEntries {
-        let mut entries: Vec<ForegroundJournalEntry> = Vec::new();
-        let mut lost = 0;
-        loop {
-            // Reserve outside the lock; the reserved chunk makes the extend
-            // below allocation-free while the lock is held.
-            entries.reserve(COLLECT_CHUNK);
-            let ring = FOREGROUND_ENTRIES.lock();
-            let buffer_len = ring.entries.len() as u64;
-            let buffer_start = ring.total_pushed.saturating_sub(buffer_len);
-            lost += buffer_start.saturating_sub(self.cursor);
-            self.cursor = self.cursor.max(buffer_start);
-            let skip = (self.cursor - buffer_start) as usize;
-            let available = ring.entries.len() - skip;
-            let take = available.min(COLLECT_CHUNK);
-            entries.extend(ring.entries.iter().skip(skip).take(take).copied());
-            self.cursor += take as u64;
-            if take == available {
-                return DrainedEntries { entries, lost };
-            }
+        let end = self.ring.finalized.load(Ordering::Acquire);
+        if self.cursor >= end {
+            return DrainedEntries::default();
         }
+        let retained_start = end.saturating_sub(self.ring.capacity() as u64);
+        let mut lost = retained_start.saturating_sub(self.cursor);
+        self.cursor = self.cursor.max(retained_start);
+        let mut entries = Vec::with_capacity((end - self.cursor) as usize + usize::from(lost > 0));
+        if lost > 0 {
+            entries.push(ForegroundJournalEntry::Discontinuity { lost });
+        }
+
+        while self.cursor < end {
+            if let Some(entry) = self.ring.read(self.cursor) {
+                entries.push(entry);
+            } else {
+                lost += 1;
+                match entries.last_mut() {
+                    Some(ForegroundJournalEntry::Discontinuity { lost }) => *lost += 1,
+                    _ => entries.push(ForegroundJournalEntry::Discontinuity { lost: 1 }),
+                }
+            }
+            self.cursor += 1;
+        }
+
+        DrainedEntries { entries, lost }
     }
 }
 
@@ -699,6 +973,7 @@ pub struct IntervalSealer {
     events: Vec<ForegroundEvent>,
     small_polls: Vec<SmallPollFlush>,
     dropped_events: u64,
+    journal_discontinuous: bool,
 }
 
 impl IntervalSealer {
@@ -710,13 +985,15 @@ impl IntervalSealer {
             events: Vec::new(),
             small_polls: Vec::new(),
             dropped_events: 0,
+            journal_discontinuous: false,
         }
     }
 
-    /// Accounts for entries lost before observation (see
-    /// [`DrainedEntries::lost`]); they are reported on the next snapshot.
+    /// Accounts for a loss supplied outside a collector drain. Collector losses
+    /// are already represented by ordered discontinuity entries.
     pub fn note_lost(&mut self, lost: u64) {
         self.dropped_events += lost;
+        self.journal_discontinuous |= lost > 0;
     }
 
     /// Processes a batch of drained entries, returning the snapshots completed
@@ -757,13 +1034,17 @@ impl IntervalSealer {
                 // the entries remain in the stream for consumers that want
                 // dirty timing, but the sealer has no use for them.
                 ForegroundJournalEntry::FrameState(_) => {}
+                ForegroundJournalEntry::Discontinuity { lost } => self.note_lost(lost),
             }
         }
         snapshots
     }
 
     fn is_empty(&self) -> bool {
-        self.events.is_empty() && self.small_polls.is_empty() && self.dropped_events == 0
+        self.events.is_empty()
+            && self.small_polls.is_empty()
+            && self.dropped_events == 0
+            && !self.journal_discontinuous
     }
 
     fn push_event(&mut self, event: ForegroundEvent) {
@@ -797,6 +1078,7 @@ impl IntervalSealer {
             events: std::mem::take(&mut self.events),
             small_polls: std::mem::take(&mut self.small_polls),
             dropped_events: std::mem::take(&mut self.dropped_events),
+            journal_discontinuous: std::mem::take(&mut self.journal_discontinuous),
         };
         self.interval_start = ended;
         snapshot
@@ -873,8 +1155,7 @@ mod tests {
     fn outermost_turn_seals_no_frame_work_when_idle() {
         let start = Instant::now();
         let counter = ForegroundRunnableCounter::new();
-        let mut collector = ForegroundJournalCollector::new();
-        let mut journal = ForegroundJournal::new(counter);
+        let (mut journal, mut collector) = test_journal(counter);
         let events = [
             ForegroundEvent::Input(InputTiming {
                 kind: "test",
@@ -914,8 +1195,7 @@ mod tests {
     #[test]
     fn nested_turns_only_seal_after_the_outermost_turn() {
         let start = Instant::now();
-        let mut collector = ForegroundJournalCollector::new();
-        let mut journal = ForegroundJournal::new(ForegroundRunnableCounter::new());
+        let (mut journal, mut collector) = test_journal(ForegroundRunnableCounter::new());
         let action = ForegroundEvent::Action(ActionTiming {
             name: "test.action",
             start,
@@ -952,8 +1232,7 @@ mod tests {
     fn an_immediately_ready_runnable_prevents_an_idle_boundary_between_polls() {
         let start = Instant::now();
         let counter = ForegroundRunnableCounter::new();
-        let mut collector = ForegroundJournalCollector::new();
-        let mut journal = ForegroundJournal::new(counter.clone());
+        let (mut journal, mut collector) = test_journal(counter.clone());
         counter.queued();
         counter.queued();
 
@@ -988,8 +1267,7 @@ mod tests {
     fn a_pending_frame_prevents_idle_until_presentation() {
         let start = Instant::now();
         let window_id = WindowId::from(0xD17A);
-        let mut collector = ForegroundJournalCollector::new();
-        let mut journal = ForegroundJournal::new(ForegroundRunnableCounter::new());
+        let (mut journal, mut collector) = test_journal(ForegroundRunnableCounter::new());
         journal.record_frame_pending(window_id, start);
         journal.begin_turn();
         journal.record_event(ForegroundEvent::Input(InputTiming {
@@ -1015,6 +1293,28 @@ mod tests {
                     if presented.frame.window_id == window_id
             )
         }));
+    }
+
+    #[test]
+    fn a_present_without_a_draw_clears_the_window_pending_state() {
+        let start = Instant::now();
+        let presented_at = start + Duration::from_millis(1);
+        let window_id = WindowId::from(0xD17B);
+        let (mut journal, mut collector) = test_journal(ForegroundRunnableCounter::new());
+        journal.record_frame_pending(window_id, start);
+        journal.begin_turn();
+        journal.record_present(presentation_timing(window_id, presented_at), None);
+        journal.end_turn(presented_at);
+
+        let entries = collector.collect_unseen().entries;
+        assert!(entries.iter().any(|entry| {
+            matches!(
+                entry,
+                ForegroundJournalEntry::Event(ForegroundEvent::Present(timing))
+                    if timing.window_id == window_id
+            )
+        }));
+        assert!(has_boundary_at(&entries, presented_at));
     }
 
     /// A frame that outlives [`FRAME_DEADLINE`] no longer seals an interval
@@ -1052,8 +1352,7 @@ mod tests {
     fn an_expired_frame_no_longer_blocks_idle_boundaries() {
         let start = Instant::now();
         let window_id = WindowId::from(0xDEA2);
-        let mut collector = ForegroundJournalCollector::new();
-        let mut journal = ForegroundJournal::new(ForegroundRunnableCounter::new());
+        let (mut journal, mut collector) = test_journal(ForegroundRunnableCounter::new());
         journal.record_frame_pending(window_id, start);
 
         let blocked_end = start + Duration::from_millis(20);
@@ -1091,8 +1390,7 @@ mod tests {
     fn closing_a_window_unblocks_idle_boundaries() {
         let start = Instant::now();
         let window_id = WindowId::from(0xDEA7);
-        let mut collector = ForegroundJournalCollector::new();
-        let mut journal = ForegroundJournal::new(ForegroundRunnableCounter::new());
+        let (mut journal, mut collector) = test_journal(ForegroundRunnableCounter::new());
         journal.record_frame_pending(window_id, start);
         journal.record_window_closed(window_id, start + Duration::from_millis(1));
 
@@ -1118,8 +1416,7 @@ mod tests {
         let start = Instant::now();
         let first_window = WindowId::from(0xDEA5);
         let second_window = WindowId::from(0xDEA6);
-        let mut collector = ForegroundJournalCollector::new();
-        let mut journal = ForegroundJournal::new(ForegroundRunnableCounter::new());
+        let (mut journal, mut collector) = test_journal(ForegroundRunnableCounter::new());
         journal.record_frame_pending(first_window, start);
         journal.record_frame_pending(second_window, start + Duration::from_millis(100));
         journal.record_present(
@@ -1169,8 +1466,7 @@ mod tests {
             end: start + Duration::from_millis(6),
             caused_invalidation: false,
         };
-        let mut collector = ForegroundJournalCollector::new();
-        let mut journal = ForegroundJournal::new(ForegroundRunnableCounter::new());
+        let (mut journal, mut collector) = test_journal(ForegroundRunnableCounter::new());
 
         journal.fold_small_poll(first);
         journal.fold_small_poll(second);
@@ -1205,8 +1501,7 @@ mod tests {
         let start = Instant::now();
         let window_id = WindowId::from(0xDEA9);
         let poll = task_timing(start, start + Duration::from_micros(50));
-        let mut collector = ForegroundJournalCollector::new();
-        let mut journal = ForegroundJournal::new(ForegroundRunnableCounter::new());
+        let (mut journal, mut collector) = test_journal(ForegroundRunnableCounter::new());
         journal.fold_small_poll(poll);
         journal.record_frame_pending(window_id, poll.end.0);
 
@@ -1233,53 +1528,39 @@ mod tests {
     }
 
     /// Sporadic wake-ups (a tiny folded poll after which the foreground goes
-    /// idle, repeatedly) must write nothing to the ring: no boundary, no
-    /// flush. The folds accumulate and ride with the next boundary that has
-    /// retained content.
+    /// idle, repeatedly) must write nothing to the ring and must not accumulate
+    /// toward a later retained interval.
     #[test]
-    fn going_idle_without_retained_work_writes_nothing() {
+    fn sparse_small_polls_are_discarded_when_the_foreground_returns_to_idle() {
         let start = Instant::now();
-        let mut collector = ForegroundJournalCollector::new();
-        let mut journal = ForegroundJournal::new(ForegroundRunnableCounter::new());
+        let (mut journal, mut collector) = test_journal(ForegroundRunnableCounter::new());
         let mut tiny_wake = |ended_at: Instant| {
             journal.begin_turn();
             journal.fold_small_poll(task_timing(ended_at - Duration::from_micros(50), ended_at));
             journal.end_turn(ended_at);
         };
 
-        let first_wake = start + Duration::from_millis(1);
-        let second_wake = start + Duration::from_millis(5);
-        tiny_wake(first_wake);
-        tiny_wake(second_wake);
+        for second in 1..=160 {
+            tiny_wake(start + Duration::from_secs(second));
+        }
         let quiet = collector.collect_unseen().entries;
-        assert!(!has_boundary_at(&quiet, first_wake));
-        assert!(!has_boundary_at(&quiet, second_wake));
-        assert!(!quiet.iter().any(|entry| matches!(
-            entry,
-            ForegroundJournalEntry::Event(ForegroundEvent::SmallPolls(flush))
-                if flush.until == first_wake || flush.until == second_wake
-        )));
+        assert!(quiet.is_empty());
 
-        // A turn with a retained event seals immediately and carries the
-        // accumulated folds, span-tagged, in its flush.
+        // A later retained event seals normally without inheriting the earlier
+        // folded-only wake-ups.
         let retained = ForegroundEvent::TaskPoll(task_timing(
-            start + Duration::from_millis(6),
-            start + Duration::from_millis(7),
+            start + Duration::from_secs(161),
+            start + Duration::from_secs(161) + Duration::from_millis(1),
         ));
         journal.begin_turn();
         journal.record_event(retained);
         journal.end_turn(retained.end_time());
         let entries = collector.collect_unseen().entries;
         assert!(has_boundary_at(&entries, retained.end_time()));
-        assert!(entries.iter().any(|entry| {
-            matches!(
-                entry,
-                ForegroundJournalEntry::Event(ForegroundEvent::SmallPolls(flush))
-                    if flush.summary.count == 2
-                        && flush.since == first_wake - Duration::from_micros(50)
-                        && flush.until == second_wake
-            )
-        }));
+        assert!(!entries.iter().any(|entry| matches!(
+            entry,
+            ForegroundJournalEntry::Event(ForegroundEvent::SmallPolls(_))
+        )));
     }
 
     #[test]
@@ -1350,16 +1631,15 @@ mod tests {
         assert_eq!(snapshots[0].dropped_events, overflow as u64);
     }
 
-    /// Drains spanning multiple lock-release chunks must return every entry
-    /// exactly once, in recording order.
     #[test]
-    fn collect_unseen_preserves_order_across_chunk_boundaries() {
+    fn collect_unseen_returns_each_entry_once_in_order() {
         let start = Instant::now();
-        let mut collector = ForegroundJournalCollector::new();
-        let timestamps: Vec<Instant> = (0..COLLECT_CHUNK * 2 + 3)
+        let (journal, mut publisher) = ForegroundJournal::new(32, 4);
+        let mut collector = journal.collector();
+        let timestamps: Vec<Instant> = (0..19)
             .map(|i| start + Duration::from_micros(i as u64 + 1))
             .collect();
-        push_to_ring(timestamps.iter().map(|&at| input_entry(at, at)));
+        publisher.publish(timestamps.iter().map(|&at| input_entry(at, at)));
 
         let ours = |entries: &[ForegroundJournalEntry]| -> Vec<Instant> {
             entries
@@ -1384,11 +1664,781 @@ mod tests {
         assert!(ours(&drained.entries).is_empty());
     }
 
+    #[test]
+    fn concurrent_collection_preserves_the_complete_logical_sequence() {
+        const ENTRY_COUNT: u64 = 20_000;
+
+        let origin = Instant::now();
+        let (journal, mut publisher) = ForegroundJournal::new(8, 4);
+        let mut collector = journal.collector();
+        let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let collector_done = Arc::clone(&done);
+        let collector_task = std::thread::spawn(move || {
+            let mut observed = Vec::new();
+            loop {
+                let drained = collector.collect_unseen();
+                observed.extend(normalize_ring_drain(origin, drained.entries));
+                if collector_done.load(Ordering::Acquire) {
+                    let drained = collector.collect_unseen();
+                    observed.extend(normalize_ring_drain(origin, drained.entries));
+                    return (collector, observed);
+                }
+                std::thread::yield_now();
+            }
+        });
+
+        for sequence in 0..ENTRY_COUNT {
+            publisher.publish([ring_entry(origin, sequence)]);
+        }
+        done.store(true, Ordering::Release);
+
+        let (mut collector, mut observed) = collector_task
+            .join()
+            .expect("collector thread should not panic");
+        publisher.flush_pending();
+        observed.extend(normalize_ring_drain(
+            origin,
+            collector.collect_unseen().entries,
+        ));
+
+        let mut expected_sequence = 0;
+        for entry in observed {
+            match entry {
+                ModelDrainEntry::Entry(sequence) => {
+                    assert_eq!(sequence, expected_sequence);
+                    expected_sequence += 1;
+                }
+                ModelDrainEntry::Discontinuity(lost) => expected_sequence += lost,
+            }
+        }
+        assert_eq!(expected_sequence, ENTRY_COUNT);
+        assert_eq!(
+            publisher.ring.finalized.load(Ordering::Acquire),
+            ENTRY_COUNT
+        );
+    }
+
+    #[derive(Clone, Debug)]
+    enum RingOperation {
+        Publish,
+        Collect(u8),
+        NewCollector,
+        Pin(u8),
+        Unpin(u8),
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum ModelDrainEntry {
+        Entry(u64),
+        Discontinuity(u64),
+    }
+
+    struct ModelRing {
+        capacity: usize,
+        pending_capacity: usize,
+        next_sequence: u64,
+        finalized: u64,
+        offered: u64,
+        slots: Vec<Option<(u64, u64)>>,
+        pinned: Vec<bool>,
+        pending: VecDeque<(u64, u64)>,
+        dropped_after_pending: u64,
+    }
+
+    impl ModelRing {
+        fn new(capacity: usize, pending_capacity: usize) -> Self {
+            Self {
+                capacity,
+                pending_capacity,
+                next_sequence: 0,
+                finalized: 0,
+                offered: 0,
+                slots: vec![None; capacity],
+                pinned: vec![false; capacity],
+                pending: VecDeque::new(),
+                dropped_after_pending: 0,
+            }
+        }
+
+        fn publish(&mut self) {
+            self.flush_pending();
+            let sequence = self.next_sequence;
+            self.next_sequence += 1;
+            self.offered = self.next_sequence;
+
+            if !self.pending.is_empty() || self.dropped_after_pending > 0 {
+                if self.dropped_after_pending == 0 && self.pending.len() < self.pending_capacity {
+                    self.pending.push_back((sequence, sequence));
+                } else {
+                    self.dropped_after_pending += 1;
+                }
+            } else {
+                let index = sequence as usize % self.capacity;
+                if self.pinned[index] {
+                    if self.pending_capacity > 0 {
+                        self.pending.push_back((sequence, sequence));
+                    } else {
+                        self.dropped_after_pending = 1;
+                    }
+                } else {
+                    self.slots[index] = Some((sequence, sequence));
+                    self.finalized = sequence + 1;
+                }
+            }
+            self.flush_pending();
+        }
+
+        fn flush_pending(&mut self) {
+            while let Some(&(sequence, value)) = self.pending.front() {
+                let index = sequence as usize % self.capacity;
+                if self.pinned[index] {
+                    return;
+                }
+                self.slots[index] = Some((sequence, value));
+                self.pending.pop_front();
+                self.finalized = sequence + 1;
+            }
+
+            if self.dropped_after_pending > 0 {
+                self.finalized = self.next_sequence;
+                self.dropped_after_pending = 0;
+            }
+        }
+
+        fn collect(&self, cursor: &mut u64) -> (Vec<ModelDrainEntry>, u64) {
+            let end = self.finalized;
+            if *cursor >= end {
+                return (Vec::new(), 0);
+            }
+
+            let retained_start = end.saturating_sub(self.capacity as u64);
+            let mut lost = retained_start.saturating_sub(*cursor);
+            *cursor = (*cursor).max(retained_start);
+            let mut entries = Vec::new();
+            if lost > 0 {
+                entries.push(ModelDrainEntry::Discontinuity(lost));
+            }
+            while *cursor < end {
+                let index = *cursor as usize % self.capacity;
+                match self.slots[index] {
+                    Some((sequence, value)) if sequence == *cursor => {
+                        entries.push(ModelDrainEntry::Entry(value));
+                    }
+                    _ => {
+                        lost += 1;
+                        match entries.last_mut() {
+                            Some(ModelDrainEntry::Discontinuity(lost)) => *lost += 1,
+                            _ => entries.push(ModelDrainEntry::Discontinuity(1)),
+                        }
+                    }
+                }
+                *cursor += 1;
+            }
+            (entries, lost)
+        }
+    }
+
+    fn ring_entry(origin: Instant, sequence: u64) -> ForegroundJournalEntry {
+        let at = origin + Duration::from_micros(sequence);
+        input_entry(at, at)
+    }
+
+    fn normalize_ring_drain(
+        origin: Instant,
+        entries: Vec<ForegroundJournalEntry>,
+    ) -> Vec<ModelDrainEntry> {
+        entries
+            .into_iter()
+            .map(|entry| match entry {
+                ForegroundJournalEntry::Event(ForegroundEvent::Input(timing)) => {
+                    ModelDrainEntry::Entry(timing.start.duration_since(origin).as_micros() as u64)
+                }
+                ForegroundJournalEntry::Discontinuity { lost } => {
+                    ModelDrainEntry::Discontinuity(lost)
+                }
+                other => panic!("ring property observed an unexpected entry: {other:?}"),
+            })
+            .collect()
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct NormalizedEvent {
+        kind: u8,
+        start: u64,
+        end: u64,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct NormalizedSmallPolls {
+        count: u64,
+        total_micros: u64,
+        since: u64,
+        until: u64,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct NormalizedSnapshot {
+        interval_start: u64,
+        boundary_kind: u8,
+        interval_end: u64,
+        events: Vec<NormalizedEvent>,
+        small_polls: Vec<NormalizedSmallPolls>,
+        dropped_events: u64,
+        journal_discontinuous: bool,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct NormalizedSealerTail {
+        interval_start: u64,
+        events: Vec<NormalizedEvent>,
+        small_polls: Vec<NormalizedSmallPolls>,
+        dropped_events: u64,
+        journal_discontinuous: bool,
+    }
+
+    fn completion_order_entries(
+        origin: Instant,
+        specifications: &[(u8, u8, u8)],
+    ) -> Vec<ForegroundJournalEntry> {
+        let mut completed_at_micros = 1u64;
+        specifications
+            .iter()
+            .map(|(advance, span, kind)| {
+                completed_at_micros += u64::from(*advance) + 1;
+                let started_at_micros = completed_at_micros.saturating_sub(u64::from(*span));
+                let start = origin + Duration::from_micros(started_at_micros);
+                let end = origin + Duration::from_micros(completed_at_micros);
+                match kind % 7 {
+                    0 => input_entry(start, end),
+                    1 => ForegroundJournalEntry::Event(ForegroundEvent::Action(ActionTiming {
+                        name: "test.action",
+                        start,
+                        end,
+                    })),
+                    2 => ForegroundJournalEntry::Event(ForegroundEvent::TaskPoll(task_timing(
+                        start, end,
+                    ))),
+                    3 => {
+                        ForegroundJournalEntry::Event(ForegroundEvent::SmallPolls(SmallPollFlush {
+                            summary: PollSummary {
+                                count: u64::from(*span % 5) + 1,
+                                total: Duration::from_micros(u64::from(*span)),
+                            },
+                            since: start,
+                            until: end,
+                        }))
+                    }
+                    4 => pending_frame(WindowId::from(completed_at_micros), start),
+                    5 => ForegroundJournalEntry::Boundary(IntervalBoundary::Idle { ended_at: end }),
+                    _ => ForegroundJournalEntry::Boundary(presented_boundary(
+                        WindowId::from(completed_at_micros),
+                        start,
+                        end,
+                    )),
+                }
+            })
+            .collect()
+    }
+
+    fn normalize_event(origin: Instant, event: ForegroundEvent) -> NormalizedEvent {
+        let kind = match event {
+            ForegroundEvent::TaskPoll(_) => 0,
+            ForegroundEvent::Action(_) => 1,
+            ForegroundEvent::Input(_) => 2,
+            ForegroundEvent::Draw(_) => 3,
+            ForegroundEvent::Present(_) => 4,
+            ForegroundEvent::SmallPolls(_) => 5,
+        };
+        NormalizedEvent {
+            kind,
+            start: event.start_time().duration_since(origin).as_micros() as u64,
+            end: event.end_time().duration_since(origin).as_micros() as u64,
+        }
+    }
+
+    fn normalize_small_polls(origin: Instant, flush: SmallPollFlush) -> NormalizedSmallPolls {
+        NormalizedSmallPolls {
+            count: flush.summary.count,
+            total_micros: flush.summary.total.as_micros() as u64,
+            since: flush.since.duration_since(origin).as_micros() as u64,
+            until: flush.until.duration_since(origin).as_micros() as u64,
+        }
+    }
+
+    fn normalize_snapshot(origin: Instant, snapshot: &FrameSnapshot) -> NormalizedSnapshot {
+        NormalizedSnapshot {
+            interval_start: snapshot.interval_start.duration_since(origin).as_micros() as u64,
+            boundary_kind: match snapshot.boundary {
+                IntervalBoundary::Idle { .. } => 0,
+                IntervalBoundary::Presented(_) => 1,
+            },
+            interval_end: snapshot.interval_end().duration_since(origin).as_micros() as u64,
+            events: snapshot
+                .events
+                .iter()
+                .copied()
+                .map(|event| normalize_event(origin, event))
+                .collect(),
+            small_polls: snapshot
+                .small_polls
+                .iter()
+                .copied()
+                .map(|flush| normalize_small_polls(origin, flush))
+                .collect(),
+            dropped_events: snapshot.dropped_events,
+            journal_discontinuous: snapshot.journal_discontinuous,
+        }
+    }
+
+    fn normalize_tail(origin: Instant, sealer: &IntervalSealer) -> NormalizedSealerTail {
+        NormalizedSealerTail {
+            interval_start: sealer.interval_start.duration_since(origin).as_micros() as u64,
+            events: sealer
+                .events
+                .iter()
+                .copied()
+                .map(|event| normalize_event(origin, event))
+                .collect(),
+            small_polls: sealer
+                .small_polls
+                .iter()
+                .copied()
+                .map(|flush| normalize_small_polls(origin, flush))
+                .collect(),
+            dropped_events: sealer.dropped_events,
+            journal_discontinuous: sealer.journal_discontinuous,
+        }
+    }
+
+    fn reference_seal(
+        origin: Instant,
+        entries: &[ForegroundJournalEntry],
+    ) -> (Vec<NormalizedSnapshot>, NormalizedSealerTail) {
+        let mut interval_start = 0;
+        let mut events = Vec::new();
+        let mut small_polls = Vec::new();
+        let mut snapshots = Vec::new();
+        let mut dropped_events = 0;
+        let mut journal_discontinuous = false;
+
+        for entry in entries {
+            match *entry {
+                ForegroundJournalEntry::Event(event) => {
+                    let event_start = event.start_time().duration_since(origin).as_micros() as u64;
+                    if events.is_empty()
+                        && small_polls.is_empty()
+                        && dropped_events == 0
+                        && !journal_discontinuous
+                    {
+                        interval_start = interval_start.max(event_start);
+                    }
+                    match event {
+                        ForegroundEvent::SmallPolls(flush) => {
+                            small_polls.push(normalize_small_polls(origin, flush));
+                        }
+                        event => events.push(normalize_event(origin, event)),
+                    }
+                }
+                ForegroundJournalEntry::Boundary(boundary) => {
+                    if let IntervalBoundary::Presented(presented) = boundary {
+                        let present = ForegroundEvent::Present(presented.presentation);
+                        if events.is_empty()
+                            && small_polls.is_empty()
+                            && dropped_events == 0
+                            && !journal_discontinuous
+                        {
+                            interval_start =
+                                interval_start
+                                    .max(present.start_time().duration_since(origin).as_micros()
+                                        as u64);
+                        }
+                        events.push(normalize_event(origin, present));
+                    }
+
+                    let interval_end =
+                        boundary.end_time().duration_since(origin).as_micros() as u64;
+                    if events.is_empty()
+                        && small_polls.is_empty()
+                        && dropped_events == 0
+                        && !journal_discontinuous
+                    {
+                        interval_start = interval_start.max(interval_end);
+                    } else {
+                        snapshots.push(NormalizedSnapshot {
+                            interval_start,
+                            boundary_kind: match boundary {
+                                IntervalBoundary::Idle { .. } => 0,
+                                IntervalBoundary::Presented(_) => 1,
+                            },
+                            interval_end,
+                            events: std::mem::take(&mut events),
+                            small_polls: std::mem::take(&mut small_polls),
+                            dropped_events: std::mem::take(&mut dropped_events),
+                            journal_discontinuous: std::mem::take(&mut journal_discontinuous),
+                        });
+                        interval_start = interval_end;
+                    }
+                }
+                ForegroundJournalEntry::FrameState(_) => {}
+                ForegroundJournalEntry::Discontinuity { lost } => {
+                    dropped_events += lost;
+                    journal_discontinuous = true;
+                }
+            }
+        }
+
+        (
+            snapshots,
+            NormalizedSealerTail {
+                interval_start,
+                events,
+                small_polls,
+                dropped_events,
+                journal_discontinuous,
+            },
+        )
+    }
+
+    fn reference_occupancy_micros(
+        event_spans: &[(u8, u8)],
+        small_poll_spans: &[(u8, u8, u8)],
+        window_start: u8,
+        window_end: u8,
+    ) -> u64 {
+        let mut clamped_spans = event_spans
+            .iter()
+            .map(|&(first, second)| {
+                let start = first.min(second).max(window_start);
+                let end = first.max(second).min(window_end).max(start);
+                (start, end)
+            })
+            .collect::<Vec<_>>();
+        clamped_spans.sort_unstable();
+
+        let mut occupied = 0u64;
+        let mut merged_until = None;
+        for (start, end) in clamped_spans {
+            let start = merged_until.map_or(start, |until| start.max(until));
+            occupied += u64::from(end.saturating_sub(start));
+            merged_until = Some(merged_until.map_or(end, |until| until.max(end)));
+        }
+
+        occupied
+            + small_poll_spans
+                .iter()
+                .map(|&(first, second, factor)| {
+                    let since = first.min(second);
+                    let until = first.max(second);
+                    if since == until {
+                        if since >= window_start && since <= window_end {
+                            u64::from(factor)
+                        } else {
+                            0
+                        }
+                    } else {
+                        let overlap_start = since.max(window_start);
+                        let overlap_end = until.min(window_end).max(overlap_start);
+                        u64::from(overlap_end - overlap_start) * u64::from(factor)
+                    }
+                })
+                .sum::<u64>()
+    }
+
+    #[derive(Debug, Clone)]
+    struct WriterOperation {
+        kind: u8,
+        advance: u16,
+        argument: u8,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum WriterEntry {
+        Input(u64),
+        SmallPolls {
+            count: u64,
+            total_micros: u64,
+            since: u64,
+            until: u64,
+        },
+        Pending {
+            window: u64,
+            at: u64,
+        },
+        Closed {
+            window: u64,
+            at: u64,
+        },
+        Present {
+            window: u64,
+            at: u64,
+        },
+        Presented {
+            window: u64,
+            at: u64,
+        },
+        Idle(u64),
+    }
+
+    #[derive(Default)]
+    struct ModelSmallPolls {
+        count: u64,
+        total_micros: u64,
+        since: u64,
+        until: u64,
+    }
+
+    #[derive(Default)]
+    struct ModelWriter {
+        turn_depth: usize,
+        runnables: usize,
+        pending_frames: HashMap<u64, u64>,
+        retained_since_boundary: bool,
+        small_polls: Option<ModelSmallPolls>,
+        entries: Vec<WriterEntry>,
+    }
+
+    impl ModelWriter {
+        fn record_entry(&mut self, entry: WriterEntry) {
+            if let Some(small_polls) = self.small_polls.take() {
+                self.entries.push(WriterEntry::SmallPolls {
+                    count: small_polls.count,
+                    total_micros: small_polls.total_micros,
+                    since: small_polls.since,
+                    until: small_polls.until,
+                });
+            }
+            let boundary = matches!(entry, WriterEntry::Presented { .. } | WriterEntry::Idle(_));
+            self.entries.push(entry);
+            if boundary {
+                self.retained_since_boundary = false;
+            }
+        }
+
+        fn record_input(&mut self, at: u64) {
+            self.retained_since_boundary = true;
+            self.record_entry(WriterEntry::Input(at));
+        }
+
+        fn fold_small_poll(&mut self, since: u64, until: u64) {
+            let small_polls = self.small_polls.get_or_insert(ModelSmallPolls {
+                since,
+                until,
+                ..ModelSmallPolls::default()
+            });
+            small_polls.count += 1;
+            small_polls.total_micros += until - since;
+            small_polls.since = small_polls.since.min(since);
+            small_polls.until = small_polls.until.max(until);
+        }
+
+        fn record_pending(&mut self, window: u64, at: u64) {
+            let should_record = self
+                .pending_frames
+                .get(&window)
+                .is_none_or(|previous| at.saturating_sub(*previous) >= 1_000_000);
+            if should_record {
+                self.pending_frames.insert(window, at);
+                self.record_entry(WriterEntry::Pending { window, at });
+            }
+        }
+
+        fn record_closed(&mut self, window: u64, at: u64) {
+            self.pending_frames.remove(&window);
+            self.record_entry(WriterEntry::Closed { window, at });
+        }
+
+        fn record_present(&mut self, window: u64, at: u64, has_frame: bool) {
+            if has_frame {
+                self.pending_frames.remove(&window);
+                self.record_entry(WriterEntry::Presented { window, at });
+            } else {
+                self.pending_frames.remove(&window);
+                self.retained_since_boundary = true;
+                self.record_entry(WriterEntry::Present { window, at });
+            }
+        }
+
+        fn end_turn(&mut self, at: u64) {
+            if self.turn_depth == 0 {
+                return;
+            }
+            self.turn_depth -= 1;
+            if self.turn_depth > 0 || self.runnables > 0 {
+                return;
+            }
+            self.pending_frames
+                .retain(|_, dirty_at| at.saturating_sub(*dirty_at) < 1_000_000);
+            if !self.pending_frames.is_empty() {
+                return;
+            }
+            if !self.retained_since_boundary {
+                self.small_polls = None;
+                return;
+            }
+            self.record_entry(WriterEntry::Idle(at));
+        }
+    }
+
+    fn normalize_writer_entries(
+        origin: Instant,
+        entries: Vec<ForegroundJournalEntry>,
+    ) -> Vec<WriterEntry> {
+        let at = |instant: Instant| instant.duration_since(origin).as_micros() as u64;
+        entries
+            .into_iter()
+            .map(|entry| match entry {
+                ForegroundJournalEntry::Event(ForegroundEvent::Input(timing)) => {
+                    WriterEntry::Input(at(timing.end))
+                }
+                ForegroundJournalEntry::Event(ForegroundEvent::SmallPolls(flush)) => {
+                    WriterEntry::SmallPolls {
+                        count: flush.summary.count,
+                        total_micros: flush.summary.total.as_micros() as u64,
+                        since: at(flush.since),
+                        until: at(flush.until),
+                    }
+                }
+                ForegroundJournalEntry::Event(ForegroundEvent::Present(timing)) => {
+                    WriterEntry::Present {
+                        window: timing.window_id.as_u64(),
+                        at: at(timing.present_end),
+                    }
+                }
+                ForegroundJournalEntry::FrameState(FrameStateChange::Pending {
+                    window_id,
+                    dirty_at,
+                }) => WriterEntry::Pending {
+                    window: window_id.as_u64(),
+                    at: at(dirty_at),
+                },
+                ForegroundJournalEntry::FrameState(FrameStateChange::Closed {
+                    window_id,
+                    at: closed_at,
+                }) => WriterEntry::Closed {
+                    window: window_id.as_u64(),
+                    at: at(closed_at),
+                },
+                ForegroundJournalEntry::Boundary(IntervalBoundary::Presented(presented)) => {
+                    WriterEntry::Presented {
+                        window: presented.frame.window_id.as_u64(),
+                        at: at(presented.presentation.present_end),
+                    }
+                }
+                ForegroundJournalEntry::Boundary(IntervalBoundary::Idle { ended_at }) => {
+                    WriterEntry::Idle(at(ended_at))
+                }
+                other => panic!("writer property emitted an unexpected entry: {other:?}"),
+            })
+            .collect()
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig {
             failure_persistence: None,
             ..ProptestConfig::default()
         })]
+
+        #[test]
+        fn ring_matches_reference_model_under_wrap_collisions_and_independent_cursors(
+            capacity in 1usize..=8,
+            pending_capacity in 0usize..=4,
+            operations in prop::collection::vec(
+                prop_oneof![
+                    5 => Just(RingOperation::Publish),
+                    3 => any::<u8>().prop_map(RingOperation::Collect),
+                    1 => Just(RingOperation::NewCollector),
+                    2 => any::<u8>().prop_map(RingOperation::Pin),
+                    2 => any::<u8>().prop_map(RingOperation::Unpin),
+                ],
+                1..=128,
+            ),
+        ) {
+            let origin = Instant::now();
+            let (journal, mut publisher) = ForegroundJournal::new(capacity, pending_capacity);
+            let mut collectors = vec![journal.collector()];
+            let mut model_collectors = vec![0];
+            let mut model = ModelRing::new(capacity, pending_capacity);
+            let mut pins: Vec<Option<JournalSlotReadGuard<'_>>> =
+                (0..capacity).map(|_| None).collect();
+
+            for operation in operations {
+                match operation {
+                    RingOperation::Publish => {
+                        let sequence = model.next_sequence;
+                        publisher.publish([ring_entry(origin, sequence)]);
+                        model.publish();
+                    }
+                    RingOperation::Collect(collector) => {
+                        let index = usize::from(collector) % collectors.len();
+                        let drained = collectors[index].collect_unseen();
+                        let (expected_entries, expected_lost) =
+                            model.collect(&mut model_collectors[index]);
+                        let observed_entries = normalize_ring_drain(origin, drained.entries);
+                        prop_assert_eq!(observed_entries, expected_entries);
+                        prop_assert_eq!(drained.lost, expected_lost);
+                    }
+                    RingOperation::NewCollector if collectors.len() < 4 => {
+                        collectors.push(journal.collector());
+                        model_collectors.push(model.offered);
+                    }
+                    RingOperation::NewCollector => {}
+                    RingOperation::Pin(slot) => {
+                        let index = usize::from(slot) % capacity;
+                        if pins[index].is_none() {
+                            pins[index] = JournalSlotReadGuard::try_new(&journal.ring.slots[index]);
+                            prop_assert!(pins[index].is_some());
+                            model.pinned[index] = true;
+                        }
+                    }
+                    RingOperation::Unpin(slot) => {
+                        let index = usize::from(slot) % capacity;
+                        pins[index].take();
+                        model.pinned[index] = false;
+                    }
+                }
+
+                prop_assert_eq!(publisher.next_sequence, model.next_sequence);
+                prop_assert_eq!(
+                    publisher.ring.offered.load(Ordering::Acquire),
+                    model.offered
+                );
+                prop_assert_eq!(
+                    publisher.ring.finalized.load(Ordering::Acquire),
+                    model.finalized
+                );
+                prop_assert_eq!(
+                    publisher
+                        .pending
+                        .iter()
+                        .map(|entry| entry.sequence)
+                        .collect::<Vec<_>>(),
+                    model
+                        .pending
+                        .iter()
+                        .map(|(sequence, _)| *sequence)
+                        .collect::<Vec<_>>()
+                );
+                prop_assert_eq!(
+                    publisher.dropped_after_pending,
+                    model.dropped_after_pending
+                );
+            }
+
+            for pin in &mut pins {
+                pin.take();
+            }
+            model.pinned.fill(false);
+            publisher.flush_pending();
+            model.flush_pending();
+
+            for (collector, model_cursor) in collectors.iter_mut().zip(&mut model_collectors) {
+                let drained = collector.collect_unseen();
+                let (expected_entries, expected_lost) = model.collect(model_cursor);
+                let observed_entries = normalize_ring_drain(origin, drained.entries);
+                prop_assert_eq!(observed_entries, expected_entries);
+                prop_assert_eq!(drained.lost, expected_lost);
+            }
+        }
 
         #[test]
         fn a_presentation_seals_exactly_once_regardless_of_delay(
@@ -1417,64 +2467,233 @@ mod tests {
         }
 
         #[test]
-        fn explicit_boundaries_partition_events_exactly_once(
-            steps in prop::collection::vec((0u16..1000, 1u16..1000, 0u8..3), 1..128)
+        fn completion_order_sealer_matches_reference_under_arbitrary_batching(
+            specifications in prop::collection::vec((0u8..16, 0u8..128, any::<u8>()), 1..=96),
+            batch_sizes in prop::collection::vec(1usize..=12, 1..=24),
         ) {
             let origin = Instant::now();
-            let mut cursor = origin;
-            let mut entries = Vec::with_capacity(steps.len() * 2);
-            let mut expected_boundary_ends = Vec::new();
+            let entries = completion_order_entries(origin, &specifications);
+            let (expected_snapshots, expected_tail) = reference_seal(origin, &entries);
 
-            for (idle_micros, duration_micros, boundary_kind) in &steps {
-                let event_start = cursor + Duration::from_micros(u64::from(*idle_micros));
-                let event_end = event_start + Duration::from_micros(u64::from(*duration_micros));
-                entries.push(ForegroundJournalEntry::Event(ForegroundEvent::Input(
-                    InputTiming {
-                        kind: "test",
-                        start: event_start,
-                        end: event_end,
-                        caused_invalidation: false,
-                    },
-                )));
-                cursor = event_end;
-
-                let boundary = match boundary_kind {
-                    1 => Some(IntervalBoundary::Idle { ended_at: cursor }),
-                    2 => Some(presented_boundary_at(cursor)),
-                    _ => None,
-                };
-                if let Some(boundary) = boundary {
-                    expected_boundary_ends.push(boundary.end_time());
-                    entries.push(ForegroundJournalEntry::Boundary(boundary));
-                }
-            }
-
-            let mut sealer = IntervalSealer::new(origin);
-            let snapshots = sealer.push_entries(entries);
-            let observed_boundary_ends = snapshots
+            let mut one_batch_sealer = IntervalSealer::new(origin);
+            let one_batch_snapshots = one_batch_sealer
+                .push_entries(entries.iter().copied())
                 .iter()
-                .map(|snapshot| snapshot.interval_end())
+                .map(|snapshot| normalize_snapshot(origin, snapshot))
                 .collect::<Vec<_>>();
-            prop_assert_eq!(observed_boundary_ends, expected_boundary_ends);
+            prop_assert_eq!(&one_batch_snapshots, &expected_snapshots);
+            prop_assert_eq!(&normalize_tail(origin, &one_batch_sealer), &expected_tail);
 
-            let sealed_event_count: usize = snapshots
+            let mut batched_sealer = IntervalSealer::new(origin);
+            let mut batched_snapshots = Vec::new();
+            let mut offset = 0;
+            let mut batch_index = 0;
+            while offset < entries.len() {
+                let batch_size = batch_sizes[batch_index % batch_sizes.len()];
+                let batch_end = (offset + batch_size).min(entries.len());
+                batched_snapshots.extend(
+                    batched_sealer
+                        .push_entries(entries[offset..batch_end].iter().copied())
+                        .iter()
+                        .map(|snapshot| normalize_snapshot(origin, snapshot)),
+                );
+                offset = batch_end;
+                batch_index += 1;
+            }
+            prop_assert_eq!(batched_snapshots, expected_snapshots);
+            prop_assert_eq!(normalize_tail(origin, &batched_sealer), expected_tail);
+        }
+
+        #[test]
+        fn occupancy_matches_interval_union_and_fold_apportionment(
+            event_spans in prop::collection::vec((0u8..=128, 0u8..=128), 0..=16),
+            small_poll_spans in prop::collection::vec(
+                (0u8..=128, 0u8..=128, 0u8..=4),
+                0..=12,
+            ),
+            window in (0u8..=128, 0u8..=128),
+        ) {
+            let origin = Instant::now();
+            let window_start_micros = window.0.min(window.1);
+            let window_end_micros = window.0.max(window.1);
+            let events = event_spans
                 .iter()
-                .map(|snapshot| snapshot.events.len())
-                .sum();
-            let presentation_count = steps
+                .map(|&(first, second)| {
+                    let start = origin + Duration::from_micros(u64::from(first.min(second)));
+                    let end = origin + Duration::from_micros(u64::from(first.max(second)));
+                    ForegroundEvent::Input(InputTiming {
+                        kind: "test",
+                        start,
+                        end,
+                        caused_invalidation: false,
+                    })
+                })
+                .collect();
+            let small_polls = small_poll_spans
                 .iter()
-                .filter(|(_, _, boundary_kind)| *boundary_kind == 2)
-                .count();
-            prop_assert_eq!(
-                sealed_event_count + sealer.events.len(),
-                steps.len() + presentation_count
+                .map(|&(first, second, factor)| {
+                    let since_micros = first.min(second);
+                    let until_micros = first.max(second);
+                    let span_micros = u64::from(until_micros - since_micros);
+                    let total_micros = if span_micros == 0 {
+                        u64::from(factor)
+                    } else {
+                        span_micros * u64::from(factor)
+                    };
+                    SmallPollFlush {
+                        summary: PollSummary {
+                            count: 1,
+                            total: Duration::from_micros(total_micros),
+                        },
+                        since: origin + Duration::from_micros(u64::from(since_micros)),
+                        until: origin + Duration::from_micros(u64::from(until_micros)),
+                    }
+                })
+                .collect();
+            let snapshot = FrameSnapshot {
+                interval_start: origin,
+                boundary: IntervalBoundary::Idle {
+                    ended_at: origin + Duration::from_micros(128),
+                },
+                events,
+                small_polls,
+                dropped_events: 0,
+                journal_discontinuous: false,
+            };
+            let expected_micros = reference_occupancy_micros(
+                &event_spans,
+                &small_poll_spans,
+                window_start_micros,
+                window_end_micros,
             );
-            for snapshot in &snapshots {
-                prop_assert!(!snapshot.events.is_empty());
-                prop_assert_eq!(snapshot.interval_start, snapshot.events[0].start_time());
-                prop_assert!(snapshot.interval_start <= snapshot.interval_end());
+            let observed = snapshot.occupancy_within(
+                origin + Duration::from_micros(u64::from(window_start_micros)),
+                origin + Duration::from_micros(u64::from(window_end_micros)),
+            );
+
+            prop_assert_eq!(observed, Duration::from_micros(expected_micros));
+
+            let full_expected =
+                reference_occupancy_micros(&event_spans, &small_poll_spans, 0, 128);
+            prop_assert_eq!(snapshot.occupancy(), Duration::from_micros(full_expected));
+            prop_assert!((0.0..=1.0).contains(&snapshot.busy_fraction()));
+            prop_assert_eq!(
+                snapshot.busy_fraction(),
+                (full_expected as f64 / 128.0).min(1.0)
+            );
+        }
+
+        #[test]
+        fn writer_matches_state_model_across_turn_frame_and_runnable_transitions(
+            operations in prop::collection::vec(
+                (any::<u8>(), any::<u16>(), any::<u8>()).prop_map(
+                    |(kind, advance, argument)| WriterOperation {
+                        kind,
+                        advance,
+                        argument,
+                    },
+                ),
+                1..=128,
+            ),
+        ) {
+            let origin = Instant::now();
+            let counter = ForegroundRunnableCounter::new();
+            let (mut writer, mut collector) = test_journal(counter.clone());
+            let mut model = ModelWriter::default();
+            let mut at_micros = 100u64;
+
+            for operation in operations {
+                if operation.advance % 16 == 0 {
+                    at_micros += FRAME_DEADLINE.as_micros() as u64;
+                } else {
+                    at_micros += u64::from(operation.advance) + 1;
+                }
+                let at = origin + Duration::from_micros(at_micros);
+                let window_id = WindowId::from(u64::from(operation.argument % 4));
+                let window = window_id.as_u64();
+
+                match operation.kind % 10 {
+                    0 => {
+                        writer.begin_turn();
+                        model.turn_depth += 1;
+                    }
+                    1 if model.turn_depth > 0 => {
+                        writer.end_turn(at);
+                        model.end_turn(at_micros);
+                    }
+                    1 => {}
+                    2 => {
+                        writer.record_event(ForegroundEvent::Input(InputTiming {
+                            kind: "test",
+                            start: at,
+                            end: at,
+                            caused_invalidation: false,
+                        }));
+                        model.record_input(at_micros);
+                    }
+                    3 => {
+                        let duration_micros = u64::from(operation.argument % 100);
+                        writer.fold_small_poll(task_timing(
+                            at - Duration::from_micros(duration_micros),
+                            at,
+                        ));
+                        model.fold_small_poll(
+                            at_micros - duration_micros,
+                            at_micros,
+                        );
+                    }
+                    4 => {
+                        counter.queued();
+                        model.runnables += 1;
+                    }
+                    5 if model.runnables > 0 => {
+                        counter.finished();
+                        model.runnables -= 1;
+                    }
+                    5 => {}
+                    6 => {
+                        writer.record_frame_pending(window_id, at);
+                        model.record_pending(window, at_micros);
+                    }
+                    7 => {
+                        writer.record_window_closed(window_id, at);
+                        model.record_closed(window, at_micros);
+                    }
+                    8 => {
+                        writer.record_present(
+                            presentation_timing(window_id, at),
+                            Some(frame_timing(window_id, at, at)),
+                        );
+                        model.record_present(window, at_micros, true);
+                    }
+                    _ => {
+                        writer.record_present(presentation_timing(window_id, at), None);
+                        model.record_present(window, at_micros, false);
+                    }
+                }
+
+                let drained = collector.collect_unseen();
+                prop_assert_eq!(drained.lost, 0);
+                prop_assert_eq!(
+                    normalize_writer_entries(origin, drained.entries),
+                    std::mem::take(&mut model.entries)
+                );
+                prop_assert_eq!(writer.turn_depth, model.turn_depth);
+                prop_assert_eq!(writer.retained_since_boundary, model.retained_since_boundary);
+                prop_assert_eq!(writer.pending_frames.len(), model.pending_frames.len());
             }
         }
+    }
+
+    fn test_journal(
+        foreground_runnables: ForegroundRunnableCounter,
+    ) -> (ForegroundJournalWriter, ForegroundJournalCollector) {
+        let (journal, publisher) = ForegroundJournal::new(256, 8);
+        let collector = journal.collector();
+        (
+            ForegroundJournalWriter::new(foreground_runnables, publisher),
+            collector,
+        )
     }
 
     fn has_boundary_at(entries: &[ForegroundJournalEntry], at: Instant) -> bool {
@@ -1536,24 +2755,5 @@ mod tests {
             start,
             end: YieldTime(end),
         }
-    }
-
-    fn presented_boundary_at(at: Instant) -> IntervalBoundary {
-        let frame = FrameTiming {
-            window_id: WindowId::from(2),
-            dirty_at: Some(at),
-            invalidations: 1,
-            draw_start: at,
-            draw_end: at,
-        };
-        IntervalBoundary::Presented(PresentedFrame {
-            frame,
-            presentation: PresentTiming {
-                window_id: frame.window_id,
-                present_start: at,
-                present_end: at,
-                animation_interval: None,
-            },
-        })
     }
 }

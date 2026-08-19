@@ -17,8 +17,8 @@ use serde::Serialize;
 
 use super::SerializedLocation;
 use super::journal::{
-    ForegroundEvent, ForegroundJournalCollector, ForegroundJournalEntry, FrameSnapshot,
-    IntervalBoundary, IntervalSealer,
+    ForegroundEvent, ForegroundJournal, ForegroundJournalCollector, ForegroundJournalEntry,
+    FrameSnapshot, IntervalBoundary, IntervalSealer,
 };
 
 /// Detects foreground hangs by polling the journal.
@@ -51,9 +51,9 @@ impl HangDetector {
     /// Creates a detector reporting single events at or above `threshold`
     /// and intervals whose total foreground spend reached `frame_budget`.
     /// Only events recorded from this point on are observed.
-    pub fn new(threshold: Duration, frame_budget: Duration) -> Self {
+    pub fn new(journal: ForegroundJournal, threshold: Duration, frame_budget: Duration) -> Self {
         Self {
-            collector: ForegroundJournalCollector::new(),
+            collector: journal.collector(),
             sealer: IntervalSealer::new(Instant::now()),
             threshold,
             frame_budget,
@@ -79,7 +79,6 @@ impl HangDetector {
                 _ => None,
             });
         }
-        self.sealer.note_lost(drained.lost);
         self.sealer
             .push_entries(drained.entries)
             .into_iter()
@@ -130,6 +129,10 @@ pub struct SerializedHangIncident {
     pub small_poll_total_ms: f64,
     /// Events lost to caps or ring overwrites.
     pub dropped_events: u64,
+    /// Whether one or more journal entries were unavailable in the interval.
+    /// Threshold-qualified contributors remain valid, but cumulative budget
+    /// conclusions and boundary attribution are not trusted across the gap.
+    pub journal_discontinuous: bool,
     /// The incident's contributors (see [`HangIncident::contributors`]) in
     /// start order. The cap keeps the longest ones; `stall_ms` is always
     /// among them.
@@ -269,6 +272,7 @@ impl SerializedHangIncident {
             small_poll_count: snapshot.small_poll_summary().count,
             small_poll_total_ms: as_millis(snapshot.small_poll_summary().total),
             dropped_events: snapshot.dropped_events,
+            journal_discontinuous: snapshot.journal_discontinuous,
             contributors: {
                 let mut kept: Vec<&ForegroundEvent> = incident
                     .contributors
@@ -404,6 +408,9 @@ impl HangIncident {
             .copied()
             .collect();
         if contributors.is_empty() {
+            if snapshot.journal_discontinuous {
+                return None;
+            }
             let spend = snapshot.occupancy_within(snapshot.interval_start, snapshot.interval_end());
             if spend < frame_budget {
                 return None;
@@ -425,6 +432,7 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
+    use proptest::prelude::*;
     use rand::prelude::*;
     use scheduler::SpawnTime;
 
@@ -439,7 +447,7 @@ mod tests {
     use super::super::journal::{
         FRAME_DEADLINE, ForegroundEvent, ForegroundJournalEntry, FrameSnapshot, FrameStateChange,
         InputTiming, IntervalBoundary, PollSummary, PresentedFrame, SmallPollFlush,
-        install_foreground_journal, record_present,
+        install_test_foreground_journal, record_present,
     };
     use super::{HangDetector, HangIncident, SerializedHangContributor, SerializedHangIncident};
 
@@ -462,7 +470,8 @@ mod tests {
         let window_id = WindowId::from(0x51E17);
         let hang_end = start + FRAME_DEADLINE * 5;
         let presented_at = hang_end + Duration::from_millis(16);
-        let mut detector = HangDetector::new(HANG_THRESHOLD, FRAME_BUDGET);
+        let (journal, _journal_guard) = install_test_foreground_journal(64, 8);
+        let mut detector = HangDetector::new(journal, HANG_THRESHOLD, FRAME_BUDGET);
 
         let snapshots = detector.sealer.push_entries([
             ForegroundJournalEntry::FrameState(FrameStateChange::Pending {
@@ -550,6 +559,7 @@ mod tests {
                 until: at(145),
             }],
             dropped_events: 0,
+            journal_discontinuous: false,
         };
 
         let incident =
@@ -596,6 +606,7 @@ mod tests {
             events: vec![task_poll_event(at(200), at(260))],
             small_polls: Vec::new(),
             dropped_events: 0,
+            journal_discontinuous: false,
         };
         let incident =
             HangIncident::detect(idle, HANG_THRESHOLD, FRAME_BUDGET).expect("has contributors");
@@ -620,6 +631,7 @@ mod tests {
             events: vec![task_poll_event(at(500), at(600))],
             small_polls: Vec::new(),
             dropped_events: 0,
+            journal_discontinuous: false,
         };
         let incident =
             HangIncident::detect(snapshot, HANG_THRESHOLD, FRAME_BUDGET).expect("has contributors");
@@ -642,13 +654,11 @@ mod tests {
     }
 
     /// The detector must latch the first presentation it observes and never
-    /// move it. Concurrent tests share the global journal ring, so this
-    /// asserts the latch is at or before our presentation and stays put,
-    /// rather than an exact identity.
+    /// move it.
     #[test]
     fn first_present_at_latches_on_the_first_observed_presentation() {
-        install_foreground_journal();
-        let mut detector = HangDetector::new(HANG_THRESHOLD, FRAME_BUDGET);
+        let (journal, _journal_guard) = install_test_foreground_journal(64, 8);
+        let mut detector = HangDetector::new(journal, HANG_THRESHOLD, FRAME_BUDGET);
         let window_id = WindowId::from(0x1A7C4);
 
         let first_present_end = scheduler::Instant::now();
@@ -660,7 +670,7 @@ mod tests {
         let latched = detector
             .first_present_at()
             .expect("a presentation was recorded");
-        assert!(latched <= first_present_end);
+        assert_eq!(latched, first_present_end);
 
         record_present(
             presentation(window_id, first_present_end + Duration::from_millis(16)),
@@ -696,6 +706,7 @@ mod tests {
                 until: at(800),
             }],
             dropped_events: 0,
+            journal_discontinuous: false,
         };
 
         let incident =
@@ -739,6 +750,7 @@ mod tests {
             ],
             small_polls: Vec::new(),
             dropped_events: 0,
+            journal_discontinuous: false,
         };
 
         let incident = HangIncident::detect(snapshot, HANG_THRESHOLD, FRAME_BUDGET)
@@ -752,6 +764,42 @@ mod tests {
         assert_eq!(serialized.stall_ms, 8.0);
         assert_eq!(serialized.dirty_to_present_ms, Some(150.0));
         assert_eq!(serialized.sealed_by, "present");
+    }
+
+    #[test]
+    fn a_journal_gap_suppresses_budget_inference_but_retains_observed_hangs() {
+        let start = scheduler::Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        let mut sealer = super::super::journal::IntervalSealer::new(start);
+        let snapshots = sealer.push_entries([
+            ForegroundJournalEntry::Event(task_poll_event(at(0), at(5))),
+            ForegroundJournalEntry::Discontinuity { lost: 1 },
+            ForegroundJournalEntry::Event(task_poll_event(at(10), at(15))),
+            ForegroundJournalEntry::Boundary(IntervalBoundary::Idle { ended_at: at(15) }),
+            ForegroundJournalEntry::Discontinuity { lost: 1 },
+            ForegroundJournalEntry::Event(task_poll_event(at(20), at(32))),
+            ForegroundJournalEntry::Boundary(IntervalBoundary::Idle { ended_at: at(32) }),
+            ForegroundJournalEntry::Event(task_poll_event(at(40), at(52))),
+            ForegroundJournalEntry::Boundary(IntervalBoundary::Idle { ended_at: at(52) }),
+        ]);
+        let [budget_only, observed_hang, clean] = snapshots.as_slice() else {
+            panic!("expected two discontinuous snapshots followed by a clean one");
+        };
+
+        assert!(budget_only.journal_discontinuous);
+        assert_eq!(budget_only.dropped_events, 1);
+        assert!(HangIncident::detect(budget_only.clone(), HANG_THRESHOLD, FRAME_BUDGET).is_none());
+
+        let observed_hang =
+            HangIncident::detect(observed_hang.clone(), HANG_THRESHOLD, FRAME_BUDGET)
+                .expect("the directly observed threshold-qualified hang remains valid");
+        assert!(observed_hang.snapshot.journal_discontinuous);
+        assert_eq!(observed_hang.contributors.len(), 1);
+        let serialized = SerializedHangIncident::convert(start, &observed_hang, 8, None);
+        assert!(serialized.journal_discontinuous);
+
+        assert!(!clean.journal_discontinuous);
+        assert!(HangIncident::detect(clean.clone(), HANG_THRESHOLD, FRAME_BUDGET).is_some());
     }
 
     /// A frame that reaches the screen late with almost no foreground work
@@ -782,6 +830,7 @@ mod tests {
             events: vec![task_poll_event(at(0), at(5))],
             small_polls: Vec::new(),
             dropped_events: 0,
+            journal_discontinuous: false,
         };
 
         assert!(HangIncident::detect(snapshot, HANG_THRESHOLD, FRAME_BUDGET).is_none());
@@ -802,6 +851,7 @@ mod tests {
                 .collect(),
             small_polls: Vec::new(),
             dropped_events: 0,
+            journal_discontinuous: false,
         };
 
         let incident = HangIncident::detect(snapshot, HANG_THRESHOLD, FRAME_BUDGET)
@@ -844,6 +894,7 @@ mod tests {
             ],
             small_polls: Vec::new(),
             dropped_events: 0,
+            journal_discontinuous: false,
         };
 
         let incident =
@@ -900,6 +951,7 @@ mod tests {
                 until: at(150),
             }],
             dropped_events: 0,
+            journal_discontinuous: false,
         };
 
         let incident = HangIncident::detect(snapshot, HANG_THRESHOLD, FRAME_BUDGET)
@@ -911,6 +963,91 @@ mod tests {
         assert_eq!(serialized.small_poll_count, 40);
         assert_eq!(serialized.dirty_to_present_ms, Some(150.0));
         assert_eq!(serialized.busy_fraction, 0.08);
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            failure_persistence: None,
+            ..ProptestConfig::default()
+        })]
+
+        #[test]
+        fn detection_matches_threshold_and_budget_model_at_boundaries(
+            durations_ms in prop::collection::vec(0u16..=50, 0..=16),
+            threshold_ms in 0u16..=60,
+            frame_budget_ms in 0u16..=500,
+            small_poll_total_ms in 0u16..=100,
+        ) {
+            let origin = scheduler::Instant::now();
+            let mut cursor_ms = 0u64;
+            let events = durations_ms
+                .iter()
+                .map(|duration_ms| {
+                    let start = origin + Duration::from_millis(cursor_ms);
+                    cursor_ms += u64::from(*duration_ms);
+                    let end = origin + Duration::from_millis(cursor_ms);
+                    cursor_ms += 1;
+                    ForegroundEvent::Input(InputTiming {
+                        kind: "test",
+                        start,
+                        end,
+                        caused_invalidation: false,
+                    })
+                })
+                .collect::<Vec<_>>();
+            let interval_end_ms = cursor_ms.max(1);
+            let snapshot = FrameSnapshot {
+                interval_start: origin,
+                boundary: IntervalBoundary::Idle {
+                    ended_at: origin + Duration::from_millis(interval_end_ms),
+                },
+                events,
+                small_polls: vec![SmallPollFlush {
+                    summary: PollSummary {
+                        count: u64::from(small_poll_total_ms > 0),
+                        total: Duration::from_millis(u64::from(small_poll_total_ms)),
+                    },
+                    since: origin,
+                    until: origin + Duration::from_millis(interval_end_ms),
+                }],
+                dropped_events: 0,
+                journal_discontinuous: false,
+            };
+            let qualifying_durations = durations_ms
+                .iter()
+                .copied()
+                .filter(|duration| *duration >= threshold_ms)
+                .collect::<Vec<_>>();
+            let occupancy_ms = durations_ms
+                .iter()
+                .map(|duration| u64::from(*duration))
+                .sum::<u64>()
+                + u64::from(small_poll_total_ms);
+            let expected_incident =
+                !qualifying_durations.is_empty() || occupancy_ms >= u64::from(frame_budget_ms);
+
+            let incident = HangIncident::detect(
+                snapshot,
+                Duration::from_millis(u64::from(threshold_ms)),
+                Duration::from_millis(u64::from(frame_budget_ms)),
+            );
+            prop_assert_eq!(incident.is_some(), expected_incident);
+
+            if let Some(incident) = incident {
+                let mut expected_contributors = if qualifying_durations.is_empty() {
+                    durations_ms
+                } else {
+                    qualifying_durations
+                };
+                expected_contributors.sort_unstable_by(|first, second| second.cmp(first));
+                let observed_contributors = incident
+                    .contributors
+                    .iter()
+                    .map(|event| event.duration().as_millis() as u16)
+                    .collect::<Vec<_>>();
+                prop_assert_eq!(observed_contributors, expected_contributors);
+            }
+        }
     }
 
     #[derive(Clone, Default)]
@@ -962,9 +1099,8 @@ mod tests {
     /// foreground task poll. Asserts the detector reports every one of them.
     #[gpui::test(iterations = 5)]
     fn detects_randomly_placed_foreground_hangs(mut rng: StdRng, cx: &mut TestAppContext) {
-        // Created first: the detector only observes events recorded after
-        // this point, which isolates concurrently running tests' iterations.
-        let mut detector = HangDetector::new(HANG_THRESHOLD, FRAME_BUDGET);
+        let (journal, _journal_guard) = install_test_foreground_journal(1024, 16);
+        let mut detector = HangDetector::new(journal, HANG_THRESHOLD, FRAME_BUDGET);
 
         let controls = HangControls::default();
         let (view, cx) = cx.add_window_view(|_, cx| HangyView {
@@ -1038,7 +1174,7 @@ mod tests {
                 .collect();
             let observed: Vec<Duration> = contributors
                 .iter()
-                .filter(|event| matches_kind(event, kind))
+                .filter(|event| matches_kind(event, kind) && event.duration() >= HANG_THRESHOLD)
                 .map(|event| event.duration())
                 .collect();
             assert_all_matched(kind, expected, observed);
@@ -1047,13 +1183,17 @@ mod tests {
 
     /// Every injected hang must be covered by a distinct observed contributor
     /// at least as long as the injected sleep (sleeps never wake early).
-    /// Extra observed contributors are allowed: other threads journaling
-    /// concurrently is not a detection failure.
     fn assert_all_matched(
         kind: HangKind,
         mut expected: Vec<Duration>,
         mut observed: Vec<Duration>,
     ) {
+        assert_eq!(
+            observed.len(),
+            expected.len(),
+            "expected every observed {kind:?} hang to correspond to one injection; \
+             expected {expected:?}, observed {observed:?}"
+        );
         expected.sort_unstable_by(|a, b| b.cmp(a));
         observed.sort_unstable_by(|a, b| b.cmp(a));
         let mut observed = observed.into_iter();

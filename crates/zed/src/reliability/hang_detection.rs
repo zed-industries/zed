@@ -101,6 +101,7 @@ fn start_hang_detection(
     let monitor_interval = Duration::from_secs(1);
     let telemetry = Arc::new(Mutex::new(telemetry::Reporter::new()));
     let incident_detector = Arc::new(spin::Mutex::new(HangDetector::new(
+        cx.foreground_journal(),
         report_longer_then,
         frame_budget,
     )));
@@ -127,6 +128,7 @@ fn start_hang_detection(
                 ));
             }
             telemetry.send();
+            drop(telemetry);
             client.telemetry().flush_events()
         }
     })
