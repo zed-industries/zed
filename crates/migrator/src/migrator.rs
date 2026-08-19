@@ -409,6 +409,7 @@ static EDIT_PREDICTION_SETTINGS_MIGRATION_QUERY: LazyLock<Query> = LazyLock::new
 #[cfg(test)]
 mod tests {
     use super::*;
+    use indoc::indoc;
     use unindent::Unindent as _;
 
     #[track_caller]
@@ -1117,39 +1118,45 @@ mod tests {
     #[test]
     fn test_flatten_context_server_command_alongside_source() {
         // Files written while `source` was still a supported key need the command
-        // flattened and the key dropped in the same run. Flattening no longer looks
-        // at `source`, so it reaches `extension` entries that it used to skip.
+        // flattened and the key dropped in the same run.
+        //
+        // No migration ever produced `hand_edited_server`, because `source` was only
+        // set to `extension` for entries without a command. It is reachable by
+        // editing settings by hand, and it is the one shape whose treatment changed
+        // when flattening stopped consulting `source`, so it is held here on purpose.
         assert_migrate_settings(
-            r#"{
-    "context_servers": {
-        "custom_server": {
-            "source": "custom",
-            "command": {
-                "path": "npx",
-                "args": ["-y", "some-mcp-server"]
-            }
-        },
-        "extension_server": {
-            "source": "extension",
-            "command": {
-                "path": "other-server"
-            }
-        }
-    }
-}"#,
-            Some(
-                r#"{
-    "context_servers": {
-        "custom_server": {
-            "command": "npx",
-            "args": ["-y", "some-mcp-server"]
-        },
-        "extension_server": {
-            "command": "other-server"
-        }
-    }
-}"#,
-            ),
+            indoc! {r#"
+                {
+                    "context_servers": {
+                        "custom_server": {
+                            "source": "custom",
+                            "command": {
+                                "path": "npx",
+                                "args": ["-y", "some-mcp-server"]
+                            }
+                        },
+                        "hand_edited_server": {
+                            "source": "extension",
+                            "command": {
+                                "path": "other-server"
+                            }
+                        }
+                    }
+                }
+            "#},
+            Some(indoc! {r#"
+                {
+                    "context_servers": {
+                        "custom_server": {
+                            "command": "npx",
+                            "args": ["-y", "some-mcp-server"]
+                        },
+                        "hand_edited_server": {
+                            "command": "other-server"
+                        }
+                    }
+                }
+            "#}),
         );
     }
 
@@ -5271,18 +5278,22 @@ mod tests {
         // A URL-only entry has nothing to migrate. Its layout used to decide whether
         // one was reported anyway, so cover the shapes that used to differ.
         assert_migrate_settings(
-            r#"{
-    "context_servers": { "grep": { "url": "https://mcp.grep.app" } }
-}"#,
+            indoc! {r#"
+                {
+                    "context_servers": { "grep": { "url": "https://mcp.grep.app" } }
+                }
+            "#},
             None,
         );
 
         assert_migrate_settings(
-            r#"{
-    "context_servers": {
-        "grep": { "url": "https://mcp.grep.app" }
-    }
-}"#,
+            indoc! {r#"
+                {
+                    "context_servers": {
+                        "grep": { "url": "https://mcp.grep.app" }
+                    }
+                }
+            "#},
             None,
         );
 
@@ -5298,11 +5309,13 @@ mod tests {
         // Flattening keys off the shape of `command` alone, so an entry it should
         // ignore must be left alone however it is laid out.
         assert_migrate_settings(
-            r#"{
-    "context_servers": {
-        "local": { "command": "npx", "args": ["-y", "some-mcp-server"] }
-    }
-}"#,
+            indoc! {r#"
+                {
+                    "context_servers": {
+                        "local": { "command": "npx", "args": ["-y", "some-mcp-server"] }
+                    }
+                }
+            "#},
             None,
         );
     }
@@ -5312,43 +5325,47 @@ mod tests {
         // The same inline entry that produces no diff on its own must not mask a
         // migration that a sibling entry genuinely needs.
         assert_migrate_settings(
-            r#"{
-    "context_servers": {
-        "grep": { "url": "https://mcp.grep.app" },
-        "local": {
-            "source": "custom",
-            "command": {
-                "path": "npx",
-                "args": ["-y", "some-mcp-server"]
-            }
-        }
-    }
-}"#,
-            Some(
-                r#"{
-    "context_servers": {
-        "grep": { "url": "https://mcp.grep.app" },
-        "local": {
-            "command": "npx",
-            "args": ["-y", "some-mcp-server"]
-        }
-    }
-}"#,
-            ),
+            indoc! {r#"
+                {
+                    "context_servers": {
+                        "grep": { "url": "https://mcp.grep.app" },
+                        "local": {
+                            "source": "custom",
+                            "command": {
+                                "path": "npx",
+                                "args": ["-y", "some-mcp-server"]
+                            }
+                        }
+                    }
+                }
+            "#},
+            Some(indoc! {r#"
+                {
+                    "context_servers": {
+                        "grep": { "url": "https://mcp.grep.app" },
+                        "local": {
+                            "command": "npx",
+                            "args": ["-y", "some-mcp-server"]
+                        }
+                    }
+                }
+            "#}),
         );
 
         // A deprecated key elsewhere in the document must still be reported.
         assert_migrate_settings(
-            r#"{
-    "show_inline_completions": true,
-    "context_servers": { "grep": { "url": "https://mcp.grep.app" } }
-}"#,
-            Some(
-                r#"{
-    "show_edit_predictions": true,
-    "context_servers": { "grep": { "url": "https://mcp.grep.app" } }
-}"#,
-            ),
+            indoc! {r#"
+                {
+                    "show_inline_completions": true,
+                    "context_servers": { "grep": { "url": "https://mcp.grep.app" } }
+                }
+            "#},
+            Some(indoc! {r#"
+                {
+                    "show_edit_predictions": true,
+                    "context_servers": { "grep": { "url": "https://mcp.grep.app" } }
+                }
+            "#}),
         );
     }
 }
