@@ -512,6 +512,13 @@ fn with_journal(f: impl FnOnce(&mut ForegroundJournal)) {
     });
 }
 
+// TODO(gpui-profiler): the turn brackets in the dispatchers and
+// WindowProfiler are bare begin/end call pairs rather than uses of this
+// guard. A caught unwind between a pair leaves `turn_depth` (and potentially
+// the runnable counter) permanently unbalanced, which silently disables
+// quiescent boundaries for the rest of the process. Zed aborts on panics so
+// this is latent today, but gpui-as-a-library callers may catch unwinds;
+// route all bracketing through this guard.
 pub(crate) struct ForegroundTurnGuard;
 
 impl Drop for ForegroundTurnGuard {
@@ -1264,6 +1271,121 @@ mod tests {
             Some(ForegroundJournalEntry::Event(ForegroundEvent::SmallPolls(flush)))
                 if flush.since == poll.start && flush.until == poll.end.0
         ));
+    }
+
+    #[test]
+    fn note_lost_is_reported_on_the_next_snapshot_only() {
+        let start = Instant::now();
+        let mut sealer = IntervalSealer::new(start);
+        sealer.note_lost(7);
+
+        let snapshots = sealer.push_entries([
+            input_entry(start, start + Duration::from_millis(1)),
+            ForegroundJournalEntry::Boundary(IntervalBoundary::Quiescent {
+                ended_at: start + Duration::from_millis(1),
+            }),
+            input_entry(
+                start + Duration::from_millis(2),
+                start + Duration::from_millis(3),
+            ),
+            ForegroundJournalEntry::Boundary(IntervalBoundary::Quiescent {
+                ended_at: start + Duration::from_millis(3),
+            }),
+        ]);
+
+        assert_eq!(snapshots.len(), 2);
+        assert_eq!(snapshots[0].dropped_events, 7);
+        assert_eq!(snapshots[1].dropped_events, 0);
+    }
+
+    /// Ring losses must be able to surface even when every retained entry was
+    /// among the losses: a loss-only interval still seals at the next
+    /// boundary rather than sliding away as empty.
+    #[test]
+    fn losses_alone_seal_a_snapshot_at_the_next_boundary() {
+        let start = Instant::now();
+        let mut sealer = IntervalSealer::new(start);
+        sealer.note_lost(3);
+
+        let snapshots = sealer.push_entries([ForegroundJournalEntry::Boundary(
+            IntervalBoundary::Quiescent {
+                ended_at: start + Duration::from_millis(1),
+            },
+        )]);
+
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].dropped_events, 3);
+        assert!(snapshots[0].events.is_empty());
+    }
+
+    #[test]
+    fn interval_event_cap_counts_overflowing_events() {
+        let start = Instant::now();
+        let mut sealer = IntervalSealer::new(start);
+        let overflow = 5;
+        let mut entries: Vec<ForegroundJournalEntry> = (0..(MAX_INTERVAL_EVENTS + overflow) as u64)
+            .map(|i| {
+                input_entry(
+                    start + Duration::from_micros(i),
+                    start + Duration::from_micros(i + 1),
+                )
+            })
+            .collect();
+        entries.push(ForegroundJournalEntry::Boundary(
+            IntervalBoundary::Quiescent {
+                ended_at: start
+                    + Duration::from_micros((MAX_INTERVAL_EVENTS + overflow) as u64 + 1),
+            },
+        ));
+
+        let snapshots = sealer.push_entries(entries);
+
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].events.len(), MAX_INTERVAL_EVENTS);
+        assert_eq!(snapshots[0].dropped_events, overflow as u64);
+    }
+
+    /// The writer folds sub-floor polls and only flushes them alongside a
+    /// later retained entry, so a flush can enter the stream after a frame
+    /// deadline it precedes semantically. The sealer must attribute it by its
+    /// span, landing it in the deadline-sealed interval.
+    #[test]
+    fn late_flushed_small_polls_land_before_the_deadline_boundary() {
+        let start = Instant::now();
+        let window_id = WindowId::from(0xD1A7);
+        let mut sealer = IntervalSealer::new(start);
+
+        let snapshots = sealer.push_entries([
+            pending_frame(window_id, start),
+            ForegroundJournalEntry::Event(ForegroundEvent::TaskPoll(task_timing(
+                start + Duration::from_millis(10),
+                start + Duration::from_millis(150),
+            ))),
+            ForegroundJournalEntry::Event(ForegroundEvent::SmallPolls(SmallPollFlush {
+                summary: PollSummary {
+                    count: 40,
+                    total: Duration::from_millis(4),
+                },
+                since: start + Duration::from_millis(200),
+                until: start + Duration::from_millis(800),
+            })),
+            ForegroundJournalEntry::Boundary(IntervalBoundary::Quiescent {
+                ended_at: start + Duration::from_secs(2),
+            }),
+        ]);
+
+        let [deadline_snapshot] = snapshots.as_slice() else {
+            panic!("expected exactly the deadline-sealed snapshot, got {snapshots:?}");
+        };
+        assert!(matches!(
+            deadline_snapshot.boundary,
+            IntervalBoundary::FrameDeadline(FrameDeadline {
+                window_id: deadline_window,
+                ..
+            }) if deadline_window == window_id
+        ));
+        assert_eq!(deadline_snapshot.small_polls.count, 40);
+        assert_eq!(deadline_snapshot.events.len(), 1);
     }
 
     proptest! {

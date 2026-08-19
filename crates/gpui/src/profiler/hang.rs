@@ -372,11 +372,14 @@ mod tests {
         point, px,
     };
 
+    use crate::profiler::{ActionTiming, FrameTiming, PresentTiming, TaskTiming, YieldTime};
+
     use super::super::journal::{
-        FRAME_DEADLINE, ForegroundEvent, ForegroundJournalEntry, FrameDeadline, FrameStateChange,
-        InputTiming, IntervalBoundary,
+        FRAME_DEADLINE, ForegroundEvent, ForegroundJournalEntry, FrameDeadline, FrameSnapshot,
+        FrameStateChange, InputTiming, IntervalBoundary, PollSummary, PresentedFrame,
+        install_foreground_journal, record_present,
     };
-    use super::HangDetector;
+    use super::{HangDetector, HangIncident, SerializedHangContributor, SerializedHangIncident};
 
     actions!(hang_test, [HangyAction]);
 
@@ -413,6 +416,224 @@ mod tests {
                 }) if deadline_window == window_id && ended_at == start + FRAME_DEADLINE
             )
         }));
+    }
+
+    #[test]
+    fn serialized_incident_reports_presented_seal_fields() {
+        let startup = scheduler::Instant::now();
+        let at = |ms: u64| startup + Duration::from_millis(ms);
+        let window_id = WindowId::from(0xF1E1D);
+
+        let presentation = PresentTiming {
+            window_id,
+            present_start: at(380),
+            present_end: at(400),
+            animation_interval: None,
+        };
+        let frame = FrameTiming {
+            window_id,
+            dirty_at: Some(at(100)),
+            invalidations: 3,
+            draw_start: at(350),
+            draw_end: at(380),
+        };
+        let snapshot = FrameSnapshot {
+            interval_start: at(150),
+            boundary: IntervalBoundary::Presented(PresentedFrame {
+                frame,
+                presentation,
+            }),
+            events: vec![
+                task_poll_event(at(150), at(300)),
+                ForegroundEvent::Action(ActionTiming {
+                    name: "test::SlowAction",
+                    start: at(300),
+                    end: at(340),
+                }),
+                ForegroundEvent::Input(InputTiming {
+                    start: at(340),
+                    end: at(345),
+                    caused_invalidation: false,
+                }),
+                ForegroundEvent::Present(presentation),
+            ],
+            small_polls: PollSummary {
+                count: 2,
+                total: Duration::from_millis(1),
+            },
+            dropped_events: 0,
+        };
+
+        let incident = HangIncident::detect(snapshot, HANG_THRESHOLD).expect("has contributors");
+        let serialized = SerializedHangIncident::convert(startup, &incident, 1, Some(at(50)));
+
+        assert_eq!(serialized.phase, "steady");
+        // The frame's first invalidation anchors the active window, not the
+        // interval start or the first contributor.
+        assert_eq!(serialized.start_ms, 100.0);
+        assert_eq!(serialized.active_ms, 300.0);
+        assert_eq!(serialized.stall_ms, 150.0);
+        assert_eq!(serialized.dirty_to_present_ms, Some(300.0));
+        assert_eq!(serialized.sealed_by, "present");
+        // Occupancy: poll 150ms + action 40ms + input 5ms + present 20ms +
+        // folded polls 1ms = 216ms of the 300ms window.
+        assert_eq!(serialized.busy_fraction, 0.72);
+        assert_eq!(serialized.event_count, 4);
+        assert_eq!(serialized.small_poll_count, 2);
+        assert_eq!(serialized.small_poll_total_ms, 1.0);
+        assert_eq!(serialized.dropped_events, 0);
+        // Three contributors qualify (poll, action, present); the cap keeps
+        // the longest and counts the rest.
+        assert_eq!(serialized.contributors.len(), 1);
+        assert_eq!(serialized.contributors_elided, 2);
+        assert!(matches!(
+            serialized.contributors[0],
+            SerializedHangContributor::TaskPoll {
+                start_ms,
+                duration_ms,
+                ..
+            } if start_ms == 150.0 && duration_ms == 150.0
+        ));
+    }
+
+    #[test]
+    fn serialized_incident_reports_quiescent_and_deadline_seal_fields() {
+        let startup = scheduler::Instant::now();
+        let at = |ms: u64| startup + Duration::from_millis(ms);
+        let window_id = WindowId::from(0xF1E1E);
+
+        let quiescent = FrameSnapshot {
+            interval_start: at(200),
+            boundary: IntervalBoundary::Quiescent { ended_at: at(260) },
+            events: vec![task_poll_event(at(200), at(260))],
+            small_polls: PollSummary::default(),
+            dropped_events: 0,
+        };
+        let incident = HangIncident::detect(quiescent, HANG_THRESHOLD).expect("has contributors");
+        let serialized = SerializedHangIncident::convert(startup, &incident, 8, None);
+        assert_eq!(serialized.phase, "startup");
+        assert_eq!(serialized.sealed_by, "quiescent");
+        assert_eq!(serialized.dirty_to_present_ms, None);
+        // With no frame, the earliest contributor anchors the active window.
+        assert_eq!(serialized.start_ms, 200.0);
+        assert_eq!(serialized.active_ms, 60.0);
+        assert_eq!(serialized.stall_ms, 60.0);
+        assert_eq!(serialized.busy_fraction, 1.0);
+
+        let deadline = FrameSnapshot {
+            interval_start: at(450),
+            boundary: IntervalBoundary::FrameDeadline(FrameDeadline {
+                window_id,
+                dirty_at: at(400),
+                ended_at: at(400) + FRAME_DEADLINE,
+            }),
+            events: vec![task_poll_event(at(500), at(700))],
+            small_polls: PollSummary::default(),
+            dropped_events: 0,
+        };
+        let incident = HangIncident::detect(deadline, HANG_THRESHOLD).expect("has contributors");
+        let serialized = SerializedHangIncident::convert(startup, &incident, 8, Some(at(100)));
+        assert_eq!(serialized.phase, "steady");
+        assert_eq!(serialized.sealed_by, "frame_deadline");
+        assert_eq!(serialized.dirty_to_present_ms, None);
+        // The never-presented frame's first invalidation anchors the window
+        // even though it precedes the interval and the contributor.
+        assert_eq!(serialized.start_ms, 400.0);
+        assert_eq!(
+            serialized.active_ms,
+            FRAME_DEADLINE.as_micros() as f64 / 1000.0
+        );
+        assert_eq!(serialized.stall_ms, 200.0);
+    }
+
+    #[test]
+    fn phase_is_startup_until_the_first_present() {
+        let startup = scheduler::Instant::now();
+        let at = |ms: u64| startup + Duration::from_millis(ms);
+        let snapshot = FrameSnapshot {
+            interval_start: at(500),
+            boundary: IntervalBoundary::Quiescent { ended_at: at(600) },
+            events: vec![task_poll_event(at(500), at(600))],
+            small_polls: PollSummary::default(),
+            dropped_events: 0,
+        };
+        let incident = HangIncident::detect(snapshot, HANG_THRESHOLD).expect("has contributors");
+
+        let phase = |first_present_at| {
+            SerializedHangIncident::convert(startup, &incident, 8, first_present_at).phase
+        };
+        assert_eq!(phase(None), "startup", "nothing has been presented yet");
+        assert_eq!(
+            phase(Some(at(700))),
+            "startup",
+            "the incident began before the first presentation"
+        );
+        assert_eq!(
+            phase(Some(at(500))),
+            "steady",
+            "an incident beginning exactly at first presentation is steady"
+        );
+        assert_eq!(phase(Some(at(100))), "steady");
+    }
+
+    /// The detector must latch the first presentation it observes and never
+    /// move it. Concurrent tests share the global journal ring, so this
+    /// asserts the latch is at or before our presentation and stays put,
+    /// rather than an exact identity.
+    #[test]
+    fn first_present_at_latches_on_the_first_observed_presentation() {
+        install_foreground_journal();
+        let mut detector = HangDetector::new(HANG_THRESHOLD);
+        let window_id = WindowId::from(0x1A7C4);
+
+        let first_present_end = scheduler::Instant::now();
+        record_present(
+            presentation(window_id, first_present_end),
+            Some(frame(window_id, first_present_end)),
+        );
+        detector.poll();
+        let latched = detector
+            .first_present_at()
+            .expect("a presentation was recorded");
+        assert!(latched <= first_present_end);
+
+        record_present(
+            presentation(window_id, first_present_end + Duration::from_millis(16)),
+            Some(frame(
+                window_id,
+                first_present_end + Duration::from_millis(16),
+            )),
+        );
+        detector.poll();
+        assert_eq!(detector.first_present_at(), Some(latched));
+    }
+
+    /// FAILS today: `occupancy_within` adds folded small-poll time wholesale
+    /// even when those polls ran outside the incident's active window
+    /// (PR #62779 review finding 5), inflating `busy_fraction` for narrow
+    /// windows. The only work inside the 100ms active window here is the
+    /// 50ms poll, so the correct busy fraction is 0.5.
+    #[test]
+    fn busy_fraction_excludes_small_polls_outside_the_active_window() {
+        let startup = scheduler::Instant::now();
+        let at = |ms: u64| startup + Duration::from_millis(ms);
+        let snapshot = FrameSnapshot {
+            interval_start: at(0),
+            boundary: IntervalBoundary::Quiescent { ended_at: at(1000) },
+            events: vec![task_poll_event(at(900), at(950))],
+            // Folded polls that ran during at(0)..at(800), long before the
+            // active window opens at the contributor's start.
+            small_polls: PollSummary {
+                count: 500,
+                total: Duration::from_millis(400),
+            },
+            dropped_events: 0,
+        };
+
+        let incident = HangIncident::detect(snapshot, HANG_THRESHOLD).expect("has contributors");
+        let serialized = SerializedHangIncident::convert(startup, &incident, 8, None);
+
+        assert_eq!(serialized.busy_fraction, 0.5);
     }
 
     #[derive(Clone, Default)]
@@ -598,5 +819,33 @@ mod tests {
         crate::profiler::update_running_task(SpawnTime(scheduler::Instant::now()), location);
         thread::sleep(duration);
         crate::profiler::save_task_timing();
+    }
+
+    fn task_poll_event(start: scheduler::Instant, end: scheduler::Instant) -> ForegroundEvent {
+        ForegroundEvent::TaskPoll(TaskTiming {
+            location: std::panic::Location::caller(),
+            spawned: SpawnTime(start),
+            start,
+            end: YieldTime(end),
+        })
+    }
+
+    fn presentation(window_id: WindowId, present_end: scheduler::Instant) -> PresentTiming {
+        PresentTiming {
+            window_id,
+            present_start: present_end - Duration::from_millis(1),
+            present_end,
+            animation_interval: None,
+        }
+    }
+
+    fn frame(window_id: WindowId, draw_end: scheduler::Instant) -> FrameTiming {
+        FrameTiming {
+            window_id,
+            dirty_at: Some(draw_end - Duration::from_millis(2)),
+            invalidations: 1,
+            draw_start: draw_end - Duration::from_millis(1),
+            draw_end,
+        }
     }
 }
