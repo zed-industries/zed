@@ -556,7 +556,6 @@ impl WindowsWindow {
             hwnd,
             display,
             params.bounds,
-            this.state.scale_factor.get(),
             &this.state.border_offset,
         )?;
         if params.show {
@@ -1520,7 +1519,6 @@ fn retrieve_window_placement(
     hwnd: HWND,
     display: WindowsDisplay,
     initial_bounds: Bounds<Pixels>,
-    scale_factor: f32,
     border_offset: &WindowBorderOffset,
 ) -> Result<WINDOWPLACEMENT> {
     let mut placement = WINDOWPLACEMENT {
@@ -1534,7 +1532,14 @@ fn retrieve_window_placement(
     } else {
         display.default_bounds()
     };
-    let bounds = bounds.to_device_pixels(scale_factor);
+    // `bounds` is expressed in logical pixels for `display`, so it must be converted
+    // to device pixels using that display's own scale factor. The window's current
+    // scale factor can't be used here: `CreateWindowExW` was called with
+    // `CW_USEDEFAULT`, so at this point the window may still be sitting on whichever
+    // monitor Windows picked by default, which can have a different DPI than `display`
+    // and would otherwise throw off the physical position (e.g. leaving the window
+    // partially off-screen when moved to a monitor with a different scale factor).
+    let bounds = bounds.to_device_pixels(display.scale_factor());
     placement.rcNormalPosition = calculate_window_rect(bounds, border_offset);
     Ok(placement)
 }
