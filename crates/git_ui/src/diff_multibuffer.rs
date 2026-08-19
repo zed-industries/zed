@@ -903,28 +903,43 @@ impl Render for DiffMultibuffer {
                 )
             })
             .when(is_empty && !is_loading, |el| {
-                let remote_button = if let Some(panel) = self
-                    .workspace
-                    .upgrade()
-                    .and_then(|workspace| workspace.read(cx).panel::<GitPanel>(cx))
-                {
-                    panel.update(cx, |panel, cx| panel.render_remote_button(cx))
-                } else {
-                    None
-                };
+                let error = self.branch_diff.read(cx).tree_diff_error().cloned();
                 let keybinding_focus_handle = self.focus_handle(cx);
+                let message = match error {
+                    Some(error) => v_flex()
+                        .gap_1()
+                        .child(h_flex().justify_around().child(
+                            Label::new(error).color(Color::Error),
+                        ))
+                        .into_any_element(),
+                    None => {
+                        let remote_button = if let Some(panel) = self
+                            .workspace
+                            .upgrade()
+                            .and_then(|workspace| workspace.read(cx).panel::<GitPanel>(cx))
+                        {
+                            panel.update(cx, |panel, cx| panel.render_remote_button(cx))
+                        } else {
+                            None
+                        };
+                        v_flex()
+                            .gap_1()
+                            .child(h_flex().justify_around().child(Label::new(empty_label)))
+                            .map(|el| match remote_button {
+                                Some(button) => el.child(h_flex().justify_around().child(button)),
+                                None => el.child(
+                                    h_flex()
+                                        .justify_around()
+                                        .child(Label::new("Remote up to date")),
+                                ),
+                            })
+                            .into_any_element()
+                    }
+                };
                 el.child(
                     v_flex()
                         .gap_1()
-                        .child(h_flex().justify_around().child(Label::new(empty_label)))
-                        .map(|el| match remote_button {
-                            Some(button) => el.child(h_flex().justify_around().child(button)),
-                            None => el.child(
-                                h_flex()
-                                    .justify_around()
-                                    .child(Label::new("Remote up to date")),
-                            ),
-                        })
+                        .child(message)
                         .child(
                             h_flex().justify_around().mt_1().child(
                                 Button::new("project-diff-close-button", "Close")
