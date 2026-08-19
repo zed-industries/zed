@@ -2180,12 +2180,20 @@ impl LspAdapter for BasedPyrightLspAdapter {
                 }
                 Some(())
             });
+
             // Disable basedpyright's organizeImports so ruff handles it instead
-            if let serde_json::map::Entry::Vacant(v) =
-                object.entry("basedpyright.disableOrganizeImports")
-            {
-                v.insert(Value::Bool(true));
-            }
+            maybe!({
+                let basedpyright = object
+                    .entry("basedpyright")
+                    .or_insert(Value::Object(serde_json::Map::default()))
+                    .as_object_mut()?;
+                if let serde_json::map::Entry::Vacant(v) =
+                    basedpyright.entry("disableOrganizeImports")
+                {
+                    v.insert(Value::Bool(true));
+                }
+                Some(())
+            });
 
             // If we have a detected toolchain, configure BasedPyright to use it - unless the user sets it themselves.
             let should_insert_toolchain = || {
