@@ -432,9 +432,6 @@ enum ExtensionManifestValidationError {
     LanguageModelProvidersUnsupported,
 }
 
-/// Validates the contents of an extension manifest, including verifying that the
-/// repository URL is a valid URL, hosted on a known git hosting provider, and
-/// reachable.
 fn validate_extension_manifest(
     manifest: &ExtensionManifest,
 ) -> Result<(), ExtensionManifestValidationError> {
