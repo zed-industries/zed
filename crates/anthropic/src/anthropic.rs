@@ -46,6 +46,9 @@ pub const FABLE_FALLBACK_MODEL_ID: &str = "claude-opus-4-8";
 /// <https://platform.claude.com/docs/en/build-with-claude/compaction>
 pub const COMPACTION_BETA_HEADER: &str = "compact-2026-01-12";
 
+/// The smallest input-token trigger Anthropic accepts for compaction.
+pub const MIN_COMPACTION_TRIGGER_TOKENS: u64 = 50_000;
+
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum AnthropicModelMode {
@@ -187,6 +190,7 @@ impl Model {
                 | "claude-opus-4-8"
                 | "claude-opus-4-7"
                 | "claude-opus-4-6"
+                | "claude-sonnet-5"
                 | "claude-sonnet-4-6"
         );
 
@@ -260,7 +264,7 @@ pub async fn stream_completion(
     .map(|output| output.0)
 }
 
-/// A raw model entry returned by the Anthropic models listing endpoint.
+/// A validated model entry returned by the Anthropic models listing endpoint.
 #[derive(Clone, Debug, Deserialize)]
 pub struct ListModelEntry {
     pub id: String,
@@ -272,8 +276,51 @@ pub struct ListModelEntry {
 }
 
 #[derive(Debug, Deserialize)]
+struct ApiListModelEntry {
+    id: String,
+    display_name: String,
+    max_input_tokens: Option<u64>,
+    max_tokens: Option<u64>,
+    #[serde(default)]
+    capabilities: Option<ModelCapabilities>,
+}
+
+impl ApiListModelEntry {
+    fn into_listed(self) -> Option<ListModelEntry> {
+        let Self {
+            id,
+            display_name,
+            max_input_tokens,
+            max_tokens,
+            capabilities,
+        } = self;
+
+        let missing_fields = match (&max_input_tokens, &max_tokens) {
+            (None, None) => Some("`max_input_tokens` and `max_tokens`"),
+            (None, Some(_)) => Some("`max_input_tokens`"),
+            (Some(_), None) => Some("`max_tokens`"),
+            (Some(_), Some(_)) => None,
+        };
+        if let Some(missing_fields) = missing_fields {
+            log::error!(
+                "Filtering out Anthropic model `{id}` because the API returned null for {missing_fields}"
+            );
+            return None;
+        }
+
+        Some(ListModelEntry {
+            id,
+            display_name,
+            max_input_tokens: max_input_tokens?,
+            max_tokens: max_tokens?,
+            capabilities,
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
 struct ListModelsResponse {
-    data: Vec<ListModelEntry>,
+    data: Vec<ApiListModelEntry>,
 }
 
 /// Fetch the list of models available to the current API key. The returned
@@ -286,7 +333,7 @@ pub async fn list_models(
     api_url: &str,
     api_key: &str,
     extra_headers: &CustomHeaders,
-) -> Result<Vec<Model>> {
+) -> Result<Vec<Model>, AnthropicError> {
     let uri = format!("{api_url}/v1/models?limit=1000");
 
     let request = HttpRequest::builder()
@@ -297,33 +344,32 @@ pub async fn list_models(
         .header("Accept", "application/json")
         .extra_headers(extra_headers)
         .body(AsyncBody::default())
-        .context("failed to build Anthropic models list request")?;
+        .map_err(AnthropicError::BuildRequestBody)?;
 
     let mut response = client
         .send(request)
         .await
-        .context("failed to send Anthropic models list request")?;
+        .map_err(AnthropicError::HttpSend)?;
+
+    if !response.status().is_success() {
+        let rate_limits = RateLimitInfo::from_headers(response.headers());
+        return Err(handle_error_response(response, rate_limits).await);
+    }
 
     let mut body = String::new();
     response
         .body_mut()
         .read_to_string(&mut body)
         .await
-        .context("failed to read Anthropic models list response")?;
-
-    anyhow::ensure!(
-        response.status().is_success(),
-        "failed to list Anthropic models: {} {}",
-        response.status(),
-        body,
-    );
+        .map_err(AnthropicError::ReadResponse)?;
 
     let parsed: ListModelsResponse =
-        serde_json::from_str(&body).context("failed to parse Anthropic models list response")?;
+        serde_json::from_str(&body).map_err(AnthropicError::DeserializeResponse)?;
 
     let models = parsed
         .data
         .into_iter()
+        .filter_map(ApiListModelEntry::into_listed)
         .map(Model::from_listed)
         .collect::<Vec<_>>();
     Ok(models)
@@ -811,6 +857,9 @@ pub enum ContextManagementEdit {
     Compact {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         trigger: Option<CompactionTrigger>,
+        /// Stops after emitting the compaction block instead of continuing the response.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pause_after_compaction: Option<bool>,
     },
 }
 
@@ -858,6 +907,44 @@ pub struct Request {
     pub top_p: Option<f32>,
 }
 
+impl Request {
+    /// Configures this request to stop after native compaction.
+    ///
+    /// Tool definitions remain in the request so the trigger observes the same
+    /// context and prompt-cache prefix as normal generation. Tool choice is
+    /// disabled because explicit compaction must only produce replacement
+    /// context.
+    ///
+    /// Claude 4.6 and later reject requests ending in an assistant message as
+    /// unsupported prefill, so completed conversations receive a final user
+    /// turn that requests compaction.
+    pub fn into_compact_request(mut self) -> Self {
+        self.tool_choice = (!self.tools.is_empty()).then_some(ToolChoice::None);
+        if self
+            .messages
+            .last()
+            .is_some_and(|message| message.role == Role::Assistant)
+        {
+            self.messages.push(Message {
+                role: Role::User,
+                content: vec![RequestContent::Text {
+                    text: "Compact the conversation so far.".to_string(),
+                    cache_control: None,
+                }],
+            });
+        }
+        self.context_management = Some(ContextManagement {
+            edits: vec![ContextManagementEdit::Compact {
+                trigger: Some(CompactionTrigger::InputTokens {
+                    value: MIN_COMPACTION_TRIGGER_TOKENS,
+                }),
+                pause_after_compaction: Some(true),
+            }],
+        });
+        self
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Speed {
@@ -888,14 +975,15 @@ pub struct Usage {
     pub cache_creation_input_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_read_input_tokens: Option<u64>,
-    /// Only populated when a new compaction is triggered during the request.
+    /// Per-sampling token counts returned when the compaction beta is enabled.
+    ///
     /// The top-level token fields exclude compaction iterations, so total
     /// billable usage is the sum across all iterations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub iterations: Option<Vec<UsageIteration>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UsageIteration {
     #[serde(rename = "type")]
     pub iteration_type: UsageIterationType,
@@ -1175,6 +1263,35 @@ pub fn completion_error_from_anthropic_api(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use http_client::FakeHttpClient;
+
+    #[test]
+    fn list_models_preserves_anthropic_api_errors() {
+        let client = FakeHttpClient::create(|_| async move {
+            Ok(http::Response::builder()
+                .status(StatusCode::UNAUTHORIZED)
+                .body(AsyncBody::from(
+                    r#"{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"},"request_id":"request-id"}"#,
+                ))
+                .expect("valid response"))
+        });
+
+        let error = futures::executor::block_on(list_models(
+            client.as_ref(),
+            ANTHROPIC_API_URL,
+            "invalid-key",
+            &CustomHeaders::default(),
+        ))
+        .expect_err("authentication should fail");
+
+        assert!(matches!(
+            error,
+            AnthropicError::ApiError(ApiError {
+                error_type,
+                message,
+            }) if error_type == "authentication_error" && message == "invalid x-api-key"
+        ));
+    }
 
     fn listed_entry(id: &str, capabilities: ModelCapabilities) -> ListModelEntry {
         ListModelEntry {
@@ -1184,6 +1301,47 @@ mod tests {
             max_tokens: 64_000,
             capabilities: Some(capabilities),
         }
+    }
+
+    #[test]
+    fn api_list_model_entry_filters_null_token_limits() {
+        let entries: Vec<ApiListModelEntry> = serde_json::from_str(
+            r#"[
+                {
+                    "id": "valid",
+                    "display_name": "Valid",
+                    "max_input_tokens": 200000,
+                    "max_tokens": 64000
+                },
+                {
+                    "id": "null-input",
+                    "display_name": "Null Input",
+                    "max_input_tokens": null,
+                    "max_tokens": 64000
+                },
+                {
+                    "id": "null-output",
+                    "display_name": "Null Output",
+                    "max_input_tokens": 200000,
+                    "max_tokens": null
+                },
+                {
+                    "id": "null-both",
+                    "display_name": "Null Both",
+                    "max_input_tokens": null,
+                    "max_tokens": null
+                }
+            ]"#,
+        )
+        .expect("entries should deserialize");
+
+        let entries = entries
+            .into_iter()
+            .filter_map(ApiListModelEntry::into_listed)
+            .collect::<Vec<_>>();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, "valid");
     }
 
     #[test]

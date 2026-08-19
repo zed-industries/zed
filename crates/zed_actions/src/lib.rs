@@ -248,7 +248,13 @@ pub mod dev {
         dev,
         [
             /// Toggles the developer inspector for debugging UI elements.
-            ToggleInspector
+            ToggleInspector,
+            /// Cycles the debug frame-time overlay between hidden, current
+            /// frame-time, and detailed frame-time statistics.
+            ToggleFpsOverlay,
+            /// Resets the debug frame-time overlay's statistics, except for the
+            /// total frame count.
+            ResetFrameOverlayStats
         ]
     );
 }
@@ -474,10 +480,30 @@ pub mod icon_theme_selector {
 }
 
 pub mod search {
-    use gpui::actions;
+    use gpui::{Action, actions};
+
+    /// Opens a new project search filtered down to the given directory.
+    ///
+    /// An internal forwarding action: the user-facing, keybindable entry
+    /// point is `project_panel::NewSearchInDirectory`, which resolves the
+    /// selected directory and dispatches this action with it.
+    #[derive(Clone, Debug, Default, PartialEq, Action)]
+    #[action(namespace = search, no_json, no_register)]
+    pub struct NewSearchInDirectory {
+        pub directory: String,
+    }
+
     actions!(
         search,
         [
+            /// Focuses on the search input field.
+            FocusSearch,
+            /// Selects the next search match.
+            SelectNextMatch,
+            /// Selects the previous search match.
+            SelectPreviousMatch,
+            /// Toggles case-sensitive search.
+            ToggleCaseSensitive,
             /// Toggles searching in ignored files.
             ToggleIncludeIgnored
         ]
@@ -936,6 +962,8 @@ pub mod notebook {
             AddMarkdownBlock,
             /// Adds a new code cell.
             AddCodeBlock,
+            /// Deletes the current cell.
+            DeleteCell,
             /// Restarts the kernel.
             RestartKernel,
             /// Interrupts the current execution.
