@@ -546,6 +546,11 @@ impl Dock {
             .and_then(|index| self.panel_entries.get(index))
     }
 
+    fn active_panel_entry_mut(&mut self) -> Option<&mut PanelEntry> {
+        self.active_panel_index
+            .and_then(|index| self.panel_entries.get_mut(index))
+    }
+
     pub fn active_panel_index(&self) -> Option<usize> {
         self.active_panel_index
     }
@@ -999,18 +1004,17 @@ impl Dock {
         cx.notify();
     }
 
-    pub fn resize_active_panel(
+    fn resize_active_panel(
         &mut self,
         size: Option<Pixels>,
         flex: Option<f32>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(index) = self.active_panel_index
-            && let Some(entry) = self.panel_entries.get_mut(index)
-        {
+        let position = self.position;
+        if let Some(entry) = self.active_panel_entry_mut() {
             let (panel_key, size_state) =
-                resize_panel_entry(self.position, entry, size, flex, window, cx);
+                resize_panel_entry(position, entry, size, flex, window, cx);
 
             let workspace = self.workspace.clone();
             cx.defer(move |cx| {
@@ -1024,7 +1028,54 @@ impl Dock {
         }
     }
 
-    pub fn resize_all_panels(
+    /// Resizes the active panel and, when this dock is included in
+    /// `resize_all_panels_in_dock`, all panels using the same sizing mode.
+    pub fn resize_panel_sizes(
+        &mut self,
+        size: Option<Pixels>,
+        flex: Option<f32>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.should_resize_all_panels(cx) {
+            self.resize_all_panels(size, flex, window, cx);
+        } else {
+            self.resize_active_panel(size, flex, window, cx);
+        }
+    }
+
+    /// Resets the active panel and, when this dock is included in
+    /// `resize_all_panels_in_dock`, all panels using the same sizing mode.
+    pub fn reset_panel_sizes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.should_resize_all_panels(cx) {
+            self.reset_all_panel_sizes(window, cx);
+        } else {
+            self.reset_active_panel_size(window, cx);
+        }
+    }
+
+    fn reset_active_panel_size(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let state = PanelSizeState::default();
+        self.resize_active_panel(state.size, state.flex, window, cx);
+    }
+
+    fn reset_all_panel_sizes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(active_entry) = self.active_panel_entry() else {
+            return;
+        };
+        let size =
+            (!panel_uses_flexible_width(self.position, active_entry.panel.as_ref(), window, cx))
+                .then(|| active_entry.panel.default_size(window, cx));
+        self.resize_all_panels(size, None, window, cx);
+    }
+
+    fn should_resize_all_panels(&self, cx: &App) -> bool {
+        WorkspaceSettings::get_global(cx)
+            .resize_all_panels_in_dock
+            .contains(&self.position)
+    }
+
+    fn resize_all_panels(
         &mut self,
         size: Option<Pixels>,
         flex: Option<f32>,
@@ -1151,7 +1202,7 @@ impl Render for Dock {
                         MouseButton::Left,
                         cx.listener(|dock, e: &MouseUpEvent, window, cx| {
                             if e.click_count == 2 {
-                                dock.resize_active_panel(None, None, window, cx);
+                                dock.reset_panel_sizes(window, cx);
                                 dock.workspace
                                     .update(cx, |workspace, cx| {
                                         workspace.serialize_workspace(window, cx);

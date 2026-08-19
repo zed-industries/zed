@@ -41,10 +41,10 @@ const PATH_SAMPLE_COUNT: u32 = 4;
 const INSTANCE_BUFFER_ALIGNMENT: usize = 256;
 const MAX_INSTANCE_BUFFER_SIZE: usize = 256 * 1024 * 1024;
 
-pub(crate) type Context = Arc<Mutex<InstanceBufferPool>>;
-pub(crate) type Renderer = MetalRenderer;
+pub type Context = Arc<Mutex<InstanceBufferPool>>;
+pub type Renderer = MetalRenderer;
 
-pub(crate) unsafe fn new_renderer(
+pub unsafe fn new_renderer(
     context: self::Context,
     _native_window: *mut c_void,
     _native_view: *mut c_void,
@@ -54,7 +54,7 @@ pub(crate) unsafe fn new_renderer(
     MetalRenderer::new(context, transparent)
 }
 
-pub(crate) struct InstanceBufferPool {
+pub struct InstanceBufferPool {
     buffer_size: usize,
     buffers: Vec<metal::Buffer>,
 }
@@ -109,7 +109,7 @@ impl InstanceBufferPool {
     }
 }
 
-pub(crate) struct MetalRenderer {
+pub struct MetalRenderer {
     device: metal::Device,
     layer: Option<metal::MetalLayer>,
     is_apple_gpu: bool,

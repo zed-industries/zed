@@ -4,12 +4,12 @@ use std::ops::Range;
 use ui::{ColumnWidthConfig, ResizableColumnsState, Table, UncheckedTableRow, div, prelude::*};
 
 use crate::{
-    CsvPreviewView,
+    TabularDataPreviewPane,
     settings::RowRenderMechanism,
     types::{AnyColumn, DisplayCellId, DisplayRow},
 };
 
-impl CsvPreviewView {
+impl TabularDataPreviewPane {
     /// Creates a new table.
     /// Column number is derived from the `ResizableColumnsState` entity.
     pub(crate) fn create_table(
@@ -32,7 +32,7 @@ impl CsvPreviewView {
 
         headers.push(self.create_row_identifier_header(cx));
 
-        // Add the actual CSV headers with sort buttons
+        // Add the actual data headers with sort buttons
         for i in 0..(cols - 1) {
             let header_text = self
                 .engine
@@ -77,7 +77,7 @@ impl CsvPreviewView {
                         })
                     }
                     RowRenderMechanism::UniformList => {
-                        table.uniform_list("csv-table", row_count, {
+                        table.uniform_list("tabular-data-table", row_count, {
                             cx.processor(move |this, range: Range<usize>, _window, cx| {
                                 // Record all display indices in the range for performance metrics
                                 this.performance_metrics
@@ -109,12 +109,12 @@ impl CsvPreviewView {
     ///
     /// Used both by UniformList and VariableRowHeightList
     fn render_single_table_row(
-        this: &CsvPreviewView,
+        this: &TabularDataPreviewPane,
         cols: usize,
         display_row: DisplayRow,
         row_identifier_text_color: gpui::Hsla,
         row_height: Pixels,
-        cx: &Context<CsvPreviewView>,
+        cx: &Context<TabularDataPreviewPane>,
     ) -> Option<UncheckedTableRow<AnyElement>> {
         // Get the actual row index from our sorted indices
         let data_row = this.engine.d2d_mapping().get_data_row(display_row)?;
@@ -123,7 +123,7 @@ impl CsvPreviewView {
         let mut elements = Vec::with_capacity(cols);
         elements.push(this.create_row_identifier_cell(display_row, data_row, cx)?);
 
-        // Remaining columns: actual CSV data
+        // Remaining columns: actual table data
         for col in (0..this.engine.contents.number_of_cols).map(AnyColumn) {
             let table_cell = row.expect_get(col);
 
@@ -143,7 +143,7 @@ impl CsvPreviewView {
                             .overflow_hidden()
                     },
                 )
-                .child(CsvPreviewView::create_selectable_cell(
+                .child(TabularDataPreviewPane::create_selectable_cell(
                     display_cell_id,
                     cell_content,
                     this.settings.vertical_alignment,

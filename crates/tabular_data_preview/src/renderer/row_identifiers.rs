@@ -5,7 +5,7 @@ use ui::{
 };
 
 use crate::{
-    CsvPreviewView,
+    TabularDataPreviewPane,
     settings::RowIdentifiers,
     types::{DataRow, DisplayRow, LineNumber},
 };
@@ -45,7 +45,7 @@ impl LineNumber {
     }
 }
 
-impl CsvPreviewView {
+impl TabularDataPreviewPane {
     /// Calculate the optimal width for the row identifier column (line numbers or row numbers).
     ///
     /// This ensures the column is wide enough to display the largest identifier comfortably,
@@ -104,7 +104,7 @@ impl CsvPreviewView {
 
     pub(crate) fn create_row_identifier_header(
         &self,
-        cx: &mut Context<'_, CsvPreviewView>,
+        cx: &mut Context<'_, TabularDataPreviewPane>,
     ) -> AnyElement {
         // First column: row identifier (clickable to toggle between Lines and Rows)
         let row_identifier_text = match self.settings.numbering_type {
@@ -144,7 +144,7 @@ impl CsvPreviewView {
         &self,
         display_row: DisplayRow,
         data_row: DataRow,
-        cx: &Context<'_, CsvPreviewView>,
+        cx: &Context<'_, TabularDataPreviewPane>,
     ) -> Option<AnyElement> {
         let row_identifier: SharedString = match self.settings.numbering_type {
             RowIdentifiers::SrcLines => self

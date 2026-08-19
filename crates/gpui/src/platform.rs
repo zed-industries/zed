@@ -865,6 +865,10 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
     fn set_edited(&mut self, _edited: bool) {}
     fn set_document_path(&self, _path: Option<&std::path::Path>) {}
+    fn toggle_simple_fullscreen(&self) {}
+    fn is_simple_fullscreen(&self) -> bool {
+        false
+    }
     #[cfg(target_os = "macos")]
     fn set_traffic_light_position(&self, _position: Point<Pixels>) {}
     fn show_character_palette(&self) {}
@@ -1827,6 +1831,11 @@ pub struct WindowOptions {
     /// Leave this `false` for windows that rely on AppKit's native titlebar dragging.
     pub app_owns_titlebar_drag: bool,
 
+    /// The minimum interval between animation frames while the window is inactive.
+    ///
+    /// Set to `None` to disable inactive-window animation frame throttling.
+    pub inactive_frame_interval: Option<Duration>,
+
     /// Whether the window should be resizable by the user
     pub is_resizable: bool,
 
@@ -1971,6 +1980,7 @@ impl Default for WindowOptions {
             kind: WindowKind::Normal,
             is_movable: true,
             app_owns_titlebar_drag: false,
+            inactive_frame_interval: Some(Duration::from_micros(33_333)),
             is_resizable: true,
             is_minimizable: true,
             display_id: None,

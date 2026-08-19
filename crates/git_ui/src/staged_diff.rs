@@ -268,7 +268,7 @@ impl StagedDiff {
         let editor = diff.editor().read(cx).rhs_editor().clone();
         let editor = editor.read(cx);
         let snapshot = diff.multibuffer().read(cx).snapshot(cx);
-        let prev_next = snapshot.diff_hunks().nth(1).is_some();
+        let prev_next = snapshot.diff_hunks().next().is_some();
         let (selection, ranges) = diff.selected_ranges(cx);
         let unstage = editor
             .diff_hunks_in_ranges(&ranges, &snapshot)
@@ -976,7 +976,7 @@ mod tests {
             repo.load_index_text(RepoPath::from_rel_path(rel_path("src/main.rs")))
                 .await
                 .unwrap(),
-            committed_contents
+            committed_contents.as_bytes()
         );
 
         fs.unpause_events_and_flush();
