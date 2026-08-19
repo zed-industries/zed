@@ -441,15 +441,17 @@ impl DivInspector {
         let diagnostic_entries = unrecognized_ranges
             .into_iter()
             .enumerate()
-            .map(|(ix, range)| DiagnosticEntry {
-                range,
-                diagnostic: Diagnostic {
-                    message: "unrecognized".to_string(),
-                    severity: DiagnosticSeverity::WARNING,
-                    is_primary: true,
-                    group_id: ix,
-                    ..Default::default()
-                },
+            .map(|(ix, range)| {
+                DiagnosticEntry::new(
+                    range,
+                    Diagnostic {
+                        message: "unrecognized".to_string(),
+                        severity: DiagnosticSeverity::WARNING,
+                        is_primary: true,
+                        group_id: ix,
+                        ..Default::default()
+                    },
+                )
             });
         let diagnostics = DiagnosticSet::from_sorted_entries(diagnostic_entries, snapshot);
         rust_style_buffer.update_diagnostics(LanguageServerId(0), diagnostics, cx);

@@ -22,8 +22,8 @@ use crate::{
         HighlightKey, HighlightedChunk, ToDisplayPoint,
     },
     editor_settings::{
-        CurrentLineHighlight, DocumentColorsRenderMode, Minimap, MinimapThumb, MinimapThumbBorder,
-        ScrollBeyondLastLine, ScrollbarAxes, ScrollbarDiagnostics, ShowMinimap,
+        CurrentLineHighlight, DocumentColorsRenderMode, GitGutterWidth, Minimap, MinimapThumb,
+        MinimapThumbBorder, ScrollBeyondLastLine, ScrollbarAxes, ScrollbarDiagnostics, ShowMinimap,
     },
     git::blame::{BlameRenderer, GitBlame, GlobalBlameRenderer},
     hover_popover::{
@@ -5321,8 +5321,8 @@ impl EditorElement {
 
     fn gutter_strip_width(line_height: Pixels, cx: &App) -> Pixels {
         match EditorSettings::get_global(cx).gutter.git_gutter_width {
-            Some(width) => px(width),
-            None => (0.275 * line_height).floor(),
+            GitGutterWidth::Custom(width) => px(*width),
+            GitGutterWidth::Default => (0.275 * line_height).floor(),
         }
     }
 
@@ -5362,8 +5362,8 @@ impl EditorElement {
                     let end_y = start_y + line_height;
 
                     let width = match EditorSettings::get_global(cx).gutter.git_gutter_width {
-                        Some(width) => px(width),
-                        None => (0.35 * line_height).floor(),
+                        GitGutterWidth::Custom(width) => px(*width),
+                        GitGutterWidth::Default => (0.35 * line_height).floor(),
                     };
                     let highlight_origin = gutter_bounds.origin + point(px(0.), start_y);
                     let highlight_size = size(width, end_y - start_y);

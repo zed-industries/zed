@@ -38,7 +38,7 @@ use gpui::{
     ImageFormat, ImageSource, KeyContext, Length, MouseButton, MouseDownEvent, MouseEvent,
     MouseMoveEvent, MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle,
     StyleRefinement, StyledImage, StyledText, Subscription, Task, TextAlign, TextLayout, TextRun,
-    TextStyle, TextStyleRefinement, WrappedLineLayout, actions, canvas, img, point, quad,
+    TextStyle, TextStyleRefinement, WrappedLineLayout, actions, canvas, img, point, quad, relative,
 };
 use language::{CharClassifier, Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
@@ -270,6 +270,7 @@ impl MarkdownStyle {
                     font_features: Some(theme_settings.buffer_font.features.clone()),
                     font_size: Some(buffer_font_size.into()),
                     font_weight: Some(buffer_font_weight),
+                    line_height: Some(relative(theme_settings.buffer_line_height.value())),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -932,6 +933,14 @@ impl Markdown {
         &self.source
     }
 
+    pub fn non_rendered_source_ranges(&self) -> Vec<Range<usize>> {
+        if self.source != self.parsed_markdown.source {
+            return Vec::new();
+        }
+
+        self.parsed_markdown.non_rendered_source_ranges()
+    }
+
     pub fn first_code_block_language(&self) -> Option<Arc<Language>> {
         self.parsed_markdown.events.iter().find_map(|(_, event)| {
             let MarkdownEvent::Start(MarkdownTag::CodeBlock { kind, .. }) = event else {
@@ -1216,6 +1225,7 @@ impl Markdown {
                         mermaid_diagrams: BTreeMap::default(),
                         heading_slugs: HashMap::default(),
                         footnote_definitions: HashMap::default(),
+                        link_definition_spans: Arc::default(),
                     },
                     Default::default(),
                 );
@@ -1235,6 +1245,7 @@ impl Markdown {
             let metadata_blocks = parsed.metadata_blocks;
             let heading_slugs = parsed.heading_slugs;
             let footnote_definitions = parsed.footnote_definitions;
+            let link_definition_spans = parsed.link_definition_spans;
             let mermaid_diagrams = if should_render_mermaid_diagrams {
                 extract_mermaid_diagrams(&source, &events)
             } else {
@@ -1304,6 +1315,7 @@ impl Markdown {
                     mermaid_diagrams,
                     heading_slugs,
                     footnote_definitions,
+                    link_definition_spans: Arc::from(link_definition_spans),
                 },
                 images_by_source_offset,
             )
@@ -1450,6 +1462,7 @@ pub struct ParsedMarkdown {
     pub(crate) mermaid_diagrams: BTreeMap<usize, ParsedMarkdownMermaidDiagram>,
     pub heading_slugs: HashMap<SharedString, usize>,
     pub footnote_definitions: HashMap<SharedString, usize>,
+    pub(crate) link_definition_spans: Arc<[Range<usize>]>,
 }
 
 impl ParsedMarkdown {
@@ -1463,6 +1476,74 @@ impl ParsedMarkdown {
 
     pub fn root_block_starts(&self) -> &Arc<[usize]> {
         &self.root_block_starts
+    }
+
+    fn non_rendered_source_ranges(&self) -> Vec<Range<usize>> {
+        let mut ranges = Vec::new();
+        let mut active_link = None;
+        let mut active_image: Option<Range<usize>> = None;
+
+        for (event_range, event) in self.events.iter() {
+            // An image renders as an image, so nothing between its start and end is text on
+            // screen - not the alt text, and not the destination. Skipping these events also
+            // keeps the alt text from advancing the enclosing link's cursor, which would
+            // otherwise carve it out of the link's non-rendered span.
+            if let Some(image_range) = &active_image {
+                if matches!(event, MarkdownEvent::End(MarkdownTagEnd::Image))
+                    && event_range.end >= image_range.end
+                {
+                    active_image = None;
+                }
+                continue;
+            }
+
+            match event {
+                MarkdownEvent::Start(MarkdownTag::Image { .. }) => {
+                    active_image = Some(event_range.clone());
+                    if active_link.is_none() {
+                        ranges.push(event_range.clone());
+                    }
+                }
+                MarkdownEvent::Start(MarkdownTag::Link { .. }) => {
+                    active_link = Some((event_range.clone(), event_range.start));
+                }
+                MarkdownEvent::Text
+                | MarkdownEvent::SubstitutedText(_)
+                | MarkdownEvent::Code
+                | MarkdownEvent::SubstitutedCode(_) => {
+                    let Some((link_range, cursor)) = active_link.as_mut() else {
+                        continue;
+                    };
+                    let visible_start = event_range.start.max(link_range.start);
+                    let visible_end = event_range.end.min(link_range.end);
+                    if visible_start > *cursor {
+                        ranges.push(*cursor..visible_start);
+                    }
+                    *cursor = (*cursor).max(visible_end);
+                }
+                MarkdownEvent::End(MarkdownTagEnd::Link) => {
+                    if let Some((link_range, cursor)) = active_link.take()
+                        && cursor < link_range.end
+                    {
+                        ranges.push(cursor..link_range.end);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        ranges.extend(self.link_definition_spans.iter().cloned());
+        // Callers binary search these ranges, which requires them to be sorted and disjoint.
+        ranges.sort_by_key(|range| range.start);
+        ranges.dedup_by(|next, previous| {
+            if next.start <= previous.end {
+                previous.end = previous.end.max(next.end);
+                true
+            } else {
+                false
+            }
+        });
+        ranges
     }
 
     pub fn root_block_for_source_index(&self, source_index: usize) -> Option<usize> {
@@ -2636,44 +2717,36 @@ impl Element for MarkdownElement {
                             builder.push_div(div().pl_2p5(), range, markdown_end);
                         }
                         MarkdownTag::Item => {
-                            let bullet =
-                                if let Some((task_range, MarkdownEvent::TaskListMarker(checked))) =
-                                    parsed_markdown.events.get(index.saturating_add(1))
-                                {
-                                    let source = &parsed_markdown.source()[range.clone()];
-                                    let checked = *checked;
-                                    let toggle_state = if checked {
-                                        ToggleState::Selected
-                                    } else {
-                                        ToggleState::Unselected
-                                    };
+                            let bullet = if let Some((task_range, checked)) =
+                                task_list_marker_for_item(&parsed_markdown.events, index)
+                            {
+                                let source = &parsed_markdown.source()[range.clone()];
+                                let checkbox = Checkbox::new(
+                                    ElementId::Name(source.to_string().into()),
+                                    ToggleState::from(checked),
+                                )
+                                .fill();
 
-                                    let checkbox = Checkbox::new(
-                                        ElementId::Name(source.to_string().into()),
-                                        toggle_state,
-                                    )
-                                    .fill();
-
-                                    if let Some(on_toggle) = self.on_checkbox_toggle.clone() {
-                                        let task_source_range = task_range.clone();
-                                        checkbox
-                                            .on_click(move |_state, window, cx| {
-                                                on_toggle(
-                                                    task_source_range.clone(),
-                                                    !checked,
-                                                    window,
-                                                    cx,
-                                                );
-                                            })
-                                            .into_any_element()
-                                    } else {
-                                        checkbox.visualization_only(true).into_any_element()
-                                    }
-                                } else if let Some(bullet_index) = builder.next_bullet_index() {
-                                    div().child(format!("{}.", bullet_index)).into_any_element()
+                                if let Some(on_toggle) = self.on_checkbox_toggle.clone() {
+                                    let task_source_range = task_range.clone();
+                                    checkbox
+                                        .on_click(move |_state, window, cx| {
+                                            on_toggle(
+                                                task_source_range.clone(),
+                                                !checked,
+                                                window,
+                                                cx,
+                                            );
+                                        })
+                                        .into_any_element()
                                 } else {
-                                    div().child("•").into_any_element()
-                                };
+                                    checkbox.visualization_only(true).into_any_element()
+                                }
+                            } else if let Some(bullet_index) = builder.next_bullet_index() {
+                                div().child(format!("{}.", bullet_index)).into_any_element()
+                            } else {
+                                div().child("•").into_any_element()
+                            };
                             self.push_markdown_list_item(&mut builder, bullet, range, markdown_end);
                         }
                         MarkdownTag::Emphasis => builder.push_text_style(TextStyleRefinement {
@@ -3411,6 +3484,25 @@ fn alignment_to_text_align(alignment: Alignment) -> Option<TextAlign> {
         Alignment::Center => Some(TextAlign::Center),
         Alignment::Right => Some(TextAlign::Right),
         Alignment::None => None,
+    }
+}
+
+// The contents of loose list items are wrapped in a paragraph, so their task
+// marker follows `Start(Paragraph)` rather than `Start(Item)`.
+fn task_list_marker_for_item(
+    events: &[(Range<usize>, MarkdownEvent)],
+    item_index: usize,
+) -> Option<(Range<usize>, bool)> {
+    let next_index = item_index.checked_add(1)?;
+    let marker_index = match &events.get(next_index)?.1 {
+        MarkdownEvent::Start(MarkdownTag::Paragraph) => next_index.checked_add(1)?,
+        MarkdownEvent::TaskListMarker(_) => next_index,
+        _ => return None,
+    };
+
+    match events.get(marker_index)? {
+        (range, MarkdownEvent::TaskListMarker(checked)) => Some((range.clone(), *checked)),
+        _ => None,
     }
 }
 
@@ -4825,6 +4917,88 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_non_rendered_source_ranges(cx: &mut TestAppContext) {
+        let source = "[@octocat](https://github.com/octocat) https://github.com/octocat";
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        cx.run_until_parked();
+
+        assert_eq!(
+            markdown.read_with(cx, |markdown, _| markdown.non_rendered_source_ranges()),
+            vec![0..1, 9..38]
+        );
+    }
+
+    #[gpui::test]
+    fn test_non_rendered_source_ranges_for_reference_definitions(cx: &mut TestAppContext) {
+        let source = "[@octocat][octocat]\n\n[octocat]: https://github.com/octocat";
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        cx.run_until_parked();
+
+        assert_eq!(
+            markdown.read_with(cx, |markdown, _| markdown.non_rendered_source_ranges()),
+            vec![0..1, 9..19, 21..58]
+        );
+    }
+
+    #[gpui::test]
+    fn test_non_rendered_source_ranges_for_images(cx: &mut TestAppContext) {
+        let source = "![alt](https://example.com/img.png \"title\")";
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        cx.run_until_parked();
+
+        assert_eq!(
+            markdown.read_with(cx, |markdown, _| markdown.non_rendered_source_ranges()),
+            vec![0..source.len()]
+        );
+    }
+
+    #[gpui::test]
+    fn test_non_rendered_source_ranges_for_linked_images(cx: &mut TestAppContext) {
+        let source = "[![alt](https://example.com/img.png)](https://example.com/dest)";
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        cx.run_until_parked();
+
+        assert_eq!(
+            markdown.read_with(cx, |markdown, _| markdown.non_rendered_source_ranges()),
+            vec![0..source.len()]
+        );
+    }
+
+    #[gpui::test]
+    fn test_non_rendered_source_ranges_for_image_between_link_text(cx: &mut TestAppContext) {
+        let source = "[before ![alt](https://example.com/img.png) after](https://example.com/dest)";
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        cx.run_until_parked();
+
+        let ranges = markdown.read_with(cx, |markdown, _| markdown.non_rendered_source_ranges());
+        assert_eq!(ranges, vec![0..1, 8..43, 49..source.len()]);
+        assert_eq!(&source[1..8], "before ");
+        assert_eq!(&source[43..49], " after");
+    }
+
+    #[gpui::test]
+    fn test_non_rendered_source_ranges_are_empty_while_parsing(cx: &mut TestAppContext) {
+        let markdown =
+            cx.new(|cx| Markdown::new("[a](https://example.com)".into(), None, None, cx));
+        cx.run_until_parked();
+
+        markdown.update(cx, |markdown, cx| {
+            markdown.reset("[bb](https://example.com)".into(), cx);
+            assert!(markdown.is_parsing());
+            assert_eq!(
+                markdown.non_rendered_source_ranges(),
+                Vec::<Range<usize>>::new()
+            );
+        });
+
+        cx.run_until_parked();
+        markdown.update(cx, |markdown, _| {
+            assert!(!markdown.is_parsing());
+            assert_eq!(markdown.non_rendered_source_ranges(), vec![0..1, 3..25]);
+        });
+    }
+
+    #[gpui::test]
     fn test_wrapped_code_block_has_no_scroll_handle(cx: &mut TestAppContext) {
         let markdown =
             cx.new(|cx| Markdown::new("```rust\nlet value = 1;\n```".into(), None, None, cx));
@@ -5415,9 +5589,48 @@ mod tests {
     }
 
     #[test]
+    fn test_task_list_marker_for_item() {
+        // Small helper that takes the Markdown contents and returns a vector of
+        // all task list marker strings as well as whether they are checked or
+        // not.
+        let task_marker_states = |markdown: &str| -> Vec<(String, bool)> {
+            let events = parse_markdown_with_options(markdown, false, false, false).events;
+
+            events
+                .iter()
+                .enumerate()
+                .filter_map(|(index, (_, event))| {
+                    matches!(event, MarkdownEvent::Start(MarkdownTag::Item))
+                        .then(|| task_list_marker_for_item(&events, index))
+                        .flatten()
+                })
+                .map(|(range, checked)| (markdown[range].to_string(), checked))
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            task_marker_states("- [ ] task"),
+            vec![("[ ]".to_string(), false)]
+        );
+        assert_eq!(
+            task_marker_states("- [x] first\n\n- [ ] second"),
+            vec![("[x]".to_string(), true), ("[ ]".to_string(), false)]
+        );
+        assert_eq!(
+            task_marker_states("- [ ] top task\n\n- [x] done task\n\n  - [x] nested done\n"),
+            vec![
+                ("[ ]".to_string(), false),
+                ("[x]".to_string(), true),
+                ("[x]".to_string(), true)
+            ]
+        );
+        assert_eq!(task_marker_states("- ordinary item"), vec![]);
+    }
+
+    #[test]
     fn test_table_checkbox_detection() {
         let md = "| Done |\n|------|\n| [x] |\n| [ ] |";
-        let events = crate::parser::parse_markdown_with_options(md, false, false, false).events;
+        let events = parse_markdown_with_options(md, false, false, false).events;
 
         let mut in_table = false;
         let mut cell_texts: Vec<String> = Vec::new();
@@ -5459,7 +5672,7 @@ mod tests {
     #[test]
     fn test_table_checkbox_marker_source_range() {
         let md = "| Done |\n|------|\n|  [x]  |\n| [ ] |";
-        let events = crate::parser::parse_markdown_with_options(md, false, false, false).events;
+        let events = parse_markdown_with_options(md, false, false, false).events;
 
         let mut in_cell = false;
         let mut pending_text = String::new();
@@ -6414,6 +6627,74 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_code_block_line_height_follows_buffer_line_height_setting(cx: &mut TestAppContext) {
+        let font_size = 14.0;
+        let (tight_prose, tight_code) = rendered_prose_and_code_line_heights(cx, font_size, 1.2);
+        let (loose_prose, loose_code) = rendered_prose_and_code_line_heights(cx, font_size, 1.8);
+
+        // Left unset, code blocks fall back to the ambient default of ~1.618
+        // regardless of this setting.
+        assert!(
+            (tight_code - px(font_size * 1.2)).abs() <= px(0.5),
+            "code block line height ({tight_code:?}) should be ~{} at buffer_line_height 1.2",
+            font_size * 1.2
+        );
+        assert!(
+            (loose_code - px(font_size * 1.8)).abs() <= px(0.5),
+            "code block line height ({loose_code:?}) should be ~{} at buffer_line_height 1.8",
+            font_size * 1.8
+        );
+
+        // Prose leading is set per element as `rems(1.3)` and is a typographic
+        // choice independent of the buffer's line height, so it must not move.
+        assert_eq!(
+            tight_prose, loose_prose,
+            "prose line height should not follow buffer_line_height"
+        );
+    }
+
+    #[gpui::test]
+    fn test_code_block_line_height_tracks_overridden_code_font_size(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.markdown_preview_font_size = Some(14.0.into());
+                    settings.theme.buffer_line_height =
+                        Some(settings::BufferLineHeight::Custom(1.5));
+                });
+            });
+        });
+        cx.run_until_parked();
+
+        let mut style = {
+            let window = cx.add_empty_window();
+            window.update(|window, cx| MarkdownStyle::themed(MarkdownFont::Preview, window, cx))
+        };
+
+        let overridden_font_size = 28.0;
+        style.code_block.text.font_size = Some(px(overridden_font_size).into());
+
+        let markdown =
+            cx.new(|cx| Markdown::new("Body text\n\n```\nfoo\nbar\n```\n".into(), None, None, cx));
+        let rendered = render_markdown_entity_in_view(markdown, style, None, None, cx);
+        let [_, code] = &rendered.lines[..] else {
+            panic!(
+                "expected a prose line and a code block line, got {} lines",
+                rendered.lines.len()
+            )
+        };
+
+        let code_line_height = code.layout.line_height();
+        assert!(
+            (code_line_height - px(overridden_font_size * 1.5)).abs() <= px(0.5),
+            "code block line height ({code_line_height:?}) should follow the overridden \
+             font size, expected ~{}",
+            overridden_font_size * 1.5
+        );
+    }
+
+    #[gpui::test]
     fn test_wide_table_scrolls_horizontally(cx: &mut TestAppContext) {
         ensure_theme_initialized(cx);
         let source = indoc::indoc! {r#"
@@ -6574,5 +6855,49 @@ mod tests {
         assert!(quad_bounds.left() < px(0.));
         assert!(visible_bounds.left() >= px(0.));
         assert!(visible_bounds.right() <= window_width);
+    }
+
+    /// Renders a paragraph followed by a fenced code block at the given
+    /// `buffer_line_height`, returning the rendered line heights of the
+    /// paragraph and of the first code block row.
+    ///
+    /// Note that this does not reproduce the `WithRemSize` wrapper the real
+    /// preview renders inside, so rem-derived lengths (such as the `rems(1.3)`
+    /// prose leading) resolve against the default rem size rather than
+    /// `markdown_preview_font_size`. Code block metrics are unaffected, since
+    /// the code font size is set as absolute pixels.
+    fn rendered_prose_and_code_line_heights(
+        cx: &mut TestAppContext,
+        font_size: f32,
+        buffer_line_height: f32,
+    ) -> (Pixels, Pixels) {
+        ensure_theme_initialized(cx);
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.markdown_preview_font_size = Some(font_size.into());
+                    settings.theme.buffer_line_height =
+                        Some(settings::BufferLineHeight::Custom(buffer_line_height));
+                });
+            });
+        });
+        cx.run_until_parked();
+
+        let style = {
+            let window = cx.add_empty_window();
+            window.update(|window, cx| MarkdownStyle::themed(MarkdownFont::Preview, window, cx))
+        };
+
+        let markdown =
+            cx.new(|cx| Markdown::new("Body text\n\n```\nfoo\nbar\n```\n".into(), None, None, cx));
+        let rendered = render_markdown_entity_in_view(markdown, style, None, None, cx);
+
+        let [prose, code] = &rendered.lines[..] else {
+            panic!(
+                "expected a prose line and a code block line, got {} lines",
+                rendered.lines.len()
+            )
+        };
+        (prose.layout.line_height(), code.layout.line_height())
     }
 }
