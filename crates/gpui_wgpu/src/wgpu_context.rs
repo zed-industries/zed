@@ -287,14 +287,47 @@ impl WgpuContext {
     }
 
     #[cfg(not(target_family = "wasm"))]
-    pub fn instance(display: Box<dyn wgpu::wgt::WgpuHasDisplayHandle>) -> wgpu::Instance {
-        wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::VULKAN | wgpu::Backends::GL,
-            flags: wgpu::InstanceFlags::default(),
-            backend_options: wgpu::BackendOptions::default(),
-            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
-            display: Some(display),
-        })
+    pub fn instance(
+        display: impl Fn() -> Box<dyn wgpu::wgt::WgpuHasDisplayHandle>,
+    ) -> wgpu::Instance {
+        let new_instance = |backends| {
+            wgpu::Instance::new(wgpu::InstanceDescriptor {
+                backends,
+                flags: wgpu::InstanceFlags::default(),
+                backend_options: wgpu::BackendOptions::default(),
+                memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+                display: Some(display()),
+            })
+        };
+
+        if let Some(backends) = wgpu::Backends::from_env() {
+            return new_instance(backends);
+        }
+
+        let backends = wgpu::Backends::VULKAN | wgpu::Backends::GL;
+
+        let previous_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let instance =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| new_instance(backends)));
+        std::panic::set_hook(previous_hook);
+
+        match instance {
+            Ok(instance) => instance,
+            Err(payload) => {
+                let message = payload
+                    .downcast_ref::<&'static str>()
+                    .copied()
+                    .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                    .unwrap_or("<non-string panic payload>");
+                log::warn!(
+                    "Panic while initializing GPU backends {backends:?}: {message}. \
+                     Retrying with Vulkan only; startup will fail if this system has no \
+                     usable Vulkan driver."
+                );
+                new_instance(wgpu::Backends::VULKAN)
+            }
+        }
     }
 
     pub fn check_compatible_with_surface(&self, surface: &wgpu::Surface<'_>) -> anyhow::Result<()> {
