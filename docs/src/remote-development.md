@@ -111,7 +111,7 @@ Zed supports opening folders inside of WSL natively on Windows.
 
 ### Opening a local folder in WSL
 
-To open a local folder inside a WSL container, use the `projects: open in wsl` action and select the folder you want to open. You will be presented with a list of available WSL distributions to open the folder in.
+To open a local folder inside a WSL container, use the `projects: open folder in wsl` action and select the folder you want to open. You will be presented with a list of available WSL distributions to open the folder in.
 
 ### Opening a folder already in WSL
 
