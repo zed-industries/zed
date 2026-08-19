@@ -371,7 +371,11 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
 #[derive(Clone, PartialEq)]
 enum InstalledExtensionMetadata {
     Unknown,
-    NoLongerPublished,
+    // We would like to surface installed extensions that are no longer published
+    // upstream, but we cannot currently determine that properly: the `/extensions`
+    // endpoint returns a fixed set of 1000 extensions, so we might show niece
+    // extensions as no longer published when they are actually not
+    // NoLongerPublished,
     Available(Arc<ExtensionMetadata>),
 }
 
@@ -475,8 +479,7 @@ impl ExtensionEntry {
         match self {
             Self::Dev(_) => ExtensionSortGroup::Dev,
             Self::Installed {
-                metadata:
-                    InstalledExtensionMetadata::Unknown | InstalledExtensionMetadata::NoLongerPublished,
+                metadata: InstalledExtensionMetadata::Unknown,
                 ..
             } => ExtensionSortGroup::Local,
             Self::Installed {
@@ -512,8 +515,7 @@ impl ExtensionEntry {
         match self {
             Self::Installed {
                 manifest,
-                metadata:
-                    InstalledExtensionMetadata::Unknown | InstalledExtensionMetadata::NoLongerPublished,
+                metadata: InstalledExtensionMetadata::Unknown,
             } => ExtensionCard::for_installed(manifest.clone(), cx),
             Self::Installed {
                 metadata: InstalledExtensionMetadata::Available(metadata),
@@ -531,7 +533,9 @@ pub struct ExtensionsPage {
     list: UniformListScrollHandle,
     fetch_state: ExtensionFetchState,
     fetch_generation: usize,
-    published_extension_ids: Option<Arc<BTreeSet<Arc<str>>>>,
+    // Used to mark installed extensions as `NoLongerPublished`. See the comment on
+    // `InstalledExtensionMetadata` for why we cannot currently determine that properly.
+    // published_extension_ids: Option<Arc<BTreeSet<Arc<str>>>>,
     filter: ExtensionFilter,
     extension_entries: Vec<ExtensionEntry>,
     filtered_extension_indices: Vec<usize>,
@@ -594,7 +598,7 @@ impl ExtensionsPage {
                 list: scroll_handle,
                 fetch_state: ExtensionFetchState::Fetching,
                 fetch_generation: 0,
-                published_extension_ids: None,
+                // published_extension_ids: None,
                 filter: ExtensionFilter::All,
                 extension_entries: Vec::new(),
                 filtered_extension_indices: Vec::new(),
@@ -693,24 +697,24 @@ impl ExtensionsPage {
         cx.notify();
     }
 
-    fn entry_for_installed_extension(
-        extension_id: &Arc<str>,
-        installed_extension: &ExtensionIndexEntry,
-        published_extension_ids: Option<&BTreeSet<Arc<str>>>,
-    ) -> ExtensionEntry {
+    fn entry_for_installed_extension(installed_extension: &ExtensionIndexEntry) -> ExtensionEntry {
         if installed_extension.dev {
             ExtensionEntry::Dev(installed_extension.manifest.clone())
         } else {
-            let metadata = if published_extension_ids.is_some_and(|published_extension_ids| {
-                !published_extension_ids.contains(extension_id)
-            }) {
-                InstalledExtensionMetadata::NoLongerPublished
-            } else {
-                InstalledExtensionMetadata::Unknown
-            };
+            // We cannot currently determine whether an installed extension is no longer
+            // published upstream (see the comment on `InstalledExtensionMetadata`), so we
+            // always treat its remote metadata as unknown here.
+            //
+            // let metadata = if published_extension_ids.is_some_and(|published_extension_ids| {
+            //     !published_extension_ids.contains(extension_id)
+            // }) {
+            //     InstalledExtensionMetadata::NoLongerPublished
+            // } else {
+            //     InstalledExtensionMetadata::Unknown
+            // };
             ExtensionEntry::Installed {
                 manifest: installed_extension.manifest.clone(),
-                metadata,
+                metadata: InstalledExtensionMetadata::Unknown,
             }
         }
     }
@@ -733,21 +737,12 @@ impl ExtensionsPage {
 
         if search.is_none() {
             self.extension_entries = installed_extensions
-                .iter()
-                .map(|(extension_id, installed_extension)| {
-                    Self::entry_for_installed_extension(
-                        extension_id,
-                        installed_extension,
-                        self.published_extension_ids.as_deref(),
-                    )
-                })
+                .values()
+                .map(Self::entry_for_installed_extension)
                 .collect();
             self.extension_entries.sort_by(ExtensionEntry::compare);
             self.filter_extension_entries(cx);
         }
-
-        let fetches_all_extensions =
-            search.is_none() && provides_filter.as_ref().is_none_or(BTreeSet::is_empty);
 
         let remote_extensions = if let Some(id) = search
             .as_ref()
@@ -834,14 +829,17 @@ impl ExtensionsPage {
                             .into_iter()
                             .map(Arc::new)
                             .collect::<Vec<_>>();
-                        if fetches_all_extensions {
-                            this.published_extension_ids = Some(Arc::new(
-                                remote_extensions
-                                    .iter()
-                                    .map(|extension| extension.id.clone())
-                                    .collect(),
-                            ));
-                        }
+                        // We cannot currently determine which extensions are still published
+                        // upstream (see the comment on `InstalledExtensionMetadata`).
+                        //
+                        // if fetches_all_extensions {
+                        //     this.published_extension_ids = Some(Arc::new(
+                        //         remote_extensions
+                        //             .iter()
+                        //             .map(|extension| extension.id.clone())
+                        //             .collect(),
+                        //     ));
+                        // }
 
                         let mut matched_remote_extension_ids = BTreeSet::new();
                         let mut extension_entries = Vec::new();
@@ -881,12 +879,8 @@ impl ExtensionsPage {
                                     !matched_remote_extension_ids.contains(*extension_id)
                                         && matches_local_search(extension_id)
                                 })
-                                .map(|(extension_id, installed_extension)| {
-                                    Self::entry_for_installed_extension(
-                                        extension_id,
-                                        installed_extension,
-                                        this.published_extension_ids.as_deref(),
-                                    )
+                                .map(|(_, installed_extension)| {
+                                    Self::entry_for_installed_extension(installed_extension)
                                 }),
                         );
 
@@ -903,12 +897,8 @@ impl ExtensionsPage {
                         this.extension_entries = installed_extensions
                             .iter()
                             .filter(|(extension_id, _)| matches_local_search(extension_id))
-                            .map(|(extension_id, installed_extension)| {
-                                Self::entry_for_installed_extension(
-                                    extension_id,
-                                    installed_extension,
-                                    this.published_extension_ids.as_deref(),
-                                )
+                            .map(|(_, installed_extension)| {
+                                Self::entry_for_installed_extension(installed_extension)
                             })
                             .collect();
                         this.extension_entries.sort_by(ExtensionEntry::compare);
