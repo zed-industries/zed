@@ -1,9 +1,8 @@
 use editor::{Editor, MultiBuffer};
-use feature_flags::FeatureFlagAppExt as _;
 use gpui::{AnyElement, Entity, Modifiers};
 use markdown_preview::markdown_preview_view::MarkdownPreviewView;
 use svg_preview::svg_preview_view::SvgPreviewView;
-use tabular_data_preview::{TabularDataPreviewFeatureFlag, TabularDataPreviewPane};
+use tabular_data_preview::TabularDataPreviewPane;
 use ui::{Tooltip, prelude::*, text_for_keystroke};
 
 use super::QuickActionBar;
@@ -31,7 +30,6 @@ impl QuickActionBar {
         {
             PreviewTarget::Svg(buffer)
         } else if let Some(editor) = editor
-            && cx.has_flag::<TabularDataPreviewFeatureFlag>()
             && TabularDataPreviewPane::is_tabular_data_file(&editor, cx)
         {
             PreviewTarget::TabularData(editor)
