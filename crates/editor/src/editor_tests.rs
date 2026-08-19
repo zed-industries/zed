@@ -43364,3 +43364,74 @@ async fn test_select_delimiters_expansion(cx: &mut TestAppContext) {
     cx.dispatch_action(SelectInsideDelimiters);
     cx.assert_editor_state("foo(«x, { a: 1 }ˇ»);");
 }
+
+#[gpui::test]
+async fn test_in_preview_key_context(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings: &mut SettingsContent| {
+                settings.preview_tabs.get_or_insert_default().enabled = Some(true);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        serde_json::json!({
+            "test.txt": "hello",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+    let worktree_id = workspace.update(cx, |workspace, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let editor = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path_preview(
+                (worktree_id, rel_path("test.txt")),
+                None,
+                true,
+                true,
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+
+    let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+    pane.read_with(cx, |pane, _| {
+        assert!(pane.is_active_preview_item(editor.entity_id()));
+    });
+
+    cx.focus(&editor);
+    editor.update_in(cx, |editor, window, cx| {
+        assert!(
+            editor.key_context(window, cx).contains("in_preview"),
+            "Expected 'in_preview' context when the editor is the pane's preview item"
+        );
+    });
+
+    pane.update(cx, |pane, _cx| {
+        pane.unpreview_item_if_preview(editor.entity_id());
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        assert!(
+            !editor.key_context(window, cx).contains("in_preview"),
+            "Expected no 'in_preview' context after the tab is unpreviewed"
+        );
+    });
+}
