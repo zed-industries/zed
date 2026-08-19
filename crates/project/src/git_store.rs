@@ -10467,7 +10467,7 @@ pub async fn resolve_git_worktree_to_main_repo(fs: &dyn Fs, path: &Path) -> Opti
         .canonicalize(&gitdir_abs.join(commondir_content.trim()))
         .await
         .ok()?;
-    Some(repo_identity_path(&common_dir).to_path_buf())
+    Some(repo_identity_path(&common_dir, PathStyle::local()).to_path_buf())
 }
 
 /// Validates that the resolved worktree directory is acceptable:
@@ -10587,12 +10587,12 @@ async fn remove_empty_managed_worktree_ancestors(fs: &dyn Fs, child_path: &Path,
 ///   meaningful project root.
 /// - Otherwise (e.g. `zed.git` for a bare clone), `common_dir` itself is
 ///   returned — it is already a meaningful on-disk path.
-pub fn repo_identity_path(common_dir: &Path) -> &Path {
-    let is_dot_entry = common_dir
-        .file_name()
-        .is_some_and(|n| n.to_string_lossy().starts_with('.'));
+pub fn repo_identity_path(common_dir: &Path, path_style: PathStyle) -> &Path {
+    let is_dot_entry = path_style
+        .file_name(common_dir)
+        .is_some_and(|n| n.starts_with('.'));
     if is_dot_entry {
-        common_dir.parent().unwrap_or(common_dir)
+        path_style.parent(common_dir).unwrap_or(common_dir)
     } else {
         common_dir
     }
