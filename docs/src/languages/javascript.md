@@ -107,7 +107,7 @@ You can also only execute a single ESLint rule when using `fixAll`:
 ```
 
 > **Note:** the other formatter you have configured will still run, after ESLint.
-> So if your language server or Prettier configuration don't format according to
+> So if your language server or Prettier configuration doesn't format according to
 > ESLint's rules, then they will overwrite what ESLint fixed and you end up with
 > errors.
 
