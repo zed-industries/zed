@@ -3634,6 +3634,156 @@ async fn test_autoscroll_relative(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_autoscroll_horizontally_long_selection_tracks_cursor(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let window = cx.window;
+    // Narrow viewport so a long line can't possibly fit on screen at once.
+    cx.simulate_window_resize(window, size(px(200.), px(300.)));
+
+    let long_line = "x".repeat(250);
+    cx.set_state(&format!("ˇ{long_line}"));
+
+    cx.update_editor(|editor, window, cx| {
+        assert_eq!(
+            editor.snapshot(window, cx).scroll_position(),
+            gpui::Point::new(0., 0.0)
+        );
+    });
+
+    // Simulate shift+end: extend the selection from column 0 to the end
+    // of the long line. Before the fix, this selection's span was wider
+    // than the viewport, which caused autoscroll_horizontally to bail
+    // out entirely and leave scroll_position.x at 0.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 0)..Point::new(0, 250)]);
+        });
+    });
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        let scroll_x = editor.snapshot(window, cx).scroll_position().x;
+        let visible_columns = editor.visible_column_count().unwrap();
+        let right_edge = scroll_x + visible_columns;
+        assert!(
+            scroll_x <= 250.,
+            "head must not be scrolled past, scroll_x = {scroll_x}"
+        );
+        assert!(
+            right_edge > 249.,
+            "head column must be at the right edge, visible columns end at {right_edge}"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_autoscroll_horizontally_padded_span_boundary_still_scrolls(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let window = cx.window;
+
+    // Long line so scroll_width stays large and never clamps target_right,
+    // isolating the case below. Viewport is tuned so a 5-char selection's
+    // raw glyph span fits, but its padded span (+ gutter margin + em_advance,
+    // the same padding the final scroll guard uses) does not.
+    cx.simulate_window_resize(window, size(px(146.), px(300.)));
+
+    let line = "x".repeat(300);
+    cx.set_state(&format!("ˇ{line}"));
+
+    cx.update_editor(|editor, window, cx| {
+        assert_eq!(
+            editor.snapshot(window, cx).scroll_position(),
+            gpui::Point::new(0., 0.0)
+        );
+    });
+
+    // Select a short span in the middle of the line (e.g. simulating a
+    // search match). Its raw glyph span fits the viewport, but the padded
+    // span does not, so the fix must still scroll to reveal it.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 100)..Point::new(0, 105)]);
+        });
+    });
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        let scroll_x = editor.snapshot(window, cx).scroll_position().x;
+        let visible_columns = editor.visible_column_count().unwrap();
+        let right_edge = scroll_x + visible_columns;
+        assert!(
+            scroll_x <= 105.,
+            "selection head must be visible, scroll_x = {scroll_x}"
+        );
+        assert!(
+            right_edge > 105.,
+            "selection head must be visible, visible columns end at {right_edge}"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_autoscroll_horizontally_fitting_selection_reveals_full_span(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let window = cx.window;
+
+    // Viewport wide enough to fit a short selection's full span at once.
+    cx.simulate_window_resize(window, size(px(200.), px(300.)));
+
+    let line = "x".repeat(300);
+    cx.set_state(&format!("ˇ{line}"));
+
+    // Scroll right first so the whole line is out of view.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 300)..Point::new(0, 300)]);
+        });
+    });
+    cx.run_until_parked();
+
+    let scrolled_right_x = cx.update_editor(|editor, window, cx| {
+        let scroll_x = editor.snapshot(window, cx).scroll_position().x;
+        assert!(
+            scroll_x > 200.,
+            "should be scrolled far right, scroll_x = {scroll_x}"
+        );
+        scroll_x
+    });
+
+    // Select a short span in the middle of the line (e.g. simulating a
+    // search match). Since it fits within the viewport, both edges of
+    // the selection should end up visible, not just the head.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 100)..Point::new(0, 105)]);
+        });
+    });
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        let scroll_x = editor.snapshot(window, cx).scroll_position().x;
+        let visible_columns = editor.visible_column_count().unwrap();
+        let right_edge = scroll_x + visible_columns;
+        assert!(
+            scroll_x < scrolled_right_x,
+            "must scroll left towards the selection, scroll_x = {scroll_x}"
+        );
+        assert!(
+            scroll_x <= 100.5,
+            "selection start must be visible, scroll_x = {scroll_x}"
+        );
+        assert!(
+            right_edge > 105.,
+            "selection end must be visible, visible columns end at {right_edge}"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_exclude_overscroll_margin_clamps_scroll_position(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     update_test_editor_settings(cx, &|settings| {
@@ -13361,6 +13511,56 @@ async fn test_autoindent_syntax_aware_applies_syntax_indent(cx: &mut TestAppCont
         // With SyntaxAware, tree-sitter adds indentation for being inside `{}`
         assert_eq!(editor.text(cx), "fn foo() {\n    \n}");
     });
+}
+
+#[gpui::test]
+async fn test_ime_composition_keeps_manual_indent(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.auto_indent = Some(settings::AutoIndentMode::SyntaxAware)
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                brackets: BracketPairConfig {
+                    pairs: vec![BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: false,
+                        surround: false,
+                        newline: false,
+                    }],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_indents_query(r#"(_ "{" "}" @end) @indent"#)
+        .unwrap(),
+    );
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    cx.set_state("fn foo() {ˇ\n}");
+    cx.condition(|editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Newline, window, cx);
+        // A manual indent here
+        editor.tab(&Tab, window, cx);
+    });
+    assert_eq!(cx.buffer_text(), "fn foo() {\n        \n}");
+
+    cx.update_editor(|editor, window, cx| {
+        editor.replace_and_mark_text_in_range(None, "n", None, window, cx);
+        editor.replace_and_mark_text_in_range(None, "nn", None, window, cx);
+    });
+
+    cx.run_until_parked();
+
+    assert_eq!(cx.buffer_text(), "fn foo() {\n        nn\n}");
 }
 
 #[gpui::test]
@@ -27071,12 +27271,9 @@ async fn test_merge_base_diff_hunks_are_read_only(cx: &mut TestAppContext) {
         .unwrap();
     assert_eq!(
         index_contents,
-        [(
-            ::git::repository::repo_path("file.rs"),
-            "head\n".to_string(),
-        )]
-        .into_iter()
-        .collect::<HashMap<_, _>>()
+        [(::git::repository::repo_path("file.rs"), b"head\n".to_vec(),)]
+            .into_iter()
+            .collect::<HashMap<_, _>>()
     );
 }
 

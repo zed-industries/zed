@@ -38,6 +38,11 @@ const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 
 const CREDENTIALS_KEY: &str = "https://chatgpt.com/backend-api/codex";
 const TOKEN_REFRESH_BUFFER_MS: u64 = 5 * 60 * 1000;
+/// Requests the complete account catalog without Codex CLI version filtering.
+///
+/// The backend treats this exact version as an ungated sentinel. Other versions
+/// are compared with each model's `minimal_client_version`.
+const UNGATED_MODEL_CATALOG_CLIENT_VERSION: &str = "0.0.0";
 // Codex applies the same bound because model discovery is a startup-critical request.
 const MODEL_CATALOG_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -88,21 +93,15 @@ impl std::fmt::Display for RefreshError {
 }
 
 impl State {
-    /// Creates the state and starts loading any persisted credentials.
+    /// Creates state and starts loading persisted credentials.
+    ///
+    /// Model discovery requests the ungated account catalog because host
+    /// application versions are unrelated to Codex CLI compatibility versions.
+    ///
     /// [`State::load_task`] resolves once the load finishes.
     pub fn new(
         http_client: Arc<dyn HttpClient>,
         credentials_provider: Arc<dyn CredentialsProvider>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        Self::new_with_client_version(http_client, credentials_provider, "0.0.0".into(), cx)
-    }
-
-    /// Creates the state with the client version reported during model discovery.
-    pub fn new_with_client_version(
-        http_client: Arc<dyn HttpClient>,
-        credentials_provider: Arc<dyn CredentialsProvider>,
-        client_version: SharedString,
         cx: &mut Context<Self>,
     ) -> Self {
         let load_task = cx
@@ -160,7 +159,7 @@ impl State {
             load_task: Some(load_task),
             credentials_provider,
             http_client,
-            client_version,
+            client_version: UNGATED_MODEL_CATALOG_CLIENT_VERSION.into(),
             available_models: ChatGptModel::all(),
             auth_generation: 0,
             model_catalog_generation: 0,

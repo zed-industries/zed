@@ -2,9 +2,9 @@ use std::time::Instant;
 
 use ui::{SpinnerLabel, div, prelude::*};
 
-use crate::CsvPreviewView;
+use crate::TabularDataPreviewPane;
 
-impl Render for CsvPreviewView {
+impl Render for TabularDataPreviewPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let row_height = window.pixel_snap(window.line_height());
@@ -41,7 +41,7 @@ impl Render for CsvPreviewView {
                                     .child("Loading…"),
                             )
                         })
-                        .when(!is_parsing, |div| div.child("No CSV content to display"))
+                        .when(!is_parsing, |div| div.child("No data to display"))
                         .into_any_element()
                 } else {
                     self.create_table(&self.column_widths.widths, cx)

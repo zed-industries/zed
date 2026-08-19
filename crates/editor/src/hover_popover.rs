@@ -407,15 +407,15 @@ fn show_hover(
                 let subscription =
                     this.update(cx, |_, cx| cx.observe(&markdown, |_, _, cx| cx.notify()))?;
 
-                let local_diagnostic = DiagnosticEntry {
-                    diagnostic: local_diagnostic.diagnostic.to_owned(),
-                    range: snapshot
+                let local_diagnostic = DiagnosticEntry::new(
+                    snapshot
                         .buffer_snapshot()
                         .anchor_before(local_diagnostic.range.start)
                         ..snapshot
                             .buffer_snapshot()
                             .anchor_after(local_diagnostic.range.end),
-                };
+                    local_diagnostic.diagnostic.to_owned(),
+                );
 
                 let scroll_handle = ScrollHandle::new();
 
