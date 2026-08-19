@@ -19,6 +19,20 @@ Terminal Threads also appear as entries in the sidebar alongside agent threads, 
 
 To focus the sidebar without toggling it, use {#kb multi_workspace::FocusWorkspaceSidebar}. To search your threads, press {#kb agents_sidebar::FocusSidebarFilter} while the sidebar is focused.
 
+The width of the sidebar defaults to 300px. To change that, open the Settings Editor and search for “Threads List Default Width” or add this to your `settings.json`:
+
+```json [settings]
+{
+  "agent": {
+    "threads": {
+      "default_width": 360
+    }
+  }
+}
+```
+
+Values are clamped between `200` and `800`. Resizing the sidebar takes precedence from then on. Double-click the divider to discard that and return to the configured width.
+
 ### Switching Threads {#switching-threads}
 
 Click any thread in the sidebar to switch to it. The Agent Panel updates to show that thread's conversation.
