@@ -2115,7 +2115,7 @@ impl WorkspaceDb {
 
     // Deletes workspace rows that can no longer be restored from. Remote workspaces whose
     // connection was removed, and (on Windows) workspaces pointing at WSL paths, are cleaned
-    // up immediately. Local workspaces with no valid paths on disk are kept for seven days
+    // up immediately. Local workspaces with no valid paths on disk are kept for 14 days
     // after going stale. Workspaces belonging to the current session or the last session are
     // always preserved so that an in-progress restore can rehydrate them.
     pub async fn garbage_collect_workspaces(
@@ -2123,6 +2123,7 @@ impl WorkspaceDb {
         fs: &dyn Fs,
         current_session_id: &str,
         last_session_id: Option<&str>,
+        delete_inaccessible_projects: bool,
     ) -> Result<()> {
         let remote_connections = self.remote_connections()?;
         let now = Utc::now();
@@ -2154,7 +2155,8 @@ impl WorkspaceDb {
             }
 
             if !Self::all_paths_exist_with_a_directory(paths.paths(), fs).await
-                && now - timestamp >= chrono::Duration::days(7)
+                && now - timestamp >= chrono::Duration::days(14)
+                && delete_inaccessible_projects
             {
                 workspaces_to_delete.push(id);
             }
@@ -3870,7 +3872,7 @@ mod tests {
         db.save_workspace(workspace_with(1, &[], empty_pane_group(), None))
             .await;
 
-        db.garbage_collect_workspaces(fs.as_ref(), "current", None)
+        db.garbage_collect_workspaces(fs.as_ref(), "current", None, true)
             .await
             .unwrap();
         assert!(
@@ -3890,7 +3892,7 @@ mod tests {
             .await
             .unwrap();
 
-        db.garbage_collect_workspaces(fs.as_ref(), "current", None)
+        db.garbage_collect_workspaces(fs.as_ref(), "current", None, true)
             .await
             .unwrap();
         assert!(
@@ -3917,7 +3919,7 @@ mod tests {
         ))
         .await;
 
-        db.garbage_collect_workspaces(fs.as_ref(), "current", None)
+        db.garbage_collect_workspaces(fs.as_ref(), "current", None, true)
             .await
             .unwrap();
         assert!(
@@ -3928,7 +3930,16 @@ mod tests {
         db.set_timestamp_for_tests(WorkspaceId(1), "2000-01-01 00:00:00".to_owned())
             .await
             .unwrap();
-        db.garbage_collect_workspaces(fs.as_ref(), "current", None)
+
+        db.garbage_collect_workspaces(fs.as_ref(), "current", None, false)
+            .await
+            .unwrap();
+        assert!(
+            db.workspace_for_id(WorkspaceId(1)).is_some(),
+            "a stale workspace must be kept if delete_inaccessible_projects settings false"
+        );
+
+        db.garbage_collect_workspaces(fs.as_ref(), "current", None, true)
             .await
             .unwrap();
         assert!(
@@ -3955,7 +3966,7 @@ mod tests {
                 .unwrap();
         }
 
-        db.garbage_collect_workspaces(fs.as_ref(), "current", Some("last"))
+        db.garbage_collect_workspaces(fs.as_ref(), "current", Some("last"), true)
             .await
             .unwrap();
 
@@ -3984,7 +3995,7 @@ mod tests {
             .await
             .unwrap();
 
-        db.garbage_collect_workspaces(fs.as_ref(), "current", None)
+        db.garbage_collect_workspaces(fs.as_ref(), "current", None, true)
             .await
             .unwrap();
         assert!(

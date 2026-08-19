@@ -292,6 +292,28 @@ fn general_page(cx: &App) -> SettingsPage {
                 })),
                 files: USER,
             }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Delete inaccessible projects",
+                description: "Automatically delete local projects that are no longer accessible (after 14 days).",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("delete_inaccessible_projects"),
+                    pick: |settings_content| {
+                        settings_content
+                            .workspace
+                            .delete_inaccessible_projects
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.workspace.delete_inaccessible_projects = value;
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    should_do_titlecase: Some(false),
+                    ..Default::default()
+                })),
+                files: USER,
+            }),
         ]
     }
     fn security_section() -> [SettingsPageItem; 2] {

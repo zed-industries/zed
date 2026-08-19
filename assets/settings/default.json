@@ -179,6 +179,10 @@
   //  2. Open projects in a new window
   //         "default_open_behavior": "new_window"
   "default_open_behavior": "existing_window",
+  // Delete local projects that are no longer accessible on disk.
+  //
+  // Default: true (auto delete after 14 days)
+  "delete_inaccessible_projects": true,
   // Whether to attempt to restore previous file's state when opening it again.
   // The state is stored per pane.
   // When disabled, defaults are applied instead of the state restoration.
