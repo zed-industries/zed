@@ -896,6 +896,7 @@ impl HttpTransport {
 
                 let mut data_buffer = Vec::new();
                 let mut in_message = false;
+                let mut received_response = false;
 
                 loop {
                     let line_result = futures::select! {
@@ -917,11 +918,20 @@ impl HttpTransport {
 
                                     // Filter out ping messages and empty data
                                     if !message.trim().is_empty() && message != "ping" {
+                                        let matches_request =
+                                            request_id.as_ref().is_some_and(|request_id| {
+                                                serde_json::from_str::<serde_json::Value>(&message)
+                                                    .ok()
+                                                    .is_some_and(|message| {
+                                                        message.get("id") == Some(request_id)
+                                                    })
+                                            });
                                         let message = param_headers.process_incoming(message);
                                         if let Err(e) = response_tx.send(message).await {
                                             log::error!("Failed to send SSE message: {}", e);
                                             break;
                                         }
+                                        received_response |= matches_request;
                                     }
                                     data_buffer.clear();
                                 }
@@ -960,10 +970,8 @@ impl HttpTransport {
                 // that ends without delivering the response loses the
                 // request, and the client must re-issue it as a new request.
                 // Resolve the request with an error promptly instead of
-                // letting it run into its timeout. If the response did
-                // arrive, no handler is waiting on this id anymore and the
-                // synthesized error is ignored.
-                if let Some(request_id) = request_id {
+                // letting it run into its timeout.
+                if !received_response && let Some(request_id) = request_id {
                     let error_response = serde_json::json!({
                         "jsonrpc": "2.0",
                         "id": request_id,
@@ -1969,6 +1977,50 @@ mod tests {
             serde_json::from_str(&receiver.next().await.unwrap()).unwrap();
         assert_eq!(second["id"], 3);
         assert_eq!(second["error"]["code"], -32603);
+    }
+
+    #[gpui::test]
+    async fn test_completed_sse_stream_does_not_synthesize_error(cx: &mut TestAppContext) {
+        let client = make_fake_http_client(|_req| {
+            Box::pin(async {
+                Ok(Response::builder()
+                    .status(200)
+                    .header("Content-Type", "text/event-stream")
+                    .body(AsyncBody::from(
+                        b"data: {\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"resultType\":\"complete\"}}\n\n".to_vec(),
+                    ))
+                    .unwrap())
+            })
+        });
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        );
+
+        transport
+            .send(
+                r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"t"}}"#
+                    .to_string(),
+            )
+            .await
+            .unwrap();
+
+        let mut receiver = transport.receive();
+        let response: serde_json::Value =
+            serde_json::from_str(&receiver.next().await.unwrap()).unwrap();
+        assert_eq!(response["id"], 3);
+        assert_eq!(response["result"]["resultType"], "complete");
+
+        cx.background_executor
+            .timer(std::time::Duration::from_millis(10))
+            .await;
+        assert!(
+            receiver.next().now_or_never().is_none(),
+            "completed response was followed by a synthesized stream error"
+        );
     }
 
     #[gpui::test]
