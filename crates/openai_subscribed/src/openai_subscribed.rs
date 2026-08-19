@@ -6,7 +6,7 @@ use futures::{FutureExt, StreamExt, future::BoxFuture, future::Shared};
 use gpui::{App, AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt as _,
-    http::{HeaderName, HeaderValue},
+    http::{HeaderName, HeaderValue, StatusCode, header::RETRY_AFTER},
 };
 use language_model::{
     CompactionResult, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -793,7 +793,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
                         &extra_headers,
                     )
                     .await
-                    .map_err(LanguageModelCompletionError::from)
+                    .map_err(chatgpt_completion_error)
                 })
                 .await?;
             let mapper = OpenAiResponseEventMapper::new(PROVIDER_ID);
@@ -907,7 +907,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
                         &extra_headers,
                     )
                     .await
-                    .map_err(LanguageModelCompletionError::from)
+                    .map_err(chatgpt_completion_error)
                 })
                 .await
         });
@@ -918,6 +918,54 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         }
         .boxed()
     }
+}
+
+fn chatgpt_completion_error(error: open_ai::RequestError) -> LanguageModelCompletionError {
+    match error {
+        open_ai::RequestError::HttpResponseError {
+            provider,
+            status_code,
+            body,
+            headers,
+        } if status_code == StatusCode::TOO_MANY_REQUESTS => {
+            let retry_after = headers
+                .get(RETRY_AFTER)
+                .and_then(|value| value.to_str().ok()?.parse::<u64>().ok())
+                .map(Duration::from_secs)
+                .or_else(|| chatgpt_retry_after(&body, SystemTime::now()));
+            LanguageModelCompletionError::from_http_status(
+                provider.into(),
+                status_code,
+                body,
+                retry_after,
+            )
+        }
+        error => error.into(),
+    }
+}
+
+#[derive(Deserialize)]
+struct ChatGptRateLimitResponse {
+    error: ChatGptRateLimitError,
+}
+
+#[derive(Deserialize)]
+struct ChatGptRateLimitError {
+    resets_in_seconds: Option<u64>,
+    resets_at: Option<u64>,
+}
+
+fn chatgpt_retry_after(body: &str, now: SystemTime) -> Option<Duration> {
+    let error = serde_json::from_str::<ChatGptRateLimitResponse>(body)
+        .ok()?
+        .error;
+    error
+        .resets_in_seconds
+        .map(Duration::from_secs)
+        .or_else(|| {
+            let resets_at = UNIX_EPOCH.checked_add(Duration::from_secs(error.resets_at?))?;
+            resets_at.duration_since(now).ok()
+        })
 }
 
 async fn get_fresh_credentials(
@@ -1323,6 +1371,54 @@ mod tests {
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn test_chatgpt_rate_limit_uses_reset_guidance() {
+        let error = chatgpt_completion_error(open_ai::RequestError::HttpResponseError {
+            provider: PROVIDER_NAME.to_string(),
+            status_code: StatusCode::TOO_MANY_REQUESTS,
+            body: r#"{"error":{"resets_in_seconds":73}}"#.to_string(),
+            headers: Box::default(),
+        });
+
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::RateLimitExceeded {
+                retry_after: Some(retry_after),
+                ..
+            } if retry_after == Duration::from_secs(73)
+        ));
+    }
+
+    #[test]
+    fn test_standard_retry_after_takes_precedence() {
+        let mut headers = http_client::http::HeaderMap::new();
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("11"));
+        let error = chatgpt_completion_error(open_ai::RequestError::HttpResponseError {
+            provider: PROVIDER_NAME.to_string(),
+            status_code: StatusCode::TOO_MANY_REQUESTS,
+            body: r#"{"error":{"resets_in_seconds":73}}"#.to_string(),
+            headers: Box::new(headers),
+        });
+
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::RateLimitExceeded {
+                retry_after: Some(retry_after),
+                ..
+            } if retry_after == Duration::from_secs(11)
+        ));
+    }
+
+    #[test]
+    fn test_chatgpt_rate_limit_falls_back_to_absolute_reset_time() {
+        let now = UNIX_EPOCH + Duration::from_secs(1_000);
+
+        assert_eq!(
+            chatgpt_retry_after(r#"{"error":{"resets_at":1073}}"#, now),
+            Some(Duration::from_secs(73))
+        );
+    }
 
     #[gpui::test]
     async fn test_concurrent_refresh_deduplicates(cx: &mut TestAppContext) {
