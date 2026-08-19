@@ -268,11 +268,15 @@ fn main() {
         return;
     }
 
-    // Set custom data directory.
-    let custom_data_dir = args
-        .user_data_dir
-        .as_deref()
-        .map(paths::set_custom_data_dir);
+    let restart_arguments = if let Some(directory) = args.user_data_dir.as_deref() {
+        let directory = paths::set_custom_data_dir(directory);
+        vec![
+            std::ffi::OsString::from("--user-data-dir"),
+            directory.as_os_str().to_owned(),
+        ]
+    } else {
+        Vec::new()
+    };
 
     #[cfg(target_os = "windows")]
     match util::get_zed_cli_path() {
@@ -341,15 +345,9 @@ fn main() {
     #[cfg(windows)]
     check_for_conpty_dll();
 
-    let restart_arguments = custom_data_dir.map(|path| {
-        vec![
-            std::ffi::OsString::from("--user-data-dir"),
-            path.as_os_str().to_owned(),
-        ]
-    });
     let app = build_application()
         .with_assets(Assets)
-        .with_restart_arguments(restart_arguments.unwrap_or_default());
+        .with_restart_arguments(restart_arguments);
 
     let app_db = db::AppDatabase::new();
     let system_id = app.background_executor().spawn(system_id());
