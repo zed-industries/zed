@@ -121,6 +121,32 @@ To use a fixed reset width, disable flexible sizing in the Settings Editor. Or a
 
 See [Agent Panel visual customization](../visual-customization.md#agent-panel) for other panel appearance settings.
 
+### Threads List Default Width {#agent-threads-default-width}
+
+- Description: Default width in pixels of the [Threads Sidebar](../ai/parallel-agents.md#threads-sidebar).
+- Setting: `agent.threads.default_width`
+- Default: `300`
+
+**Options**
+
+Numbers from `200` to `800` pixels (inclusive). Values outside this range are clamped to the nearest limit.
+
+Open the Settings Editor and search for “Threads List Default Width”. Or add this to your `settings.json`:
+
+```json [settings]
+{
+  "agent": {
+    "threads": {
+      "default_width": 360
+    }
+  }
+}
+```
+
+If you haven’t manually resized the sidebar, its width follows changes to this setting immediately. A manually resized width takes precedence until you double-click the divider to reset it. After resetting, the sidebar follows this setting again.
+
+Widths saved by older versions of Zed are preserved if they differ from the previous default of 300 pixels. A saved width of 300 pixels uses this setting instead.
+
 ## Agent UI Font Size
 
 - Description: The font size for text in the agent panel. Inherits the UI font size if unset.
