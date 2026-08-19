@@ -505,10 +505,6 @@ impl Platform for WindowsPlatform {
         // borrow of the `AppCell` ending up with a double borrow panic
         self.foreground_executor
             .spawn(async move {
-                #[allow(
-                    clippy::disallowed_methods,
-                    reason = "We are restarting ourselves, using std command thus is fine"
-                )]
                 let mut command = new_std_command(get_windows_system_shell());
                 let arguments = encode_restart_arguments(&arguments);
                 command
@@ -517,6 +513,10 @@ impl Platform for WindowsPlatform {
                     .env("ZED_RESTART_PID", pid.to_string())
                     .env("ZED_RESTART_EXECUTABLE", app_path)
                     .env("ZED_RESTART_ARGUMENTS", arguments);
+                #[allow(
+                    clippy::disallowed_methods,
+                    reason = "We are restarting ourselves, using std command thus is fine"
+                )]
                 let restart_process = command.spawn();
 
                 match restart_process {
