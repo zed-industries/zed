@@ -182,7 +182,7 @@ pub(crate) fn to_esc_str(
             "f2" => Some(format!("\x1b[1;{}Q", modifier_code)),
             "f3" => Some(format!("\x1b[1;{}R", modifier_code)),
             "f4" => Some(format!("\x1b[1;{}S", modifier_code)),
-            "F5" => Some(format!("\x1b[15;{}~", modifier_code)),
+            "f5" => Some(format!("\x1b[15;{}~", modifier_code)),
             "f6" => Some(format!("\x1b[17;{}~", modifier_code)),
             "f7" => Some(format!("\x1b[18;{}~", modifier_code)),
             "f8" => Some(format!("\x1b[19;{}~", modifier_code)),
@@ -210,18 +210,18 @@ pub(crate) fn to_esc_str(
         }
     }
 
-    if !cfg!(target_os = "macos") || option_as_meta {
-        let is_alt_lowercase_ascii =
-            modifiers == TerminalModifiers::Alt && keystroke.key.is_ascii();
-        let is_alt_uppercase_ascii =
-            keystroke.modifiers.alt && keystroke.modifiers.shift && keystroke.key.is_ascii();
-        if is_alt_lowercase_ascii || is_alt_uppercase_ascii {
-            let key = if is_alt_uppercase_ascii {
-                &keystroke.key.to_ascii_uppercase()
-            } else {
-                &keystroke.key
-            };
-            return Some(Cow::Owned(format!("\x1b{}", key)));
+    // Handling alt keys. These work for single ASCII characters.
+    if (!cfg!(target_os = "macos") || option_as_meta)
+        && keystroke.modifiers.alt
+        && keystroke.key.is_ascii()
+        && keystroke.key.len() == 1
+    {
+        let key = keystroke.key.chars().next().unwrap();
+
+        if modifiers == TerminalModifiers::Alt {
+            return Some(Cow::Owned(format!("\x1b{key}")));
+        } else if keystroke.modifiers.shift {
+            return Some(Cow::Owned(format!("\x1b{}", key.to_ascii_uppercase())));
         }
     }
 
@@ -362,7 +362,7 @@ mod test {
         }
 
         let gpui_keys = [
-            "up", "down", "right", "left", "f1", "f2", "f3", "f4", "F5", "f6", "f7", "f8", "f9",
+            "up", "down", "right", "left", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9",
             "f10", "f11", "f12", "f13", "f14", "f15", "f16", "f17", "f18", "f19", "f20", "insert",
             "pageup", "pagedown", "end", "home",
         ];
