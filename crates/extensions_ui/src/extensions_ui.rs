@@ -533,9 +533,6 @@ pub struct ExtensionsPage {
     list: UniformListScrollHandle,
     fetch_state: ExtensionFetchState,
     fetch_generation: usize,
-    // Used to mark installed extensions as `NoLongerPublished`. See the comment on
-    // `InstalledExtensionMetadata` for why we cannot currently determine that properly.
-    // published_extension_ids: Option<Arc<BTreeSet<Arc<str>>>>,
     filter: ExtensionFilter,
     extension_entries: Vec<ExtensionEntry>,
     filtered_extension_indices: Vec<usize>,
@@ -598,7 +595,6 @@ impl ExtensionsPage {
                 list: scroll_handle,
                 fetch_state: ExtensionFetchState::Fetching,
                 fetch_generation: 0,
-                // published_extension_ids: None,
                 filter: ExtensionFilter::All,
                 extension_entries: Vec::new(),
                 filtered_extension_indices: Vec::new(),
@@ -701,17 +697,6 @@ impl ExtensionsPage {
         if installed_extension.dev {
             ExtensionEntry::Dev(installed_extension.manifest.clone())
         } else {
-            // We cannot currently determine whether an installed extension is no longer
-            // published upstream (see the comment on `InstalledExtensionMetadata`), so we
-            // always treat its remote metadata as unknown here.
-            //
-            // let metadata = if published_extension_ids.is_some_and(|published_extension_ids| {
-            //     !published_extension_ids.contains(extension_id)
-            // }) {
-            //     InstalledExtensionMetadata::NoLongerPublished
-            // } else {
-            //     InstalledExtensionMetadata::Unknown
-            // };
             ExtensionEntry::Installed {
                 manifest: installed_extension.manifest.clone(),
                 metadata: InstalledExtensionMetadata::Unknown,
@@ -829,17 +814,6 @@ impl ExtensionsPage {
                             .into_iter()
                             .map(Arc::new)
                             .collect::<Vec<_>>();
-                        // We cannot currently determine which extensions are still published
-                        // upstream (see the comment on `InstalledExtensionMetadata`).
-                        //
-                        // if fetches_all_extensions {
-                        //     this.published_extension_ids = Some(Arc::new(
-                        //         remote_extensions
-                        //             .iter()
-                        //             .map(|extension| extension.id.clone())
-                        //             .collect(),
-                        //     ));
-                        // }
 
                         let mut matched_remote_extension_ids = BTreeSet::new();
                         let mut extension_entries = Vec::new();
