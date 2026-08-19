@@ -142,6 +142,10 @@ pub struct ProtectedResourceMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthServerMetadata {
     pub issuer: Url,
+    /// The issuer identifier exactly as reported by validated authorization
+    /// server metadata. RFC 9207 requires comparing this value without URL
+    /// normalization.
+    pub issuer_identifier: String,
     pub authorization_endpoint: Url,
     pub token_endpoint: Url,
     pub registration_endpoint: Option<Url>,
@@ -747,7 +751,7 @@ pub fn dcr_registration_body(
 /// authorization endpoint the flow started at; a missing one is accepted
 /// only when the authorization server does not advertise RFC 9207 support.
 pub fn validate_issuer(callback_iss: Option<&str>, metadata: &AuthServerMetadata) -> Result<()> {
-    let issuer = &metadata.issuer;
+    let issuer = &metadata.issuer_identifier;
     let Some(callback_iss) = callback_iss else {
         // RFC 9207: a server that advertises issuer identification must
         // send `iss` on every authorization response — its absence is how a
@@ -759,10 +763,8 @@ pub fn validate_issuer(callback_iss: Option<&str>, metadata: &AuthServerMetadata
         );
         return Ok(());
     };
-    let callback_iss =
-        Url::parse(callback_iss).context("invalid 'iss' parameter in OAuth callback")?;
     anyhow::ensure!(
-        callback_iss == *issuer,
+        callback_iss == issuer,
         "OAuth callback 'iss' parameter ({callback_iss}) does not match the authorization \
          server ({issuer}); refusing to redeem the authorization code"
     );
@@ -848,7 +850,11 @@ pub async fn fetch_auth_server_metadata(
     for url in &candidate_urls {
         match fetch_json::<AuthServerMetadataResponse>(http_client, url).await {
             Ok(response) => {
-                let reported_issuer = response.issuer.unwrap_or_else(|| issuer.clone());
+                let issuer_identifier = response
+                    .issuer
+                    .unwrap_or_else(|| issuer.as_str().to_string());
+                let reported_issuer = Url::parse(&issuer_identifier)
+                    .context("invalid issuer in authorization server metadata")?;
 
                 if reported_issuer != *issuer {
                     bail!(
@@ -860,6 +866,7 @@ pub async fn fetch_auth_server_metadata(
 
                 return Ok(AuthServerMetadata {
                     issuer: reported_issuer,
+                    issuer_identifier,
                     grant_types_supported: response.grant_types_supported,
                     authorization_endpoint: response
                         .authorization_endpoint
@@ -1193,7 +1200,7 @@ struct ProtectedResourceMetadataResponse {
 #[derive(Debug, Deserialize)]
 struct AuthServerMetadataResponse {
     #[serde(default)]
-    issuer: Option<Url>,
+    issuer: Option<String>,
     #[serde(default)]
     authorization_endpoint: Option<Url>,
     #[serde(default)]
@@ -1704,6 +1711,7 @@ mod tests {
     fn test_registration_strategy_prefers_cimd() {
         let metadata = AuthServerMetadata {
             issuer: Url::parse("https://auth.example.com").unwrap(),
+            issuer_identifier: "https://auth.example.com".to_string(),
             authorization_endpoint: Url::parse("https://auth.example.com/authorize").unwrap(),
             token_endpoint: Url::parse("https://auth.example.com/token").unwrap(),
             registration_endpoint: Some(Url::parse("https://auth.example.com/register").unwrap()),
@@ -1726,6 +1734,7 @@ mod tests {
         let reg_endpoint = Url::parse("https://auth.example.com/register").unwrap();
         let metadata = AuthServerMetadata {
             issuer: Url::parse("https://auth.example.com").unwrap(),
+            issuer_identifier: "https://auth.example.com".to_string(),
             authorization_endpoint: Url::parse("https://auth.example.com/authorize").unwrap(),
             token_endpoint: Url::parse("https://auth.example.com/token").unwrap(),
             registration_endpoint: Some(reg_endpoint.clone()),
@@ -1747,6 +1756,7 @@ mod tests {
     fn test_registration_strategy_unavailable() {
         let metadata = AuthServerMetadata {
             issuer: Url::parse("https://auth.example.com").unwrap(),
+            issuer_identifier: "https://auth.example.com".to_string(),
             authorization_endpoint: Url::parse("https://auth.example.com/authorize").unwrap(),
             token_endpoint: Url::parse("https://auth.example.com/token").unwrap(),
             registration_endpoint: None,
@@ -1805,6 +1815,7 @@ mod tests {
     fn test_build_authorization_url() {
         let metadata = AuthServerMetadata {
             issuer: Url::parse("https://auth.example.com").unwrap(),
+            issuer_identifier: "https://auth.example.com".to_string(),
             authorization_endpoint: Url::parse("https://auth.example.com/authorize").unwrap(),
             token_endpoint: Url::parse("https://auth.example.com/token").unwrap(),
             registration_endpoint: None,
@@ -1849,6 +1860,7 @@ mod tests {
     fn test_build_authorization_url_omits_empty_scope() {
         let metadata = AuthServerMetadata {
             issuer: Url::parse("https://auth.example.com").unwrap(),
+            issuer_identifier: "https://auth.example.com".to_string(),
             authorization_endpoint: Url::parse("https://auth.example.com/authorize").unwrap(),
             token_endpoint: Url::parse("https://auth.example.com/token").unwrap(),
             registration_endpoint: None,
@@ -1961,6 +1973,7 @@ mod tests {
     fn test_validate_issuer() {
         let metadata = |iss_supported| AuthServerMetadata {
             issuer: Url::parse("https://auth.example.com").unwrap(),
+            issuer_identifier: "https://auth.example.com".to_string(),
             authorization_endpoint: Url::parse("https://auth.example.com/authorize").unwrap(),
             token_endpoint: Url::parse("https://auth.example.com/token").unwrap(),
             registration_endpoint: None,
@@ -1978,8 +1991,10 @@ mod tests {
         validate_issuer(None, &metadata(true)).unwrap_err();
 
         validate_issuer(Some("https://auth.example.com"), &metadata(true)).unwrap();
-        // URL normalization differences don't cause false mismatches.
-        validate_issuer(Some("https://auth.example.com/"), &metadata(true)).unwrap();
+        // RFC 9207 requires simple string comparison without URL
+        // normalization.
+        validate_issuer(Some("https://auth.example.com/"), &metadata(true)).unwrap_err();
+        validate_issuer(Some("HTTPS://auth.example.com"), &metadata(true)).unwrap_err();
         // A different issuer (mix-up attack) is rejected.
         validate_issuer(Some("https://attacker.example.com"), &metadata(false)).unwrap_err();
         validate_issuer(Some("not a url"), &metadata(false)).unwrap_err();
@@ -2261,6 +2276,7 @@ mod tests {
             let metadata = fetch_auth_server_metadata(&client, &issuer).await.unwrap();
 
             assert_eq!(metadata.issuer.as_str(), "https://auth.example.com/");
+            assert_eq!(metadata.issuer_identifier, "https://auth.example.com");
             assert_eq!(
                 metadata.authorization_endpoint.as_str(),
                 "https://auth.example.com/authorize"
@@ -2538,6 +2554,7 @@ mod tests {
 
             let metadata = AuthServerMetadata {
                 issuer: Url::parse("https://auth.example.com").unwrap(),
+                issuer_identifier: "https://auth.example.com".to_string(),
                 authorization_endpoint: Url::parse("https://auth.example.com/authorize").unwrap(),
                 token_endpoint: Url::parse("https://auth.example.com/token").unwrap(),
                 registration_endpoint: None,
@@ -2616,6 +2633,7 @@ mod tests {
 
             let metadata = AuthServerMetadata {
                 issuer: Url::parse("https://auth.example.com").unwrap(),
+                issuer_identifier: "https://auth.example.com".to_string(),
                 authorization_endpoint: Url::parse("https://auth.example.com/authorize").unwrap(),
                 token_endpoint: Url::parse("https://auth.example.com/token").unwrap(),
                 registration_endpoint: None,
