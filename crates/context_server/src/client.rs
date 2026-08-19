@@ -770,7 +770,9 @@ mod tests {
             .await
             .unwrap_err();
 
-        let error = err.downcast_ref::<Error>().expect("should be a typed Error");
+        let error = err
+            .downcast_ref::<Error>()
+            .expect("should be a typed Error");
         assert_eq!(error.code, -32022);
         assert_eq!(error.message, "Unsupported protocol version");
         assert_eq!(

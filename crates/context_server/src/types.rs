@@ -118,12 +118,7 @@ pub mod requests {
         ListResourceTemplatesResponse
     );
     request!("roots/list", ListRoots, (), ListRootsResponse);
-    request!(
-        "server/discover",
-        ServerDiscover,
-        (),
-        DiscoverResponse
-    );
+    request!("server/discover", ServerDiscover, (), DiscoverResponse);
     request!(
         "subscriptions/listen",
         SubscriptionsListen,

@@ -219,9 +219,9 @@ struct ParamHeader {
 fn collect_param_headers(input_schema: &serde_json::Value) -> Result<Vec<ParamHeader>, String> {
     fn is_token(value: &str) -> bool {
         !value.is_empty()
-            && value.bytes().all(|byte| {
-                byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte)
-            })
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte))
     }
 
     /// Count `x-mcp-header` keys in schema-keyword position. Keys under a
@@ -231,20 +231,17 @@ fn collect_param_headers(input_schema: &serde_json::Value) -> Result<Vec<ParamHe
     fn count_annotations(value: &serde_json::Value) -> usize {
         const DATA_VALUED_KEYWORDS: &[&str] = &["default", "examples", "const", "enum"];
         match value {
-            serde_json::Value::Object(object) => {
-                object.iter().fold(0, |count, (key, child)| {
-                    if key == "properties" {
-                        if let Some(properties) = child.as_object() {
-                            return count
-                                + properties.values().map(count_annotations).sum::<usize>();
-                        }
+            serde_json::Value::Object(object) => object.iter().fold(0, |count, (key, child)| {
+                if key == "properties" {
+                    if let Some(properties) = child.as_object() {
+                        return count + properties.values().map(count_annotations).sum::<usize>();
                     }
-                    if DATA_VALUED_KEYWORDS.contains(&key.as_str()) {
-                        return count;
-                    }
-                    count + usize::from(key == "x-mcp-header") + count_annotations(child)
-                })
-            }
+                }
+                if DATA_VALUED_KEYWORDS.contains(&key.as_str()) {
+                    return count;
+                }
+                count + usize::from(key == "x-mcp-header") + count_annotations(child)
+            }),
             serde_json::Value::Array(array) => array.iter().map(count_annotations).sum(),
             _ => 0,
         }
@@ -255,8 +252,7 @@ fn collect_param_headers(input_schema: &serde_json::Value) -> Result<Vec<ParamHe
         path: &mut Vec<String>,
         found: &mut Vec<ParamHeader>,
     ) -> Result<(), String> {
-        let Some(properties) = schema.get("properties").and_then(|value| value.as_object())
-        else {
+        let Some(properties) = schema.get("properties").and_then(|value| value.as_object()) else {
             return Ok(());
         };
         for (key, property) in properties {
@@ -413,7 +409,10 @@ impl ParamHeaderState {
             }
         });
         let mut inner = self.inner.lock();
-        if inner.applied_sequence.is_none_or(|applied| sequence > applied) {
+        if inner
+            .applied_sequence
+            .is_none_or(|applied| sequence > applied)
+        {
             inner.applied_sequence = Some(sequence);
             inner.headers_by_tool = headers_by_tool;
         }
@@ -1787,7 +1786,9 @@ mod tests {
                 if request_count.fetch_add(1, Ordering::SeqCst) == 0 {
                     // First request: answered, leaving a stale response in
                     // the channel.
-                    Box::pin(async { json_response(200, r#"{"jsonrpc":"2.0","id":0,"result":{}}"#) })
+                    Box::pin(async {
+                        json_response(200, r#"{"jsonrpc":"2.0","id":0,"result":{}}"#)
+                    })
                 } else {
                     // Second request: never answered.
                     Box::pin(std::future::pending())
@@ -1915,7 +1916,10 @@ mod tests {
         );
 
         transport
-            .send(r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"t"}}"#.to_string())
+            .send(
+                r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"t"}}"#
+                    .to_string(),
+            )
             .await
             .unwrap();
 
@@ -2015,8 +2019,7 @@ mod tests {
         );
         transport.set_protocol_version("2025-11-25");
 
-        let legacy_request =
-            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#.to_string();
+        let legacy_request = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#.to_string();
         transport.send(legacy_request.clone()).await.unwrap();
         transport.send(legacy_request).await.unwrap();
 
@@ -2026,18 +2029,12 @@ mod tests {
         assert_eq!(headers[0], (None, Some("2025-11-25".into()), None));
         assert_eq!(
             headers[1],
-            (
-                Some("session-123".into()),
-                Some("2025-11-25".into()),
-                None,
-            )
+            (Some("session-123".into()), Some("2025-11-25".into()), None,)
         );
     }
 
     #[gpui::test]
-    async fn test_json_rpc_error_body_on_http_400_reaches_response_stream(
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_json_rpc_error_body_on_http_400_reaches_response_stream(cx: &mut TestAppContext) {
         let error_body = r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32022,"message":"Unsupported protocol version","data":{"supported":["2026-07-28"]}}}"#;
         let client = make_fake_http_client({
             let error_body = error_body.to_string();

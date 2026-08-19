@@ -56,9 +56,7 @@ pub fn create_modern_fake_transport_with_capabilities(
 
 fn create_initialize_response(server_name: String) -> InitializeResponse {
     InitializeResponse {
-        protocol_version: ProtocolVersion(
-            crate::types::LATEST_LEGACY_PROTOCOL_VERSION.to_string(),
-        ),
+        protocol_version: ProtocolVersion(crate::types::LATEST_LEGACY_PROTOCOL_VERSION.to_string()),
         server_info: Implementation {
             name: server_name,
             title: None,

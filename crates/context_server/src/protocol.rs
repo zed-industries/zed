@@ -499,9 +499,7 @@ mod tests {
     fn messages_with_method(messages: &[Value], method: &str) -> Vec<Value> {
         messages
             .iter()
-            .filter(|message| {
-                message.get("method").and_then(|m| m.as_str()) == Some(method)
-            })
+            .filter(|message| message.get("method").and_then(|m| m.as_str()) == Some(method))
             .cloned()
             .collect()
     }
@@ -541,10 +539,7 @@ mod tests {
             Some("modern-server")
         );
 
-        protocol
-            .request::<requests::ListTools>(())
-            .await
-            .unwrap();
+        protocol.request::<requests::ListTools>(()).await.unwrap();
 
         let messages = received_messages.lock().clone();
         // No legacy handshake took place.
@@ -591,10 +586,7 @@ mod tests {
             Some("legacy-server")
         );
 
-        protocol
-            .request::<requests::ListTools>(())
-            .await
-            .unwrap();
+        protocol.request::<requests::ListTools>(()).await.unwrap();
 
         let messages = received_messages.lock().clone();
         // The probe was rejected, and the legacy handshake ran.
@@ -613,9 +605,11 @@ mod tests {
         // Legacy requests are not stamped with modern `_meta`.
         let list_tools = messages_with_method(&messages, "tools/list");
         assert_eq!(list_tools.len(), 1);
-        assert!(list_tools[0].get("params").is_none_or(|params| {
-            params.get("_meta").is_none()
-        }));
+        assert!(
+            list_tools[0]
+                .get("params")
+                .is_none_or(|params| { params.get("_meta").is_none() })
+        );
     }
 
     #[gpui::test]
@@ -1071,11 +1065,15 @@ mod tests {
 
     #[gpui::test]
     async fn test_dropping_a_request_cancels_it(cx: &mut TestAppContext) {
-        let transport = Arc::new(create_modern_fake_transport("modern-server", cx.executor())
-            .on_raw_request(requests::CallTool::METHOD, |_params| async {
-                // Never answers.
-                Ok(None)
-            }));
+        let transport = Arc::new(
+            create_modern_fake_transport("modern-server", cx.executor()).on_raw_request(
+                requests::CallTool::METHOD,
+                |_params| async {
+                    // Never answers.
+                    Ok(None)
+                },
+            ),
+        );
         let received_messages = transport.received_messages();
 
         let client = Client::new(
