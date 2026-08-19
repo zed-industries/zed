@@ -43,9 +43,17 @@ impl Editor {
                 else {
                     return false;
                 };
-                LanguageSettings::for_buffer(buffer.read(cx), cx).colorize_brackets
+                let buffer = buffer.read(cx);
+                buffer
+                    .language()
+                    .is_some_and(|language| language.grammar().is_some())
+                    && LanguageSettings::for_buffer(buffer, cx).colorize_brackets
             })
             .collect();
+
+        if !invalidate && (accents.is_empty() || excerpt_data.is_empty()) {
+            return;
+        }
 
         let mut fetched_tree_sitter_chunks = excerpt_data
             .iter()
@@ -1792,8 +1800,8 @@ mod foo «1{
                         theme.to_string(),
                         ThemeStyleContent {
                             accents: vec![
-                                AccentContent(Some("#ff0000".to_string())),
-                                AccentContent(Some("#0000ff".to_string())),
+                                AccentContent(Some("#ff0000".into())),
+                                AccentContent(Some("#0000ff".into())),
                             ],
                             ..ThemeStyleContent::default()
                         },
