@@ -567,45 +567,21 @@ impl MultiWorkspace {
                     })?
                     .await?;
                 if !should_continue {
+                    this.update(cx, |multi_workspace, cx| {
+                        for workspace in multi_workspace.workspaces() {
+                            workspace.update(cx, |workspace, _| {
+                                workspace.removing = false;
+                            });
+                        }
+                    })?;
                     return anyhow::Ok(());
                 }
             }
 
-            let will_quit = cx.update(|_window, cx| {
-                let workspace_windows = cx
-                    .windows()
-                    .into_iter()
-                    .filter(|w| w.downcast::<MultiWorkspace>().is_some())
-                    .collect::<Vec<_>>();
-                if workspace_windows.len() == 1 {
-                    #[cfg(target_os = "macos")]
-                    {
-                        crate::WorkspaceSettings::get_global(cx)
-                            .on_last_window_closed
-                            .is_quit_app()
-                    }
-                    #[cfg(not(target_os = "macos"))]
-                    {
-                        true
-                    }
-                } else {
-                    false
-                }
+            let flush_tasks = this.update_in(cx, |multi_workspace, window, cx| {
+                multi_workspace.flush_pending_serialization(window, cx)
             })?;
-
-            if will_quit {
-                let mut flush_tasks = Vec::new();
-                this.update_in(cx, |multi_workspace, window, cx| {
-                    for workspace in multi_workspace.workspaces() {
-                        flush_tasks.push(workspace.update(cx, |workspace, cx| {
-                            workspace.flush_serialization(window, cx)
-                        }));
-                    }
-                    flush_tasks.append(&mut multi_workspace.take_pending_removal_tasks());
-                    flush_tasks.push(multi_workspace.flush_serialization());
-                })?;
-                futures::future::join_all(flush_tasks).await;
-            }
+            futures::future::join_all(flush_tasks).await;
 
             cx.update(|window, _cx| {
                 window.remove_window();
@@ -1513,6 +1489,22 @@ impl MultiWorkspace {
     /// complete before the process exits.
     pub fn flush_serialization(&mut self) -> Task<()> {
         self._serialize_task.take().unwrap_or(Task::ready(()))
+    }
+
+    pub fn flush_pending_serialization(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<Task<()>> {
+        let mut tasks = Vec::new();
+        for workspace in self.workspaces() {
+            tasks.push(workspace.update(cx, |workspace, cx| {
+                workspace.flush_serialization(window, cx)
+            }));
+        }
+        tasks.append(&mut self.take_pending_removal_tasks());
+        tasks.push(self.flush_serialization());
+        tasks
     }
 
     fn app_will_quit(&mut self, _cx: &mut Context<Self>) -> impl Future<Output = ()> + use<> {
