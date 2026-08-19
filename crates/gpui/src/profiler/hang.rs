@@ -248,8 +248,8 @@ impl SerializedHangIncident {
             },
             busy_fraction: (busy_fraction * 1000.0).round() / 1000.0,
             event_count: snapshot.events.len(),
-            small_poll_count: snapshot.small_polls.count,
-            small_poll_total_ms: as_millis(snapshot.small_polls.total),
+            small_poll_count: snapshot.small_poll_summary().count,
+            small_poll_total_ms: as_millis(snapshot.small_poll_summary().total),
             dropped_events: snapshot.dropped_events,
             contributors: incident
                 .contributors
@@ -377,7 +377,7 @@ mod tests {
     use super::super::journal::{
         FRAME_DEADLINE, ForegroundEvent, ForegroundJournalEntry, FrameDeadline, FrameSnapshot,
         FrameStateChange, InputTiming, IntervalBoundary, PollSummary, PresentedFrame,
-        install_foreground_journal, record_present,
+        SmallPollFlush, install_foreground_journal, record_present,
     };
     use super::{HangDetector, HangIncident, SerializedHangContributor, SerializedHangIncident};
 
@@ -457,10 +457,14 @@ mod tests {
                 }),
                 ForegroundEvent::Present(presentation),
             ],
-            small_polls: PollSummary {
-                count: 2,
-                total: Duration::from_millis(1),
-            },
+            small_polls: vec![SmallPollFlush {
+                summary: PollSummary {
+                    count: 2,
+                    total: Duration::from_millis(1),
+                },
+                since: at(105),
+                until: at(145),
+            }],
             dropped_events: 0,
         };
 
@@ -506,7 +510,7 @@ mod tests {
             interval_start: at(200),
             boundary: IntervalBoundary::Idle { ended_at: at(260) },
             events: vec![task_poll_event(at(200), at(260))],
-            small_polls: PollSummary::default(),
+            small_polls: Vec::new(),
             dropped_events: 0,
         };
         let incident = HangIncident::detect(idle, HANG_THRESHOLD).expect("has contributors");
@@ -528,7 +532,7 @@ mod tests {
                 ended_at: at(400) + FRAME_DEADLINE,
             }),
             events: vec![task_poll_event(at(500), at(700))],
-            small_polls: PollSummary::default(),
+            small_polls: Vec::new(),
             dropped_events: 0,
         };
         let incident = HangIncident::detect(deadline, HANG_THRESHOLD).expect("has contributors");
@@ -554,7 +558,7 @@ mod tests {
             interval_start: at(500),
             boundary: IntervalBoundary::Idle { ended_at: at(600) },
             events: vec![task_poll_event(at(500), at(600))],
-            small_polls: PollSummary::default(),
+            small_polls: Vec::new(),
             dropped_events: 0,
         };
         let incident = HangIncident::detect(snapshot, HANG_THRESHOLD).expect("has contributors");
@@ -608,11 +612,10 @@ mod tests {
         assert_eq!(detector.first_present_at(), Some(latched));
     }
 
-    /// FAILS today: `occupancy_within` adds folded small-poll time wholesale
-    /// even when those polls ran outside the incident's active window
-    /// (PR #62779 review finding 5), inflating `busy_fraction` for narrow
-    /// windows. The only work inside the 100ms active window here is the
-    /// 50ms poll, so the correct busy fraction is 0.5.
+    /// The only work inside the 100ms active window here is the 50ms poll,
+    /// so the busy fraction is 0.5: the folded polls' flush span lies
+    /// entirely before the window and must contribute nothing to it
+    /// (PR #62779 review finding 5).
     #[test]
     fn busy_fraction_excludes_small_polls_outside_the_active_window() {
         let startup = scheduler::Instant::now();
@@ -623,10 +626,14 @@ mod tests {
             events: vec![task_poll_event(at(900), at(950))],
             // Folded polls that ran during at(0)..at(800), long before the
             // active window opens at the contributor's start.
-            small_polls: PollSummary {
-                count: 500,
-                total: Duration::from_millis(400),
-            },
+            small_polls: vec![SmallPollFlush {
+                summary: PollSummary {
+                    count: 500,
+                    total: Duration::from_millis(400),
+                },
+                since: at(0),
+                until: at(800),
+            }],
             dropped_events: 0,
         };
 

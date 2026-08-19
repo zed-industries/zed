@@ -123,10 +123,6 @@ pub struct PollSummary {
 }
 
 impl PollSummary {
-    fn is_empty(&self) -> bool {
-        self.count == 0
-    }
-
     fn add(&mut self, other: Self) {
         self.count += other.count;
         self.total += other.total;
@@ -267,11 +263,13 @@ pub struct FrameSnapshot {
     /// The semantic event that completed the interval, including its metadata.
     pub boundary: IntervalBoundary,
     /// Foreground work recorded during the interval, in completion order.
-    /// [`ForegroundEvent::SmallPolls`] entries are folded into `small_polls`
-    /// instead of appearing here.
+    /// [`ForegroundEvent::SmallPolls`] entries are collected into
+    /// `small_polls` instead of appearing here.
     pub events: Vec<ForegroundEvent>,
-    /// Aggregate of task polls below [`TASK_POLL_FLOOR`].
-    pub small_polls: PollSummary,
+    /// Span-tagged aggregates of task polls below [`TASK_POLL_FLOOR`]. Spans
+    /// are retained so occupancy can apportion folded poll time to reporting
+    /// windows narrower than the interval.
+    pub small_polls: Vec<SmallPollFlush>,
     /// Events lost to the interval's event cap, plus ring losses reported
     /// via [`IntervalSealer::note_lost`].
     pub dropped_events: u64,
@@ -281,6 +279,16 @@ impl FrameSnapshot {
     /// When the interval ended.
     pub fn interval_end(&self) -> Instant {
         self.boundary.end_time()
+    }
+
+    /// The combined count and total of all folded sub-floor polls in the
+    /// interval.
+    pub fn small_poll_summary(&self) -> PollSummary {
+        let mut summary = PollSummary::default();
+        for flush in &self.small_polls {
+            summary.add(flush.summary);
+        }
+        summary
     }
 
     /// Total foreground time occupied within the interval: the union of the
@@ -294,8 +302,10 @@ impl FrameSnapshot {
 
     /// Like [`Self::occupancy`], but measured against an arbitrary window
     /// (e.g. a reporting window anchored at a frame's first invalidation).
-    /// Event spans are clamped to the window; the small-poll summary is added
-    /// wholesale since folded polls carry no individual timestamps.
+    /// Event spans are clamped to the window. Folded polls carry no
+    /// individual timestamps, so each flush's total is apportioned by how
+    /// much of its span overlaps the window — assuming the folded time is
+    /// spread uniformly across the span.
     pub fn occupancy_within(&self, window_start: Instant, window_end: Instant) -> Duration {
         let mut spans: Vec<(Instant, Instant)> = self
             .events
@@ -321,7 +331,29 @@ impl FrameSnapshot {
                 None => end,
             });
         }
-        occupied + self.small_polls.total
+
+        let apportioned_small_polls: Duration = self
+            .small_polls
+            .iter()
+            .map(|flush| {
+                let span = flush.until.duration_since(flush.since);
+                if span.is_zero() {
+                    // A point-like flush lies either inside or outside the
+                    // window.
+                    if flush.since >= window_start && flush.since <= window_end {
+                        flush.summary.total
+                    } else {
+                        Duration::ZERO
+                    }
+                } else {
+                    let overlap_start = flush.since.max(window_start);
+                    let overlap_end = flush.until.min(window_end).max(overlap_start);
+                    let overlap = overlap_end.duration_since(overlap_start);
+                    flush.summary.total.mul_f64(overlap.div_duration_f64(span))
+                }
+            })
+            .sum();
+        occupied + apportioned_small_polls
     }
 
     /// The fraction of the interval the foreground spent working, in `0.0..=1.0`.
@@ -670,7 +702,7 @@ impl ForegroundJournalCollector {
 pub struct IntervalSealer {
     interval_start: Instant,
     events: Vec<ForegroundEvent>,
-    small_polls: PollSummary,
+    small_polls: Vec<SmallPollFlush>,
     dropped_events: u64,
     pending_frames: HashMap<WindowId, Instant>,
 }
@@ -682,7 +714,7 @@ impl IntervalSealer {
         Self {
             interval_start: start,
             events: Vec::new(),
-            small_polls: PollSummary::default(),
+            small_polls: Vec::new(),
             dropped_events: 0,
             pending_frames: HashMap::new(),
         }
@@ -715,7 +747,7 @@ impl IntervalSealer {
                         self.interval_start = self.interval_start.max(event.start_time());
                     }
                     match event {
-                        ForegroundEvent::SmallPolls(flush) => self.small_polls.add(flush.summary),
+                        ForegroundEvent::SmallPolls(flush) => self.push_small_polls(flush),
                         event => self.push_event(event),
                     }
                 }
@@ -801,6 +833,21 @@ impl IntervalSealer {
             self.dropped_events += 1;
         } else {
             self.events.push(event);
+        }
+    }
+
+    fn push_small_polls(&mut self, flush: SmallPollFlush) {
+        if self.small_polls.len() >= MAX_INTERVAL_EVENTS
+            && let Some(last) = self.small_polls.last_mut()
+        {
+            // Degrade gracefully at the cap: widen the last flush's span
+            // instead of dropping poll time, at the cost of coarser
+            // apportioning.
+            last.summary.add(flush.summary);
+            last.since = last.since.min(flush.since);
+            last.until = last.until.max(flush.until);
+        } else {
+            self.small_polls.push(flush);
         }
     }
 
@@ -1435,7 +1482,7 @@ mod tests {
                 ..
             }) if deadline_window == window_id
         ));
-        assert_eq!(deadline_snapshot.small_polls.count, 40);
+        assert_eq!(deadline_snapshot.small_poll_summary().count, 40);
         assert_eq!(deadline_snapshot.events.len(), 1);
     }
 
