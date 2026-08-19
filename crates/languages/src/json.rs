@@ -32,7 +32,7 @@ use std::{
 use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::{
     ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into,
-    paths::PathStyle, rel_path::RelPath,
+    paths::PathStyle, rel_path::RelPath, union_json_value_into,
 };
 
 use crate::PackageJsonData;
@@ -52,8 +52,12 @@ impl ContextProvider for JsonTaskProvider {
         let Some(file) = project::File::from_dyn(file).cloned() else {
             return Task::ready(None);
         };
-        let is_package_json = file.path.ends_with(RelPath::unix("package.json").unwrap());
-        let is_composer_json = file.path.ends_with(RelPath::unix("composer.json").unwrap());
+        let is_package_json = file
+            .path
+            .ends_with(RelPath::from_unix_str("package.json").unwrap());
+        let is_composer_json = file
+            .path
+            .ends_with(RelPath::from_unix_str("composer.json").unwrap());
         if !is_package_json && !is_composer_json {
             return Task::ready(None);
         }
@@ -65,11 +69,12 @@ impl ContextProvider for JsonTaskProvider {
                 .await
                 .ok()?;
             let path = cx.update(|cx| file.abs_path(cx)).as_path().into();
+            let contents_text = contents.text.to_string();
 
             let task_templates = if is_package_json {
                 let package_json = serde_json_lenient::from_str::<
                     HashMap<String, serde_json_lenient::Value>,
-                >(&contents.text)
+                >(&contents_text)
                 .ok()?;
                 let package_json = PackageJsonData::new(path, package_json);
                 let command = package_json.package_manager.unwrap_or("npm").to_owned();
@@ -96,7 +101,7 @@ impl ContextProvider for JsonTaskProvider {
                     }])
                     .collect()
             } else if is_composer_json {
-                serde_json_lenient::Value::from_str(&contents.text)
+                serde_json_lenient::Value::from_str(&contents_text)
                     .ok()?
                     .get("scripts")?
                     .as_object()?
@@ -150,7 +155,7 @@ impl LspInstaller for JsonLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        _: &dyn LspAdapterDelegate,
+        _: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut AsyncApp,
     ) -> Result<Self::BinaryVersion> {
@@ -161,7 +166,7 @@ impl LspInstaller for JsonLspAdapter {
 
     async fn check_if_user_installed(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
@@ -213,7 +218,7 @@ impl LspInstaller for JsonLspAdapter {
 
     fn fetch_server_binary(
         &self,
-        latest_version: Self::BinaryVersion,
+        _latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
@@ -221,13 +226,9 @@ impl LspInstaller for JsonLspAdapter {
 
         async move {
             let server_path = container_dir.join(SERVER_PATH);
-            let latest_version = latest_version.to_string();
 
-            node.npm_install_packages(
-                &container_dir,
-                &[(Self::PACKAGE_NAME, latest_version.as_str())],
-            )
-            .await?;
+            node.npm_install_latest_packages(&container_dir, &[Self::PACKAGE_NAME])
+                .await?;
 
             Ok(LanguageServerBinary {
                 path: node.binary_path().await?,
@@ -318,7 +319,7 @@ impl LspAdapter for JsonLspAdapter {
         });
 
         if let Some(override_options) = project_options {
-            merge_json_value_into(override_options, &mut config);
+            union_json_value_into(override_options, &mut config);
         }
 
         Ok(config)
@@ -438,7 +439,7 @@ impl LspInstaller for NodeVersionAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut AsyncApp,
     ) -> Result<GitHubLspBinaryVersion> {
@@ -475,7 +476,7 @@ impl LspInstaller for NodeVersionAdapter {
 
     async fn check_if_user_installed(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {

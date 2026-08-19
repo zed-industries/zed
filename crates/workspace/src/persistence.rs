@@ -75,23 +75,6 @@ fn contains_wsl_path(paths: &PathList) -> bool {
             .any(|path| util::paths::WslPath::from_path(path).is_some())
 }
 
-fn serialize_recent_navigation_history(paths: &[PathBuf]) -> String {
-    paths
-        .iter()
-        .filter_map(|path| path.to_str())
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn deserialize_recent_navigation_history(paths: Option<String>) -> Vec<PathBuf> {
-    paths
-        .unwrap_or_default()
-        .split('\n')
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from)
-        .collect()
-}
-
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct SerializedAxis(pub(crate) gpui::Axis);
 impl sqlez::bindable::StaticColumnCount for SerializedAxis {}
@@ -373,6 +356,13 @@ pub fn read_serialized_multi_workspaces(
             let active_workspace = state
                 .active_workspace_id
                 .and_then(|id| group.iter().position(|ws| ws.workspace_id == id))
+                // If the persisted active workspace can't be matched (e.g. its
+                // pointer was lost or its row was pruned), fall back to the
+                // first workspace that actually has paths rather than blindly
+                // taking index 0, so a stray scratch/empty workspace isn't
+                // restored as the focused window. Only if none have paths do we
+                // fall back to the first entry.
+                .or_else(|| group.iter().position(|ws| !ws.paths.is_empty()))
                 .or(Some(0))
                 .and_then(|index| group.into_iter().nth(index))?;
             Some(model::SerializedMultiWorkspace {
@@ -404,12 +394,13 @@ pub async fn write_default_dock_state(
 #[derive(Debug)]
 pub struct Bookmark {
     pub row: u32,
+    pub label: String,
 }
 
 impl sqlez::bindable::StaticColumnCount for Bookmark {
     fn column_count() -> usize {
-        // row
-        1
+        // row, label
+        2
     }
 }
 
@@ -419,7 +410,8 @@ impl sqlez::bindable::Bind for Bookmark {
         statement: &sqlez::statement::Statement,
         start_index: i32,
     ) -> anyhow::Result<i32> {
-        statement.bind(&self.row, start_index)
+        let next_index = statement.bind(&self.row, start_index)?;
+        statement.bind(&self.label, next_index)
     }
 }
 
@@ -430,7 +422,9 @@ impl Column for Bookmark {
             .with_context(|| format!("Failed to read bookmark at index {start_index}"))?
             as u32;
 
-        Ok((Bookmark { row }, start_index + 1))
+        let (label, next_index) = String::column(statement, start_index + 1)?;
+
+        Ok((Bookmark { row, label }, next_index))
     }
 }
 
@@ -1053,7 +1047,20 @@ impl Domain for WorkspaceDb {
         sql!(
             ALTER TABLE workspaces ADD COLUMN identity_paths TEXT;
             ALTER TABLE workspaces ADD COLUMN identity_paths_order TEXT;
-            ALTER TABLE workspaces ADD COLUMN recent_navigation_history TEXT;
+        ),
+        sql!(
+            ALTER TABLE bookmarks ADD COLUMN label TEXT NOT NULL DEFAULT "";
+        ),
+        sql!(
+            CREATE TABLE recent_navigation_history (
+                workspace_id INTEGER NOT NULL,
+                path BLOB NOT NULL,
+                position INTEGER NOT NULL,
+                PRIMARY KEY (workspace_id, path),
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                ON DELETE CASCADE
+                ON UPDATE CASCADE
+            ) STRICT;
         ),
     ];
 
@@ -1114,7 +1121,6 @@ impl WorkspaceDb {
             centered_layout,
             docks,
             window_id,
-            recent_navigation_history,
         ): (
             WorkspaceId,
             String,
@@ -1126,7 +1132,6 @@ impl WorkspaceDb {
             Option<bool>,
             DockStructure,
             Option<u64>,
-            Option<String>,
         ) = self
             .select_row_bound(sql! {
                 SELECT
@@ -1151,8 +1156,7 @@ impl WorkspaceDb {
                     bottom_dock_visible,
                     bottom_dock_active_panel,
                     bottom_dock_zoom,
-                    window_id,
-                    recent_navigation_history
+                    window_id
                 FROM workspaces
                 WHERE
                     paths IS ? AND
@@ -1209,9 +1213,7 @@ impl WorkspaceDb {
             breakpoints: self.breakpoints(workspace_id),
             window_id,
             user_toolchains: self.user_toolchains(workspace_id, remote_connection_id),
-            recent_navigation_history: deserialize_recent_navigation_history(
-                recent_navigation_history,
-            ),
+            recent_navigation_history: self.recent_navigation_history(workspace_id),
         })
     }
 
@@ -1231,7 +1233,6 @@ impl WorkspaceDb {
             docks,
             window_id,
             remote_connection_id,
-            recent_navigation_history,
         ): (
             String,
             String,
@@ -1243,7 +1244,6 @@ impl WorkspaceDb {
             DockStructure,
             Option<u64>,
             Option<i32>,
-            Option<String>,
         ) = self
             .select_row_bound(sql! {
                 SELECT
@@ -1268,8 +1268,7 @@ impl WorkspaceDb {
                     bottom_dock_active_panel,
                     bottom_dock_zoom,
                     window_id,
-                    remote_connection_id,
-                    recent_navigation_history
+                    remote_connection_id
                 FROM workspaces
                 WHERE workspace_id = ?
             })
@@ -1319,16 +1318,27 @@ impl WorkspaceDb {
             breakpoints: self.breakpoints(workspace_id),
             window_id,
             user_toolchains: self.user_toolchains(workspace_id, remote_connection_id),
-            recent_navigation_history: deserialize_recent_navigation_history(
-                recent_navigation_history,
-            ),
+            recent_navigation_history: self.recent_navigation_history(workspace_id),
         })
+    }
+
+    fn recent_navigation_history(&self, workspace_id: WorkspaceId) -> Vec<PathBuf> {
+        self.select_bound(sql!(
+            SELECT path
+            FROM recent_navigation_history
+            WHERE workspace_id = ?
+            ORDER BY position
+        ))
+        .and_then(|mut statement| statement(workspace_id))
+        .context("Loading recent navigation history")
+        .log_err()
+        .unwrap_or_default()
     }
 
     fn bookmarks(&self, workspace_id: WorkspaceId) -> BTreeMap<Arc<Path>, Vec<SerializedBookmark>> {
         let bookmarks: Result<Vec<(PathBuf, Bookmark)>> = self
             .select_bound(sql! {
-                SELECT path, row
+                SELECT path, row, label
                 FROM bookmarks
                 WHERE workspace_id = ?
                 ORDER BY path, row
@@ -1347,7 +1357,10 @@ impl WorkspaceDb {
                     let path: Arc<Path> = path.into();
                     map.entry(path.clone())
                         .or_default()
-                        .push(SerializedBookmark(bookmark.row))
+                        .push(SerializedBookmark {
+                            row: bookmark.row,
+                            label: bookmark.label,
+                        })
                 }
 
                 map
@@ -1448,7 +1461,8 @@ impl WorkspaceDb {
                     relative_worktree_path == String::default()
                 );
 
-                let Some(relative_path) = RelPath::unix(&relative_worktree_path).log_err() else {
+                let Some(relative_path) = RelPath::from_unix_str(&relative_worktree_path).log_err()
+                else {
                     continue;
                 };
                 if worktree_root_path != String::default()
@@ -1508,9 +1522,9 @@ impl WorkspaceDb {
                 for (path, bookmarks) in workspace.bookmarks {
                     for bookmark in bookmarks {
                         conn.exec_bound(sql!(
-                            INSERT INTO bookmarks (workspace_id, path, row)
-                            VALUES (?1, ?2, ?3);
-                        ))?((workspace.id, path.as_ref(), bookmark.0)).context("Inserting bookmark")?;
+                            INSERT INTO bookmarks (workspace_id, path, row, label)
+                            VALUES (?1, ?2, ?3, ?4);
+                        ))?((workspace.id, path.as_ref(), bookmark.row, bookmark.label)).context("Inserting bookmark")?;
                     }
                 }
 
@@ -1609,10 +1623,9 @@ impl WorkspaceDb {
                         bottom_dock_zoom,
                         session_id,
                         window_id,
-                        recent_navigation_history,
                         timestamp
                     )
-                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, CURRENT_TIMESTAMP)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, CURRENT_TIMESTAMP)
                     ON CONFLICT DO
                     UPDATE SET
                         paths = ?2,
@@ -1631,12 +1644,9 @@ impl WorkspaceDb {
                         bottom_dock_zoom = ?15,
                         session_id = ?16,
                         window_id = ?17,
-                        recent_navigation_history = ?18,
                         timestamp = CURRENT_TIMESTAMP
                 );
                 let mut prepared_query = conn.exec_bound(query)?;
-                let recent_navigation_history =
-                    serialize_recent_navigation_history(&workspace.recent_navigation_history);
                 let args = (
                     workspace.id,
                     paths.paths.clone(),
@@ -1647,10 +1657,23 @@ impl WorkspaceDb {
                     workspace.docks,
                     workspace.session_id,
                     workspace.window_id,
-                    recent_navigation_history,
                 );
 
                 prepared_query(args).context("Updating workspace")?;
+
+                conn.exec_bound(sql!(
+                    DELETE FROM recent_navigation_history WHERE workspace_id = ?;
+                ))?(workspace.id)
+                .context("Clearing recent navigation history")?;
+
+                let mut insert_recent_path = conn.exec_bound(sql!(
+                    INSERT INTO recent_navigation_history(workspace_id, path, position)
+                    VALUES (?, ?, ?);
+                ))?;
+                for (position, path) in workspace.recent_navigation_history.iter().enumerate() {
+                    insert_recent_path((workspace.id, path.as_path(), position))
+                        .context("Inserting recent navigation history")?;
+                }
 
                 // Save center pane group
                 Self::save_pane_group(conn, workspace.id, &workspace.center_group, None)
@@ -2514,7 +2537,7 @@ impl WorkspaceDb {
                                 as_json: serde_json::Value::from_str(&json).ok()?,
                             },
                            Arc::from(worktree_root_path.as_ref()),
-                            RelPath::from_proto(&relative_worktree_path).log_err()?,
+                            RelPath::from_unix_str(&relative_worktree_path).log_err()?.into(),
                         ))
                     },
                 )
@@ -2781,9 +2804,9 @@ pub fn delete_unloaded_items(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::OpenMode;
     use crate::PathList;
     use crate::ProjectGroupKey;
+    use crate::RemovalIntent;
     use crate::{
         multi_workspace::MultiWorkspace,
         persistence::{
@@ -2860,7 +2883,7 @@ mod tests {
                 .workspaces()
                 .find(|ws| *ws != &active)
                 .expect("should have a non-active workspace");
-            mw.remove([ws.clone()], |_, _, _| unreachable!(), _window, cx)
+            mw.remove([ws.clone()], RemovalIntent::CloseProject, _window, cx)
                 .detach_and_log_err(cx);
         });
 
@@ -3394,6 +3417,9 @@ mod tests {
 
         let round_trip_workspace = db.workspace_for_roots(&["/tmp", "/tmp2"]);
         assert_eq!(workspace, round_trip_workspace.unwrap());
+
+        assert!(db.delete_workspace_by_id(workspace.id).await.is_ok());
+        assert!(db.recent_navigation_history(workspace.id).is_empty());
     }
 
     #[gpui::test]
@@ -3851,6 +3877,7 @@ mod tests {
             session_id: None,
             window_id: Some(id),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         }
     }
 
@@ -4852,7 +4879,7 @@ mod tests {
         // Remove workspace at index 1 (the second workspace).
         multi_workspace.update_in(cx, |mw, window, cx| {
             let ws = mw.workspaces().nth(1).unwrap().clone();
-            mw.remove([ws], |_, _, _| unreachable!(), window, cx)
+            mw.remove([ws], RemovalIntent::CloseProject, window, cx)
                 .detach_and_log_err(cx);
         });
 
@@ -4964,7 +4991,7 @@ mod tests {
         // Remove workspace2 (index 1).
         multi_workspace.update_in(cx, |mw, window, cx| {
             let ws = mw.workspaces().nth(1).unwrap().clone();
-            mw.remove([ws], |_, _, _| unreachable!(), window, cx)
+            mw.remove([ws], RemovalIntent::CloseProject, window, cx)
                 .detach_and_log_err(cx);
         });
 
@@ -5046,7 +5073,7 @@ mod tests {
         // Remove workspace2 — this pushes a task to pending_removal_tasks.
         multi_workspace.update_in(cx, |mw, window, cx| {
             let ws = mw.workspaces().nth(1).unwrap().clone();
-            mw.remove([ws], |_, _, _| unreachable!(), window, cx)
+            mw.remove([ws], RemovalIntent::CloseProject, window, cx)
                 .detach_and_log_err(cx);
         });
 
@@ -5332,6 +5359,47 @@ mod tests {
         // Bare-backed worktrees should resolve to the repo identity path, which
         // is the parent directory users think of as the project root.
         assert_eq!(result.identity_paths.paths(), &[PathBuf::from("/foo")]);
+    }
+
+    #[gpui::test]
+    async fn test_recent_workspace_identity_for_submodule(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+
+        // Superproject `/Foo` with a submodule `Bar`. A submodule's `.git` is a
+        // file pointing into the superproject's `.git/modules/<name>` directory,
+        // structurally like a linked worktree's `.git` file.
+        fs.insert_tree(
+            "/Foo",
+            json!({
+                ".git": {
+                    "modules": {
+                        "Bar": {
+                            "HEAD": "ref: refs/heads/main"
+                        }
+                    }
+                },
+                "Bar": {
+                    ".git": "gitdir: ../.git/modules/Bar\n",
+                    "src": { "main.rs": "" }
+                },
+                "src": { "lib.rs": "" }
+            }),
+        )
+        .await;
+
+        let t0 = Utc::now();
+
+        let result = local_recent_workspace(
+            WorkspaceId(1),
+            PathList::new(&["/Foo/Bar"]),
+            t0,
+            fs.as_ref(),
+        )
+        .await;
+
+        // Submodules are independent projects: their identity is their own
+        // working directory, not the superproject's `.git/modules/<name>`.
+        assert_eq!(result.identity_paths.paths(), &[PathBuf::from("/Foo/Bar")]);
     }
 
     #[gpui::test]
@@ -5958,27 +6026,12 @@ mod tests {
         });
         cx.run_until_parked();
 
-        // Remove workspace_a. The fallback searches for the same paths.
-        // Without the `excluding` parameter, `workspace_for_paths` would
-        // return workspace_a (first match) and the assert in `remove`
-        // would fire. With the fix, workspace_a is skipped and
-        // workspace_b is found instead.
-        let path_list = PathList::new(std::slice::from_ref(&dir));
-        let excluded = vec![workspace_a.clone()];
+        // Remove workspace_a. Its replacement is looked up by the same paths,
+        // so workspace_a itself has to be skipped or it would be picked again.
         multi_workspace.update_in(cx, |mw, window, cx| {
             mw.remove(
                 vec![workspace_a.clone()],
-                move |this, window, cx| {
-                    this.find_or_create_local_workspace(
-                        path_list,
-                        None,
-                        &excluded,
-                        None,
-                        OpenMode::Activate,
-                        window,
-                        cx,
-                    )
-                },
+                RemovalIntent::CloseProject,
                 window,
                 cx,
             )

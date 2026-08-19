@@ -135,10 +135,10 @@ impl TextSize {
         let settings = theme::theme_settings(cx);
 
         match self {
-            Self::Large => rems_from_px(16.),
-            Self::Default => rems_from_px(14.),
-            Self::Small => rems_from_px(12.),
-            Self::XSmall => rems_from_px(10.),
+            Self::Large => rems_from_px(16_f32),
+            Self::Default => rems_from_px(14_f32),
+            Self::Small => rems_from_px(12_f32),
+            Self::XSmall => rems_from_px(10_f32),
             Self::Ui => rems_from_px(settings.ui_font_size(cx)),
             Self::Editor => rems_from_px(settings.buffer_font_size(cx)),
         }
@@ -250,45 +250,43 @@ impl Component for Headline {
         ComponentScope::Typography
     }
 
-    fn description() -> Option<&'static str> {
-        Some("A headline element used to emphasize text and create visual hierarchy in the UI.")
+    fn description() -> &'static str {
+        "A headline element used to emphasize text and create visual hierarchy in the UI."
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_1()
-                .children(vec![
-                    single_example(
-                        "XLarge",
-                        Headline::new("XLarge Headline")
-                            .size(HeadlineSize::XLarge)
-                            .into_any_element(),
-                    ),
-                    single_example(
-                        "Large",
-                        Headline::new("Large Headline")
-                            .size(HeadlineSize::Large)
-                            .into_any_element(),
-                    ),
-                    single_example(
-                        "Medium (Default)",
-                        Headline::new("Medium Headline").into_any_element(),
-                    ),
-                    single_example(
-                        "Small",
-                        Headline::new("Small Headline")
-                            .size(HeadlineSize::Small)
-                            .into_any_element(),
-                    ),
-                    single_example(
-                        "XSmall",
-                        Headline::new("XSmall Headline")
-                            .size(HeadlineSize::XSmall)
-                            .into_any_element(),
-                    ),
-                ])
-                .into_any_element(),
-        )
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_1()
+            .children(vec![
+                single_example(
+                    "XLarge",
+                    Headline::new("XLarge Headline")
+                        .size(HeadlineSize::XLarge)
+                        .into_any_element(),
+                ),
+                single_example(
+                    "Large",
+                    Headline::new("Large Headline")
+                        .size(HeadlineSize::Large)
+                        .into_any_element(),
+                ),
+                single_example(
+                    "Medium (Default)",
+                    Headline::new("Medium Headline").into_any_element(),
+                ),
+                single_example(
+                    "Small",
+                    Headline::new("Small Headline")
+                        .size(HeadlineSize::Small)
+                        .into_any_element(),
+                ),
+                single_example(
+                    "XSmall",
+                    Headline::new("XSmall Headline")
+                        .size(HeadlineSize::XSmall)
+                        .into_any_element(),
+                ),
+            ])
+            .into_any_element()
     }
 }

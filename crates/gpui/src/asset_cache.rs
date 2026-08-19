@@ -2,7 +2,7 @@ use crate::{App, SharedString, SharedUri};
 use futures::{Future, TryFutureExt};
 
 use std::fmt::Debug;
-use std::hash::{Hash, Hasher};
+use std::hash::{BuildHasher, Hash};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -61,7 +61,7 @@ impl<T, R, E> Asset for AssetLogger<T>
 where
     T: Asset<Output = Result<R, E>>,
     R: Clone + Send,
-    E: Clone + Send + std::fmt::Display,
+    E: Clone + Send + Debug,
 {
     type Source = T::Source;
 
@@ -72,13 +72,11 @@ where
         cx: &mut App,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
         let load = T::load(source, cx);
-        load.inspect_err(|e| log::error!("Failed to load asset: {}", e))
+        load.inspect_err(|e| log::error!("Failed to load asset: {:?}", e))
     }
 }
 
 /// Use a quick, non-cryptographically secure hash function to get an identifier from data
 pub fn hash<T: Hash>(data: &T) -> u64 {
-    let mut hasher = collections::FxHasher::default();
-    data.hash(&mut hasher);
-    hasher.finish()
+    collections::FxBuildHasher.hash_one(data)
 }

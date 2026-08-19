@@ -240,6 +240,7 @@ impl Render for ActiveToolchain {
         div().child(
             Button::new("change-toolchain", active_toolchain.name.clone())
                 .label_size(LabelSize::Small)
+                .tab_index(0isize)
                 .on_click(cx.listener(|this, _, window, cx| {
                     if let Some(workspace) = this.workspace.upgrade() {
                         workspace.update(cx, |workspace, cx| {
@@ -247,7 +248,7 @@ impl Render for ActiveToolchain {
                         });
                     }
                 }))
-                .tooltip(Tooltip::text(format!("Select {}", &self.term))),
+                .tooltip(Tooltip::text(format!("Select {}", self.term))),
         )
     }
 }

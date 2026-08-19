@@ -40,6 +40,7 @@ pub fn init(cx: &mut App) -> Arc<AgentCliAppState> {
 
     let settings_store = SettingsStore::new(cx, &settings::default_settings());
     cx.set_global(settings_store);
+    theme_settings::init(theme::LoadThemes::JustBase, cx);
 
     let user_agent = format!(
         "Zed Agent CLI/{} ({}; {})",
@@ -115,6 +116,11 @@ pub fn init(cx: &mut App) -> Arc<AgentCliAppState> {
     languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
     prompt_store::init(cx);
     terminal_view::init(cx);
+
+    // The eval CLI runs headless with no controlling TTY, so PTY allocation and
+    // acquiring a controlling terminal fail with `ENOTTY`. Tell the agent to run
+    // its terminal commands without a PTY (and non-interactively) instead.
+    cx.set_global(acp_thread::HeadlessTerminal(true));
 
     let stdout_is_a_pty = false;
     let prompt_builder = PromptBuilder::load(fs.clone(), stdout_is_a_pty, cx);

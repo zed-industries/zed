@@ -122,7 +122,7 @@ To run deno tasks like tests from the ui, add this to `.zed/tasks.json`
 [
   {
     "label": "deno test",
-    "command": "deno test -A '$ZED_FILE'",
+    "command": "deno test -A $ZED_FILE",
     "tags": ["js-test"]
   }
 ]
