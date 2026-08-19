@@ -267,6 +267,13 @@
     },
   },
   {
+    "context": "AgentPanel && SearchWithinAgentPanel",
+    "use_key_equivalents": true,
+    "bindings": {
+      "alt-f": "agent::SearchThreads",
+    },
+  },
+  {
     "context": "AgentPanel > Markdown",
     "use_key_equivalents": true,
     "bindings": {
@@ -439,6 +446,14 @@
     "context": "ThreadsArchiveView",
     "bindings": {
       "backspace": "agent::ArchiveSelectedThread",
+    },
+  },
+  // Embedded thread-search editor navigation lives in
+  // keymaps/specific-overrides-macos.json so it wins over base Editor bindings.
+  {
+    "context": "CodexThreadsArchiveView",
+    "bindings": {
+      "escape": "menu::Cancel"
     },
   },
   {

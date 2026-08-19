@@ -8614,6 +8614,29 @@ fn ai_page(cx: &App) -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Search Within Agent Panel",
+                description: "Enable experimental thread search keyboard controls and horizontally scrollable terminal commands in the agent panel.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent.search_within_agent_panel"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .search_within_agent_panel
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .search_within_agent_panel = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
         ]);
 
         items.extend([

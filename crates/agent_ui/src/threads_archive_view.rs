@@ -23,7 +23,7 @@ use gpui::{
     list, prelude::*, px,
 };
 use itertools::Itertools as _;
-use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
+use menu::{Cancel, Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use picker::{
     Picker, PickerDelegate,
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
@@ -156,6 +156,7 @@ pub struct ThreadsArchiveView {
     archived_branch_names: HashMap<ThreadId, HashMap<PathBuf, String>>,
     _load_branch_names_task: Task<()>,
     thread_filter: ThreadFilter,
+    embedded: bool,
 }
 
 impl ThreadsArchiveView {
@@ -230,10 +231,30 @@ impl ThreadsArchiveView {
             archived_branch_names: HashMap::default(),
             _load_branch_names_task: Task::ready(()),
             thread_filter: ThreadFilter::All,
+            embedded: false,
         };
 
         this.update_items(cx);
         this.reload_branch_names_if_threads_changed(cx);
+        this
+    }
+
+    pub(crate) fn new_embedded(
+        workspace: WeakEntity<Workspace>,
+        agent_connection_store: WeakEntity<AgentConnectionStore>,
+        agent_server_store: WeakEntity<AgentServerStore>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut this = Self::new(
+            workspace,
+            agent_connection_store,
+            agent_server_store,
+            window,
+            cx,
+        );
+        this.embedded = true;
+        this.update_items(cx);
         this
     }
 
@@ -282,9 +303,15 @@ impl ThreadsArchiveView {
         let thread_filter = self.thread_filter;
         let sessions = store
             .entries()
-            .filter(|t| match thread_filter {
-                ThreadFilter::All => true,
-                ThreadFilter::ArchivedOnly => t.archived,
+            .filter(|t| {
+                if self.embedded {
+                    !t.archived
+                } else {
+                    match thread_filter {
+                        ThreadFilter::All => true,
+                        ThreadFilter::ArchivedOnly => t.archived,
+                    }
+                }
             })
             .sorted_by_cached_key(|t| t.created_at.unwrap_or(t.updated_at))
             .rev()
@@ -527,7 +554,7 @@ impl ThreadsArchiveView {
         }
     }
 
-    fn select_next(&mut self, _: &SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
+    fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
         let next = match self.selection {
             Some(ix) => self.find_next_selectable(ix + 1),
             None => self.find_next_selectable(0),
@@ -535,6 +562,9 @@ impl ThreadsArchiveView {
         if let Some(next) = next {
             self.selection = Some(next);
             self.list_state.scroll_to_reveal_item(next);
+            if self.embedded {
+                self.focus_handle.focus(window, cx);
+            }
             cx.notify();
         }
     }
@@ -548,6 +578,9 @@ impl ThreadsArchiveView {
                 {
                     self.selection = Some(prev);
                     self.list_state.scroll_to_reveal_item(prev);
+                    if self.embedded {
+                        self.focus_handle.focus(window, cx);
+                    }
                 } else {
                     self.selection = None;
                     self.focus_filter_editor(window, cx);
@@ -559,6 +592,9 @@ impl ThreadsArchiveView {
                 if let Some(prev) = self.find_previous_selectable(last) {
                     self.selection = Some(prev);
                     self.list_state.scroll_to_reveal_item(prev);
+                    if self.embedded {
+                        self.focus_handle.focus(window, cx);
+                    }
                     cx.notify();
                 }
             }
@@ -583,12 +619,32 @@ impl ThreadsArchiveView {
     }
 
     fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(ix) = self.selection else { return };
+        let Some(ix) = self.selection.or_else(|| {
+            self.embedded
+                .then(|| self.find_next_selectable(0))
+                .flatten()
+        }) else {
+            return;
+        };
         let Some(ArchiveListItem::Entry { thread, .. }) = self.items.get(ix) else {
             return;
         };
 
-        self.unarchive_thread(thread.clone(), window, cx);
+        if self.embedded {
+            cx.emit(ThreadsArchiveViewEvent::Activate {
+                thread: thread.clone(),
+            });
+        } else {
+            self.unarchive_thread(thread.clone(), window, cx);
+        }
+    }
+
+    fn cancel(&mut self, _: &Cancel, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.embedded {
+            cx.emit(ThreadsArchiveViewEvent::Close);
+        } else {
+            cx.propagate();
+        }
     }
 
     fn render_list_entry(
@@ -673,6 +729,7 @@ impl ThreadsArchiveView {
                     .highlight_positions(highlight_positions.clone())
                     .project_paths(thread.folder_paths().paths_owned())
                     .worktrees(worktrees)
+                    .selected(self.embedded && is_focused)
                     .focused(is_focused)
                     .hovered(is_hovered)
                     .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
@@ -850,7 +907,50 @@ impl ThreadsArchiveView {
         .detach_and_log_err(cx);
     }
 
-    fn render_header(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_header(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        if self.embedded {
+            let has_query = !self.filter_editor.read(cx).text(cx).is_empty();
+
+            return h_flex()
+                .h(Tab::container_height(cx))
+                .px_2()
+                .gap_1()
+                .border_b_1()
+                .border_color(cx.theme().colors().border)
+                .child(
+                    h_flex()
+                        .min_w_0()
+                        .flex_1()
+                        .gap_1()
+                        .child(
+                            Icon::new(IconName::MagnifyingGlass)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(self.filter_editor.clone()),
+                )
+                .when(has_query, |this| {
+                    this.child(
+                        IconButton::new("clear-filter", IconName::Close)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("Clear Search"))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.reset_filter_editor_text(window, cx);
+                                this.update_items(cx);
+                            })),
+                    )
+                })
+                .child(
+                    IconButton::new("close-thread-search", IconName::Close)
+                        .icon_size(IconSize::Small)
+                        .tooltip(Tooltip::text("Close Thread Search"))
+                        .on_click(cx.listener(|_this, _, _, cx| {
+                            cx.emit(ThreadsArchiveViewEvent::Close);
+                        })),
+                )
+                .into_any_element();
+        }
+
         let has_query = !self.filter_editor.read(cx).text(cx).is_empty();
         let sidebar_on_left = matches!(
             AgentSettings::get_global(cx).sidebar_side(),
@@ -922,6 +1022,7 @@ impl ThreadsArchiveView {
             .when(right_window_controls, |this| {
                 this.children(Self::render_right_window_controls(window, cx))
             })
+            .into_any_element()
     }
 
     fn render_left_window_controls(window: &Window, cx: &mut App) -> Option<AnyElement> {
@@ -1088,7 +1189,11 @@ impl Render for ThreadsArchiveView {
         };
 
         v_flex()
-            .key_context("ThreadsArchiveView")
+            .key_context(if self.embedded {
+                "CodexThreadsArchiveView"
+            } else {
+                "ThreadsArchiveView"
+            })
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
@@ -1097,11 +1202,16 @@ impl Render for ThreadsArchiveView {
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::confirm))
+            .when(self.embedded, |this| {
+                this.on_action(cx.listener(Self::cancel))
+            })
             .on_action(cx.listener(Self::remove_selected_thread))
             .on_action(cx.listener(Self::archive_selected_thread))
             .size_full()
             .child(self.render_header(window, cx))
-            .when(!has_query, |this| this.child(self.render_toolbar(cx)))
+            .when(!has_query && !self.embedded, |this| {
+                this.child(self.render_toolbar(cx))
+            })
             .child(content)
     }
 }
