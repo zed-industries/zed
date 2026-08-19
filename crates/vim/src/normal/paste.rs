@@ -1,6 +1,6 @@
 use editor::{
-    DisplayPoint, MultiBufferOffset, RowExt, SelectionEffects, display_map::ToDisplayPoint,
-    movement,
+    DisplayPoint, MultiBufferOffset, RowExt, SelectionEffects, ToOffset,
+    display_map::ToDisplayPoint, movement,
 };
 use gpui::{Action, Context, Window};
 use language::{Bias, SelectionGoal};
@@ -8,6 +8,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
 use std::cmp;
+use text::LineEnding;
 use vim_mode_setting::HelixModeSetting;
 
 use crate::{
@@ -36,6 +37,10 @@ impl Vim {
         Vim::take_forced_motion(cx);
 
         self.update_editor(cx, |vim, editor, cx| {
+            if editor.read_only(cx) {
+                return;
+            }
+
             let text_layout_details = editor.text_layout_details(window, cx);
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
@@ -104,6 +109,7 @@ impl Vim {
                 let mut new_selections = Vec::new();
                 let mut original_indent_columns = Vec::new();
                 let mut start_offset = 0;
+                let mut mark_start_adjustments = Vec::new();
 
                 for (ix, (selection, preserve)) in selections_to_process.iter().enumerate() {
                     let (mut to_insert, original_indent_column) =
@@ -123,6 +129,7 @@ impl Vim {
                         } else {
                             (text.to_string(), first_selection_indent_column)
                         };
+                    LineEnding::normalize(&mut to_insert);
                     let line_mode = to_insert.ends_with('\n');
                     let is_multiline = to_insert.contains('\n');
 
@@ -130,11 +137,16 @@ impl Vim {
                         if selection.is_empty() {
                             to_insert =
                                 "\n".to_owned() + &to_insert[..to_insert.len() - "\n".len()];
+                            mark_start_adjustments.push(1usize);
                         } else {
                             to_insert = "\n".to_owned() + &to_insert;
+                            mark_start_adjustments.push(1usize);
                         }
                     } else if line_mode && vim.mode == Mode::VisualLine {
                         to_insert.pop();
+                        mark_start_adjustments.push(0usize);
+                    } else {
+                        mark_start_adjustments.push(0usize);
                     }
 
                     let display_range = if !selection.is_empty() {
@@ -185,6 +197,24 @@ impl Vim {
                     original_indent_columns.push(original_indent_column);
                 }
 
+                // Record anchors before applying edits to track pasted text start.
+                // anchor_before(start) stays before inserted text (for `[` mark).
+                let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+                let mark_start_anchors: Vec<_> = edits
+                    .iter()
+                    .map(|(range, _)| buffer_snapshot.anchor_before(range.start))
+                    .collect();
+                let paste_text_last_character_offsets: Vec<_> = edits
+                    .iter()
+                    .map(|(_, text)| {
+                        text.strip_suffix('\n')
+                            .unwrap_or(text.as_str())
+                            .char_indices()
+                            .next_back()
+                            .map_or(0, |(offset, _)| offset)
+                    })
+                    .collect();
+
                 let cursor_offset = editor
                     .selections
                     .last::<MultiBufferOffset>(&display_map)
@@ -200,6 +230,28 @@ impl Vim {
                 } else {
                     editor.edit(edits, cx);
                 }
+
+                // Set `[` and `]` marks to the pasted text range.
+                let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+                let start_anchors: Vec<_> = mark_start_anchors
+                    .iter()
+                    .zip(mark_start_adjustments.iter())
+                    .map(|(anchor, &adj)| {
+                        let offset = anchor.to_offset(&buffer_snapshot) + adj;
+                        buffer_snapshot.anchor_before(offset)
+                    })
+                    .collect();
+                let end_anchors: Vec<_> = mark_start_anchors
+                    .iter()
+                    .zip(paste_text_last_character_offsets.iter())
+                    .map(|(anchor, &last_character_offset)| {
+                        let start = anchor.to_offset(&buffer_snapshot);
+                        let end = start + last_character_offset;
+                        buffer_snapshot.anchor_after(end)
+                    })
+                    .collect();
+                vim.set_mark("[".to_string(), start_anchors, editor.buffer(), window, cx);
+                vim.set_mark("]".to_string(), end_anchors, editor.buffer(), window, cx);
 
                 // in line_mode vim will insert the new text on the next (or previous if before) line
                 // and put the cursor on the first non-blank character of the first inserted line (or at the end if the first line is blank).
@@ -1180,6 +1232,140 @@ mod test {
                 line two
                 line three"},
             Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_paste_marks(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Yank a word, paste it elsewhere, then verify `[ and `] point to pasted text.
+        cx.set_state(
+            indoc! {"
+                ˇhello world
+                foo bar"},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("y i w");
+        cx.simulate_keystrokes("j w");
+        cx.simulate_keystrokes("p");
+        cx.assert_state(
+            indoc! {"
+                hello world
+                foo bhellˇoar"},
+            Mode::Normal,
+        );
+        // `[ should go to start of pasted text
+        cx.simulate_keystrokes("` [");
+        cx.assert_state(
+            indoc! {"
+                hello world
+                foo bˇhelloar"},
+            Mode::Normal,
+        );
+        // `] should go to end of pasted text
+        cx.simulate_keystrokes("` ]");
+        cx.assert_state(
+            indoc! {"
+                hello world
+                foo bhellˇoar"},
+            Mode::Normal,
+        );
+
+        // Line-mode paste: yank a line, paste below, verify marks.
+        cx.set_state(
+            indoc! {"
+                ˇfirst line
+                second line
+                third line"},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("y y j p");
+        cx.assert_state(
+            indoc! {"
+                first line
+                second line
+                ˇfirst line
+                third line"},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("` [");
+        cx.assert_state(
+            indoc! {"
+                first line
+                second line
+                ˇfirst line
+                third line"},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("` ]");
+        cx.assert_state(
+            indoc! {"
+                first line
+                second line
+                first linˇe
+                third line"},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_paste_marks_unicode(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("ˇxy", Mode::Normal);
+        cx.write_to_clipboard(ClipboardItem::new_string("é".to_string()));
+
+        cx.simulate_keystrokes("p");
+        cx.simulate_keystrokes("` ]");
+
+        cx.assert_state("xˇéy", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_paste_marks_normalize_line_endings(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("ˇxy", Mode::Normal);
+        cx.write_to_clipboard(ClipboardItem::new_string("a\r\nb".to_string()));
+
+        cx.simulate_keystrokes("p");
+        cx.simulate_keystrokes("` ]");
+
+        cx.assert_state("xa\nˇby", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_paste_marks_read_only(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("ˇx", Mode::Normal);
+        cx.write_to_clipboard(ClipboardItem::new_string("long text".to_string()));
+        cx.update_editor(|editor, _window, _cx| editor.set_read_only(true));
+
+        cx.simulate_keystrokes("p");
+
+        cx.assert_state("ˇx", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_paste_marks_linewise_before(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state(
+            indoc! {"
+                ˇfirst line
+                second line
+                third line"},
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes("y y j shift-p");
+        cx.simulate_keystrokes("` [ v ` ]");
+
+        cx.assert_state(
+            indoc! {"
+                first line
+                «first lineˇ»
+                second line
+                third line"},
+            Mode::Visual,
         );
     }
 }

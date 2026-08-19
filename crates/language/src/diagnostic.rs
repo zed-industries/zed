@@ -1,7 +1,8 @@
 use gpui::SharedString;
-use lsp::{DiagnosticSeverity, NumberOrString};
+use lsp::{DiagnosticRelatedInformation, DiagnosticSeverity, NumberOrString};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::Arc;
 
 /// A diagnostic associated with a certain range of a buffer.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,6 +46,10 @@ pub struct Diagnostic {
     pub data: Option<Value>,
     /// Whether to underline the corresponding text range in the editor.
     pub underline: bool,
+    /// Related information from the language server that produced this diagnostic. Passed back to the LS when we request code actions for this diagnostic.
+    ///
+    /// Kept as sent, since flattening it into non-primary entries is lossy.
+    pub related_information: Option<Arc<[DiagnosticRelatedInformation]>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,6 +76,7 @@ impl Default for Diagnostic {
             underline: true,
             data: None,
             registration_id: None,
+            related_information: None,
         }
     }
 }

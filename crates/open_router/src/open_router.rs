@@ -1,8 +1,9 @@
 use anyhow::{Result, anyhow};
-use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
+use futures::{AsyncReadExt, StreamExt, stream::BoxStream};
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt, http,
 };
+use open_ai::ChatCompletionStreamEvent;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 pub use settings::DataCollection;
@@ -14,6 +15,7 @@ use strum::EnumString;
 use thiserror::Error;
 
 pub const OPEN_ROUTER_API_URL: &str = "https://openrouter.ai/api/v1";
+const OPEN_ROUTER_APP_TITLE: &str = "Zed";
 
 fn extract_retry_after(headers: &http::HeaderMap) -> Option<std::time::Duration> {
     if let Some(reset) = headers.get("X-RateLimit-Reset") {
@@ -439,6 +441,13 @@ pub struct ResponseStreamEvent {
     pub usage: Option<Usage>,
 }
 
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ResponseStreamResult {
+    Response(ResponseStreamEvent),
+    Error(OpenRouterErrorResponse),
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Response {
     pub id: String,
@@ -488,91 +497,50 @@ pub async fn stream_completion(
     request: Request,
     extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent, OpenRouterError>>, OpenRouterError> {
-    let uri = format!("{api_url}/chat/completions");
-    let request = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("HTTP-Referer", "https://zed.dev")
-        .header("X-Title", "Zed Editor")
-        .extra_headers(extra_headers)
-        .body(AsyncBody::from(
-            serde_json::to_string(&request).map_err(OpenRouterError::SerializeRequest)?,
-        ))
-        .map_err(OpenRouterError::BuildRequestBody)?;
-    let mut response = client
-        .send(request)
-        .await
-        .map_err(OpenRouterError::HttpSend)?;
-
-    if response.status().is_success() {
-        let reader = BufReader::new(response.into_body());
-        Ok(reader
-            .lines()
-            .filter_map(|line| async move {
-                match line {
-                    Ok(line) => {
-                        if line.starts_with(':') {
-                            return None;
-                        }
-
-                        let line = line.strip_prefix("data: ")?;
-                        if line == "[DONE]" {
-                            None
-                        } else {
-                            match serde_json::from_str::<ResponseStreamEvent>(line) {
-                                Ok(response) => Some(Ok(response)),
-                                Err(error) => {
-                                    if line.trim().is_empty() {
-                                        None
-                                    } else {
-                                        Some(Err(OpenRouterError::DeserializeResponse(error)))
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Err(error) => Some(Err(OpenRouterError::ReadResponse(error))),
-                }
-            })
-            .boxed())
-    } else {
-        let code = ApiErrorCode::from_status(response.status().as_u16());
-
-        let mut body = String::new();
-        response
-            .body_mut()
-            .read_to_string(&mut body)
+    let headers = completion_headers(extra_headers);
+    let events =
+        open_ai::stream_chat_completion(client, "OpenRouter", api_url, api_key, &headers, &request)
             .await
-            .map_err(OpenRouterError::ReadResponse)?;
-
-        let error_response = match serde_json::from_str::<OpenRouterErrorResponse>(&body) {
-            Ok(OpenRouterErrorResponse { error }) => error,
-            Err(_) => OpenRouterErrorBody {
-                code: response.status().as_u16(),
-                message: body,
-                metadata: None,
-            },
-        };
-
-        match code {
-            ApiErrorCode::RateLimitError => {
-                let retry_after = extract_retry_after(response.headers());
-                Err(OpenRouterError::RateLimit {
-                    retry_after: retry_after.unwrap_or_else(|| std::time::Duration::from_secs(60)),
-                })
+            .map_err(OpenRouterError::from_chat_completion_request_error)?;
+    Ok(events
+        .filter_map(|event| async move {
+            let value = match event {
+                Ok(ChatCompletionStreamEvent::Data(value)) => value,
+                Ok(ChatCompletionStreamEvent::Done) => return None,
+                Err(error) => {
+                    return Some(Err(OpenRouterError::ChatCompletion(error)));
+                }
+            };
+            match serde_json::from_value(value) {
+                Ok(ResponseStreamResult::Response(response)) => Some(Ok(response)),
+                Ok(ResponseStreamResult::Error(OpenRouterErrorResponse { error })) => {
+                    Some(Err(OpenRouterError::ApiError(ApiError {
+                        code: ApiErrorCode::from_status(error.code),
+                        message: error.message,
+                    })))
+                }
+                Err(error) => Some(Err(OpenRouterError::DeserializeResponse(error))),
             }
-            ApiErrorCode::OverloadedError => {
-                let retry_after = extract_retry_after(response.headers());
-                Err(OpenRouterError::ServerOverloaded { retry_after })
-            }
-            _ => Err(OpenRouterError::ApiError(ApiError {
-                code: code,
-                message: error_response.message,
-            })),
-        }
-    }
+        })
+        .boxed())
+}
+
+fn completion_headers(extra_headers: &CustomHeaders) -> CustomHeaders {
+    let mut headers = Vec::with_capacity(extra_headers.iter().len() + 2);
+    headers.push((
+        http::HeaderName::from_static("http-referer"),
+        http::HeaderValue::from_static("https://zed.dev"),
+    ));
+    headers.push((
+        http::HeaderName::from_static("x-title"),
+        http::HeaderValue::from_static(OPEN_ROUTER_APP_TITLE),
+    ));
+    headers.extend(
+        extra_headers
+            .iter()
+            .map(|(name, value)| (name.clone(), value.clone())),
+    );
+    CustomHeaders::new(headers)
 }
 
 pub async fn list_models(
@@ -588,7 +556,7 @@ pub async fn list_models(
         .header("Accept", "application/json")
         .header("Authorization", format!("Bearer {}", api_key))
         .header("HTTP-Referer", "https://zed.dev")
-        .header("X-Title", "Zed Editor")
+        .header("X-Title", OPEN_ROUTER_APP_TITLE)
         .extra_headers(extra_headers)
         .body(AsyncBody::default())
         .map_err(OpenRouterError::BuildRequestBody)?;
@@ -684,9 +652,6 @@ pub async fn list_models(
 
 #[derive(Debug)]
 pub enum OpenRouterError {
-    /// Failed to serialize the HTTP request body to JSON
-    SerializeRequest(serde_json::Error),
-
     /// Failed to construct the HTTP request body
     BuildRequestBody(http::Error),
 
@@ -707,6 +672,46 @@ pub enum OpenRouterError {
 
     /// API returned an error response
     ApiError(ApiError),
+
+    /// The shared Chat Completions transport failed.
+    ChatCompletion(open_ai::RequestError),
+}
+
+impl OpenRouterError {
+    fn from_chat_completion_request_error(error: open_ai::RequestError) -> Self {
+        let open_ai::RequestError::HttpResponseError {
+            status_code,
+            body,
+            headers,
+            ..
+        } = error
+        else {
+            return Self::ChatCompletion(error);
+        };
+        let code = ApiErrorCode::from_status(status_code.as_u16());
+        let error_response = match serde_json::from_str::<OpenRouterErrorResponse>(&body) {
+            Ok(OpenRouterErrorResponse { error }) => error,
+            Err(_) => OpenRouterErrorBody {
+                code: status_code.as_u16(),
+                message: body,
+                metadata: None,
+            },
+        };
+
+        match code {
+            ApiErrorCode::RateLimitError => Self::RateLimit {
+                retry_after: extract_retry_after(&headers)
+                    .unwrap_or_else(|| std::time::Duration::from_secs(60)),
+            },
+            ApiErrorCode::OverloadedError => Self::ServerOverloaded {
+                retry_after: extract_retry_after(&headers),
+            },
+            _ => Self::ApiError(ApiError {
+                code,
+                message: error_response.message,
+            }),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -790,7 +795,6 @@ impl From<OpenRouterError> for language_model_core::LanguageModelCompletionError
     fn from(error: OpenRouterError) -> Self {
         let provider = language_model_core::LanguageModelProviderName::new("OpenRouter");
         match error {
-            OpenRouterError::SerializeRequest(error) => Self::SerializeRequest { provider, error },
             OpenRouterError::BuildRequestBody(error) => Self::BuildRequestBody { provider, error },
             OpenRouterError::HttpSend(error) => Self::HttpSend { provider, error },
             OpenRouterError::DeserializeResponse(error) => {
@@ -806,6 +810,7 @@ impl From<OpenRouterError> for language_model_core::LanguageModelCompletionError
                 retry_after,
             },
             OpenRouterError::ApiError(api_error) => api_error.into(),
+            OpenRouterError::ChatCompletion(error) => error.into(),
         }
     }
 }
@@ -849,5 +854,98 @@ impl From<ApiError> for language_model_core::LanguageModelCompletionError {
                 retry_after: None,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::executor::block_on;
+    use http_client::{
+        FakeHttpClient, Response,
+        http::{HeaderName, HeaderValue},
+    };
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn completion_uses_shared_transport_with_open_router_headers() {
+        let captured_headers = Arc::new(Mutex::new(None));
+        let captured_headers_for_handler = captured_headers.clone();
+        let client = FakeHttpClient::create(move |request| {
+            let captured_headers = captured_headers_for_handler.clone();
+            async move {
+                captured_headers
+                    .lock()
+                    .expect("captured headers lock")
+                    .replace(request.headers().clone());
+                Ok(Response::builder()
+                    .status(200)
+                    .body(AsyncBody::from(concat!(
+                        "data: {\"id\":\"response-1\",\"created\":1,\"model\":\"vendor/model\",\"choices\":[],\"usage\":null}\n\n",
+                        "data: [DONE]\n\n"
+                    )))?)
+            }
+        });
+        let extra_headers = CustomHeaders::new(vec![(
+            HeaderName::from_static("x-custom-header"),
+            HeaderValue::from_static("custom-value"),
+        )]);
+        let request = Request {
+            model: "vendor/model".to_string(),
+            messages: vec![RequestMessage::User {
+                content: MessageContent::Plain("Hello".to_string()),
+            }],
+            stream: true,
+            session_id: None,
+            max_tokens: None,
+            stop: Vec::new(),
+            temperature: 0.4,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            tools: Vec::new(),
+            reasoning: None,
+            usage: RequestUsage { include: true },
+            provider: None,
+        };
+
+        let responses = block_on(async {
+            stream_completion(
+                client.as_ref(),
+                OPEN_ROUTER_API_URL,
+                "secret",
+                request,
+                &extra_headers,
+            )
+            .await
+            .expect("streaming request")
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .expect("stream responses")
+        });
+
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0].model, "vendor/model");
+        let headers = captured_headers.lock().expect("captured headers lock");
+        let headers = headers.as_ref().expect("captured headers");
+        assert_eq!(headers["http-referer"], "https://zed.dev");
+        assert_eq!(headers["x-title"], OPEN_ROUTER_APP_TITLE);
+        assert_eq!(headers["x-custom-header"], "custom-value");
+    }
+
+    #[test]
+    fn shared_transport_errors_retain_language_model_classification() {
+        let error = OpenRouterError::ChatCompletion(open_ai::RequestError::HttpSend {
+            provider: "OpenRouter".to_string(),
+            error: anyhow!("network unavailable"),
+        });
+        let error = language_model_core::LanguageModelCompletionError::from(error);
+
+        assert!(matches!(
+            error,
+            language_model_core::LanguageModelCompletionError::HttpSend { provider, .. }
+                if provider.0 == "OpenRouter"
+        ));
     }
 }

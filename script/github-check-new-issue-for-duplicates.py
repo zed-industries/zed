@@ -6,12 +6,14 @@ This script is run by a GitHub Actions workflow when a new issue is opened. It:
 1. Checks eligibility (bug/crash type or untyped, non-staff author)
 2. Detects relevant areas using Claude + the area label taxonomy
 3. Parses known "duplicate magnets" from tracking issue #46355
-4. Searches for similar issues — open (last 60 days) and recently closed (last 30 days)
-5. Asks Claude to sort open candidates into likely and possible duplicates, and
-   surface recently closed issues that may be useful triage context
-6. Posts a comment if anything is found: a user-facing duplicate alert for likely
-   duplicates, and/or a collapsed triager-facing section for possible duplicates
-   and recently closed related issues
+4. Searches for similar issues — open (including long-lived, recently active issues) and recently
+   closed (last 90 days) — and Discussions (feature requests / open-ended topics)
+5. Asks Claude to sort open candidates into likely and possible duplicates, surface
+   recently closed issues that may be useful triage context, and flag discussions the
+   issue may duplicate
+6. Posts a comment if anything is found: a user-facing alert for likely duplicate issues
+   or discussions, and/or a collapsed triager-facing section for possible duplicates,
+   recently closed related issues, and possibly-related discussions
 
 Requires:
     requests (pip install requests)
@@ -80,10 +82,36 @@ def github_api_get(path, params=None):
             time.sleep(wait)
 
 
-def github_search_issues(query, per_page=15):
-    """Search issues, returning most recently created first."""
-    params = {"q": query, "sort": "created", "order": "desc", "per_page": per_page}
+def github_search_issues(query, per_page=50, sort=None):
+    """Search issues, using GitHub's relevance ordering unless a sort is specified."""
+    params = {"q": query, "per_page": per_page}
+    if sort:
+        params.update({"sort": sort, "order": "desc"})
     return github_api_get("/search/issues", params).get("items", [])
+
+
+def github_api_graphql(query, variables=None):
+    """Run a GraphQL query against the GitHub API, retrying transient failures. """
+    url = f"{GITHUB_API}/graphql"
+    for attempt in range(3):
+        try:
+            response = requests.post(
+                url, headers=GITHUB_HEADERS, json={"query": query, "variables": variables or {}}
+            )
+            response.raise_for_status()
+            data = response.json()
+            if "errors" in data:
+                raise ValueError(f"GraphQL errors: {json.dumps(data['errors'])[:300]}")
+            return data["data"]
+        except requests.RequestException as e:
+            transient = isinstance(e, (requests.ConnectionError, requests.Timeout)) or (
+                isinstance(e, requests.HTTPError) and e.response.status_code in TRANSIENT_HTTP_STATUSES
+            )
+            if not transient or attempt == 2:
+                raise
+            wait = 2 ** attempt
+            log(f"  Transient GitHub GraphQL error ({e}); retrying in {wait}s")
+            time.sleep(wait)
 
 
 def check_team_membership(org, team_slug, username):
@@ -104,21 +132,25 @@ def post_comment(issue_number: int, body):
     log(f"  Posted comment on #{issue_number}")
 
 
-def build_comment(likely_duplicates, possible_duplicates, related_closed_issues):
-    """Compose the full comment body. Returns empty string if there's nothing to post.
+def format_candidate_reference(match):
+    candidate = match["candidate"]
+    if candidate["kind"] == "discussion":
+        return f"[Discussion #{candidate['number']}]({candidate['url']})"
+    return f"#{candidate['number']}"
 
-    The comment has two sections, each optional:
-    - User-facing duplicate alert, rendered when likely_duplicates is non-empty.
-    - Collapsed triage context, rendered when there are possible duplicates or
-      related closed issues to surface for triagers.
-    """
+
+def build_comment(likely_matches, possible_matches, related_closed_candidates):
+    """Compose the full comment body. Returns empty string if there's nothing to post."""
     sections = []
+    likely_issues = [m for m in likely_matches if m["candidate"]["kind"] == "issue"]
+    likely_discussions = [m for m in likely_matches if m["candidate"]["kind"] == "discussion"]
 
-    if likely_duplicates:
-        match_list = "\n".join(f"- #{m['number']}" for m in likely_duplicates)
+    if likely_issues:
+        match_list = "\n".join(f"- {format_candidate_reference(m)}" for m in likely_issues)
         explanations = "\n\n".join(
-            f"**#{m['number']}:** {m['explanation']}\n\n**Shared root cause:** {m['shared_root_cause']}"
-            for m in likely_duplicates
+            f"**{format_candidate_reference(m)}:** {m['explanation']}\n\n"
+            f"**Shared root cause:** {m['shared_root_cause']}"
+            for m in likely_issues
         )
         sections.append(f"""This issue appears to be a duplicate of:
 
@@ -137,25 +169,49 @@ No action needed. A maintainer will review this shortly.
 
 </details>""")
 
-    if possible_duplicates or related_closed_issues:
+    if likely_discussions:
+        match_list = "\n".join(f"- {format_candidate_reference(m)}" for m in likely_discussions)
+        explanations = "\n\n".join(
+            f"**{format_candidate_reference(m)}:** {m['explanation']}" for m in likely_discussions
+        )
+        sections.append(f"""This looks like it may already be covered by an existing discussion:
+
+{match_list}
+
+Zed tracks feature requests and open-ended topics in Discussions rather than Issues. **If your report is covered there, please close this issue as a duplicate (select "Close as not planned" → "Duplicate") and continue in the discussion** so the conversation stays in one place.
+
+<details>
+<summary>Why were these selected?</summary>
+
+{explanations}
+
+</details>""")
+
+    possible_issues = [m for m in possible_matches if m["candidate"]["kind"] == "issue"]
+    possible_discussions = [m for m in possible_matches if m["candidate"]["kind"] == "discussion"]
+    if possible_matches or related_closed_candidates:
         parts = []
-        if possible_duplicates:
+        if possible_issues:
             lines = [
-                f"- #{m['number']} — {m['explanation']}\n"
+                f"- {format_candidate_reference(m)} — {m['explanation']}\n"
                 f"  - Possible shared root cause: {m['shared_root_cause']}"
-                for m in possible_duplicates
+                for m in possible_issues
             ]
             parts.append("**Possibly related open issues:**\n\n" + "\n".join(lines))
-        if related_closed_issues:
-            # state_reason is shown only for "duplicate" (the close type is otherwise
-            # already visible from GitHub's icon next to the issue number on render).
+        if related_closed_candidates:
             lines = [
-                f"- #{m['number']}"
-                f"{' (closed as duplicate)' if m['state_reason'] == 'duplicate' else ''}"
+                f"- {format_candidate_reference(m)}"
+                f"{' (closed as duplicate)' if m['candidate'].get('state_reason') == 'duplicate' else ''}"
                 f" — {m['explanation']}"
-                for m in related_closed_issues
+                for m in related_closed_candidates
             ]
             parts.append("**Recently closed, possibly the same bug:**\n\n" + "\n".join(lines))
+        if possible_discussions:
+            lines = [
+                f"- {format_candidate_reference(m)} — {m['explanation']}"
+                for m in possible_discussions
+            ]
+            parts.append("**Possibly related discussions:**\n\n" + "\n".join(lines))
         body = "\n\n".join(parts)
         sections.append(f"""<details>
 <summary>Additional recent context for triagers</summary>
@@ -300,6 +356,64 @@ def format_taxonomy_for_claude(area_labels):
     return "\n".join(sorted(lines))
 
 
+SEARCH_QUERY_TOOL = {
+    "name": "report_search_queries",
+    "description": "Report concise GitHub search queries for finding duplicate reports.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "queries": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 1,
+                "maxItems": 3,
+            },
+        },
+        "required": ["queries"],
+    },
+}
+
+
+def generate_search_queries(anthropic_key, issue):
+    """Use Claude to derive a few concise searches from the issue's title and body."""
+    log("Generating search queries with Claude")
+    system_prompt = """Generate 1-3 concise GitHub search queries for finding earlier reports of the
+same underlying bug or request. Each query should contain 2-5 terms that are likely to appear in a
+canonical issue's title or body. Use the report body as well as its title, include distinctive terms
+such as error codes or requested mechanisms, and vary vocabulary when useful. Do not include GitHub
+qualifiers such as repo:, is:, label:, or in:, and do not wrap terms in quotes."""
+    user_content = f"""# Issue Title
+{issue['title']}
+
+# Issue Body
+{issue['body'][:4000]}"""
+    try:
+        response = call_claude_tool(
+            anthropic_key,
+            system_prompt,
+            user_content,
+            SEARCH_QUERY_TOOL,
+            max_tokens=300,
+        )
+    except (requests.RequestException, ValueError) as error:
+        log(f"  Search query generation failed ({error}); falling back to title and area searches")
+        return []
+
+    queries = []
+    for query in response.get("queries", []):
+        if not isinstance(query, str) or re.search(
+            r"\b(?:repo|is|label|state|created|updated|closed|in):", query, re.IGNORECASE
+        ):
+            continue
+        terms = re.findall(r"[A-Za-z0-9][A-Za-z0-9_./+#'-]*", query)
+        normalized = " ".join(terms[:5])
+        if normalized and normalized not in queries:
+            queries.append(normalized)
+
+    log(f"  Generated search queries: {queries}")
+    return queries
+
+
 def detect_areas(anthropic_key, issue, area_labels):
     """Use Claude to detect which area labels apply to the issue.
 
@@ -411,12 +525,20 @@ def parse_duplicate_magnets():
 
 
 def enrich_magnets(magnets):
-    """Fetch title and body_preview for magnets from the API."""
+    """Fetch details for magnets and normalize them as candidates."""
     log(f"  Fetching details for {len(magnets)} magnets")
     for magnet in magnets:
         data = github_api_get(f"/repos/{REPO_OWNER}/{REPO_NAME}/issues/{magnet['number']}")
-        magnet["title"] = data["title"]
-        magnet["body_preview"] = (data.get("body") or "")[:1000]
+        magnet.update({
+            "key": f"issue:{magnet['number']}",
+            "kind": "issue",
+            "title": data["title"],
+            "url": data["html_url"],
+            "state": data["state"],
+            "state_reason": data.get("state_reason"),
+            "body_preview": (data.get("body") or "")[:3000],
+            "source": "known_duplicate_magnet",
+        })
 
 
 def areas_match(detected, magnet_area):
@@ -448,50 +570,117 @@ def filter_magnets_by_areas(magnets, detected_areas):
     return list(filter(matches, magnets))
 
 
-def search_for_similar_issues(issue, detected_areas, max_searches_per_state=6):
-    """Search for similar issues — both open and recently closed.
+def filter_author_referenced_candidates(issue, candidates):
+    text = f"{issue['title']}\n{issue['body']}"
+    discussion_shorthand_pattern = r"\bdiscussion\s+#(\d+)\b"
+    discussion_numbers = re.findall(discussion_shorthand_pattern, text, re.IGNORECASE)
+    text_without_discussion_shorthand = re.sub(
+        discussion_shorthand_pattern, "", text, flags=re.IGNORECASE
+    )
+    referenced_keys = {
+        f"issue:{number}" for number in re.findall(r"#(\d+)\b", text_without_discussion_shorthand)
+    }
+    referenced_keys.update(f"discussion:{number}" for number in discussion_numbers)
 
-    Runs two passes:
-    - Open issues: title keywords / error pattern unrestricted, area searches last 60 days.
-    - Closed issues: closed within the last 30 days (across all query types).
+    resource_pattern = rf"https?://github\.com/{REPO_OWNER}/{REPO_NAME}/(issues|discussions)/(\d+)\b"
+    for resource, number in re.findall(resource_pattern, text, re.IGNORECASE):
+        kind = "issue" if resource.lower() == "issues" else "discussion"
+        referenced_keys.add(f"{kind}:{number}")
 
-    max_searches_per_state caps queries per state to keep token usage and context size bounded.
-    """
+    omitted = [candidate["key"] for candidate in candidates if candidate["key"] in referenced_keys]
+    if omitted:
+        log(f"  Omitted candidates already referenced by the author: {omitted}")
+    return [candidate for candidate in candidates if candidate["key"] not in referenced_keys]
+
+
+def rank_search_candidates(candidates):
+    def rank(candidate):
+        matched_searches = candidate["matched_searches"]
+        return (
+            len(matched_searches) > 1,
+            "semantic_query" in matched_searches,
+            "title_keywords" in matched_searches,
+            "error_pattern" in matched_searches,
+            "popular_area" in matched_searches,
+            len(matched_searches),
+            -candidate.get("best_match_rank", 1000),
+            candidate.get("updated_at", ""),
+        )
+
+    return sorted(candidates, key=rank, reverse=True)
+
+
+def select_search_candidates(candidates, limit):
+    """Select candidates while preserving capacity for each retrieval channel."""
+    selected = []
+    selected_keys = set()
+    reserved = (
+        ("semantic_query", max(2, limit // 3)),
+        ("error_pattern", max(1, limit // 10)),
+        ("title_keywords", max(1, limit // 6)),
+        ("popular_area", max(1, limit // 5)),
+        ("area_label", max(1, limit // 6)),
+    )
+
+    def add(candidate):
+        if candidate["key"] not in selected_keys and len(selected) < limit:
+            selected.append(candidate)
+            selected_keys.add(candidate["key"])
+
+    for search_type, quota in reserved:
+        matching = [candidate for candidate in candidates if search_type in candidate["matched_searches"]]
+        for candidate in matching[:quota]:
+            add(candidate)
+
+    for candidate in candidates:
+        add(candidate)
+
+    return selected
+
+
+def extract_error_snippet(body):
+    match = re.search(
+        r"(?i:(?:\berror\b|\bfailed\b)[ \t]*:[ \t]+|\bpanicked at[ \t]+)([^\r\n]{5,90})",
+        body,
+    )
+    if not match:
+        return None
+    snippet = match.group(1).strip()
+    if snippet.startswith(("#", "<", "```")):
+        return None
+    return snippet
+
+
+def search_for_similar_issues(issue, detected_areas, search_queries, max_searches_per_state=12):
+    """Search for similar open issues and issues closed within the last 90 days."""
     log("Searching for similar issues")
 
-    sixty_days_ago = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
-    thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+    ninety_days_ago = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
 
     title_keywords = [word for word in issue["title"].split() if word.lower() not in STOPWORDS and len(word) > 2]
     keywords_query = " ".join(title_keywords) if title_keywords else None
 
-    # error pattern search: capture 5–90 chars after keyword, colon optional
-    error_pattern = r"(?i:\b(?:error|panicked|panic|failed)\b)\s*([^\n]{5,90})"
-    error_match = re.search(error_pattern, issue["body"])
-    error_snippet = error_match.group(1).strip() if error_match else None
+    error_snippet = extract_error_snippet(issue["body"])
 
-    def build_queries(base, area_window=None):
-        queries = []
-        if keywords_query:
+    def build_queries(base):
+        queries = [("semantic_query", f"{base} {query}") for query in search_queries]
+        if keywords_query and keywords_query not in search_queries:
             queries.append(("title_keywords", f"{base} {keywords_query}"))
-        for area in detected_areas:
-            area_q = f'{base} label:"area:{area}"'
-            if area_window:
-                area_q += f" created:>{area_window}"
-            queries.append(("area_label", area_q))
         if error_snippet:
             queries.append(("error_pattern", f'{base} in:body "{error_snippet}"'))
+        queries.extend(("area_label", f'{base} label:"area:{area}"') for area in detected_areas)
         return queries
 
-    open_queries = build_queries(
-        f"repo:{REPO_OWNER}/{REPO_NAME} is:issue is:open",
-        area_window=sixty_days_ago,
+    open_queries = build_queries(f"repo:{REPO_OWNER}/{REPO_NAME} is:issue is:open")
+    open_queries.extend(
+        ("popular_area", f'repo:{REPO_OWNER}/{REPO_NAME} is:issue is:open label:"area:{area}"')
+        for area in detected_areas
     )
     # closed pass: filter by close date so we catch issues closed recently regardless of
     # when they were opened. closed:> already restricts the result set, so the per-query
     # area window is unnecessary.
     closed_queries = build_queries(
-        f"repo:{REPO_OWNER}/{REPO_NAME} is:issue is:closed closed:>{thirty_days_ago}",
+        f"repo:{REPO_OWNER}/{REPO_NAME} is:issue is:closed closed:>{ninety_days_ago}"
     )
 
     seen_issues = {}
@@ -502,70 +691,189 @@ def search_for_similar_issues(issue, detected_areas, max_searches_per_state=6):
         for search_type, query in queries:
             log(f"  Search ({state_label} / {search_type}): {query}")
             try:
-                results = github_search_issues(query, per_page=15)
-                for item in results:
+                if search_type == "popular_area":
+                    sort = "reactions"
+                elif state_label == "open" and search_type == "area_label":
+                    sort = "updated"
+                else:
+                    sort = None
+                results = github_search_issues(query, per_page=50, sort=sort)
+                for result_rank, item in enumerate(results):
                     number = item["number"]
-                    if number != issue["number"] and number not in seen_issues:
-                        body = item.get("body") or ""
-                        seen_issues[number] = {
-                            "number": number,
-                            "title": item["title"],
-                            "state": item.get("state", ""),
-                            "state_reason": item.get("state_reason"),
-                            "created_at": item.get("created_at", ""),
-                            "body_preview": body[:1000],
-                            "source": search_type,
-                        }
+                    if number == issue["number"]:
+                        continue
+                    existing = seen_issues.get(number)
+                    if existing:
+                        if search_type not in existing["matched_searches"]:
+                            existing["matched_searches"].append(search_type)
+                        if search_type not in ("area_label", "popular_area"):
+                            existing["best_match_rank"] = min(existing["best_match_rank"], result_rank)
+                        continue
+                    body = item.get("body") or ""
+                    seen_issues[number] = {
+                        "key": f"issue:{number}",
+                        "kind": "issue",
+                        "number": number,
+                        "title": item["title"],
+                        "url": item["html_url"],
+                        "state": item.get("state", ""),
+                        "state_reason": item.get("state_reason"),
+                        "created_at": item.get("created_at", ""),
+                        "updated_at": item.get("updated_at", ""),
+                        "body_preview": body[:3000],
+                        "source": "issue_search",
+                        "matched_searches": [search_type],
+                        "best_match_rank": (
+                            result_rank if search_type not in ("area_label", "popular_area") else 1000
+                        ),
+                    }
             except requests.RequestException as e:
                 log(f"  Search failed: {e}")
 
-    similar_issues = list(seen_issues.values())
+    similar_issues = rank_search_candidates(seen_issues.values())
     log(f"  Found {len(similar_issues)} similar issues")
     return similar_issues
 
 
-def analyze_duplicates(anthropic_key, issue, magnets, search_results):
-    """Use Claude to identify duplicates (open) and surface related closed issues.
+def enrich_popular_candidate_comments(candidates):
+    for candidate in candidates:
+        if (
+            candidate["kind"] != "issue"
+            or "popular_area" not in candidate.get("matched_searches", [])
+        ):
+            continue
+        try:
+            comments = github_api_get(
+                f"/repos/{REPO_OWNER}/{REPO_NAME}/issues/{candidate['number']}/comments",
+                params={"per_page": 100},
+            )
+        except requests.RequestException as error:
+            log(f"  Failed to fetch comments for {candidate['key']}: {error}")
+            continue
+        bodies = [comment.get("body") or "" for comment in comments]
+        candidate["recent_comments_preview"] = "\n\n---\n\n".join(filter(None, bodies[-5:]))[-3000:]
 
-    Returns (likely_duplicates, possible_duplicates, related_closed_issues).
+
+def search_discussions(issue, detected_areas, search_queries, max_searches=6):
+    """Search Discussions for a topic/request the new issue may duplicate.
+
+    Discussions are not in the REST search API, so this uses GraphQL search(type: DISCUSSION).
+    Zed tracks feature requests and open-ended topics as Discussions rather than Issues, so a
+    new issue that re-files an existing discussion should be closed by its author in favor of
+    the discussion.
     """
-    top_magnets = magnets[:10]
-    magnet_numbers = {m["number"] for m in top_magnets}
+    log("Searching discussions")
+    title_keywords = [w for w in issue["title"].split() if w.lower() not in STOPWORDS and len(w) > 2]
+    keywords_query = " ".join(title_keywords) if title_keywords else None
+    if not search_queries and not keywords_query:
+        return []
 
-    open_results = [r for r in search_results if r["state"] == "open" and r["number"] not in magnet_numbers]
-    closed_results = [r for r in search_results if r["state"] == "closed" and r["number"] not in magnet_numbers]
+    base = f"repo:{REPO_OWNER}/{REPO_NAME} is:open"
+    queries = [("semantic_query", f"{base} {query}") for query in search_queries]
+    if keywords_query and keywords_query not in search_queries:
+        queries.append(("title_keywords", f"{base} {keywords_query}"))
+    if keywords_query:
+        for area in detected_areas:
+            queries.append(("area_label", f'{base} {keywords_query} label:"area:{area}"'))
 
-    if not top_magnets and not open_results and not closed_results:
-        return [], [], []
+    gql = """
+    query($q: String!) {
+      search(query: $q, type: DISCUSSION, first: 30) {
+        nodes {
+          ... on Discussion {
+            number
+            title
+            url
+            bodyText
+            category { name }
+          }
+        }
+      }
+    }
+    """
+    seen = {}
+    for search_type, query in queries[:max_searches]:
+        log(f"  Discussion search ({search_type}): {query}")
+        try:
+            data = github_api_graphql(gql, {"q": query})
+            for result_rank, node in enumerate(data["search"]["nodes"]):
+                if not node:
+                    continue
+                number = node["number"]
+                existing = seen.get(number)
+                if existing:
+                    if search_type not in existing["matched_searches"]:
+                        existing["matched_searches"].append(search_type)
+                    existing["best_match_rank"] = min(existing["best_match_rank"], result_rank)
+                    continue
+                body = node.get("bodyText") or ""
+                seen[number] = {
+                    "key": f"discussion:{number}",
+                    "kind": "discussion",
+                    "number": number,
+                    "title": node["title"],
+                    "url": node["url"],
+                    "state": "open",
+                    "state_reason": None,
+                    "category": (node.get("category") or {}).get("name"),
+                    "body_preview": body[:3000],
+                    "source": "discussion_search",
+                    "matched_searches": [search_type],
+                    "best_match_rank": result_rank,
+                }
+        except (requests.RequestException, ValueError, KeyError, TypeError) as e:
+            log(f"  Discussion search failed: {e}")
+    discussions = rank_search_candidates(seen.values())
+    log(f"  Found {len(discussions)} candidate discussions")
+    return discussions
 
-    log("Analyzing candidates with Claude")
-    log(f"  Candidate pool: {len(top_magnets)} magnets, {len(open_results)} open search results, "
-        f"{len(closed_results)} closed search results (will pass {min(len(closed_results), 5)} closed)")
-    enrich_magnets(top_magnets)
 
-    closed_candidates_for_claude = closed_results[:5]
-    if closed_candidates_for_claude:
-        log(f"  Closed candidates given to proposer: {[r['number'] for r in closed_candidates_for_claude]}")
-
-    candidates = [
-        {"number": m["number"], "title": m["title"], "body_preview": m["body_preview"],
-         "state": "open", "state_reason": None, "source": "known_duplicate_magnet"}
-        for m in top_magnets
-    ] + [
-        {"number": r["number"], "title": r["title"], "body_preview": r["body_preview"],
-         "state": r["state"], "state_reason": r["state_reason"], "source": "search_result"}
-        for r in open_results[:10] + closed_candidates_for_claude
+def analyze_duplicates(anthropic_key, issue, candidates):
+    """Use Claude to identify likely, possible, and related closed candidates."""
+    magnets = [candidate for candidate in candidates if candidate["source"] == "known_duplicate_magnet"]
+    magnet_keys = {candidate["key"] for candidate in magnets}
+    open_issues = [
+        candidate for candidate in candidates
+        if candidate["kind"] == "issue" and candidate["state"] == "open"
+        and candidate["key"] not in magnet_keys
+    ]
+    closed_issues = [
+        candidate for candidate in candidates
+        if candidate["kind"] == "issue" and candidate["state"] == "closed"
+        and candidate["key"] not in magnet_keys
+    ]
+    open_discussions = [
+        candidate for candidate in candidates
+        if candidate["kind"] == "discussion" and candidate["state"] == "open"
     ]
 
-    system_prompt = """You analyze GitHub issues to (a) identify duplicates among OPEN candidates
-and (b) surface recently CLOSED candidates that are useful triage context.
+    selected_candidates = (
+        magnets[:10]
+        + select_search_candidates(open_issues, 30)
+        + select_search_candidates(closed_issues, 10)
+        + open_discussions[:10]
+    )
+    if not selected_candidates:
+        return {"likely_matches": [], "possible_matches": [], "related_closed_candidates": []}
 
-Each candidate has a "state" field ("open" or "closed"), and closed candidates carry a
-"state_reason" ("completed", "not_planned", or "duplicate").
+    enrich_popular_candidate_comments(selected_candidates)
 
-# (a) Duplicates — OPEN candidates only
+    log("Analyzing candidates with Claude")
+    log(
+        f"  Candidate pool: {len(magnets)} magnets, {len(open_issues)} open issues, "
+        f"{len(closed_issues)} closed issues, {len(open_discussions)} open discussions"
+    )
+    log(f"  Candidates given to proposer: {[candidate['key'] for candidate in selected_candidates]}")
 
-A duplicate means: caused by the SAME BUG in the code, not just similar symptoms.
+    system_prompt = """You analyze a new GitHub issue against candidates that may be issues or discussions.
+
+Each candidate has a unique "key", a "kind" ("issue" or "discussion"), and a "state"
+("open" or "closed"). Closed issues carry a "state_reason" ("completed", "not_planned",
+or "duplicate"). Always identify a candidate using its full key.
+
+# (a) Duplicate issues — OPEN issue candidates only
+
+For an issue candidate, a duplicate means: caused by the SAME BUG in the code, not just similar symptoms.
 
 CRITICAL DISTINCTION — shared symptoms vs shared root cause:
 - "models missing", "can't sign in", "editor hangs", "venv not detected" are SYMPTOMS that many
@@ -575,12 +883,15 @@ CRITICAL DISTINCTION — shared symptoms vs shared root cause:
 - If the issues just happen to be in the same feature area, or describe similar-sounding problems
   with different specifics (different error messages, different triggers, different platforms,
   different configurations), they are NOT duplicates.
+- Compare the causal mechanism, not only the surface observations. Differing observed effects do
+  not rule out a duplicate when the provided evidence supports a specific shared trigger and
+  mechanism, but do create uncertainty about the match.
 
-Sort duplicates into two buckets:
-- "likely_duplicates": Almost certainly the same bug. You can name a specific shared root cause, and
+Sort matches into two buckets:
+- "likely_matches": Almost certainly the same bug. You can name a specific shared root cause, and
   the reproduction steps / error messages / triggers are consistent.
-- "possible_duplicates": Likely the same bug based on specific technical details, but some
-  uncertainty remains.
+- "possible_matches": Plausibly the same bug because concrete evidence supports a shared trigger
+  or mechanism, but incomplete evidence or differing observed effects leave meaningful uncertainty.
 - Do NOT include issues that merely share symptoms, affect the same feature area, or sound similar
   at a surface level.
 
@@ -651,6 +962,19 @@ Worth surfacing — strict examples:
 Count: typically 0 or 1. Never more than 2 unless there's an obvious cluster of identical
 "not_planned" reports. 0 is a normal outcome.
 
+# (c) Duplicate of a discussion — OPEN discussion candidates only
+
+Zed tracks feature requests and open-ended proposals as Discussions, not Issues. If the
+new issue is essentially the SAME request or topic as a discussion candidate, its author
+should close the issue and continue in the discussion.
+
+Put a discussion in "likely_matches" when it is clearly the same request/topic, or in
+"possible_matches" when it is plausibly the same request/topic but some uncertainty remains.
+Do not provide a shared_root_cause for discussion matches.
+
+The test here is "same underlying request/topic", NOT "same code bug". Do not match on
+shared area alone. The same false-positives-are-worse asymmetry applies: when in doubt, omit.
+
 # Output
 
 Report your verdict by calling the report_duplicate_analysis tool. Fill the "reasoning"
@@ -662,19 +986,33 @@ found."""
 **Title:** {issue['title']}
 
 **Body:**
-{issue['body'][:3000]}
+{issue['body'][:6000]}
 
-## Existing Issues to Compare
-{json.dumps(candidates, indent=2)}"""
+## Candidates to Compare
+{json.dumps(selected_candidates, indent=2)}"""
 
-    duplicate_match_schema = {
+    match_schema = {
         "type": "object",
         "properties": {
-            "number": {"type": "integer", "description": "The candidate issue number"},
-            "shared_root_cause": {"type": "string", "description": "The specific bug/root cause shared by both issues"},
-            "explanation": {"type": "string", "description": "Brief explanation with concrete evidence from both issues"},
+            "candidate_key": {"type": "string", "description": "The candidate's full key"},
+            "shared_root_cause": {
+                "type": "string",
+                "description": "The specific shared bug/root cause. Include for issue matches only.",
+            },
+            "explanation": {
+                "type": "string",
+                "description": "Brief explanation with concrete evidence from the new issue and candidate",
+            },
         },
-        "required": ["number", "shared_root_cause", "explanation"],
+        "required": ["candidate_key", "explanation"],
+    }
+    related_closed_schema = {
+        "type": "object",
+        "properties": {
+            "candidate_key": {"type": "string", "description": "The candidate's full key"},
+            "explanation": {"type": "string", "description": "Why this is useful triage context"},
+        },
+        "required": ["candidate_key", "explanation"],
     }
     analysis_tool = {
         "name": "report_duplicate_analysis",
@@ -684,25 +1022,14 @@ found."""
             "properties": {
                 "reasoning": {
                     "type": "string",
-                    "description": "A brief scratchpad (at most 2-3 sentences) weighing the strongest "
-                                   "candidates and whether they share a root cause. Be terse.",
+                    "description": "A brief scratchpad (at most 2-3 sentences) weighing the strongest candidates.",
                     "maxLength": 700,
                 },
-                "likely_duplicates": {"type": "array", "items": duplicate_match_schema},
-                "possible_duplicates": {"type": "array", "items": duplicate_match_schema},
-                "related_closed_issues": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "number": {"type": "integer", "description": "The candidate issue number"},
-                            "explanation": {"type": "string", "description": "Brief explanation of why this is useful triage context"},
-                        },
-                        "required": ["number", "explanation"],
-                    },
-                },
+                "likely_matches": {"type": "array", "items": match_schema},
+                "possible_matches": {"type": "array", "items": match_schema},
+                "related_closed_candidates": {"type": "array", "items": related_closed_schema},
             },
-            "required": ["reasoning", "likely_duplicates", "possible_duplicates", "related_closed_issues"],
+            "required": ["reasoning", "likely_matches", "possible_matches", "related_closed_candidates"],
         },
     }
 
@@ -710,39 +1037,159 @@ found."""
     if data.get("reasoning"):
         log(f"  Reasoning: {data['reasoning']}")
 
-    likely = data.get("likely_duplicates", [])
-    possible = data.get("possible_duplicates", [])
-    closed = data.get("related_closed_issues", [])
+    candidates_by_key = {candidate["key"]: candidate for candidate in selected_candidates}
 
-    # Claude occasionally places a closed candidate in the duplicate buckets, or vice
-    # versa. Enforce that each match lives in the bucket consistent with the canonical
-    # state of the candidate we passed in.
-    candidate_states = {c["number"]: c["state"] for c in candidates}
+    def resolve_matches(matches, expected_state, label):
+        resolved = []
+        seen = set()
+        dropped = []
+        for match in matches:
+            key = match.get("candidate_key")
+            candidate = candidates_by_key.get(key)
+            if candidate is None or candidate["state"] != expected_state or key in seen:
+                dropped.append(key)
+                continue
+            if candidate["kind"] == "issue" and expected_state == "open" and not match.get("shared_root_cause"):
+                dropped.append(key)
+                continue
+            seen.add(key)
+            resolved.append({**match, "candidate": candidate})
+        if dropped:
+            log(f"  Dropped {len(dropped)} invalid matches from {label}: {dropped}")
+        return resolved
 
-    def filter_by_state(items, expected_state, label):
-        kept, wrong = [], []
-        for m in items:
-            (kept if candidate_states.get(m["number"]) == expected_state else wrong).append(m)
-        if wrong:
-            log(f"  Dropped {len(wrong)} from {label} with wrong/unknown state: {[m['number'] for m in wrong]}")
-        return kept
+    likely = resolve_matches(data.get("likely_matches", []), "open", "likely_matches")
+    possible = resolve_matches(data.get("possible_matches", []), "open", "possible_matches")
+    related_closed = resolve_matches(
+        data.get("related_closed_candidates", []), "closed", "related_closed_candidates"
+    )
 
-    likely = filter_by_state(likely, "open", "likely_duplicates")
-    possible = filter_by_state(possible, "open", "possible_duplicates")
-    closed = filter_by_state(closed, "closed", "related_closed_issues")
-
-    # Avoid showing the same issue in both the user-facing alert and the triage section.
-    likely_numbers = {m["number"] for m in likely}
-    overlap = [m["number"] for m in possible if m["number"] in likely_numbers]
+    likely_keys = {match["candidate_key"] for match in likely}
+    overlap = [match["candidate_key"] for match in possible if match["candidate_key"] in likely_keys]
     if overlap:
-        log(f"  Dropped {len(overlap)} from possible_duplicates already in likely_duplicates: {overlap}")
-    possible = [m for m in possible if m["number"] not in likely_numbers]
+        log(f"  Dropped {len(overlap)} possible matches already in likely matches: {overlap}")
+    possible = [match for match in possible if match["candidate_key"] not in likely_keys]
 
-    log(f"  Found {len(likely) + len(possible) + len(closed)} potential matches")
-    return likely, possible, closed
+    log(f"  Found {len(likely)} likely, {len(possible)} possible, and "
+        f"{len(related_closed)} related closed matches")
+    return {
+        "likely_matches": likely,
+        "possible_matches": possible,
+        "related_closed_candidates": related_closed,
+    }
 
 
-CRITIQUE_SYSTEM_PROMPT = """You are evaluating ONE recently closed GitHub issue to decide whether a triager looking
+PROPOSED_MATCH_CRITIQUE_SYSTEM_PROMPT = """You evaluate one proposed match for a new GitHub issue.
+
+The proposer classified the candidate as likely or possible and supplied an explanation.
+For issue candidates it also supplied a shared root cause. Verify the proposal against the
+actual text of both reports. False positives are much worse than false negatives.
+
+For an issue candidate, keep the match only when both reports plausibly describe the SAME
+BUG. Shared symptoms, product area, or terminology are insufficient. The proposed shared
+root cause and every concrete claim in the explanation must be supported by the provided
+text. Omit matches that rely on invented mechanisms, contradictory triggers, different
+errors, configurations, or platforms without evidence tying them together. Judge the proposed
+causal mechanism rather than requiring every surface observation to be identical; any claimed
+bridge between differing observations must itself be supported by the provided text.
+
+Some reports framed as bugs are actually requests for behavior Zed does not support. Zed
+tracks feature requests and open-ended proposals in Discussions. For a discussion candidate,
+keep the match when the report's desired behavior is substantially the SAME request or topic.
+A shared area or superficially similar wording is insufficient.
+
+Verdicts:
+- "keep": the proposed confidence and justification are supported as written.
+- "downgrade": only for a proposed likely match whose relationship is plausible but not
+  strong enough to show as likely. The proposed justification must still be supported.
+- "omit": the relationship or its justification is not sufficiently supported. Use this
+  for a proposed possible match that does not meet the bar; never downgrade a possible match.
+
+Report the verdict with one concise rationale grounded in the provided text."""
+
+
+PROPOSED_MATCH_CRITIQUE_VERDICT_TOOL = {
+    "name": "report_proposed_match_critique_verdict",
+    "description": "Report whether the proposed candidate match is supported.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "rationale": {
+                "type": "string",
+                "description": "One concise sentence explaining whether the proposed match is supported.",
+                "maxLength": 400,
+            },
+            "verdict": {"type": "string", "enum": ["keep", "downgrade", "omit"]},
+        },
+        "required": ["rationale", "verdict"],
+    },
+}
+
+
+def critique_proposed_matches(anthropic_key, issue, likely_matches, possible_matches):
+    proposed = [("likely", match) for match in likely_matches]
+    proposed.extend(("possible", match) for match in possible_matches)
+    if not proposed:
+        log("  Match critique: proposer surfaced 0 candidates; skipping")
+        return {"likely_matches": [], "possible_matches": []}
+
+    kept_likely = []
+    kept_possible = []
+    for confidence, match in proposed:
+        candidate = match["candidate"]
+        key = candidate["key"]
+        shared_root_cause = match.get("shared_root_cause") or "Not applicable"
+        user_content = f"""## New Issue #{issue['number']}
+**Title:** {issue['title']}
+
+**Body:**
+{issue['body'][:6000]}
+
+## Candidate {key}
+**Kind:** {candidate['kind']}
+**Title:** {candidate['title']}
+
+**Body preview:**
+{candidate['body_preview']}
+
+**Recent comments:**
+{candidate.get('recent_comments_preview') or 'None provided'}
+
+## Proposed Match
+**Confidence:** {confidence}
+**Shared root cause:** {shared_root_cause}
+**Explanation:** {match['explanation']}"""
+
+        log(f"  Match critique: evaluating {confidence} match {key}")
+        try:
+            verdict_data = call_claude_tool(
+                anthropic_key,
+                PROPOSED_MATCH_CRITIQUE_SYSTEM_PROMPT,
+                user_content,
+                PROPOSED_MATCH_CRITIQUE_VERDICT_TOOL,
+                max_tokens=600,
+            )
+        except (requests.RequestException, ValueError) as e:
+            log(f"  Match critique: verdict call failed for {key} ({e}); omitting candidate")
+            continue
+
+        verdict = verdict_data.get("verdict")
+        rationale = verdict_data.get("rationale", "")
+        if verdict == "keep":
+            destination = kept_likely if confidence == "likely" else kept_possible
+            destination.append(match)
+            log(f"  Match critique: keeping {confidence} match {key} — {rationale}")
+        elif verdict == "downgrade" and confidence == "likely":
+            kept_possible.append(match)
+            log(f"  Match critique: downgrading {key} to possible — {rationale}")
+        else:
+            log(f"  Match critique: omitting {key} — {rationale}")
+
+    log(f"  Match critique: kept {len(kept_likely)} likely and {len(kept_possible)} possible matches")
+    return {"likely_matches": kept_likely, "possible_matches": kept_possible}
+
+
+RELATED_CLOSED_CANDIDATE_CRITIQUE_SYSTEM_PROMPT = """You are evaluating ONE recently closed GitHub issue to decide whether a triager looking
 at a brand-new bug report would find it useful to be told about that closed issue.
 
 There is no slate to fill. There is no quota. You will be shown exactly one candidate.
@@ -792,7 +1239,7 @@ null. When "verdict" is "omit", set "rule_violated" to the most relevant rule nu
 null if the candidate is simply too unrelated for any rule to specifically apply."""
 
 
-CRITIQUE_VERDICT_TOOL = {
+RELATED_CLOSED_CANDIDATE_CRITIQUE_VERDICT_TOOL = {
     "name": "report_critique_verdict",
     "description": "Report whether the closed candidate is worth surfacing to a triager.",
     "input_schema": {
@@ -814,53 +1261,44 @@ CRITIQUE_VERDICT_TOOL = {
 }
 
 
-def critique_closed_candidates(anthropic_key, issue, proposed, search_results):
-    """Run a strict per-candidate critique pass over the proposer's closed candidates.
-
-    For each proposed match, call Claude with only the new issue and that single candidate
-    (blind to the proposer's rationale) and ask for a yes/no verdict. Default is omit.
-    Returns the subset of `proposed` that passes critique.
-    """
+def critique_related_closed_candidates(anthropic_key, issue, proposed):
+    """Run a strict per-candidate critique pass over the proposer's closed candidates."""
     if not proposed:
-        log("  Critique: proposer surfaced 0 closed candidates; skipping")
+        log("  Related candidate critique: proposer surfaced 0 candidates; skipping")
         return []
 
-    log(f"  Critique: proposer surfaced {len(proposed)} closed candidate(s): "
-        f"{[m['number'] for m in proposed]}")
+    log(f"  Related candidate critique: proposer surfaced {len(proposed)} candidate(s): "
+        f"{[m['candidate_key'] for m in proposed]}")
 
-    results_by_number = {r["number"]: r for r in search_results}
     kept = []
     for match in proposed:
-        number = match["number"]
-        candidate = results_by_number.get(number)
-        if candidate is None:
-            # Should not happen — analyze_duplicates only emits numbers from candidates it
-            # was given — but be defensive rather than crash the bot.
-            log(f"  Critique: dropping #{number} — candidate context not found")
-            continue
-
+        candidate = match["candidate"]
+        key = candidate["key"]
         state_reason = candidate.get("state_reason") or "unknown"
         user_content = f"""## New Issue #{issue['number']}
 **Title:** {issue['title']}
 
 **Body:**
-{issue['body'][:3000]}
+{issue['body'][:6000]}
 
-## Closed Candidate #{number}
+## Closed Candidate {key}
 **Title:** {candidate.get('title', '')}
 **State reason:** {state_reason}
 
 **Body preview:**
 {candidate.get('body_preview', '')}"""
 
-        log(f"  Critique: evaluating #{number}")
+        log(f"  Related candidate critique: evaluating {key}")
         try:
             verdict_data = call_claude_tool(
-                anthropic_key, CRITIQUE_SYSTEM_PROMPT, user_content, CRITIQUE_VERDICT_TOOL, max_tokens=600
+                anthropic_key,
+                RELATED_CLOSED_CANDIDATE_CRITIQUE_SYSTEM_PROMPT,
+                user_content,
+                RELATED_CLOSED_CANDIDATE_CRITIQUE_VERDICT_TOOL,
+                max_tokens=600,
             )
         except (requests.RequestException, ValueError) as e:
-            # If the critique call fails, prefer omitting the candidate over posting noise.
-            log(f"  Critique: verdict call failed for #{number} ({e}); omitting candidate")
+            log(f"  Related candidate critique: verdict call failed for {key} ({e}); omitting candidate")
             continue
 
         verdict = verdict_data.get("verdict")
@@ -868,13 +1306,13 @@ def critique_closed_candidates(anthropic_key, issue, proposed, search_results):
         rationale = verdict_data.get("rationale", "")
 
         if verdict == "include":
-            log(f"  Critique: keeping #{number} — {rationale}")
+            log(f"  Related candidate critique: keeping {key} — {rationale}")
             kept.append(match)
         else:
             rule_str = f"rule {rule}" if rule else "no specific rule"
-            log(f"  Critique: omitting #{number} ({rule_str}) — {rationale}")
+            log(f"  Related candidate critique: omitting {key} ({rule_str}) — {rationale}")
 
-    log(f"  Critique: kept {len(kept)} of {len(proposed)} closed candidates")
+    log(f"  Related candidate critique: kept {len(kept)} of {len(proposed)} candidates")
     return kept
 
 
@@ -909,29 +1347,27 @@ if __name__ == "__main__":
     detected_areas = detect_areas(anthropic_key, issue, fetch_area_labels())
 
     # search for potential duplicates and related closed issues
+    search_queries = generate_search_queries(anthropic_key, issue)
     all_magnets = parse_duplicate_magnets()
     relevant_magnets = filter_magnets_by_areas(all_magnets, detected_areas)
-    search_results = search_for_similar_issues(issue, detected_areas)
+    magnet_candidates = relevant_magnets[:10]
+    enrich_magnets(magnet_candidates)
+    search_results = search_for_similar_issues(issue, detected_areas, search_queries)
+    discussion_results = search_discussions(issue, detected_areas, search_queries)
+    candidates = magnet_candidates + search_results + discussion_results
+    candidates = filter_author_referenced_candidates(issue, candidates)
 
-    # analyze candidates
-    likely_duplicates, possible_duplicates, related_closed_issues = analyze_duplicates(
-        anthropic_key, issue, relevant_magnets, search_results
+    analysis = analyze_duplicates(anthropic_key, issue, candidates)
+    critiqued_matches = critique_proposed_matches(
+        anthropic_key, issue, analysis["likely_matches"], analysis["possible_matches"]
+    )
+    likely_matches = critiqued_matches["likely_matches"]
+    possible_matches = critiqued_matches["possible_matches"]
+    related_closed_candidates = critique_related_closed_candidates(
+        anthropic_key, issue, analysis["related_closed_candidates"]
     )
 
-    # second-pass critique: prompt iteration on the proposer hit a ceiling around 30% noise.
-    # Re-evaluate each proposed closed candidate in isolation with a stricter prompt that
-    # has no slate to fill and is blind to the proposer's rationale.
-    related_closed_issues = critique_closed_candidates(
-        anthropic_key, issue, related_closed_issues, search_results
-    )
-
-    # resolve close reason from our search results (the source of truth) so we don't depend
-    # on Claude to faithfully echo it back
-    results_by_number = {r["number"]: r for r in search_results}
-    for m in related_closed_issues:
-        m["state_reason"] = results_by_number[m["number"]]["state_reason"]
-
-    comment_body = build_comment(likely_duplicates, possible_duplicates, related_closed_issues)
+    comment_body = build_comment(likely_matches, possible_matches, related_closed_candidates)
     commented = False
 
     if comment_body:
@@ -958,8 +1394,9 @@ if __name__ == "__main__":
         "detected_areas": detected_areas,
         "magnets_count": len(relevant_magnets),
         "search_results_count": len(search_results),
-        "likely_duplicates": likely_duplicates,
-        "possible_duplicates": possible_duplicates,
-        "related_closed_issues": related_closed_issues,
+        "likely_matches": likely_matches,
+        "possible_matches": possible_matches,
+        "related_closed_candidates": related_closed_candidates,
+        "discussion_results_count": len(discussion_results),
         "commented": commented,
     }))

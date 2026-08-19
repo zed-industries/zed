@@ -67,6 +67,11 @@ actions!(
         StageFile,
         /// Unstages the current file.
         UnstageFile,
+        // per-section
+        /// Stages every entry in the section containing the selected entry.
+        StageSection,
+        /// Unstages every entry in the section containing the selected entry.
+        UnstageSection,
         // repo-wide
         /// Stages all changes in the repository.
         StageAll,
@@ -74,6 +79,10 @@ actions!(
         UnstageAll,
         /// Stashes all changes in the repository, including untracked files.
         StashAll,
+        /// Stashes tracked changes in the repository, leaving untracked files in place.
+        StashTracked,
+        /// Stashes staged changes in the repository, leaving unstaged changes in place.
+        StashStaged,
         /// Pops the most recent stash.
         StashPop,
         /// Apply the most recent stash.
@@ -100,6 +109,8 @@ actions!(
         FetchFrom,
         /// Creates a new commit with staged changes.
         Commit,
+        /// Runs the next commit with `git commit --no-verify`.
+        SkipHooks,
         /// Amends the last commit with staged changes.
         Amend,
         /// Enable the --signoff option.
@@ -223,7 +234,7 @@ impl Oid {
         &self.bytes[..self.format.byte_len()]
     }
 
-    pub(crate) fn is_zero(&self) -> bool {
+    pub fn is_zero(&self) -> bool {
         self.as_bytes().iter().all(|byte| *byte == 0)
     }
 

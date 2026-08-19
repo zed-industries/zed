@@ -69,6 +69,15 @@ pub struct EditorSettings {
     pub completion_menu_item_kind: CompletionMenuItemKind,
     pub diff_view_style: DiffViewStyle,
     pub minimum_split_diff_width: f32,
+    pub file_diff: FileDiffSettings,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct FileDiffSettings {
+    /// Whether newly opened file diffs show the full file instead of changes only.
+    ///
+    /// Default: true
+    pub show_full_file: bool,
 }
 #[derive(Debug, Clone)]
 pub struct Jupyter {
@@ -132,7 +141,7 @@ impl Minimap {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Gutter {
     pub min_line_number_digits: usize,
     pub line_numbers: bool,
@@ -140,6 +149,7 @@ pub struct Gutter {
     pub breakpoints: bool,
     pub bookmarks: bool,
     pub folds: bool,
+    pub git_gutter_width: Option<f32>,
 }
 
 /// Forcefully enable or disable the scrollbar for each axis
@@ -204,6 +214,7 @@ impl Settings for EditorSettings {
         let search = editor.search.unwrap();
         let drag_and_drop_selection = editor.drag_and_drop_selection.unwrap();
         let sticky_scroll = editor.sticky_scroll.unwrap();
+        let file_diff = content.git.as_ref().unwrap().file_diff.unwrap();
         Self {
             cursor_blink: editor.cursor_blink.unwrap(),
             cursor_shape: editor.cursor_shape.map(Into::into),
@@ -257,6 +268,7 @@ impl Settings for EditorSettings {
                 bookmarks: gutter.bookmarks.unwrap(),
                 breakpoints: gutter.breakpoints.unwrap(),
                 folds: gutter.folds.unwrap(),
+                git_gutter_width: gutter.git_gutter_width,
             },
             scroll_beyond_last_line: editor.scroll_beyond_last_line.unwrap(),
             vertical_scroll_margin: editor.vertical_scroll_margin.unwrap() as f64,
@@ -313,6 +325,9 @@ impl Settings for EditorSettings {
             completion_menu_item_kind: editor.completion_menu_item_kind.unwrap(),
             diff_view_style: editor.diff_view_style.unwrap(),
             minimum_split_diff_width: editor.minimum_split_diff_width.unwrap(),
+            file_diff: FileDiffSettings {
+                show_full_file: file_diff.show_full_file.unwrap(),
+            },
         }
     }
 }
