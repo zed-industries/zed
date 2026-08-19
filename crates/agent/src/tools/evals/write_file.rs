@@ -205,6 +205,7 @@ impl WriteToolTest {
                 sandboxing: false,
                 is_linux: cfg!(target_os = "linux"),
                 is_windows: cfg!(target_os = "windows"),
+                plan_mode: false,
             };
             let templates = Templates::new();
             template.render(&templates)?
