@@ -31,7 +31,7 @@ impl Connection {
         let rx = self.rx.fuse();
         let (message_tx, message_rx) = unbounded();
         let executor = cx.background_executor().clone();
-        let task = cx.spawn(async move |_cx| {
+        let task = cx.background_executor().spawn(async move {
             let keepalive_timer = executor.timer(KEEPALIVE_INTERVAL).fuse();
             futures::pin_mut!(keepalive_timer, rx);
 
