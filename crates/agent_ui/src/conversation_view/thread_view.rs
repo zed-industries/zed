@@ -709,6 +709,34 @@ fn full_path_for_empty_project_path(file: &dyn language::File, cx: &App) -> Opti
     (!full_path.is_empty()).then_some(full_path)
 }
 
+/// Formats a usage-limit reset delay as a coarse human-readable duration.
+/// Reset windows are hours or days long, so minute precision is enough.
+fn format_reset_delay(delay: Duration) -> String {
+    let total_minutes = delay.as_secs() / 60;
+    let days = total_minutes / (60 * 24);
+    let hours = (total_minutes / 60) % 24;
+    let minutes = total_minutes % 60;
+
+    let mut parts = Vec::new();
+    if days > 0 {
+        parts.push(format!("{days} day{}", if days == 1 { "" } else { "s" }));
+    }
+    if hours > 0 {
+        parts.push(format!("{hours} hour{}", if hours == 1 { "" } else { "s" }));
+    }
+    if days == 0 && minutes > 0 {
+        parts.push(format!(
+            "{minutes} minute{}",
+            if minutes == 1 { "" } else { "s" }
+        ));
+    }
+    if parts.is_empty() {
+        "less than a minute".to_string()
+    } else {
+        parts.join(" ")
+    }
+}
+
 fn skill_issue_file_label(path: &std::path::Path) -> String {
     let file_name = path.file_name().and_then(|name| name.to_str());
     let parent_name = path
@@ -1892,6 +1920,11 @@ impl ThreadView {
                     "rate_limit_exceeded",
                     None,
                     format!("{provider}'s rate limit was reached.").into(),
+                ),
+                ThreadError::UsageLimitReached { provider, .. } => (
+                    "usage_limit_reached",
+                    None,
+                    format!("{provider}'s usage limit was reached.").into(),
                 ),
                 ThreadError::ServerOverloaded { provider } => (
                     "server_overloaded",
@@ -11044,6 +11077,28 @@ impl ThreadView {
                 true,
                 cx,
             ),
+            ThreadError::UsageLimitReached {
+                provider,
+                message,
+                retry_after,
+            } => {
+                let reset_hint = retry_after
+                    .map(|retry_after| {
+                        format!(" Your usage resets in {}.", format_reset_delay(retry_after))
+                    })
+                    .unwrap_or_default();
+                self.render_error_callout(
+                    "Usage Limit Reached",
+                    format!(
+                        "{provider} reported: {message}{reset_hint} \
+                        Wait for your usage to reset or switch to a different model."
+                    )
+                    .into(),
+                    false,
+                    true,
+                    cx,
+                )
+            }
             ThreadError::ServerOverloaded { provider } => self.render_error_callout(
                 "Provider Unavailable",
                 format!(

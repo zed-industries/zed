@@ -121,6 +121,17 @@ pub enum LanguageModelCompletionError {
         provider: LanguageModelProviderName,
         retry_after: Option<Duration>,
     },
+    /// The account's usage allowance is exhausted (e.g. a ChatGPT subscription
+    /// ran out of Codex credits, or an OpenAI API account exceeded its quota).
+    /// Unlike [`Self::RateLimitExceeded`], retrying cannot succeed until the
+    /// usage window resets or the user purchases more usage.
+    #[error("{provider} usage limit reached: {message}")]
+    UsageLimitReached {
+        provider: LanguageModelProviderName,
+        message: String,
+        /// Time until the usage window resets, when the provider reports one.
+        retry_after: Option<Duration>,
+    },
     #[error("{provider}'s API servers are overloaded right now")]
     ServerOverloaded {
         provider: LanguageModelProviderName,
@@ -278,9 +289,16 @@ impl LanguageModelCompletionError {
             StatusCode::PAYLOAD_TOO_LARGE => Self::PromptTooLarge {
                 tokens: parse_prompt_too_long(&message),
             },
-            StatusCode::TOO_MANY_REQUESTS => Self::RateLimitExceeded {
-                provider,
-                retry_after,
+            StatusCode::TOO_MANY_REQUESTS => match parse_usage_limit_message(&message) {
+                Some(usage_limit) => Self::UsageLimitReached {
+                    provider,
+                    message: usage_limit.message,
+                    retry_after: usage_limit.retry_after.or(retry_after),
+                },
+                None => Self::RateLimitExceeded {
+                    provider,
+                    retry_after,
+                },
             },
             StatusCode::INTERNAL_SERVER_ERROR => Self::ApiInternalServerError { provider, message },
             StatusCode::SERVICE_UNAVAILABLE => Self::ServerOverloaded {
@@ -298,6 +316,46 @@ impl LanguageModelCompletionError {
             },
         }
     }
+}
+
+struct UsageLimitMessage {
+    message: String,
+    retry_after: Option<Duration>,
+}
+
+/// Distinguishes a 429 that means "this account's usage allowance is
+/// exhausted" from an ordinary short-lived rate limit, since retrying the
+/// former is pointless until the usage window resets. The ChatGPT Codex
+/// backend reports `usage_limit_reached` (with the reset time) or
+/// `usage_not_included`, and the OpenAI API reports `insufficient_quota`.
+fn parse_usage_limit_message(message: &str) -> Option<UsageLimitMessage> {
+    let response = serde_json::from_str::<serde_json::Value>(message).ok()?;
+    let error = response.get("error").unwrap_or(&response);
+    let error_type = error
+        .get("type")
+        .or_else(|| error.get("code"))
+        .and_then(serde_json::Value::as_str)?;
+    if !matches!(
+        error_type,
+        "usage_limit_reached" | "usage_not_included" | "insufficient_quota"
+    ) {
+        return None;
+    }
+
+    let provider_message = error
+        .get("message")
+        .and_then(serde_json::Value::as_str)
+        .filter(|message| !message.is_empty())
+        .unwrap_or("The usage limit has been reached");
+    let retry_after = error
+        .get("resets_in_seconds")
+        .and_then(serde_json::Value::as_u64)
+        .map(Duration::from_secs);
+
+    Some(UsageLimitMessage {
+        message: provider_message.to_owned(),
+        retry_after,
+    })
 }
 
 fn is_invalid_encrypted_content_message(message: &str) -> bool {
@@ -713,6 +771,90 @@ mod tests {
         assert!(matches!(
             error,
             LanguageModelCompletionError::BadRequestFormat { .. }
+        ));
+    }
+
+    #[test]
+    fn test_from_http_status_maps_codex_usage_limit_to_usage_limit_reached() {
+        let message = r#"{"type":"error","error":{"type":"usage_limit_reached","message":"The usage limit has been reached","plan_type":"plus","resets_at":1777936568,"resets_in_seconds":13872},"status_code":429}"#;
+        let error = LanguageModelCompletionError::from_http_status(
+            String::from("ChatGPT Subscription").into(),
+            StatusCode::TOO_MANY_REQUESTS,
+            message.to_string(),
+            None,
+        );
+
+        match error {
+            LanguageModelCompletionError::UsageLimitReached {
+                provider,
+                message,
+                retry_after,
+            } => {
+                assert_eq!(provider.0, "ChatGPT Subscription");
+                assert_eq!(message, "The usage limit has been reached");
+                assert_eq!(retry_after, Some(Duration::from_secs(13872)));
+            }
+            _ => panic!("Expected UsageLimitReached, got: {error:?}"),
+        }
+    }
+
+    #[test]
+    fn test_from_http_status_maps_openai_insufficient_quota_to_usage_limit_reached() {
+        let message = r#"{"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","param":null,"code":"insufficient_quota"}}"#;
+        let error = LanguageModelCompletionError::from_http_status(
+            String::from("OpenAI").into(),
+            StatusCode::TOO_MANY_REQUESTS,
+            message.to_string(),
+            None,
+        );
+
+        match error {
+            LanguageModelCompletionError::UsageLimitReached {
+                provider,
+                message,
+                retry_after,
+            } => {
+                assert_eq!(provider.0, "OpenAI");
+                assert_eq!(
+                    message,
+                    "You exceeded your current quota, please check your plan and billing details."
+                );
+                assert_eq!(retry_after, None);
+            }
+            _ => panic!("Expected UsageLimitReached, got: {error:?}"),
+        }
+    }
+
+    #[test]
+    fn test_from_http_status_keeps_ordinary_429_as_rate_limit_exceeded() {
+        let error = LanguageModelCompletionError::from_http_status(
+            String::from("OpenAI").into(),
+            StatusCode::TOO_MANY_REQUESTS,
+            r#"{"error":{"message":"Rate limit reached for gpt-4 in organization org-x on tokens per min.","type":"tokens","param":null,"code":"rate_limit_exceeded"}}"#.to_string(),
+            Some(Duration::from_secs(2)),
+        );
+
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::RateLimitExceeded {
+                retry_after: Some(retry_after),
+                ..
+            } if retry_after == Duration::from_secs(2)
+        ));
+
+        let error = LanguageModelCompletionError::from_http_status(
+            String::from("OpenAI").into(),
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too Many Requests".to_string(),
+            None,
+        );
+
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::RateLimitExceeded {
+                retry_after: None,
+                ..
+            }
         ));
     }
 

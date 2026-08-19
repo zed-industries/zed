@@ -129,6 +129,11 @@ pub(crate) enum ThreadError {
     RateLimitExceeded {
         provider: SharedString,
     },
+    UsageLimitReached {
+        provider: SharedString,
+        message: SharedString,
+        retry_after: Option<Duration>,
+    },
     ServerOverloaded {
         provider: SharedString,
     },
@@ -173,6 +178,15 @@ impl From<anyhow::Error> for ThreadError {
             match lm_error {
                 RateLimitExceeded { provider, .. } => Self::RateLimitExceeded {
                     provider: provider.to_string().into(),
+                },
+                UsageLimitReached {
+                    provider,
+                    message,
+                    retry_after,
+                } => Self::UsageLimitReached {
+                    provider: provider.to_string().into(),
+                    message: message.clone().into(),
+                    retry_after: *retry_after,
                 },
                 ServerOverloaded { provider, .. } | ApiInternalServerError { provider, .. } => {
                     Self::ServerOverloaded {
