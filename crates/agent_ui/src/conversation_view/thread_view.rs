@@ -9828,6 +9828,8 @@ impl ThreadView {
                 let option_id = SharedString::from(option.option_id.0.clone());
                 let option_name = permission_option_button_label(&option.name);
                 Button::new((option_id, entry_ix), option_name)
+                    .aria_label(option.name.clone())
+                    .truncate(true)
                     .map(|this| {
                         // The sandbox-fallback prompt offers a "Retry" option
                         // that re-attempts creating the sandbox; it isn't an
