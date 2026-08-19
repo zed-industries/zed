@@ -3,7 +3,7 @@
 use gpui::{AnyElement, ClipboardItem, ElementId, MouseButton, StatefulInteractiveElement};
 use ui::{Color, Divider, Label, LabelSize, SharedString, Tooltip, div, prelude::*};
 
-use crate::{CsvPreviewView, settings::VerticalAlignment, types::DisplayCellId};
+use crate::{TabularDataPreviewPane, settings::VerticalAlignment, types::DisplayCellId};
 
 /// Adds a right-click-to-copy handler and a tooltip showing `text` plus `hint`
 /// (e.g. "Right click to copy content") to a `Stateful` element.
@@ -30,13 +30,13 @@ pub(crate) fn with_copy_on_right_click<E: StatefulInteractiveElement>(
         }))
 }
 
-impl CsvPreviewView {
+impl TabularDataPreviewPane {
     /// Create selectable table cell with mouse event handlers.
     pub fn create_selectable_cell(
         display_cell_id: DisplayCellId,
         cell_content: SharedString,
         vertical_alignment: VerticalAlignment,
-        cx: &Context<CsvPreviewView>,
+        cx: &Context<TabularDataPreviewPane>,
     ) -> AnyElement {
         create_table_cell(display_cell_id, cell_content, vertical_alignment, cx)
             // Mouse events handlers will be here
@@ -49,11 +49,11 @@ fn create_table_cell(
     display_cell_id: DisplayCellId,
     cell_content: SharedString,
     vertical_alignment: VerticalAlignment,
-    cx: &Context<'_, CsvPreviewView>,
+    cx: &Context<'_, TabularDataPreviewPane>,
 ) -> gpui::Stateful<Div> {
     let cell = div()
         .id(ElementId::NamedInteger(
-            format!("csv-display-cell-{}", *display_cell_id.row).into(),
+            format!("table-display-cell-{}", *display_cell_id.row).into(),
             *display_cell_id.col as u64,
         ))
         .flex()
