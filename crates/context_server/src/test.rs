@@ -9,8 +9,8 @@ use crate::{
     client,
     transport::Transport,
     types::{
-        DiscoverResponse, Implementation, InitializeResponse, ProtocolVersion, ServerCapabilities,
-        meta_keys,
+        DiscoverResponse, Implementation, InitializeResponse, ProtocolVersion, Request,
+        ServerCapabilities, meta_keys,
     },
 };
 
@@ -45,11 +45,18 @@ pub fn create_modern_fake_transport_with_capabilities(
     executor: BackgroundExecutor,
 ) -> FakeTransport {
     let name = name.into();
-    FakeTransport::new(executor).on_request::<crate::types::requests::ServerDiscover, _>(
+    FakeTransport::new(executor).on_raw_request(
+        crate::types::requests::ServerDiscover::METHOD,
         move |_params| {
             let name = name.clone();
             let capabilities = capabilities.clone();
-            async move { create_discover_response(name, capabilities) }
+            async move {
+                let response = create_discover_response(name, capabilities);
+                let mut response =
+                    serde_json::to_value(response).expect("discover response should serialize");
+                response["resultType"] = serde_json::Value::String("complete".to_string());
+                Ok(Some(response))
+            }
         },
     )
 }
