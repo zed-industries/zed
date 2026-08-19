@@ -860,7 +860,7 @@ pub struct WslConnectionOptions {
     pub user: Option<String>,
 }
 
-// `debug_assertions` makes the actions visibile for the docs preprocessor
+// `debug_assertions` makes the actions visible for the docs preprocessor
 #[cfg(any(debug_assertions, target_os = "windows"))]
 pub mod wsl_actions {
     use gpui::Action;
