@@ -5,7 +5,7 @@ use cloud_api_types::websocket_protocol::{PROTOCOL_VERSION, PROTOCOL_VERSION_HEA
 use futures::channel::mpsc::unbounded;
 use futures::stream::{SplitSink, SplitStream};
 use futures::{FutureExt as _, SinkExt as _, StreamExt as _, TryStreamExt as _};
-use gpui::{App, Task};
+use gpui::{App, AppContext, Task};
 use http_client::http::request;
 use yawc::frame::Frame;
 use yawc::{TcpWebSocket, WebSocket};
