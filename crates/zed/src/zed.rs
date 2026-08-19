@@ -1026,10 +1026,11 @@ fn register_actions(
             window.zoom_window();
         })
         .register_action(|_, _: &ToggleFullScreen, window, cx| {
-            let use_simple_fullscreen = window.is_simple_fullscreen()
-                || (!window.is_fullscreen()
-                    && WorkspaceSettings::get_global(cx).fullscreen_mode
-                        == settings::FullscreenMode::Simple);
+            let use_simple_fullscreen = PlatformStyle::platform() == PlatformStyle::Mac
+                && (window.is_simple_fullscreen()
+                    || (!window.is_fullscreen()
+                        && WorkspaceSettings::get_global(cx).fullscreen_mode
+                            == settings::FullscreenMode::Simple));
             if use_simple_fullscreen {
                 window.toggle_simple_fullscreen();
             } else {

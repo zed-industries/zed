@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "1.17.0"
+version = "1.18.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -123,8 +123,8 @@ go_to_line.workspace = true
 gpui = { workspace = true, features = [ "profiler" ] }
 gpui_platform = { workspace = true, features = [ "screen-capture", "font-kit", "wayland", "x11" ] }
 gpui_tokio.workspace = true
-hdrhistogram.workspace = true
 image = { workspace = true, optional = true }
+spin = "0.10.0"
 itertools.workspace = true
 rayon.workspace = true
 semver.workspace = true
