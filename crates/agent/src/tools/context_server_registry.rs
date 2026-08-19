@@ -172,7 +172,7 @@ impl ContextServerRegistry {
             })
             .map(|client| {
                 let server_id = server_id.clone();
-                cx.spawn(async move |_, _| {
+                cx.background_spawn(async move {
                     client
                         .listen_to_notifications(context_server::types::NotificationFilter {
                             tools_list_changed: Some(true),
