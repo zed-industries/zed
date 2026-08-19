@@ -4860,8 +4860,7 @@ mod tests {
         let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
         cx.run_until_parked();
 
-        let ranges =
-            markdown.read_with(cx, |markdown, _| markdown.non_rendered_source_ranges());
+        let ranges = markdown.read_with(cx, |markdown, _| markdown.non_rendered_source_ranges());
         assert_eq!(ranges, vec![0..1, 8..43, 49..source.len()]);
         assert_eq!(&source[1..8], "before ");
         assert_eq!(&source[43..49], " after");
@@ -4869,7 +4868,8 @@ mod tests {
 
     #[gpui::test]
     fn test_non_rendered_source_ranges_are_empty_while_parsing(cx: &mut TestAppContext) {
-        let markdown = cx.new(|cx| Markdown::new("[a](https://example.com)".into(), None, None, cx));
+        let markdown =
+            cx.new(|cx| Markdown::new("[a](https://example.com)".into(), None, None, cx));
         cx.run_until_parked();
 
         markdown.update(cx, |markdown, cx| {
