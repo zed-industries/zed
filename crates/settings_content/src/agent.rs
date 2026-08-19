@@ -344,7 +344,7 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub show_merge_conflict_indicator: Option<bool>,
-    /// Whether to enable the local experimental Codex-oriented agent UI additions.
+    /// Whether to enable experimental agent panel thread search.
     ///
     /// Default: false
     pub search_within_agent_panel: Option<bool>,

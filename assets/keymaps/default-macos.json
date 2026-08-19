@@ -451,7 +451,7 @@
   // Embedded thread-search editor navigation lives in
   // keymaps/specific-overrides-macos.json so it wins over base Editor bindings.
   {
-    "context": "CodexThreadsArchiveView",
+    "context": "AgentPanelThreadsSearch",
     "bindings": {
       "escape": "menu::Cancel"
     },

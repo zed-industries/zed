@@ -1190,7 +1190,7 @@ impl Render for ThreadsArchiveView {
 
         v_flex()
             .key_context(if self.embedded {
-                "CodexThreadsArchiveView"
+                "AgentPanelThreadsSearch"
             } else {
                 "ThreadsArchiveView"
             })

@@ -7,7 +7,7 @@
 // keymaps, giving it the highest precedence of all the bindings set by us.
 [
   {
-    "context": "CodexThreadsArchiveView > Editor",
+    "context": "AgentPanelThreadsSearch > Editor",
     "use_key_equivalents": true,
     "bindings": {
       "down": "menu::SelectNext",
