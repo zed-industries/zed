@@ -363,11 +363,52 @@ impl GitRepository for FakeGitRepository {
 
     fn checkout_files(
         &self,
-        _commit: String,
-        _paths: Vec<RepoPath>,
+        commit: String,
+        paths: Vec<RepoPath>,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
-        unimplemented!()
+        Box::pin(async move {
+            anyhow::ensure!(
+                commit == "HEAD",
+                "checking out {commit} is not supported by FakeGitRepository"
+            );
+            let contents = self
+                .with_state_async(false, move |state| {
+                    paths
+                        .into_iter()
+                        .map(|path| {
+                            let content =
+                                state.head_contents.get(&path).cloned().with_context(|| {
+                                    format!(
+                                        "pathspec '{}' did not match any file(s) known to git",
+                                        path.as_unix_str()
+                                    )
+                                })?;
+                            Ok((path, content))
+                        })
+                        .collect::<Result<Vec<_>>>()
+                })
+                .await?;
+
+            let work_dir = self
+                .dot_git_path
+                .parent()
+                .context("git directory has no parent")?
+                .to_owned();
+            for (path, content) in &contents {
+                self.fs
+                    .write(&work_dir.join(path.as_std_path()), content)
+                    .await?;
+            }
+
+            self.with_state_async(true, move |state| {
+                for (path, content) in contents {
+                    state.index_contents.insert(path, content);
+                }
+                Ok(())
+            })
+            .await
+        })
     }
 
     fn path(&self) -> PathBuf {
