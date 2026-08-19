@@ -141,6 +141,31 @@ mod server {
         pub iss: Option<String>,
     }
 
+    /// An authorization error response with the parameters callers must
+    /// validate before trusting the response's origin.
+    #[derive(Debug)]
+    pub struct OAuthAuthorizationError {
+        pub error_code: String,
+        pub error_description: Option<String>,
+        pub state: Option<String>,
+        pub iss: Option<String>,
+    }
+
+    impl std::fmt::Display for OAuthAuthorizationError {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(
+                formatter,
+                "OAuth authorization failed: {} ({})",
+                self.error_code,
+                self.error_description
+                    .as_deref()
+                    .unwrap_or("no description")
+            )
+        }
+    }
+
+    impl std::error::Error for OAuthAuthorizationError {}
+
     /// Configuration for the loopback OAuth callback server.
     ///
     /// OAuth servers compare `redirect_uri` against a per-client allow-list using
@@ -211,12 +236,14 @@ mod server {
                 }
             }
 
-            if let Some(error_code) = error {
-                anyhow::bail!(
-                    "OAuth authorization failed: {} ({})",
-                    error_code,
-                    error_description.as_deref().unwrap_or("no description")
-                );
+            if let Some(error) = error {
+                return Err(OAuthAuthorizationError {
+                    error_code: error,
+                    error_description,
+                    state,
+                    iss,
+                }
+                .into());
             }
 
             let code = code.ok_or_else(|| anyhow!("missing 'code' parameter in OAuth callback"))?;
@@ -497,6 +524,6 @@ mod server {
 
 #[cfg(not(target_family = "wasm"))]
 pub use server::{
-    OAuthCallbackParams, OAuthCallbackServerConfig, start_oauth_callback_server,
-    start_oauth_callback_server_with_config,
+    OAuthAuthorizationError, OAuthCallbackParams, OAuthCallbackServerConfig,
+    start_oauth_callback_server, start_oauth_callback_server_with_config,
 };

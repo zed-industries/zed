@@ -1491,9 +1491,17 @@ impl ContextServerStore {
 
         cx.update(|cx| cx.open_url(auth_url.as_str()));
 
-        let callback = callback_rx
-            .await
-            .context("OAuth callback server received an invalid request")?;
+        let callback = match callback_rx.await {
+            Ok(callback) => callback,
+            Err(error) => {
+                oauth::validate_callback_error(
+                    &error,
+                    &state_param,
+                    &discovery.auth_server_metadata,
+                )?;
+                return Err(error).context("OAuth callback server received an invalid request");
+            }
+        };
 
         if callback.state != state_param {
             anyhow::bail!("OAuth state parameter mismatch (possible CSRF)");

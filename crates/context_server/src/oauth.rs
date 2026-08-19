@@ -759,16 +759,33 @@ pub fn validate_issuer(callback_iss: Option<&str>, metadata: &AuthServerMetadata
         anyhow::ensure!(
             !metadata.authorization_response_iss_parameter_supported,
             "OAuth callback is missing the 'iss' parameter, but the authorization server \
-             advertises RFC 9207 support; refusing to redeem the authorization code"
+             advertises RFC 9207 support; refusing the authorization response"
         );
         return Ok(());
     };
     anyhow::ensure!(
         callback_iss == issuer,
         "OAuth callback 'iss' parameter ({callback_iss}) does not match the authorization \
-         server ({issuer}); refusing to redeem the authorization code"
+         server ({issuer}); refusing the authorization response"
     );
     Ok(())
+}
+
+/// Validate the security parameters retained on an OAuth error response.
+pub fn validate_callback_error(
+    error: &anyhow::Error,
+    expected_state: &str,
+    metadata: &AuthServerMetadata,
+) -> Result<()> {
+    let Some(error) = error.downcast_ref::<oauth_callback_server::OAuthAuthorizationError>() else {
+        return Ok(());
+    };
+
+    anyhow::ensure!(
+        error.state.as_deref() == Some(expected_state),
+        "OAuth state parameter mismatch (possible CSRF)"
+    );
+    validate_issuer(error.iss.as_deref(), metadata)
 }
 
 // -- Discovery (async, hits real endpoints) ----------------------------------
@@ -2012,6 +2029,63 @@ mod tests {
 
         let callback = OAuthCallback::parse_query("code=abc&state=xyz").unwrap();
         assert!(callback.iss.is_none());
+    }
+
+    #[test]
+    fn test_validate_callback_error() {
+        let metadata = AuthServerMetadata {
+            issuer: Url::parse("https://auth.example.com").unwrap(),
+            issuer_identifier: "https://auth.example.com".to_string(),
+            authorization_endpoint: Url::parse("https://auth.example.com/authorize").unwrap(),
+            token_endpoint: Url::parse("https://auth.example.com/token").unwrap(),
+            registration_endpoint: None,
+            scopes_supported: None,
+            grant_types_supported: None,
+            code_challenge_methods_supported: None,
+            client_id_metadata_document_supported: false,
+            authorization_response_iss_parameter_supported: true,
+        };
+
+        let valid_error = OAuthCallback::parse_query(
+            "error=access_denied&state=expected&iss=https%3A%2F%2Fauth.example.com",
+        )
+        .err()
+        .expect("authorization should fail");
+        validate_callback_error(&valid_error, "expected", &metadata).unwrap();
+
+        let wrong_state = OAuthCallback::parse_query(
+            "error=access_denied&state=unexpected&iss=https%3A%2F%2Fauth.example.com",
+        )
+        .err()
+        .expect("authorization should fail");
+        assert!(
+            validate_callback_error(&wrong_state, "expected", &metadata)
+                .unwrap_err()
+                .to_string()
+                .contains("state parameter mismatch")
+        );
+
+        let wrong_issuer = OAuthCallback::parse_query(
+            "error=access_denied&state=expected&iss=https%3A%2F%2Fattacker.example.com",
+        )
+        .err()
+        .expect("authorization should fail");
+        assert!(
+            validate_callback_error(&wrong_issuer, "expected", &metadata)
+                .unwrap_err()
+                .to_string()
+                .contains("does not match")
+        );
+
+        let missing_issuer = OAuthCallback::parse_query("error=access_denied&state=expected")
+            .err()
+            .expect("authorization should fail");
+        assert!(
+            validate_callback_error(&missing_issuer, "expected", &metadata)
+                .unwrap_err()
+                .to_string()
+                .contains("missing the 'iss' parameter")
+        );
     }
 
     #[test]
