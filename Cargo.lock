@@ -6409,7 +6409,6 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
- "strum 0.27.2",
  "task",
  "telemetry",
  "tempfile",
