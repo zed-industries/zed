@@ -2038,14 +2038,10 @@ impl GitPanel {
         !entry.status.is_created() && entry.staging.has_staged()
     }
 
-    fn change_flags_for_entries(entries: &[GitStatusEntry]) -> (bool, bool, bool, bool, bool) {
-        (
-            entries.iter().any(|entry| !entry.status.is_created()),
-            entries.iter().any(Self::is_staged_tracked),
-            entries.iter().any(|entry| entry.staging.has_staged()),
-            entries.iter().any(|entry| entry.staging.has_unstaged()),
-            entries.iter().any(|entry| entry.status.is_created()),
-        )
+    fn contains_staged_tracked_entry<'a>(
+        entries: impl IntoIterator<Item = &'a GitStatusEntry>,
+    ) -> bool {
+        entries.into_iter().any(Self::is_staged_tracked)
     }
 
     fn staged_tracked_entries<'a>(
@@ -5334,7 +5330,7 @@ impl GitPanel {
     }
 
     fn has_staged_tracked_changes(&self) -> bool {
-        self.change_entries_by_path().any(Self::is_staged_tracked)
+        Self::contains_staged_tracked_entry(self.change_entries_by_path())
     }
 
     pub fn has_unstaged_conflicts(&self) -> bool {
@@ -7659,25 +7655,15 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) {
         let has_stash_items = self.stash_entries.entries.len() > 0;
-        let (
-            has_tracked_changes,
-            has_staged_tracked_changes,
-            has_staged_changes,
-            has_unstaged_changes,
-            has_new_changes,
-        ) = target_entry_index
+        let has_tracked_changes = self.has_tracked_changes();
+        let has_staged_changes = self.has_staged_changes();
+        let has_unstaged_changes = self.has_unstaged_changes();
+        let has_new_changes = self.new_count > 0;
+        let has_staged_tracked_changes = target_entry_index
             .and_then(|entry_index| self.directory_descendants(entry_index))
             .map_or_else(
-                || {
-                    (
-                        self.has_tracked_changes(),
-                        self.has_staged_tracked_changes(),
-                        self.has_staged_changes(),
-                        self.has_unstaged_changes(),
-                        self.new_count > 0,
-                    )
-                },
-                Self::change_flags_for_entries,
+                || self.has_staged_tracked_changes(),
+                |entries| Self::contains_staged_tracked_entry(entries),
             );
 
         let context_menu = git_panel_context_menu(
@@ -13004,7 +12990,7 @@ mod tests {
             "directory/tracked.rs",
             FileStatus::index(StatusCode::Modified),
         )];
-        let (_, has_staged_tracked_changes, _, _, _) = GitPanel::change_flags_for_entries(&entries);
+        let has_staged_tracked_changes = GitPanel::contains_staged_tracked_entry(&entries);
         assert!(has_staged_tracked_changes);
         assert_eq!(GitPanel::staged_tracked_entries(&entries).len(), 1);
 
@@ -13013,7 +12999,7 @@ mod tests {
             "directory/new.rs",
             FileStatus::index(StatusCode::Added),
         )];
-        let (_, has_staged_tracked_changes, _, _, _) = GitPanel::change_flags_for_entries(&entries);
+        let has_staged_tracked_changes = GitPanel::contains_staged_tracked_entry(&entries);
         assert!(!has_staged_tracked_changes);
         assert_eq!(GitPanel::staged_tracked_entries(&entries).len(), 0);
 
@@ -13022,13 +13008,13 @@ mod tests {
             "directory/tracked.rs",
             StatusCode::Modified.worktree(),
         )];
-        let (_, has_staged_tracked_changes, _, _, _) = GitPanel::change_flags_for_entries(&entries);
+        let has_staged_tracked_changes = GitPanel::contains_staged_tracked_entry(&entries);
         assert!(!has_staged_tracked_changes);
         assert_eq!(GitPanel::staged_tracked_entries(&entries).len(), 0);
 
         // 4. Single untracked file that is unstaged.
         let entries = vec![entry("directory/new.rs", FileStatus::Untracked)];
-        let (_, has_staged_tracked_changes, _, _, _) = GitPanel::change_flags_for_entries(&entries);
+        let has_staged_tracked_changes = GitPanel::contains_staged_tracked_entry(&entries);
         assert!(!has_staged_tracked_changes);
         assert_eq!(GitPanel::staged_tracked_entries(&entries).len(), 0);
 
@@ -13049,7 +13035,7 @@ mod tests {
             ),
             entry("directory/unstaged_new.rs", FileStatus::Untracked),
         ];
-        let (_, has_staged_tracked_changes, _, _, _) = GitPanel::change_flags_for_entries(&entries);
+        let has_staged_tracked_changes = GitPanel::contains_staged_tracked_entry(&entries);
         assert!(has_staged_tracked_changes);
         assert_eq!(GitPanel::staged_tracked_entries(&entries).len(), 1);
     }
