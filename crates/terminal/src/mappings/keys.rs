@@ -222,6 +222,11 @@ pub(crate) fn to_esc_str(
             return Some(Cow::Owned(format!("\x1b{key}")));
         } else if keystroke.modifiers.shift {
             return Some(Cow::Owned(format!("\x1b{}", key.to_ascii_uppercase())));
+        } else if keystroke.modifiers.control && key.is_ascii_lowercase() {
+            return Some(Cow::Owned(format!(
+                "\x1b{}",
+                (key as u8 - b'a' + 1) as char
+            )));
         }
     }
 
@@ -376,6 +381,23 @@ mod test {
                 )
                 .unwrap(),
                 format!("\x1b{}", key)
+            );
+        }
+    }
+
+    #[test]
+    fn test_ctrl_alt_codes() {
+        let letters_lower = 'a'..='z';
+        let esc_codes = '\x01'..='\x1a';
+        for (character, esc_code) in letters_lower.zip(esc_codes) {
+            assert_eq!(
+                to_esc_str(
+                    &Keystroke::parse(&format!("ctrl-alt-{}", character)).unwrap(),
+                    Modes::NONE,
+                    true
+                )
+                .unwrap(),
+                format!("\x1b{}", esc_code)
             );
         }
     }
