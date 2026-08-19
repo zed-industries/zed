@@ -1770,6 +1770,23 @@ mod resolve_worktree_tests {
     }
 
     #[test]
+    fn test_windows_remote_identity_path() {
+        let examples = [
+            (r"C:\Users\zed\.git", r"C:\Users\zed"),
+            (r"C:\Users\project\.bare", r"C:\Users\project"),
+            (r"C:\Users\zed.git", r"C:\Users\zed.git"),
+            (r"C:\Users\zed", r"C:\Users\zed"),
+        ];
+        for (common_dir, expected) in examples {
+            assert_eq!(
+                repo_identity_path(Path::new(common_dir), PathStyle::Windows),
+                Path::new(expected),
+                "identity path for common_dir {common_dir:?} should be {expected:?}"
+            );
+        }
+    }
+
+    #[test]
     fn test_linked_worktree_short_name() {
         let examples = [
             (

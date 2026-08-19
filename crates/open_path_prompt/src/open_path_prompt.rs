@@ -673,7 +673,7 @@ impl PickerDelegate for OpenPathDelegate {
                     } else {
                         let Some(confirmed_path) = self
                             .path_style
-                            .join_path(
+                            .join_path_preserving_components(
                                 Path::new(self.lister.resolve_tilde(parent_path, cx).as_ref()),
                                 &candidate.path.string,
                             )
@@ -703,7 +703,7 @@ impl PickerDelegate for OpenPathDelegate {
                         } else {
                             let Some(prompted_path) = self
                                 .path_style
-                                .join_path(
+                                .join_path_preserving_components(
                                     Path::new(self.lister.resolve_tilde(parent_path, cx).as_ref()),
                                     &user_input.file.string,
                                 )

@@ -125,6 +125,25 @@ impl PathStyle {
         Ok(PathBuf::from(self.normalize(&joined)))
     }
 
+    pub fn join_path_preserving_components(
+        self,
+        left: impl AsRef<Path>,
+        right: impl AsRef<Path>,
+    ) -> anyhow::Result<PathBuf> {
+        let left = left
+            .as_ref()
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Path contains invalid UTF-8"))?;
+        let right = right.as_ref();
+        let right_string = right
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Path contains invalid UTF-8"))?;
+        let joined = self
+            .join(left, right_string)
+            .ok_or_else(|| anyhow::anyhow!("Path must be relative: {right:?}"))?;
+        Ok(PathBuf::from(&joined))
+    }
+
     pub fn normalize(self, path_like: &str) -> String {
         match self {
             PathStyle::Windows => {
@@ -239,6 +258,9 @@ impl PathStyle {
     }
 
     pub fn file_name(self, path: &Path) -> Option<&str> {
+        if self == PathStyle::local() {
+            return path.file_name().and_then(|n| n.to_str());
+        }
         let path_string = path.to_str()?;
         let parent_length = self.parent(path)?.to_str()?.len();
         let remainder = path_string.get(parent_length..)?;
@@ -262,6 +284,9 @@ impl PathStyle {
     }
 
     pub fn parent(self, path: &Path) -> Option<&Path> {
+        if self == PathStyle::local() {
+            return path.parent();
+        }
         let path = path.to_str()?;
         let path_bytes = path.as_bytes();
         let is_windows = self.is_windows();
@@ -504,6 +529,22 @@ mod tests {
         assert_eq!(
             windows_path.to_string_lossy(),
             "C:\\Users\\user\\dev\\worktrees"
+        );
+    }
+
+    #[test]
+    fn test_join_path_preserving_components() {
+        let posix_path = PathStyle::Unix
+            .join_path_preserving_components(Path::new("/home/user/symlink"), "../worktrees")
+            .unwrap();
+        let windows_path = PathStyle::Windows
+            .join_path_preserving_components(Path::new(r"C:\Users\user\symlink"), r"..\worktrees")
+            .unwrap();
+
+        assert_eq!(posix_path, PathBuf::from("/home/user/symlink/../worktrees"));
+        assert_eq!(
+            windows_path.to_string_lossy(),
+            r"C:\Users\user\symlink\..\worktrees"
         );
     }
 
@@ -773,5 +814,45 @@ mod tests {
                 parent.map(Path::new)
             );
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_local_path_style_non_utf8() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        let path = Path::new(OsStr::from_bytes(b"/home/user/\xff\xfe/repo/file.txt"));
+        assert_eq!(PathStyle::Unix.file_name(path), Some("file.txt"));
+        assert_eq!(
+            PathStyle::Unix.parent(path),
+            Some(Path::new(OsStr::from_bytes(b"/home/user/\xff\xfe/repo")))
+        );
+
+        let invalid_filename_path = Path::new(OsStr::from_bytes(b"/home/user/repo/\xff\xfe.txt"));
+        assert_eq!(PathStyle::Unix.file_name(invalid_filename_path), None);
+        assert_eq!(
+            PathStyle::Unix.parent(invalid_filename_path),
+            Some(Path::new("/home/user/repo"))
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_local_path_style_non_utf8() {
+        use std::ffi::OsString;
+        use std::os::windows::ffi::OsStringExt;
+
+        let wide: Vec<u16> = "C:\\invalid_"
+            .encode_utf16()
+            .chain(Some(0xD800))
+            .chain(r"\repo\file.txt".encode_utf16())
+            .collect();
+        let os_str = OsString::from_wide(&wide);
+        let path = Path::new(&os_str);
+
+        assert_eq!(PathStyle::Windows.file_name(path), Some("file.txt"));
+        let parent = PathStyle::Windows.parent(path).unwrap();
+        assert_eq!(PathStyle::Windows.file_name(parent), Some("repo"));
     }
 }
