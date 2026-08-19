@@ -4,7 +4,7 @@ use super::{
 };
 
 use language::{LanguageAwareStyling, Point};
-use multi_buffer::MultiBufferSnapshot;
+use multi_buffer::{MultiBufferRow, MultiBufferSnapshot};
 use std::{cmp, num::NonZeroU32, ops::Range};
 use sum_tree::Bias;
 
@@ -392,6 +392,11 @@ impl TabSnapshot {
         )
     }
 
+    pub fn buffer_row_to_tab_row(&self, buffer_row: MultiBufferRow) -> u32 {
+        self.point_to_tab_point(Point::new(buffer_row.0, 0), Bias::Left)
+            .row()
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn point_to_tab_point(&self, point: Point, bias: Bias) -> TabPoint {
         let inlay_point = self.fold_snapshot.inlay_snapshot.to_inlay_point(point);
@@ -506,6 +511,10 @@ pub struct TabPointCursor<'this> {
 }
 
 impl TabPointCursor<'_> {
+    /// No-op; this cursor is stateless. Provided for symmetry with the other
+    /// display-map layer cursors.
+    pub fn reset(&mut self) {}
+
     #[ztracing::instrument(skip_all)]
     pub fn map(&mut self, point: FoldPoint) -> TabPoint {
         self.this.fold_point_to_tab_point(point)
