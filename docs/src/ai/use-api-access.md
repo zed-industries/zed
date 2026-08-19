@@ -349,7 +349,10 @@ Use OpenCode API access when you have an OpenCode API key. OpenCode Zen and Go a
 Zed does not sign in to OpenCode with OAuth or detect your OpenCode subscription; it uses an OpenCode API key saved in the system keychain or `OPENCODE_API_KEY`.
 
 1. Visit [OpenCode Console](https://opencode.ai/auth) and create an account.
-2. To use Zen or Go models, make sure you have enough credits or an active subscription. OpenCode Free models are not available in Zed.
+2. To use Zen or Go models, make sure you have enough credits or an active
+   subscription. OpenCode Free models are not available when using OpenCode as a
+   provider in Zed's Agent. You can use them in Zed by running OpenCode as an
+   [external agent through ACP](https://zed.dev/acp/agent/opencode).
 3. Generate an API key from the API Keys section in the OpenCode Console.
 4. Open Agent Settings with {#action agent::OpenSettings} and go to the OpenCode section.
 5. Enter your OpenCode API key.
