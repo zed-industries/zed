@@ -5274,8 +5274,38 @@ mod tests {
     }
 
     #[test]
-    fn test_url_only_context_server_reports_no_migration() {
-        // A URL-only entry has nothing to migrate. Its layout used to decide whether
+    fn test_context_server_types_report_no_migration() {
+        // Every server type a settings file can hold today. Extension-defined servers
+        // used to gain a `settings` object here, which is the one thing that changed:
+        // the field is gone from the schema, so a file like this is already current.
+        assert_migrate_settings(
+            indoc! {r#"
+                {
+                    "context_servers": {
+                        "extension_server": {},
+                        "stdio_server": {
+                            "command": "npx",
+                            "args": ["-y", "some-server"]
+                        },
+                        "http_server": {
+                            "url": "https://example.com/mcp"
+                        },
+                        "http_server_with_headers": {
+                            "url": "https://example.com/mcp",
+                            "headers": {
+                                "Authorization": "Bearer token"
+                            }
+                        }
+                    }
+                }
+            "#},
+            None,
+        );
+    }
+
+    #[test]
+    fn test_context_servers_report_no_migration_whatever_the_layout() {
+        // These entries have nothing to migrate. Their layout used to decide whether
         // one was reported anyway, so cover the shapes that used to differ.
         assert_migrate_settings(
             indoc! {r#"
@@ -5301,13 +5331,9 @@ mod tests {
             "{\n\t\"context_servers\": {\n\t\t\"grep\": {\n\t\t\t\"url\": \"https://mcp.grep.app\"\n\t\t}\n\t}\n}",
             None,
         );
-    }
 
-    #[test]
-    fn test_inline_context_server_command_reports_no_migration() {
-        // An entry already in the flat `command` shape has nothing left to migrate.
-        // Flattening keys off the shape of `command` alone, so an entry it should
-        // ignore must be left alone however it is laid out.
+        // Flattening decides from the shape of `command`, so an entry already in the
+        // flat shape has to survive the same layouts untouched.
         assert_migrate_settings(
             indoc! {r#"
                 {
