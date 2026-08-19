@@ -348,6 +348,10 @@ struct ParamHeaderStateInner {
 }
 
 impl ParamHeaderState {
+    fn reset(&self) {
+        *self.inner.lock() = ParamHeaderStateInner::default();
+    }
+
     fn note_outgoing(&self, outgoing: &OutgoingMessage) {
         if outgoing.method.as_deref() == Some("tools/list")
             && let Some(id) = &outgoing.id
@@ -1005,9 +1009,14 @@ impl Transport for HttpTransport {
 
     fn reset(&self) {
         // Abort every in-flight request and stream of the previous client
-        // generation, and drop messages it never consumed — the channels are
-        // reused by the next generation, whose request ids start over.
+        // generation, clear its negotiated protocol state, and drop messages
+        // it never consumed. The transport is reused by the next generation,
+        // whose request ids and protocol negotiation start over.
         self.active_streams.lock().clear();
+        *self.session_id.lock() = None;
+        *self.protocol_version.lock() = None;
+        *self.auth_challenge.lock() = None;
+        self.param_headers.reset();
         while self.response_rx.try_recv().is_ok() {}
         while self.error_rx.try_recv().is_ok() {}
     }
@@ -1832,14 +1841,43 @@ mod tests {
         assert!(!transport.response_rx.is_empty());
         assert!(transport.active_streams.lock().contains_key("1"));
 
+        transport.set_protocol_version("2025-11-25");
+        *transport.session_id.lock() = Some("stale-session".to_string());
+        *transport.auth_challenge.lock() = Some(WwwAuthenticate {
+            resource_metadata: None,
+            scope: None,
+            error: None,
+            error_description: None,
+        });
+        {
+            let mut param_headers = transport.param_headers.inner.lock();
+            param_headers.next_sequence = 1;
+            param_headers.applied_sequence = Some(0);
+            param_headers.headers_by_tool.insert(
+                "stale-tool".to_string(),
+                vec![ParamHeader {
+                    name: "Stale".to_string(),
+                    path: vec!["stale".to_string()],
+                }],
+            );
+        }
+
         // A new client generation must not see the old one's streams or
-        // undelivered messages.
+        // protocol state, or undelivered messages.
         transport.reset();
         cx.run_until_parked();
 
         pending_task.await.unwrap();
         assert!(transport.response_rx.is_empty());
         assert!(transport.active_streams.lock().is_empty());
+        assert!(transport.session_id.lock().is_none());
+        assert!(transport.protocol_version.lock().is_none());
+        assert!(transport.auth_challenge.lock().is_none());
+        let param_headers = transport.param_headers.inner.lock();
+        assert_eq!(param_headers.next_sequence, 0);
+        assert!(param_headers.pending_tools_list.is_empty());
+        assert!(param_headers.applied_sequence.is_none());
+        assert!(param_headers.headers_by_tool.is_empty());
     }
 
     #[gpui::test]
