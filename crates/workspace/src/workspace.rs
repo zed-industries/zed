@@ -7100,35 +7100,6 @@ impl Workspace {
             return Task::ready(());
         };
 
-        fn serialize_pane_handle(
-            pane_handle: &Entity<Pane>,
-            window: &mut Window,
-            cx: &mut App,
-        ) -> SerializedPane {
-            let (items, active, pinned_count) = {
-                let pane = pane_handle.read(cx);
-                let active_item_id = pane.active_item().map(|item| item.item_id());
-                (
-                    pane.items()
-                        .filter_map(|handle| {
-                            let handle = handle.to_serializable_item_handle(cx)?;
-
-                            Some(SerializedItem {
-                                kind: Arc::from(handle.serialized_item_kind()),
-                                item_id: handle.item_id().as_u64(),
-                                active: Some(handle.item_id()) == active_item_id,
-                                preview: pane.is_active_preview_item(handle.item_id()),
-                            })
-                        })
-                        .collect::<Vec<_>>(),
-                    pane.has_focus(window, cx),
-                    pane.pinned_count(),
-                )
-            };
-
-            SerializedPane::new(items, active, pinned_count)
-        }
-
         fn build_serialized_pane_group(
             pane_group: &Member,
             window: &mut Window,
@@ -9971,6 +9942,46 @@ async fn join_channel_internal(
     anyhow::Ok(false)
 }
 
+fn serialize_pane_handle(
+    pane_handle: &Entity<Pane>,
+    window: &mut Window,
+    cx: &mut App,
+) -> SerializedPane {
+    let (items, active, pinned_count) = {
+        let pane = pane_handle.read(cx);
+        let active_item_id = pane.active_item().map(|item| item.item_id());
+        // Pinned tabs are the leading tabs of a pane, so the pinned count has to
+        // shrink along with every pinned item that is dropped here. Otherwise a
+        // tab that was not pinned would take the dropped item's slot and come
+        // back pinned on the next restore.
+        let pinned_region = 0..pane.pinned_count();
+        let mut pinned_count = pane.pinned_count();
+        let items = pane
+            .items()
+            .enumerate()
+            .filter_map(|(index, handle)| {
+                let Some(handle) = handle.to_serializable_item_handle(cx) else {
+                    if pinned_region.contains(&index) {
+                        pinned_count -= 1;
+                    }
+                    return None;
+                };
+
+                Some(SerializedItem {
+                    kind: Arc::from(handle.serialized_item_kind()),
+                    item_id: handle.item_id().as_u64(),
+                    active: Some(handle.item_id()) == active_item_id,
+                    preview: pane.is_active_preview_item(handle.item_id()),
+                })
+            })
+            .collect::<Vec<_>>();
+
+        (items, pane.has_focus(window, cx), pinned_count)
+    };
+
+    SerializedPane::new(items, active, pinned_count)
+}
+
 pub fn join_channel(
     channel_id: ChannelId,
     app_state: Arc<AppState>,
@@ -11629,6 +11640,7 @@ mod tests {
     use super::*;
     use crate::{
         dock::{PanelEvent, test::TestPanel},
+        invalid_item_view::InvalidItemView,
         item::{
             ItemBufferKind, ItemEvent,
             test::{TestItem, TestProjectItem},
@@ -16721,6 +16733,230 @@ mod tests {
         let item_count_c = pane_c.read_with(cx, |pane, _| pane.items_len());
         assert_eq!(item_count_b, 0, "Pinned item in pane B should be closed");
         assert_eq!(item_count_c, 0, "Unpinned item in pane C should be closed");
+    }
+
+    #[gpui::test]
+    async fn test_restoring_pinned_tabs_when_items_fail_to_deserialize(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            register_serializable_item::<TestItem>(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "test.txt": "" })).await;
+        let project = Project::test(fs, ["root".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        // Items whose kind has no registered descriptor always fail to deserialize,
+        // which is what happens to a real item when its file or serialized state is
+        // gone by the time the workspace is restored.
+        let pane = restore_pane(
+            &workspace,
+            SerializedPane::new(
+                vec![
+                    SerializedItem::new("TestItem", 1, false, false),
+                    SerializedItem::new("Unrestorable", 2, false, false),
+                    SerializedItem::new("TestItem", 3, true, false),
+                    SerializedItem::new("TestItem", 4, false, false),
+                ],
+                true,
+                2,
+            ),
+            cx,
+        )
+        .await;
+        let (items_len, pinned_count) =
+            pane.read_with(cx, |pane, _| (pane.items_len(), pane.pinned_count()));
+        assert_eq!(items_len, 3);
+        assert_eq!(
+            pinned_count, 1,
+            "only the pinned item that was restored should stay pinned"
+        );
+
+        let pane = restore_pane(
+            &workspace,
+            SerializedPane::new(
+                vec![
+                    SerializedItem::new("TestItem", 1, false, false),
+                    SerializedItem::new("TestItem", 2, true, false),
+                    SerializedItem::new("Unrestorable", 3, false, false),
+                ],
+                true,
+                2,
+            ),
+            cx,
+        )
+        .await;
+        let (items_len, pinned_count) =
+            pane.read_with(cx, |pane, _| (pane.items_len(), pane.pinned_count()));
+        assert_eq!(items_len, 2);
+        assert_eq!(
+            pinned_count, 2,
+            "an unpinned item failing to restore should not unpin anything"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_restoring_active_and_preview_tabs_when_items_fail_to_deserialize(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            register_serializable_item::<TestItem>(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "test.txt": "" })).await;
+        let project = Project::test(fs, ["root".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        // The active and preview tabs both sit behind an item that fails to restore, so
+        // their serialized indices are one ahead of where those tabs end up.
+        let pane = restore_pane(
+            &workspace,
+            SerializedPane::new(
+                vec![
+                    SerializedItem::new("Unrestorable", 1, false, false),
+                    SerializedItem::new("TestItem", 2, true, false),
+                    SerializedItem::new("TestItem", 3, false, true),
+                ],
+                true,
+                0,
+            ),
+            cx,
+        )
+        .await;
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.items_len(), 2);
+            assert_eq!(pane.active_item_index(), 0);
+            assert_eq!(
+                pane.preview_item_id(),
+                pane.item_for_index(1).map(|item| item.item_id()),
+                "the preview tab should follow the item it was serialized with"
+            );
+        });
+
+        // The active item itself fails to restore, so nothing should be activated in its
+        // place and the pane should keep the tab it settled on.
+        let pane = restore_pane(
+            &workspace,
+            SerializedPane::new(
+                vec![
+                    SerializedItem::new("TestItem", 1, false, false),
+                    SerializedItem::new("Unrestorable", 2, true, true),
+                    SerializedItem::new("TestItem", 3, false, false),
+                ],
+                true,
+                0,
+            ),
+            cx,
+        )
+        .await;
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.items_len(), 2);
+            assert_eq!(pane.active_item_index(), 1);
+            assert_eq!(pane.preview_item_id(), None);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_serializing_pinned_tabs_when_items_are_not_serializable(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            register_serializable_item::<TestItem>(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "test.txt": "" })).await;
+        let project = Project::test(fs, ["root".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        // A pane where the last two of four pinned tabs cannot be serialized, which is
+        // what an item that failed to open turns into. Every dropped tab has to be
+        // counted against the pinned region of the original pane, not against the
+        // count that the earlier drops already shrank.
+        let pane = serialize_pane(&workspace, &[true, true, false, false, true, true], 4, cx);
+        assert_eq!(pane.children.len(), 4);
+        assert_eq!(
+            pane.pinned_count, 2,
+            "both dropped pinned tabs should shrink the pinned count"
+        );
+
+        // The same holds when the dropped tabs lead the pinned region.
+        let pane = serialize_pane(&workspace, &[false, false, true, true, true], 4, cx);
+        assert_eq!(pane.children.len(), 3);
+        assert_eq!(pane.pinned_count, 2);
+
+        // Dropping an unpinned tab must leave the pinned count alone.
+        let pane = serialize_pane(&workspace, &[true, true, false, true], 2, cx);
+        assert_eq!(pane.children.len(), 3);
+        assert_eq!(
+            pane.pinned_count, 2,
+            "an unpinned tab that is not serialized should not unpin anything"
+        );
+    }
+
+    /// Serializes a fresh pane holding one tab per entry of `serializable`, where a
+    /// `false` entry is a tab that `serialize_pane_handle` has to drop.
+    fn serialize_pane(
+        workspace: &Entity<Workspace>,
+        serializable: &[bool],
+        pinned_count: usize,
+        cx: &mut VisualTestContext,
+    ) -> SerializedPane {
+        workspace.update_in(cx, |workspace, window, cx| {
+            let pane = workspace.add_pane(window, cx);
+            pane.update(cx, |pane, cx| {
+                for (index, serializable) in serializable.iter().enumerate() {
+                    let item: Box<dyn ItemHandle> = if *serializable {
+                        Box::new(cx.new(|cx| TestItem::new(cx)))
+                    } else {
+                        Box::new(cx.new(|cx| {
+                            InvalidItemView::new(
+                                Path::new(&format!("/root/{index}.txt")),
+                                true,
+                                &anyhow::anyhow!("failed to open"),
+                                window,
+                                cx,
+                            )
+                        }))
+                    };
+                    pane.add_item(item, false, false, None, window, cx);
+                }
+                pane.set_pinned_count(pinned_count);
+            });
+            serialize_pane_handle(&pane, window, cx)
+        })
+    }
+
+    async fn restore_pane(
+        workspace: &Entity<Workspace>,
+        serialized_pane: SerializedPane,
+        cx: &mut VisualTestContext,
+    ) -> Entity<Pane> {
+        let (pane, task) = workspace.update_in(cx, |workspace, window, cx| {
+            let pane = workspace.add_pane(window, cx);
+            let weak_pane = pane.downgrade();
+            let project = workspace.project().clone();
+            let workspace = cx.entity().downgrade();
+            let task = window.spawn(cx, async move |cx| {
+                serialized_pane
+                    .deserialize_to(
+                        &project,
+                        &weak_pane,
+                        WorkspaceId::from_i64(1),
+                        workspace,
+                        cx,
+                    )
+                    .await
+            });
+            (pane, task)
+        });
+        task.await.unwrap();
+        pane
     }
 
     mod register_project_item_tests {

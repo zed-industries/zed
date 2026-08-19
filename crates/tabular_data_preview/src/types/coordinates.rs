@@ -1,8 +1,8 @@
-//! Type definitions for CSV table coordinates and cell identifiers.
+//! Type definitions for table coordinates and cell identifiers.
 //!
 //! Provides newtypes for self-documenting coordinate systems:
 //! - Display coordinates: Visual positions in rendered table
-//! - Data coordinates: Original CSV data positions
+//! - Data coordinates: Original data positions
 
 use std::ops::Deref;
 
@@ -31,7 +31,7 @@ impl Deref for DisplayRow {
     }
 }
 
-/// Original CSV row position.
+/// Original table row position.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DataRow(pub usize);
 
@@ -63,7 +63,7 @@ impl From<usize> for DataRow {
 }
 
 ///// Columns /////
-/// Data column position in CSV table. 0-based
+/// Data column position in the table. 0-based
 ///
 /// Currently represents both display and data coordinate systems since
 /// column reordering is not yet implemented. When column reordering is added,

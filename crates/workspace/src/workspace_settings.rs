@@ -83,7 +83,7 @@ impl Settings for WorkspaceSettings {
         Self {
             active_pane_modifiers: ActivePanelModifiers {
                 border_size: Some(
-                    workspace
+                    *workspace
                         .active_pane_modifiers
                         .unwrap()
                         .border_size

@@ -215,6 +215,26 @@ mod tests {
     }
 
     #[test]
+    fn dedicated_executor_tasks_share_one_thread() {
+        let background =
+            BackgroundExecutor::new(Arc::new(PlatformScheduler::new(Arc::new(SmokeDispatcher))));
+        let dedicated = scheduler::DedicatedExecutor::new(&background);
+
+        let first = dedicated.spawn(async { std::thread::current().id() });
+        let second = dedicated.spawn(async { std::thread::current().id() });
+
+        let first = futures::executor::block_on(first);
+        let second = futures::executor::block_on(second);
+
+        assert_eq!(first, second, "tasks must share the dedicated thread");
+        assert_ne!(
+            first,
+            std::thread::current().id(),
+            "dedicated tasks must not run on the spawning thread"
+        );
+    }
+
+    #[test]
     fn spawn_dedicated_runs_on_a_real_separate_thread() {
         let background =
             BackgroundExecutor::new(Arc::new(PlatformScheduler::new(Arc::new(SmokeDispatcher))));

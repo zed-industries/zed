@@ -84,7 +84,7 @@ use std::future::Future;
 use std::ops::Range;
 use std::path::Path;
 use std::rc::Rc;
-use std::{sync::Arc, time::Duration, usize};
+use std::{sync::Arc, time::Duration};
 use strum::{IntoEnumIterator, VariantNames};
 use theme_settings::ThemeSettings;
 use time::OffsetDateTime;
@@ -1688,24 +1688,68 @@ impl GitPanel {
         }
     }
 
+    /// Finds the nearest expanded directory at or above the given path.
+    fn nearest_expanded_directory_key(&self, section: Section, path: &RepoPath) -> Option<TreeKey> {
+        let tree_state = self.view_mode.tree_state()?;
+        let mut candidate_path = Some(path.clone());
+
+        while let Some(path) = candidate_path {
+            candidate_path = path.parent().map(RepoPath::from_rel_path);
+            let key = TreeKey { section, path };
+
+            if tree_state.expanded_dirs.get(&key).copied() == Some(true) {
+                return Some(key);
+            }
+        }
+
+        None
+    }
+
+    fn directory_entry_index(&self, key: &TreeKey) -> Option<usize> {
+        self.entries.iter().position(|entry| {
+            entry
+                .directory_entry()
+                .is_some_and(|directory| directory.key == *key)
+        })
+    }
+
+    /// Collapses the selected directory or its nearest expanded ancestor.
+    ///
+    /// If a file or collapsed directory is selected, walks up the tree to find,
+    /// collapse, and select the nearest expanded directory.
+    /// For other entry types, selects the previous entry.
     fn collapse_selected_entry(
         &mut self,
         _: &CollapseSelectedEntry,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(entry) = self.get_selected_entry().cloned() else {
+        let Some(selected_index) = self.selected_entry else {
             return;
         };
 
-        if let GitListEntry::Directory(dir_entry) = entry {
-            if dir_entry.expanded {
-                self.toggle_directory(&dir_entry.key, window, cx);
-            } else {
-                self.select_previous(&menu::SelectPrevious, window, cx);
+        let directory_key = match self.entries.get(selected_index) {
+            Some(GitListEntry::Directory(directory)) => {
+                self.nearest_expanded_directory_key(directory.key.section, &directory.key.path)
             }
-        } else {
+            Some(GitListEntry::TreeStatus(status)) => self
+                .section_for_entry_index(selected_index)
+                .and_then(|section| {
+                    self.nearest_expanded_directory_key(section, &status.entry.repo_path)
+                }),
+            _ => None,
+        };
+
+        let Some(directory_key) = directory_key else {
             self.select_previous(&menu::SelectPrevious, window, cx);
+            return;
+        };
+
+        self.toggle_directory(&directory_key, window, cx);
+
+        if let Some(index) = self.directory_entry_index(&directory_key) {
+            self.selected_entry = Some(index);
+            self.scroll_to_selected_entry(cx);
         }
     }
 
@@ -4210,17 +4254,27 @@ impl GitPanel {
         let workspace = self.workspace.clone();
         let operation = operation.into();
         let window = window.window_handle();
-        AskPassDelegate::new(&mut cx.to_async(), move |prompt, tx, cx| {
-            window
-                .update(cx, |_, window, cx| {
-                    workspace.update(cx, |workspace, cx| {
-                        workspace.toggle_modal(window, cx, |window, cx| {
-                            AskPassModal::new(operation.clone(), prompt.into(), tx, window, cx)
-                        });
+        AskPassDelegate::new_with_cancellation(
+            &mut cx.to_async(),
+            move |prompt, tx, cancellation, cx| {
+                window
+                    .update(cx, |_, window, cx| {
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.toggle_modal(window, cx, |window, cx| {
+                                AskPassModal::new(
+                                    operation.clone(),
+                                    prompt.into(),
+                                    tx,
+                                    cancellation,
+                                    window,
+                                    cx,
+                                )
+                            });
+                        })
                     })
-                })
-                .ok();
-        })
+                    .ok();
+            },
+        )
     }
 
     fn can_push_and_pull(&self, cx: &App) -> bool {
@@ -12992,6 +13046,155 @@ mod tests {
             !detail.contains("unstaged.rs"),
             "prompt should NOT list unstaged.rs, got: {detail}"
         );
+    }
+
+    #[gpui::test]
+    async fn test_collapse_selected_entry(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "files": {
+                    "docs": {
+                        "README.md": "Don't look here!"
+                    },
+                    "notes.txt": "Remember this."
+                },
+                "README.md": "Project's README."
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            path!("/project/.git").as_ref(),
+            &[
+                ("files/docs/README.md", StatusCode::Modified.worktree()),
+                ("files/notes.txt", StatusCode::Modified.worktree()),
+                ("README.md", StatusCode::Modified.worktree()),
+            ],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().tree_view = Some(true);
+                })
+            });
+        });
+
+        let worktree_id =
+            cx.read(|cx| project.read(cx).worktrees(cx).next().unwrap().read(cx).id());
+        let panel = workspace.update_in(cx, GitPanel::new);
+        await_git_panel_entries(&panel, cx).await;
+
+        // Build the `TreeKey` for both the `files/` and `files/docs/` folders
+        // so we can later assert that these entries are selected.
+        let files_key = TreeKey {
+            section: Section::Tracked,
+            path: repo_path("files/"),
+        };
+        let docs_key = TreeKey {
+            section: Section::Tracked,
+            path: repo_path("files/docs/"),
+        };
+
+        // We'll start by selecting the `README.md` file and confirming that,
+        // collapsing it should simply select the previous entry
+        // (`files/notes.txt`), as there's no parent folder for `README.md`.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_entry_by_path(
+                ProjectPath {
+                    worktree_id,
+                    path: RelPath::from_unix_str("README.md").unwrap().into_arc(),
+                },
+                window,
+                cx,
+            );
+            panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
+
+            let selected_entry = panel
+                .get_selected_entry()
+                .and_then(GitListEntry::status_entry)
+                .expect("the previous file should be selected");
+            assert_eq!(selected_entry.repo_path, repo_path("files/notes.txt"));
+        });
+
+        // Confirm that, collapsing `files/docs/README.md` should select and
+        // collapse the parent directory (`files/docs/`).
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_entry_by_path(
+                ProjectPath {
+                    worktree_id,
+                    path: RelPath::from_unix_str("files/docs/README.md")
+                        .unwrap()
+                        .into_arc(),
+                },
+                window,
+                cx,
+            );
+            panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
+
+            let state = panel
+                .view_mode
+                .tree_state()
+                .expect("tree view should be enabled");
+
+            assert_eq!(state.expanded_dirs.get(&docs_key), Some(&false));
+            assert_eq!(state.expanded_dirs.get(&files_key), Some(&true));
+            assert_eq!(
+                panel
+                    .get_selected_entry()
+                    .and_then(GitListEntry::directory_entry)
+                    .map(|directory| &directory.key),
+                Some(&docs_key)
+            );
+        });
+
+        // With `files/docs/` already collapsed, and selected, collapsing a
+        // second time should now collapse the parent directory, `files/`.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
+
+            let state = panel
+                .view_mode
+                .tree_state()
+                .expect("tree view should be enabled");
+
+            assert_eq!(state.expanded_dirs.get(&docs_key), Some(&false));
+            assert_eq!(state.expanded_dirs.get(&files_key), Some(&false));
+            assert_eq!(
+                panel
+                    .get_selected_entry()
+                    .and_then(GitListEntry::directory_entry)
+                    .map(|directory| &directory.key),
+                Some(&files_key)
+            );
+        });
     }
 
     #[gpui::test]

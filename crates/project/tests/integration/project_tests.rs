@@ -67,7 +67,7 @@ use project::{
 };
 use rand::{Rng as _, rngs::StdRng};
 use serde_json::json;
-use settings::{GlobalLspSettingsContent, SettingsStore};
+use settings::{GlobalLspSettingsContent, SettingsStore, SplicingVec};
 #[cfg(target_os = "linux")]
 use settings::{LocalSettingsKind, LocalSettingsPath};
 #[cfg(not(windows))]
@@ -1830,10 +1830,10 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         buffer.update_diagnostics(
             LanguageServerId(0),
             DiagnosticSet::from_sorted_entries(
-                vec![DiagnosticEntry {
-                    diagnostic: Default::default(),
-                    range: Anchor::min_max_range_for_buffer(buffer.remote_id()),
-                }],
+                vec![DiagnosticEntry::new(
+                    Anchor::min_max_range_for_buffer(buffer.remote_id()),
+                    Default::default(),
+                )],
                 &buffer.snapshot(),
             ),
             cx,
@@ -3666,9 +3666,9 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                 .diagnostics_in_range::<_, Point>(Point::new(3, 0)..Point::new(5, 0), false)
                 .collect::<Vec<_>>(),
             &[
-                DiagnosticEntry {
-                    range: Point::new(3, 9)..Point::new(3, 11),
-                    diagnostic: Diagnostic {
+                DiagnosticEntry::new(
+                    Point::new(3, 9)..Point::new(3, 11),
+                    Diagnostic {
                         source: Some("disk".into()),
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'BB'".to_string(),
@@ -3677,11 +3677,11 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                         is_primary: true,
                         source_kind: DiagnosticSourceKind::Pushed,
                         ..Diagnostic::default()
-                    },
-                },
-                DiagnosticEntry {
-                    range: Point::new(4, 9)..Point::new(4, 12),
-                    diagnostic: Diagnostic {
+                    }
+                ),
+                DiagnosticEntry::new(
+                    Point::new(4, 9)..Point::new(4, 12),
+                    Diagnostic {
                         source: Some("disk".into()),
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'CCC'".to_string(),
@@ -3691,7 +3691,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                         source_kind: DiagnosticSourceKind::Pushed,
                         ..Diagnostic::default()
                     }
-                }
+                )
             ]
         );
         assert_eq!(
@@ -3746,9 +3746,9 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                 .diagnostics_in_range::<_, Point>(Point::new(2, 0)..Point::new(3, 0), false)
                 .collect::<Vec<_>>(),
             &[
-                DiagnosticEntry {
-                    range: Point::new(2, 9)..Point::new(2, 12),
-                    diagnostic: Diagnostic {
+                DiagnosticEntry::new(
+                    Point::new(2, 9)..Point::new(2, 12),
+                    Diagnostic {
                         source: Some("disk".into()),
                         severity: DiagnosticSeverity::WARNING,
                         message: "unreachable statement".to_string(),
@@ -3758,10 +3758,10 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                         source_kind: DiagnosticSourceKind::Pushed,
                         ..Diagnostic::default()
                     }
-                },
-                DiagnosticEntry {
-                    range: Point::new(2, 9)..Point::new(2, 10),
-                    diagnostic: Diagnostic {
+                ),
+                DiagnosticEntry::new(
+                    Point::new(2, 9)..Point::new(2, 10),
+                    Diagnostic {
                         source: Some("disk".into()),
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'A'".to_string(),
@@ -3770,8 +3770,8 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                         is_primary: true,
                         source_kind: DiagnosticSourceKind::Pushed,
                         ..Diagnostic::default()
-                    },
-                }
+                    }
+                )
             ]
         );
         assert_eq!(
@@ -3840,9 +3840,9 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                 .diagnostics_in_range::<_, Point>(0..buffer.len(), false)
                 .collect::<Vec<_>>(),
             &[
-                DiagnosticEntry {
-                    range: Point::new(2, 21)..Point::new(2, 22),
-                    diagnostic: Diagnostic {
+                DiagnosticEntry::new(
+                    Point::new(2, 21)..Point::new(2, 22),
+                    Diagnostic {
                         source: Some("disk".into()),
                         severity: DiagnosticSeverity::WARNING,
                         message: "undefined variable 'A'".to_string(),
@@ -3852,10 +3852,10 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                         source_kind: DiagnosticSourceKind::Pushed,
                         ..Diagnostic::default()
                     }
-                },
-                DiagnosticEntry {
-                    range: Point::new(3, 9)..Point::new(3, 14),
-                    diagnostic: Diagnostic {
+                ),
+                DiagnosticEntry::new(
+                    Point::new(3, 9)..Point::new(3, 14),
+                    Diagnostic {
                         source: Some("disk".into()),
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'BB'".to_string(),
@@ -3864,8 +3864,8 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                         is_primary: true,
                         source_kind: DiagnosticSourceKind::Pushed,
                         ..Diagnostic::default()
-                    },
-                }
+                    }
+                )
             ]
         );
     });
@@ -3901,26 +3901,24 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
                     None,
                     None,
                     vec![
-                        DiagnosticEntry {
-                            range: Unclipped(PointUtf16::new(0, 10))
-                                ..Unclipped(PointUtf16::new(0, 10)),
-                            diagnostic: Diagnostic {
+                        DiagnosticEntry::new(
+                            Unclipped(PointUtf16::new(0, 10))..Unclipped(PointUtf16::new(0, 10)),
+                            Diagnostic {
                                 severity: DiagnosticSeverity::ERROR,
                                 message: "syntax error 1".to_string(),
                                 source_kind: DiagnosticSourceKind::Pushed,
                                 ..Diagnostic::default()
                             },
-                        },
-                        DiagnosticEntry {
-                            range: Unclipped(PointUtf16::new(1, 10))
-                                ..Unclipped(PointUtf16::new(1, 10)),
-                            diagnostic: Diagnostic {
+                        ),
+                        DiagnosticEntry::new(
+                            Unclipped(PointUtf16::new(1, 10))..Unclipped(PointUtf16::new(1, 10)),
+                            Diagnostic {
                                 severity: DiagnosticSeverity::ERROR,
                                 message: "syntax error 2".to_string(),
                                 source_kind: DiagnosticSourceKind::Pushed,
                                 ..Diagnostic::default()
                             },
-                        },
+                        ),
                     ],
                     cx,
                 )
@@ -3967,16 +3965,16 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
                 Path::new(path!("/dir/a.rs")).to_owned(),
                 None,
                 None,
-                vec![DiagnosticEntry {
-                    range: Unclipped(PointUtf16::new(0, 0))..Unclipped(PointUtf16::new(0, 3)),
-                    diagnostic: Diagnostic {
+                vec![DiagnosticEntry::new(
+                    Unclipped(PointUtf16::new(0, 0))..Unclipped(PointUtf16::new(0, 3)),
+                    Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         is_primary: true,
                         message: "syntax error a1".to_string(),
                         source_kind: DiagnosticSourceKind::Pushed,
                         ..Diagnostic::default()
                     },
-                }],
+                )],
                 cx,
             )
             .unwrap();
@@ -3986,16 +3984,16 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
                 Path::new(path!("/dir/a.rs")).to_owned(),
                 None,
                 None,
-                vec![DiagnosticEntry {
-                    range: Unclipped(PointUtf16::new(0, 0))..Unclipped(PointUtf16::new(0, 3)),
-                    diagnostic: Diagnostic {
+                vec![DiagnosticEntry::new(
+                    Unclipped(PointUtf16::new(0, 0))..Unclipped(PointUtf16::new(0, 3)),
+                    Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         is_primary: true,
                         message: "syntax error b1".to_string(),
                         source_kind: DiagnosticSourceKind::Pushed,
                         ..Diagnostic::default()
                     },
-                }],
+                )],
                 cx,
             )
             .unwrap();
@@ -4030,16 +4028,16 @@ async fn test_diagnostic_summaries_cleared_on_worktree_entry_removal(
                 Path::new(path!("/dir/a.rs")).to_owned(),
                 None,
                 None,
-                vec![DiagnosticEntry {
-                    range: Unclipped(PointUtf16::new(0, 0))..Unclipped(PointUtf16::new(0, 3)),
-                    diagnostic: Diagnostic {
+                vec![DiagnosticEntry::new(
+                    Unclipped(PointUtf16::new(0, 0))..Unclipped(PointUtf16::new(0, 3)),
+                    Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         is_primary: true,
                         message: "error in a".to_string(),
                         source_kind: DiagnosticSourceKind::Pushed,
                         ..Diagnostic::default()
                     },
-                }],
+                )],
                 cx,
             )
             .unwrap();
@@ -4049,16 +4047,16 @@ async fn test_diagnostic_summaries_cleared_on_worktree_entry_removal(
                 Path::new(path!("/dir/b.rs")).to_owned(),
                 None,
                 None,
-                vec![DiagnosticEntry {
-                    range: Unclipped(PointUtf16::new(0, 0))..Unclipped(PointUtf16::new(0, 3)),
-                    diagnostic: Diagnostic {
+                vec![DiagnosticEntry::new(
+                    Unclipped(PointUtf16::new(0, 0))..Unclipped(PointUtf16::new(0, 3)),
+                    Diagnostic {
                         severity: DiagnosticSeverity::WARNING,
                         is_primary: true,
                         message: "warning in b".to_string(),
                         source_kind: DiagnosticSourceKind::Pushed,
                         ..Diagnostic::default()
                     },
-                }],
+                )],
                 cx,
             )
             .unwrap();
@@ -6107,7 +6105,8 @@ async fn test_rename_file_to_new_directory(cx: &mut gpui::TestAppContext) {
             })
             .await
             .unwrap()
-            .text,
+            .text
+            .to_string(),
         expected_contents,
         "Moved file's contents should be preserved"
     );
@@ -6154,7 +6153,8 @@ async fn test_rename_file_to_new_directory(cx: &mut gpui::TestAppContext) {
             })
             .await
             .unwrap()
-            .text,
+            .text
+            .to_string(),
         expected_contents,
         "Moved file's contents should be preserved"
     );
@@ -7707,68 +7707,77 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
 
     assert_eq!(
         buffer
-            .diagnostics_in_range::<_, Point>(0..buffer.len(), false)
+            .diagnostic_entries_in_range(0..buffer.len(), false)
+            .map(|entry| entry.clone().map_coordinates(|range| {
+                range.start.to_point(&buffer)..range.end.to_point(&buffer)
+            }))
             .collect::<Vec<_>>(),
         &[
             DiagnosticEntry {
                 range: Point::new(1, 8)..Point::new(1, 9),
+                related_information: expected_related_information(&error_1_related_information),
                 diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::WARNING,
                     message: "error 1".to_string(),
                     group_id: 1,
                     is_primary: true,
                     source_kind: DiagnosticSourceKind::Pushed,
-                    related_information: Some(error_1_related_information.clone()),
                     ..Diagnostic::default()
-                }
+                },
             },
             DiagnosticEntry {
                 range: Point::new(1, 8)..Point::new(1, 9),
+                related_information: expected_related_information(
+                    &error_1_hint_related_information
+                ),
                 diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::HINT,
                     message: "error 1 hint 1".to_string(),
                     group_id: 1,
                     is_primary: false,
                     source_kind: DiagnosticSourceKind::Pushed,
-                    related_information: Some(error_1_hint_related_information.clone()),
                     ..Diagnostic::default()
-                }
+                },
             },
             DiagnosticEntry {
                 range: Point::new(1, 13)..Point::new(1, 15),
+                related_information: expected_related_information(
+                    &error_2_hint_related_information
+                ),
                 diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::HINT,
                     message: "error 2 hint 1".to_string(),
                     group_id: 0,
                     is_primary: false,
                     source_kind: DiagnosticSourceKind::Pushed,
-                    related_information: Some(error_2_hint_related_information.clone()),
                     ..Diagnostic::default()
-                }
+                },
             },
             DiagnosticEntry {
                 range: Point::new(1, 13)..Point::new(1, 15),
+                related_information: expected_related_information(
+                    &error_2_hint_related_information
+                ),
                 diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::HINT,
                     message: "error 2 hint 2".to_string(),
                     group_id: 0,
                     is_primary: false,
                     source_kind: DiagnosticSourceKind::Pushed,
-                    related_information: Some(error_2_hint_related_information.clone()),
                     ..Diagnostic::default()
-                }
+                },
             },
             DiagnosticEntry {
                 range: Point::new(2, 8)..Point::new(2, 17),
+                related_information: expected_related_information(&error_2_related_information),
                 diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::ERROR,
                     message: "error 2".to_string(),
                     group_id: 0,
                     is_primary: true,
                     source_kind: DiagnosticSourceKind::Pushed,
-                    related_information: Some(error_2_related_information.clone()),
                     ..Diagnostic::default()
-                }
+                },
             }
         ]
     );
@@ -7778,39 +7787,43 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
         &[
             DiagnosticEntry {
                 range: Point::new(1, 13)..Point::new(1, 15),
+                related_information: expected_related_information(
+                    &error_2_hint_related_information
+                ),
                 diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::HINT,
                     message: "error 2 hint 1".to_string(),
                     group_id: 0,
                     is_primary: false,
                     source_kind: DiagnosticSourceKind::Pushed,
-                    related_information: Some(error_2_hint_related_information.clone()),
                     ..Diagnostic::default()
-                }
+                },
             },
             DiagnosticEntry {
                 range: Point::new(1, 13)..Point::new(1, 15),
+                related_information: expected_related_information(
+                    &error_2_hint_related_information
+                ),
                 diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::HINT,
                     message: "error 2 hint 2".to_string(),
                     group_id: 0,
                     is_primary: false,
                     source_kind: DiagnosticSourceKind::Pushed,
-                    related_information: Some(error_2_hint_related_information),
                     ..Diagnostic::default()
-                }
+                },
             },
             DiagnosticEntry {
                 range: Point::new(2, 8)..Point::new(2, 17),
+                related_information: expected_related_information(&error_2_related_information),
                 diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::ERROR,
                     message: "error 2".to_string(),
                     group_id: 0,
                     is_primary: true,
                     source_kind: DiagnosticSourceKind::Pushed,
-                    related_information: Some(error_2_related_information),
                     ..Diagnostic::default()
-                }
+                },
             }
         ]
     );
@@ -7820,27 +7833,29 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
         &[
             DiagnosticEntry {
                 range: Point::new(1, 8)..Point::new(1, 9),
+                related_information: expected_related_information(&error_1_related_information),
                 diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::WARNING,
                     message: "error 1".to_string(),
                     group_id: 1,
                     is_primary: true,
                     source_kind: DiagnosticSourceKind::Pushed,
-                    related_information: Some(error_1_related_information),
                     ..Diagnostic::default()
-                }
+                },
             },
             DiagnosticEntry {
                 range: Point::new(1, 8)..Point::new(1, 9),
+                related_information: expected_related_information(
+                    &error_1_hint_related_information
+                ),
                 diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::HINT,
                     message: "error 1 hint 1".to_string(),
                     group_id: 1,
                     is_primary: false,
                     source_kind: DiagnosticSourceKind::Pushed,
-                    related_information: Some(error_1_hint_related_information),
                     ..Diagnostic::default()
-                }
+                },
             },
         ]
     );
@@ -10033,6 +10048,294 @@ async fn test_code_actions_preserve_supporting_diagnostic_entry(cx: &mut gpui::T
 
     let code_actions_task = project.update(cx, |project, cx| {
         project.code_actions(&buffer, 0..4, None, cx)
+    });
+
+    request_handled
+        .next()
+        .await
+        .expect("The code action request should have been triggered");
+    assert!(code_actions_task.await.unwrap().unwrap().is_empty());
+}
+
+#[gpui::test]
+async fn test_code_actions_related_information_follows_edits(cx: &mut gpui::TestAppContext) {
+    let (project, buffer, _handle, fake_server) = code_action_project_with(
+        FakeLspAdapter {
+            name: "test-language-server",
+            capabilities: lsp::ServerCapabilities {
+                code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+        cx,
+    )
+    .await;
+
+    let uri = Uri::from_file_path(path!("/dir/a.ts")).unwrap();
+    let note_line = 5;
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+        uri: uri.clone(),
+        version: None,
+        diagnostics: vec![lsp::Diagnostic {
+            range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 3)),
+            severity: Some(DiagnosticSeverity::ERROR),
+            source: Some("test-language-server".to_string()),
+            message: "primary diagnostic".to_string(),
+            related_information: Some(vec![lsp::DiagnosticRelatedInformation {
+                location: lsp::Location {
+                    uri,
+                    range: lsp::Range::new(
+                        lsp::Position::new(note_line, 0),
+                        lsp::Position::new(note_line, 3),
+                    ),
+                },
+                message: "note".to_string(),
+            }]),
+            ..Default::default()
+        }],
+    });
+    cx.executor().run_until_parked();
+
+    let inserted_lines = 2;
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "zzz\nzzz\n")], None, cx);
+    });
+    cx.executor().run_until_parked();
+
+    let mut request_handled = fake_server
+        .set_request_handler::<lsp::request::CodeActionRequest, _, _>(
+            move |params, _| async move {
+                let primary = &params.context.diagnostics[0];
+                let flattened_note = &params.context.diagnostics[1];
+                let related_note = &primary
+                    .related_information
+                    .as_ref()
+                    .expect("the primary diagnostic carries its related information")[0];
+
+                // Both entries are anchored, so they followed the edit.
+                assert_eq!(primary.range.start.line, 1 + inserted_lines);
+                assert_eq!(flattened_note.range.start.line, note_line + inserted_lines);
+
+                // The related information of the primary points at the same note as the
+                // flattened entry, so it should have followed it.
+                assert_eq!(
+                    related_note.location.range.start.line, flattened_note.range.start.line,
+                    "the same note is reported at two different lines in one request"
+                );
+                Ok(Some(Vec::new()))
+            },
+        );
+
+    let buffer_length = buffer.read_with(cx, |buffer, _| buffer.len());
+    let code_actions_task = project.update(cx, |project, cx| {
+        project.code_actions(&buffer, 0..buffer_length, None, cx)
+    });
+
+    request_handled
+        .next()
+        .await
+        .expect("The code action request should have been triggered");
+    assert!(code_actions_task.await.unwrap().unwrap().is_empty());
+}
+
+#[gpui::test]
+async fn test_code_actions_related_information_of_disk_based_diagnostics(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (project, buffer, _handle, fake_server) = code_action_project_with(
+        FakeLspAdapter {
+            name: "test-language-server",
+            disk_based_diagnostics_sources: vec!["disk".into()],
+            capabilities: lsp::ServerCapabilities {
+                code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+        cx,
+    )
+    .await;
+
+    // The diagnostic below is computed against the file on disk, so its positions have
+    // to be moved by this edit, which the buffer has not saved.
+    let unsaved_lines = 1;
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "zzz\n")], None, cx);
+    });
+    cx.executor().run_until_parked();
+
+    let uri = Uri::from_file_path(path!("/dir/a.ts")).unwrap();
+    let note_line = 5;
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+        uri: uri.clone(),
+        version: None,
+        diagnostics: vec![lsp::Diagnostic {
+            range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 3)),
+            severity: Some(DiagnosticSeverity::ERROR),
+            source: Some("disk".to_string()),
+            message: "primary diagnostic".to_string(),
+            related_information: Some(vec![lsp::DiagnosticRelatedInformation {
+                location: lsp::Location {
+                    uri,
+                    range: lsp::Range::new(
+                        lsp::Position::new(note_line, 0),
+                        lsp::Position::new(note_line, 3),
+                    ),
+                },
+                message: "note".to_string(),
+            }]),
+            ..Default::default()
+        }],
+    });
+    cx.executor().run_until_parked();
+
+    let mut request_handled = fake_server
+        .set_request_handler::<lsp::request::CodeActionRequest, _, _>(
+            move |params, _| async move {
+                let primary = &params.context.diagnostics[0];
+                let flattened_note = &params.context.diagnostics[1];
+                let related_note = &primary
+                    .related_information
+                    .as_ref()
+                    .expect("the primary diagnostic carries its related information")[0];
+
+                assert_eq!(primary.range.start.line, 1 + unsaved_lines);
+                assert_eq!(flattened_note.range.start.line, note_line + unsaved_lines);
+                assert_eq!(
+                    related_note.location.range.start.line, flattened_note.range.start.line,
+                    "the related information is moved by the unsaved edits like the rest"
+                );
+                Ok(Some(Vec::new()))
+            },
+        );
+
+    let buffer_length = buffer.read_with(cx, |buffer, _| buffer.len());
+    let code_actions_task = project.update(cx, |project, cx| {
+        project.code_actions(&buffer, 0..buffer_length, None, cx)
+    });
+
+    request_handled
+        .next()
+        .await
+        .expect("The code action request should have been triggered");
+    assert!(code_actions_task.await.unwrap().unwrap().is_empty());
+}
+
+#[gpui::test]
+async fn test_code_actions_related_information_drifts_across_merges(cx: &mut gpui::TestAppContext) {
+    let (project, buffer, _handle, fake_server) = code_action_project_with(
+        FakeLspAdapter {
+            name: "test-language-server",
+            capabilities: lsp::ServerCapabilities {
+                code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+                diagnostic_provider: Some(lsp::DiagnosticServerCapabilities::Options(
+                    lsp::DiagnosticOptions {
+                        identifier: Some("test-pull".to_string()),
+                        inter_file_dependencies: true,
+                        workspace_diagnostics: false,
+                        work_done_progress_options: Default::default(),
+                    },
+                )),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new(|fake_server| {
+                fake_server.set_request_handler::<lsp::request::DocumentDiagnosticRequest, _, _>(
+                    |_, _| async move {
+                        Ok(lsp::DocumentDiagnosticReportResult::Report(
+                            lsp::DocumentDiagnosticReport::Full(
+                                lsp::RelatedFullDocumentDiagnosticReport {
+                                    related_documents: None,
+                                    full_document_diagnostic_report:
+                                        lsp::FullDocumentDiagnosticReport {
+                                            result_id: None,
+                                            items: Vec::new(),
+                                        },
+                                },
+                            ),
+                        ))
+                    },
+                );
+            })),
+            ..FakeLspAdapter::default()
+        },
+        cx,
+    )
+    .await;
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+
+    let uri = Uri::from_file_path(path!("/dir/a.ts")).unwrap();
+    let note_line = 5;
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+        uri: uri.clone(),
+        version: None,
+        diagnostics: vec![lsp::Diagnostic {
+            range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 3)),
+            severity: Some(DiagnosticSeverity::ERROR),
+            source: Some("test-language-server".to_string()),
+            message: "primary diagnostic".to_string(),
+            related_information: Some(vec![lsp::DiagnosticRelatedInformation {
+                location: lsp::Location {
+                    uri,
+                    range: lsp::Range::new(
+                        lsp::Position::new(note_line, 0),
+                        lsp::Position::new(note_line, 3),
+                    ),
+                },
+                message: "note".to_string(),
+            }]),
+            ..Default::default()
+        }],
+    });
+    cx.executor().run_until_parked();
+
+    // Each round edits the buffer and then pulls diagnostics. The pull reports nothing,
+    // so the pushed diagnostic is not replaced but merged: it is re-collected from its
+    // anchors, which is what keeps its own range current.
+    let mut inserted_lines = 0;
+    for lines in ["zzz\nzzz\n", "zzz\nzzz\nzzz\n"] {
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, lines)], None, cx);
+        });
+        cx.executor().run_until_parked();
+
+        let pull = lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.pull_diagnostics_for_buffer(buffer.clone(), cx)
+        });
+        pull.await.unwrap();
+        cx.executor().run_until_parked();
+
+        inserted_lines += lines.lines().count() as u32;
+    }
+
+    let mut request_handled = fake_server
+        .set_request_handler::<lsp::request::CodeActionRequest, _, _>(
+            move |params, _| async move {
+                let primary = &params.context.diagnostics[0];
+                let flattened_note = &params.context.diagnostics[1];
+                let related_note = &primary
+                    .related_information
+                    .as_ref()
+                    .expect("the primary diagnostic carries its related information")[0];
+
+                // The diagnostic survived both merges, and both of its entries were
+                // brought up to date each time.
+                assert_eq!(primary.range.start.line, 1 + inserted_lines);
+                assert_eq!(flattened_note.range.start.line, note_line + inserted_lines);
+
+                // The related information was cloned as it was published, so the two
+                // positions for the same note are now apart by every line inserted since.
+                assert_eq!(
+                    related_note.location.range.start.line, flattened_note.range.start.line,
+                    "the same note is reported at two different lines, {inserted_lines} apart"
+                );
+                Ok(Some(Vec::new()))
+            },
+        );
+
+    let buffer_length = buffer.read_with(cx, |buffer, _| buffer.len());
+    let code_actions_task = project.update(cx, |project, cx| {
+        project.code_actions(&buffer, 0..buffer_length, None, cx)
     });
 
     request_handled
@@ -13420,7 +13723,8 @@ async fn test_git_events_after_project_excludes_dot_git(cx: &mut gpui::TestAppCo
     cx.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_exclusions = Some(vec!["foo".to_string()]);
+                settings.project.worktree.file_scan_exclusions =
+                    Some(SplicingVec::from(vec!["foo".to_string()]));
             });
         });
     });
@@ -15268,7 +15572,8 @@ async fn test_rescan_with_gitignore(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_exclusions = Some(Vec::new());
+                settings.project.worktree.file_scan_exclusions =
+                    Some(SplicingVec::from(Vec::new()));
             });
         });
     });
@@ -17311,6 +17616,66 @@ async fn test_staging_hunks_with_ambiguous_placement(cx: &mut gpui::TestAppConte
             (row(12, 13), HasSecondaryHunk),
         ]
     );
+}
+
+fn expected_related_information(
+    infos: &[lsp::DiagnosticRelatedInformation],
+) -> Option<Arc<[language::RelatedInformation<Point>]>> {
+    Some(
+        infos
+            .iter()
+            .map(|info| language::RelatedInformation {
+                location: language::RelatedLocation::InBuffer(
+                    Point::new(
+                        info.location.range.start.line,
+                        info.location.range.start.character,
+                    )
+                        ..Point::new(
+                            info.location.range.end.line,
+                            info.location.range.end.character,
+                        ),
+                ),
+                message: info.message.clone(),
+            })
+            .collect(),
+    )
+}
+
+async fn code_action_project_with(
+    adapter: FakeLspAdapter,
+    cx: &mut gpui::TestAppContext,
+) -> (
+    Entity<Project>,
+    Entity<Buffer>,
+    project::lsp_store::OpenLspBufferHandle,
+    lsp::FakeLanguageServer,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "a.ts": "aaa\nbbb\nccc\nddd\neee\nfff\nggg\nhhh\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(typescript_lang());
+    let mut fake_language_servers = language_registry.register_fake_lsp("TypeScript", adapter);
+
+    let (buffer, handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.ts"), cx)
+        })
+        .await
+        .unwrap();
+    let fake_server = fake_language_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    (project, buffer, handle, fake_server)
 }
 
 async fn code_action_project(

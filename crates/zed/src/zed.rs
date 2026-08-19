@@ -2938,7 +2938,7 @@ mod tests {
     use remote_server::{HeadlessAppState, HeadlessProject};
     use semver::Version;
     use serde_json::json;
-    use settings::{SaturatingBool, SettingsStore, watch_config_file};
+    use settings::{SaturatingBool, SettingsStore, SplicingVec, watch_config_file};
     use std::{
         path::{Path, PathBuf},
         sync::Arc,
@@ -4283,7 +4283,10 @@ mod tests {
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings(cx, |project_settings| {
                     project_settings.project.worktree.file_scan_exclusions =
-                        Some(vec!["excluded_dir".to_string(), "**/.git".to_string()]);
+                        Some(SplicingVec::from(vec![
+                            "excluded_dir".to_string(),
+                            "**/.git".to_string(),
+                        ]));
                 });
             });
         });
@@ -6319,7 +6322,7 @@ mod tests {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |worktree_settings| {
                 worktree_settings.project.worktree.file_scan_exclusions =
-                    Some(vec![".zed".to_string()]);
+                    Some(SplicingVec::from(vec![".zed".to_string()]));
             });
         });
 
