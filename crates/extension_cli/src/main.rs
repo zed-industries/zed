@@ -79,7 +79,7 @@ async fn main() -> Result<()> {
     );
     let http_client = Arc::new(ReqwestClient::user_agent(&user_agent)?);
 
-    let builder = ExtensionBuilder::new(http_client.clone(), scratch_dir);
+    let builder = ExtensionBuilder::new(http_client, scratch_dir);
     builder
         .compile_extension(
             &extension_path,
