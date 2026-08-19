@@ -445,4 +445,53 @@ mod tests {
         let expected_url = "https://forgejo-instance.big-co.com/zed-industries/zed/src/commit/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
+
+    #[test]
+        fn test_parse_remote_url_with_subpath() {
+            let provider = Forgejo {
+                base_url: Url::parse("https://myhost.com/forgejo/").unwrap(),
+            };
+
+            // Standard subpath remote URL
+            let parsed = provider
+                .parse_remote_url("https://myhost.com/forgejo/my-org/my-repo.git")
+                .unwrap();
+            assert_eq!(parsed.owner, "my-org");
+            assert_eq!(parsed.repo, "my-repo");
+
+            // Base URL without trailing slash
+            let provider_no_slash = Forgejo {
+                base_url: Url::parse("https://myhost.com/forgejo").unwrap(),
+            };
+            let parsed_no_slash = provider_no_slash
+                .parse_remote_url("https://myhost.com/forgejo/my-org/my-repo.git")
+                .unwrap();
+            assert_eq!(parsed_no_slash.owner, "my-org");
+            assert_eq!(parsed_no_slash.repo, "my-repo");
+        }
+
+        #[test]
+        fn test_parse_remote_url_root() {
+            let provider = Forgejo {
+                base_url: Url::parse("https://myhost.com/").unwrap(),
+            };
+
+            // Standard root domain deployment
+            let parsed = provider
+                .parse_remote_url("https://myhost.com/my-org/my-repo.git")
+                .unwrap();
+            assert_eq!(parsed.owner, "my-org");
+            assert_eq!(parsed.repo, "my-repo");
+        }
+
+        #[test]
+        fn test_parse_remote_url_mismatched_subpath() {
+            let provider = Forgejo {
+                base_url: Url::parse("https://myhost.com/forgejo/").unwrap(),
+            };
+
+            // Should return None when remote URL path does not match base_url subpath
+            let parsed = provider.parse_remote_url("https://myhost.com/other/my-org/my-repo.git");
+            assert!(parsed.is_none());
+        }
 }
