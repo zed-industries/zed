@@ -71,8 +71,9 @@ message SetIndexText {
 
 message GetPermalinkToLine {
   uint64 project_id = 1;
-  uint64 buffer_id = 2;
-  Range selection = 3;
+  optional uint64 buffer_id = 2;
+  optional Range selection = 3;
+  optional ProjectPath path = 4;
 }
 
 message GetPermalinkToLineResponse {

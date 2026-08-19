@@ -61,6 +61,10 @@ actions!(
         Blame,
         /// Shows the git history for the selected file, folder, or project.
         FileHistory,
+        /// Opens the selected file on its Git hosting provider.
+        OpenFileOnRemote,
+        /// Copies a remote URL for the selected file on its Git hosting provider.
+        CopyRemoteFileUrl,
         /// Opens the selected file in the editor without a diff view.
         ViewFile,
         /// Stages the current file.
