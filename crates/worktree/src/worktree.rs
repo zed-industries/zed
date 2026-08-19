@@ -7197,6 +7197,40 @@ fn read_file_header(file: &mut dyn Read, abs_path: &Path) -> Result<(Vec<u8>, bo
     Ok((header, reached_eof))
 }
 
+const STREAM_BLOCK_BYTES: usize = 1024 * 1024;
+
+async fn read_file_to_end(
+    file: &mut (dyn Read + Send),
+    content: &mut Vec<u8>,
+    abs_path: &Path,
+) -> Result<()> {
+    let mut buf = vec![0u8; STREAM_BLOCK_BYTES];
+    loop {
+        let mut block_len = 0;
+        while block_len < buf.len() {
+            let n = file
+                .read(&mut buf[block_len..])
+                .with_context(|| format!("reading remaining bytes of the file {abs_path:?}"))?;
+            if n == 0 {
+                break;
+            }
+            block_len += n;
+        }
+
+        if block_len == 0 {
+            break;
+        }
+
+        content.extend_from_slice(&buf[..block_len]);
+        if block_len < buf.len() {
+            break;
+        }
+
+        yield_now().await;
+    }
+    Ok(())
+}
+
 pub async fn decode_file_text(
     fs: &dyn Fs,
     abs_path: &Path,
@@ -7216,22 +7250,12 @@ pub async fn decode_file_text(
     // If the file is eligible for opening, read the rest of the file.
     let mut content = file_first_bytes;
     if !reached_eof {
-        let mut buf = [0u8; 8 * 1024];
-        loop {
-            let n = file
-                .read(&mut buf)
-                .with_context(|| format!("reading remaining bytes of the file {abs_path:?}"))?;
-            if n == 0 {
-                break;
-            }
-            content.extend_from_slice(&buf[..n]);
-        }
+        read_file_to_end(&mut *file, &mut content, abs_path).await?;
     }
     let decoded = decode_text(content)?;
     Ok((decoded.text, decoded.encoding, decoded.has_bom))
 }
 
-const STREAM_BLOCK_BYTES: usize = 1024 * 1024;
 /// Reads and decodes a file straight into a [`Rope`].
 /// The returned rope has already had its line endings normalized, the
 /// [`LineEnding`] detected before normalizing is returned alongside it.
@@ -7402,6 +7426,32 @@ mod tests {
             .await
             .unwrap()
             .map(|(rope, line_ending)| (rope.to_string(), line_ending))
+    }
+
+    #[test]
+    fn test_stream_utf8_yields_between_blocks() {
+        let mut reader = std::io::Cursor::new(vec![b'a'; STREAM_BLOCK_BYTES * 2]);
+
+        assert!(
+            stream_utf8_into_rope(&mut reader, Vec::new(), false, Path::new("test"))
+                .now_or_never()
+                .is_none()
+        );
+        assert_eq!(reader.position(), STREAM_BLOCK_BYTES as u64);
+    }
+
+    #[test]
+    fn test_file_reading_yields_between_blocks() {
+        let mut reader = std::io::Cursor::new(vec![b'a'; STREAM_BLOCK_BYTES * 2]);
+        let mut content = Vec::new();
+
+        assert!(
+            read_file_to_end(&mut reader, &mut content, Path::new("test"))
+                .now_or_never()
+                .is_none()
+        );
+        assert_eq!(reader.position(), STREAM_BLOCK_BYTES as u64);
+        assert_eq!(content.len(), STREAM_BLOCK_BYTES);
     }
 
     #[gpui::test]
