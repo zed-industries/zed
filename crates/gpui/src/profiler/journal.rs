@@ -6,7 +6,7 @@
 //! bound the stream by the number of slow polls while preserving their exact
 //! count and total duration.
 //!
-//! Presentation and foreground quiescence are explicit [`IntervalBoundary`]
+//! Presentation and the foreground going idle are explicit [`IntervalBoundary`]
 //! entries in the same stream. Independent [`ForegroundJournalCollector`]s
 //! feed entries to [`IntervalSealer`], a pure state machine that groups all work
 //! preceding each boundary into a [`FrameSnapshot`]. The sealer does not infer
@@ -31,7 +31,7 @@ use crate::WindowId;
 pub const TASK_POLL_FLOOR: Duration = Duration::from_micros(100);
 
 /// A dirty frame that has not been presented by this deadline stops blocking
-/// foreground-quiescence boundaries and completes its interval explicitly.
+/// foreground-idle boundaries and completes its interval explicitly.
 pub const FRAME_DEADLINE: Duration = Duration::from_secs(1);
 
 // Backstop against pathological event storms within a single interval. At the
@@ -181,8 +181,8 @@ pub enum IntervalBoundary {
     /// A dirty frame did not reach the platform before its deadline.
     FrameDeadline(FrameDeadline),
     /// The foreground returned to an idle platform loop with no frame pending.
-    Quiescent {
-        /// When the foreground became quiescent.
+    Idle {
+        /// When the foreground went idle.
         ended_at: Instant,
     },
 }
@@ -193,7 +193,7 @@ impl IntervalBoundary {
         match self {
             Self::Presented(presented) => presented.presentation.present_end,
             Self::FrameDeadline(deadline) => deadline.ended_at,
-            Self::Quiescent { ended_at } => *ended_at,
+            Self::Idle { ended_at } => *ended_at,
         }
     }
 
@@ -202,7 +202,7 @@ impl IntervalBoundary {
         match self {
             Self::Presented(presented) => presented.frame.dirty_at,
             Self::FrameDeadline(deadline) => Some(deadline.dirty_at),
-            Self::Quiescent { .. } => None,
+            Self::Idle { .. } => None,
         }
     }
 }
@@ -217,7 +217,8 @@ pub enum FrameStateChange {
         /// When this frame generation first became dirty.
         dirty_at: Instant,
     },
-    /// The window closed, so any pending frame no longer blocks quiescence.
+    /// The window closed, so any pending frame no longer blocks idle
+    /// boundaries.
     Closed {
         /// The window that closed.
         window_id: WindowId,
@@ -381,12 +382,12 @@ impl ForegroundJournal {
         self.turn_depth += 1;
     }
 
-    // Quiescent boundaries require a retained event since the last boundary,
-    // not merely folded sub-floor polls. Sporadic wake-ups (timers, file
-    // watchers) reach quiescence after every tiny poll; a boundary for each
-    // would re-admit to the ring the very polls the fold keeps out of it,
-    // wrapping the ring within seconds. A sub-floor-only stretch can never be
-    // an incident on its own — frame misses always seal through the
+    // Idle boundaries require a retained event since the last boundary, not
+    // merely folded sub-floor polls. Sporadic wake-ups (timers, file
+    // watchers) leave the foreground idle after every tiny poll; a boundary
+    // for each would re-admit to the ring the very polls the fold keeps out
+    // of it, wrapping the ring within seconds. A sub-floor-only stretch can
+    // never be an incident on its own — frame misses always seal through the
     // pending-frame boundaries — so its folds simply ride, span-tagged, into
     // the next interval with retained content.
     fn end_turn(&mut self, ended_at: Instant) {
@@ -403,9 +404,9 @@ impl ForegroundJournal {
             return;
         }
 
-        self.record_entry(ForegroundJournalEntry::Boundary(
-            IntervalBoundary::Quiescent { ended_at },
-        ));
+        self.record_entry(ForegroundJournalEntry::Boundary(IntervalBoundary::Idle {
+            ended_at,
+        }));
     }
 
     fn has_unexpired_pending_frame(&mut self, now: Instant) -> bool {
@@ -523,7 +524,7 @@ fn with_journal(f: impl FnOnce(&mut ForegroundJournal)) {
 // WindowProfiler are bare begin/end call pairs rather than uses of this
 // guard. A caught unwind between a pair leaves `turn_depth` (and potentially
 // the runnable counter) permanently unbalanced, which silently disables
-// quiescent boundaries for the rest of the process. Zed aborts on panics so
+// idle boundaries for the rest of the process. Zed aborts on panics so
 // this is latent today, but gpui-as-a-library callers may catch unwinds;
 // route all bracketing through this guard.
 pub(crate) struct ForegroundTurnGuard;
@@ -876,14 +877,14 @@ mod tests {
                 IntervalBoundary::Presented(presented) => {
                     presented.dirty_to_present_duration()
                 }
-                IntervalBoundary::FrameDeadline(_) | IntervalBoundary::Quiescent { .. } => None,
+                IntervalBoundary::FrameDeadline(_) | IntervalBoundary::Idle { .. } => None,
             },
             Some(Duration::from_millis(5))
         );
     }
 
     #[test]
-    fn outermost_turn_seals_no_frame_work_at_quiescence() {
+    fn outermost_turn_seals_no_frame_work_when_idle() {
         let start = Instant::now();
         let counter = ForegroundRunnableCounter::new();
         let mut collector = ForegroundJournalCollector::new();
@@ -916,7 +917,7 @@ mod tests {
             assert!(entries.iter().any(|entry| {
                 matches!(
                     entry,
-                    ForegroundJournalEntry::Boundary(IntervalBoundary::Quiescent { ended_at })
+                    ForegroundJournalEntry::Boundary(IntervalBoundary::Idle { ended_at })
                         if *ended_at == event.end_time()
                 )
             }));
@@ -953,14 +954,14 @@ mod tests {
         assert!(collector.collect_unseen().entries.iter().any(|entry| {
             matches!(
                 entry,
-                ForegroundJournalEntry::Boundary(IntervalBoundary::Quiescent { ended_at })
+                ForegroundJournalEntry::Boundary(IntervalBoundary::Idle { ended_at })
                     if *ended_at == input.end_time()
             )
         }));
     }
 
     #[test]
-    fn an_immediately_ready_runnable_prevents_quiescence_between_polls() {
+    fn an_immediately_ready_runnable_prevents_an_idle_boundary_between_polls() {
         let start = Instant::now();
         let counter = ForegroundRunnableCounter::new();
         let mut collector = ForegroundJournalCollector::new();
@@ -989,14 +990,14 @@ mod tests {
         assert!(collector.collect_unseen().entries.iter().any(|entry| {
             matches!(
                 entry,
-                ForegroundJournalEntry::Boundary(IntervalBoundary::Quiescent { ended_at })
+                ForegroundJournalEntry::Boundary(IntervalBoundary::Idle { ended_at })
                     if *ended_at == second.end_time()
             )
         }));
     }
 
     #[test]
-    fn a_pending_frame_prevents_quiescence_until_presentation() {
+    fn a_pending_frame_prevents_idle_until_presentation() {
         let start = Instant::now();
         let window_id = WindowId::from(0xD17A);
         let mut collector = ForegroundJournalCollector::new();
@@ -1064,7 +1065,7 @@ mod tests {
     }
 
     #[test]
-    fn expired_frame_no_longer_blocks_later_quiescence() {
+    fn expired_frame_no_longer_blocks_later_idle_boundaries() {
         let start = Instant::now();
         let window_id = WindowId::from(0xDEA2);
         let mut sealer = IntervalSealer::new(start);
@@ -1078,16 +1079,16 @@ mod tests {
         let event_end = event_start + Duration::from_millis(20);
         let snapshots = sealer.push_entries([
             input_entry(event_start, event_end),
-            ForegroundJournalEntry::Boundary(IntervalBoundary::Quiescent {
+            ForegroundJournalEntry::Boundary(IntervalBoundary::Idle {
                 ended_at: event_end,
             }),
         ]);
         let [snapshot] = snapshots.as_slice() else {
-            panic!("expected one quiescent snapshot, got {snapshots:?}");
+            panic!("expected one idle snapshot, got {snapshots:?}");
         };
         assert!(matches!(
             snapshot.boundary,
-            IntervalBoundary::Quiescent { ended_at } if ended_at == event_end
+            IntervalBoundary::Idle { ended_at } if ended_at == event_end
         ));
     }
 
@@ -1122,17 +1123,14 @@ mod tests {
                 window_id,
                 at: start + FRAME_DEADLINE,
             }),
-            ForegroundJournalEntry::Boundary(IntervalBoundary::Quiescent {
+            ForegroundJournalEntry::Boundary(IntervalBoundary::Idle {
                 ended_at: start + FRAME_DEADLINE,
             }),
         ]);
         let [snapshot] = snapshots.as_slice() else {
-            panic!("expected one quiescent snapshot, got {snapshots:?}");
+            panic!("expected one idle snapshot, got {snapshots:?}");
         };
-        assert!(matches!(
-            snapshot.boundary,
-            IntervalBoundary::Quiescent { .. }
-        ));
+        assert!(matches!(snapshot.boundary, IntervalBoundary::Idle { .. }));
         assert!(sealer.advance(start + FRAME_DEADLINE * 2).is_empty());
     }
 
@@ -1280,12 +1278,12 @@ mod tests {
         ));
     }
 
-    /// Sporadic wake-ups (a tiny folded poll followed by quiescence,
-    /// repeatedly) must write nothing to the ring: no boundary, no flush.
-    /// The folds accumulate and ride with the next boundary that has
+    /// Sporadic wake-ups (a tiny folded poll after which the foreground goes
+    /// idle, repeatedly) must write nothing to the ring: no boundary, no
+    /// flush. The folds accumulate and ride with the next boundary that has
     /// retained content.
     #[test]
-    fn quiescence_without_retained_work_writes_nothing() {
+    fn going_idle_without_retained_work_writes_nothing() {
         let start = Instant::now();
         let mut collector = ForegroundJournalCollector::new();
         let mut journal = ForegroundJournal::new(ForegroundRunnableCounter::new());
@@ -1338,14 +1336,14 @@ mod tests {
 
         let snapshots = sealer.push_entries([
             input_entry(start, start + Duration::from_millis(1)),
-            ForegroundJournalEntry::Boundary(IntervalBoundary::Quiescent {
+            ForegroundJournalEntry::Boundary(IntervalBoundary::Idle {
                 ended_at: start + Duration::from_millis(1),
             }),
             input_entry(
                 start + Duration::from_millis(2),
                 start + Duration::from_millis(3),
             ),
-            ForegroundJournalEntry::Boundary(IntervalBoundary::Quiescent {
+            ForegroundJournalEntry::Boundary(IntervalBoundary::Idle {
                 ended_at: start + Duration::from_millis(3),
             }),
         ]);
@@ -1364,11 +1362,10 @@ mod tests {
         let mut sealer = IntervalSealer::new(start);
         sealer.note_lost(3);
 
-        let snapshots = sealer.push_entries([ForegroundJournalEntry::Boundary(
-            IntervalBoundary::Quiescent {
+        let snapshots =
+            sealer.push_entries([ForegroundJournalEntry::Boundary(IntervalBoundary::Idle {
                 ended_at: start + Duration::from_millis(1),
-            },
-        )]);
+            })]);
 
         assert_eq!(snapshots.len(), 1);
         assert_eq!(snapshots[0].dropped_events, 3);
@@ -1388,12 +1385,9 @@ mod tests {
                 )
             })
             .collect();
-        entries.push(ForegroundJournalEntry::Boundary(
-            IntervalBoundary::Quiescent {
-                ended_at: start
-                    + Duration::from_micros((MAX_INTERVAL_EVENTS + overflow) as u64 + 1),
-            },
-        ));
+        entries.push(ForegroundJournalEntry::Boundary(IntervalBoundary::Idle {
+            ended_at: start + Duration::from_micros((MAX_INTERVAL_EVENTS + overflow) as u64 + 1),
+        }));
 
         let snapshots = sealer.push_entries(entries);
 
@@ -1426,7 +1420,7 @@ mod tests {
                 since: start + Duration::from_millis(200),
                 until: start + Duration::from_millis(800),
             })),
-            ForegroundJournalEntry::Boundary(IntervalBoundary::Quiescent {
+            ForegroundJournalEntry::Boundary(IntervalBoundary::Idle {
                 ended_at: start + Duration::from_secs(2),
             }),
         ]);
@@ -1510,7 +1504,7 @@ mod tests {
                 cursor = event_end;
 
                 let boundary = match boundary_kind {
-                    1 => Some(IntervalBoundary::Quiescent { ended_at: cursor }),
+                    1 => Some(IntervalBoundary::Idle { ended_at: cursor }),
                     2 => Some(presented_boundary_at(cursor)),
                     _ => None,
                 };

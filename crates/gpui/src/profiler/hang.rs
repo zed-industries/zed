@@ -20,7 +20,7 @@ use super::journal::{
 /// Detects foreground hangs by polling the journal.
 ///
 /// Detection is post-hoc: a hang is reported once an explicit presentation,
-/// foreground-quiescence, or pending-frame deadline boundary completes its
+/// foreground-idle, or pending-frame deadline boundary completes its
 /// interval. Work that never yields back to the foreground is not observed
 /// until it does.
 pub struct HangDetector {
@@ -116,7 +116,7 @@ pub struct SerializedHangIncident {
     /// been dirty, in milliseconds.
     pub dirty_to_present_ms: Option<f64>,
     /// What closed the incident: `"present"`, `"frame_deadline"`, or
-    /// `"quiescent"`. This labels the boundary, not the hang's cause — the
+    /// `"idle"`. This labels the boundary, not the hang's cause — the
     /// cause is the first contributor.
     pub sealed_by: &'static str,
     /// Fraction of the active window the foreground spent working,
@@ -239,12 +239,12 @@ impl SerializedHangIncident {
                 IntervalBoundary::Presented(presented) => {
                     presented.dirty_to_present_duration().map(as_millis)
                 }
-                IntervalBoundary::FrameDeadline(_) | IntervalBoundary::Quiescent { .. } => None,
+                IntervalBoundary::FrameDeadline(_) | IntervalBoundary::Idle { .. } => None,
             },
             sealed_by: match snapshot.boundary {
                 IntervalBoundary::Presented(_) => "present",
                 IntervalBoundary::FrameDeadline(_) => "frame_deadline",
-                IntervalBoundary::Quiescent { .. } => "quiescent",
+                IntervalBoundary::Idle { .. } => "idle",
             },
             busy_fraction: (busy_fraction * 1000.0).round() / 1000.0,
             event_count: snapshot.events.len(),
@@ -497,22 +497,22 @@ mod tests {
     }
 
     #[test]
-    fn serialized_incident_reports_quiescent_and_deadline_seal_fields() {
+    fn serialized_incident_reports_idle_and_deadline_seal_fields() {
         let startup = scheduler::Instant::now();
         let at = |ms: u64| startup + Duration::from_millis(ms);
         let window_id = WindowId::from(0xF1E1E);
 
-        let quiescent = FrameSnapshot {
+        let idle = FrameSnapshot {
             interval_start: at(200),
-            boundary: IntervalBoundary::Quiescent { ended_at: at(260) },
+            boundary: IntervalBoundary::Idle { ended_at: at(260) },
             events: vec![task_poll_event(at(200), at(260))],
             small_polls: PollSummary::default(),
             dropped_events: 0,
         };
-        let incident = HangIncident::detect(quiescent, HANG_THRESHOLD).expect("has contributors");
+        let incident = HangIncident::detect(idle, HANG_THRESHOLD).expect("has contributors");
         let serialized = SerializedHangIncident::convert(startup, &incident, 8, None);
         assert_eq!(serialized.phase, "startup");
-        assert_eq!(serialized.sealed_by, "quiescent");
+        assert_eq!(serialized.sealed_by, "idle");
         assert_eq!(serialized.dirty_to_present_ms, None);
         // With no frame, the earliest contributor anchors the active window.
         assert_eq!(serialized.start_ms, 200.0);
@@ -552,7 +552,7 @@ mod tests {
         let at = |ms: u64| startup + Duration::from_millis(ms);
         let snapshot = FrameSnapshot {
             interval_start: at(500),
-            boundary: IntervalBoundary::Quiescent { ended_at: at(600) },
+            boundary: IntervalBoundary::Idle { ended_at: at(600) },
             events: vec![task_poll_event(at(500), at(600))],
             small_polls: PollSummary::default(),
             dropped_events: 0,
@@ -619,7 +619,7 @@ mod tests {
         let at = |ms: u64| startup + Duration::from_millis(ms);
         let snapshot = FrameSnapshot {
             interval_start: at(0),
-            boundary: IntervalBoundary::Quiescent { ended_at: at(1000) },
+            boundary: IntervalBoundary::Idle { ended_at: at(1000) },
             events: vec![task_poll_event(at(900), at(950))],
             // Folded polls that ran during at(0)..at(800), long before the
             // active window opens at the contributor's start.
