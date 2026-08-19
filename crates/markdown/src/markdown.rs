@@ -43,8 +43,8 @@ use gpui::{
 use language::{CharClassifier, Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
 use parser::{
-    MarkdownEvent, MarkdownTag, MarkdownTagEnd, ParsedMetadataBlock, parse_links_only,
-    parse_markdown_with_options,
+    MarkdownEvent, MarkdownTag, MarkdownTagEnd, ParsedMetadataBlock, fenced_language_name,
+    parse_links_only, parse_markdown_with_options,
 };
 use pulldown_cmark::{Alignment, BlockQuoteKind};
 use sum_tree::TreeMap;
@@ -1247,7 +1247,9 @@ impl Markdown {
             if let Some(registry) = language_registry.as_ref() {
                 for name in language_names {
                     let language = if !name.is_empty() {
-                        registry.language_for_name_or_extension(&name).left_future()
+                        registry
+                            .language_for_name_or_extension(fenced_language_name(&name))
+                            .left_future()
                     } else if let Some(fallback) = &fallback {
                         registry.language_for_name(fallback.as_ref()).right_future()
                     } else {

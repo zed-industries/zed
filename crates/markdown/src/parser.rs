@@ -168,6 +168,12 @@ fn build_heading_slugs(
     slugs
 }
 
+/// The language name of a fenced code block is the first word of its info string;
+/// anything after it is metadata (per CommonMark).
+pub(crate) fn fenced_language_name(info: &str) -> &str {
+    info.split_whitespace().next().unwrap_or(info)
+}
+
 fn parse_metadata_table_rows(source: &str, source_range: Range<usize>) -> Option<Vec<MetadataRow>> {
     let mut rows = Vec::new();
     let mut line_start = source_range.start;
@@ -1352,6 +1358,13 @@ mod tests {
                 Some(false)
             );
         }
+    }
+
+    #[test]
+    fn test_fenced_language_name_uses_first_word() {
+        assert_eq!(fenced_language_name("ts import.meta.vitest"), "ts");
+        assert_eq!(fenced_language_name("rust"), "rust");
+        assert_eq!(fenced_language_name("  python  extra "), "python");
     }
 
     fn assert_code_block_does_not_emit_links(markdown: &str) {
