@@ -6043,6 +6043,10 @@ fn network_grants_nothing(network: &SandboxNetPolicy) -> bool {
     }
 }
 
+fn permission_option_button_label(option_name: &str) -> SharedString {
+    option_name.replace('\n', "⏎").into()
+}
+
 /// Rows for the write-access group: a message for the "all"/"none" cases, or one
 /// row per granted path.
 fn sandbox_fs_rows(fs: &SandboxFsDisplay) -> Vec<SandboxRow> {
@@ -9822,7 +9826,8 @@ impl ThreadView {
             .gap_0p5()
             .children(options.iter().map(move |option| {
                 let option_id = SharedString::from(option.option_id.0.clone());
-                Button::new((option_id, entry_ix), option.name.clone())
+                let option_name = permission_option_button_label(&option.name);
+                Button::new((option_id, entry_ix), option_name)
                     .map(|this| {
                         // The sandbox-fallback prompt offers a "Retry" option
                         // that re-attempts creating the sandbox; it isn't an
@@ -12690,6 +12695,14 @@ mod tests {
         acp::AvailableCommand::new(name, "").meta(acp_thread::meta_with_command_category(
             acp_thread::CommandCategory::Mcp,
         ))
+    }
+
+    #[test]
+    fn test_permission_option_button_label_is_single_line() {
+        assert_eq!(
+            permission_option_button_label("Always allow\nthis command\nfor this conversation"),
+            "Always allow⏎this command⏎for this conversation"
+        );
     }
 
     #[test]
