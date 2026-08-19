@@ -716,54 +716,28 @@ impl LspAdapter for PyrightLspAdapter {
                     .and_then(|s| s.settings.clone())
                     .unwrap_or_default();
 
+            if !user_settings.is_object() {
+                user_settings = Value::Object(serde_json::Map::default());
+            }
+            let object = user_settings.as_object_mut().unwrap();
+
             // If we have a detected toolchain, configure Pyright to use it - unless the user sets it themselves.
             let should_insert_toolchain = || {
-                user_settings.as_object().is_none_or(|object| {
-                    ![
-                        "venvPath",
-                        "venv",
-                        "python",
-                        "pythonPath",
-                        "defaultInterpreterPath",
-                    ]
-                    .into_iter()
-                    .any(|known_key| object.contains_key(known_key))
-                })
+                object
+                    .get("python")
+                    .and_then(Value::as_object)
+                    .is_none_or(|python| {
+                        !["pythonPath", "venvPath"]
+                            .into_iter()
+                            .any(|known_key| python.contains_key(known_key))
+                    })
             };
             if let Some(toolchain) = toolchain
                 && should_insert_toolchain()
-                && let Ok(env) =
-                    serde_json::from_value::<PythonToolchainData>(toolchain.as_json.clone())
+                && serde_json::from_value::<PythonToolchainData>(toolchain.as_json.clone()).is_ok()
             {
-                if !user_settings.is_object() {
-                    user_settings = Value::Object(serde_json::Map::default());
-                }
-                let object = user_settings.as_object_mut().unwrap();
-
                 let interpreter_path = toolchain.path.to_string();
-                if let Some(venv_dir) = &env.environment.prefix {
-                    // Set venvPath and venv at the root level
-                    // This matches the format of a pyrightconfig.json file
-                    if let Some(parent) = venv_dir.parent() {
-                        // Use relative path if the venv is inside the workspace
-                        let venv_path = if parent == adapter.worktree_root_path() {
-                            ".".to_string()
-                        } else {
-                            parent.to_string_lossy().into_owned()
-                        };
-                        object.insert("venvPath".to_string(), Value::String(venv_path));
-                    }
 
-                    if let Some(venv_name) = venv_dir.file_name() {
-                        object.insert(
-                            "venv".to_owned(),
-                            Value::String(venv_name.to_string_lossy().into_owned()),
-                        );
-                    }
-                }
-
-                // Always set the python interpreter path
-                // Get or create the python section
                 let python = object
                     .entry("python")
                     .and_modify(|v| {
@@ -774,15 +748,7 @@ impl LspAdapter for PyrightLspAdapter {
                     .or_insert(Value::Object(serde_json::Map::default()));
                 let python = python.as_object_mut().unwrap();
 
-                // Set both pythonPath and defaultInterpreterPath for compatibility
-                python.insert(
-                    "pythonPath".to_owned(),
-                    Value::String(interpreter_path.clone()),
-                );
-                python.insert(
-                    "defaultInterpreterPath".to_owned(),
-                    Value::String(interpreter_path),
-                );
+                python.insert("pythonPath".to_owned(), Value::String(interpreter_path));
             }
 
             normalize_pyright_analysis_configuration(&mut user_settings, "python");
