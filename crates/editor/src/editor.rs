@@ -2787,6 +2787,10 @@ impl Editor {
             key_context.add("diffs_expanded");
         }
 
+        if self.has_active_diagnostic_group() {
+            key_context.add("active_diagnostics");
+        }
+
         key_context
     }
 
